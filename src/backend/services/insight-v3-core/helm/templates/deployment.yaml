@@ -61,18 +61,17 @@ spec:
             {{- $host := required "alerts.redis.host is required when alerts are enabled" $redis.host }}
             - name: APP__gears__insight_v3_core__config__alerts__enabled
               value: "true"
+            - name: APP__gears__insight_v3_core__config__alerts__redis_url
+              value: {{ printf "redis://%s:%v" $host $redis.port | quote }}
             {{- if $redis.passwordSecret }}
-            # SAFETY: the pod assembles the URL, so the password is never copied into another Secret.
-            - name: ALERTS_REDIS_PASSWORD
+            # SAFETY: the password travels as its own setting and the service joins it to
+            # the URL percent-encoded, so any character is fine and it is never copied
+            # into another Secret.
+            - name: APP__gears__insight_v3_core__config__alerts__redis_password
               valueFrom:
                 secretKeyRef:
                   name: {{ $redis.passwordSecret | quote }}
                   key: {{ required "alerts.redis.passwordKey is required with alerts.redis.passwordSecret" $redis.passwordKey | quote }}
-            - name: APP__gears__insight_v3_core__config__alerts__redis_url
-              value: {{ printf "redis://:$(ALERTS_REDIS_PASSWORD)@%s:%v" $host $redis.port | quote }}
-            {{- else }}
-            - name: APP__gears__insight_v3_core__config__alerts__redis_url
-              value: {{ printf "redis://%s:%v" $host $redis.port | quote }}
             {{- end }}
             {{- end }}
             {{- end }}

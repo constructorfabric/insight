@@ -182,7 +182,7 @@ impl MetricQuery {
             }
             selection
                 .column_types
-                .insert(field.as_name.clone(), field.r#type);
+                .insert(field.as_name.clone(), field.result_type());
 
             if let Some(ratio) = field.ratio(&selection.as_names)? {
                 selection.as_names.insert(field.as_name.as_str());

@@ -42,25 +42,24 @@ impl<'a> AlertRules<'a> {
         self.destinations
     }
 
-    /// Creates a rule, and schedules its checks.
+    /// Creates a rule, enabled unless the draft says otherwise, and
+    /// schedules its checks. The store holds the rule bound.
     pub(crate) async fn create(
         &self,
         draft: &RuleDraft,
         actor: Option<Uuid>,
     ) -> Result<AlertRule, AlertsError> {
-        let spec = self.checked(draft).await?;
-        if self.store.count().await? >= self.limits.max_rules {
-            return Err(AlertsError::TooMany(self.limits.max_rules));
+        if draft.expected_revision.is_some() {
+            return Err(AlertsError::RevisionOnCreate);
         }
+        let spec = self.checked(draft).await?;
 
-        let rule = self
-            .store
-            .create(Write {
-                spec,
-                enabled: draft.enabled,
-                actor,
-            })
-            .await?;
+        let write = Write {
+            spec,
+            enabled: draft.enabled.unwrap_or(true),
+            actor,
+        };
+        let rule = self.store.create(write, self.limits.max_rules).await?;
 
         self.reschedule(&rule).await;
 
@@ -68,7 +67,8 @@ impl<'a> AlertRules<'a> {
     }
 
     /// Replaces a rule at the revision the draft expects, and reschedules
-    /// its checks.
+    /// its checks. A draft silent on `enabled` leaves it as it is: the read
+    /// here may be stale, but the revision the store checks is not.
     pub(crate) async fn replace(
         &self,
         id: Uuid,
@@ -79,19 +79,14 @@ impl<'a> AlertRules<'a> {
             .expected_revision
             .ok_or(AlertsError::RevisionRequired)?;
         let spec = self.checked(draft).await?;
+        let current = self.get(id).await?;
 
-        let rule = self
-            .store
-            .replace(
-                id,
-                expected,
-                Write {
-                    spec,
-                    enabled: draft.enabled,
-                    actor,
-                },
-            )
-            .await?;
+        let write = Write {
+            spec,
+            enabled: draft.enabled.unwrap_or(current.enabled),
+            actor,
+        };
+        let rule = self.store.replace(id, expected, write).await?;
 
         self.reschedule(&rule).await;
 
@@ -122,12 +117,20 @@ impl<'a> AlertRules<'a> {
         Ok(self.store.page(needle.trim(), page).await?)
     }
 
+    /// Turns checks on or off. Turning them on is refused while the rule's
+    /// destination is no longer configured: every breach would owe a
+    /// notification nothing can carry.
     pub(crate) async fn set_enabled(
         &self,
         id: Uuid,
         expected_revision: u32,
         enabled: bool,
     ) -> Result<AlertRule, AlertsError> {
+        if enabled {
+            let current = self.get(id).await?;
+            self.configured(&current.spec.destination)?;
+        }
+
         let rule = self
             .store
             .set_enabled(id, expected_revision, enabled)
@@ -136,6 +139,14 @@ impl<'a> AlertRules<'a> {
         self.reschedule(&rule).await;
 
         Ok(rule)
+    }
+
+    fn configured(&self, destination: &str) -> Result<(), AlertsError> {
+        if self.destinations.provider_of(destination).is_none() {
+            return Err(RuleError::Destination(destination.to_owned()).into());
+        }
+
+        Ok(())
     }
 
     /// Removes the rule, its checks and everything recorded for it.
@@ -184,6 +195,8 @@ pub(crate) enum AlertsError {
     NotFound(Uuid),
     #[error("expected_revision is required to replace an alert")]
     RevisionRequired,
+    #[error("expected_revision is not accepted when creating an alert")]
+    RevisionOnCreate,
     #[error("alert {id} is at revision {current}, not {expected}")]
     Conflict {
         id: Uuid,
@@ -211,6 +224,7 @@ impl From<AlertStoreError> for AlertsError {
                 current,
                 expected,
             },
+            AlertStoreError::TooMany(limit) => Self::TooMany(limit),
             AlertStoreError::Database(_) | AlertStoreError::UnreadableRow(_) => Self::Store(error),
         }
     }
@@ -225,6 +239,7 @@ impl AlertsError {
             | Self::MetricMissing(_)
             | Self::NotFound(_)
             | Self::RevisionRequired
+            | Self::RevisionOnCreate
             | Self::Conflict { .. }
             | Self::TooMany(_) => true,
             Self::Store(_) | Self::Definitions(_) => false,

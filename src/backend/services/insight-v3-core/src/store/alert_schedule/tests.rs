@@ -204,22 +204,25 @@ mod worker {
         .await;
 
         let rule = store
-            .create(Write {
-                spec: RuleSpec {
-                    name: AlertName::parse("Worker probe")?,
-                    metric: DefinitionName::parse("prs-open")?,
-                    column: "total".to_owned(),
-                    condition: Condition {
-                        operator: Operator::Gt,
-                        threshold: Number::Int(10),
+            .create(
+                Write {
+                    spec: RuleSpec {
+                        name: AlertName::parse("Worker probe")?,
+                        metric: DefinitionName::parse("prs-open")?,
+                        column: "total".to_owned(),
+                        condition: Condition {
+                            operator: Operator::Gt,
+                            threshold: Number::Int(10),
+                        },
+                        range: None,
+                        interval_secs: 3600,
+                        destination: "ops".to_owned(),
                     },
-                    range: None,
-                    interval_secs: 3600,
-                    destination: "ops".to_owned(),
+                    enabled: true,
+                    actor: None,
                 },
-                enabled: true,
-                actor: None,
-            })
+                u64::MAX,
+            )
             .await?;
         schedule.upsert(Scheduled::of(&rule)).await?;
 
@@ -353,24 +356,27 @@ mod delivery {
 
     async fn owed(store: &MemoryAlerts) -> Notification {
         let rule = store
-            .create(Write {
-                spec: RuleSpec {
-                    name: AlertName::parse("Delivery probe")
-                        .unwrap_or_else(|error| panic!("{error}")),
-                    metric: DefinitionName::parse("prs-open")
-                        .unwrap_or_else(|error| panic!("{error}")),
-                    column: "total".to_owned(),
-                    condition: Condition {
-                        operator: Operator::Gt,
-                        threshold: Number::Int(10),
+            .create(
+                Write {
+                    spec: RuleSpec {
+                        name: AlertName::parse("Delivery probe")
+                            .unwrap_or_else(|error| panic!("{error}")),
+                        metric: DefinitionName::parse("prs-open")
+                            .unwrap_or_else(|error| panic!("{error}")),
+                        column: "total".to_owned(),
+                        condition: Condition {
+                            operator: Operator::Gt,
+                            threshold: Number::Int(10),
+                        },
+                        range: None,
+                        interval_secs: 3600,
+                        destination: "ops".to_owned(),
                     },
-                    range: None,
-                    interval_secs: 3600,
-                    destination: "ops".to_owned(),
+                    enabled: true,
+                    actor: None,
                 },
-                enabled: true,
-                actor: None,
-            })
+                u64::MAX,
+            )
             .await
             .unwrap_or_else(|error| panic!("{error}"));
         let recorded = store

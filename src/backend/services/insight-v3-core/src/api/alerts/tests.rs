@@ -128,17 +128,27 @@ impl TestHarness {
 
 struct TestResponse {
     status: StatusCode,
+    content_type: Option<String>,
     body: Bytes,
 }
 
 impl TestResponse {
     async fn from_response(response: axum::response::Response) -> Self {
         let status = response.status();
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
         let body = to_bytes(response.into_body(), 64 * 1024)
             .await
             .unwrap_or_else(|error| panic!("response body must be readable: {error}"));
 
-        Self { status, body }
+        Self {
+            status,
+            content_type,
+            body,
+        }
     }
 
     fn json(&self) -> Value {
@@ -175,6 +185,32 @@ impl TestHarness {
     }
 }
 
+/// A missing alert as the document declares it: a problem body naming what
+/// was asked for, whether the id is absent or not an id at all.
+fn assert_not_found(response: &TestResponse, asked: &str) {
+    assert_eq!(
+        response.status,
+        StatusCode::NOT_FOUND,
+        "{:?}",
+        response.body
+    );
+    assert!(
+        response
+            .content_type
+            .as_deref()
+            .is_some_and(|value| value.starts_with("application/problem+json")),
+        "{:?}",
+        response.content_type
+    );
+    let shown = response.json();
+    assert_eq!(shown["status"], json!(404), "{shown}");
+    let detail = shown["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("was not found") && detail.contains(asked),
+        "{shown}"
+    );
+}
+
 #[tokio::test]
 async fn a_created_rule_reads_back_at_revision_one_and_is_scheduled() -> R {
     let harness = TestHarness::new();
@@ -205,6 +241,47 @@ async fn a_created_rule_reads_back_at_revision_one_and_is_scheduled() -> R {
         json!([{"id": id, "name": "Too many open PRs", "metric": "prs-open", "enabled": true}])
     );
     assert_eq!(listed.json()["total"], json!(1));
+    let regardless_of_case = harness.send("GET", "/v1/alerts?q=OPEN", None).await;
+    assert_eq!(regardless_of_case.json()["total"], json!(1));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_threshold_past_what_javascript_holds_round_trips_as_a_digit_string() -> R {
+    let harness = TestHarness::new();
+
+    let created = harness
+        .send(
+            "POST",
+            "/v1/alerts",
+            Some(rule(|body| {
+                body["threshold"] = json!(9_007_199_254_740_993_u64);
+            })),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    let shown = created.json();
+    assert_eq!(shown["threshold"], json!("9007199254740993"));
+    let id = shown["id"].as_str().unwrap_or_default().to_owned();
+
+    let written_back = harness
+        .send(
+            "PUT",
+            &format!("/v1/alerts/{id}"),
+            Some(rule(|body| {
+                body["threshold"] = json!("9007199254740993");
+                body["expected_revision"] = json!(1);
+            })),
+        )
+        .await;
+    assert_eq!(
+        written_back.status,
+        StatusCode::OK,
+        "{:?}",
+        written_back.body
+    );
+    assert_eq!(written_back.json()["threshold"], json!("9007199254740993"));
 
     Ok(())
 }
@@ -276,14 +353,15 @@ async fn replacing_needs_the_revision_it_replaces() -> R {
         (2, 600)
     );
 
+    let missing = uuid::Uuid::now_v7().simple().to_string();
     let absent = harness
         .send(
             "PUT",
-            &format!("/v1/alerts/{}", uuid::Uuid::now_v7().simple()),
+            &format!("/v1/alerts/{missing}"),
             Some(rule(|body| body["expected_revision"] = json!(1))),
         )
         .await;
-    assert_eq!(absent.status, StatusCode::NOT_FOUND, "{:?}", absent.body);
+    assert_not_found(&absent, &missing);
 
     let malformed = harness
         .send(
@@ -292,11 +370,108 @@ async fn replacing_needs_the_revision_it_replaces() -> R {
             Some(rule(|body| body["expected_revision"] = json!(1))),
         )
         .await;
+    assert_not_found(&malformed, "not-an-id");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replace_silent_on_enabled_leaves_a_disabled_rule_off() -> R {
+    let harness = TestHarness::new();
+    let id = harness.create(rule(|_| {})).await;
+    let path = format!("/v1/alerts/{id}");
+    harness
+        .send(
+            "POST",
+            &format!("{path}/disable"),
+            Some(json!({"expected_revision": 1})),
+        )
+        .await;
+
+    let silent = harness
+        .send(
+            "PUT",
+            &path,
+            Some(rule(|body| {
+                body["threshold"] = json!(20);
+                body["expected_revision"] = json!(2);
+            })),
+        )
+        .await;
+    assert_eq!(silent.status, StatusCode::OK, "{:?}", silent.body);
+    assert_eq!(silent.json()["enabled"], json!(false));
+    assert_eq!(silent.json()["revision"], json!(3));
+    assert!(
+        harness.schedule.entries().is_empty(),
+        "stays off the schedule"
+    );
+
+    let explicit = harness
+        .send(
+            "PUT",
+            &path,
+            Some(rule(|body| {
+                body["enabled"] = json!(true);
+                body["expected_revision"] = json!(3);
+            })),
+        )
+        .await;
+    assert_eq!(explicit.status, StatusCode::OK, "{:?}", explicit.body);
+    assert_eq!(explicit.json()["enabled"], json!(true));
+    assert_eq!(harness.schedule.entries()[0].job.revision, 4);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn enabling_a_rule_whose_destination_is_gone_is_refused() -> R {
+    use crate::domain::alerts::rule::{AlertStore as _, RuleSpec, Write};
+
+    let harness = TestHarness::new();
+    let draft: RuleDraft =
+        serde_json::from_value(rule(|body| body["destination"] = json!("retired")))?;
+    let once_configured = Destinations::new(BTreeMap::from([(
+        "retired".to_owned(),
+        "discord".to_owned(),
+    )]));
+    let spec = RuleSpec::parse(&draft, Limits::default(), &once_configured)?;
+    let stored = harness
+        .store
+        .create(
+            Write {
+                spec,
+                enabled: false,
+                actor: None,
+            },
+            u64::MAX,
+        )
+        .await?;
+
+    let refused = harness
+        .send(
+            "POST",
+            &format!("/v1/alerts/{}/enable", stored.id.simple()),
+            Some(json!({"expected_revision": 1})),
+        )
+        .await;
     assert_eq!(
-        malformed.status,
-        StatusCode::NOT_FOUND,
+        refused.status,
+        StatusCode::BAD_REQUEST,
         "{:?}",
-        malformed.body
+        refused.body
+    );
+    let shown = refused.json();
+    assert!(
+        shown.to_string().contains("destination") && shown.to_string().contains("retired"),
+        "{shown}"
+    );
+    assert!(harness.schedule.entries().is_empty());
+    assert_eq!(
+        harness
+            .send("GET", &format!("/v1/alerts/{}", stored.id.simple()), None)
+            .await
+            .json()["enabled"],
+        json!(false)
     );
 
     Ok(())
@@ -323,9 +498,14 @@ async fn a_rule_is_refused_for_what_it_gets_wrong() -> R {
             "interval_secs",
         ),
         (
-            "text threshold",
-            rule(|body| body["threshold"] = json!("10")),
+            "text threshold that is not an integer",
+            rule(|body| body["threshold"] = json!("1,5")),
             "threshold",
+        ),
+        (
+            "expected_revision on create",
+            rule(|body| body["expected_revision"] = json!(1)),
+            "expected_revision",
         ),
         (
             "unknown field",
@@ -360,6 +540,11 @@ async fn the_rule_count_is_bounded() -> R {
 
     let third = harness.send("POST", "/v1/alerts", Some(rule(|_| {}))).await;
     assert_eq!(third.status, StatusCode::CONFLICT, "{:?}", third.body);
+    let shown = third.json().to_string();
+    assert!(
+        shown.contains(r#""subject":"alerts""#) && !shown.contains(r#""subject":"name""#),
+        "the limit is about the collection, not the name: {shown}"
+    );
 
     Ok(())
 }
@@ -412,13 +597,23 @@ async fn deleting_removes_the_rule_and_its_schedule() -> R {
     let deleted = harness.send("DELETE", &path, None).await;
     assert_eq!(deleted.status, StatusCode::NO_CONTENT);
     assert!(harness.schedule.entries().is_empty());
-    assert_eq!(
-        harness.send("GET", &path, None).await.status,
-        StatusCode::NOT_FOUND
+    assert_not_found(&harness.send("GET", &path, None).await, &id);
+    assert_not_found(&harness.send("DELETE", &path, None).await, &id);
+    assert_not_found(
+        &harness
+            .send("GET", &format!("{path}/notifications"), None)
+            .await,
+        &id,
     );
-    assert_eq!(
-        harness.send("DELETE", &path, None).await.status,
-        StatusCode::NOT_FOUND
+    assert_not_found(
+        &harness
+            .send(
+                "POST",
+                &format!("{path}/enable"),
+                Some(json!({"expected_revision": 1})),
+            )
+            .await,
+        &id,
     );
 
     Ok(())

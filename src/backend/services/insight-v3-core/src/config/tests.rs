@@ -159,13 +159,213 @@ fn the_redis_url_is_redacted_from_debug_output() {
     let mut config = valid_config();
     config.alerts = AlertsConfig {
         redis_url: "redis://:alert-redis-secret@redis.example.test:6379".to_owned(),
+        redis_password: Some(SecretString::from("alert-redis-password")),
         ..alerts_on()
     };
 
     let shown = format!("{config:?}");
     assert!(!shown.contains("alert-redis-secret"), "{shown}");
+    assert!(!shown.contains("alert-redis-password"), "{shown}");
     assert!(!shown.contains("alert-webhook-secret"), "{shown}");
     assert!(shown.contains("Discord"), "{shown}");
+}
+
+#[test]
+fn the_delivery_settings_show_in_debug_output() {
+    let mut config = valid_config();
+    config.alerts = AlertsConfig {
+        delivery_attempts: 7,
+        delivery_backoff_secs: 11,
+        delivery_timeout_secs: 13,
+        delivery_concurrency: 3,
+        ..alerts_on()
+    };
+
+    let shown = format!("{config:?}");
+    for setting in [
+        "delivery_attempts: 7",
+        "delivery_backoff_secs: 11",
+        "delivery_timeout_secs: 13",
+        "delivery_concurrency: 3",
+    ] {
+        assert!(shown.contains(setting), "should show {setting}: {shown}");
+    }
+}
+
+#[test]
+fn a_destination_name_is_a_plain_lowercase_identifier() {
+    let cases = [
+        ("ops", true),
+        ("ops-team", true),
+        ("ops_team_2", true),
+        ("Ops-Team", false),
+        ("OPS", false),
+        ("ops team", false),
+        ("ops.team", false),
+        ("", false),
+    ];
+
+    for (name, accepted) in cases {
+        let mut config = valid_config();
+        config.alerts = AlertsConfig {
+            destinations: std::collections::BTreeMap::from([(
+                name.to_owned(),
+                DestinationConfig::Telegram {
+                    bot_token: SecretString::from("token"),
+                    chat_id: "1".to_owned(),
+                },
+            )]),
+            ..alerts_on()
+        };
+
+        let outcome = config.validate();
+        assert_eq!(
+            outcome.is_ok(),
+            accepted,
+            "destination {name:?} should be accepted: {accepted}"
+        );
+        if !accepted {
+            assert!(
+                matches!(&outcome, Err(ConfigError::AlertDestinationName(refused)) if refused == name),
+                "should refuse the name itself: {name:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_plain_http_destination_is_admitted_on_loopback_only() {
+    let cases = [
+        ("https://discord.example.test/api/webhooks/1/x", true),
+        ("http://localhost:9000/webhook", true),
+        ("http://127.0.0.1:9000/webhook", true),
+        ("http://[::1]:9000/webhook", true),
+        ("http://discord.example.test/api/webhooks/1/x", false),
+        ("http://10.0.0.1:9000/webhook", false),
+        ("http://[2001:db8::1]:9000/webhook", false),
+        ("ftp://localhost/webhook", false),
+        ("not a url", false),
+    ];
+
+    for (value, accepted) in cases {
+        assert_eq!(
+            is_https_url(value),
+            accepted,
+            "should accept {value:?}: {accepted}"
+        );
+    }
+}
+
+#[test]
+fn a_redis_password_kept_apart_reaches_the_client_whatever_it_contains() {
+    use redis::IntoConnectionInfo as _;
+
+    for password in ["plain", "p@ss/w:rd#?%25 x", "pässwörd"] {
+        let mut config = valid_config();
+        config.alerts = AlertsConfig {
+            redis_url: "redis://redis.example.test:6379".to_owned(),
+            redis_password: Some(SecretString::from(password)),
+            ..alerts_on()
+        };
+
+        let validated = config
+            .validate()
+            .unwrap_or_else(|error| panic!("should accept {password:?}: {error}"));
+        let alerts = validated.alerts();
+        let info = alerts
+            .redis_url
+            .as_str()
+            .into_connection_info()
+            .unwrap_or_else(|error| {
+                panic!("the client should read the URL for {password:?}: {error}")
+            });
+
+        assert_eq!(
+            info.redis_settings().password(),
+            Some(password),
+            "{password:?}"
+        );
+        assert!(
+            matches!(info.addr(), redis::ConnectionAddr::Tcp(host, 6379) if host == "redis.example.test"),
+            "{password:?}: {:?}",
+            info.addr()
+        );
+        assert!(
+            alerts.redis_password.is_none(),
+            "once validated the password lives in the URL alone"
+        );
+    }
+}
+
+#[test]
+fn a_redis_url_without_a_separate_password_passes_through_untouched() {
+    let mut config = valid_config();
+    config.alerts = AlertsConfig {
+        redis_url: "redis://:embedded-secret@redis.example.test:6379/1".to_owned(),
+        redis_password: Some(SecretString::from(String::new())),
+        ..alerts_on()
+    };
+
+    let validated = config
+        .validate()
+        .unwrap_or_else(|error| panic!("an embedded password alone is fine: {error}"));
+
+    assert_eq!(
+        validated.alerts().redis_url,
+        "redis://:embedded-secret@redis.example.test:6379/1"
+    );
+}
+
+#[test]
+fn a_second_redis_password_or_an_unusable_url_is_refused() {
+    let cases = [
+        (
+            "redis://:embedded@redis.example.test:6379",
+            "credentials twice",
+        ),
+        ("redis://user@redis.example.test:6379", "credentials twice"),
+        ("not a url", "unusable url"),
+        ("redis.example.test:6379", "unusable url"),
+    ];
+
+    for (url, expected) in cases {
+        let mut config = valid_config();
+        config.alerts = AlertsConfig {
+            redis_url: url.to_owned(),
+            redis_password: Some(SecretString::from("apart")),
+            ..alerts_on()
+        };
+
+        let refusal = config.validate().err();
+        let refused_as_expected = match expected {
+            "credentials twice" => matches!(refusal, Some(ConfigError::AlertRedisCredentialsTwice)),
+            _ => matches!(refusal, Some(ConfigError::AlertRedisUrl)),
+        };
+        assert!(
+            refused_as_expected,
+            "should refuse {url:?} as {expected}: {refusal:?}"
+        );
+    }
+}
+
+#[test]
+fn alerts_enabled_without_a_destination_are_accepted_with_a_warning() {
+    let mut config = valid_config();
+    config.alerts = AlertsConfig {
+        destinations: std::collections::BTreeMap::new(),
+        ..alerts_on()
+    };
+
+    let mut accepted = false;
+    let logged = insight_log_context::test_support::capture_output(|| {
+        accepted = config.validate().is_ok();
+    });
+
+    assert!(
+        accepted,
+        "a section with no destination still validates; compose ships one"
+    );
+    assert!(logged.contains("no destinations"), "{logged}");
 }
 
 #[test]

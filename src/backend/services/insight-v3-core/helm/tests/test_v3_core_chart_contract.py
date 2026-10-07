@@ -212,6 +212,39 @@ def test_allow_insecure_private_network_follows_the_global_switch(overrides: dic
     assert env["APP__gears__insight_v3_core__config__mcp__allow_insecure_private_network"] == expected
 
 
+ALERTS_ON = {"alerts__enabled": "true", "alerts__redis__host": "redis"}
+REDIS_URL = "APP__gears__insight_v3_core__config__alerts__redis_url"
+REDIS_PASSWORD = "APP__gears__insight_v3_core__config__alerts__redis_password"
+
+
+def test_no_alerts_env_leaf_is_rendered_while_alerts_are_off():
+    assert [name for name in env_names(render()) if "__alerts__" in name] == []
+
+
+def test_the_redis_password_arrives_as_its_own_setting_and_never_inside_the_url():
+    """A password spliced into the URL by the chart would need percent-encoding
+    the chart cannot do; one with `@` or `/` in it then fails the connect and the
+    whole service with it. The service joins the two itself."""
+    docs = render(**ALERTS_ON)
+
+    entry = next(e for e in container(docs)["env"] if e["name"] == REDIS_PASSWORD)
+    assert entry["valueFrom"]["secretKeyRef"] == {"name": "insight-db-creds", "key": "redis-password"}
+    assert "value" not in entry
+    assert env_of(docs)[REDIS_URL] == "redis://redis:6379"
+    assert not any("ALERTS_REDIS_PASSWORD" in name for name in env_names(docs))
+
+
+def test_an_empty_password_secret_connects_without_a_password():
+    docs = render(**ALERTS_ON, alerts__redis__passwordSecret="")
+
+    assert REDIS_PASSWORD not in env_names(docs)
+    assert env_of(docs)[REDIS_URL] == "redis://redis:6379"
+
+
+def test_enabling_alerts_without_a_redis_host_refuses_to_render():
+    assert "alerts.redis.host is required" in render_fails(**SECRET, alerts__enabled="true")
+
+
 def test_the_migrate_hook_runs_the_image_the_configmap_pins():
     """The umbrella contract already ties every gears service's
     service.version to the image its Deployment runs

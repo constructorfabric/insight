@@ -45,12 +45,15 @@ existingSecret: ""
 # installation has none.
 alerts:
   enabled: false
-  # The Redis the check schedule lives in. It must persist.
+  # The Redis the check schedule lives in. It must persist (AOF or RDB on a
+  # volume): one run as a plain cache loses every scheduled check and queued
+  # notification on restart.
   redis:
     host: ""
     port: 6379
-    # Where the password the URL carries is read from. An empty name
-    # connects without one.
+    # Where the password is read from. It reaches the pod as its own setting
+    # (`alerts.redis_password`), never spliced into the URL, so it may hold
+    # any character. An empty name connects without one.
     passwordSecret: insight-db-creds
     passwordKey: redis-password
   # Optional Secret carrying the destinations, one key per field:

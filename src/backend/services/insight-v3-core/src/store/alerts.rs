@@ -23,6 +23,16 @@ use crate::domain::alerts::{Number, Outcome, UnknownReason, last_valid_breached,
 use crate::domain::definition::{DefinitionName, Page};
 use crate::store::like_escaped;
 
+/// The most of a provider's words a row keeps: the width of the columns.
+const LAST_ERROR_CHARS: usize = 1000;
+const PROVIDER_RECEIPT_CHARS: usize = 256;
+
+/// A create that lost a deadlock on the locking count goes again this often.
+const CREATE_ATTEMPTS: usize = 3;
+/// `SQLSTATE` of a deadlock: two creates both held the gap after the last
+/// rule, which an empty table makes certain, and both went to insert.
+const DEADLOCK_SQLSTATE: &str = "40001";
+
 const RULE_COLUMNS: &str = "id, name, metric, column_name, operator, threshold, range_code, interval_secs, destination, enabled, revision, last_evaluated_at, last_outcome, last_reason, last_value, last_valid_breached, breached_since, created_by, created_at, updated_at";
 
 const SELECT_BY_ID: &str = "SELECT {columns} FROM alert_rules WHERE id = ?";
@@ -33,7 +43,10 @@ const SELECT_ENABLED: &str =
 const PAGE_RULES: &str = "SELECT id, name, metric, enabled FROM alert_rules WHERE name LIKE ? OR metric LIKE ? ORDER BY name, id LIMIT ? OFFSET ?";
 const COUNT_MATCHES: &str =
     "SELECT COUNT(*) AS total FROM alert_rules WHERE name LIKE ? OR metric LIKE ?";
-const COUNT_ALL: &str = "SELECT COUNT(*) AS total FROM alert_rules";
+/// The count a create checks, as a locking read: `InnoDB` locks every row it
+/// scans and the gap after the last one, so a second create waits here until
+/// the first has committed or rolled back, and then counts its rule.
+const COUNT_ALL_HELD: &str = "SELECT COUNT(*) AS total FROM alert_rules FOR UPDATE";
 const NOW: &str = "SELECT UTC_TIMESTAMP(6) AS now";
 
 const INSERT_RULE: &str = "INSERT INTO alert_rules (id, name, metric, column_name, operator, threshold, range_code, interval_secs, destination, enabled, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)";
@@ -82,6 +95,56 @@ fn stamp(at: DateTime<Utc>) -> sea_orm::Value {
     at.naive_utc().into()
 }
 
+/// What one send leaves on the row, cut to what its columns hold. Shared
+/// with the in-memory store so both record the same thing.
+#[derive(Debug, PartialEq, Eq)]
+struct AttemptColumns {
+    status: NotificationStatus,
+    last_error: Option<String>,
+    provider_receipt: Option<String>,
+}
+
+fn attempt_columns(attempted: &Attempted) -> AttemptColumns {
+    match attempted {
+        Attempted::Sent(receipt) => AttemptColumns {
+            status: NotificationStatus::Sent,
+            last_error: None,
+            provider_receipt: Some(fitted(&receipt.0, PROVIDER_RECEIPT_CHARS)),
+        },
+        Attempted::Retry(error) => AttemptColumns {
+            status: NotificationStatus::Pending,
+            last_error: Some(fitted(error, LAST_ERROR_CHARS)),
+            provider_receipt: None,
+        },
+        Attempted::Failed(error) => AttemptColumns {
+            status: NotificationStatus::Failed,
+            last_error: Some(fitted(error, LAST_ERROR_CHARS)),
+            provider_receipt: None,
+        },
+    }
+}
+
+fn fitted(value: &str, chars: usize) -> String {
+    value.chars().take(chars).collect()
+}
+
+fn is_deadlock(error: &AlertStoreError) -> bool {
+    let AlertStoreError::Database(
+        sea_orm::DbErr::Exec(sea_orm::RuntimeErr::SqlxError(sqlx))
+        | sea_orm::DbErr::Query(sea_orm::RuntimeErr::SqlxError(sqlx)),
+    ) = error
+    else {
+        return false;
+    };
+    let sea_orm::sqlx::Error::Database(database) = sqlx.as_ref() else {
+        return false;
+    };
+
+    database
+        .code()
+        .is_some_and(|code| code == DEADLOCK_SQLSTATE)
+}
+
 pub(crate) struct MariaAlerts {
     db: DatabaseConnection,
     notifications_kept_per_rule: u64,
@@ -116,6 +179,39 @@ impl MariaAlerts {
             .await?
             .map(RuleRow::into_rule)
             .transpose()
+    }
+
+    async fn create_once(
+        &self,
+        write: &Write,
+        max_rules: u64,
+    ) -> Result<AlertRule, AlertStoreError> {
+        let transaction = self.db.begin().await?;
+        let now = Self::now(&transaction).await?;
+
+        let rule = Self::insert_within(&transaction, write, max_rules, now).await?;
+        transaction.commit().await?;
+
+        Ok(rule)
+    }
+
+    /// The insert, once the locking count says there is room.
+    async fn insert_within(
+        transaction: &sea_orm::DatabaseTransaction,
+        write: &Write,
+        max_rules: u64,
+        now: DateTime<Utc>,
+    ) -> Result<AlertRule, AlertStoreError> {
+        let counted =
+            TotalRow::find_by_statement(Statement::from_string(DbBackend::MySql, COUNT_ALL_HELD))
+                .one(transaction)
+                .await?;
+        let held = counted.map_or(0, |row| u64::try_from(row.total).unwrap_or(0));
+        if held >= max_rules {
+            return Err(AlertStoreError::TooMany(max_rules));
+        }
+
+        Self::insert(transaction, write, now).await
     }
 
     async fn insert(
@@ -281,14 +377,19 @@ impl MariaAlerts {
 
 #[async_trait]
 impl AlertStore for MariaAlerts {
-    async fn create(&self, write: Write) -> Result<AlertRule, AlertStoreError> {
-        let transaction = self.db.begin().await?;
-        let now = Self::now(&transaction).await?;
-
-        let rule = Self::insert(&transaction, &write, now).await?;
-        transaction.commit().await?;
-
-        Ok(rule)
+    /// INVARIANT: the bound is held by the locking count inside the
+    /// transaction and nothing session-scoped, so a request dropped midway
+    /// releases it with the rollback instead of leaving it on the pooled
+    /// connection. Two creates meeting on an empty table both lock the gap
+    /// and deadlock on the insert; the one rolled back goes again.
+    async fn create(&self, write: Write, max_rules: u64) -> Result<AlertRule, AlertStoreError> {
+        let mut attempt = 1;
+        loop {
+            match self.create_once(&write, max_rules).await {
+                Err(error) if attempt < CREATE_ATTEMPTS && is_deadlock(&error) => attempt += 1,
+                outcome => return outcome,
+            }
+        }
     }
 
     async fn replace(
@@ -341,15 +442,6 @@ impl AlertStore for MariaAlerts {
                 .collect::<Result<_, _>>()?,
             total: counted.map_or(0, |row| u64::try_from(row.total).unwrap_or(0)),
         })
-    }
-
-    async fn count(&self) -> Result<u64, AlertStoreError> {
-        let counted =
-            TotalRow::find_by_statement(Statement::from_string(DbBackend::MySql, COUNT_ALL))
-                .one(&self.db)
-                .await?;
-
-        Ok(counted.map_or(0, |row| u64::try_from(row.total).unwrap_or(0)))
     }
 
     async fn enabled(&self) -> Result<Vec<AlertRule>, AlertStoreError> {
@@ -559,18 +651,14 @@ impl AlertStore for MariaAlerts {
             return Ok(None);
         };
 
-        let (status, last_error, receipt) = match attempted {
-            Attempted::Sent(receipt) => (NotificationStatus::Sent, None, Some(receipt.0.clone())),
-            Attempted::Retry(error) => (NotificationStatus::Pending, Some(error.clone()), None),
-            Attempted::Failed(error) => (NotificationStatus::Failed, Some(error.clone()), None),
-        };
+        let columns = attempt_columns(attempted);
         transaction
             .execute_raw(statement(
                 RECORD_ATTEMPT.to_owned(),
                 [
-                    status.as_str().into(),
-                    last_error.into(),
-                    receipt.into(),
+                    columns.status.as_str().into(),
+                    columns.last_error.into(),
+                    columns.provider_receipt.into(),
                     stamp(now),
                     id_column(current.id),
                     NotificationStatus::Pending.as_str().into(),

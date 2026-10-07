@@ -102,6 +102,107 @@ fn an_integer_too_wide_for_a_float_is_not_compared_with_one() {
             breached: true,
         }
     );
+
+    let at_the_bound = result(&["total"], &[&[json!(9_007_199_254_740_992_u64)]]);
+    assert_eq!(
+        classify(&at_the_bound, "total", &above(&json!(1.5))),
+        Outcome::Valid {
+            value: Number::Int(9_007_199_254_740_992),
+            breached: true,
+        },
+        "2^53 itself converts exactly"
+    );
+}
+
+#[test]
+fn an_integer_is_a_json_number_only_while_javascript_holds_it_exactly() {
+    let safe = 9_007_199_254_740_991_i128;
+    let cases = [
+        (
+            "2^53 - 1",
+            Number::Int(safe),
+            json!(9_007_199_254_740_991_i64),
+        ),
+        (
+            "-(2^53 - 1)",
+            Number::Int(-safe),
+            json!(-9_007_199_254_740_991_i64),
+        ),
+        ("2^53", Number::Int(safe + 1), json!("9007199254740992")),
+        ("-2^53", Number::Int(-safe - 1), json!("-9007199254740992")),
+        (
+            "i64::MAX",
+            Number::Int(i128::from(i64::MAX)),
+            json!(i64::MAX.to_string()),
+        ),
+        (
+            "i64::MIN",
+            Number::Int(i128::from(i64::MIN)),
+            json!(i64::MIN.to_string()),
+        ),
+        (
+            "u64::MAX",
+            Number::Int(i128::from(u64::MAX)),
+            json!(u64::MAX.to_string()),
+        ),
+        ("a float", Number::Float(2.5), json!(2.5)),
+    ];
+
+    for (case, number, expected) in cases {
+        let shown = number.to_json();
+        assert_eq!(shown, expected, "should show: {case}");
+        assert_eq!(
+            Number::parse_written(&shown),
+            Some(number),
+            "should take back what it showed: {case}"
+        );
+    }
+}
+
+#[test]
+fn a_written_number_is_a_json_number_or_an_integer_in_digits_and_nothing_else() {
+    let accepted = [
+        (json!(10), Number::Int(10)),
+        (json!(-7), Number::Int(-7)),
+        (json!(1.5), Number::Float(1.5)),
+        (json!("0"), Number::Int(0)),
+        (
+            json!("-9007199254740993"),
+            Number::Int(-9_007_199_254_740_993),
+        ),
+        (
+            json!("18446744073709551615"),
+            Number::Int(i128::from(u64::MAX)),
+        ),
+    ];
+    for (written, expected) in accepted {
+        assert_eq!(
+            Number::parse_written(&written),
+            Some(expected),
+            "should accept: {written}"
+        );
+    }
+
+    let refused = [
+        json!("1,5"),
+        json!("1e3"),
+        json!(" 7 "),
+        json!("1.0"),
+        json!(""),
+        json!("-"),
+        json!("+7"),
+        json!("ten"),
+        json!(true),
+        json!(null),
+        json!([1]),
+    ];
+    for written in refused {
+        assert_eq!(
+            Number::parse_written(&written),
+            None,
+            "should refuse: {written}"
+        );
+    }
 }
 
 #[test]
@@ -258,8 +359,8 @@ fn a_draft_is_checked_against_the_bounds_before_it_is_a_rule() {
             RuleError::Column,
         ),
         (
-            "threshold text",
-            draft(|body| body["threshold"] = json!("10")),
+            "threshold text that is not an integer",
+            draft(|body| body["threshold"] = json!("1e3")),
             RuleError::Threshold,
         ),
         (
@@ -331,6 +432,204 @@ fn a_number_survives_the_row_it_is_stored_in() {
             Number::from_stored(&number.to_stored()),
             Some(number),
             "should round-trip: {number}"
+        );
+    }
+}
+
+/// One send through a deliverer over the in-memory store, with a provider
+/// played in-process.
+mod deliveries {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use chrono::Utc;
+    use serde_json::json;
+
+    use insight_log_context::test_support::capture_output;
+
+    use super::super::delivery::{
+        Attempted, Delivered, Deliverer, DeliveryJob, Message, Provider, Receipt, SendError,
+    };
+    use super::super::rule::{
+        AlertRule, AlertStore, Limits, Notification, NotificationStatus, Recorded, Recording,
+        RuleSpec, Write,
+    };
+    use super::super::{Number, Outcome};
+    use crate::store::alerts::memory::MemoryAlerts;
+
+    fn block_on<T>(future: impl Future<Output = T>) -> T {
+        futures::executor::block_on(future)
+    }
+
+    /// A rule whose first check breached: the notification it owes, pending.
+    async fn owed(store: &MemoryAlerts) -> (AlertRule, Notification) {
+        let spec = RuleSpec::parse(
+            &super::draft(|body| body["threshold"] = json!(10)),
+            Limits::default(),
+            &super::destinations(),
+        )
+        .unwrap_or_else(|error| panic!("the draft is a rule: {error}"));
+        let write = Write {
+            spec,
+            enabled: true,
+            actor: None,
+        };
+        let rule = store
+            .create(write, u64::MAX)
+            .await
+            .unwrap_or_else(|error| panic!("the rule is stored: {error}"));
+
+        let recorded = store
+            .record(Recording {
+                rule_id: rule.id,
+                revision: rule.revision,
+                outcome: Outcome::Valid {
+                    value: Number::Int(12),
+                    breached: true,
+                },
+                evaluated_at: Utc::now(),
+            })
+            .await
+            .unwrap_or_else(|error| panic!("the breach is recorded: {error}"));
+        let Recorded::Accepted(accepted) = recorded else {
+            panic!("the breach is accepted: {recorded:?}");
+        };
+        let notification = accepted
+            .notification
+            .unwrap_or_else(|| panic!("the breach owes a notification"));
+
+        (accepted.rule, notification)
+    }
+
+    fn row(store: &MemoryAlerts, id: uuid::Uuid) -> Notification {
+        block_on(store.notification(id))
+            .unwrap_or_else(|error| panic!("the row reads: {error}"))
+            .unwrap_or_else(|| panic!("the row is there"))
+    }
+
+    fn at(provider: Arc<dyn Provider>) -> BTreeMap<String, Arc<dyn Provider>> {
+        BTreeMap::from([("ops".to_owned(), provider)])
+    }
+
+    #[derive(Debug)]
+    struct Unconfirming;
+
+    #[async_trait]
+    impl Provider for Unconfirming {
+        async fn send(&self, _: &Message) -> Result<Receipt, SendError> {
+            Err(SendError::Unconfirmed("timed out".to_owned()))
+        }
+    }
+
+    #[test]
+    fn the_attempt_cap_counts_the_notification_not_the_job() {
+        let store = MemoryAlerts::new();
+        let (_, notification) = block_on(owed(&store));
+        for _ in 0..4 {
+            block_on(store.record_attempt(notification.id, &Attempted::Retry("late".to_owned())))
+                .unwrap_or_else(|error| panic!("an attempt is recorded: {error}"));
+        }
+        let providers = at(Arc::new(Unconfirming));
+        let deliverer = Deliverer::new(&store, &providers);
+        let job = DeliveryJob {
+            notification_id: notification.id,
+        };
+
+        let fifth = block_on(deliverer.deliver(job, 1, 5))
+            .unwrap_or_else(|error| panic!("the send is recorded: {error}"));
+
+        assert!(
+            matches!(fifth, Delivered::Attempted(Attempted::Failed(_))),
+            "a fresh job on the fifth attempt of the row is the last one: {fifth:?}"
+        );
+        let settled = row(&store, notification.id);
+        assert_eq!(
+            (settled.status, settled.attempts),
+            (NotificationStatus::Failed, 5)
+        );
+    }
+
+    #[test]
+    fn a_job_further_along_than_its_row_keeps_its_own_count() {
+        let store = MemoryAlerts::new();
+        let (_, notification) = block_on(owed(&store));
+        let providers = at(Arc::new(Unconfirming));
+        let deliverer = Deliverer::new(&store, &providers);
+        let job = DeliveryJob {
+            notification_id: notification.id,
+        };
+
+        let early = block_on(deliverer.deliver(job, 2, 5))
+            .unwrap_or_else(|error| panic!("the send is recorded: {error}"));
+        assert!(
+            matches!(early, Delivered::Attempted(Attempted::Retry(_))),
+            "{early:?}"
+        );
+
+        let last = block_on(deliverer.deliver(job, 5, 5))
+            .unwrap_or_else(|error| panic!("the send is recorded: {error}"));
+        assert!(
+            matches!(last, Delivered::Attempted(Attempted::Failed(_))),
+            "{last:?}"
+        );
+        assert_eq!(row(&store, notification.id).attempts, 2);
+    }
+
+    /// A provider that, while the message is in flight, has the rule turned
+    /// off — and confirms the message anyway.
+    #[derive(Debug)]
+    struct Withdrawing {
+        store: Arc<MemoryAlerts>,
+        rule: AlertRule,
+    }
+
+    #[async_trait]
+    impl Provider for Withdrawing {
+        async fn send(&self, _: &Message) -> Result<Receipt, SendError> {
+            self.store
+                .set_enabled(self.rule.id, self.rule.revision, false)
+                .await
+                .unwrap_or_else(|error| panic!("the rule is disabled: {error}"));
+
+            Ok(Receipt("m-late".to_owned()))
+        }
+    }
+
+    #[test]
+    fn a_send_confirmed_while_withdrawn_is_skipped_and_its_receipt_is_logged() {
+        let store = Arc::new(MemoryAlerts::new());
+        let (rule, notification) = block_on(owed(&store));
+        let providers = at(Arc::new(Withdrawing {
+            store: Arc::clone(&store),
+            rule,
+        }));
+        let deliverer = Deliverer::new(store.as_ref(), &providers);
+        let job = DeliveryJob {
+            notification_id: notification.id,
+        };
+
+        let mut outcome = None;
+        let output = capture_output(|| {
+            outcome = Some(block_on(deliverer.deliver(job, 1, 5)));
+        });
+
+        assert!(
+            matches!(outcome, Some(Ok(Delivered::Skipped))),
+            "{outcome:?}"
+        );
+        let withdrawn = row(&store, notification.id);
+        assert_eq!(
+            (
+                withdrawn.status,
+                withdrawn.attempts,
+                withdrawn.provider_receipt
+            ),
+            (NotificationStatus::Cancelled, 0, None)
+        );
+        assert!(
+            output.contains(&notification.id.to_string()) && output.contains("m-late"),
+            "the log is where the receipt went: {output}"
         );
     }
 }

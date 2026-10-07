@@ -1141,12 +1141,110 @@ fn a_filter_value_that_does_not_match_its_declared_type_is_refused() {
 
 #[test]
 fn coerces_string_typed_clickhouse_numbers_to_json_numbers() {
-    assert_eq!(coerce_value(json!("132"), FieldType::Int), json!(132));
-    assert_eq!(coerce_value(json!("12.5"), FieldType::Float), json!(12.5));
-    assert_eq!(
-        coerce_value(json!("2026-09-01"), FieldType::String),
-        json!("2026-09-01")
-    );
+    let cases = [
+        ("a 64-bit count", json!("132"), FieldType::Int, json!(132)),
+        ("a negative sum", json!("-7"), FieldType::Int, json!(-7)),
+        (
+            "a sum above i64::MAX",
+            json!("9223372036854775808"),
+            FieldType::Int,
+            json!(9_223_372_036_854_775_808_u64),
+        ),
+        (
+            "u64::MAX",
+            json!("18446744073709551615"),
+            FieldType::Int,
+            json!(u64::MAX),
+        ),
+        ("a float", json!("12.5"), FieldType::Float, json!(12.5)),
+        (
+            "text under an int type",
+            json!("n/a"),
+            FieldType::Int,
+            json!("n/a"),
+        ),
+        (
+            "a date",
+            json!("2026-09-01"),
+            FieldType::String,
+            json!("2026-09-01"),
+        ),
+        ("a number already", json!(5), FieldType::String, json!(5)),
+    ];
+
+    for (case, value, field_type, expected) in cases {
+        assert_eq!(
+            coerce_value(value, field_type),
+            expected,
+            "should coerce: {case}"
+        );
+    }
+}
+
+#[test]
+fn a_count_is_typed_as_a_whole_number_whatever_its_field_declares() {
+    let metric = query(json!({
+        "table": "events",
+        "fields": [
+            { "agg": "count", "type": "string", "as_name": "total" },
+            { "agg": "count", "column": "actor", "type": "string", "as_name": "actors" }
+        ],
+        "group_by": [],
+        "filters": []
+    }));
+
+    let compiled = metric
+        .compile(&people())
+        .unwrap_or_else(|error| panic!("the query compiles: {error}"));
+
+    for column in ["total", "actors"] {
+        let field_type = compiled.column_types[column];
+        assert_eq!(field_type, FieldType::Int, "{column}");
+        assert_eq!(
+            coerce_value(json!("12"), field_type),
+            json!(12),
+            "a quoted count leaves as a number: {column}"
+        );
+    }
+}
+
+/// A reader is told which columns hold numbers by `column_kinds`; the runner
+/// decides which quoted cells to parse by `column_types`. The two must say the
+/// same thing, or a column advertised as a number arrives as text.
+#[test]
+fn column_types_number_exactly_the_columns_column_kinds_calls_numbers() {
+    let metric = query(json!({
+        "table": "events",
+        "fields": [
+            { "agg": "count", "type": "string", "as_name": "counted_text" },
+            { "agg": "count", "column": "n", "type": "int", "as_name": "counted_int" },
+            { "agg": "sum", "column": "n", "type": "string", "as_name": "summed_text" },
+            { "agg": "sum", "column": "n", "type": "int", "as_name": "summed_int" },
+            { "agg": "sum", "column": "n", "type": "float", "as_name": "summed_float" },
+            { "agg": "avg", "column": "n", "type": "int", "as_name": "averaged" },
+            { "agg": "min", "column": "n", "type": "string", "as_name": "smallest_text" },
+            { "agg": "max", "column": "n", "type": "int", "as_name": "largest_int" },
+            { "divide": ["summed_int", "counted_int"], "type": "int", "as_name": "rate" }
+        ],
+        "group_by": [],
+        "filters": []
+    }));
+
+    let compiled = metric
+        .compile(&people())
+        .unwrap_or_else(|error| panic!("the query compiles: {error}"));
+    let kinds = metric.column_kinds(None, false);
+
+    assert_eq!(kinds.len(), 9);
+    for (name, kind) in kinds {
+        let field_type = compiled.column_types[name.as_str()];
+        let numeric = matches!(field_type, FieldType::Int | FieldType::Float);
+        assert_eq!(
+            kind == ColumnKind::Number,
+            numeric,
+            "should agree on `{name}`: kind {kind:?}, type {field_type:?}"
+        );
+    }
 }
 
 #[test]

@@ -95,10 +95,19 @@ class ChangedCliTests(unittest.TestCase):
                 "live_db": True,
                 "live_ch": True,
                 "live_test": "services/insight-v3-core/tests/ci.sh",
+                "include_ignored": True,
                 "live_db_name": "insight_v3",
                 "cover_ignore_regex": "",
             },
         )
+
+    def test_only_insight_v3_core_runs_its_ignored_live_suites(self) -> None:
+        """identity-resolution's live tests are never #[ignore]d (they skip when
+        the URL is unset), so the flag must stay off everywhere else."""
+        matrix = changed.all_components(COMPONENTS)
+
+        flagged = {job["name"] for job in matrix["rust"] if job["include_ignored"]}
+        self.assertEqual(flagged, {"insight-v3-core"})
 
     def test_insight_clickhouse_change_runs_insight_v3_core_tests(self) -> None:
         completed = subprocess.CompletedProcess(

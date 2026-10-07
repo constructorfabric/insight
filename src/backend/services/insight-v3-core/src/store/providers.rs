@@ -31,7 +31,7 @@ pub(crate) fn providers(
     destinations: &BTreeMap<String, DestinationConfig>,
     timeout: Duration,
 ) -> Result<BTreeMap<String, Arc<dyn Provider>>, reqwest::Error> {
-    let http = reqwest::Client::builder().timeout(timeout).build()?;
+    let http = client(timeout)?;
 
     Ok(destinations
         .iter()
@@ -66,6 +66,16 @@ pub(crate) fn providers(
         .collect())
 }
 
+/// The one client every adapter posts through: a bounded wait, and no
+/// following of redirects, since what a redirect's target answers is not
+/// the provider's answer to the message.
+fn client(timeout: Duration) -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+}
+
 /// What a transport failure means: a timeout or a dropped connection
 /// leaves the outcome unknown.
 fn transport(error: &reqwest::Error) -> SendError {
@@ -77,7 +87,8 @@ fn transport(error: &reqwest::Error) -> SendError {
 }
 
 /// What a status the provider chose means. Rate limits and server errors
-/// are unknown outcomes; everything else in the error range is final.
+/// are unknown outcomes; everything else that is not success, a redirect
+/// included, is final.
 fn status(response: &reqwest::Response) -> Result<(), SendError> {
     let status = response.status();
     if status.is_success() {

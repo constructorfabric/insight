@@ -47,6 +47,10 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True, test: b
         entry["live_db"] = comp.get("live_db", False)  # DB-backed live_tests (see #1564)
         entry["live_ch"] = comp.get("live_ch", False)  # ClickHouse-backed live_tests (see #1564)
         entry["live_test"] = comp.get("live_test", "")  # optional executable integration-test script
+        # True ⇒ the no-coverage test step passes `--include-ignored`: the crate
+        # keeps its live MariaDB/Redis suites #[ignore]d so a plain local
+        # `cargo test` stays offline (insight-v3-core).
+        entry["include_ignored"] = comp.get("include_ignored", False)
         # MariaDB database the CI provisions for live_db entries (defaults to
         # the component name — analytics owns `analytics`, identity-resolution
         # owns `identity`).
