@@ -1,0 +1,9 @@
+{
+  "id": 3001,
+  "name": "Sam Rivera",
+  "email": "sam.rivera@example.com",
+  "role": "agent",
+  "default_group_id": 4001,
+  "active": true,
+  "suspended": false
+}

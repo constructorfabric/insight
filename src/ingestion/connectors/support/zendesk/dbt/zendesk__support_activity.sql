@@ -39,7 +39,10 @@ WITH events AS (
         insight_source_id                         AS source_id,
         actor_person_key                          AS person_key,
         metric_date                               AS date,
-        countIf(event_type = 'update')            AS updates,
+        -- DISTINCT audits, not events: one ticket edit touching five fields
+        -- emits five `Change` events and would otherwise report five updates.
+        -- Same reasoning as `solved` below, one grain up.
+        uniqExactIf(source_audit_id, event_type = 'update') AS updates,
         countIf(event_type = 'public_comment')    AS public_comments,
         countIf(event_type = 'private_comment')   AS private_comments,
         -- DISTINCT tickets solved (not solve-events): a reopen→solve on the
@@ -74,6 +77,7 @@ csat AS (
            AND a.insight_source_id = r.source_id
            AND a.source_agent_id = r.assignee_id
     WHERE a.person_key != ''
+      AND parseDateTimeBestEffortOrNull(r.created_at) IS NOT NULL
     GROUP BY r.tenant_id, r.source_id, a.person_key, date
 ),
 merged AS (
@@ -108,9 +112,32 @@ SELECT
     toUnixTimestamp64Milli(now64()) AS _version
 FROM merged
 {% if is_incremental() %}
+-- SAFETY: the bronze reads below need no read-time dedup — they only feed a
+-- set of dates tested with IN, and duplicates do not change the set.
+-- Recompute the person-dates touched by an extract since this model's last
+-- BUILD (collected_at = now() at build), not the trailing window of business
+-- dates: a late-arriving audit or rating carries an old business date, and a
+-- boundary that only rises would strand it forever. Anchoring on the build
+-- rather than on bronze's newest extract keeps the window honest when dbt
+-- skips a few nightly runs. Every selected date is rebuilt from ALL of its
+-- contributions, so a partial row is impossible. Scoped to the (tenant,
+-- source) whose extract touched the date, so one instance's late sync does
+-- not rebuild every other instance's rows for that day.
+-- SAFETY: the count() guard is load-bearing. The target exists but is empty
+-- on every fresh install (the snapshot creates it as a placeholder before the
+-- first sync); max() over it is 1970-01-01, and DateTime minus an interval
+-- wraps past 2106, which would select no date and keep the table empty forever.
 WHERE (
-    (SELECT max(date) FROM {{ this }}) IS NULL
-    OR date > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
+    (SELECT count() FROM {{ this }}) = 0
+    OR (tenant_id, source_id, date) IN (
+        SELECT tenant_id, source_id, toDate(parseDateTimeBestEffortOrNull(created_at))
+        FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
+        WHERE _airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
+        UNION DISTINCT
+        SELECT tenant_id, source_id, toDate(parseDateTimeBestEffortOrNull(created_at))
+        FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }}
+        WHERE _airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
+    )
 )
 {% endif %}
 GROUP BY tenant_id, source_id, person_key, date
