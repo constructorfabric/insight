@@ -1,3 +1,7 @@
+# Hand-run convenience only. Every step that runs dbt for real writes its own
+# profile through scripts/dbt_profiles.py, which is where the connection shape
+# and the ClickHouse topology are decided; a model's engine comes from
+# dbt_project.yml and the `insight_engine` macro, never from here.
 ingestion:
   target: local
   outputs:
@@ -9,9 +13,10 @@ ingestion:
       user: default
       password: "{{ env_var('CLICKHOUSE_PASSWORD') }}"
       secure: false
-      engine: "ReplacingMergeTree(_version)"
-      settings:
-        allow_nullable_key: 1
+      send_receive_timeout: 1500
+      connect_timeout: 30
+      custom_settings:
+        allow_experimental_correlated_subqueries: 1
     k8s:
       type: clickhouse
       host: insight-clickhouse.insight.svc.cluster.local
@@ -20,6 +25,7 @@ ingestion:
       user: default
       password: "{{ env_var('CLICKHOUSE_PASSWORD') }}"
       secure: false
-      engine: "ReplacingMergeTree(_version)"
-      settings:
-        allow_nullable_key: 1
+      send_receive_timeout: 1500
+      connect_timeout: 30
+      custom_settings:
+        allow_experimental_correlated_subqueries: 1

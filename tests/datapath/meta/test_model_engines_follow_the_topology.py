@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,6 +29,11 @@ if TYPE_CHECKING:
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DBT_PROJECT = REPO_ROOT / "src/ingestion/dbt"
+
+# The deploy's own profile writer — a top-level module in the toolbox image.
+sys.path.insert(0, str(REPO_ROOT / "src/ingestion/scripts"))
+
+from dbt_profiles import Connection, build_profile  # type: ignore[import-not-found] # noqa: E402
 
 #: The model roots dbt_project.yml lists, plus the macros a model takes its config from.
 MODEL_SOURCES = (
@@ -54,24 +60,17 @@ def _model_sql() -> Iterator[Path]:
 
 
 def _write_profile(directory: Path) -> Path:
-    """A profile dbt can load and will never connect with."""
+    """A profile dbt can load and will never connect with.
+
+    Written by the deploy's own writer, so a body dbt would reject fails here
+    rather than on the install that first runs it.
+    """
     directory.mkdir(parents=True)
-    profile = {
-        "ingestion": {
-            "target": "parse",
-            "outputs": {
-                "parse": {
-                    "type": "clickhouse",
-                    "host": "parse.invalid",
-                    "port": 8123,
-                    "schema": "parse",
-                    "user": "parse",
-                    "password": "parse",
-                    "secure": False,
-                }
-            },
-        }
-    }
+    profile = build_profile(
+        "parse",
+        Connection(host="parse.invalid", port=8123, user="parse", password="parse", schema="parse"),
+        correlated_subqueries=False,
+    )
     (directory / "profiles.yml").write_text(yaml.safe_dump(profile), encoding="utf-8")
     return directory
 
