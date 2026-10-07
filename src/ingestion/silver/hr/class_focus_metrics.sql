@@ -31,8 +31,8 @@ SELECT
         )) / 3600.0,
         4
     )                                                               AS meeting_hours,
-    -- nullIf: under join_use_nulls=0 an unmatched LEFT JOIN yields 0, not NULL.
-    COALESCE(nullIf(wh.working_hours_per_day, 0), 8.0)                        AS working_hours_per_day,
+    -- WORKAROUND: under join_use_nulls=0 an unmatched LEFT JOIN yields 0, not NULL.
+    COALESCE(nullIf(wh.working_hours_per_day, 0), 8.0)              AS working_hours_per_day,
     ROUND(
         GREATEST(toFloat64(0), 100.0 - (
             sum(greatest(
