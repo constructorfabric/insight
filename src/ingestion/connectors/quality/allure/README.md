@@ -92,7 +92,7 @@ Every list endpoint pages with `page` and `size`, sorted `id,ASC`, until a respo
 
 Every request retries `429`, `500`, `502`, `503` and `504` up to 5 times. It waits `Retry-After` when the response sends one, and backs off exponentially otherwise.
 
-`categories`, `category_matchers` and the `_defects` parent skip a project that answers `403`. `defects` and `defect_test_results` skip a defect that answers `404`, as one deleted between the list and the read does.
+`categories`, `category_matchers` and the `_defects` parent skip a project that answers `403`. `launch_environment` and `launch_errors` skip a launch that answers `404`, and `defects` and `defect_test_results` a defect, as one deleted between the list and the read does.
 
 ### Caveats
 
@@ -100,6 +100,7 @@ Every request retries `429`, `500`, `502`, `503` and `504` up to 5 times. It wai
 - `launches` and the `_launches` parent page separately, so such a skip can hit one stream and not the other. Two `connector_quality` checks report it: `assert_allure_launches_reach_test_results` and `assert_allure_test_results_name_a_synced_launch`.
 - A custom field edit reaches `test_cases` only if Allure bumps the test case's `lastModifiedDate`. If it does not, the edit lands with the test case's next change.
 - `allure__test_results.launch_env` is built when the results are staged. A result staged before its launch's environment landed — `launch_environment` failed in a sync where `test_results` succeeded — keeps `{}` until the launch is modified again or the model is fully refreshed. `assert_allure_launch_environment_names_a_synced_launch` reports environment rows whose launch `launches` never synced.
+- Full-refresh streams land in an `append_dedup` destination, so a sync adds to bronze and never replaces it. A custom field, category, matcher, defect or defect link deleted in Allure stays in bronze and staging. Its `_airbyte_extracted_at` stops advancing with each sync, which tells it apart.
 
 ## Silver Targets
 
@@ -119,7 +120,7 @@ None. `dbt/` holds eleven staging models tagged `allure` and nothing else. No si
 | `allure__defects` | One row per defect |
 | `allure__defect_test_results` | One row per defect × linked test result |
 
-`allure__test_results.test_case_id` joins `allure__test_cases.test_case_id`; `category_id` joins `allure__categories.category_id`. `allure__test_results.launch_env` holds the launch's environment as a JSON object, variable name → value, so a single-table metric can filter on a key. `allure__defect_test_results.test_result_id` joins `allure__test_results.test_result_id`.
+`allure__test_results.test_case_id` joins `allure__test_cases.test_case_id`; `category_id` joins `allure__categories.category_id`. `allure__test_results.launch_env` holds the launch's environment as a JSON object, variable name → value. `allure__defect_test_results.test_result_id` joins `allure__test_results.test_result_id`.
 
 No identity inputs: the connector syncs no user directory. `createdBy` and `lastModifiedBy` are Allure logins, and nothing resolves them to a person.
 
