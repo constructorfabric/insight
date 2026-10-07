@@ -12,6 +12,10 @@ sources:
       - name: launches
       - name: test_results
       - name: launch_environment
+      - name: defects
+        freshness: null
+      - name: defect_test_results
+        freshness: null
       - name: categories
         freshness: null
       - name: category_matchers
@@ -203,3 +207,41 @@ models:
         description: "Regex the result's message must match; empty when the matcher checks the trace only"
       - name: trace_regex
         description: "Regex the result's trace must match; empty when the matcher checks the message only"
+
+  - name: allure__defects
+    description: "Defects triaged in Allure TestOps -> staging, one row per defect, read from the defect detail"
+    columns:
+      - name: tenant_id
+        data_tests:
+          - not_null
+      - name: source_id
+        data_tests:
+          - not_null
+      - name: unique_key
+        description: "{tenant}-{source}-{defect id}"
+        data_tests:
+          - not_null
+          - unique
+      - name: issue_name
+        description: "Tracker issue key the defect is linked to; empty when none"
+      - name: found_launch_id
+        description: "Launch the defect was first found in"
+      - name: last_found_at
+        description: "lastFoundDate (epoch ms) as UTC DateTime64(3): when a result last matched the defect"
+
+  - name: allure__defect_test_results
+    description: "Test results linked to each defect -> staging, one row per defect and result"
+    columns:
+      - name: tenant_id
+        data_tests:
+          - not_null
+      - name: source_id
+        data_tests:
+          - not_null
+      - name: unique_key
+        description: "{tenant}-{source}-{defect id}-{test result id}"
+        data_tests:
+          - not_null
+          - unique
+      - name: test_result_id
+        description: "Joins allure__test_results.test_result_id"

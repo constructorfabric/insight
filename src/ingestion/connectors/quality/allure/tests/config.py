@@ -100,6 +100,24 @@ def category_matchers_url(project_id: int) -> str:
     return f"{ALLURE_URL}/api/project/{project_id}/categorymatcher"
 
 
+DEFECTS_URL = f"{ALLURE_URL}/api/defect"
+
+
+def defect_url(defect_id: int) -> str:
+    return f"{ALLURE_URL}/api/defect/{defect_id}"
+
+
+def defect_test_results_url(defect_id: int) -> str:
+    return f"{ALLURE_URL}/api/defect/{defect_id}/testresult"
+
+
+def mock_defect_list(http_mocker: HttpMocker, project_id: int, response: HttpResponse | list[HttpResponse]) -> HttpRequest:
+    request = api_request(DEFECTS_URL, paged({"projectId": str(project_id)}))
+    http_mocker.get(request, response)
+
+    return request
+
+
 def mock_projects(http_mocker: HttpMocker, project_ids: tuple[int, ...] = (7, 12)) -> HttpRequest:
     request = api_request(PROJECTS_URL, paged({}))
     projects = [load_fixture(__file__, "project.json", id=project_id) for project_id in project_ids]

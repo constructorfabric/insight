@@ -1,0 +1,13 @@
+{
+  "id": 1201,
+  "name": "Login page times out",
+  "closed": false,
+  "count": 3,
+  "issue": {
+    "id": 31,
+    "name": "EXP-7",
+    "url": "https://tracker.example.test/EXP-7",
+    "closed": false,
+    "integrationId": 5
+  }
+}

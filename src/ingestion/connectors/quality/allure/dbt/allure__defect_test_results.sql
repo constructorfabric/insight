@@ -10,10 +10,8 @@
 ) }}
 
 WITH bronze AS (
-    SELECT
-        b.*,
-        if(JSONType(coalesce(toString(category), 'null')) = 'String', JSONExtractString(coalesce(toString(category), 'null')), coalesce(toString(category), 'null')) AS category_json
-    FROM {{ source('bronze_allure', 'category_matchers') }} AS b FINAL
+    SELECT b.*
+    FROM {{ source('bronze_allure', 'defect_test_results') }} AS b FINAL
     {% if is_incremental() %}
     LEFT JOIN (
         SELECT tenant_id, source_id, max(_airbyte_extracted_at) AS watermark
@@ -29,14 +27,11 @@ SELECT
     tenant_id,
     source_id,
     unique_key,
-    toInt64(COALESCE(id, 0)) AS matcher_id,
+    toInt64(COALESCE(defect_id, 0)) AS defect_id,
     toInt64(COALESCE(project_id, 0)) AS project_id,
-    JSONExtract(category_json, 'id', 'Nullable(Int64)') AS category_id,
-    COALESCE(name, '') AS matcher_name,
-    COALESCE(messageRegex, '') AS message_regex,
-    COALESCE(traceRegex, '') AS trace_regex,
-    fromUnixTimestamp64Milli(createdDate, 'UTC') AS created_at,
-    fromUnixTimestamp64Milli(lastModifiedDate, 'UTC') AS last_modified_at,
+    toInt64(COALESCE(id, 0)) AS test_result_id,
+    CAST(testCaseId AS Nullable(Int64)) AS test_case_id,
+    COALESCE(status, '') AS status,
     'insight_allure' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at

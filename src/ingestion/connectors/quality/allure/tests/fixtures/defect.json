@@ -1,0 +1,30 @@
+{
+  "id": 1201,
+  "projectId": 7,
+  "name": "Login page times out",
+  "closed": false,
+  "description": "The login form never answers on slow networks",
+  "descriptionHtml": "<p>The login form never answers on slow networks</p>",
+  "issue": {
+    "id": 31,
+    "name": "EXP-7",
+    "displayName": "EXP-7",
+    "url": "https://tracker.example.test/EXP-7",
+    "summary": "Login page times out",
+    "status": "Open",
+    "closed": false,
+    "integrationId": 5,
+    "integrationType": "jira"
+  },
+  "foundAtLaunch": {
+    "id": 100,
+    "name": "Nightly regression"
+  },
+  "lastFoundLaunch": {
+    "id": 101,
+    "name": "Nightly regression"
+  },
+  "lastFoundDate": 1781519400000,
+  "createdDate": 1781433000000,
+  "lastModifiedDate": 1781519400000
+}
