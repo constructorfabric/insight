@@ -1,7 +1,7 @@
 ---
 status: draft
-version: "0.5"
-date: 2026-09-28
+version: "0.6"
+date: 2026-10-06
 ---
 
 # Technical Design — Insight v3 Metric Alerts
@@ -10,7 +10,7 @@ date: 2026-09-28
 
 **Flow:** an enabled rule is one repeating job; each run loads the rule, runs the stored metric as an on-demand run would, reads one number, records the outcome on the rule and, on the first breach, writes the notification it owes and queues it. A second queue hands each owed notification to its provider and records what the provider said.
 
-**Version 0.5:** Add delivery: a second queue, one adapter per provider, and the send outcome on the notification. Version 0.4 replaced the Apalis proposal with BullMQ and collapsed the state model to rules and notifications.
+**Version 0.6:** Add the portal screens: four routes in the Custom zone over the administrator API, with no behaviour of their own. Version 0.5 added delivery: a second queue, one adapter per provider, and the send outcome on the notification. Version 0.4 replaced the Apalis proposal with BullMQ and collapsed the state model to rules and notifications.
 
 <!-- toc -->
 
@@ -83,7 +83,8 @@ The parent [separate-service ADR](../ADR/0001-separate-service.md) still applies
 
 ```mermaid
 flowchart LR
-    API[Administrator API and MCP] --> Rules[Alert rule operations]
+    Portal[Custom zone screens] --> API[Administrator API and MCP]
+    API --> Rules[Alert rule operations]
     Rules --> Store[(MariaDB rules and notifications)]
     Rules --> Schedule[(Redis: BullMQ job scheduler per rule)]
     Schedule --> Worker[Alert worker]
@@ -97,7 +98,7 @@ flowchart LR
 
 | Layer | Responsibility | Technology |
 |-------|----------------|------------|
-| Interface | Administrator operations and safe result presentation | Existing Rust REST and MCP integration |
+| Interface | Administrator operations and safe result presentation | Existing Rust REST and MCP integration; the portal's Custom zone screens over the REST routes |
 | Application/domain | Rule lifecycle, scalar comparison, breach transition | Typed Rust operations in Insight v3 |
 | Infrastructure | Durable state, schedule, metric execution, outbound messages | MariaDB, BullMQ on Redis, existing ClickHouse client, HTTP client per provider |
 
@@ -269,6 +270,21 @@ Administration follows `cpt-insightspec-v3-alerts-interface-administration`. The
 
 Refusals distinguish an invalid rule, a missing metric or alert, a revision conflict, the rule limit, and an installation with alerts off. An id that is malformed names no alert and answers the same as one that is absent. No login, SSO or MFA mechanism is added.
 
+#### Portal Screens
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-interface-portal`
+
+The portal reaches the same routes from four pages under the Custom zone's catalogue, behind its administrator gate. The pages hold no rule logic: validation mirrors the API's bounds so a refusal is rare, and when one arrives it lands on the field it names.
+
+| Page | Route | Reads | Writes |
+|------|-------|-------|--------|
+| List | `/portal/custom/alerts` | `GET /v1/alerts`, searched and paged | enable and disable, after reading the rule for its revision |
+| New | `/portal/custom/alerts/new` | metrics catalogue, the picked metric's definition for its columns, `GET /v1/alert-destinations`, one metric run for the current value | `POST /v1/alerts` |
+| Alert | `/portal/custom/alerts/{id}` | `GET /v1/alerts/{id}`, `GET /v1/alerts/{id}/notifications` | enable, disable, delete |
+| Edit | `/portal/custom/alerts/{id}/edit` | the rule, read after the page mounts, then what New reads | `PUT /v1/alerts/{id}` with `expected_revision` |
+
+A save or toggle that lost a race keeps the input and offers the latest version instead of overwriting it. The list carries no check status because the list route carries none; the latest check is on the alert's page.
+
 ### 3.4 Internal Dependencies
 
 | Dependency | Interface Used | Purpose |
@@ -374,6 +390,7 @@ The alternatives were run, not read, against a local MariaDB and Redis before Bu
 - Live Redis tests for one scheduler per rule, for a worker taking a scheduled check through the metric runner to a recorded and queued notification, and for delivery: sent once with a receipt, retried after an unconfirmed answer, failed after the last attempt.
 - Adapter tests against a local server playing each provider: acceptance, rate limit, rejection, server error, an answer not understood, and no answer in time.
 - Handler tests for every route's authorization, validation and revision handling; an MCP tool-list test.
+- Component and story tests for the portal screens: draft validation and the current-value preview, the conflict flow, list and notification paging, the switch's optimistic state, and phone-width layout.
 
 Every check logs the rule, revision, outcome, reason, whether a notification was owed, and its duration. Every send logs the notification, attempt, and receipt or reason. Redis persistence, worker health and failed notifications are operator signals.
 
@@ -397,4 +414,4 @@ Every check logs the rule, revision, outcome, reason, whether a notification was
 - **Parent PRD**: [Insight v3](../PRD.md), specifically `cpt-insightspec-v3-fr-create-alerts` and the inherited quality requirements.
 - **Parent DESIGN**: [Insight v3](../DESIGN.md).
 - **Applicable ADRs**: [Separate service](../ADR/0001-separate-service.md), [BullMQ schedules the alert checks](../ADR/0009-bullmq-schedules-alert-checks.md).
-- **Implementation**: `src/backend/services/insight-v3-core/src/domain/alerts`, `store/alerts.rs`, `store/alert_schedule.rs`, `store/providers`, `api/alerts.rs`, `mcp/alerts.rs`.
+- **Implementation**: `src/backend/services/insight-v3-core/src/domain/alerts`, `store/alerts.rs`, `store/alert_schedule.rs`, `store/providers`, `api/alerts.rs`, `mcp/alerts.rs`; portal screens in `src/frontend/src/components/alerts`, `src/frontend/src/lib/alerts`, `src/frontend/src/queries/alerts.ts` and the `portal.custom.alerts.*` routes.
