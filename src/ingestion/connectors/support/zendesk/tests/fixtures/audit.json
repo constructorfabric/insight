@@ -1,0 +1,10 @@
+{
+  "id": 9001,
+  "ticket_id": 1001,
+  "author_id": 3001,
+  "created_at": "2026-06-15T10:00:00Z",
+  "events": [
+    {"id": 90011, "type": "Comment", "public": true, "body": "Looking into it."},
+    {"id": 90012, "type": "Change", "field_name": "priority", "value": "high"}
+  ]
+}

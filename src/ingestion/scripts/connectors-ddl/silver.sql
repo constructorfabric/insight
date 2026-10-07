@@ -1381,28 +1381,6 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
-CREATE TABLE IF NOT EXISTS silver.zendesk__support_event
-(
-    `tenant_id` Nullable(String),
-    `insight_source_id` Nullable(String),
-    `unique_key` Nullable(String),
-    `data_source` String,
-    `ticket_key` Nullable(String),
-    `source_ticket_id` Nullable(String),
-    `actor_person_key` Nullable(String),
-    `actor_source_id` Nullable(String),
-    `event_type` String,
-    `is_public` Nullable(UInt8),
-    `occurred_at` Nullable(DateTime),
-    `metric_date` Nullable(Date),
-    `collected_at` DateTime,
-    `_version` Int64
-)
-ENGINE = ReplacingMergeTree(_version)
-ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
-;
-
 CREATE OR REPLACE VIEW silver.contract_version
 (
     `version` UInt32

@@ -1,0 +1,13 @@
+{
+  "id": 7001,
+  "ticket_id": 1001,
+  "requester_id": 5001,
+  "assignee_id": 3001,
+  "group_id": 4001,
+  "score": "good",
+  "comment": "Resolved quickly.",
+  "reason": null,
+  "reason_code": 0,
+  "created_at": "2026-06-16T08:00:00Z",
+  "updated_at": "2026-06-16T08:00:00Z"
+}
