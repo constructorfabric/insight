@@ -11,7 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import feature_testing as ft
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[5]
+KIT_TEMPLATE = ROOT / ".cf-studio" / "config" / "kits" / "sdlc" / "artifacts" / "FEATURE" / "template.md"
 
 REGISTRY = """
 [[systems]]
@@ -104,7 +105,27 @@ DESIGN_GATEWAY = """# Gateway DESIGN
 | `cpt-demo-nfr-latency` | Edge cache | shared-memory lookup | Load test measured at the gateway |
 """
 
-FEATURE_BULLETS = """# Feature: Demo
+SECTION_7 = """## 7. Testing
+
+**Feature**: `cpt-demo-feature-demo`
+
+Scope.
+
+### 7.1 Requirement verification
+
+| Requirement | Tests citing it | Suite | End to end | Note |
+|---|---|---|---|---|
+| `cpt-{system}-fr-{slug}` | {filled from citations} | {suite} | {yes or no} | {reason and owner when uncited} |
+
+### 7.2 Quality metrics
+
+| Vector | NFR | Metric | Target | Collected today | Source | Note |
+|---|---|---|---|---|---|---|
+| {vector} | `cpt-{system}-nfr-{slug}` | {NFR heading} | {threshold} | {value, date, environment} | {tests; DESIGN cell} | {reason and owner when no source} |
+"""
+
+FEATURE_BULLETS = (
+    """# Feature: Demo
 
 ## 1. Feature Context
 
@@ -128,7 +149,10 @@ Why.
 ## 6. Acceptance Criteria
 
 - [ ] it works
+
 """
+    + SECTION_7
+)
 
 FEATURE_INLINE = """# Feature: Demo
 
@@ -139,29 +163,20 @@ FEATURE_INLINE = """# Feature: Demo
 **Principles**: `cpt-demo-principle-x`
 """
 
-
-TEMPLATE = """# Feature: {Feature Name}
-
-## 6. Acceptance Criteria
-
-- [ ] {Testable criterion for this feature}
-
-## 7. Testing
-
-**Feature**: `cpt-{system}-feature-{slug}`
-
-{Brief scope, primary risk, fixtures and test boundaries.}
-
-<!-- feature-testing:begin -->
-<!-- feature-testing:end -->
-"""
+ROW_BIND = (
+    "| `cpt-demo-fr-bind` | test_bind.py::test_bind_unseen_account, "
+    "test_bind.py::test_bind_is_fast, bind.test.ts::binds in the browser | stand-api, unit | yes |  |"
+)
+ROW_LATENCY = (
+    "| Performance | `cpt-demo-nfr-latency` | Bind latency | p95 under 500 ms at the reference organization. "
+    "|  | test_bind.py::test_bind_is_fast; Insight · API endpoints, p95 panel, 7d, insight-dev |  |"
+)
+ROW_AUDIT = "| Security | `cpt-demo-nfr-audit` | Audit retention | every bind leaves one audit row. |  | none |  |"
 
 
 def make_project(tmp: Path) -> Path:
     (tmp / ".cf-studio" / "config").mkdir(parents=True)
     (tmp / ".cf-studio" / "config" / "artifacts.toml").write_text(REGISTRY)
-    (tmp / ft.TEMPLATE_PATH).parent.mkdir(parents=True)
-    (tmp / ft.TEMPLATE_PATH).write_text(TEMPLATE)
     (tmp / "docs").mkdir()
     (tmp / "docs" / "PRD.md").write_text(PRD)
     (tmp / "docs" / "DESIGN.md").write_text(DESIGN)
@@ -288,6 +303,22 @@ class DefinitionTests(unittest.TestCase):
             defs = ft.load_definitions(ft.load_registry(root), root)
             self.assertEqual(defs["cpt-demo-nfr-latency"].vector, "Performance")
 
+    def test_multiline_threshold_is_kept_whole(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            prd = root / "docs" / "PRD.md"
+            prd.write_text(
+                prd.read_text().replace(
+                    "**Threshold**: p95 under 500 ms at the reference organization.",
+                    "**Threshold**: p95 under 500 ms at the reference organization,\nmeasured at the gateway.",
+                )
+            )
+            defs = ft.load_definitions(ft.load_registry(root), root)
+            self.assertEqual(
+                defs["cpt-demo-nfr-latency"].threshold,
+                "p95 under 500 ms at the reference organization, measured at the gateway.",
+            )
+
     def test_verification_cell_from_design(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = make_project(Path(d))
@@ -309,88 +340,128 @@ class DefinitionTests(unittest.TestCase):
 
 
 class RenderTests(unittest.TestCase):
-    def test_tables_and_gate(self) -> None:
+    def test_rows_and_gate(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = make_project(Path(d))
-            block, failures = ft.render(Path("docs/FEATURE.md"), root)
-            self.assertIn("### 7.1 Requirement verification", block)
-            self.assertIn(
-                "| `cpt-demo-fr-bind` | test_bind.py::test_bind_unseen_account, "
-                "test_bind.py::test_bind_is_fast, bind.test.ts::binds in the browser | stand-api, unit | yes |  |",
-                block,
-            )
-            self.assertIn("### 7.2 Quality metrics", block)
-            self.assertIn(
-                "| Performance | `cpt-demo-nfr-latency` | Bind latency | p95 under 500 ms at the reference organization. "
-                "|  | test_bind.py::test_bind_is_fast; Insight · API endpoints, p95 panel, 7d, insight-dev |  |",
-                block,
-            )
-            self.assertIn(
-                "| Security | `cpt-demo-nfr-audit` | Audit retention | every bind leaves one audit row. |  | none |  |",
-                block,
-            )
-            self.assertNotIn("Reliability", block.split("### 7.2")[0])
+            rows_a, rows_b, failures = ft.render(Path("docs/FEATURE.md"), root)
+            self.assertEqual(rows_a, [ROW_BIND])
+            self.assertEqual(rows_b, [ROW_LATENCY, ROW_AUDIT])
             self.assertEqual(failures, ["cpt-demo-nfr-audit: no source and no note"])
 
     def test_unknown_id_is_reported_not_dropped(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = make_project(Path(d))
             (root / "docs" / "FEATURE.md").write_text(FEATURE_BULLETS.replace("cpt-demo-nfr-audit", "cpt-demo-fr-gone"))
-            block, failures = ft.render(Path("docs/FEATURE.md"), root)
-            self.assertIn("| `cpt-demo-fr-gone` | unknown id |  | no |  |", block)
+            rows_a, _, failures = ft.render(Path("docs/FEATURE.md"), root)
+            self.assertIn("| `cpt-demo-fr-gone` | unknown id |  | no |  |", rows_a)
             self.assertIn("cpt-demo-fr-gone: unknown id", failures)
+
+    def test_unknown_id_marker_is_not_read_back_as_a_note(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            feature = root / "docs" / "FEATURE.md"
+            feature.write_text(FEATURE_BULLETS.replace("cpt-demo-nfr-audit", "cpt-demo-fr-gone"))
+            ft.apply(Path("docs/FEATURE.md"), root, write=True)
+            prd = root / "docs" / "PRD.md"
+            prd.write_text(
+                prd.read_text() + "\n#### Gone\n\n- [ ] `p1` - **ID**: `cpt-demo-fr-gone`\n\nThe system **MUST** go.\n"
+            )
+            rows_a, _, failures = ft.render(Path("docs/FEATURE.md"), root)
+            self.assertIn("| `cpt-demo-fr-gone` | none |  | no |  |", rows_a)
+            self.assertIn("cpt-demo-fr-gone: no test and no note", failures)
+
+    def test_cited_dod_of_this_feature_renders_and_uncited_dod_is_not_a_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            feature = root / "docs" / "FEATURE.md"
+            feature.write_text(
+                FEATURE_BULLETS.replace(
+                    "## 6. Acceptance Criteria",
+                    "## 5. Definitions of Done\n\n### Verbs\n\n- [ ] `p1` - **ID**: `cpt-demo-dod-verbs`\n\n"
+                    "### Quiet\n\n- [ ] `p1` - **ID**: `cpt-demo-dod-quiet`\n\n## 6. Acceptance Criteria",
+                )
+            )
+            (root / "tests" / "unit" / "test_dod.py").write_text(
+                "# @cpt-test:cpt-demo-dod-verbs:p1\ndef test_verbs():\n    pass\n"
+            )
+            rows_a, _, failures = ft.render(Path("docs/FEATURE.md"), root)
+            self.assertIn("| `cpt-demo-dod-verbs` | test_dod.py::test_verbs | unit | no |  |", rows_a)
+            self.assertFalse(any("cpt-demo-dod-quiet" in r for r in rows_a))
+            self.assertNotIn("cpt-demo-dod-quiet: no test and no note", failures)
+
+
+class FillTests(unittest.TestCase):
+    def test_write_replaces_placeholder_rows_and_keeps_the_rest(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            self.assertTrue(ft.apply(Path("docs/FEATURE.md"), root, write=True))
+            text = (root / "docs" / "FEATURE.md").read_text()
+            self.assertIn(
+                "**Feature**: `cpt-demo-feature-demo`\n\nScope.\n\n### 7.1 Requirement verification\n\n", text
+            )
+            self.assertIn(ft.HEADER_A + "\n" + ft.SEPARATOR_A + "\n" + ROW_BIND + "\n\n### 7.2 Quality metrics", text)
+            self.assertIn(ft.HEADER_B + "\n" + ft.SEPARATOR_B + "\n" + ROW_LATENCY + "\n" + ROW_AUDIT + "\n", text)
+            self.assertNotIn("{filled from citations}", text)
+            self.assertEqual(text.count("## 7. Testing"), 1)
+            self.assertFalse(ft.apply(Path("docs/FEATURE.md"), root, write=True))
 
     def test_authored_cells_survive_regeneration(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = make_project(Path(d))
             ft.apply(Path("docs/FEATURE.md"), root, write=True)
-            text = (root / "docs" / "FEATURE.md").read_text()
-            text = text.replace(
-                "| Security | `cpt-demo-nfr-audit` | Audit retention | every bind leaves one audit row. |  | none |  |",
-                "| Security | `cpt-demo-nfr-audit` | Audit retention | every bind leaves one audit row. "
-                "| 1 row on 2026-10-01 | none | observed by hand |",
+            path = root / "docs" / "FEATURE.md"
+            path.write_text(
+                path.read_text().replace(
+                    ROW_AUDIT,
+                    "| Security | `cpt-demo-nfr-audit` | Audit retention | every bind leaves one audit row. "
+                    "| 1 row on 2026-10-01 | none | observed by hand |",
+                )
             )
-            (root / "docs" / "FEATURE.md").write_text(text)
             self.assertFalse(ft.apply(Path("docs/FEATURE.md"), root, write=False))
-            block, failures = ft.render(Path("docs/FEATURE.md"), root)
-            self.assertIn("| 1 row on 2026-10-01 | none | observed by hand |", block)
+            _, rows_b, failures = ft.render(Path("docs/FEATURE.md"), root)
+            self.assertTrue(any("| 1 row on 2026-10-01 | none | observed by hand |" in r for r in rows_b))
             self.assertEqual(failures, [])
 
-    def test_write_appends_section_when_missing_and_is_idempotent(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
-            root = make_project(Path(d))
-            self.assertTrue(ft.apply(Path("docs/FEATURE.md"), root, write=True))
-            text = (root / "docs" / "FEATURE.md").read_text()
-            self.assertEqual(text.count("## 7. Testing"), 1)
-            self.assertEqual(text.count(ft.BEGIN), 1)
-            self.assertFalse(ft.apply(Path("docs/FEATURE.md"), root, write=True))
-
-    def test_write_places_block_at_end_of_existing_section(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
-            root = make_project(Path(d))
-            (root / "docs" / "FEATURE.md").write_text(FEATURE_BULLETS + "\n## 7. Testing\n\nIntro kept.\n")
-            ft.apply(Path("docs/FEATURE.md"), root, write=True)
-            text = (root / "docs" / "FEATURE.md").read_text()
-            self.assertLess(text.index("Intro kept."), text.index(ft.BEGIN))
-            self.assertEqual(text.count("## 7. Testing"), 1)
-
-    def test_write_adds_the_template_preamble_when_section_is_missing(self) -> None:
+    def test_authored_cell_with_escaped_pipe_survives(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = make_project(Path(d))
             ft.apply(Path("docs/FEATURE.md"), root, write=True)
-            text = (root / "docs" / "FEATURE.md").read_text()
-            self.assertIn(
-                "## 7. Testing\n\n**Feature**: `cpt-demo-feature-demo`\n\n"
-                "{Brief scope, primary risk, fixtures and test boundaries.}\n\n" + ft.BEGIN,
-                text,
+            path = root / "docs" / "FEATURE.md"
+            path.write_text(
+                path.read_text().replace(
+                    "| every bind leaves one audit row. |  | none |  |",
+                    "| every bind leaves one audit row. | p95 1.2 s \\| cf-prod | none | by hand \\| KT |",
+                )
             )
+            self.assertFalse(ft.apply(Path("docs/FEATURE.md"), root, write=False))
+            _, rows_b, failures = ft.render(Path("docs/FEATURE.md"), root)
+            self.assertTrue(any("| p95 1.2 s \\| cf-prod | none | by hand \\| KT |" in r for r in rows_b))
+            self.assertEqual(failures, [])
 
-    def test_kit_template_provides_the_preamble(self) -> None:
-        preamble = ft.section_preamble(ROOT, "- [ ] `p1` - `cpt-ir-feature-manual-resolution`\n")
-        self.assertTrue(
-            preamble.startswith("**Feature**: `cpt-ir-feature-manual-resolution`\n\n{Brief scope"), preamble
-        )
-        self.assertNotIn("{slug}", preamble)
+    def test_missing_tables_is_an_error_not_an_append(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            (root / "docs" / "FEATURE.md").write_text(FEATURE_INLINE)
+            with self.assertRaises(ft.MissingTable):
+                ft.apply(Path("docs/FEATURE.md"), root, write=True)
+            self.assertEqual((root / "docs" / "FEATURE.md").read_text(), FEATURE_INLINE)
+            self.assertEqual(ft.main(["docs/FEATURE.md", "--write", "--root", str(root)]), 2)
+
+
+class KitTemplateTests(unittest.TestCase):
+    def test_kit_template_carries_the_headings_and_header_rows(self) -> None:
+        section = KIT_TEMPLATE.read_text().split("## 7. Testing", 1)[1]
+        for needle in (
+            "### 7.1 Requirement verification",
+            ft.HEADER_A,
+            ft.SEPARATOR_A,
+            "### 7.2 Quality metrics",
+            ft.HEADER_B,
+            ft.SEPARATOR_B,
+        ):
+            self.assertIn(needle, section)
+        self.assertTrue(ft.has_tables(section))
+        self.assertNotIn("<!--", section)
 
 
 class SkillDocTests(unittest.TestCase):
@@ -403,10 +474,11 @@ class SkillDocTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
-    def test_check_ignores_features_without_block_and_fails_on_stale(self) -> None:
+    def test_check_skips_features_without_tables_and_flags_stale_ones(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = make_project(Path(d))
-            self.assertEqual(ft.main(["--check", "--root", str(root)]), 0)
+            add_artifact(root, "FEATURE", "docs/FEATURE2.md", FEATURE_INLINE)
+            self.assertEqual(ft.main(["--check", "--root", str(root)]), 1)
             ft.apply(Path("docs/FEATURE.md"), root, write=True)
             self.assertEqual(ft.main(["--check", "--root", str(root)]), 0)
             (root / "tests" / "unit" / "bind.test.ts").unlink()
@@ -415,7 +487,7 @@ class CliTests(unittest.TestCase):
     def test_check_scans_citations_once_for_all_features(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = make_project(Path(d))
-            add_artifact(root, "FEATURE", "docs/FEATURE2.md", FEATURE_INLINE)
+            add_artifact(root, "FEATURE", "docs/FEATURE2.md", FEATURE_BULLETS)
             ft.apply(Path("docs/FEATURE.md"), root, write=True)
             ft.apply(Path("docs/FEATURE2.md"), root, write=True)
             with mock.patch.object(ft, "scan_citations", wraps=ft.scan_citations) as scan:
@@ -430,67 +502,3 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class ReviewFixTests(unittest.TestCase):
-    def test_authored_cell_with_escaped_pipe_survives(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
-            root = make_project(Path(d))
-            ft.apply(Path("docs/FEATURE.md"), root, write=True)
-            path = root / "docs" / "FEATURE.md"
-            text = path.read_text().replace(
-                "| every bind leaves one audit row. |  | none |  |",
-                "| every bind leaves one audit row. | p95 1.2 s \\| cf-prod | none | by hand \\| KT |",
-            )
-            path.write_text(text)
-            self.assertFalse(ft.apply(Path("docs/FEATURE.md"), root, write=False))
-            block, failures = ft.render(Path("docs/FEATURE.md"), root)
-            self.assertIn("| p95 1.2 s \\| cf-prod | none | by hand \\| KT |", block)
-            self.assertEqual(failures, [])
-
-    def test_unknown_id_marker_is_not_read_back_as_a_note(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
-            root = make_project(Path(d))
-            feature = root / "docs" / "FEATURE.md"
-            feature.write_text(FEATURE_BULLETS.replace("cpt-demo-nfr-audit", "cpt-demo-fr-gone"))
-            ft.apply(Path("docs/FEATURE.md"), root, write=True)
-            prd = root / "docs" / "PRD.md"
-            prd.write_text(
-                prd.read_text() + "\n#### Gone\n\n- [ ] `p1` - **ID**: `cpt-demo-fr-gone`\n\nThe system **MUST** go.\n"
-            )
-            block, failures = ft.render(Path("docs/FEATURE.md"), root)
-            self.assertIn("| `cpt-demo-fr-gone` | none |  | no |  |", block)
-            self.assertIn("cpt-demo-fr-gone: no test and no note", failures)
-
-    def test_cited_dod_of_this_feature_renders_and_uncited_dod_is_not_a_gap(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
-            root = make_project(Path(d))
-            feature = root / "docs" / "FEATURE.md"
-            feature.write_text(
-                FEATURE_BULLETS
-                + "\n## 5. Definitions of Done\n\n### Verbs\n\n- [ ] `p1` - **ID**: `cpt-demo-dod-verbs`\n\n"
-                "### Quiet\n\n- [ ] `p1` - **ID**: `cpt-demo-dod-quiet`\n"
-            )
-            (root / "tests" / "unit" / "test_dod.py").write_text(
-                "# @cpt-test:cpt-demo-dod-verbs:p1\ndef test_verbs():\n    pass\n"
-            )
-            block, failures = ft.render(Path("docs/FEATURE.md"), root)
-            self.assertIn("| `cpt-demo-dod-verbs` | test_dod.py::test_verbs | unit | no |  |", block)
-            self.assertNotIn("cpt-demo-dod-quiet", block)
-            self.assertNotIn("cpt-demo-dod-quiet: no test and no note", failures)
-
-    def test_multiline_threshold_is_kept_whole(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
-            root = make_project(Path(d))
-            prd = root / "docs" / "PRD.md"
-            prd.write_text(
-                prd.read_text().replace(
-                    "**Threshold**: p95 under 500 ms at the reference organization.",
-                    "**Threshold**: p95 under 500 ms at the reference organization,\nmeasured at the gateway.",
-                )
-            )
-            defs = ft.load_definitions(ft.load_registry(root), root)
-            self.assertEqual(
-                defs["cpt-demo-nfr-latency"].threshold,
-                "p95 under 500 ms at the reference organization, measured at the gateway.",
-            )

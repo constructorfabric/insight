@@ -471,6 +471,6 @@ regeneration. To seed a connector whose bronze tables aren't in the snapshot yet
 When a spec proves a requirement a feature lists in its section 1.2, cite that
 requirement in a comment line of the spec: `# @cpt-test:<fr-or-nfr-id>:p1`.
 The binding contract is section 2 of the `quality-vector-tests` skill, and
-`scripts/ci/feature_testing.py --write` regenerates the feature's section 7.
+the `quality-vector-tests` skill's `scripts/feature_testing.py --write` regenerates the feature's section 7.
 This suite has no vector marker mechanism; a vector belongs to an NFR, never
 to the spec.

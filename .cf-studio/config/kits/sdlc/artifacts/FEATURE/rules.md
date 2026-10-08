@@ -18,7 +18,7 @@ DO:
   - LOAD {cf-studio-path}/config/artifacts.toml to resolve FEATURE path (artifacts_dir default `architecture`, subdir `features/`)
   - LOAD {feature_template} for structure
   - RUN author content: actor flows (complete user journeys), algorithms (processing logic), state machines (entity lifecycle), DoD/acceptance criteria
-  - RUN generate `## 7. Testing` with `python3 scripts/ci/feature_testing.py <FEATURE path> --write`; a test proves a requirement by citing it (`@cpt-test:<fr-or-nfr-id>:p1`), and the tool renders 7.1 (functional requirements → citing tests, suite, end to end) and 7.2 (vector → NFR → metric → target → collected today → source); author only the `Collected today` and `Note` cells
+  - RUN fill the `## 7. Testing` tables (their shape comes from {feature_template}) with `python3 .claude/skills/quality-vector-tests/scripts/feature_testing.py <FEATURE path> --write`; a test proves a requirement by citing it (`@cpt-test:<fr-or-nfr-id>:p1`), and the tool replaces the rows of 7.1 (functional requirements → citing tests, suite, end to end) and 7.2 (vector → NFR → metric → target → collected today → source); author only the `Collected today` and `Note` cells
   - RUN define featstatus ID under H1 (before `## Feature Context`): `cpt-{system}-featstatus-{feature-slug}` (status rollup, not to_code)
   - RUN assign IDs: flow `cpt-{system}-flow-{feature-slug}-{slug}`, algo `cpt-{system}-algo-{feature-slug}-{slug}`, state `cpt-{system}-state-{feature-slug}-{slug}`, dod `cpt-{system}-dod-{feature-slug}-{slug}`
   - RUN assign priority markers `p1`-`p9` per feature priority

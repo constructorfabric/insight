@@ -741,7 +741,7 @@ Before evaluating each checklist item, the expert MUST:
 
 > **New in v2.1**: Added to gate the vector and suite-tag attribution of authored scenarios. **Revised 2026-10**: section 7 is now derived from `@cpt-test` citations; this item gates the binding, not a scenario format.
 
-- [ ] Section 7 carries the generated block and it is current (`python3 scripts/ci/feature_testing.py --check` passes)
+- [ ] Section 7 carries the template's two tables and their rows are current (`python3 .claude/skills/quality-vector-tests/scripts/feature_testing.py --check` passes)
 - [ ] Every functional requirement in section 1.2 appears in table 7.1 with at least one citing test, or carries a `Note` naming the reason and the owner
 - [ ] Every NFR in section 1.2 appears in table 7.2 with a source (a citing test, or a DESIGN NFR-allocation verification cell naming the dashboard, panel, query, window and environment), or carries a `Note` naming the reason and the owner
 - [ ] No functional requirement row carries a vector; vectors appear only in table 7.2, taken from the PRD's 6.1 table or the NFR's `**Vector**` line

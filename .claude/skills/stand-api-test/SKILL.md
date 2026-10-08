@@ -289,4 +289,4 @@ python3 tests/lib/insight_stand/coverage.py \
    that requirement on the line above the test — `# @cpt-test:<fr-or-nfr-id>:p1`
    — and keep the pytest vector marker as the selection label it is; the
    binding contract is section 2 of the `quality-vector-tests` skill, and
-   `scripts/ci/feature_testing.py --write` regenerates the feature's section 7.
+   the `quality-vector-tests` skill's `scripts/feature_testing.py --write` regenerates the feature's section 7.

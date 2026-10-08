@@ -12,7 +12,8 @@ description: >-
 
 A test proves a requirement by citing it. Nothing is authored twice: the PRD
 states the requirement, the test cites it, and
-`scripts/ci/feature_testing.py` renders FEATURE section 7 from the citations.
+the skill's `scripts/feature_testing.py` fills the rows of FEATURE section 7 from the
+citations; the FEATURE template owns the headings and header rows.
 
 `PRD FR/NFR → FEATURE 1.2 Requirements → test citing the ID → generated 7.1 / 7.2`
 
@@ -65,11 +66,11 @@ hand. Only trees registered as `[[systems.codebase]]` in
 `.cf-studio/config/artifacts.toml` are scanned; a test elsewhere is invisible,
 including an inline Rust `#[cfg(test)]` module.
 
-## 3. Generate section 7
+## 3. Fill section 7
 
 ```sh
-python3 scripts/ci/feature_testing.py docs/<path>/FEATURE.md --write
-python3 scripts/ci/feature_testing.py docs/<path>/FEATURE.md --gate
+python3 .claude/skills/quality-vector-tests/scripts/feature_testing.py docs/<path>/FEATURE.md --write
+python3 .claude/skills/quality-vector-tests/scripts/feature_testing.py docs/<path>/FEATURE.md --gate
 cfs toc docs/<path>/FEATURE.md
 ```
 
@@ -112,12 +113,12 @@ are generated once the FEATURE exists.
 ## 5. Validate
 
 ```sh
-python3 scripts/ci/feature_testing.py --check
+python3 .claude/skills/quality-vector-tests/scripts/feature_testing.py --check
 cfs validate --artifact docs/<path>/FEATURE.md
 cfs validate-toc docs/<path>/FEATURE.md
 ```
 
-`--check` fails only for FEATUREs that already carry the generated block and
-are stale. `cfs` validates artifact references; it does not index `@cpt-test`
+`--check` fails only for FEATUREs that carry the two section 7 tables and
+whose rows are stale; a freshly templated section counts as stale until filled. `cfs` validates artifact references; it does not index `@cpt-test`
 citations while the system's artifacts are DOCS-ONLY, which is why the tool
 scans the registry itself.

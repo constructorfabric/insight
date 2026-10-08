@@ -133,11 +133,22 @@ The system **MUST** {clear description of what to implement}.
 
 {Brief scope, primary risk, fixtures and test boundaries. This section is an
 Insight extension; keep Acceptance Criteria above in the canonical kit form.
-The two tables below are generated: run
-`python3 scripts/ci/feature_testing.py <this file> --write` after a test gains
-a `@cpt-test:<requirement-id>:p1` citation. Edit only the `Collected today`
-and `Note` cells; a requirement with no citing test needs a `Note` naming the
-reason and the owner.}
+A test proves a requirement by citing it on the line above the test
+(`@cpt-test:<requirement-id>:p1`). The rows of the two tables below are filled
+from those citations by the `quality-vector-tests` skill's
+`scripts/feature_testing.py <this file> --write`; the headings and header rows
+stay as they are here. Edit only the `Collected today` and `Note` cells; a
+requirement with no citing test needs a `Note` naming the reason and the
+owner.}
 
-<!-- feature-testing:begin -->
-<!-- feature-testing:end -->
+### 7.1 Requirement verification
+
+| Requirement | Tests citing it | Suite | End to end | Note |
+|---|---|---|---|---|
+| `cpt-{system}-fr-{slug}` | {filled from citations} | {suite} | {yes or no} | {reason and owner when uncited} |
+
+### 7.2 Quality metrics
+
+| Vector | NFR | Metric | Target | Collected today | Source | Note |
+|---|---|---|---|---|---|---|
+| {vector} | `cpt-{system}-nfr-{slug}` | {NFR heading} | {threshold} | {value, date, environment} | {citing tests; DESIGN verification cell} | {reason and owner when no source} |

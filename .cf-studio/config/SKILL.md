@@ -18,7 +18,7 @@ table itself is gated (checklist ARCH-PRD-006).
 
 Use `quality-vector-tests` in `.claude/skills/` to bind tests to requirements:
 a test cites the FR/NFR it proves with `@cpt-test:<id>:p1`, and
-`scripts/ci/feature_testing.py --write` derives FEATURE section 7 from those
+the skill's `scripts/feature_testing.py --write` fills FEATURE section 7 from those
 citations. Preserve canonical Acceptance Criteria and FR/NFR IDs. Stand API/UI
 test collection continues to require one native vector marker per test; that
 marker selects tests with `-m`, it does not bind a requirement to a vector.
