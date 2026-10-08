@@ -1,24 +1,26 @@
 spec_version: 1
 description: >
-  Metric: collab.emails_sent — which mailboxes and days count, #3681.
+  Metric: collab.emails_sent — which mailboxes and days count.
   How it's computed (bronze → silver → gold):
     • bronze: the daily M365 email-activity report per mailbox, with the products
       assigned to the user.
-    • staging: a mailbox whose assigned-product list is explicitly empty is an
-      unlicensed account and is dropped; an unknown (missing) list is kept.
+    • staging: a report row whose assigned-product list is empty ('[]', with or
+      without spaces, or '') belongs to an unlicensed account and is dropped; a row
+      with no list at all (NULL) is kept.
     • gold:   per-person sum of emails sent over the window, both bounds inclusive;
       a person's several mailboxes add up into one value.
 
   Cast (Engineering):
     alice — licensed; sends on Nov 30, Dec 1, Dec 31 and Jan 1 (1 / 10 / 100 / 1000),
             so December takes 110 and a Dec 31 window takes 100.
-    bob   — unlicensed (empty product list, also written with a space) → nothing counts.
-    carol — product list unknown → kept: 5.
-    dave  — two mailboxes bound to one person: 3 + 4 = 7. The second mailbox
-            exists in the directory as its own Microsoft Entra user, as on a
-            real tenant; the operator binds it to dave.
-  Cases: inclusive window bounds · single-day window · unlicensed dropped ·
-  unknown licence kept · two mailboxes summed.
+    bob   — two unlicensed days (empty list, also written with a space) are dropped;
+            one licensed day (2) counts, so December takes 2, not 17.
+    carol — no product list in the report → kept: 5.
+    dave  — two mailboxes bound to one person: 3 + 4 = 7. The second mailbox is a
+            separate directory account under another name, and only the
+            operator's binding joins it to dave.
+  Cases: inclusive window bounds · single-day window · unlicensed days dropped
+  beside a licensed one · a row without a product list kept · two mailboxes summed.
 
 identity_aliases:
   dave@example.com:
@@ -56,6 +58,8 @@ bronze:
     # bob, unlicensed: an explicitly empty product list, in both spellings → dropped.
     - { $ref: ../templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-12-15", unique_key: scope-bob-20261215,   assignedProducts: "[]",  sendCount: 7 }
     - { $ref: ../templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-12-16", unique_key: scope-bob-20261216,   assignedProducts: "[ ]", sendCount: 8 }
+    # bob's licensed day: the control that he is resolved and counted at all.
+    - { $ref: ../templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-12-20", unique_key: scope-bob-20261220,   assignedProducts: '["Microsoft 365 E3"]', sendCount: 2 }
     # carol: the report carries no product list → unknown, kept.
     - { $ref: ../templates/m365_email.yaml#/templates/carol_email, reportRefreshDate: "2026-12-15", unique_key: scope-carol-20261215, sendCount: 5 }
     # dave: his main mailbox and a second one bound to him.
