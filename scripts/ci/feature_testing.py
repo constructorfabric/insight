@@ -272,11 +272,12 @@ def _tests_cell(cites: list[Citation]) -> str:
     return ", ".join(f"{c.path.name}::{c.test_name}" for c in cites) if cites else "none"
 
 
-def render(feature_path: Path, root: Path) -> tuple[str, list[str]]:
+def render(feature_path: Path, root: Path, cites: dict[str, list[Citation]] | None = None) -> tuple[str, list[str]]:
     registry = load_registry(root)
     text = (root / feature_path).read_text()
     reqs = feature_requirements(text)
-    cites = scan_citations(registry, root)
+    if cites is None:
+        cites = scan_citations(registry, root)
     defs = load_definitions(registry, root)
     kept = _preserved(text)
     failures: list[str] = []
@@ -360,10 +361,10 @@ def _splice(text: str, block: str) -> str:
     return text[:cut].rstrip("\n") + "\n\n" + block + "\n" + ("\n" + text[cut:] if nxt else "")
 
 
-def apply(feature_path: Path, root: Path, write: bool) -> bool:
+def apply(feature_path: Path, root: Path, write: bool, cites: dict[str, list[Citation]] | None = None) -> bool:
     path = root / feature_path
     old = path.read_text()
-    block, _ = render(feature_path, root)
+    block, _ = render(feature_path, root, cites)
     new = _splice(old, block)
     if new == old:
         return False
@@ -382,14 +383,16 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv)
     root = args.root.resolve()
     if args.check:
+        registry = load_registry(root)
+        cites = scan_citations(registry, root)
         stale = []
-        for art in load_registry(root).artifacts:
+        for art in registry.artifacts:
             file = root / art.path
             if (
                 art.kind == "FEATURE"
                 and file.is_file()
                 and BEGIN in file.read_text()
-                and apply(art.path, root, write=False)
+                and apply(art.path, root, write=False, cites=cites)
             ):
                 stale.append(str(art.path))
         for s in stale:

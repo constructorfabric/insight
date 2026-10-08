@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -352,6 +353,16 @@ class CliTests(unittest.TestCase):
             self.assertEqual(ft.main(["--check", "--root", str(root)]), 0)
             (root / "tests" / "unit" / "bind.test.ts").unlink()
             self.assertEqual(ft.main(["--check", "--root", str(root)]), 1)
+
+    def test_check_scans_citations_once_for_all_features(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            add_artifact(root, "FEATURE", "docs/FEATURE2.md", FEATURE_INLINE)
+            ft.apply(Path("docs/FEATURE.md"), root, write=True)
+            ft.apply(Path("docs/FEATURE2.md"), root, write=True)
+            with mock.patch.object(ft, "scan_citations", wraps=ft.scan_citations) as scan:
+                self.assertEqual(ft.main(["--check", "--root", str(root)]), 0)
+            self.assertEqual(scan.call_count, 1)
 
     def test_gate_exit_code(self) -> None:
         with tempfile.TemporaryDirectory() as d:
