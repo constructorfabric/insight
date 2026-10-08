@@ -205,6 +205,17 @@ class CitationTests(unittest.TestCase):
             cites = ft.scan_citations(ft.load_registry(root), root)
             self.assertNotIn("cpt-demo-dod-x", cites)
 
+    def test_regex_test_call_does_not_name_a_ts_test(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            (root / "tests" / "unit" / "guard.test.ts").write_text(
+                "// @cpt-test:cpt-demo-nfr-audit:p1\n"
+                "const ok = /x/.test('abc');\n"
+                "it('keeps the audit row', () => expect(ok).toBe(true));\n"
+            )
+            cites = ft.scan_citations(ft.load_registry(root), root)
+            self.assertEqual([c.test_name for c in cites["cpt-demo-nfr-audit"]], ["keeps the audit row"])
+
 
 class SuiteTests(unittest.TestCase):
     def test_suite_by_path(self) -> None:
@@ -247,6 +258,14 @@ class DefinitionTests(unittest.TestCase):
             self.assertEqual(defs["cpt-demo-nfr-audit"].vector, "Security")
             self.assertEqual(defs["cpt-demo-fr-bind"].heading, "Operator bind")
             self.assertEqual(defs["cpt-demo-fr-bind"].vector, "")
+
+    def test_bold_vector_cell_is_read(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            prd = root / "docs" / "PRD.md"
+            prd.write_text(prd.read_text().replace("| Performance | Binding", "| **Performance** | Binding"))
+            defs = ft.load_definitions(ft.load_registry(root), root)
+            self.assertEqual(defs["cpt-demo-nfr-latency"].vector, "Performance")
 
     def test_verification_cell_from_design(self) -> None:
         with tempfile.TemporaryDirectory() as d:

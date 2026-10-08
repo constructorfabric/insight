@@ -41,7 +41,7 @@ from pathlib import Path
 
 CITATION_RE = re.compile(r"@cpt-test:(?P<id>cpt-[a-z0-9][a-z0-9-]+):(?:p|ph-)\d+")
 PY_TEST_RE = re.compile(r"^\s*(?:async\s+)?def\s+(test\w*)")
-TS_TEST_RE = re.compile(r"\b(?:it|test)\(\s*['\"`](.+?)['\"`]")
+TS_TEST_RE = re.compile(r"(?<![.\w])(?:it|test)\(\s*['\"`](.+?)['\"`]")
 RS_TEST_RE = re.compile(r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)")
 ID_DEF_RE = re.compile(r"\*\*ID\*\*:\s*`(cpt-[a-z0-9][a-z0-9-]+)`")
 ID_RE = re.compile(r"`(cpt-[a-z0-9][a-z0-9-]+)`")
@@ -177,9 +177,10 @@ def _vector_rows(lines: list[str]) -> dict[str, str]:
     out: dict[str, str] = {}
     for line in lines:
         cells = _cells(line)
-        if len(cells) >= 2 and cells[0] in VECTORS:
+        vector = cells[0].strip("* ") if cells else ""
+        if len(cells) >= 2 and vector in VECTORS:
             for nfr in ID_RE.findall(line):
-                out.setdefault(nfr, cells[0])
+                out.setdefault(nfr, vector)
     return out
 
 
