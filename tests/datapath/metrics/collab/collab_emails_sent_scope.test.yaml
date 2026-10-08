@@ -1,0 +1,63 @@
+spec_version: 1
+description: >
+  Metric: collab.emails_sent — which mailboxes and days count, #3681.
+  How it's computed (bronze → silver → gold):
+    • bronze: the daily M365 email-activity report per mailbox, with the products
+      assigned to the user.
+    • staging: a mailbox whose assigned-product list is explicitly empty is an
+      unlicensed account and is dropped; an unknown (missing) list is kept.
+    • gold:   per-person sum of emails sent over the window, both bounds inclusive;
+      a person's several mailboxes add up into one value.
+
+  Cast (Engineering):
+    alice — licensed; sends on Nov 30, Dec 1, Dec 31 and Jan 1 (1 / 10 / 100 / 1000),
+            so December takes 110 and a Dec 31 window takes 100.
+    bob   — unlicensed (empty product list, also written with a space) → nothing counts.
+    carol — product list unknown → kept: 5.
+    dave  — two mailboxes bound to one person: 3 + 4 = 7. The second mailbox
+            exists in the directory as its own Microsoft Entra user, as on a
+            real tenant; the operator binds it to dave.
+  Cases: inclusive window bounds · single-day window · unlicensed dropped ·
+  unknown licence kept · two mailboxes summed.
+
+identity_aliases:
+  dave@example.com:
+    - dave.alt@example.org
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+
+  bronze_ms_entra.users:
+    # dave's second mailbox is a separate Entra account under another name, so only
+    # the operator's binding joins it to him.
+    - _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+      _airbyte_extracted_at: "2026-01-05T00:00:00"
+      _airbyte_meta: "{}"
+      _airbyte_generation_id: 0
+      tenant_id: "{{ tenant }}"
+      source_id: entra-test
+      unique_key: entra-dave-alt
+      id: entra-dave-alt
+      mail: dave.alt@example.org
+      displayName: Shared Mailbox D
+      accountEnabled: true
+      userType: Member
+
+  bronze_m365.email_activity:
+    # alice, licensed: one day before, both bounds, one day after December.
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-11-30", unique_key: scope-alice-20261130, assignedProducts: '["Microsoft 365 E3"]', sendCount: 1 }
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-01", unique_key: scope-alice-20261201, assignedProducts: '["Microsoft 365 E3"]', sendCount: 10 }
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-31", unique_key: scope-alice-20261231, assignedProducts: '["Microsoft 365 E3"]', sendCount: 100 }
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2027-01-01", unique_key: scope-alice-20270101, assignedProducts: '["Microsoft 365 E3"]', sendCount: 1000 }
+    # bob, unlicensed: an explicitly empty product list, in both spellings → dropped.
+    - { $ref: ../templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-12-15", unique_key: scope-bob-20261215,   assignedProducts: "[]",  sendCount: 7 }
+    - { $ref: ../templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-12-16", unique_key: scope-bob-20261216,   assignedProducts: "[ ]", sendCount: 8 }
+    # carol: the report carries no product list → unknown, kept.
+    - { $ref: ../templates/m365_email.yaml#/templates/carol_email, reportRefreshDate: "2026-12-15", unique_key: scope-carol-20261215, sendCount: 5 }
+    # dave: his main mailbox and a second one bound to him.
+    - { $ref: ../templates/m365_email.yaml#/templates/dave_email,  reportRefreshDate: "2026-12-10", unique_key: scope-dave-20261210,  sendCount: 3 }
+    - { $ref: ../templates/m365_email.yaml#/templates/m365_email,  userPrincipalName: dave.alt@example.org, reportRefreshDate: "2026-12-11", unique_key: scope-dave-alt-20261211, sendCount: 4 }
