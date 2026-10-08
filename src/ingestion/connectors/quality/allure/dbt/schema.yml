@@ -80,6 +80,12 @@ models:
         description: "Allure login that ran a manual result, not a person id"
       - name: launch_env
         description: "The launch's environment variables as a JSON object, name -> value; when a name has several values, the one with the highest value id. '{}' when the launch has none"
+      - name: test_result_url
+        description: "The result in Allure, built from the project's allure_url. Empty when the project row carries none"
+      - name: launch_url
+        description: "The result's launch in Allure. Empty when the project row carries no allure_url"
+      - name: test_case_url
+        description: "The result's test case in Allure. Empty when the result has no test case or the project row carries no allure_url"
 
   - name: allure__test_cases
     description: "Allure TestOps test cases -> staging, one row per test case"

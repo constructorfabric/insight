@@ -466,6 +466,12 @@ ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS tested_by Stri
 ALTER TABLE staging.allure__test_results MODIFY COLUMN tested_by String AFTER assignee;
 ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS launch_env String DEFAULT '{}' AFTER message;
 ALTER TABLE staging.allure__test_results MODIFY COLUMN launch_env String DEFAULT '{}' AFTER message;
+ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS test_result_url String AFTER launch_env;
+ALTER TABLE staging.allure__test_results MODIFY COLUMN test_result_url String AFTER launch_env;
+ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS launch_url String AFTER test_result_url;
+ALTER TABLE staging.allure__test_results MODIFY COLUMN launch_url String AFTER test_result_url;
+ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS test_case_url String AFTER launch_url;
+ALTER TABLE staging.allure__test_results MODIFY COLUMN test_case_url String AFTER launch_url;
 SQL
 }
 

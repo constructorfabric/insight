@@ -4,7 +4,7 @@ import logging
 
 import pytest
 from airbyte_cdk.models import Status
-from config import PROJECTS_URL, AllureConfigBuilder, api_request, error, page, paged
+from config import ALLURE_URL, PROJECTS_URL, AllureConfigBuilder, api_request, error, page, paged
 from connector_tests import HttpMocker, assert_records_conform, get_source, load_fixture, read_stream
 
 _CONNECTOR = "quality/allure"
@@ -35,6 +35,15 @@ def test_records_stamped_with_tenant_source_and_unique_key(http_mocker: HttpMock
     assert record["tenant_id"] == "test-tenant"
     assert record["source_id"] == "test-source"
     assert record["unique_key"] == "test-tenant-test-source-7"
+
+
+def test_records_carry_the_instance_url(http_mocker: HttpMocker) -> None:
+    config = AllureConfigBuilder().build()
+    http_mocker.get(api_request(PROJECTS_URL, paged({})), page([_project(7, "Alpha")]))
+
+    output = read_stream(_CONNECTOR, _STREAM, config)
+
+    assert output.records[0].record.data["allure_url"] == ALLURE_URL
 
 
 def test_records_conform_to_schema(http_mocker: HttpMocker) -> None:
