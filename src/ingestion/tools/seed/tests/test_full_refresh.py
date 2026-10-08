@@ -87,6 +87,10 @@ def _only(items: list[Any], what: str) -> Any:
     return items[0]
 
 
+def _profiles_dir(argv: list[str]) -> str:
+    return argv[argv.index("--profiles-dir") + 1]
+
+
 def _run_migration_script(
     *args: str, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
@@ -168,11 +172,18 @@ def test_config_tables_exist_before_the_generators_write_them(
 
 
 def test_config_tables_come_from_the_owning_dbt_macro(script_runs: list[ScriptRun]) -> None:
-    """No DDL copy: the seed runs the same macro dbt's on-run-start owns."""
+    """No DDL copy and no profile copy: the seed runs the macro dbt's on-run-start
+    owns, against a profile the one shared writer produced."""
     silver.ensure_task_config_tables()
 
-    argv, _ = _only(script_runs, "dbt invocation")
-    assert argv[:3] == ["dbt", "run-operation", "create_task_config_tables"]
+    assert len(script_runs) == 2, f"expected a profile write then a dbt run, got {len(script_runs)}"
+    (profile_argv, _), (dbt_argv, _) = script_runs
+
+    assert Path(profile_argv[1]).name == "dbt_profiles.py"
+    assert dbt_argv[:3] == ["dbt", "run-operation", "create_task_config_tables"]
+    assert _profiles_dir(profile_argv) == _profiles_dir(dbt_argv), (
+        "dbt must read the profile this run just wrote"
+    )
 
 
 def test_gold_step_does_not_full_refresh(refresh_requests: list[dict[str, Any]]) -> None:

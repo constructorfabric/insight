@@ -32,34 +32,8 @@ fi
 PROFILES_DIR="$(mktemp -d)"
 trap 'rm -rf "${PROFILES_DIR}"' EXIT
 
-if [[ "${CLICKHOUSE_PROTOCOL}" == "https" ]]; then
-  SECURE=true
-else
-  SECURE=false
-fi
-
-cat > "${PROFILES_DIR}/profiles.yml" <<EOF
-ingestion:
-  target: bootstrap
-  outputs:
-    bootstrap:
-      type: clickhouse
-      host: ${CLICKHOUSE_HOST}
-      port: ${CLICKHOUSE_PORT}
-      schema: silver
-      user: ${CLICKHOUSE_USER}
-      password: "{{ env_var('CLICKHOUSE_PASSWORD') }}"
-      secure: ${SECURE}
-      send_receive_timeout: 1500
-      query_limit: 0
-      connect_timeout: 30
-      settings:
-        # Correlated subqueries (LEFT ANTI JOIN in the identity seed models)
-        # are gated behind this experimental flag on CH 25.7. A model-level
-        # config() setting does NOT reach the SELECT plan in dbt-clickhouse, so
-        # it must be set at profile level. Kept in parity with prod/test/e2e.
-        allow_experimental_correlated_subqueries: 1
-EOF
+"${VENV_DIR}/bin/python" "${SCRIPT_DIR}/../dbt_profiles.py" --target bootstrap \
+  --correlated-subqueries --profiles-dir "${PROFILES_DIR}"
 
 cd "${DBT_DIR}"
 "${DBT_BIN}" run --profiles-dir "${PROFILES_DIR}" "$@"

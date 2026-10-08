@@ -1048,52 +1048,10 @@ echo "=== Building gold models (dbt run --select ${_dbt_select[*]} ${_dbt_flags[
 # are bounded by the models' own query_settings (memory, threads, disk
 # spill), so this step degrades to a slower build rather than failing
 # the deploy on data volume.
-#
-# Profile generation mirrors the dbt-run WorkflowTemplate: python3 writes
-# profiles.yml from env vars, never interpolating values into YAML text.
 DBT_PROFILES_DIR="$(mktemp -d)"
 export DBT_PROFILES_DIR
-python3 - <<'PY'
-import os
-from urllib.parse import urlparse
-
-import yaml
-
-url = urlparse(os.environ["CLICKHOUSE_URL"])
-profile = {
-    "ingestion": {
-        "target": "migrate",
-        "outputs": {
-            "migrate": {
-                "type": "clickhouse",
-                "host": url.hostname,
-                "port": url.port or (8443 if url.scheme == "https" else 8123),
-                "schema": "silver",
-                "user": os.environ["CLICKHOUSE_USER"],
-                "password": os.environ["CLICKHOUSE_PASSWORD"],
-                "secure": url.scheme == "https",
-                "send_receive_timeout": 1500,
-                "query_limit": 0,
-                "connect_timeout": 30,
-                # Correlated subqueries (LEFT ANTI JOIN in the identity seed
-                # models) are gated behind this experimental flag on CH 25.7.
-                # A model-level config() setting does NOT reach the SELECT plan
-                # in dbt-clickhouse, so it must be set at profile level. Parity
-                # with test/bootstrap.
-                "settings": {"allow_experimental_correlated_subqueries": 1},
-            }
-        },
-    }
-}
-# The adapter's own key: present, it appends ON CLUSTER to the DDL
-# dbt-clickhouse emits. Same rule as scripts/dbt_profiles.on_cluster.
-cluster_mode = os.environ.get("CLICKHOUSE_CLUSTER_MODE", "").strip().lower()
-cluster_name = os.environ.get("CLICKHOUSE_CLUSTER_NAME", "").strip()
-if cluster_mode in ("1", "true", "yes", "on") and cluster_name:
-    profile["ingestion"]["outputs"]["migrate"]["cluster"] = cluster_name
-with open(os.path.join(os.environ["DBT_PROFILES_DIR"], "profiles.yml"), "w") as f:
-    yaml.safe_dump(profile, f)
-PY
+python3 "$SCRIPT_DIR/dbt_profiles.py" --target migrate --correlated-subqueries \
+  --profiles-dir "$DBT_PROFILES_DIR"
 (cd "$SCRIPT_DIR/../dbt" && dbt run --profiles-dir "$DBT_PROFILES_DIR" --log-format json --select "${_dbt_select[@]}" ${_dbt_flags[@]+"${_dbt_flags[@]}"})
 
 echo "=== Dropping quarantined pre-view tables (gold build succeeded) ==="

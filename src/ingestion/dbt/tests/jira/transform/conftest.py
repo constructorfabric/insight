@@ -35,6 +35,7 @@ from typing import Any
 
 import clickhouse_connect
 import pytest
+import yaml
 from dbt.cli.main import dbtRunner
 from helpers import SOURCE_ID
 
@@ -42,10 +43,14 @@ from helpers import SOURCE_ID
 DBT_DIR = Path(__file__).resolve().parents[3]
 INGESTION_DIR = DBT_DIR.parent
 # This suite's rootdir is its own directory, so the shared helper beside the other
-# transform suites is not importable without saying where it is.
+# transform suites is not importable without saying where it is. `dbt_profiles`
+# is the deploy's own profile writer, used here so the rig connects the way a
+# deployment does.
 sys.path.insert(0, str(DBT_DIR / "tests"))
+sys.path.insert(0, str(INGESTION_DIR / "scripts"))
 
 from bronze import create_bronze  # noqa: E402
+from dbt_profiles import Connection, build_profile  # noqa: E402
 
 # The class tables gold reads. `test_title_role.py` seeds them directly, and
 # the union models that normally create them need every source's staging arm.
@@ -173,7 +178,11 @@ class Warehouse:
             pytest.fail(f"dbt {' '.join(args)} failed:\n{invocation.log}", pytrace=False)
 
     def build(
-        self, selector: str = FIELD_HISTORY_SELECTOR, *, full_refresh: bool = True, dbt_vars: dict[str, Any] | None = None
+        self,
+        selector: str = FIELD_HISTORY_SELECTOR,
+        *,
+        full_refresh: bool = True,
+        dbt_vars: dict[str, Any] | None = None,
     ) -> None:
         # `run`, not `build`: `build` interleaves the singular tests, so a
         # scenario written to make an invariant fail — and there is one, because
@@ -212,26 +221,12 @@ def warehouse() -> Warehouse:
         wh = Warehouse(profiles_dir)
         # `password` is inlined rather than read through env_var: this profile is
         # written to a private temp dir for one session and never committed.
-        profiles_dir.joinpath("profiles.yml").write_text(
-            "ingestion:\n"
-            "  target: test\n"
-            "  outputs:\n"
-            "    test:\n"
-            "      type: clickhouse\n"
-            f"      host: {wh.host}\n"
-            f"      port: {wh.port}\n"
-            f"      user: {wh.user}\n"
-            f"      password: {wh.password}\n"
-            "      schema: silver\n"
-            "      secure: false\n"
-            "      query_limit: 0\n"
-            "      connect_timeout: 30\n"
-            "      send_receive_timeout: 600\n"
-            "      settings:\n"
-            # Parity with prod and the bootstrap profile: dbt-clickhouse does not
-            # push a model-level setting into the SELECT plan, so it lives here.
-            "        allow_experimental_correlated_subqueries: 1\n"
+        profile = build_profile(
+            "test",
+            Connection(host=wh.host, port=wh.port, user=wh.user, password=wh.password),
+            correlated_subqueries=True,
         )
+        profiles_dir.joinpath("profiles.yml").write_text(yaml.safe_dump(profile))
         wh.execute("CREATE DATABASE IF NOT EXISTS staging")
         wh.execute("CREATE DATABASE IF NOT EXISTS silver")
         wh.execute("CREATE DATABASE IF NOT EXISTS config")
@@ -321,7 +316,11 @@ class Scenario:
         ]
 
     def build(
-        self, selector: str = FIELD_HISTORY_SELECTOR, *, full_refresh: bool = True, dbt_vars: dict[str, Any] | None = None
+        self,
+        selector: str = FIELD_HISTORY_SELECTOR,
+        *,
+        full_refresh: bool = True,
+        dbt_vars: dict[str, Any] | None = None,
     ) -> None:
         self.warehouse.build(selector, full_refresh=full_refresh, dbt_vars=dbt_vars)
 

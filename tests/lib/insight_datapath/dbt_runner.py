@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -29,6 +30,12 @@ from dbt.cli.main import dbtRunner  # type: ignore[import-not-found]
 
 from insight_datapath import clickhouse as ch
 from insight_datapath.instance import InstanceConfig
+
+# The deploy's own profile writer, so this harness connects the way a deployment
+# does. It ships as a top-level module in the toolbox image, not as a package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src/ingestion/scripts"))
+
+from dbt_profiles import Connection, build_profile  # type: ignore[import-not-found]
 
 LOG = logging.getLogger("datapath.dbt")
 
@@ -291,36 +298,20 @@ class DbtRunner:
 
     def _write_profiles(self) -> None:
         self.profiles_dir.mkdir(parents=True, exist_ok=True)
-        profiles = {
-            "ingestion": {
-                "target": "test",
-                "outputs": {
-                    "test": {
-                        "type": "clickhouse",
-                        # Derive from session config — `127.0.0.1` only works in
-                        # host mode; in docker mode the runner reaches ClickHouse
-                        # at the compose service name (`clickhouse`).
-                        "host": self.cfg.ch_host,
-                        "port": self.cfg.ch_http_port,
-                        "schema": PROFILE_SCHEMA,
-                        "user": self.cfg.ch_user,
-                        "password": self.cfg.ch_password,
-                        "secure": False,
-                        # Match prod profile so models materialize identically
-                        "engine": "ReplacingMergeTree(_version)",
-                        "settings": {
-                            "allow_nullable_key": 1,
-                            # Correlated subqueries (LEFT ANTI JOIN in the identity
-                            # seed models) are gated behind this experimental flag
-                            # on CH 25.7. A model-level config() setting does NOT
-                            # reach the SELECT plan in dbt-clickhouse, so it must be
-                            # set at profile level. Parity with prod/bootstrap.
-                            "allow_experimental_correlated_subqueries": 1,
-                        },
-                    }
-                },
-            }
-        }
+        profiles = build_profile(
+            "test",
+            # Derive from session config — `127.0.0.1` only works in host mode;
+            # in docker mode the runner reaches ClickHouse at the compose
+            # service name (`clickhouse`).
+            Connection(
+                host=self.cfg.ch_host,
+                port=self.cfg.ch_http_port,
+                user=self.cfg.ch_user,
+                password=self.cfg.ch_password,
+                schema=PROFILE_SCHEMA,
+            ),
+            correlated_subqueries=True,
+        )
         (self.profiles_dir / "profiles.yml").write_text(yaml.safe_dump(profiles))
         LOG.debug("wrote test profiles.yml to %s", self.profiles_dir)
 
