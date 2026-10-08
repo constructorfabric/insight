@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 import tempfile
 import unittest
@@ -331,6 +332,15 @@ class RenderTests(unittest.TestCase):
             text = (root / "docs" / "FEATURE.md").read_text()
             self.assertLess(text.index("Intro kept."), text.index(ft.BEGIN))
             self.assertEqual(text.count("## 7. Testing"), 1)
+
+
+class SkillDocTests(unittest.TestCase):
+    def test_suite_table_names_only_suites_the_tool_emits(self) -> None:
+        skill = (ROOT / ".claude" / "skills" / "quality-vector-tests" / "SKILL.md").read_text()
+        table = skill.split("| Target component |", 1)[1].split("\n\n", 1)[0]
+        named = set(re.findall(r"`([a-z][a-z0-9-]*)`", table))
+        emitted = {suite for _, suite in ft.SUITE_PREFIXES} | {"fe-component", "unit"}
+        self.assertEqual(named - emitted, set())
 
 
 class CliTests(unittest.TestCase):

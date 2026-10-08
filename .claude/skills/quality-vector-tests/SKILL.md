@@ -55,14 +55,15 @@ lane for a functional requirement:
 | Target component | Suite, cheapest adequate first | End to end |
 |---|---|---|
 | Frontend | `fe-unit` → `fe-component` → `stand-ui` (`tests/stand/ui`) | `stand-ui` |
-| Serving / analytics | `rust-unit` → `metric-spec` (`tests/datapath/metrics`) → `stand-api` (`tests/stand/api`) | `metric-spec`, `stand-api` |
-| Authentication | `rust-unit` → `auth-rig` → `stand-api` / `stand-ui` | `stand-api`, `stand-ui` |
-| Identity | `rust-unit` → `identity-e2e` (`tests/datapath/identity`) → `stand-api` | `identity-e2e`, `stand-api` |
+| Serving / analytics | `metric-spec` (`tests/datapath/metrics`) → `stand-api` (`tests/stand/api`) | `metric-spec`, `stand-api` |
+| Authentication | `auth-rig` (`src/backend/services/authenticator/tests`) → `stand-api` / `stand-ui` | `stand-api`, `stand-ui` |
+| Identity | `identity-e2e` (`tests/datapath/identity`) → `stand-api` | `identity-e2e`, `stand-api` |
 | Ingestion | `connector-tests` → `dbt-tests` → `ingestion-e2e` (`src/ingestion/tests`) → `metric-spec` | `ingestion-e2e`, `metric-spec` |
 
 The suite is derived from the test's path by the tool; nothing is tagged by
 hand. Only trees registered as `[[systems.codebase]]` in
-`.cf-studio/config/artifacts.toml` are scanned; a test elsewhere is invisible.
+`.cf-studio/config/artifacts.toml` are scanned; a test elsewhere is invisible,
+including an inline Rust `#[cfg(test)]` module.
 
 ## 3. Generate section 7
 
