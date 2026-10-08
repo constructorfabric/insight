@@ -2101,13 +2101,13 @@ metrics:
   - metric_key: collab.emails_read
     source_key: collab
     subject: email
-    label: Emails Read
-    short_label: Emails read
-    description: Emails read
-    explanation: Emails a person read.
-    unit: emails
+    label: Email Read Actions
+    short_label: Mail read actions
+    description: Email read actions
+    explanation: Times a person opened an email, as the mail source reports them. Opening the same message again counts again, so this can exceed the number of emails received.
+    unit: actions
     format: integer
-    direction: higher_is_better
+    direction: neutral
     entity_type: person
     computation: sum
     peer_cohort_key: org_unit
