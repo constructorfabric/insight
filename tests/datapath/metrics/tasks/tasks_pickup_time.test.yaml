@@ -16,6 +16,8 @@ description: >
   then Closed 2026-03-27 -> per-person pickup = {1,2,3,4,5} days. The IC case
   requests erin (5): value=5, median=3, range_min=1, range_max=5 (P95), p25=2,
   p75=4. Empty window 2026-06 -> no items.
+  Erin also holds PUE2, closed straight from Open with no In Progress: it was
+  never picked up, so it has no pickup time and leaves erin's value at 5.
   Every issue comes from the one Jira instance, so the `source` breakdown is a
   single row carrying the member's own figure.
 
@@ -51,6 +53,7 @@ bronze:
     - { $ref: ../templates/jira_task.yaml#/templates/jira_issue, id: "10135", jira_id: "10135", unique_key: jira-test-PUC-1, id_readable: PUC1, created: "2026-03-20T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}' }
     - { $ref: ../templates/jira_task.yaml#/templates/jira_issue, id: "10136", jira_id: "10136", unique_key: jira-test-PUD-1, id_readable: PUD1, created: "2026-03-20T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}' }
     - { $ref: ../templates/jira_task.yaml#/templates/jira_issue, id: "10137", jira_id: "10137", unique_key: jira-test-PUE-1, id_readable: PUE1, created: "2026-03-20T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}' }
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_issue, id: "10138", jira_id: "10138", unique_key: jira-test-PUE-2, id_readable: PUE2, created: "2026-03-20T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}' }
 
   bronze_jira.jira_issue_history:
     # Per member: (a) Open -> In Progress at 2026-03-(20+r); (b) In Progress -> Closed at 2026-03-27.
@@ -64,3 +67,4 @@ bronze:
     - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: PUD1, jira_id: "10136", changelog_id: "53008", unique_key: jira-test-PUD1-53008, created_at: "2026-03-27T00:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
     - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: PUE1, jira_id: "10137", changelog_id: "53009", unique_key: jira-test-PUE1-53009, created_at: "2026-03-25T00:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"In Progress","to":"3"}]' }
     - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: PUE1, jira_id: "10137", changelog_id: "53010", unique_key: jira-test-PUE1-53010, created_at: "2026-03-27T00:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: PUE2, jira_id: "10138", changelog_id: "53011", unique_key: jira-test-PUE2-53011, created_at: "2026-03-27T00:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"Closed","to":"6"}]' }
