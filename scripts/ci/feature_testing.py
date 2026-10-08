@@ -220,6 +220,7 @@ def load_definitions(registry: Registry, root: Path) -> dict[str, Definition]:
 
 
 def verification_for(nfr_id: str, registry: Registry, root: Path) -> str:
+    found: list[str] = []
     for art in registry.artifacts:
         if art.kind != "DESIGN" or not (root / art.path).is_file():
             continue
@@ -233,8 +234,8 @@ def verification_for(nfr_id: str, registry: Registry, root: Path) -> str:
                 header = cells
                 continue
             if cells and f"`{nfr_id}`" in cells[0] and "Verification Approach" in header:
-                return cells[-1]
-    return ""
+                found.append(cells[-1])
+    return "; ".join(found)
 
 
 SUITE_ORDER = {suite: i for i, (_, suite) in enumerate(SUITE_PREFIXES)}

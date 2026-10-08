@@ -93,6 +93,15 @@ DESIGN = """# DESIGN
 | `cpt-demo-nfr-latency` | API | index on account | Insight · API endpoints, p95 panel, 7d, insight-dev |
 """
 
+DESIGN_GATEWAY = """# Gateway DESIGN
+
+#### NFR Allocation
+
+| NFR ID | Allocated To | Design Response | Verification Approach |
+|---|---|---|---|
+| `cpt-demo-nfr-latency` | Edge cache | shared-memory lookup | Load test measured at the gateway |
+"""
+
 FEATURE_BULLETS = """# Feature: Demo
 
 ## 1. Feature Context
@@ -149,6 +158,14 @@ def make_project(tmp: Path) -> Path:
         "// @cpt-test:cpt-demo-fr-bind:p1\nit('binds in the browser', () => {});\n"
     )
     return tmp
+
+
+def add_artifact(root: Path, kind: str, rel: str, text: str) -> None:
+    (root / rel).write_text(text)
+    toml = root / ".cf-studio" / "config" / "artifacts.toml"
+    toml.write_text(
+        toml.read_text() + f'\n[[systems.artifacts]]\npath = "{rel}"\nkind = "{kind}"\ntraceability = "DOCS-ONLY"\n'
+    )
 
 
 class RegistryTests(unittest.TestCase):
@@ -238,6 +255,15 @@ class DefinitionTests(unittest.TestCase):
                 "Insight · API endpoints, p95 panel, 7d, insight-dev",
             )
             self.assertEqual(ft.verification_for("cpt-demo-nfr-audit", reg, root), "")
+
+    def test_verification_joins_every_design_allocating_the_nfr(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            add_artifact(root, "DESIGN", "docs/GATEWAY-DESIGN.md", DESIGN_GATEWAY)
+            self.assertEqual(
+                ft.verification_for("cpt-demo-nfr-latency", ft.load_registry(root), root),
+                "Insight · API endpoints, p95 panel, 7d, insight-dev; Load test measured at the gateway",
+            )
 
 
 class RenderTests(unittest.TestCase):
