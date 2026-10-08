@@ -1,10 +1,10 @@
 # Vector mapping — which scenario goes under which quality vector
 
 The [authoring guide](../../../../.cf-studio/config/kits/sdlc/guides/quality-vectors.md)
-owns the product definitions. These are common Insight probes, not exhaustive
-definitions. Each scenario has one primary vector for its verification claim;
-independent claims in different vectors use assertion-focused tests sharing setup.
-The test suite is a separate dimension, described in SKILL.md.
+owns the product definitions. These are common Insight probes for deciding which
+vector an NFR belongs to and what a measurement of it looks like. A vector
+qualifies an NFR and its metric; a functional requirement carries none, and a
+test carries none beyond the pytest selection marker.
 
 ## The five vectors and what belongs to each
 

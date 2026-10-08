@@ -237,7 +237,7 @@ correct but unread has failed.
 Offer to file the scope as a **linked test subtask** under the parent feature via the
 `github-task` skill (Type `Task`, added to the Insights board, attached as a sub-issue). Draft
 for review first; don't auto-create. When the coverage belongs in the feature body instead,
-hand the groups to `quality-vector-tests` — it lays them out as the tracked scenario checkboxes. Do **not** reimplement issue mechanics here — compose with
+hand the groups to `quality-vector-tests` — it binds each group's tests to their requirement IDs and generates section 7. Do **not** reimplement issue mechanics here — compose with
 `github-task`.
 
 ## Common axes worth probing (prompts, not a fixed checklist)

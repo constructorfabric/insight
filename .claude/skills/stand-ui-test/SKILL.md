@@ -277,8 +277,9 @@ coverage.
    other vector count.
 9. Audit fidelity, then run headed once to confirm it fails for the right
    reason when you break the expectation deliberately.
-10. When the journey implements a scenario from a feature's Testing section,
-    cite it in the test docstring — the FEATURE path, its `cpt-…-feature-…` ID
-    and the stable scenario number — and keep the pytest marker equal to the
-    scenario's vector; the full traceability contract is section 5 of the
-    `quality-vector-tests` skill.
+10. When the journey proves a requirement a feature lists in its section 1.2,
+    cite that requirement on the line above the test —
+    `# @cpt-test:<fr-or-nfr-id>:p1` — and keep the pytest vector marker as the
+    selection label it is; the binding contract is section 2 of the
+    `quality-vector-tests` skill, and `scripts/ci/feature_testing.py --write`
+    regenerates the feature's section 7.

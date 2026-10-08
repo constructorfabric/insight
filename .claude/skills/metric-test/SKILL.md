@@ -466,10 +466,11 @@ regeneration. To seed a connector whose bronze tables aren't in the snapshot yet
   same change. A spec that asserts only the keys it requests is immune to this coupling;
   only a spec that pins a positive count needs the lockstep bump.
 
-## Feature-scenario traceability
+## Feature-requirement traceability
 
-When a spec implements a scenario from a feature's Testing section, cite it
-inside the spec's `description`: the FEATURE path, its `cpt-…-feature-…` ID and
-the stable scenario number. The full traceability contract is section 5 of the
-`quality-vector-tests` skill. This suite has no vector marker mechanism, so the
-scenario's vector lives in the FEATURE only.
+When a spec proves a requirement a feature lists in its section 1.2, cite that
+requirement in a comment line of the spec: `# @cpt-test:<fr-or-nfr-id>:p1`.
+The binding contract is section 2 of the `quality-vector-tests` skill, and
+`scripts/ci/feature_testing.py --write` regenerates the feature's section 7.
+This suite has no vector marker mechanism; a vector belongs to an NFR, never
+to the spec.

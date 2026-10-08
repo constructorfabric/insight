@@ -26,7 +26,7 @@ The other four testing skills each stop short of this:
 | Skill | Owns | Not this because |
 |---|---|---|
 | `scope-feature-tests` | reasoning out coverage before implementation | the code does not exist yet |
-| `quality-vector-tests` | authoring the Testing section into the issue | it formats scenarios, it does not run them |
+| `quality-vector-tests` | binding tests to requirements and generating section 7 | it does not run tests |
 | `insight-stand-validate` | validating a whole stand | scoped to an instance, not to a diff |
 | `verify-fix` | confirming a known defect is fixed | the defect is already named |
 
