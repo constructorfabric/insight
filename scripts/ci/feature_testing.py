@@ -47,6 +47,9 @@ ID_DEF_RE = re.compile(r"\*\*ID\*\*:\s*`(cpt-[a-z0-9][a-z0-9-]+)`")
 ID_RE = re.compile(r"`(cpt-[a-z0-9][a-z0-9-]+)`")
 CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 VECTORS = ("Efficiency", "Reliability", "Performance", "Security", "Versatility")
+FEATURE_ID_RE = re.compile(r"^- \[.\] `p\d+` - `(cpt-[a-z0-9][a-z0-9-]*-feature-[a-z0-9-]+)`\s*$", re.MULTILINE)
+FEATURE_ID_PLACEHOLDER = "`cpt-{system}-feature-{slug}`"
+TEMPLATE_PATH = Path(".cf-studio/config/kits/sdlc/artifacts/FEATURE/template.md")
 BEGIN = "<!-- feature-testing:begin -->"
 END = "<!-- feature-testing:end -->"
 E2E_SUITES = {"stand-api", "stand-ui", "identity-e2e", "metric-spec", "ingestion-e2e"}
@@ -348,14 +351,23 @@ def render(feature_path: Path, root: Path, cites: dict[str, list[Citation]] | No
     return block, failures
 
 
-def _splice(text: str, block: str) -> str:
+def section_preamble(root: Path, text: str) -> str:
+    template = (root / TEMPLATE_PATH).read_text()
+    section = template.split("## 7. Testing", 1)[1].split(BEGIN, 1)[0]
+    m = FEATURE_ID_RE.search(text)
+    if m:
+        section = section.replace(FEATURE_ID_PLACEHOLDER, f"`{m.group(1)}`")
+    return section.strip("\n")
+
+
+def _splice(text: str, block: str, root: Path) -> str:
     if BEGIN in text and END in text:
         head, rest = text.split(BEGIN, 1)
         _, tail = rest.split(END, 1)
         return head + block + tail
     heading = re.search(r"^## 7\. Testing[^\n]*\n", text, re.MULTILINE)
     if heading is None:
-        return text.rstrip("\n") + "\n\n## 7. Testing\n\n" + block + "\n"
+        return text.rstrip("\n") + "\n\n## 7. Testing\n\n" + section_preamble(root, text) + "\n\n" + block + "\n"
     after = text[heading.end() :]
     nxt = re.search(r"^## ", after, re.MULTILINE)
     cut = heading.end() + (nxt.start() if nxt else len(after))
@@ -366,7 +378,7 @@ def apply(feature_path: Path, root: Path, write: bool, cites: dict[str, list[Cit
     path = root / feature_path
     old = path.read_text()
     block, _ = render(feature_path, root, cites)
-    new = _splice(old, block)
+    new = _splice(old, block, root)
     if new == old:
         return False
     if write:

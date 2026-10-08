@@ -108,6 +108,8 @@ FEATURE_BULLETS = """# Feature: Demo
 
 ## 1. Feature Context
 
+- [ ] `p2` - `cpt-demo-feature-demo`
+
 ### 1.2 Purpose
 
 Why.
@@ -138,9 +140,28 @@ FEATURE_INLINE = """# Feature: Demo
 """
 
 
+TEMPLATE = """# Feature: {Feature Name}
+
+## 6. Acceptance Criteria
+
+- [ ] {Testable criterion for this feature}
+
+## 7. Testing
+
+**Feature**: `cpt-{system}-feature-{slug}`
+
+{Brief scope, primary risk, fixtures and test boundaries.}
+
+<!-- feature-testing:begin -->
+<!-- feature-testing:end -->
+"""
+
+
 def make_project(tmp: Path) -> Path:
     (tmp / ".cf-studio" / "config").mkdir(parents=True)
     (tmp / ".cf-studio" / "config" / "artifacts.toml").write_text(REGISTRY)
+    (tmp / ft.TEMPLATE_PATH).parent.mkdir(parents=True)
+    (tmp / ft.TEMPLATE_PATH).write_text(TEMPLATE)
     (tmp / "docs").mkdir()
     (tmp / "docs" / "PRD.md").write_text(PRD)
     (tmp / "docs" / "DESIGN.md").write_text(DESIGN)
@@ -352,6 +373,24 @@ class RenderTests(unittest.TestCase):
             text = (root / "docs" / "FEATURE.md").read_text()
             self.assertLess(text.index("Intro kept."), text.index(ft.BEGIN))
             self.assertEqual(text.count("## 7. Testing"), 1)
+
+    def test_write_adds_the_template_preamble_when_section_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            ft.apply(Path("docs/FEATURE.md"), root, write=True)
+            text = (root / "docs" / "FEATURE.md").read_text()
+            self.assertIn(
+                "## 7. Testing\n\n**Feature**: `cpt-demo-feature-demo`\n\n"
+                "{Brief scope, primary risk, fixtures and test boundaries.}\n\n" + ft.BEGIN,
+                text,
+            )
+
+    def test_kit_template_provides_the_preamble(self) -> None:
+        preamble = ft.section_preamble(ROOT, "- [ ] `p1` - `cpt-ir-feature-manual-resolution`\n")
+        self.assertTrue(
+            preamble.startswith("**Feature**: `cpt-ir-feature-manual-resolution`\n\n{Brief scope"), preamble
+        )
+        self.assertNotIn("{slug}", preamble)
 
 
 class SkillDocTests(unittest.TestCase):
