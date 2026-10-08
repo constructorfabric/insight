@@ -597,8 +597,8 @@ is an order statistic instead, and always answers with one that did.
 - Source: collab (collab_metric_observations)
 - Reads: emails_read
 - Formula: sum(emails_read)
-- Shape: integer, higher_is_better, unit actions
-- Notes: Times a person opened an email, as Microsoft 365 counts them. Opening the same message again, or on another device, counts again, so this can be higher than Emails Received.
+- Shape: integer, neutral, unit actions
+- Notes: Times a person opened an email, as the mail source reports them. Opening the same message again counts again, so this can exceed the number of emails received.
 
 ## collab.files_engaged — Files Engaged
 

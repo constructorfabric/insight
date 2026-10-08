@@ -1,9 +1,9 @@
 spec_version: 1
 description: >
-  Metric: collab.emails_read (Email Read Actions) — IC Bullet Collaboration (…0012), #1413, #3147.
+  Metric: collab.emails_read (Email Read Actions) — IC Bullet Collaboration (…0012), #1413.
   How it's computed (bronze → silver → gold):
     • bronze: daily M365 email-activity report per person (send/receive/read counts)
-    • silver: deduped to one row per person/day with the read-action count (each open counts, re-opens included)
+    • silver: deduped to one row per person/day with the source's read-action count
     • gold:   value = the requested member's per-person SUM of read actions over the
               window; median/p25/p75/range = the distribution of those per-person
               SUMs across the member's DEPARTMENT (same org_unit_id).

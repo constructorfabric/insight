@@ -2102,12 +2102,12 @@ metrics:
     source_key: collab
     subject: email
     label: Email Read Actions
-    short_label: Read actions
+    short_label: Mail read actions
     description: Email read actions
-    explanation: Times a person opened an email, as Microsoft 365 counts them. Opening the same message again, or on another device, counts again, so this can be higher than Emails Received.
+    explanation: Times a person opened an email, as the mail source reports them. Opening the same message again counts again, so this can exceed the number of emails received.
     unit: actions
     format: integer
-    direction: higher_is_better
+    direction: neutral
     entity_type: person
     computation: sum
     peer_cohort_key: org_unit
