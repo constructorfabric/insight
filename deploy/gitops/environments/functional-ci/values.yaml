@@ -11,7 +11,6 @@ gitCliProxy:
 
 global:
   storageClass: local-path
-  tenantDefaultId: "00000000-df51-5b42-9538-d2b56b7ee953"
   # functional-k3s.yml drives v3's raw-data flow end to end, so this
   # environment opts in.
   insightV3Core:
@@ -39,6 +38,8 @@ redpanda:
 ingestion:
   templates:
     enabled: false
+  reconcile:
+    tenantId: "00000000-df51-5b42-9538-d2b56b7ee953"
   dataQuality:
     enabled: false
 

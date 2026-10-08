@@ -30,7 +30,7 @@ automatically when `identityResolution.deploy=true`. It carries
 `APP__gears__identity-resolution__config__database_url` (derived from
 auto-generated MariaDB credentials in `insight-db-creds`), the
 ClickHouse coordinates for the persons-seed reader, and — when set —
-`tenant_default_id` (from `global.tenantDefaultId`) and
+`tenant_default_id` (from `ingestion.reconcile.tenantId`) and
 `bootstrap_admin_person_id` (from
 `identityResolution.bootstrapAdminPersonId`).
 

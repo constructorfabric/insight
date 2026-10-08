@@ -28,11 +28,12 @@
 #   .identityResolution.databaseName (defaults to "identity")
 #   .insightV3Core.existingSecret (optional; when set, compose that Secret and
 #                                  require insight-v3-core-token to exist)
-#   .global.tenantDefaultId      (optional; empty disables the resolver
-#                                 on both identity-resolution and
-#                                 analytics. Single source of truth for
-#                                 the single-tenant UUID — matches the
-#                                 chart's `global.tenantDefaultId` knob.)
+#   .ingestion.reconcile.tenantId (optional; empty disables the resolver
+#                                 on identity-resolution. The canonical
+#                                 tenant UUID, the chart's
+#                                 `insight.tenantId`. The deprecated
+#                                 .global.tenantDefaultId is read when it
+#                                 is empty; two different values fail.)
 #   .identityUrl                 (optional; the identity URL ANALYTICS calls.
 #                                 Empty = the default
 #                                 `http://<release>-identity-resolution:8082`.
@@ -82,7 +83,13 @@ CH_DB=$(   yq -r '.clickhouse.database'      "$VALUES")
 CORE_CONFIG_SECRET=$(yq -r '.insightV3Core.existingSecret // ""' "$VALUES")
 RD_HOST=$( yq -r '.redis.host'               "$VALUES")
 RD_PORT=$( yq -r '.redis.port       // 6379' "$VALUES")
-TENANT_DEFAULT=$(yq -r '.global.tenantDefaultId          // ""' "$VALUES")
+TENANT_DEFAULT=$(yq -r '.ingestion.reconcile.tenantId    // ""' "$VALUES")
+TENANT_DEFAULT_DEPRECATED=$(yq -r '.global.tenantDefaultId // ""' "$VALUES")
+if [[ -n "$TENANT_DEFAULT" && -n "$TENANT_DEFAULT_DEPRECATED" && "$TENANT_DEFAULT" != "$TENANT_DEFAULT_DEPRECATED" ]]; then
+  echo "ERROR: ingestion.reconcile.tenantId and global.tenantDefaultId name different tenants; keep only ingestion.reconcile.tenantId (deploy/TENANT_IDENTITY_UPGRADE.md)" >&2
+  exit 1
+fi
+TENANT_DEFAULT="${TENANT_DEFAULT:-$TENANT_DEFAULT_DEPRECATED}"
 IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN=$(yq -r '.identityResolution.bootstrapAdminPersonId // ""' "$VALUES")
 IDENTITY_RESOLUTION_DB=$(yq -r '.identityResolution.databaseName // "identity"' "$VALUES")
 CORE_DB=$(yq -r '.insightV3Core.databaseName // "insight_v3"' "$VALUES")

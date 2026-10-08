@@ -62,7 +62,7 @@ spec:
               value: "true"
             - name: KEYCLOAK_AVAILABILITYCHECK_TIMEOUT
               value: "120s"
-            {{- with (default "" (default dict .Values.global).tenantDefaultId) }}
+            {{- with (include "insight.tenantId" .) }}
             # Env tenant pin for realm IdP mappers (never claim-derived).
             - name: INSIGHT_TENANT_ID
               value: {{ . | quote }}

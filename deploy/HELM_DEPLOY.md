@@ -114,7 +114,7 @@ Generate the tenant ID, then read the rest off the cluster. Each dependency may 
 
 ### Generate the tenant ID
 
-A lowercase UUID, used verbatim for both `global.tenantDefaultId` and `ingestion.reconcile.tenantId`, and never changed after the first sync. (Local/dev against the compose wizard or the seed generators reuses their fixed `00000000-df51-5b42-9538-d2b56b7ee953`.) `global.tenantDefaultId` is only a fallback — the request tenant comes from the id_token claim named by `authenticator.oidc.tenantClaim`, default `tenant_id` — so if your IdP asserts that claim, give it this same UUID.
+A lowercase UUID, set once as `ingestion.reconcile.tenantId` and never changed after the first sync. A fresh install never sets `ingestion.reconcile.legacyTenantKeyOverride`; upgrading an install whose data predates the canonical tenant follows [TENANT_IDENTITY_UPGRADE.md](TENANT_IDENTITY_UPGRADE.md). (Local/dev against the compose wizard or the seed generators reuses their fixed `00000000-df51-5b42-9538-d2b56b7ee953`.) The tenant id is only a fallback for the request tenant — the request tenant comes from the id_token claim named by `authenticator.oidc.tenantClaim`, default `tenant_id` — so if your IdP asserts that claim, give it this same UUID.
 
 ```sh
 uuidgen | tr '[:upper:]' '[:lower:]'    # no uuidgen? python3 -c 'import uuid; print(uuid.uuid4())'
@@ -180,7 +180,6 @@ credentials:
   autoGenerate: true                 # BYO compose; won't overwrite a labelless insight-db-creds
 
 global:
-  tenantDefaultId: "<TENANT_ID>"     # the UUID from Step 0; must equal ingestion.reconcile.tenantId
   # imagePullSecrets: []             # [{name: my-regcred}] for a private registry
 
 # Datastore wiring — every dep is external; the chart only dials it.
@@ -205,7 +204,7 @@ ingestion:
   templates:
     enabled: true
   reconcile:
-    tenantId: "<TENANT_ID>"
+    tenantId: "<TENANT_ID>"          # the UUID from Step 0
     destinationName: clickhouse-bronze
     argoInstanceId: "<ARGO_INSTANCE_ID>"     # match the controller's instanceID (Step 0); leave "" if unpinned
 airbyte:
@@ -287,7 +286,7 @@ Fill each placeholder:
 
 | Placeholder | What it should be |
 |-------------|--------------------|
-| `<TENANT_ID>` | The tenant UUID you generated in Step 0. Must be the same value in `global.tenantDefaultId` and `ingestion.reconcile.tenantId` |
+| `<TENANT_ID>` | The tenant UUID you generated in Step 0, set as `ingestion.reconcile.tenantId` |
 | `<CLICKHOUSE_HOST>` | ClickHouse host only — no port, no scheme; the skeleton's `port: 8123` supplies the port |
 | `<MARIADB_HOST>` | MariaDB host only — no port; the skeleton's `port: 3306` supplies it |
 | `<REDIS_HOST>` | Redis host only — no port; the skeleton's `port: 6379` supplies it |
@@ -444,7 +443,7 @@ This is demo data. The seeder refuses a tenant that already holds `persons` rows
 
 | Placeholder | Field(s) | Notes |
 |-------------|----------|-------|
-| `<TENANT_ID>` | `global.tenantDefaultId`, `ingestion.reconcile.tenantId` | Generated in Step 0; a lowercase UUID, identical across both |
+| `<TENANT_ID>` | `ingestion.reconcile.tenantId` | Generated in Step 0; a lowercase UUID |
 | `<CLICKHOUSE_HOST>` | `clickhouse.host` | Always external; port fixed at `8123` in the file |
 | `<MARIADB_HOST>` | `mariadb.host` | Always external; port fixed at `3306` |
 | `<REDIS_HOST>` | `redis.host` | Always external; port fixed at `6379` |
@@ -474,7 +473,7 @@ Other notable (non-placeholder) settings in this file:
   identity mints only for an account a connector has already observed, refuses
   one the source has closed, refuses one an operator excluded as not-a-person,
   and writes only under the tenant its own journal is keyed by — so
-  `global.tenantDefaultId` is required, and the chart refuses to render without
+  `ingestion.reconcile.tenantId` is required, and the chart refuses to render without
   it rather than leaving the switch on and inert. The minted person carries
   the source-native id alone until the next seed run attaches the roster's name
   and org placement to it.

@@ -32,7 +32,7 @@ def _analytics_secret(manifests: str) -> dict:
     ("extra", "expected"), [((), False), (("--set", "analytics.metricCatalog.tenantMetricsEnabled=true"), True)]
 )
 def test_tenant_metrics_are_opt_in_per_installation(umbrella_deps, extra: tuple[str, ...], expected: bool) -> None:
-    code, out, err = render(umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}", *extra)
+    code, out, err = render(umbrella_deps, *UMBRELLA_BASE, "--set", f"ingestion.reconcile.tenantId={TENANT}", *extra)
     assert code == 0, err
 
     assert _analytics_config(out)["metric_catalog"]["tenant_metrics_enabled"] is expected
@@ -44,7 +44,7 @@ def test_analytics_visibility_policy_reuses_identity_resolution_setting(umbrella
         umbrella_deps,
         *UMBRELLA_BASE,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"ingestion.reconcile.tenantId={TENANT}",
         "--set",
         "identityResolution.visibilityPolicy=flat",
     )
@@ -59,7 +59,7 @@ def test_external_source_registry_reaches_analytics_config(umbrella_deps) -> Non
         umbrella_deps,
         *UMBRELLA_BASE,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"ingestion.reconcile.tenantId={TENANT}",
         "--set",
         "analytics.externalSources[0].id=github-main",
         "--set",
