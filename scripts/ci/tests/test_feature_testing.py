@@ -5,10 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "scripts" / "ci"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import feature_testing as ft  # noqa: E402
+import feature_testing as ft
+
+ROOT = Path(__file__).resolve().parents[3]
 
 REGISTRY = """
 [[systems]]
