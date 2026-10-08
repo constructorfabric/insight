@@ -21,10 +21,7 @@ SPEC = "collab_m365_revised_report"
 
 ALICE = "alice@example.com"
 BRONZE = "bronze_m365.email_activity"
-REBUILT_MODELS = (
-    "m365__collab_email_activity class_collab_email_activity "
-    "collab_metric_evidence collab_metric_observations"
-)
+REBUILT_MODELS = "m365__collab_email_activity+"
 
 
 def test_latest_version_of_a_day_wins_before_any_merge(
