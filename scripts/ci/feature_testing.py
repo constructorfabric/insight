@@ -45,6 +45,7 @@ TS_TEST_RE = re.compile(r"\b(?:it|test)\(\s*['\"`](.+?)['\"`]")
 RS_TEST_RE = re.compile(r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)")
 ID_DEF_RE = re.compile(r"\*\*ID\*\*:\s*`(cpt-[a-z0-9][a-z0-9-]+)`")
 ID_RE = re.compile(r"`(cpt-[a-z0-9][a-z0-9-]+)`")
+CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 VECTORS = ("Efficiency", "Reliability", "Performance", "Security", "Versatility")
 BEGIN = "<!-- feature-testing:begin -->"
 END = "<!-- feature-testing:end -->"
@@ -168,10 +169,14 @@ def feature_requirements(text: str) -> list[str]:
     return [x for x in ids if not (x in seen or seen.add(x))]
 
 
+def _cells(line: str) -> list[str]:
+    return [c.strip().replace("\\|", "|") for c in CELL_SPLIT_RE.split(line.strip().strip("|"))]
+
+
 def _vector_rows(lines: list[str]) -> dict[str, str]:
     out: dict[str, str] = {}
     for line in lines:
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        cells = _cells(line)
         if len(cells) >= 2 and cells[0] in VECTORS:
             for nfr in ID_RE.findall(line):
                 out.setdefault(nfr, cells[0])
@@ -196,11 +201,17 @@ def load_definitions(registry: Registry, root: Path) -> dict[str, Definition]:
             if not m:
                 continue
             threshold, vector = "", ""
-            for body in lines[i + 1 :]:
+            body_lines = lines[i + 1 :]
+            for j, body in enumerate(body_lines):
                 if body.startswith("#"):
                     break
                 if body.startswith("**Threshold**:"):
-                    threshold = body.split(":", 1)[1].strip()
+                    parts = [body.split(":", 1)[1].strip()]
+                    for cont in body_lines[j + 1 :]:
+                        if not cont.strip() or cont.startswith(("**", "#", "-", "|")):
+                            break
+                        parts.append(cont.strip())
+                    threshold = " ".join(parts)
                 if body.startswith("**Vector**"):
                     vector = body.split(":", 1)[1].strip()
             rid = m.group(1)
@@ -217,7 +228,7 @@ def verification_for(nfr_id: str, registry: Registry, root: Path) -> str:
             if not line.strip().startswith("|"):
                 header = []
                 continue
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            cells = _cells(line)
             if not header:
                 header = cells
                 continue
@@ -245,7 +256,7 @@ def _preserved(text: str) -> dict[str, tuple[str, str]]:
     for line in block.splitlines():
         if not line.startswith("| ") or line.startswith(("| Requirement", "| Vector")):
             continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        cells = _cells(line)
         ids = ID_RE.findall(line)
         if not ids:
             continue
@@ -269,13 +280,19 @@ def render(feature_path: Path, root: Path) -> tuple[str, list[str]]:
     kept = _preserved(text)
     failures: list[str] = []
     functional = [r for r in reqs if "-nfr-" not in r]
+    here = (root / feature_path).resolve()
+    functional += [
+        rid
+        for rid, d in defs.items()
+        if "-dod-" in rid and rid in cites and rid not in functional and (root / d.path).resolve() == here
+    ]
     quality = [r for r in reqs if "-nfr-" in r]
 
     rows_a = ["| Requirement | Tests citing it | Suite | End to end | Note |", "|---|---|---|---|---|"]
     for rid in functional:
         note = kept.get(rid, ("", ""))[1]
         if rid not in defs:
-            rows_a.append(f"| `{rid}` | none | | no | unknown id |")
+            rows_a.append(f"| `{rid}` | unknown id |  | no | {_cell(note)} |")
             failures.append(f"{rid}: unknown id")
             continue
         found = cites.get(rid, [])
@@ -295,7 +312,7 @@ def render(feature_path: Path, root: Path) -> tuple[str, list[str]]:
     for rid in sorted(quality, key=quality_key):
         collected, note = kept.get(rid, ("", ""))
         if rid not in defs:
-            rows_b.append(f"| unassigned | `{rid}` | | | {_cell(collected)} | none | unknown id |")
+            rows_b.append(f"| unassigned | `{rid}` |  |  | {_cell(collected)} | unknown id | {_cell(note)} |")
             failures.append(f"{rid}: unknown id")
             continue
         d = defs[rid]

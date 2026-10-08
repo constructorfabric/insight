@@ -268,7 +268,7 @@ class RenderTests(unittest.TestCase):
             root = make_project(Path(d))
             (root / "docs" / "FEATURE.md").write_text(FEATURE_BULLETS.replace("cpt-demo-nfr-audit", "cpt-demo-fr-gone"))
             block, failures = ft.render(Path("docs/FEATURE.md"), root)
-            self.assertIn("| `cpt-demo-fr-gone` | none | | no | unknown id |", block)
+            self.assertIn("| `cpt-demo-fr-gone` | unknown id |  | no |  |", block)
             self.assertIn("cpt-demo-fr-gone: unknown id", failures)
 
     def test_authored_cells_survive_regeneration(self) -> None:
@@ -324,3 +324,67 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixTests(unittest.TestCase):
+    def test_authored_cell_with_escaped_pipe_survives(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            ft.apply(Path("docs/FEATURE.md"), root, write=True)
+            path = root / "docs" / "FEATURE.md"
+            text = path.read_text().replace(
+                "| every bind leaves one audit row. |  | none |  |",
+                "| every bind leaves one audit row. | p95 1.2 s \\| cf-prod | none | by hand \\| KT |",
+            )
+            path.write_text(text)
+            self.assertFalse(ft.apply(Path("docs/FEATURE.md"), root, write=False))
+            block, failures = ft.render(Path("docs/FEATURE.md"), root)
+            self.assertIn("| p95 1.2 s \\| cf-prod | none | by hand \\| KT |", block)
+            self.assertEqual(failures, [])
+
+    def test_unknown_id_marker_is_not_read_back_as_a_note(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            feature = root / "docs" / "FEATURE.md"
+            feature.write_text(FEATURE_BULLETS.replace("cpt-demo-nfr-audit", "cpt-demo-fr-gone"))
+            ft.apply(Path("docs/FEATURE.md"), root, write=True)
+            prd = root / "docs" / "PRD.md"
+            prd.write_text(
+                prd.read_text() + "\n#### Gone\n\n- [ ] `p1` - **ID**: `cpt-demo-fr-gone`\n\nThe system **MUST** go.\n"
+            )
+            block, failures = ft.render(Path("docs/FEATURE.md"), root)
+            self.assertIn("| `cpt-demo-fr-gone` | none |  | no |  |", block)
+            self.assertIn("cpt-demo-fr-gone: no test and no note", failures)
+
+    def test_cited_dod_of_this_feature_renders_and_uncited_dod_is_not_a_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            feature = root / "docs" / "FEATURE.md"
+            feature.write_text(
+                FEATURE_BULLETS
+                + "\n## 5. Definitions of Done\n\n### Verbs\n\n- [ ] `p1` - **ID**: `cpt-demo-dod-verbs`\n\n"
+                "### Quiet\n\n- [ ] `p1` - **ID**: `cpt-demo-dod-quiet`\n"
+            )
+            (root / "tests" / "unit" / "test_dod.py").write_text(
+                "# @cpt-test:cpt-demo-dod-verbs:p1\ndef test_verbs():\n    pass\n"
+            )
+            block, failures = ft.render(Path("docs/FEATURE.md"), root)
+            self.assertIn("| `cpt-demo-dod-verbs` | test_dod.py::test_verbs | unit | no |  |", block)
+            self.assertNotIn("cpt-demo-dod-quiet", block)
+            self.assertNotIn("cpt-demo-dod-quiet: no test and no note", failures)
+
+    def test_multiline_threshold_is_kept_whole(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = make_project(Path(d))
+            prd = root / "docs" / "PRD.md"
+            prd.write_text(
+                prd.read_text().replace(
+                    "**Threshold**: p95 under 500 ms at the reference organization.",
+                    "**Threshold**: p95 under 500 ms at the reference organization,\nmeasured at the gateway.",
+                )
+            )
+            defs = ft.load_definitions(ft.load_registry(root), root)
+            self.assertEqual(
+                defs["cpt-demo-nfr-latency"].threshold,
+                "p95 under 500 ms at the reference organization, measured at the gateway.",
+            )
