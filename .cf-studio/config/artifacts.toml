@@ -4,8 +4,142 @@
 name = "InsightSpec"
 slug = "insightspec"
 kit = "sdlc"
-codebase = ["docs"]
 children = ["identity-svc", "ir"]
+
+[[systems.codebase]]
+name = "Stand and datapath tests"
+path = "tests"
+extensions = [".py", ".yaml"]
+
+[[systems.codebase]]
+name = "Frontend unit and component tests"
+path = "src/frontend/src"
+extensions = [".ts", ".tsx"]
+
+[[systems.codebase]]
+name = "Authenticator tests"
+path = "src/backend/services/authenticator/tests"
+extensions = [".py", ".rs"]
+
+[[systems.codebase]]
+name = "Gateway tests"
+path = "src/backend/services/gateway/tests"
+extensions = [".py", ".yaml", ".yml"]
+
+[[systems.codebase]]
+name = "git-cli-proxy tests"
+path = "src/backend/services/git-cli-proxy/tests"
+extensions = [".rs"]
+
+[[systems.codebase]]
+name = "insight-v3-core tests"
+path = "src/backend/services/insight-v3-core/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "routegen tests"
+path = "src/backend/tools/routegen/tests"
+extensions = [".rs", ".yaml"]
+
+[[systems.codebase]]
+name = "Ingestion e2e tests"
+path = "src/ingestion/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "dbt tests"
+path = "src/ingestion/dbt/tests"
+extensions = [".py", ".sql"]
+
+[[systems.codebase]]
+name = "reconcile-connectors tests"
+path = "src/ingestion/reconcile-connectors/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Ingestion scripts tests"
+path = "src/ingestion/scripts/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Seed tool tests"
+path = "src/ingestion/tools/seed/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: chatgpt-team"
+path = "src/ingestion/connectors/ai/chatgpt-team/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: claude-team-invoices"
+path = "src/ingestion/connectors/ai/claude-team-invoices/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: claude-team"
+path = "src/ingestion/connectors/ai/claude-team/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: zoom"
+path = "src/ingestion/connectors/collaboration/zoom/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: hubspot"
+path = "src/ingestion/connectors/crm/hubspot/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: compass"
+path = "src/ingestion/connectors/dev-portal/compass/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: bitbucket-cloud"
+path = "src/ingestion/connectors/git/bitbucket-cloud/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: github-directory"
+path = "src/ingestion/connectors/git/github-directory/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: github"
+path = "src/ingestion/connectors/git/github/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: gitlab"
+path = "src/ingestion/connectors/git/gitlab/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: bamboohr"
+path = "src/ingestion/connectors/hr-directory/bamboohr/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: allure"
+path = "src/ingestion/connectors/quality/allure/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: zendesk"
+path = "src/ingestion/connectors/support/zendesk/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: jira"
+path = "src/ingestion/connectors/task-tracking/jira/tests"
+extensions = [".py"]
+
+[[systems.codebase]]
+name = "Connector tests: youtrack"
+path = "src/ingestion/connectors/task-tracking/youtrack/tests"
+extensions = [".py"]
 
 [[systems.artifacts]]
 kind = "PRD"

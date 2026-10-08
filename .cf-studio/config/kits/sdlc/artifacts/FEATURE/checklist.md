@@ -735,27 +735,28 @@ Before evaluating each checklist item, the expert MUST:
 - [ ] Criteria cover error paths
 - [ ] Criteria testable automatically
 
-### TEST-FDESIGN-004: Testing Scenario Vector Attribution
+### TEST-FDESIGN-004: Requirement Verification Binding
 **Severity**: HIGH
 **Ref**: [quality-vector guide](../../guides/quality-vectors.md) (kit-local framing, not an ISO/IEC 25010 characteristic set)
 
-> **New in v2.1**: Added to gate the vector and suite-tag attribution `FEATURE/rules.md` requires of every authored `## 7. Testing` scenario.
+> **New in v2.1**: Added to gate the vector and suite-tag attribution of authored scenarios. **Revised 2026-10**: section 7 is now derived from `@cpt-test` citations; this item gates the binding, not a scenario format.
 
-- [ ] Every authored Testing scenario carries exactly one primary quality vector (Efficiency, Reliability, Performance, Security, Versatility) and exactly one suite tag
-- [ ] Each scenario traces to an executable test, citing the feature path, feature ID and stable scenario number (or is explicitly marked "Not implemented")
-- [ ] The vector attributed to a scenario is the one the scenario's own claim tests, not the vector the underlying requirement is filed under in section 1.2
-- [ ] A vector category with no scenario is not reported as a violation by itself — missing coverage across the five vectors is not a gate (`FEATURE/rules.md`)
+- [ ] Section 7 carries the generated block and it is current (`python3 scripts/ci/feature_testing.py <FEATURE> --write` produces no diff)
+- [ ] Every functional requirement in section 1.2 appears in table 7.1 with at least one citing test, or carries a `Note` naming the reason and the owner
+- [ ] Every NFR in section 1.2 appears in table 7.2 with a source (a citing test, or a DESIGN NFR-allocation verification cell naming the dashboard, panel, query, window and environment), or carries a `Note` naming the reason and the owner
+- [ ] No functional requirement row carries a vector; vectors appear only in table 7.2, taken from the PRD's 6.1 table or the NFR's `**Vector**` line
+- [ ] A unit-only citation is reported as `End to end: no` and is not a violation; a vector absent from 7.2 is not a violation
 
 ---
 
 ## Authoring aid — quality vectors
 
 **Authoring aid:** Use the [quality-vector guide](../../guides/quality-vectors.md)
-to suggest clearer requirement mappings, contribution boundaries and evidence
-links. Report these as improvement opportunities, without a severity or
-pass/fail verdict. Canonical criteria above and agreed requirements retain
-their meaning. Vector and suite-tag attribution on authored Testing scenarios
-is checked under TEST-FDESIGN-004.
+to suggest clearer NFR thresholds, measurement boundaries and evidence
+sources for table 7.2. Report these as improvement opportunities, without a
+severity or pass/fail verdict. Canonical criteria above and agreed requirements
+retain their meaning. The binding of tests to requirements is checked under
+TEST-FDESIGN-004.
 
 ---
 

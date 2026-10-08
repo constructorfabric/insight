@@ -16,10 +16,12 @@ content-improvement suggestions and the optional per-requirement `**Vector**` ta
 stay advisory and do not add a readiness gate; the PRD's Quality Vector Analysis
 table itself is gated (checklist ARCH-PRD-006).
 
-Use `quality-vector-tests` in `.claude/skills/` to author FEATURE section 7 Testing
-and map exact tests back to feature-owned scenarios. It owns that format and the
-suite mapping. Preserve canonical Acceptance Criteria and FR/NFR IDs. Stand API/UI
-test collection continues to require one native vector marker per test.
+Use `quality-vector-tests` in `.claude/skills/` to bind tests to requirements:
+a test cites the FR/NFR it proves with `@cpt-test:<id>:p1`, and
+`scripts/ci/feature_testing.py --write` derives FEATURE section 7 from those
+citations. Preserve canonical Acceptance Criteria and FR/NFR IDs. Stand API/UI
+test collection continues to require one native vector marker per test; that
+marker selects tests with `-m`, it does not bind a requirement to a vector.
 
 Existing artifacts adopt this extension only within the requested scope. Agreed
 requirements define expectations; record implementation disagreements for review.

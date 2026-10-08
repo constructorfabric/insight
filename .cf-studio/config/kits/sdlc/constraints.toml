@@ -718,7 +718,7 @@ required = false
 multiple = false
 numbered = true
 pattern = "Testing"
-description = "Test scenarios mapped to executable tests, each carrying one quality vector and one suite tag."
+description = "Generated tables: functional requirements with their citing tests, and NFRs with vector, metric, target, collected value and source."
 
 # ── FEATURE ID kinds ───────────────────────────────────────────
 
