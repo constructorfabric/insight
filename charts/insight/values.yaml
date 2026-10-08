@@ -291,9 +291,9 @@ clickhouse:
   #                         MergeTree family, so DDL and data reach every
   #                         replica. Requires ClickHouse Keeper.
   #   clusterName:       -> the cluster the `ON CLUSTER <name>` clause names.
-  # The two are independent: a database created with the `Replicated` engine
-  # replicates DDL on its own, so an empty clusterName under clusterMode: true
-  # is a valid clustered install.
+  # The two travel together: clusterMode without a clusterName is refused at
+  # template time, because replicated DDL that reaches one node leaves every
+  # other replica without the relation.
   # Defaults are a standalone single node, which is the DDL shipped today.
   clusterMode: false
   clusterName: ""

@@ -110,9 +110,9 @@ def test_a_cluster_name_without_the_flag_names_no_cluster(monkeypatch) -> None:
     assert "cluster" not in _output()
 
 
-def test_a_replicated_database_needs_no_clause(monkeypatch) -> None:
-    """The epic's chosen mechanism: the database engine distributes the DDL,
-    so the flag stands alone and no clause is written."""
+def test_a_flag_without_a_name_writes_no_clause(monkeypatch) -> None:
+    """The chart refuses that pair, so this records only that the writer neither
+    invents a cluster nor half-writes one if it is ever reached."""
     monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", "true")
 
     assert on_cluster() == ""

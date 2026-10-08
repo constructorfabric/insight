@@ -139,8 +139,10 @@ release, and they are the only place an operator sets it:
 
 - `clickhouse.clusterMode` (bool, default `false`) — created engines replicate.
 - `clickhouse.clusterName` (string, default `""`) — the cluster `ON CLUSTER`
-  names. It may stay empty under `clusterMode: true`: a database created with
-  the `Replicated` engine distributes DDL by itself.
+  names. Required whenever `clusterMode` is on, and `helm template` fails
+  without it: replicated DDL that reaches only the node a creator connected to
+  leaves every other replica without the relation. Every creator downstream
+  reads the pair from this release, so this is the one place it is checked.
 
 The same decision under a different name in each layer:
 

@@ -12,8 +12,8 @@ pub enum Topology {
     #[default]
     Standalone,
     /// `Replicated*` engines. `on_cluster` names the cluster for the
-    /// `ON CLUSTER` clause; a database created with the `Replicated` engine
-    /// distributes DDL by itself and so needs no clause.
+    /// `ON CLUSTER` clause; the chart refuses a clustered install that names
+    /// none, so `None` is a topology this service is never configured with.
     Replicated { on_cluster: Option<String> },
 }
 

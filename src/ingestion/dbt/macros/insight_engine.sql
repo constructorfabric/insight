@@ -43,10 +43,10 @@
   adapter — so the profile's `cluster:` key, which is what qualifies every
   model's DDL, never reaches them and the clause has to be rendered here.
 
-  Empty on a standalone install, and on a cluster that named none: a database
-  created with the `Replicated` engine distributes DDL by itself. A name
-  without the flag names no cluster, which is how every other reader of
-  `CLICKHOUSE_CLUSTER_NAME` treats it (`scripts/dbt_profiles.py:on_cluster`).
+  Empty on a standalone install. A name without the flag names no cluster:
+  the flag is what turns on the replicated engines a clause would qualify. The
+  flag without a name never reaches here — the chart refuses that pair (see
+  charts/insight/README.md, "ClickHouse topology").
 -#}
 {% macro insight_on_cluster() -%}
   {%- set name = var('cluster_name', '') | string | trim -%}

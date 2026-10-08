@@ -46,8 +46,8 @@ def chart_dependencies() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def _render(template: str, overrides: list[str]) -> str:
-    result = subprocess.run(
+def _template(template: str, overrides: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         [
             "helm",
             "template",
@@ -64,6 +64,10 @@ def _render(template: str, overrides: list[str]) -> str:
         timeout=300,
         check=False,
     )
+
+
+def _render(template: str, overrides: list[str]) -> str:
+    result = _template(template, overrides)
     assert result.returncode == 0, result.stderr
     return result.stdout
 
@@ -120,15 +124,35 @@ def test_every_consumer_hears_the_same_cluster(chart_dependencies: None, templat
     assert found == {mode: "true", name: "insight_cluster"}, f"{template} missed the topology"
 
 
-def test_a_cluster_needs_no_name_when_its_database_replicates_the_ddl(chart_dependencies: None) -> None:
-    """`clusterName` stays empty on the epic's chosen mechanism — a database
-    created with the `Replicated` engine needs no `ON CLUSTER` clause."""
+@pytest.mark.parametrize(
+    "name", ["", "   ", "has space", "1leading", "insight-cluster", "insight.cluster", 'a"; DROP TABLE x']
+)
+def test_a_cluster_mode_install_needs_a_name_shaped_like_an_identifier(chart_dependencies: None, name: str) -> None:
+    """Without one, every creator gets replicated engines and no clause to qualify
+    them, so their DDL reaches one node and leaves the replicas bare. The shape is
+    checked with it: the name is interpolated into DDL unquoted, so a `-` or a `.`
+    in it is a syntax error in every statement it reaches, not a wrong cluster."""
+    result = _template(
+        "templates/platform-config.yaml",
+        [*BASE, "--set", "clickhouse.clusterMode=true", "--set", f"clickhouse.clusterName={name}"],
+    )
+
+    assert result.returncode != 0
+    assert "must name the cluster" in result.stderr
+
+
+@pytest.mark.parametrize("name", ["insight_cluster", "_c1", "Cluster2"])
+def test_a_cluster_may_be_named_anything_clickhouse_reads_as_an_identifier(chart_dependencies: None, name: str) -> None:
+    """The rule above must not reject a name an operator can actually configure."""
     found = _values(
-        _render("templates/platform-config.yaml", [*BASE, "--set", "clickhouse.clusterMode=true"]),
+        _render(
+            "templates/platform-config.yaml",
+            [*BASE, "--set", "clickhouse.clusterMode=true", "--set", f"clickhouse.clusterName={name}"],
+        ),
         CONSUMERS["templates/platform-config.yaml"],
     )
 
-    assert found == {"CLICKHOUSE_CLUSTER_MODE": "true", "CLICKHOUSE_CLUSTER_NAME": ""}
+    assert found == {"CLICKHOUSE_CLUSTER_MODE": "true", "CLICKHOUSE_CLUSTER_NAME": name}
 
 
 @pytest.mark.parametrize(
