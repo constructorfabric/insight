@@ -142,3 +142,87 @@ def suite_for(rel_path: Path) -> tuple[str, bool]:
                 suite = "fe-component"
             return suite, suite in E2E_SUITES
     return "unit", False
+
+
+@dataclass(frozen=True)
+class Definition:
+    id: str
+    path: Path
+    line: int
+    heading: str
+    threshold: str
+    vector: str
+
+
+def feature_requirements(text: str) -> list[str]:
+    lines = text.splitlines()
+    ids: list[str] = []
+    start = next((n for n, line in enumerate(lines) if line.startswith("**Requirements**")), None)
+    if start is None:
+        return ids
+    ids.extend(ID_RE.findall(lines[start]))
+    for line in lines[start + 1 :]:
+        if line.startswith(("**", "#")):
+            break
+        if line.strip().startswith("-"):
+            ids.extend(ID_RE.findall(line))
+    seen: set[str] = set()
+    return [x for x in ids if not (x in seen or seen.add(x))]
+
+
+def _vector_rows(lines: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in lines:
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 2 and cells[0] in VECTORS:
+            for nfr in ID_RE.findall(line):
+                out.setdefault(nfr, cells[0])
+    return out
+
+
+def load_definitions(registry: Registry, root: Path) -> dict[str, Definition]:
+    defs: dict[str, Definition] = {}
+    for art in registry.artifacts:
+        if art.kind not in ("PRD", "FEATURE"):
+            continue
+        path = root / art.path
+        if not path.is_file():
+            continue
+        lines = path.read_text(errors="replace").splitlines()
+        by_row = _vector_rows(lines)
+        heading = ""
+        for i, line in enumerate(lines):
+            if line.startswith("#"):
+                heading = line.lstrip("#").strip()
+            m = ID_DEF_RE.search(line)
+            if not m:
+                continue
+            threshold, vector = "", ""
+            for body in lines[i + 1 :]:
+                if body.startswith("#"):
+                    break
+                if body.startswith("**Threshold**:"):
+                    threshold = body.split(":", 1)[1].strip()
+                if body.startswith("**Vector**"):
+                    vector = body.split(":", 1)[1].strip()
+            rid = m.group(1)
+            defs.setdefault(rid, Definition(rid, art.path, i + 1, heading, threshold, by_row.get(rid, vector)))
+    return defs
+
+
+def verification_for(nfr_id: str, registry: Registry, root: Path) -> str:
+    for art in registry.artifacts:
+        if art.kind != "DESIGN" or not (root / art.path).is_file():
+            continue
+        header: list[str] = []
+        for line in (root / art.path).read_text(errors="replace").splitlines():
+            if not line.strip().startswith("|"):
+                header = []
+                continue
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if not header:
+                header = cells
+                continue
+            if cells and f"`{nfr_id}`" in cells[0] and "Verification Approach" in header:
+                return cells[-1]
+    return ""
