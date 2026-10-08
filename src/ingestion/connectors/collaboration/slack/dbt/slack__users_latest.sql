@@ -26,7 +26,7 @@ WITH ranked AS (
             PARTITION BY tenant_id, source_id, user_id
             ORDER BY date DESC
         ) AS rn
-    FROM {{ source('bronze_slack', 'users_details') }}
+    FROM {{ source('bronze_slack', 'users_details') }} FINAL
     WHERE email_address IS NOT NULL
       AND email_address != ''
 )

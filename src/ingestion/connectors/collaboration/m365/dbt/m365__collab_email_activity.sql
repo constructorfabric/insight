@@ -27,7 +27,7 @@ SELECT
     now() AS collected_at,
     'insight_m365' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version
-FROM {{ source('bronze_m365', 'email_activity') }}
+FROM {{ source('bronze_m365', 'email_activity') }} FINAL
 WHERE userPrincipalName IS NOT NULL
   AND userPrincipalName != ''
   AND {{ m365_day_was_reported('email_activity') }}
