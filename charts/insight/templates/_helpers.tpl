@@ -73,16 +73,34 @@ Contract per dep (all infra is external — out-of-chart L2):
 {{/* Topology of the target ClickHouse (epic #2010). One pair of values tells
      every creator in this release which DDL to emit: `clusterMode` turns on
      `Replicated*` engines, `clusterName` supplies the `ON CLUSTER <name>`
-     clause. They are independent — a database on the `Replicated` engine
-     replicates without any `ON CLUSTER`, so an empty name under
-     `clusterMode: true` is a valid clustered install.
+     clause. The two travel together — see requireNamedCluster below.
      Defaults render "false" and "", which is today's standalone DDL. */}}
 {{- define "insight.clickhouse.clusterMode" -}}
+{{- include "insight.clickhouse.requireNamedCluster" . -}}
 {{- .Values.clickhouse.clusterMode | default false -}}
 {{- end -}}
 
 {{- define "insight.clickhouse.clusterName" -}}
+{{- include "insight.clickhouse.requireNamedCluster" . -}}
 {{- default "" .Values.clickhouse.clusterName -}}
+{{- end -}}
+
+{{/* Refuses the half-configured topology at render time, before anything in
+     the release has created a relation: replicated engines whose DDL reaches
+     only the node that answered the connection leave the other replicas
+     without the table, which is the failure clusterMode exists to prevent.
+     Checked here alone — every creator downstream is handed the pair by this
+     chart and none of them is configured anywhere else.
+     The name is an identifier every creator interpolates into DDL unquoted,
+     the way dbt-clickhouse renders its own `cluster:` key, so what is accepted
+     here is a bare ClickHouse identifier: a name carrying `-` or `.` parses
+     only in quotes, and would be a syntax error in every statement it reached. */}}
+{{- define "insight.clickhouse.requireNamedCluster" -}}
+{{- if .Values.clickhouse.clusterMode -}}
+{{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" (trim (default "" .Values.clickhouse.clusterName))) -}}
+{{- fail (printf "clickhouse.clusterMode is true, so clickhouse.clusterName must name the cluster its DDL reaches, as a bare ClickHouse identifier — letters, digits and '_', starting with a letter or '_'. Got %q" .Values.clickhouse.clusterName) -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{/* ---------- MariaDB (external) ---------- */}}

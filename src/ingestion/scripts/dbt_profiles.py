@@ -57,10 +57,10 @@ def cluster_mode() -> bool:
 def on_cluster() -> str:
     """The cluster the adapter's `cluster` key names, or nothing.
 
-    Empty on a standalone install, and on a cluster whose database carries the
-    `Replicated` engine: that one distributes DDL itself and needs no
-    `ON CLUSTER` clause. A name without the flag names no cluster — the flag
-    is what turns on the replicated engines the clause would qualify.
+    Empty on a standalone install. A name without the flag names no cluster —
+    the flag is what turns on the replicated engines the clause would qualify.
+    The flag without a name is refused by the chart, so no name arrives here
+    while one is needed.
     """
     if not cluster_mode():
         return ""

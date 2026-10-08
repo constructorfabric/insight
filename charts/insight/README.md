@@ -139,8 +139,10 @@ release, and they are the only place an operator sets it:
 
 - `clickhouse.clusterMode` (bool, default `false`) — created engines replicate.
 - `clickhouse.clusterName` (string, default `""`) — the cluster `ON CLUSTER`
-  names. It may stay empty under `clusterMode: true`: a database created with
-  the `Replicated` engine distributes DDL by itself.
+  names. Required whenever `clusterMode` is on, and `helm template` fails
+  without it: replicated DDL that reaches only the node a creator connected to
+  leaves every other replica without the relation. Every creator downstream
+  reads the pair from this release, so this is the one place it is checked.
 
 The same decision under a different name in each layer:
 
@@ -150,7 +152,7 @@ The same decision under a different name in each layer:
 | Chart helpers | `insight.clickhouse.clusterMode` / `insight.clickhouse.clusterName` | [`templates/_helpers.tpl`](./templates/_helpers.tpl) |
 | Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-migrate` Job, `apply-ch-migrations.sh` |
 | Reconcile | `RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE` / `RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME` | `reconcile-cron.yaml`, consumed by `compose_destination_config.py` as the destination's `use_replicated_engines` / `cluster_name` |
-| dbt | project vars `cluster_mode` / `cluster_name`, read by the `insight_engine` macro every model's engine is declared through; the project-level `+engine` default for a model that declares none; the adapter's `cluster:` profile key and the quorum `custom_settings`, both written by the one profile writer | `dbt_project.yml`, `dbt/macros/insight_engine.sql`, `scripts/dbt_profiles.py` |
+| dbt | project vars `cluster_mode` / `cluster_name`, read by the `insight_engine` macro every model's engine is declared through and by the `insight_on_cluster` clause the `on-run-start` hooks qualify their raw DDL with; the project-level `+engine` default for a model that declares none; the adapter's `cluster:` profile key and the quorum `custom_settings`, both written by the one profile writer | `dbt_project.yml`, `dbt/macros/insight_engine.sql`, `scripts/dbt_profiles.py` |
 | Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name` | `libs/insight-clickhouse`, `insight-v3-core` gear config |
 
 Tests that must know the topology read `CLICKHOUSE_CLUSTER_MODE` /
