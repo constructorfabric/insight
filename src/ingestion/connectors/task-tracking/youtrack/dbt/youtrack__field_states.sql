@@ -1,4 +1,4 @@
-{{ config(materialized='table', schema='staging', engine='ReplacingMergeTree(_version)', order_by=['unique_key'], tags=['youtrack', 'staging']) }}
+{{ config(materialized='table', schema='staging', engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], tags=['youtrack', 'staging']) }}
 
 WITH events AS (
     SELECT a.*, r.entry_rank,

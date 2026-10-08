@@ -8,7 +8,7 @@
     unique_key=['insight_source_id', 'issue_id'],
     alias='jira__field_history_derived',
     schema='staging',
-    engine='ReplacingMergeTree(_version)',
+    engine=insight_engine('ReplacingMergeTree', '_version'),
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     query_settings={

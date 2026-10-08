@@ -150,11 +150,18 @@ The same decision under a different name in each layer:
 | Chart helpers | `insight.clickhouse.clusterMode` / `insight.clickhouse.clusterName` | [`templates/_helpers.tpl`](./templates/_helpers.tpl) |
 | Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-migrate` Job, `apply-ch-migrations.sh` |
 | Reconcile | `RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE` / `RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME` | `reconcile-cron.yaml`, consumed by `compose_destination_config.py` as the destination's `use_replicated_engines` / `cluster_name` |
-| dbt | project vars `cluster_mode` / `cluster_name`, plus the adapter's `cluster:` profile key | `dbt_project.yml`, `dbt_profiles.py` |
+| dbt | project vars `cluster_mode` / `cluster_name`, read by the `insight_engine` macro every model's engine is declared through; the project-level `+engine` default for a model that declares none; the adapter's `cluster:` profile key and the quorum `custom_settings`, both written by the one profile writer | `dbt_project.yml`, `dbt/macros/insight_engine.sql`, `scripts/dbt_profiles.py` |
 | Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name` | `libs/insight-clickhouse`, `insight-v3-core` gear config |
 
 Tests that must know the topology read `CLICKHOUSE_CLUSTER_MODE` /
 `CLICKHOUSE_CLUSTER_NAME` from their harness, defaulting to a single node.
+
+Every step that runs dbt — the Argo steps, the deploy hook, bootstrap, the
+sample seeder, the jira transform rig, the data-path harness — takes its
+profile body from `src/ingestion/scripts/dbt_profiles.py`, so a step cannot
+reach a clustered warehouse with a standalone profile. The engine default is
+the one thing that profile cannot carry: dbt-clickhouse resolves `engine` from
+the model config alone, so it lives in `dbt_project.yml`.
 
 Flipping the values does not by itself make an install clustered — the
 creators act on them task by task (epic #2010), and the clustered path is not

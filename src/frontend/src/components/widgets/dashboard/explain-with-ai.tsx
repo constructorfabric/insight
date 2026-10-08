@@ -55,9 +55,9 @@ export function ExplainWithAi({ snapshot, className }: ExplainWithAiProps) {
             className={cn(
               "absolute top-2 right-2 z-10 grid size-7 place-items-center rounded-md",
               "text-muted-foreground transition-colors",
-              "hover:bg-accent hover:text-foreground",
+              "hover:bg-muted hover:text-foreground",
               "focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none",
-              open && "bg-accent text-foreground",
+              open && "bg-muted text-foreground",
               className
             )}
           >

@@ -430,7 +430,7 @@ function SupportingFold({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-start justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-accent"
+        className="flex w-full items-start justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-muted"
         aria-expanded={open}
       >
         <div className="min-w-0 flex-1">

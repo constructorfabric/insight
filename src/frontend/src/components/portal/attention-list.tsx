@@ -44,7 +44,7 @@ function PersonRow({ flag }: { flag: AttentionFlag }) {
       // A pinned theme zone (Overview, Manage) wins over the route in
       // `useActiveZone` — clear it so the navigation lands on the Person zone.
       onClick={() => setZone(null)}
-      className="flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-accent"
+      className="flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-muted"
     >
       <Icon
         className={cn(
@@ -111,7 +111,7 @@ function Theme({
         aria-expanded={open}
         aria-controls={`attention-${metricKey}`}
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+        className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
       >
         {open ? (
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" />

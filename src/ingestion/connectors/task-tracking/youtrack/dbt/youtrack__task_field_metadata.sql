@@ -1,4 +1,4 @@
-{{ config(materialized='table', engine='ReplacingMergeTree(_version)', order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_field_metadata']) }}
+{{ config(materialized='table', engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_field_metadata']) }}
 
 WITH catalogue AS (
     SELECT insight_source_id, field_id, field_name, field_type,

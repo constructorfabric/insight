@@ -5,7 +5,7 @@
     materialized='incremental',
     unique_key='unique_key',
     incremental_strategy='delete+insert',
-    engine='ReplacingMergeTree(_version)',
+    engine=insight_engine('ReplacingMergeTree', '_version'),
     order_by=['unique_key'],
     on_schema_change='append_new_columns',
     settings={'allow_nullable_key': 1},

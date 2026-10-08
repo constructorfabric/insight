@@ -1,4 +1,4 @@
-{{ config(materialized='table', schema='staging', engine='MergeTree', order_by=['insight_source_id', 'issue_id', 'field_id', 'observed_at'], tags=['youtrack', 'staging']) }}
+{{ config(materialized='table', schema='staging', engine=insight_engine('MergeTree'), order_by=['insight_source_id', 'issue_id', 'field_id', 'observed_at'], tags=['youtrack', 'staging']) }}
 
 WITH custom AS (
     SELECT i.*, arrayJoin(JSONExtractArrayRaw(custom_fields)) AS f

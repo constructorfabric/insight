@@ -3,7 +3,7 @@
     materialized='table',
     alias='jira__changelog_entry_ranks',
     schema='staging',
-    engine='ReplacingMergeTree',
+    engine=insight_engine('ReplacingMergeTree'),
     order_by=['unique_key'],
     query_settings={
         'max_bytes_before_external_group_by': 2000000000,

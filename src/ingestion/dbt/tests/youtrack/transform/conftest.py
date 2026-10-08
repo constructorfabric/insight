@@ -25,10 +25,14 @@ from dbt.cli.main import dbtRunner
 INGESTION = Path(__file__).resolve().parents[4]
 DBT = INGESTION / "dbt"
 # This suite's rootdir is its own directory, so the shared helper beside the other
-# transform suites is not importable without saying where it is.
+# transform suites is not importable without saying where it is. `dbt_profiles`
+# is the deploy's own profile writer, used here so the rig connects the way a
+# deployment does.
 sys.path.insert(0, str(DBT / "tests"))
+sys.path.insert(0, str(INGESTION / "scripts"))
 
 from bronze import create_bronze  # noqa: E402
+from dbt_profiles import Connection, build_profile  # noqa: E402
 
 SOURCE = "synthetic-youtrack"
 TENANT = "synthetic-tenant"
@@ -140,29 +144,25 @@ class Warehouse:
 def warehouse(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Warehouse]:
     if os.environ["YOUTRACK_TEST_DISPOSABLE"] != "yes":
         raise RuntimeError("Use only a disposable ClickHouse: this suite resets its YouTrack tables")
-    output = {
-        "type": "clickhouse",
-        "host": os.environ["CLICKHOUSE_HOST"],
-        "port": int(os.environ["CLICKHOUSE_HTTP_PORT"]),
-        "user": os.environ["CLICKHOUSE_USER"],
-        "password": os.environ["CLICKHOUSE_PASSWORD"],
-        "schema": "default",
-        "threads": 2,
-        "engine": "ReplacingMergeTree(_version)",
-        "settings": {"allow_nullable_key": 1},
-    }
+    connection = Connection(
+        host=os.environ["CLICKHOUSE_HOST"],
+        port=int(os.environ["CLICKHOUSE_HTTP_PORT"]),
+        user=os.environ["CLICKHOUSE_USER"],
+        password=os.environ["CLICKHOUSE_PASSWORD"],
+        schema="default",
+    )
     profile = tmp_path_factory.mktemp("profile")
     (profile / "profiles.yml").write_text(
-        yaml.safe_dump({"ingestion": {"target": "test", "outputs": {"test": output}}})
+        yaml.safe_dump(build_profile("test", connection, correlated_subqueries=False, threads=2))
     )
     client = clickhouse_connect.get_client(
-        host=output["host"], port=output["port"], username=output["user"], password=output["password"]
+        host=connection.host, port=connection.port, username=connection.user, password=connection.password
     )
     create_bronze(
         "youtrack",
         port=os.environ["CLICKHOUSE_HTTP_PORT"],
-        user=output["user"],
-        password=output["password"],
+        user=connection.user,
+        password=connection.password,
         database="default",
     )
     client.command("CREATE DATABASE IF NOT EXISTS staging")

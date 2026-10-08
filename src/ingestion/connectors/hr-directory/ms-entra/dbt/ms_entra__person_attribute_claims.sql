@@ -2,7 +2,7 @@
     materialized='incremental',
     incremental_strategy='append',
     schema='staging',
-    engine='ReplacingMergeTree(_version)',
+    engine=insight_engine('ReplacingMergeTree', '_version'),
     order_by=['unique_key'],
     tags=['ms-entra', 'silver:class_person_attribute_claims']
 ) }}

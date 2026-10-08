@@ -13,7 +13,8 @@ drilldown sweep reconciles:
   amount is judged against, or a reader cannot place either.
 
 It also asserts which of the two overage quantities is served: the amount the
-vendor billed, and not the excess over the ceiling that caps it.
+vendor billed, and not the excess over the ceiling that caps it — and that the
+catalogue serves that figure once.
 
 Every expectation is derived from what the stand serves — the date and the
 billing month come out of the evidence itself — so the suite keeps working when
@@ -28,7 +29,7 @@ from collections.abc import Callable, Mapping
 import pytest
 from insight_stand import ApiClient, Manifest, PersonaSession, analytics_path
 
-from ..schemas import MetricResultsResponse, PeriodView
+from ..schemas import MetricDefinitionListResponse, MetricResultsResponse, PeriodView
 from . import query_window
 
 METRIC_RESULTS = analytics_path("/v1/metric-results")
@@ -37,6 +38,15 @@ DRILLDOWN = analytics_path("/v1/metric-drilldown")
 MONEY = "ai.extra_usage_cost"
 UTILISATION = "ai.extra_usage_utilisation"
 USAGE_PRICED = "ai.cost"
+METRIC_DEFINITIONS = analytics_path("/v1/metric-definitions")
+
+AI_COST_TOPIC = {
+    USAGE_PRICED: "consumption at vendor rates, seat-covered usage included",
+    "ai.seat_cost": "the seat fee",
+    MONEY: "the one billed-overage figure, per billing month",
+    "ai.daily_approximate_extra_usage_cost": "that same figure, spread over its days",
+    UTILISATION: "that figure against the seat's ceiling",
+}
 
 
 def _period_values(
@@ -188,8 +198,7 @@ def test_the_billed_amount_is_not_the_excess_over_the_ceiling(
     positive there, while the excess over the ceiling is exactly zero.
 
     A SECOND key arriving that computes the other quantity is not this test's
-    job — `test_drilldown.py` already compares the whole served catalogue against
-    the drilldown matrix, so a metric added without an entry there fails.
+    job — `test_the_catalogue_serves_one_billed_overage_figure` pins that.
     """
     session = session_for("dev_lead")
     start, end = query_window(stand_manifest)
@@ -208,6 +217,29 @@ def test_the_billed_amount_is_not_the_excess_over_the_ceiling(
         f"none of the {len(rows)} seat-months spends a non-zero amount below its ceiling, so "
         "nothing here tells the billed amount apart from the excess over the ceiling — the "
         "seed stopped covering the case this asserts"
+    )
+
+
+@pytest.mark.reliability
+def test_the_catalogue_serves_one_billed_overage_figure(api: ApiClient) -> None:
+    """#2479 scenario 7: the AI cost topic serves exactly one billed-overage figure.
+
+    The daily key spreads that figure over its days; it is not a second computation.
+    """
+    response = api.get(METRIC_DEFINITIONS)
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+
+    served = {
+        metric.metric_key
+        for metric in response.parse(MetricDefinitionListResponse).metrics
+        if metric.origin == "builtin"
+        and metric.subject == "cost"
+        and metric.metric_key.startswith("ai.")
+    }
+
+    assert served == set(AI_COST_TOPIC), (
+        f"served but not accounted for: {sorted(served - set(AI_COST_TOPIC))}; "
+        f"accounted for but not served: {sorted(set(AI_COST_TOPIC) - served)}"
     )
 
 

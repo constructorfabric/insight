@@ -1,6 +1,6 @@
 {{ config(
     materialized='table',
-    engine='MergeTree',
+    engine=insight_engine('MergeTree'),
     order_by=['insight_source_id', 'issue_id'],
     schema=var('gold_database'),
     alias='task_issue_state',

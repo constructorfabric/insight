@@ -2,7 +2,7 @@
     materialized='incremental',
     unique_key='unique_key',
     incremental_strategy='delete+insert',
-    engine='ReplacingMergeTree(_version)',
+    engine=insight_engine('ReplacingMergeTree', '_version'),
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     schema='silver',
@@ -31,7 +31,8 @@ SELECT
         )) / 3600.0,
         4
     )                                                               AS meeting_hours,
-    COALESCE(wh.working_hours_per_day, 8.0)                        AS working_hours_per_day,
+    -- WORKAROUND: under join_use_nulls=0 an unmatched LEFT JOIN yields 0, not NULL.
+    COALESCE(nullIf(wh.working_hours_per_day, 0), 8.0)              AS working_hours_per_day,
     ROUND(
         GREATEST(toFloat64(0), 100.0 - (
             sum(greatest(
@@ -40,13 +41,13 @@ SELECT
                 ma.screen_share_duration_seconds
             ))
             / 3600.0
-            / nullIf(COALESCE(wh.working_hours_per_day, 8.0), 0)
+            / nullIf(COALESCE(nullIf(wh.working_hours_per_day, 0), 8.0), 0)
         ) * 100.0),
         2
     )                                                               AS focus_time_pct,
     ROUND(
         GREATEST(toFloat64(0),
-            COALESCE(wh.working_hours_per_day, 8.0) -
+            COALESCE(nullIf(wh.working_hours_per_day, 0), 8.0) -
             sum(greatest(
                 ma.audio_duration_seconds,
                 ma.video_duration_seconds,
@@ -70,4 +71,4 @@ GROUP BY
     ma.tenant_id,
     ma.person_key,
     ma.date,
-    COALESCE(wh.working_hours_per_day, 8.0)
+    COALESCE(nullIf(wh.working_hours_per_day, 0), 8.0)

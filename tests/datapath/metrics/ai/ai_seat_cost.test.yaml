@@ -45,8 +45,14 @@ description: >
   extra-usage line at another. Either one counted would leave the Standard tier priced
   twice, and every Standard seat would fall to absent.
 
+  dave also carries Claude Code usage priced at $4.40, so one month of his holds all
+  three AI cost figures at once: the $25.00 seat fee, the $2.00 billed on top of it,
+  and the $4.40 of usage at vendor rates. No sum of any two equals the third or a
+  served value, so a figure blended into another fails the exact match
+  (#2479 scenario 6).
+
   Cases: the two bound tiers · a tier no priced line binds to · a seat with no tier ·
-  breakdown by seat tier · empty window.
+  breakdown by seat tier · empty window · the three cost figures side by side.
 
 bronze:
   bronze_bamboohr.employees:
@@ -69,6 +75,10 @@ bronze:
     - { $ref: ../templates/claude_team_overage.yaml#/templates/heidi, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-heidi, used_credits: 300, monthly_credit_limit: 1000, seat_tier: team_legacy }
     # ── frank — no ceiling, so no tier and no seat the invoice billed ────────────
     - { $ref: ../templates/claude_team_overage.yaml#/templates/frank, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-frank, used_credits: 350, monthly_credit_limit: null, seat_tier: unassigned, limit_type: null }
+
+  bronze_claude_team.claude_team_code_metrics:
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: dave@example.com, metric_date: "2026-12-05", unique_key: cc-dave-20261205, total_cost: "3.10" }
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: dave@example.com, metric_date: "2026-12-09", unique_key: cc-dave-20261209, total_cost: "1.30" }
 
   bronze_claude_team_invoices.claude_team_invoice_lines:
     # The invoice's own row: money, no line, no seat price.

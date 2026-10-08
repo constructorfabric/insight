@@ -434,7 +434,7 @@ function QueueGroup({
           render={
             <button
               type="button"
-              className="group sticky top-0 z-10 flex w-full cursor-pointer items-center gap-2 bg-card px-6 py-4 text-start hover:bg-accent/40"
+              className="group sticky top-0 z-10 flex w-full cursor-pointer items-center gap-2 bg-card px-6 py-4 text-start hover:bg-muted"
             />
           }
         >

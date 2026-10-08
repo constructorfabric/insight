@@ -41,6 +41,7 @@ SELECT
 FROM {{ source('bronze_m365', 'teams_activity') }}
 WHERE userPrincipalName IS NOT NULL
   AND userPrincipalName != ''
+  AND {{ m365_day_was_reported('teams_activity') }}
   -- Drop unlicensed users (guests, ex-employees, service accounts). Their Teams
   -- activity inflates team-level collab counters and produces orphan gold rows
   -- with no matching insight.people entry. `isLicensed` = "Selected if the user

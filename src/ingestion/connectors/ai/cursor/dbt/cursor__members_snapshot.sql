@@ -3,7 +3,7 @@
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
-    engine='MergeTree',
+    engine=insight_engine('MergeTree'),
     order_by=['unique_key', '_tracked_at'],
     settings={'allow_nullable_key': 1},
     schema='staging',

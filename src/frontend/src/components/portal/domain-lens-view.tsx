@@ -86,6 +86,7 @@ import {
 } from "@/lib/portal/bar-rows";
 import { narrowedEvidenceSelection } from "@/lib/metrics/evidence-targets";
 import { evidenceMetricFor } from "@/lib/metrics/evidence-via";
+import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
 import {
   dayHourMatrix,
   HOUR_BLOCKS,
@@ -1955,6 +1956,7 @@ function CompositionSection({
   memberIds: readonly string[];
 }) {
   const evidence = useMetricEvidenceOptional();
+  const definitions = useMetricDefinitionsResponse().data?.metrics;
   if (compIsError) {
     return (
       <section className="flex flex-col gap-3">
@@ -2015,21 +2017,41 @@ function CompositionSection({
 
   // The records behind a bar are the ones that carry the figure, which for a
   // line count is its commits rather than its own per-day summary.
-  const carrier = grid.byKey.get(evidenceMetricFor(spec.metric));
+  const declared = (key: string) =>
+    definitions?.find((d) => d.metric_key === key)?.dimensions;
+  const clicked = (row: BarRow, segment?: BarSegment) => [
+    { dimension: spec.dimension, value: row.key },
+    ...(segment && spec.splitBy
+      ? [{ dimension: spec.splitBy, value: segment.seed }]
+      : []),
+  ];
+  const recordsBehind = (filters: readonly { dimension: string }[]) =>
+    grid.byKey.get(
+      evidenceMetricFor(
+        spec.metric,
+        filters.map((f) => f.dimension),
+        declared
+      )
+    );
+  const canOpen = (row: BarRow, segment?: BarSegment) =>
+    segment?.seed !== UNSPLIT_SEGMENT &&
+    Boolean(recordsBehind(clicked(row, segment))?.drilldown);
+  const anyOpens = rows.some((row) =>
+    row.segments?.length
+      ? row.segments.some((segment) => canOpen(row, segment))
+      : canOpen(row)
+  );
   const openBar =
-    evidence && carrier?.drilldown
+    evidence && anyOpens
       ? (row: BarRow, segment?: BarSegment) => {
-          const selection = narrowedEvidenceSelection(carrier, memberIds, {
-            filters: [
-              { dimension: spec.dimension, value: row.key },
-              ...(segment && spec.splitBy
-                ? [{ dimension: spec.splitBy, value: segment.seed }]
-                : []),
-            ],
+          const filters = clicked(row, segment);
+          const records = recordsBehind(filters);
+          const selection = narrowedEvidenceSelection(records, memberIds, {
+            filters,
           });
-          if (selection) {
+          if (records && selection) {
             evidence.openEvidenceTargets(
-              [{ selection, label: carrier.label }],
+              [{ selection, label: records.label }],
               { activeMetricKey: selection.metric_key }
             );
           }
@@ -2044,7 +2066,7 @@ function CompositionSection({
       unit={r?.unit ?? null}
       notes={spec.notes}
       onOpen={openBar}
-      canOpen={(_row, segment) => segment?.seed !== UNSPLIT_SEGMENT}
+      canOpen={canOpen}
     />
   );
 }
@@ -2741,7 +2763,7 @@ function DirectionCardsSection({
             key={c.id}
             type="button"
             onClick={() => go(c.id)}
-            className="rounded-xl border bg-card text-left transition-colors hover:bg-accent"
+            className="rounded-xl border bg-card text-left transition-colors hover:bg-card-hover"
           >
             <div className="flex flex-col gap-2 p-4">
               <div className="text-sm font-semibold">{c.name}</div>

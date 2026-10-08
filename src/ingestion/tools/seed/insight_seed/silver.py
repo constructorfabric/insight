@@ -39,10 +39,10 @@ All steps are idempotent — re-running converges on the same end state.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -140,31 +140,21 @@ def ensure_task_config_tables() -> None:
     `create_task_config_tables` is the single owner of that DDL — so run the
     macro itself (dbt run-operation), never a DDL copy.
     """
-    dbt_dir = _ingestion_scripts_dir().parent / "dbt"
-    target = config.parse_clickhouse(os.environ)
-    profile = {
-        "ingestion": {
-            "target": "seed",
-            "outputs": {
-                "seed": {
-                    "type": "clickhouse",
-                    "host": target.host,
-                    "port": target.http_port,
-                    "schema": "silver",
-                    "user": target.user,
-                    "password": target.password,
-                    "secure": False,
-                    "send_receive_timeout": 1500,
-                    "query_limit": 0,
-                    "connect_timeout": 30,
-                }
-            },
-        }
-    }
+    scripts_dir = _ingestion_scripts_dir()
+    dbt_dir = scripts_dir.parent / "dbt"
     with tempfile.TemporaryDirectory() as profiles_dir:
-        # SAFETY: JSON is a YAML subset dbt's loader reads; credentials are
-        # never interpolated into YAML text (same rule as apply-ch-migrations.sh).
-        (Path(profiles_dir) / "profiles.yml").write_text(json.dumps(profile))
+        subprocess.run(
+            [
+                sys.executable,
+                str(scripts_dir / "dbt_profiles.py"),
+                "--target",
+                "seed",
+                "--profiles-dir",
+                profiles_dir,
+            ],
+            env=_script_env(),
+            check=True,
+        )
         subprocess.run(
             ["dbt", "run-operation", "create_task_config_tables", "--profiles-dir", profiles_dir],
             cwd=dbt_dir,

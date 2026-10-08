@@ -87,7 +87,7 @@ export function IcNeedsAttention({
                        Below `sm` the row becomes two lines instead: at 390px
                        there is no arrangement of six columns that leaves a
                        name legible. */
-                    className="-mx-2 flex w-[calc(100%+1rem)] flex-col gap-x-2 rounded px-2 py-1 text-left text-sm transition-colors hover:bg-accent sm:col-span-full sm:grid sm:w-auto sm:grid-cols-subgrid sm:items-baseline"
+                    className="-mx-2 flex w-[calc(100%+1rem)] flex-col gap-x-2 rounded px-2 py-1 text-left text-sm transition-colors hover:bg-muted sm:col-span-full sm:grid sm:w-auto sm:grid-cols-subgrid sm:items-baseline"
                   >
                     <span className="flex min-w-0 items-baseline gap-2 sm:contents">
                       <span className={cn("min-w-0 truncate", TEXT_NAME)}>

@@ -3,7 +3,7 @@
     alias='jira__task_field_metadata',
     incremental_strategy='append',
     schema='staging',
-    engine='ReplacingMergeTree(_version)',
+    engine=insight_engine('ReplacingMergeTree', '_version'),
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     tags=['staging', 'jira', 'silver:class_task_field_metadata']

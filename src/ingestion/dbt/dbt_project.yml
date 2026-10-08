@@ -122,6 +122,14 @@ vars:
   # boards is something an operator can actually do.
   task_board_bindings_enforced: false
 
+models:
+  ingestion:
+    # The engine of a model that configures none. It cannot live in the profile
+    # (dbt-clickhouse resolves `engine` from the model config alone, dropping a
+    # profile-level key) nor read `insight_engine` (dbt renders this file before
+    # it loads macros), so the topology is spelled out once more here.
+    +engine: "{{ 'Replicated' if env_var('CLICKHOUSE_CLUSTER_MODE', 'false') | trim | lower in ['1', 'true', 'yes', 'on'] else '' }}MergeTree()"
+
 on-run-start:
   # config.task_field_roles / config.task_value_map — operator-authored
   # bindings from a vendor field or value to the role and canonical value gold

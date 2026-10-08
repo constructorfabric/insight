@@ -57,7 +57,7 @@ export function KpiTile({
         className={cn(
           CARD_SURFACE,
           "relative",
-          interactive && "text-left transition-colors hover:bg-accent/50"
+          interactive && "text-left transition-colors hover:bg-card-hover"
         )}
         render={
           primaryGroup ? (

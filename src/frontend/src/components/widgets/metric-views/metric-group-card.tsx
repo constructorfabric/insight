@@ -195,7 +195,7 @@ export function MetricGroupCard({
         // Header→content on the card's own 12px rhythm (the preview stack's
         // gap-3), not the default 24px section gap.
         "gap-3",
-        !isEmpty && "text-left transition-colors hover:bg-accent/50"
+        !isEmpty && "text-left transition-colors hover:bg-card-hover"
       )}
     >
       <CardHeader>

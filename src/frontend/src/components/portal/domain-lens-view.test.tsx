@@ -812,6 +812,131 @@ describe("composition (rule 7: only real server dimensions)", () => {
     ).not.toBeInTheDocument();
   });
 
+  describe("a line count, whose records are its commits", () => {
+    afterEach(() => {
+      mocks.definitions = [];
+    });
+
+    function drillable(key: string, label: string) {
+      return metric(key, IDS.map((id) => [id, 10] as [string, number]), {
+        label,
+        drilldown: { granularity: ["event"] },
+        selection: {
+          metric_key: key,
+          entity: { type: "person", ids: IDS },
+          period: { from: "2026-07-20", to: "2026-07-26" },
+          filters: [],
+        },
+      } as Partial<NormalizedMetricResult>);
+    }
+
+    function openBarOf(
+      dimension: string,
+      value: string,
+      label: string,
+      { commitsReadable = true } = {},
+    ) {
+      const openEvidenceTargets = vi.fn();
+      const comp = emptyCollection();
+      comp.byKey.set("git.lines_added", {
+        ...metric("git.lines_added", []),
+        breakdown: {
+          view: "breakdown",
+          values: IDS.flatMap((id) => [
+            { entity_id: id, dimensions: [{ key: dimension, value, label }], value: 30 },
+            { entity_id: id, dimensions: [{ key: dimension, value: "other", label: "Other" }], value: 10 },
+          ]),
+        },
+      } as never);
+      mocks.collections = [emptyCollection(), comp, emptyCollection()];
+      mocks.grid.byKey = new Map([
+        ["git.lines_added", drillable("git.lines_added", "Lines added")],
+        ...(commitsReadable
+          ? [["git.commits", drillable("git.commits", "Commits")] as const]
+          : []),
+      ]);
+      mocks.definitions = [
+        {
+          metric_key: "git.lines_added",
+          dimensions: ["branch_scope", "category", "change_type", "file_extension", "project", "repository", "source"],
+        },
+        {
+          metric_key: "git.commits",
+          dimensions: ["branch_scope", "hour_block", "project", "repository", "source"],
+        },
+      ];
+
+      render(
+        <EvidenceDialogContext.Provider
+          value={{
+            openEvidence: vi.fn(),
+            openEvidenceTargets,
+            openEvidencePeople: vi.fn(),
+          }}
+        >
+          <DomainLensView
+            config={{
+              title: "T",
+              sections: [
+                { kind: "composition", metric: "git.lines_added", dimension, title: "Lines" },
+              ],
+            }}
+          />
+        </EvidenceDialogContext.Provider>,
+      );
+      return openEvidenceTargets;
+    }
+
+    it("opens its own records when the commits cannot carry the clicked category", async () => {
+      const user = userEvent.setup();
+      const openEvidenceTargets = openBarOf("category", "docs", "Documentation");
+
+      await user.click(
+        screen.getByRole("button", { name: "Open the records behind Documentation" }),
+      );
+
+      expect(openEvidenceTargets).toHaveBeenCalledTimes(1);
+      const [targets] = openEvidenceTargets.mock.calls[0]!;
+      expect(targets[0].label).toBe("Lines added");
+      expect(targets[0].selection.metric_key).toBe("git.lines_added");
+      expect(targets[0].selection.filters).toEqual([
+        { dimension: "category", values: ["docs"] },
+      ]);
+    });
+
+    it("opens a category bar when only its own records can be read", async () => {
+      const user = userEvent.setup();
+      const openEvidenceTargets = openBarOf("category", "docs", "Documentation", {
+        commitsReadable: false,
+      });
+
+      await user.click(
+        screen.getByRole("button", { name: "Open the records behind Documentation" }),
+      );
+
+      expect(openEvidenceTargets).toHaveBeenCalledTimes(1);
+      const [targets] = openEvidenceTargets.mock.calls[0]!;
+      expect(targets[0].selection.metric_key).toBe("git.lines_added");
+    });
+
+    it("opens the commits behind it when they carry the clicked dimension", async () => {
+      const user = userEvent.setup();
+      const openEvidenceTargets = openBarOf("repository", "src:acme/api", "acme/api");
+
+      await user.click(
+        screen.getByRole("button", { name: "Open the records behind acme/api" }),
+      );
+
+      expect(openEvidenceTargets).toHaveBeenCalledTimes(1);
+      const [targets] = openEvidenceTargets.mock.calls[0]!;
+      expect(targets[0].label).toBe("Commits");
+      expect(targets[0].selection.metric_key).toBe("git.commits");
+      expect(targets[0].selection.filters).toEqual([
+        { dimension: "repository", values: ["src:acme/api"] },
+      ]);
+    });
+  });
+
   it("leaves the bars inert when the carrier's records cannot be read", () => {
     const comp = emptyCollection();
     comp.byKey.set("t.commits", {
