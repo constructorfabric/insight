@@ -10,8 +10,7 @@ every registered codebase entry for `@cpt-test` citations, reads the FEATURE's
 section 1.2 requirement list, and renders two tables into section 7:
 
   7.1 Requirement verification — one row per FR/DoD: the tests citing it, their
-      suite, whether any is end to end. No vector column: a functional
-      requirement does not cover a quality vector.
+      suite, whether any is end to end.
   7.2 Quality metrics — one row per NFR: its vector (from the PRD's 6.1 table or
       `**Vector**` line), metric (the NFR heading), target (its `**Threshold**`),
       and sources (citing tests plus the DESIGN NFR-allocation verification
@@ -28,13 +27,9 @@ Usage:
   feature_testing.py --check                        every registered FEATURE that
                                                      already carries a block must
                                                      be current; exit 1 otherwise
-
-The engine's own query commands (`cfs where-used`, `list-ids --include-code`)
-index no code citation while a system's artifacts are DOCS-ONLY, which is why
-this tool scans the registry's codebase entries itself.
 """
 
-# ruff: noqa: T201  — stdout/stderr IS this script's report (cf. connector_wiring.py).
+# ruff: noqa: T201
 from __future__ import annotations
 
 import argparse
