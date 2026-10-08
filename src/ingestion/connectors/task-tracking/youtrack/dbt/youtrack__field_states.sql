@@ -36,7 +36,9 @@ WITH events AS (
         events, [initial_pairs]) AS states
     FROM initial
 )
-SELECT concat(insight_source_id, '-youtrack-', issue_id, '-', field_id, '-', events[n].2) AS unique_key,
-    insight_source_id, issue_id, field_id, events[n].2 AS event_id, states[n+1] AS pairs,
+SELECT concat(insight_source_id, '-youtrack-', issue_id, '-', field_id, '-', event_id) AS unique_key,
+    insight_source_id, issue_id, field_id, event_id, pairs,
     toUInt64(toUnixTimestamp64Milli(now64(3))) AS _version
-FROM replay ARRAY JOIN range(1, length(events)+1) AS n
+FROM replay ARRAY JOIN
+    arrayMap(n -> if(n = 0, concat('initial:', issue_id), events[n].2), range(0, length(events)+1)) AS event_id,
+    arrayMap(n -> states[n+1], range(0, length(events)+1)) AS pairs

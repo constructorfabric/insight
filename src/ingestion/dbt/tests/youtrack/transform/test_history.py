@@ -459,3 +459,48 @@ def test_status_category_is_resolved_from_youtrack_and_split_by_the_operator(cas
         {'status_id': 'state-fixed', 'status_name': 'Fixed', 'status_category': 'done'},
         {'status_id': 'state-open', 'status_name': 'Open', 'status_category': 'undefined'},
         {'status_id': 'state-progress', 'status_name': 'In Progress', 'status_category': 'in_progress'}]
+
+
+def feed_starts_before_the_issue(case: Warehouse) -> None:
+    case.insert('youtrack_activities', {
+        'id': 'other-issue-event', 'unique_key': TENANT + '-' + SOURCE + '-other-issue-event',
+        '_type': 'CustomFieldActivityItem', 'timestamp': '1767139200000', 'author_id': 'user-1',
+        'field_json': json.dumps({'id': 'filter-1', 'customField': {'id': 'field-1'}, 'name': 'Synthetic field'}),
+        'target_json': '{"id":"issue-0","idReadable":"EX-0","$type":"Issue"}',
+        'added_json': json.dumps([value('x')]), 'removed_json': '[]', 'activity_json': '{}',
+    })
+
+
+def test_an_issue_created_inside_the_feed_starts_from_what_its_first_change_replaced(case: Warehouse) -> None:
+    feed_starts_before_the_issue(case)
+    case.issue([value('a')], 'SingleEnumIssueCustomField')
+    case.event('e1', value('old'), value('a'))
+    case.build()
+    rows = list(case.rows("SELECT event_kind, toString(event_at) AS event_at, value_ids FROM staging.youtrack__task_field_history"
+                          " WHERE issue_id='issue-1' AND field_id='field-1' ORDER BY event_order"))
+    assert rows == [
+        {'event_kind': 'synthetic_initial', 'event_at': '2026-01-01 00:00:00.000', 'value_ids': ['old']},
+        {'event_kind': 'changelog', 'event_at': '2026-01-02 00:00:00.000', 'value_ids': ['a']},
+    ]
+
+
+def test_an_issue_created_before_the_feed_gets_no_guessed_initial_value(case: Warehouse) -> None:
+    case.issue([value('a')], 'SingleEnumIssueCustomField')
+    case.event('e1', value('old'), value('a'))
+    case.build()
+    rows = list(case.rows("SELECT event_kind FROM staging.youtrack__task_field_history WHERE field_id='field-1' ORDER BY event_order"))
+    assert rows == [{'event_kind': 'changelog'}]
+
+
+def test_a_comment_stored_without_its_ids_is_attributed_through_the_issue_snapshot(case: Warehouse) -> None:
+    case.insert('youtrack_issues', {
+        'id': 'issue-1', 'idReadable': 'EX-1', 'created': 1767225600000,
+        'unique_key': TENANT + '-' + SOURCE + '-issue-1', 'reporter_id': 'user-1', 'project_id': 'project-1',
+        'custom_fields_json': '[]',
+        'issue_json': json.dumps({'summary': 'Synthetic issue', 'comments': [{'id': 'comment-9'}], 'links': []}),
+    })
+    case.insert('youtrack_comments', {'unique_key': TENANT + '-' + SOURCE + '-comment-9',
+        'created': 1767312000000, 'deleted': False, 'author_id': 'user-1', 'text': 'Synthetic comment'})
+    case.build()
+    rows = list(case.rows("SELECT comment_id, issue_id, id_readable FROM staging.youtrack__task_comments"))
+    assert rows == [{'comment_id': 'comment-9', 'issue_id': 'issue-1', 'id_readable': 'EX-1'}]
