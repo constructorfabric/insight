@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from insight_datapath.bindings import Bindings
@@ -29,7 +30,10 @@ from insight_datapath.fixture_loader import TestYaml
 from insight_datapath.metric_expect import Ledger, MetricResponse
 from insight_datapath.reset import clear
 from insight_datapath.subjects import SubjectError, Subjects
+from insight_datapath.tenant_transition import WarmTenant, apply_transition
 from insight_datapath.tracked_models import TrackedModels
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 LOG = logging.getLogger("datapath.spec")
 
@@ -155,11 +159,14 @@ def run_spec(
     tenant: str,
     bindings: Bindings,
     ledger: Ledger,
+    warm: WarmTenant | None = None,
 ) -> SpecRun:
     """Seed, build and publish one spec; returns the caller its tests read through."""
     tracked = TrackedModels(dbt_runner, ch_seeder)
     clear(ch_seeder.cfg, ch_seeder.ledger.drain())
     ch_seeder.seed_bronze(spec.bronze, spec.schemas)
+    if warm is not None:
+        apply_transition(ch_seeder.cfg, warm, repo_root=_REPO_ROOT)
 
     staging, silver = dbt_runner.derive_selectors(spec.touched_tables)
     tracked.build(staging, with_ancestors=True)

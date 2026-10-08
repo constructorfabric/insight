@@ -21,6 +21,7 @@ from insight_datapath.metric_definitions import collect
 from insight_datapath.metric_expect import Ledger
 from insight_datapath.spec_runner import SpecRun, run_spec
 from insight_datapath.subjects import Subjects
+from insight_datapath.tenant_transition import WarmTenant
 from insight_stand.manifest import Manifest
 from insight_stand.personas import PersonaSession
 from insight_stand.stand import artifact_dir
@@ -50,6 +51,8 @@ def spec(
     caller_session: PersonaSession,
     stand_manifest: Manifest,
     bindings: Bindings,
+    bronze_tenant: str,
+    warm: WarmTenant | None,
 ) -> SpecRun:
     name = getattr(request.module, "SPEC", None)
     if not name:
@@ -59,7 +62,7 @@ def spec(
     loaded = load(
         Path(request.module.__file__).parent / f"{name}.test.yaml",
         substitutions={
-            "tenant": stand_manifest.tenant,
+            "tenant": bronze_tenant,
             "supervisor_email": caller_session.email,
             "supervisor_name": caller_session.person.display_name,
         },
@@ -76,6 +79,7 @@ def spec(
         tenant=stand_manifest.tenant,
         bindings=bindings,
         ledger=LEDGER,
+        warm=warm,
     )
 
 
