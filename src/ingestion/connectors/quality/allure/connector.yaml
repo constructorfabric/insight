@@ -407,6 +407,135 @@ streams:
                   type:
                     - string
                     - "null"
+          issues:
+            type:
+              - array
+              - "null"
+            items:
+              type:
+                - object
+                - "null"
+              properties:
+                id:
+                  type:
+                    - integer
+                    - "null"
+                name:
+                  type:
+                    - string
+                    - "null"
+                displayName:
+                  type:
+                    - string
+                    - "null"
+                url:
+                  type:
+                    - string
+                    - "null"
+                summary:
+                  type:
+                    - string
+                    - "null"
+                status:
+                  type:
+                    - string
+                    - "null"
+                closed:
+                  type:
+                    - boolean
+                    - "null"
+                integrationId:
+                  type:
+                    - integer
+                    - "null"
+                integrationType:
+                  type:
+                    - string
+                    - "null"
+          links:
+            type:
+              - array
+              - "null"
+            items:
+              type:
+                - object
+                - "null"
+              properties:
+                name:
+                  type:
+                    - string
+                    - "null"
+                type:
+                  type:
+                    - string
+                    - "null"
+                url:
+                  type:
+                    - string
+                    - "null"
+          releases:
+            type:
+              - array
+              - "null"
+            items:
+              type:
+                - object
+                - "null"
+              properties:
+                id:
+                  type:
+                    - integer
+                    - "null"
+                name:
+                  type:
+                    - string
+                    - "null"
+                workflowId:
+                  type:
+                    - integer
+                    - "null"
+                dueDate:
+                  type:
+                    - integer
+                    - "null"
+                previousReleaseId:
+                  type:
+                    - integer
+                    - "null"
+                status:
+                  type:
+                    - object
+                    - "null"
+                  properties:
+                    id:
+                      type:
+                        - integer
+                        - "null"
+                    code:
+                      type:
+                        - string
+                        - "null"
+                    name:
+                      type:
+                        - string
+                        - "null"
+                    category:
+                      type:
+                        - string
+                        - "null"
+          chronology:
+            type:
+              - object
+              - "null"
+            properties:
+              previousLaunchId:
+                type:
+                  - integer
+                  - "null"
+              comparisonLaunchId:
+                type:
+                  - integer
+                  - "null"
           tenant_id:
             type:
               - string
@@ -955,6 +1084,93 @@ streams:
                   type:
                     - boolean
                     - "null"
+          category:
+            type:
+              - object
+              - "null"
+            properties:
+              id:
+                type:
+                  - integer
+                  - "null"
+              name:
+                type:
+                  - string
+                  - "null"
+              color:
+                type:
+                  - string
+                  - "null"
+              description:
+                type:
+                  - string
+                  - "null"
+              projectId:
+                type:
+                  - integer
+                  - "null"
+              createdBy:
+                type:
+                  - string
+                  - "null"
+              createdDate:
+                type:
+                  - integer
+                  - "null"
+              lastModifiedBy:
+                type:
+                  - string
+                  - "null"
+              lastModifiedDate:
+                type:
+                  - integer
+                  - "null"
+          namedEnv:
+            type:
+              - object
+              - "null"
+            properties:
+              id:
+                type:
+                  - integer
+                  - "null"
+              externalId:
+                type:
+                  - string
+                  - "null"
+              name:
+                type:
+                  - string
+                  - "null"
+              launchId:
+                type:
+                  - integer
+                  - "null"
+              jobRunId:
+                type:
+                  - integer
+                  - "null"
+          retriedBy:
+            type:
+              - object
+              - "null"
+            properties:
+              id:
+                type:
+                  - integer
+                  - "null"
+              name:
+                type:
+                  - string
+                  - "null"
+          assignee:
+            type:
+              - string
+              - "null"
+          testedBy:
+            type:
+              - string
+              - "null"
           tenant_id:
             type:
               - string
@@ -971,6 +1187,716 @@ streams:
     transformations:
       - type: AddFields
         fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+  - type: DeclarativeStream
+    name: launch_environment
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: launch_id
+            incremental_dependency: true
+            extra_fields:
+              - - lastModifiedDate
+              - - projectId
+            stream:
+              type: DeclarativeStream
+              name: _launches
+              primary_key:
+                - id
+              retriever:
+                type: SimpleRetriever
+                decoder:
+                  type: JsonDecoder
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: id
+                      partition_field: project_id
+                      request_option:
+                        type: RequestOption
+                        inject_into: request_parameter
+                        field_name: projectId
+                      stream:
+                        type: DeclarativeStream
+                        name: _projects
+                        primary_key:
+                          - id
+                        retriever:
+                          type: SimpleRetriever
+                          decoder:
+                            type: JsonDecoder
+                          requester:
+                            type: HttpRequester
+                            url: "{{ config['allure_url'] }}/api/project"
+                            http_method: GET
+                            authenticator:
+                              type: ApiKeyAuthenticator
+                              api_token: "Api-Token {{ config['allure_api_token'] }}"
+                              inject_into:
+                                type: RequestOption
+                                inject_into: header
+                                field_name: Authorization
+                            request_parameters:
+                              sort: id,ASC
+                            error_handler:
+                              type: DefaultErrorHandler
+                              max_retries: 5
+                              response_filters:
+                                - type: HttpResponseFilter
+                                  action: RATE_LIMITED
+                                  http_codes:
+                                    - 429
+                                - type: HttpResponseFilter
+                                  action: RETRY
+                                  http_codes:
+                                    - 500
+                                    - 502
+                                    - 503
+                                    - 504
+                              backoff_strategies:
+                                - type: WaitTimeFromHeader
+                                  header: Retry-After
+                                - type: ExponentialBackoffStrategy
+                                  factor: 5
+                          paginator:
+                            type: DefaultPaginator
+                            page_token_option:
+                              type: RequestOption
+                              inject_into: request_parameter
+                              field_name: page
+                            page_size_option:
+                              type: RequestOption
+                              inject_into: request_parameter
+                              field_name: size
+                            pagination_strategy:
+                              type: CursorPagination
+                              page_size: "{{ config.get('allure_page_size', 100) }}"
+                              cursor_value: "{{ response.get('number', 0) + 1 }}"
+                              stop_condition: "{{ response.get('last', true) }}"
+                          record_selector:
+                            type: RecordSelector
+                            extractor:
+                              type: DpathExtractor
+                              field_path:
+                                - content
+                            record_filter:
+                              type: RecordFilter
+                              condition: >-
+                                {{ not config.get('allure_project_ids') or record['id'] in
+                                config['allure_project_ids'] }}
+                        schema_loader:
+                          type: InlineSchemaLoader
+                          schema:
+                            type: object
+                            $schema: http://json-schema.org/schema#
+                            properties:
+                              id:
+                                type:
+                                  - integer
+                                  - "null"
+                            additionalProperties: true
+                requester:
+                  type: HttpRequester
+                  url: "{{ config['allure_url'] }}/api/launch/__search"
+                  http_method: GET
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "Api-Token {{ config['allure_api_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                  request_parameters:
+                    rql: >-
+                      lastModifiedDate >= {{ stream_interval.start_time }}
+                    sort: id,ASC
+                  error_handler:
+                    type: DefaultErrorHandler
+                    max_retries: 5
+                    response_filters:
+                      - type: HttpResponseFilter
+                        action: RATE_LIMITED
+                        http_codes:
+                          - 429
+                      - type: HttpResponseFilter
+                        action: RETRY
+                        http_codes:
+                          - 500
+                          - 502
+                          - 503
+                          - 504
+                    backoff_strategies:
+                      - type: WaitTimeFromHeader
+                        header: Retry-After
+                      - type: ExponentialBackoffStrategy
+                        factor: 5
+                paginator:
+                  type: DefaultPaginator
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: page
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: size
+                  pagination_strategy:
+                    type: CursorPagination
+                    page_size: "{{ config.get('allure_page_size', 100) }}"
+                    cursor_value: "{{ response.get('number', 0) + 1 }}"
+                    stop_condition: "{{ response.get('last', true) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - content
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: lastModifiedDate
+                cursor_datetime_formats:
+                  - "%ms"
+                datetime_format: "%ms"
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config.get('allure_start_date') or (now_utc() - duration('P90D')).strftime('%Y-%m-%d') }}"
+                  datetime_format: "%Y-%m-%d"
+                end_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+                  datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                lookback_window: P2D
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id:
+                      type:
+                        - integer
+                        - "null"
+                    lastModifiedDate:
+                      type:
+                        - integer
+                        - "null"
+                  additionalProperties: true
+      requester:
+        type: HttpRequester
+        url: "{{ config['allure_url'] }}/api/launch/{{ stream_partition.launch_id }}/env"
+        http_method: GET
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "Api-Token {{ config['allure_api_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+        error_handler:
+          type: DefaultErrorHandler
+          max_retries: 5
+          response_filters:
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes:
+                - 404
+            - type: HttpResponseFilter
+              action: RATE_LIMITED
+              http_codes:
+                - 429
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes:
+                - 500
+                - 502
+                - 503
+                - 504
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+            - type: ExponentialBackoffStrategy
+              factor: 5
+      paginator:
+        type: NoPagination
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: lastModifiedDate
+      cursor_datetime_formats:
+        - "%ms"
+      datetime_format: "%ms"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('allure_start_date') or (now_utc() - duration('P90D')).strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type:
+              - integer
+              - "null"
+          name:
+            type:
+              - string
+              - "null"
+          variable:
+            type:
+              - object
+              - "null"
+            properties:
+              id:
+                type:
+                  - integer
+                  - "null"
+              name:
+                type:
+                  - string
+                  - "null"
+              createdBy:
+                type:
+                  - string
+                  - "null"
+              createdDate:
+                type:
+                  - integer
+                  - "null"
+              lastModifiedBy:
+                type:
+                  - string
+                  - "null"
+              lastModifiedDate:
+                type:
+                  - integer
+                  - "null"
+          launch_id:
+            type:
+              - integer
+              - "null"
+          project_id:
+            type:
+              - integer
+              - "null"
+          lastModifiedDate:
+            type:
+              - integer
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - launch_id
+            value: "{{ stream_partition.launch_id }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path:
+              - project_id
+            value: "{{ stream_slice.extra_fields['projectId'] }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path:
+              - lastModifiedDate
+            value: "{{ stream_slice.extra_fields['lastModifiedDate'] }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.launch_id }}-{{ record['id'] }}
+  - type: DeclarativeStream
+    name: launch_errors
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: launch_id
+            incremental_dependency: true
+            extra_fields:
+              - - lastModifiedDate
+              - - projectId
+            stream:
+              type: DeclarativeStream
+              name: _launches
+              primary_key:
+                - id
+              retriever:
+                type: SimpleRetriever
+                decoder:
+                  type: JsonDecoder
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: id
+                      partition_field: project_id
+                      request_option:
+                        type: RequestOption
+                        inject_into: request_parameter
+                        field_name: projectId
+                      stream:
+                        type: DeclarativeStream
+                        name: _projects
+                        primary_key:
+                          - id
+                        retriever:
+                          type: SimpleRetriever
+                          decoder:
+                            type: JsonDecoder
+                          requester:
+                            type: HttpRequester
+                            url: "{{ config['allure_url'] }}/api/project"
+                            http_method: GET
+                            authenticator:
+                              type: ApiKeyAuthenticator
+                              api_token: "Api-Token {{ config['allure_api_token'] }}"
+                              inject_into:
+                                type: RequestOption
+                                inject_into: header
+                                field_name: Authorization
+                            request_parameters:
+                              sort: id,ASC
+                            error_handler:
+                              type: DefaultErrorHandler
+                              max_retries: 5
+                              response_filters:
+                                - type: HttpResponseFilter
+                                  action: RATE_LIMITED
+                                  http_codes:
+                                    - 429
+                                - type: HttpResponseFilter
+                                  action: RETRY
+                                  http_codes:
+                                    - 500
+                                    - 502
+                                    - 503
+                                    - 504
+                              backoff_strategies:
+                                - type: WaitTimeFromHeader
+                                  header: Retry-After
+                                - type: ExponentialBackoffStrategy
+                                  factor: 5
+                          paginator:
+                            type: DefaultPaginator
+                            page_token_option:
+                              type: RequestOption
+                              inject_into: request_parameter
+                              field_name: page
+                            page_size_option:
+                              type: RequestOption
+                              inject_into: request_parameter
+                              field_name: size
+                            pagination_strategy:
+                              type: CursorPagination
+                              page_size: "{{ config.get('allure_page_size', 100) }}"
+                              cursor_value: "{{ response.get('number', 0) + 1 }}"
+                              stop_condition: "{{ response.get('last', true) }}"
+                          record_selector:
+                            type: RecordSelector
+                            extractor:
+                              type: DpathExtractor
+                              field_path:
+                                - content
+                            record_filter:
+                              type: RecordFilter
+                              condition: >-
+                                {{ not config.get('allure_project_ids') or record['id'] in
+                                config['allure_project_ids'] }}
+                        schema_loader:
+                          type: InlineSchemaLoader
+                          schema:
+                            type: object
+                            $schema: http://json-schema.org/schema#
+                            properties:
+                              id:
+                                type:
+                                  - integer
+                                  - "null"
+                            additionalProperties: true
+                requester:
+                  type: HttpRequester
+                  url: "{{ config['allure_url'] }}/api/launch/__search"
+                  http_method: GET
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "Api-Token {{ config['allure_api_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                  request_parameters:
+                    rql: >-
+                      lastModifiedDate >= {{ stream_interval.start_time }}
+                    sort: id,ASC
+                  error_handler:
+                    type: DefaultErrorHandler
+                    max_retries: 5
+                    response_filters:
+                      - type: HttpResponseFilter
+                        action: RATE_LIMITED
+                        http_codes:
+                          - 429
+                      - type: HttpResponseFilter
+                        action: RETRY
+                        http_codes:
+                          - 500
+                          - 502
+                          - 503
+                          - 504
+                    backoff_strategies:
+                      - type: WaitTimeFromHeader
+                        header: Retry-After
+                      - type: ExponentialBackoffStrategy
+                        factor: 5
+                paginator:
+                  type: DefaultPaginator
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: page
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: size
+                  pagination_strategy:
+                    type: CursorPagination
+                    page_size: "{{ config.get('allure_page_size', 100) }}"
+                    cursor_value: "{{ response.get('number', 0) + 1 }}"
+                    stop_condition: "{{ response.get('last', true) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - content
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: lastModifiedDate
+                cursor_datetime_formats:
+                  - "%ms"
+                datetime_format: "%ms"
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config.get('allure_start_date') or (now_utc() - duration('P90D')).strftime('%Y-%m-%d') }}"
+                  datetime_format: "%Y-%m-%d"
+                end_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+                  datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                lookback_window: P2D
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id:
+                      type:
+                        - integer
+                        - "null"
+                    lastModifiedDate:
+                      type:
+                        - integer
+                        - "null"
+                  additionalProperties: true
+      requester:
+        type: HttpRequester
+        url: "{{ config['allure_url'] }}/api/launch/error"
+        http_method: GET
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "Api-Token {{ config['allure_api_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+        request_parameters:
+          launchId: "{{ stream_partition.launch_id }}"
+          sort: id,ASC
+        error_handler:
+          type: DefaultErrorHandler
+          max_retries: 5
+          response_filters:
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes:
+                - 404
+            - type: HttpResponseFilter
+              action: RATE_LIMITED
+              http_codes:
+                - 429
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes:
+                - 500
+                - 502
+                - 503
+                - 504
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+            - type: ExponentialBackoffStrategy
+              factor: 5
+      paginator:
+        type: DefaultPaginator
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: page
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: size
+        pagination_strategy:
+          type: CursorPagination
+          page_size: "{{ config.get('allure_page_size', 100) }}"
+          cursor_value: "{{ response.get('number', 0) + 1 }}"
+          stop_condition: "{{ response.get('last', true) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - content
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: lastModifiedDate
+      cursor_datetime_formats:
+        - "%ms"
+      datetime_format: "%ms"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('allure_start_date') or (now_utc() - duration('P90D')).strftime('%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type:
+              - integer
+              - "null"
+          launchId:
+            type:
+              - integer
+              - "null"
+          jobRunId:
+            type:
+              - integer
+              - "null"
+          hash:
+            type:
+              - string
+              - "null"
+          message:
+            type:
+              - string
+              - "null"
+          trace:
+            type:
+              - string
+              - "null"
+          launch_id:
+            type:
+              - integer
+              - "null"
+          project_id:
+            type:
+              - integer
+              - "null"
+          lastModifiedDate:
+            type:
+              - integer
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - launch_id
+            value: "{{ stream_partition.launch_id }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path:
+              - project_id
+            value: "{{ stream_slice.extra_fields['projectId'] }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path:
+              - lastModifiedDate
+            value: "{{ stream_slice.extra_fields['lastModifiedDate'] }}"
+            value_type: integer
           - type: AddedFieldDefinition
             path:
               - tenant_id
@@ -1846,6 +2772,1215 @@ streams:
             value: >-
               {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['projectId'] }}-{{ record['id'] }}
 
+  - type: DeclarativeStream
+    name: categories
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: project_id
+            stream:
+              type: DeclarativeStream
+              name: _projects
+              primary_key:
+                - id
+              retriever:
+                type: SimpleRetriever
+                decoder:
+                  type: JsonDecoder
+                requester:
+                  type: HttpRequester
+                  url: "{{ config['allure_url'] }}/api/project"
+                  http_method: GET
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "Api-Token {{ config['allure_api_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                  request_parameters:
+                    sort: id,ASC
+                  error_handler:
+                    type: DefaultErrorHandler
+                    max_retries: 5
+                    response_filters:
+                      - type: HttpResponseFilter
+                        action: RATE_LIMITED
+                        http_codes:
+                          - 429
+                      - type: HttpResponseFilter
+                        action: RETRY
+                        http_codes:
+                          - 500
+                          - 502
+                          - 503
+                          - 504
+                    backoff_strategies:
+                      - type: WaitTimeFromHeader
+                        header: Retry-After
+                      - type: ExponentialBackoffStrategy
+                        factor: 5
+                paginator:
+                  type: DefaultPaginator
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: page
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: size
+                  pagination_strategy:
+                    type: CursorPagination
+                    page_size: "{{ config.get('allure_page_size', 100) }}"
+                    cursor_value: "{{ response.get('number', 0) + 1 }}"
+                    stop_condition: "{{ response.get('last', true) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - content
+                  record_filter:
+                    type: RecordFilter
+                    condition: >-
+                      {{ not config.get('allure_project_ids') or record['id'] in
+                      config['allure_project_ids'] }}
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id:
+                      type:
+                        - integer
+                        - "null"
+                  additionalProperties: true
+      requester:
+        type: HttpRequester
+        url: "{{ config['allure_url'] }}/api/project/{{ stream_partition.project_id }}/category"
+        http_method: GET
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "Api-Token {{ config['allure_api_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+        request_parameters:
+          sort: id,ASC
+        error_handler:
+          type: DefaultErrorHandler
+          max_retries: 5
+          response_filters:
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes:
+                - 403
+            - type: HttpResponseFilter
+              action: RATE_LIMITED
+              http_codes:
+                - 429
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes:
+                - 500
+                - 502
+                - 503
+                - 504
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+            - type: ExponentialBackoffStrategy
+              factor: 5
+      paginator:
+        type: DefaultPaginator
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: page
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: size
+        pagination_strategy:
+          type: CursorPagination
+          page_size: "{{ config.get('allure_page_size', 100) }}"
+          cursor_value: "{{ response.get('number', 0) + 1 }}"
+          stop_condition: "{{ response.get('last', true) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - content
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type:
+              - integer
+              - "null"
+          name:
+            type:
+              - string
+              - "null"
+          color:
+            type:
+              - string
+              - "null"
+          description:
+            type:
+              - string
+              - "null"
+          projectId:
+            type:
+              - integer
+              - "null"
+          createdBy:
+            type:
+              - string
+              - "null"
+          createdDate:
+            type:
+              - integer
+              - "null"
+          lastModifiedBy:
+            type:
+              - string
+              - "null"
+          lastModifiedDate:
+            type:
+              - integer
+              - "null"
+          project_id:
+            type:
+              - integer
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - project_id
+            value: "{{ stream_partition.project_id }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.project_id }}-{{ record['id'] }}
+  - type: DeclarativeStream
+    name: category_matchers
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: project_id
+            stream:
+              type: DeclarativeStream
+              name: _projects
+              primary_key:
+                - id
+              retriever:
+                type: SimpleRetriever
+                decoder:
+                  type: JsonDecoder
+                requester:
+                  type: HttpRequester
+                  url: "{{ config['allure_url'] }}/api/project"
+                  http_method: GET
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "Api-Token {{ config['allure_api_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                  request_parameters:
+                    sort: id,ASC
+                  error_handler:
+                    type: DefaultErrorHandler
+                    max_retries: 5
+                    response_filters:
+                      - type: HttpResponseFilter
+                        action: RATE_LIMITED
+                        http_codes:
+                          - 429
+                      - type: HttpResponseFilter
+                        action: RETRY
+                        http_codes:
+                          - 500
+                          - 502
+                          - 503
+                          - 504
+                    backoff_strategies:
+                      - type: WaitTimeFromHeader
+                        header: Retry-After
+                      - type: ExponentialBackoffStrategy
+                        factor: 5
+                paginator:
+                  type: DefaultPaginator
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: page
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: size
+                  pagination_strategy:
+                    type: CursorPagination
+                    page_size: "{{ config.get('allure_page_size', 100) }}"
+                    cursor_value: "{{ response.get('number', 0) + 1 }}"
+                    stop_condition: "{{ response.get('last', true) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - content
+                  record_filter:
+                    type: RecordFilter
+                    condition: >-
+                      {{ not config.get('allure_project_ids') or record['id'] in
+                      config['allure_project_ids'] }}
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id:
+                      type:
+                        - integer
+                        - "null"
+                  additionalProperties: true
+      requester:
+        type: HttpRequester
+        url: "{{ config['allure_url'] }}/api/project/{{ stream_partition.project_id }}/categorymatcher"
+        http_method: GET
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "Api-Token {{ config['allure_api_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+        request_parameters:
+          sort: id,ASC
+        error_handler:
+          type: DefaultErrorHandler
+          max_retries: 5
+          response_filters:
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes:
+                - 403
+            - type: HttpResponseFilter
+              action: RATE_LIMITED
+              http_codes:
+                - 429
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes:
+                - 500
+                - 502
+                - 503
+                - 504
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+            - type: ExponentialBackoffStrategy
+              factor: 5
+      paginator:
+        type: DefaultPaginator
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: page
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: size
+        pagination_strategy:
+          type: CursorPagination
+          page_size: "{{ config.get('allure_page_size', 100) }}"
+          cursor_value: "{{ response.get('number', 0) + 1 }}"
+          stop_condition: "{{ response.get('last', true) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - content
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type:
+              - integer
+              - "null"
+          name:
+            type:
+              - string
+              - "null"
+          messageRegex:
+            type:
+              - string
+              - "null"
+          traceRegex:
+            type:
+              - string
+              - "null"
+          projectId:
+            type:
+              - integer
+              - "null"
+          category:
+            type:
+              - object
+              - "null"
+            properties:
+              id:
+                type:
+                  - integer
+                  - "null"
+              name:
+                type:
+                  - string
+                  - "null"
+              color:
+                type:
+                  - string
+                  - "null"
+              description:
+                type:
+                  - string
+                  - "null"
+              projectId:
+                type:
+                  - integer
+                  - "null"
+              createdBy:
+                type:
+                  - string
+                  - "null"
+              createdDate:
+                type:
+                  - integer
+                  - "null"
+              lastModifiedBy:
+                type:
+                  - string
+                  - "null"
+              lastModifiedDate:
+                type:
+                  - integer
+                  - "null"
+          createdBy:
+            type:
+              - string
+              - "null"
+          createdDate:
+            type:
+              - integer
+              - "null"
+          lastModifiedBy:
+            type:
+              - string
+              - "null"
+          lastModifiedDate:
+            type:
+              - integer
+              - "null"
+          project_id:
+            type:
+              - integer
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - project_id
+            value: "{{ stream_partition.project_id }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.project_id }}-{{ record['id'] }}
+  - type: DeclarativeStream
+    name: defects
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: defect_id
+            extra_fields:
+              - - projectId
+            stream:
+              type: DeclarativeStream
+              name: _defects
+              primary_key:
+                - id
+              retriever:
+                type: SimpleRetriever
+                decoder:
+                  type: JsonDecoder
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: id
+                      partition_field: project_id
+                      request_option:
+                        type: RequestOption
+                        inject_into: request_parameter
+                        field_name: projectId
+                      stream:
+                        type: DeclarativeStream
+                        name: _projects
+                        primary_key:
+                          - id
+                        retriever:
+                          type: SimpleRetriever
+                          decoder:
+                            type: JsonDecoder
+                          requester:
+                            type: HttpRequester
+                            url: "{{ config['allure_url'] }}/api/project"
+                            http_method: GET
+                            authenticator:
+                              type: ApiKeyAuthenticator
+                              api_token: "Api-Token {{ config['allure_api_token'] }}"
+                              inject_into:
+                                type: RequestOption
+                                inject_into: header
+                                field_name: Authorization
+                            request_parameters:
+                              sort: id,ASC
+                            error_handler:
+                              type: DefaultErrorHandler
+                              max_retries: 5
+                              response_filters:
+                                - type: HttpResponseFilter
+                                  action: RATE_LIMITED
+                                  http_codes:
+                                    - 429
+                                - type: HttpResponseFilter
+                                  action: RETRY
+                                  http_codes:
+                                    - 500
+                                    - 502
+                                    - 503
+                                    - 504
+                              backoff_strategies:
+                                - type: WaitTimeFromHeader
+                                  header: Retry-After
+                                - type: ExponentialBackoffStrategy
+                                  factor: 5
+                          paginator:
+                            type: DefaultPaginator
+                            page_token_option:
+                              type: RequestOption
+                              inject_into: request_parameter
+                              field_name: page
+                            page_size_option:
+                              type: RequestOption
+                              inject_into: request_parameter
+                              field_name: size
+                            pagination_strategy:
+                              type: CursorPagination
+                              page_size: "{{ config.get('allure_page_size', 100) }}"
+                              cursor_value: "{{ response.get('number', 0) + 1 }}"
+                              stop_condition: "{{ response.get('last', true) }}"
+                          record_selector:
+                            type: RecordSelector
+                            extractor:
+                              type: DpathExtractor
+                              field_path:
+                                - content
+                            record_filter:
+                              type: RecordFilter
+                              condition: >-
+                                {{ not config.get('allure_project_ids') or record['id'] in
+                                config['allure_project_ids'] }}
+                        schema_loader:
+                          type: InlineSchemaLoader
+                          schema:
+                            type: object
+                            $schema: http://json-schema.org/schema#
+                            properties:
+                              id:
+                                type:
+                                  - integer
+                                  - "null"
+                            additionalProperties: true
+                requester:
+                  type: HttpRequester
+                  url: "{{ config['allure_url'] }}/api/defect"
+                  http_method: GET
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "Api-Token {{ config['allure_api_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                  request_parameters:
+                    sort: id,ASC
+                  error_handler:
+                    type: DefaultErrorHandler
+                    max_retries: 5
+                    response_filters:
+                      - type: HttpResponseFilter
+                        action: IGNORE
+                        http_codes:
+                          - 403
+                      - type: HttpResponseFilter
+                        action: RATE_LIMITED
+                        http_codes:
+                          - 429
+                      - type: HttpResponseFilter
+                        action: RETRY
+                        http_codes:
+                          - 500
+                          - 502
+                          - 503
+                          - 504
+                    backoff_strategies:
+                      - type: WaitTimeFromHeader
+                        header: Retry-After
+                      - type: ExponentialBackoffStrategy
+                        factor: 5
+                paginator:
+                  type: DefaultPaginator
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: page
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: size
+                  pagination_strategy:
+                    type: CursorPagination
+                    page_size: "{{ config.get('allure_page_size', 100) }}"
+                    cursor_value: "{{ response.get('number', 0) + 1 }}"
+                    stop_condition: "{{ response.get('last', true) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - content
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id:
+                      type:
+                        - integer
+                        - "null"
+                    projectId:
+                      type:
+                        - integer
+                        - "null"
+                  additionalProperties: true
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path:
+                        - projectId
+                      value: "{{ stream_partition.project_id }}"
+                      value_type: integer
+      requester:
+        type: HttpRequester
+        url: "{{ config['allure_url'] }}/api/defect/{{ stream_partition.defect_id }}"
+        http_method: GET
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "Api-Token {{ config['allure_api_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+        error_handler:
+          type: DefaultErrorHandler
+          max_retries: 5
+          response_filters:
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes:
+                - 404
+            - type: HttpResponseFilter
+              action: RATE_LIMITED
+              http_codes:
+                - 429
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes:
+                - 500
+                - 502
+                - 503
+                - 504
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+            - type: ExponentialBackoffStrategy
+              factor: 5
+      paginator:
+        type: NoPagination
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type:
+              - integer
+              - "null"
+          projectId:
+            type:
+              - integer
+              - "null"
+          name:
+            type:
+              - string
+              - "null"
+          closed:
+            type:
+              - boolean
+              - "null"
+          description:
+            type:
+              - string
+              - "null"
+          descriptionHtml:
+            type:
+              - string
+              - "null"
+          issue:
+            type:
+              - object
+              - "null"
+            properties:
+              id:
+                type:
+                  - integer
+                  - "null"
+              name:
+                type:
+                  - string
+                  - "null"
+              displayName:
+                type:
+                  - string
+                  - "null"
+              url:
+                type:
+                  - string
+                  - "null"
+              summary:
+                type:
+                  - string
+                  - "null"
+              status:
+                type:
+                  - string
+                  - "null"
+              closed:
+                type:
+                  - boolean
+                  - "null"
+              integrationId:
+                type:
+                  - integer
+                  - "null"
+              integrationType:
+                type:
+                  - string
+                  - "null"
+          foundAtLaunch:
+            type:
+              - object
+              - "null"
+            properties:
+              id:
+                type:
+                  - integer
+                  - "null"
+              name:
+                type:
+                  - string
+                  - "null"
+          lastFoundLaunch:
+            type:
+              - object
+              - "null"
+            properties:
+              id:
+                type:
+                  - integer
+                  - "null"
+              name:
+                type:
+                  - string
+                  - "null"
+          lastFoundDate:
+            type:
+              - integer
+              - "null"
+          createdDate:
+            type:
+              - integer
+              - "null"
+          lastModifiedDate:
+            type:
+              - integer
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+  - type: DeclarativeStream
+    name: defect_test_results
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      decoder:
+        type: JsonDecoder
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: defect_id
+            extra_fields:
+              - - projectId
+            stream:
+              type: DeclarativeStream
+              name: _defects
+              primary_key:
+                - id
+              retriever:
+                type: SimpleRetriever
+                decoder:
+                  type: JsonDecoder
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: id
+                      partition_field: project_id
+                      request_option:
+                        type: RequestOption
+                        inject_into: request_parameter
+                        field_name: projectId
+                      stream:
+                        type: DeclarativeStream
+                        name: _projects
+                        primary_key:
+                          - id
+                        retriever:
+                          type: SimpleRetriever
+                          decoder:
+                            type: JsonDecoder
+                          requester:
+                            type: HttpRequester
+                            url: "{{ config['allure_url'] }}/api/project"
+                            http_method: GET
+                            authenticator:
+                              type: ApiKeyAuthenticator
+                              api_token: "Api-Token {{ config['allure_api_token'] }}"
+                              inject_into:
+                                type: RequestOption
+                                inject_into: header
+                                field_name: Authorization
+                            request_parameters:
+                              sort: id,ASC
+                            error_handler:
+                              type: DefaultErrorHandler
+                              max_retries: 5
+                              response_filters:
+                                - type: HttpResponseFilter
+                                  action: RATE_LIMITED
+                                  http_codes:
+                                    - 429
+                                - type: HttpResponseFilter
+                                  action: RETRY
+                                  http_codes:
+                                    - 500
+                                    - 502
+                                    - 503
+                                    - 504
+                              backoff_strategies:
+                                - type: WaitTimeFromHeader
+                                  header: Retry-After
+                                - type: ExponentialBackoffStrategy
+                                  factor: 5
+                          paginator:
+                            type: DefaultPaginator
+                            page_token_option:
+                              type: RequestOption
+                              inject_into: request_parameter
+                              field_name: page
+                            page_size_option:
+                              type: RequestOption
+                              inject_into: request_parameter
+                              field_name: size
+                            pagination_strategy:
+                              type: CursorPagination
+                              page_size: "{{ config.get('allure_page_size', 100) }}"
+                              cursor_value: "{{ response.get('number', 0) + 1 }}"
+                              stop_condition: "{{ response.get('last', true) }}"
+                          record_selector:
+                            type: RecordSelector
+                            extractor:
+                              type: DpathExtractor
+                              field_path:
+                                - content
+                            record_filter:
+                              type: RecordFilter
+                              condition: >-
+                                {{ not config.get('allure_project_ids') or record['id'] in
+                                config['allure_project_ids'] }}
+                        schema_loader:
+                          type: InlineSchemaLoader
+                          schema:
+                            type: object
+                            $schema: http://json-schema.org/schema#
+                            properties:
+                              id:
+                                type:
+                                  - integer
+                                  - "null"
+                            additionalProperties: true
+                requester:
+                  type: HttpRequester
+                  url: "{{ config['allure_url'] }}/api/defect"
+                  http_method: GET
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "Api-Token {{ config['allure_api_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                  request_parameters:
+                    sort: id,ASC
+                  error_handler:
+                    type: DefaultErrorHandler
+                    max_retries: 5
+                    response_filters:
+                      - type: HttpResponseFilter
+                        action: IGNORE
+                        http_codes:
+                          - 403
+                      - type: HttpResponseFilter
+                        action: RATE_LIMITED
+                        http_codes:
+                          - 429
+                      - type: HttpResponseFilter
+                        action: RETRY
+                        http_codes:
+                          - 500
+                          - 502
+                          - 503
+                          - 504
+                    backoff_strategies:
+                      - type: WaitTimeFromHeader
+                        header: Retry-After
+                      - type: ExponentialBackoffStrategy
+                        factor: 5
+                paginator:
+                  type: DefaultPaginator
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: page
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: size
+                  pagination_strategy:
+                    type: CursorPagination
+                    page_size: "{{ config.get('allure_page_size', 100) }}"
+                    cursor_value: "{{ response.get('number', 0) + 1 }}"
+                    stop_condition: "{{ response.get('last', true) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - content
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id:
+                      type:
+                        - integer
+                        - "null"
+                    projectId:
+                      type:
+                        - integer
+                        - "null"
+                  additionalProperties: true
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path:
+                        - projectId
+                      value: "{{ stream_partition.project_id }}"
+                      value_type: integer
+      requester:
+        type: HttpRequester
+        url: "{{ config['allure_url'] }}/api/defect/{{ stream_partition.defect_id }}/testresult"
+        http_method: GET
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "Api-Token {{ config['allure_api_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+        request_parameters:
+          sort: id,ASC
+        error_handler:
+          type: DefaultErrorHandler
+          max_retries: 5
+          response_filters:
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes:
+                - 404
+            - type: HttpResponseFilter
+              action: RATE_LIMITED
+              http_codes:
+                - 429
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes:
+                - 500
+                - 502
+                - 503
+                - 504
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+            - type: ExponentialBackoffStrategy
+              factor: 5
+      paginator:
+        type: DefaultPaginator
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: page
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: size
+        pagination_strategy:
+          type: CursorPagination
+          page_size: "{{ config.get('allure_page_size', 100) }}"
+          cursor_value: "{{ response.get('number', 0) + 1 }}"
+          stop_condition: "{{ response.get('last', true) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - content
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type:
+              - integer
+              - "null"
+          name:
+            type:
+              - string
+              - "null"
+          status:
+            type:
+              - string
+              - "null"
+          testCaseId:
+            type:
+              - integer
+              - "null"
+          assignee:
+            type:
+              - string
+              - "null"
+          duration:
+            type:
+              - integer
+              - "null"
+          defect_id:
+            type:
+              - integer
+              - "null"
+          project_id:
+            type:
+              - integer
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+        required:
+          - unique_key
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - defect_id
+            value: "{{ stream_partition.defect_id }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path:
+              - project_id
+            value: "{{ stream_slice.extra_fields['projectId'] }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.defect_id }}-{{ record['id'] }}
+
 concurrency_level:
   type: ConcurrencyLevel
   default_concurrency: 4
@@ -1927,3 +4062,9 @@ metadata:
     test_results: true
     test_cases: true
     custom_fields: true
+    launch_environment: true
+    launch_errors: true
+    categories: true
+    category_matchers: true
+    defects: true
+    defect_test_results: true

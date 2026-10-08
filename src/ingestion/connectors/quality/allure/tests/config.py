@@ -9,6 +9,7 @@ PROJECTS_URL = f"{ALLURE_URL}/api/project"
 LAUNCHES_URL = f"{ALLURE_URL}/api/launch/__search"
 TEST_RESULTS_URL = f"{ALLURE_URL}/api/testresult"
 TEST_CASE_SEARCH_URL = f"{ALLURE_URL}/api/testcase/__search"
+LAUNCH_ERRORS_URL = f"{ALLURE_URL}/api/launch/error"
 
 FROZEN_NOW = "2026-07-01T00:00:00Z"
 NOW_MS = 1782864000000
@@ -85,6 +86,36 @@ def case_overview_url(test_case_id: int) -> str:
 
 def custom_fields_url(project_id: int) -> str:
     return f"{ALLURE_URL}/api/project/{project_id}/cf"
+
+
+def launch_env_url(launch_id: int) -> str:
+    return f"{ALLURE_URL}/api/launch/{launch_id}/env"
+
+
+def categories_url(project_id: int) -> str:
+    return f"{ALLURE_URL}/api/project/{project_id}/category"
+
+
+def category_matchers_url(project_id: int) -> str:
+    return f"{ALLURE_URL}/api/project/{project_id}/categorymatcher"
+
+
+DEFECTS_URL = f"{ALLURE_URL}/api/defect"
+
+
+def defect_url(defect_id: int) -> str:
+    return f"{ALLURE_URL}/api/defect/{defect_id}"
+
+
+def defect_test_results_url(defect_id: int) -> str:
+    return f"{ALLURE_URL}/api/defect/{defect_id}/testresult"
+
+
+def mock_defect_list(http_mocker: HttpMocker, project_id: int, response: HttpResponse | list[HttpResponse]) -> HttpRequest:
+    request = api_request(DEFECTS_URL, paged({"projectId": str(project_id)}))
+    http_mocker.get(request, response)
+
+    return request
 
 
 def mock_projects(http_mocker: HttpMocker, project_ids: tuple[int, ...] = (7, 12)) -> HttpRequest:

@@ -67,5 +67,29 @@
       "hidden": false,
       "excluded": false
     }
-  ]
+  ],
+  "category": {
+    "id": 21,
+    "name": "Product defects",
+    "color": "#d32f2f",
+    "description": "Failures caused by the product",
+    "projectId": 7,
+    "createdBy": "admin",
+    "createdDate": 1767225600000,
+    "lastModifiedBy": "admin",
+    "lastModifiedDate": 1767225600000
+  },
+  "namedEnv": {
+    "id": 51,
+    "externalId": "chromium-eu",
+    "name": "chromium-eu",
+    "launchId": 101,
+    "jobRunId": 4001
+  },
+  "retriedBy": {
+    "id": 5002,
+    "name": "Login succeeds"
+  },
+  "assignee": "qa-lead",
+  "testedBy": "ci-bot"
 }

@@ -1,0 +1,11 @@
+{
+  "id": 21,
+  "name": "Product defects",
+  "color": "#d32f2f",
+  "description": "Failures caused by the product",
+  "projectId": null,
+  "createdBy": "admin",
+  "createdDate": 1767225600000,
+  "lastModifiedBy": "admin",
+  "lastModifiedDate": 1767225600000
+}
