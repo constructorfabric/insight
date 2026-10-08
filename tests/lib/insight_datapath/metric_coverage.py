@@ -4,6 +4,10 @@ The gate runs as a bare `python3 <path>` over two JSON files a run leaves behind
 metric catalogue the suite read from analytics, and the ledger of what it asserted. It
 fails when a catalogued metric is missing a view its computation requires, or when the
 suite asserted a key the catalogue does not name.
+
+A run that skipped metric classes owes only the metrics of the classes it ran: a key's
+class is its prefix (`git.active_days` belongs to `metrics/git`). A key whose prefix
+names no class directory is owed by every run.
 """
 
 from __future__ import annotations
@@ -46,6 +50,7 @@ class CoverageReport:
     universe: dict[str, MetricDefinition]
     asserted: dict[str, dict[str, set[str]]]
     requested: set[str]
+    owed: frozenset[str] | None = None
     missing: dict[str, set[str]] = field(default_factory=dict)
     unknown_asserted: set[str] = field(default_factory=set)
     unknown_requested: set[str] = field(default_factory=set)
@@ -54,11 +59,17 @@ class CoverageReport:
         universe_keys = set(self.universe)
         self.unknown_asserted = set(self.asserted) - universe_keys
         self.unknown_requested = self.requested - universe_keys
-        for key, definition in self.universe.items():
+        for key, definition in self.owed_definitions.items():
             covered = set(self.asserted.get(key, {}))
             absent = definition.required_views - covered
             if absent:
                 self.missing[key] = absent
+
+    @property
+    def owed_definitions(self) -> dict[str, MetricDefinition]:
+        if self.owed is None:
+            return self.universe
+        return {key: definition for key, definition in self.universe.items() if key in self.owed}
 
     @property
     def passed(self) -> bool:
@@ -97,9 +108,26 @@ def coverage_from_ledgers(paths: Sequence[Path]) -> tuple[dict[str, dict[str, se
     return asserted, requested
 
 
-def build_report(universe: dict[str, MetricDefinition], ledgers: Sequence[Path]) -> CoverageReport:
+def metric_class(metric_key: str) -> str:
+    return metric_key.split(".", 1)[0]
+
+
+def owed_by(
+    universe: dict[str, MetricDefinition], ran: frozenset[str], known: frozenset[str]
+) -> frozenset[str]:
+    """The keys a run of the classes in `ran` must cover, out of the `known` classes."""
+    return frozenset(
+        key for key in universe if metric_class(key) in ran or metric_class(key) not in known
+    )
+
+
+def build_report(
+    universe: dict[str, MetricDefinition],
+    ledgers: Sequence[Path],
+    owed: frozenset[str] | None = None,
+) -> CoverageReport:
     asserted, requested = coverage_from_ledgers(ledgers)
-    return CoverageReport(universe=universe, asserted=asserted, requested=requested)
+    return CoverageReport(universe=universe, asserted=asserted, requested=requested, owed=owed)
 
 
 def gate_violations(report: CoverageReport) -> list[str]:
@@ -118,17 +146,30 @@ def gate_violations(report: CoverageReport) -> list[str]:
     return violations
 
 
+def _scope_note(report: CoverageReport) -> list[str]:
+    if report.owed is None:
+        return []
+    unchecked = len(report.universe) - len(report.owed_definitions)
+    return [
+        f"Scoped to the metric classes this change reached: {unchecked} of "
+        f"{len(report.universe)} catalogued metrics belong to other classes and were not checked.",
+        "",
+    ]
+
+
 def render_markdown(report: CoverageReport) -> str:
-    covered = len(report.universe) - len(report.missing)
+    owed = report.owed_definitions
+    covered = len(owed) - len(report.missing)
     lines = [
         "# Unified builtin metric coverage",
         "",
-        f"**Gate: {'PASS' if report.passed else 'FAIL'}.** {covered}/{len(report.universe)} metrics cover every supported view.",
+        f"**Gate: {'PASS' if report.passed else 'FAIL'}.** {covered}/{len(owed)} metrics cover every supported view.",
         "",
+        *_scope_note(report),
         "| metric | computation | required views | covered views |",
         "|---|---|---|---|",
     ]
-    for key, definition in sorted(report.universe.items()):
+    for key, definition in sorted(owed.items()):
         covered_views = sorted(report.asserted.get(key, {}))
         lines.append(
             f"| `{key}` | {definition.computation} | {', '.join(sorted(definition.required_views))} | {', '.join(covered_views)} |"
@@ -145,11 +186,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--ledger", type=Path, nargs="+", default=[LEDGER_FILE], help="one per suite run"
     )
+    parser.add_argument("--classes", help="comma-separated metric classes this run covered")
+    parser.add_argument("--known", help="comma-separated metric classes the suite has")
     args = parser.parse_args(argv)
+    if (args.classes is None) != (args.known is None):
+        parser.error("--classes and --known go together")
     missing = [path for path in args.ledger if not path.is_file()]
     if missing:
         parser.error(f"no assertion ledger at {', '.join(str(path) for path in missing)}")
-    report = build_report(universe_from_file(args.universe_file), args.ledger)
+    universe = universe_from_file(args.universe_file)
+    owed = None
+    if args.classes is not None:
+        ran = frozenset(name for name in args.classes.split(",") if name)
+        if not ran:
+            parser.error("--classes names no class; a run covering none has no gate")
+        owed = owed_by(universe, ran, frozenset(name for name in args.known.split(",") if name))
+    report = build_report(universe, args.ledger, owed)
     output = render_markdown(report)
     sys.stdout.write(output)
     for violation in gate_violations(report):
