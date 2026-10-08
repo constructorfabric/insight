@@ -592,13 +592,13 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit emails
 - Notes: Emails a person received.
 
-## collab.emails_read — Emails Read
+## collab.emails_read — Email Read Actions
 
 - Source: collab (collab_metric_observations)
 - Reads: emails_read
 - Formula: sum(emails_read)
-- Shape: integer, higher_is_better, unit emails
-- Notes: Emails a person read.
+- Shape: integer, higher_is_better, unit actions
+- Notes: Times a person opened an email, as Microsoft 365 counts them. Opening the same message again, or on another device, counts again, so this can be higher than Emails Received.
 
 ## collab.files_engaged — Files Engaged
 

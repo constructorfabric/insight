@@ -2101,11 +2101,11 @@ metrics:
   - metric_key: collab.emails_read
     source_key: collab
     subject: email
-    label: Emails Read
-    short_label: Emails read
-    description: Emails read
-    explanation: Emails a person read.
-    unit: emails
+    label: Email Read Actions
+    short_label: Read actions
+    description: Email read actions
+    explanation: Times a person opened an email, as Microsoft 365 counts them. Opening the same message again, or on another device, counts again, so this can be higher than Emails Received.
+    unit: actions
     format: integer
     direction: higher_is_better
     entity_type: person
