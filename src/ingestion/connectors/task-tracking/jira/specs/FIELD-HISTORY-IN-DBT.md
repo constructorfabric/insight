@@ -663,7 +663,9 @@ happened together. The rank reaches the class inside `event_order` (§10), and
 `initial_state`, the newest state and the element-wise spans read the same
 order. `assert_jira_same_instant_events_chain` warns where a field's
 same-instant events, in that order, still do not chain — the changelog does not
-say which came first there.
+say which came first there. It reads each entry as the one event the journal
+collapses it to, and two identical adjacent events as one step, since either
+order passes through the same states.
 
 The id reaches staging as a String, and as text `'101'` sorts before `'99'`,
 which inverts a pair of events every time the id crosses a digit-count
