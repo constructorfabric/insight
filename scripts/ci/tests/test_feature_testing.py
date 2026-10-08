@@ -247,7 +247,7 @@ class RenderTests(unittest.TestCase):
             self.assertIn("### 7.1 Requirement verification", block)
             self.assertIn(
                 "| `cpt-demo-fr-bind` | test_bind.py::test_bind_unseen_account, "
-                "test_bind.py::test_bind_is_fast, bind.test.ts::binds in the browser | stand-api, fe-unit | yes |  |",
+                "test_bind.py::test_bind_is_fast, bind.test.ts::binds in the browser | stand-api, unit | yes |  |",
                 block,
             )
             self.assertIn("### 7.2 Quality metrics", block)
