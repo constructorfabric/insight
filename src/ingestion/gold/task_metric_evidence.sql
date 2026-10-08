@@ -56,12 +56,14 @@ issue_facts AS (
            CAST(NULL AS Nullable(Float64)),
            toFloat64(greatest(toInt64(0),
                dateDiff('second', any(s.created_at), any(s.final_close_at))))) AS lead_seconds,
+        -- INVARIANT: an issue with no in-progress span joins one default row whose
+        -- start is 1970-01-01; matching the category keeps it out of the minimum.
         if(any(s.created_at) IS NULL
-               OR minIf(i.interval_start, i.interval_start < s.final_close_at) IS NULL,
+               OR minIfOrNull(i.interval_start, i.status_category = 'in_progress' AND i.interval_start < s.final_close_at) IS NULL,
            CAST(NULL AS Nullable(Float64)),
            toFloat64(greatest(toInt64(0),
                dateDiff('second', any(s.created_at),
-                        minIf(i.interval_start, i.interval_start < s.final_close_at))))) AS pickup_seconds,
+                        minIfOrNull(i.interval_start, i.status_category = 'in_progress' AND i.interval_start < s.final_close_at))))) AS pickup_seconds,
         -- The population measures taken off these rows carry no breakdown, but
         -- a row still has to name its tracker: `source` is what makes its ref
         -- addressable.
