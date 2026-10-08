@@ -36,9 +36,6 @@ date: 2026-08-06
   - [Operator Authorization](#operator-authorization)
   - [Analytics Resolver Upgrade](#analytics-resolver-upgrade)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
-- [7. Testing](#7-testing)
-  - [7.1 Requirement verification](#71-requirement-verification)
-  - [7.2 Quality metrics](#72-quality-metrics)
 
 <!-- /toc -->
 
@@ -424,33 +421,3 @@ The system **MUST** resolve `person_id` account-first on the source-instance-sco
 - [ ] After a correction, the next gold build attributes the affected accounts' full history to the corrected person; contested values resolve to NULL rather than a winner
 - [ ] Excluded accounts resolve to NULL in analytics and are not served as persons by the read API
 - [ ] Write verbs are rejected without an operator grant, and every appended row names the acting person
-
-## 7. Testing
-
-**Feature**: `cpt-ir-feature-manual-resolution`
-
-Operator corrections to identity resolution: the merge, split, bind and exclude
-verbs, their audit trail and idempotency, and the review queue. A test proves a
-requirement by citing it on the line above the test; the rows below are filled
-from those citations, and only the `Collected today` and `Note` cells are
-authored.
-
-### 7.1 Requirement verification
-
-| Requirement | Tests citing it | Suite | End to end | Note |
-|---|---|---|---|---|
-| `cpt-ir-fr-merge-v2` | none |  | no |  |
-| `cpt-ir-fr-split-v2` | none |  | no |  |
-| `cpt-ir-fr-operator-bind` | none |  | no |  |
-| `cpt-ir-fr-operator-exclude` | none |  | no |  |
-| `cpt-ir-fr-review-queue` | none |  | no |  |
-| `cpt-ir-fr-correction-durability` | none |  | no |  |
-| `cpt-ir-fr-merge-audit-v2` | none |  | no |  |
-| `cpt-ir-fr-idempotent-mutations-v2` | none |  | no |  |
-| `cpt-ir-fr-binding-history` | none |  | no |  |
-
-### 7.2 Quality metrics
-
-| Vector | NFR | Metric | Target | Collected today | Source | Note |
-|---|---|---|---|---|---|---|
-| unassigned | `cpt-ir-nfr-merge-reversibility` | Correction Reversibility | 100% round-trip fidelity — effective bindings after correction + counter-correction are identical to the pre-correction bindings; reconstruction of the pre-correction state succeeds for every corrected account. |  | Correction + counter-action round-trip test |  |
