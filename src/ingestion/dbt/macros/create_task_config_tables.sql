@@ -38,10 +38,13 @@
 -#}
 
 {% macro create_task_config_tables() %}
-    {% do run_query("CREATE DATABASE IF NOT EXISTS config") %}
+    {% set on_cluster = insight_on_cluster() %}
+    {% set engine = insight_engine('ReplacingMergeTree', '_version') %}
+
+    {% do run_query("CREATE DATABASE IF NOT EXISTS config " ~ on_cluster) %}
 
     {% do run_query("
-        CREATE TABLE IF NOT EXISTS config.task_field_roles
+        CREATE TABLE IF NOT EXISTS config.task_field_roles " ~ on_cluster ~ "
         (
             tenant_id         String,
             insight_source_id String,
@@ -61,12 +64,12 @@
             recorded_by       String  DEFAULT '',
             _version          DateTime64(3) DEFAULT now64(3)
         )
-        ENGINE = ReplacingMergeTree(_version)
+        ENGINE = " ~ engine ~ "
         ORDER BY (unique_key)
     ") %}
 
     {% do run_query("
-        CREATE TABLE IF NOT EXISTS config.task_value_map
+        CREATE TABLE IF NOT EXISTS config.task_value_map " ~ on_cluster ~ "
         (
             tenant_id         String,
             insight_source_id String,
@@ -85,12 +88,12 @@
             recorded_by       String DEFAULT '',
             _version          DateTime64(3) DEFAULT now64(3)
         )
-        ENGINE = ReplacingMergeTree(_version)
+        ENGINE = " ~ engine ~ "
         ORDER BY (unique_key)
     ") %}
 
     {% do run_query("
-        CREATE TABLE IF NOT EXISTS config.field_value_map
+        CREATE TABLE IF NOT EXISTS config.field_value_map " ~ on_cluster ~ "
         (
             tenant_id         String,
             insight_source_id String,
@@ -109,12 +112,12 @@
             recorded_by       String DEFAULT '',
             _version          DateTime64(3) DEFAULT now64(3)
         )
-        ENGINE = ReplacingMergeTree(_version)
+        ENGINE = " ~ engine ~ "
         ORDER BY (unique_key)
     ") %}
 
     {% do run_query("
-        CREATE TABLE IF NOT EXISTS config.field_value_defaults
+        CREATE TABLE IF NOT EXISTS config.field_value_defaults " ~ on_cluster ~ "
         (
             tenant_id         String,
             insight_source_id String,
@@ -130,7 +133,7 @@
             recorded_by       String DEFAULT '',
             _version          DateTime64(3) DEFAULT now64(3)
         )
-        ENGINE = ReplacingMergeTree(_version)
+        ENGINE = " ~ engine ~ "
         ORDER BY (unique_key)
     ") %}
 

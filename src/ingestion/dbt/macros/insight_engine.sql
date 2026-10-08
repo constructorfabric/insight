@@ -35,3 +35,20 @@
 {% macro insight_cluster_mode() -%}
   {{- return((var('cluster_mode', 'false') | string | trim | lower) in ['1', 'true', 'yes', 'on']) -}}
 {%- endmacro %}
+
+{#-
+  The `ON CLUSTER` clause a hand-written DDL statement carries, or nothing.
+
+  The `on-run-start` hooks emit their DDL through `run_query`, bypassing the
+  adapter — so the profile's `cluster:` key, which is what qualifies every
+  model's DDL, never reaches them and the clause has to be rendered here.
+
+  Empty on a standalone install, and on a cluster that named none: a database
+  created with the `Replicated` engine distributes DDL by itself. A name
+  without the flag names no cluster, which is how every other reader of
+  `CLICKHOUSE_CLUSTER_NAME` treats it (`scripts/dbt_profiles.py:on_cluster`).
+-#}
+{% macro insight_on_cluster() -%}
+  {%- set name = var('cluster_name', '') | string | trim -%}
+  {{- 'ON CLUSTER ' ~ name if insight_cluster_mode() and name else '' -}}
+{%- endmacro %}

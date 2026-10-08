@@ -28,10 +28,13 @@
 -#}
 
 {% macro create_ai_config_tables() %}
-    {% do run_query("CREATE DATABASE IF NOT EXISTS config") %}
+    {% set on_cluster = insight_on_cluster() %}
+    {% set engine = insight_engine('ReplacingMergeTree', '_version') %}
+
+    {% do run_query("CREATE DATABASE IF NOT EXISTS config " ~ on_cluster) %}
 
     {% do run_query("
-        CREATE TABLE IF NOT EXISTS config.ai_seat_tier_map
+        CREATE TABLE IF NOT EXISTS config.ai_seat_tier_map " ~ on_cluster ~ "
         (
             tenant_id         String,
             insight_source_id String,
@@ -48,7 +51,7 @@
             recorded_by       String  DEFAULT '',
             _version          DateTime64(3) DEFAULT now64(3)
         )
-        ENGINE = ReplacingMergeTree(_version)
+        ENGINE = " ~ engine ~ "
         ORDER BY (unique_key)
     ") %}
 
@@ -75,7 +78,7 @@
       all — never a zero, which would read as "this cost nothing".
     -#}
     {% do run_query("
-        CREATE TABLE IF NOT EXISTS config.ai_credit_pricing
+        CREATE TABLE IF NOT EXISTS config.ai_credit_pricing " ~ on_cluster ~ "
         (
             tenant_id               String,
             insight_source_id       String,
@@ -101,7 +104,7 @@
             recorded_by             String  DEFAULT '',
             _version                DateTime64(3) DEFAULT now64(3)
         )
-        ENGINE = ReplacingMergeTree(_version)
+        ENGINE = " ~ engine ~ "
         -- The natural pricing scope IS the key. An instance-specific row and the
         -- vendor default differ by insight_source_id, so they stay separate
         -- rows; two writes of one scope replace each other, whatever unique_key
