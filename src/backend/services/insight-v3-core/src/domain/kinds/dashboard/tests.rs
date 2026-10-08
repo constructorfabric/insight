@@ -71,6 +71,30 @@ fn laying_a_board_out_keeps_its_title_and_drops_the_shorthand() {
 }
 
 #[test]
+fn laying_a_board_out_keeps_its_time_ranges() {
+    let laid = laid_out(
+        &json!({
+            "title": "Engineering",
+            "time_ranges": ["P7D", "P30D"],
+            "default_range": "P30D",
+            "items": [{ "widget": "one" }]
+        }),
+        &[widget("two")],
+    )
+    .unwrap_or_else(|error| panic!("serialises: {error}"));
+
+    assert_eq!(
+        laid,
+        json!({
+            "title": "Engineering",
+            "time_ranges": ["P7D", "P30D"],
+            "default_range": "P30D",
+            "items": [{ "widget": "two" }]
+        })
+    );
+}
+
+#[test]
 fn an_item_naming_two_things_at_once_is_refused() {
     let mixed: Result<Item, _> =
         serde_json::from_value(json!({ "widget": "one", "heading": "Two" }));
