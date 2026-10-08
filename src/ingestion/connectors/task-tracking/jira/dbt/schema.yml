@@ -112,7 +112,7 @@ models:
   - name: jira__comment_lifecycle_events
     description: "Comment add/set/remove as field-history events (field_id='comment', event_kind='lifecycle'); value carries the comment id — the lookup key into class_task_comments. Unioned into silver.class_task_field_history."
   - name: jira__worklog_state
-    description: "Current state per worklog including is_deleted (tombstone + generation diff + parent-issue availability) and the tombstone's real deletion timestamp. Feeds the class projection and the lifecycle snapshot chain."
+    description: "Current state per worklog including is_deleted (tombstone + parent-issue availability) and the tombstone's real deletion timestamp. Feeds the class projection and the lifecycle snapshot chain."
   - name: jira__worklog_snapshot
     description: "Append-only SCD2 over worklog state — a version per edit (updated_at / seconds / started) or deletion flip."
   - name: jira__worklog_lifecycle_history

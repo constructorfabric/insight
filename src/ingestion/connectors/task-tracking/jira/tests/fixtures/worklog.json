@@ -1,0 +1,13 @@
+{
+  "self": "https://jira.example.com/rest/api/3/issue/20000/worklog/801",
+  "author": {"accountId": "acc-1", "displayName": "Example Author"},
+  "updateAuthor": {"accountId": "acc-1", "displayName": "Example Author"},
+  "comment": "worked",
+  "created": "2026-06-15T09:30:00.000+0000",
+  "updated": "2026-06-15T10:00:00.000+0000",
+  "started": "2026-06-15T09:00:00.000+0000",
+  "timeSpent": "1h",
+  "timeSpentSeconds": 3600,
+  "id": "801",
+  "issueId": "20000"
+}

@@ -106,7 +106,16 @@ name: jira
 # issue changed within that offset reached jira_issue but not its substreams
 # until a later sync. MINOR per ADR-0015: reconcile republishes the manifest,
 # the saved state carries over, and nothing already stored changes meaning.
-version: "11.1.0"
+# 12.0.0 (major): jira_worklogs reads Jira's worklog change feed
+# (/worklog/updated, then /worklog/list in groups of 1000) instead of each
+# issue's worklog list, and a worklog is deleted only on a /worklog/deleted
+# tombstone or a deleted parent issue. The issue-key list is a stream of its own
+# whose extraction time says nothing about when an issue's worklogs were read,
+# so comparing the two flagged worklogs that still exist as deleted (#3480).
+# MAJOR because the saved state belongs to the retired substream, and because
+# the false `remove` lifecycle events already written stay until the full
+# refresh a major dispatches (ADR-0015) rebuilds the journal.
+version: "12.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is

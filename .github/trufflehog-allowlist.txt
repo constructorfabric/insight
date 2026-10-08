@@ -72,6 +72,10 @@ de93042515ab723b  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_
 30824eb2a2d37486  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_deleted_excluded.test.yaml  # synthetic e2e metric fixture value
 7aad0a849a609676  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_deleted_excluded.test.yaml  # synthetic e2e metric fixture value
 23b497b98d695cfa  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_deleted_excluded.test.yaml  # repeated-digit placeholder identifier from an earlier revision of this fixture
+66629e822f3f6ca0  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_issue_refetch_kept.test.yaml  # synthetic e2e metric fixture value
+7396f699cc3cc39b  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_issue_refetch_kept.test.yaml  # synthetic e2e metric fixture value
+c89d14efaff266ca  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_unknown_issue_excluded.test.yaml  # synthetic e2e metric fixture value
+d83a7c29ffae2595  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_unknown_issue_excluded.test.yaml  # synthetic e2e metric fixture value
 a1bf6f0828538dc7  JiraToken          tests/datapath/metrics/templates/jira_task.yaml  # synthetic e2e metric fixture value
 
 # Retired paths. The nightly sweep reads every ref, so a value stays reachable

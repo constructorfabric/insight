@@ -78,7 +78,7 @@ kubectl apply -f src/ingestion/secrets/connectors/jira.yaml
 | `jira_issue` | `GET /rest/api/3/search/jql` | Incremental | `updated` | Cursor (`nextPageToken`) |
 | `jira_issue_history` | `GET /rest/api/3/issue/{key}/changelog` | Substream of `jira_issue` | — | Offset |
 | `jira_comments` | `GET /rest/api/3/issue/{key}/comment` | Substream of `jira_issue` | — | Offset |
-| `jira_worklogs` | `GET /rest/api/3/issue/{key}/worklog` | Substream of `jira_issue` | — | Offset |
+| `jira_worklogs` | `GET /rest/api/3/worklog/updated` → `POST /rest/api/3/worklog/list` | Incremental on the change feed's `since` | — | `nextPage` URL; 1000 ids per list request |
 | `jira_sprints` | `GET /rest/agile/1.0/board/{board_id}/sprint` | Substream of boards | — | Offset |
 | `jira_project_visibility` | `GET /rest/api/3/project/search?status=<live\|archived\|deleted>` | Full refresh | — | Offset |
 | `jira_issue_census` | `GET /rest/api/3/search/jql` (`fields=id`) | Full refresh | — | Cursor (`nextPageToken`) |
@@ -90,7 +90,7 @@ The `jira_boards` stream (`GET /rest/agile/1.0/board`) is the substream parent f
 ### Identity Key
 
 - `jira_user.email_address` — primary identity key
-- `jira_issue_history.jira_id`, `jira_comments.jira_id`, `jira_worklogs.jira_id` — the parent issue's immutable numeric id, taken from the parent slice (`id_readable` is the key at fetch time and changes when an issue moves between projects).
+- `jira_issue_history.jira_id`, `jira_comments.jira_id` — the parent issue's immutable numeric id, taken from the parent slice (`id_readable` is the key at fetch time and changes when an issue moves between projects). `jira_worklogs.jira_id` is the worklog's own `issueId`; its `id_readable` is not collected, the key is resolved downstream.
 - `jira_issue.reporter_id`, `jira_issue_history.author_account_id`, `jira_comments.author_account_id`, `jira_worklogs.author_account_id` — Atlassian `accountId` resolved to `email` downstream via `jira_user` JOIN in Silver.
 
 ## Silver Targets

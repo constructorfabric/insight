@@ -544,6 +544,23 @@ templates:
     _airbyte_meta: "{}"
     _airbyte_generation_id: 0
 
+  # jira_issue_key: a row of the issue-key list. Its extraction time is
+  # independent of when the issue's worklogs were collected.
+  jira_issue_key:
+    id: null
+    key: null
+    tenant_id: "{{ tenant }}"
+    source_id: jira-test
+    unique_key: null
+    id_readable: null
+    jira_id: null
+    updated: null
+    collected_at: "2026-01-15T18:00:00.000Z"
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-15T18:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+
   # jira_worklog_tombstone: an authoritative deletion record from
   # GET /rest/api/3/worklog/deleted — flips is_deleted on the matching
   # class_task_worklogs row (join by tenant/source/worklog_id).

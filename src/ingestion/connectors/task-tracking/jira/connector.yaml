@@ -216,6 +216,66 @@ definitions:
               - "null"
         additionalProperties: true
 
+  # Inline-only parent for jira_worklogs: ids of every worklog changed after
+  # the cursor, newest last. It lives here, not under streams, so it is never
+  # discovered as a bronze table of its own. Pagination: the API pages via a
+  # `nextPage` URL that carries since=<until>; the RequestPath token swaps the
+  # request URL wholesale, so the cursor baked into the first URL never
+  # conflicts with it. The API omits the last minute, so the cursor never
+  # passes a change it has not returned.
+  jira_worklog_updated:
+    type: DeclarativeStream
+    name: jira_worklog_updated
+    primary_key:
+      - worklogId
+    retriever:
+      type: SimpleRetriever
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - values
+      paginator:
+        type: DefaultPaginator
+        page_token_option:
+          type: RequestPath
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('nextPage', '') }}"
+          stop_condition: "{{ response.get('lastPage', true) }}"
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        error_handler:
+          $ref: "#/definitions/linked/HttpRequester/error_handler"
+        url: "{{ config['jira_instance_url'] }}/rest/api/3/worklog/updated?since={{ stream_slice.start_time }}"
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updatedTime
+      datetime_format: "%ms"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('jira_start_date', '2020-01-01') }}"
+        datetime_format: "%Y-%m-%d"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          worklogId:
+            type:
+              - number
+              - "null"
+          updatedTime:
+            type:
+              - number
+              - "null"
+        additionalProperties: true
+
 streams:
   - type: DeclarativeStream
     name: jira_boards
@@ -1723,43 +1783,30 @@ streams:
         type: RecordSelector
         extractor:
           type: DpathExtractor
-          field_path:
-            - worklogs
-      paginator:
-        type: DefaultPaginator
-        page_size_option:
-          type: RequestOption
-          inject_into: request_parameter
-          field_name: maxResults
-        page_token_option:
-          type: RequestOption
-          inject_into: request_parameter
-          field_name: startAt
-        pagination_strategy:
-          type: OffsetIncrement
-          page_size: 100
+          field_path: []
       requester:
         type: HttpRequester
-        http_method: GET
+        http_method: POST
         authenticator:
           $ref: "#/definitions/linked/HttpRequester/authenticator"
         error_handler:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
-        url: >-
-          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{ stream_partition.id_readable }}/worklog
+        url: "{{ config['jira_instance_url'] }}/rest/api/3/worklog/list"
+        request_body_json:
+          ids: "{{ stream_partition.worklog_id }}"
+      # /worklog/list takes at most 1000 ids and returns them unpaginated.
       partition_router:
-        type: SubstreamPartitionRouter
-        parent_stream_configs:
-          - type: ParentStreamConfig
-            stream:
-              $ref: "#/streams/13"
-            parent_key: id_readable
-            partition_field: id_readable
-            # INVARIANT: the parent's immutable id travels with every child row; the
-            # key is what Jira showed at fetch time and changes on a project move.
-            extra_fields:
-              - [id]
-            incremental_dependency: true
+        type: GroupingPartitionRouter
+        group_size: 1000
+        underlying_partition_router:
+          type: SubstreamPartitionRouter
+          parent_stream_configs:
+            - type: ParentStreamConfig
+              stream:
+                $ref: "#/definitions/jira_worklog_updated"
+              parent_key: worklogId
+              partition_field: worklog_id
+              incremental_dependency: true
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated
@@ -1771,11 +1818,6 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ config.get('jira_start_date', '2020-01-01') }}"
         datetime_format: "%Y-%m-%d"
-      end_datetime:
-        type: MinMaxDatetime
-        datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%fZ') }}"
-        datetime_format: "%Y-%m-%dT%H:%M:%S.%fZ"
-      lookback_window: PT1H
     transformations:
       - type: AddFields
         fields:
@@ -1800,12 +1842,8 @@ streams:
             value: "{{ record['id'] }}"
           - type: AddedFieldDefinition
             path:
-              - id_readable
-            value: "{{ stream_partition.id_readable }}"
-          - type: AddedFieldDefinition
-            path:
               - jira_id
-            value: "{{ stream_slice.extra_fields['id'] }}"
+            value: "{{ record.get('issueId') }}"
           - type: AddedFieldDefinition
             path:
               - author_account_id

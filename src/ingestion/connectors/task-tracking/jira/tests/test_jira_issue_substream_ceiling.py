@@ -1,11 +1,11 @@
 """The issue-key query that feeds the issue substreams clears the timezone offset.
 
-jira_issue_history, jira_comments and jira_worklogs partition over the
+jira_issue_history and jira_comments partition over the
 jira_issue_keys parent. A JQL datetime literal is read in the instance's zone
 while the bound is rendered from UTC, so the parent's ceiling must be the clock
 plus PT14H here too — not only when jira_issue_keys is read as a stream of its
 own. A ceiling at the bare clock leaves an issue changed within the instance's
-offset out of the partitions, and its new worklogs, comments and history entries
+offset out of the partitions, and its new comments and history entries
 wait for a later sync.
 
 The clock is frozen at 2026-06-30 00:00 UTC and jira_start_date is 2026-06-01,
@@ -33,23 +33,6 @@ _WINDOW_START = "2026-06-01 00:00"
 _UPDATED = "2026-06-29T23:50:00.000+0000"
 
 _SUBSTREAMS = {
-    "jira_worklogs": (
-        "worklog",
-        {
-            "worklogs": [
-                {
-                    "id": "801",
-                    "author": {"accountId": "acc-1"},
-                    "started": _UPDATED,
-                    "updated": _UPDATED,
-                    "timeSpentSeconds": 600,
-                }
-            ],
-            "total": 1,
-            "startAt": 0,
-            "maxResults": 100,
-        },
-    ),
     "jira_comments": (
         "comment",
         {
