@@ -76,10 +76,9 @@
 {%- set meetings = source('bronze_zoom', 'meetings') %}
 WITH
 {%- if is_incremental() %}
--- Watermark on the source EXTRACT time, not the meeting date: re-pulled rows carry a
--- fresh `_airbyte_extracted_at` (see the zoom header on backfill-strand history).
--- INVARIANT: a session's company time depends on every attendee of its meeting, so a
--- late attendee re-opens all dates of that meeting, not only the late row's own date.
+-- INVARIANT: the watermark is the source EXTRACT time, not the meeting date, because
+-- re-pulled rows carry a fresh `_airbyte_extracted_at`. Company time depends on every
+-- attendee, so a late attendee re-opens all dates of that meeting.
 recently_extracted_meetings AS (
     SELECT DISTINCT meeting_uuid
     FROM {{ participants }}
@@ -212,15 +211,14 @@ attended_days AS (
         p.source_id AS source_id,
         lower(p.email) AS person_key,
         toDate(p.joined_at, 'UTC') AS date,
-        any(p.email) AS attendee_email,
-        -- Pick one display name when the same email surfaces under multiple spellings.
-        coalesce(any(p.user_name), '') AS attendee_name,
-        -- uniqExact over logical_meeting_id collapses host-drop rejoins into one;
-        -- meeting_uuid stands in while the meeting row is not yet stitched.
+        min(p.email) AS attendee_email,
+        coalesce(max(p.user_name), '') AS attendee_name,
+        -- INVARIANT: logical_meeting_id folds host-drop rejoins into one meeting;
+        -- meeting_uuid stands in until the meeting is stitched.
         toInt64(uniqExactIf(coalesce(ml.logical_meeting_id, p.meeting_uuid), p.company_seconds > 0)) AS meetings_attended,
         toInt64(sum(p.company_seconds)) AS audio_duration_seconds,
-        -- #263: gate by per-participant `camera` device name, not by the meeting-level
-        -- `has_video` flag (see header for the full-session over-estimate caveat).
+        -- INVARIANT: video is gated by the participant's own camera, not the meeting-level
+        -- has_video flag, which would credit everyone in a meeting where anyone had video.
         toInt64(sumIf(p.company_seconds, p.camera IS NOT NULL AND p.camera != '')) AS video_duration_seconds,
         toInt64(sumIf(
             p.company_seconds,
@@ -236,13 +234,13 @@ attended_days AS (
     GROUP BY tenant_id, source_id, person_key, date
 ),
 
-hosted_meetings AS (
+hosted_sessions AS (
     SELECT
         tenant_id,
         source_id,
         uuid AS meeting_uuid,
-        lower(email) AS host,
-        toDate(parseDateTimeBestEffortOrNull(start_time), 'UTC') AS date
+        email AS host_email,
+        parseDateTimeBestEffortOrNull(start_time) AS started_at
     FROM {{ meetings }}
     WHERE email IS NOT NULL AND email != ''
       AND uuid IS NOT NULL AND uuid != ''
@@ -254,43 +252,71 @@ hosted_meetings AS (
       )
     {%- endif %}
     ORDER BY _airbyte_extracted_at DESC
-    LIMIT 1 BY uuid
+    LIMIT 1 BY tenant_id, source_id, uuid
 ),
 
-organized_days AS (
-    -- A hosted meeting counts only if someone besides the host attended it.
+attended_by_others AS (
     SELECT
         h.tenant_id AS tenant_id,
         h.source_id AS source_id,
-        h.host AS person_key,
-        h.date AS date,
-        toInt64(uniqExact(coalesce(ml.logical_meeting_id, h.meeting_uuid))) AS meetings_organized
-    FROM hosted_meetings AS h
-    INNER JOIN (
-        SELECT DISTINCT tenant_id, source_id, meeting_uuid, attendee
-        FROM attendance
-    ) AS a
+        h.meeting_uuid AS meeting_uuid,
+        h.host_email AS host_email,
+        h.started_at AS started_at
+    FROM hosted_sessions AS h
+    INNER JOIN attendance AS a
         ON a.tenant_id = h.tenant_id
         AND a.source_id = h.source_id
         AND a.meeting_uuid = h.meeting_uuid
-        AND a.attendee != h.host
+        AND a.attendee != lower(h.host_email)
+    GROUP BY tenant_id, source_id, meeting_uuid, host_email, started_at
+),
+
+organized_days AS (
+    -- INVARIANT: like attendance, a stitched meeting counts once per UTC day it ran,
+    -- so organized and attended meetings stay comparable day by day.
+    SELECT
+        o.tenant_id AS tenant_id,
+        o.source_id AS source_id,
+        lower(o.host_email) AS person_key,
+        toDate(o.started_at, 'UTC') AS date,
+        min(o.host_email) AS organizer_email,
+        toInt64(uniqExact(coalesce(ml.logical_meeting_id, o.meeting_uuid))) AS meetings_organized
+    FROM attended_by_others AS o
     LEFT JOIN {{ ref('zoom__meeting_sessions') }} AS ml FINAL
-        ON h.meeting_uuid = ml.uuid
-        AND h.tenant_id = ml.tenant_id
-        AND h.source_id = ml.source_id
+        ON o.meeting_uuid = ml.uuid
+        AND o.tenant_id = ml.tenant_id
+        AND o.source_id = ml.source_id
     GROUP BY tenant_id, source_id, person_key, date
 ),
 
 person_days AS (
     SELECT
-        tenant_id, source_id, person_key, date, attendee_email, attendee_name,
-        meetings_attended, audio_duration_seconds, video_duration_seconds, screen_share_duration_seconds,
-        toInt64(0) AS meetings_organized
+        tenant_id,
+        source_id,
+        person_key,
+        date,
+        attendee_email                AS contact_email,
+        attendee_name                 AS display_name,
+        toUInt8(1)                    AS from_attendance,
+        meetings_attended,
+        audio_duration_seconds,
+        video_duration_seconds,
+        screen_share_duration_seconds,
+        toInt64(0)                    AS meetings_organized
     FROM attended_days
     UNION ALL
     SELECT
-        tenant_id, source_id, person_key, date, person_key AS attendee_email, '' AS attendee_name,
-        toInt64(0), toInt64(0), toInt64(0), toInt64(0),
+        tenant_id,
+        source_id,
+        person_key,
+        date,
+        organizer_email               AS contact_email,
+        ''                            AS display_name,
+        toUInt8(0)                    AS from_attendance,
+        toInt64(0)                    AS meetings_attended,
+        toInt64(0)                    AS audio_duration_seconds,
+        toInt64(0)                    AS video_duration_seconds,
+        toInt64(0)                    AS screen_share_duration_seconds,
         meetings_organized
     FROM organized_days
 )
@@ -299,9 +325,9 @@ SELECT
     tenant_id,
     source_id AS insight_source_id,
     MD5(concat(tenant_id, '-', source_id, '-', person_key, '-', toString(date))) AS unique_key,
-    if(countIf(attendee_name != '') > 0, anyIf(attendee_email, attendee_name != ''), any(attendee_email)) AS user_id,
-    toNullable(max(attendee_name)) AS user_name,
-    if(countIf(attendee_name != '') > 0, anyIf(attendee_email, attendee_name != ''), any(attendee_email)) AS email,
+    argMax(contact_email, (from_attendance, contact_email)) AS user_id,
+    toNullable(max(display_name)) AS user_name,
+    user_id AS email,
     person_key,
     date,
     CAST(NULL AS Nullable(Int64)) AS calls_count,
