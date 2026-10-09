@@ -26,7 +26,6 @@ from insight_datapath.caller import StandCaller
 from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import DbtRunner
 from insight_datapath.fixture_loader import TestYaml
-from insight_datapath.metric_coverage import metric_class
 from insight_datapath.metric_expect import Ledger, MetricResponse
 from insight_datapath.reset import clear
 from insight_datapath.subjects import SubjectError, Subjects
@@ -38,18 +37,6 @@ _EMAIL_TOKEN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 #: These models' own dbt tests assert a completeness one spec's seed cannot satisfy.
 _RUN_WITHOUT_TESTS = frozenset({"class_hr_working_hours"})
-
-
-class MetricClassError(ValueError):
-    """A spec asked for a metric another class's directory owns."""
-
-
-def _foreign_metric(key: str, owner: str) -> MetricClassError:
-    return MetricClassError(
-        f"{key} belongs to metrics/{metric_class(key)}, but a spec under metrics/{owner} asked "
-        "for it. A run that skips classes holds each class only to the keys its own specs "
-        "assert, so a key asserted from another class's directory would go unchecked."
-    )
 
 
 def all_persona_emails(
@@ -126,7 +113,6 @@ class SpecRun:
     """A spec's built data path and the caller that reads it."""
 
     spec: TestYaml
-    metric_class: str
     caller: StandCaller
     tenant: str
     to_person_id: dict[str, str]
@@ -141,12 +127,7 @@ class SpecRun:
 
     def call(self, request: dict[str, Any]) -> MetricResponse:
         """Send `request` as the spec wrote it; the response reads in the spec's emails."""
-        body = request.get("body") or {}
-        for metric in body.get("metrics") or []:
-            key = metric.get("metric_key")
-            if key and metric_class(str(key)) != self.metric_class:
-                raise _foreign_metric(str(key), self.metric_class)
-        self.ledger.record_request(body)
+        self.ledger.record_request(request.get("body") or {})
         status, payload = self.caller.call_request(translate(request, self.to_person_id))
         if status != 200:
             LOG.warning("HTTP %d; body: %r", status, payload)
@@ -166,7 +147,6 @@ class SpecRun:
 def run_spec(
     spec: TestYaml,
     *,
-    metric_class: str,
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,
     subjects: Subjects,
@@ -216,7 +196,6 @@ def run_spec(
 
     return SpecRun(
         spec=spec,
-        metric_class=metric_class,
         caller=caller,
         tenant=tenant,
         to_person_id=person_ids,

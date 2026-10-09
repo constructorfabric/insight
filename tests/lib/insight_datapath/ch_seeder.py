@@ -23,7 +23,6 @@ from typing import Any
 from insight_datapath import clickhouse as ch
 from insight_datapath.instance import InstanceConfig
 from insight_datapath.reset import Relation, clear
-from insight_datapath.seed_audit import AUDIT
 
 LOG = logging.getLogger("datapath.seeder")
 
@@ -85,7 +84,6 @@ class CHSeeder:
         It does not clear the table first: on an instance some bronze relations
         belong to the stand's own seed, and only `reset` knows which.
         """
-        AUDIT.record(schema, table)
         column_types = self._fetch_column_types(schema, table)
         if not column_types:
             raise SeederError(

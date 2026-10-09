@@ -395,13 +395,9 @@ python3 tests/lib/insight_datapath/metric_coverage.py --universe-file .artifacts
 Every builtin metric owes `period` and `timeseries`; `peer` when it has a peer cohort,
 `breakdown` when it has dimensions, `histogram` when its computation is `median`. A builtin
 metric with no spec fails the required check. In CI (`.github/workflows/e2e-bronze-to-api.yml`)
-the job `e2e-datapath` runs the shards (`ai`, `git`, `tasks`, `rest`, `identity`) the change can
-reach — a class runs when its specs' seeded bronze flows through a changed model
-(`insight_datapath.leg_selection`) — each raising a minimal stand on its runner;
-`metric-coverage-gate` unions the legs' ledgers over the classes that ran, and the umbrella
-`Run E2E suite` is the required check. A spec module may request only its own class's
-metric keys, and a table a test seeds must be readable by `insight_datapath.suite_scan`
-(a `"bronze_x.y"` literal, or `seed_records()` given string constants). It runs on `merge_group` and
+the job `e2e-datapath` runs one leg per shard (`ai`, `git`, `tasks`, `rest`, `identity`), each
+raising a minimal stand on its runner; `metric-coverage-gate` unions the legs' ledgers, and
+the umbrella `Run E2E suite` is the required check. It runs on `merge_group` and
 `workflow_dispatch`.
 
 To create a new test, use `/metric-test create` or hand-author `<class>/<name>.test.yaml`

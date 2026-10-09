@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from insight_datapath.metric_coverage import MetricDefinition, build_report, main, owed_by
+from insight_datapath.metric_coverage import MetricDefinition, build_report, main
 from insight_datapath.metric_expect import Ledger
 
 
@@ -74,45 +74,3 @@ def test_a_ledger_that_is_not_there_is_refused(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as refusal:
         main(["--universe-file", str(universe), "--ledger", str(tmp_path / "absent.json")])
     assert refusal.value.code == 2
-
-
-@pytest.mark.parametrize(
-    ("ran", "owed"),
-    [
-        ({"git"}, {"git.commits", "orphan.metric"}),
-        ({"git", "ai"}, {"git.commits", "ai.seats", "orphan.metric"}),
-        ({"collab"}, {"orphan.metric"}),
-    ],
-)
-def test_a_partial_run_owes_its_own_classes_and_every_classless_key(
-    ran: set[str], owed: set[str]
-) -> None:
-    universe = {key: _definition(key) for key in ("git.commits", "ai.seats", "orphan.metric")}
-    known = frozenset({"git", "ai", "collab"})
-    assert owed_by(universe, frozenset(ran), known) == owed, f"should owe {owed} for a run of {ran}"
-
-
-def test_a_partial_run_still_fails_on_a_gap_in_a_class_it_ran(tmp_path: Path) -> None:
-    views = ("period", "peer", "timeseries")
-    ledger = _ledger(tmp_path / "ledger.json", "git.commits", *views)
-    universe = {key: _definition(key) for key in ("git.commits", "git.active_days", "ai.seats")}
-    owed = owed_by(universe, frozenset({"git"}), frozenset({"git", "ai"}))
-
-    report = build_report(universe, [ledger], owed)
-
-    assert report.missing == {"git.active_days": set(views)}
-
-
-@pytest.mark.parametrize(
-    "arguments",
-    [["--classes", "git"], ["--known", "git"], ["--classes", "", "--known", "git"]],
-)
-def test_a_class_scope_needs_both_halves_and_at_least_one_class(
-    tmp_path: Path, arguments: list[str]
-) -> None:
-    universe = tmp_path / "universe.json"
-    universe.write_text('{"metrics": []}', encoding="utf-8")
-    ledger = _ledger(tmp_path / "ledger.json", "git.commits", "period")
-    with pytest.raises(SystemExit) as refusal:
-        main(["--universe-file", str(universe), "--ledger", str(ledger), *arguments])
-    assert refusal.value.code == 2, f"should refuse {arguments}"

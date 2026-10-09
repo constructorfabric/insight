@@ -20,9 +20,7 @@ from insight_datapath.dbt_runner import DbtRunner
 from insight_datapath.instance import InstanceConfig, resolve_instance
 from insight_datapath.reset import refuse_a_seeded_warehouse, session_floor
 from insight_datapath.schema import apply_all, restart_analytics
-from insight_datapath.seed_audit import AUDIT
 from insight_datapath.subjects import Subjects
-from insight_datapath.suite_scan import scan_suites, suite_of, unplanned
 from insight_stand.manifest import Manifest, load_manifest
 from insight_stand.personas import ADMIN_OPERATOR_FIXTURE, PersonaSession, open_session
 from insight_stand.stand import resolve_endpoint
@@ -34,27 +32,6 @@ CALLER_FIXTURE = "dev_lead"
 
 
 _ENV_FILE_STEM = ".env.compose.test-stand"
-
-
-@pytest.hookimpl(tryfirst=True)
-def pytest_runtest_setup(item: pytest.Item) -> None:
-    AUDIT.suite = suite_of(item.path, REPO_ROOT)
-
-
-def pytest_sessionfinish(session: pytest.Session) -> None:
-    """A relation a suite seeds that its tree reading misses would let a change to it skip
-    that suite's leg, so the run that seeds it fails."""
-    missed = unplanned(AUDIT.seeded, scan_suites(REPO_ROOT).seeds)
-    if not missed:
-        return
-    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
-    if reporter is not None:
-        reporter.write_line(
-            "leg planning cannot see what these suites seeded; name each relation as a "
-            f"'bronze_x.y' literal or pass seed_records() module constants: {missed}",
-            red=True,
-        )
-    session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 def _env_file() -> Path:

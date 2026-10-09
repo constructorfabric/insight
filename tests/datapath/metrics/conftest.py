@@ -68,7 +68,6 @@ def spec(
         pytest.skip(loaded.skip)
     return run_spec(
         loaded,
-        metric_class=Path(request.module.__file__).parent.name,
         ch_seeder=ch_seeder,
         dbt_runner=dbt_runner,
         subjects=subjects,

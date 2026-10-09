@@ -99,11 +99,9 @@ Components against a real store, and the API contract:
 ./dev-compose.sh test-stand down --instance=datapath   # full reset: volumes go too
 ```
 
-**CI:** `e2e-bronze-to-api.yml` — shards `ai`, `git`, `tasks`, `rest` (the other metric classes plus `meta`) and
-`identity`, each on a minimal stand of its own, trimmed to the shards whose seeded bronze flows through what the
-change touched (`tests/lib/insight_datapath/leg_selection.py`), and a blocking metric-coverage gate
-(`tests/lib/insight_datapath/metric_coverage.py`: every builtin metric of the classes that ran is asserted by some
-spec). OpenAPI drift is a unit test in each service crate (`ci.yml`);
+**CI:** `e2e-bronze-to-api.yml` — one shard per metric class plus one for identity, each on a minimal stand of
+its own, and a blocking metric-coverage gate (`tests/lib/insight_datapath/metric_coverage.py`: every builtin
+metric the catalogue serves is asserted by some spec). OpenAPI drift is a unit test in each service crate (`ci.yml`);
 the HTTP contract lanes live on the deployed stand (`e2e-stand.yml`) with the endpoint coverage gate.
 
 ---

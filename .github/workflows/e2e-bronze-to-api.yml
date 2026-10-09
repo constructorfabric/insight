@@ -16,10 +16,8 @@ name: E2E bronze to API
 # run after it), both read back as real stand personas.
 #
 # Topology: a cheap `changes` job decides whether the diff can reach the data
-# path at all, and which legs it can reach, and everything expensive hangs off
-# it. The suite is a shard matrix — ai, git and tasks alone, the other metric
-# classes with the meta tree in `rest`, identity alone — trimmed to the legs
-# whose seeded bronze flows through what changed: each leg raises a
+# path at all and everything expensive hangs off it. The suite is a shard
+# matrix, one leg per metric class plus one for identity: each leg raises a
 # MINIMAL compose stand of its own (`dev-compose.sh test-stand minimal` —
 # identity and the realm seeded, the warehouse empty), pulls the chart-pinned
 # backend images or, when the diff touched the backend, mounts the binaries
@@ -112,15 +110,11 @@ jobs:
     name: Detect changes
     if: github.event_name != 'pull_request'
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
-    timeout-minutes: 10
+    timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
       backend: ${{ steps.filter.outputs.backend }}
       entry: ${{ steps.entry.outputs.key }}
-      matrix: ${{ steps.plan.outputs.matrix }}
-      scope: ${{ steps.plan.outputs.scope }}
-      classes: ${{ steps.plan.outputs.classes }}
-      known: ${{ steps.plan.outputs.known }}
     steps:
       # INVARIANT: a PR holds one live queue entry, so an older run with this key is dead.
       - id: entry
@@ -173,8 +167,7 @@ jobs:
             echo "no merge base between $BASE and $HEAD — running"
             exit 0
           fi
-          echo "base_point=$base_point" >> "$GITHUB_OUTPUT"
-          changed="$(git diff --name-only --no-renames "$base_point" "$HEAD")"
+          changed="$(git diff --name-only "$base_point" "$HEAD")"
           echo "$changed" | sed 's/^/  /'
 
           # Ignored because nothing in this suite reads these paths.
@@ -206,71 +199,19 @@ jobs:
             echo "  affects this run: nothing — no changed file can reach this suite"
           fi
 
-          RELEVANT_PATHS='^(src/ingestion/|src/backend/|tests/datapath/|tests/lib/|tests/pyproject\.toml|tests/uv\.lock|dev-compose\.sh|docker-compose\.yml|\.env\.compose\.example|deploy/compose/|\.github/workflows/e2e-bronze-to-api\.yml)'
-          if grep -qE "$RELEVANT_PATHS" <<< "$changes_to_test"; then
+          if echo "$changes_to_test" | grep -qE '^(src/ingestion/|src/backend/|tests/datapath/|tests/lib/|tests/pyproject\.toml|tests/uv\.lock|dev-compose\.sh|docker-compose\.yml|\.env\.compose\.example|deploy/compose/|\.github/workflows/e2e-bronze-to-api\.yml)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
-            printf '%s\n' "$changes_to_test" | grep -E "$RELEVANT_PATHS" > "$RUNNER_TEMP/datapath-changed.txt"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "nothing on the bronze → dbt → ClickHouse → analytics path changed"
           fi
           # A backend change means the pinned images no longer describe this
           # tree, so the stand compiles the backend instead of pulling it.
-          if grep -qE '^src/backend/' <<< "$changes_to_test"; then
+          if echo "$changes_to_test" | grep -qE '^src/backend/'; then
             echo "backend=true" >> "$GITHUB_OUTPUT"
           else
             echo "backend=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        if: steps.filter.outputs.relevant == 'true' && github.event_name != 'push'
-        with:
-          cache-suffix: datapath
-
-      - id: plan
-        if: steps.filter.outputs.relevant == 'true' && github.event_name != 'push'
-        env:
-          CHANGED: ${{ runner.temp }}/datapath-changed.txt
-          TARGET: ${{ runner.temp }}/datapath-dbt
-          BASE_POINT: ${{ steps.filter.outputs.base_point }}
-        run: |
-          set -euo pipefail
-          run_uv() { uv run --project tests --frozen --group datapath --no-group dev "$@"; }
-          select_legs() { run_uv python -m insight_datapath.select_legs "$@" >> "$GITHUB_OUTPUT"; }
-          parse() {
-            run_uv dbt parse --no-send-anonymous-usage-stats --no-partial-parse \
-              --project-dir "$1/src/ingestion/dbt" --profiles-dir "$TARGET/profiles" \
-              --target parse --target-path "$2"
-          }
-          if [ ! -f "$CHANGED" ]; then
-            select_legs --full "no diff to read"
-            exit 0
-          fi
-          mkdir -p "$TARGET/profiles" "$TARGET/base-tree"
-          # `dbt parse` never connects; the profile only has to name an adapter.
-          printf '%s\n' 'ingestion:' '  target: parse' '  outputs:' \
-            '    parse: {type: clickhouse, host: 127.0.0.1, port: 8123, schema: default, user: default, password: ""}' \
-            > "$TARGET/profiles/profiles.yml"
-          # INVARIANT: never plan from the head graph alone — only the base graph
-          # places a deleted file, or a model the change cut off from seeded bronze.
-          git archive "$BASE_POINT" src/ingestion | tar -x -C "$TARGET/base-tree"
-          run_uv true
-          parse . "$TARGET/head" > "$TARGET/head.log" 2>&1 & head_pid=$!
-          parse "$TARGET/base-tree" "$TARGET/base" > "$TARGET/base.log" 2>&1 & base_pid=$!
-          head_parsed=true; wait "$head_pid" || head_parsed=false
-          base_parsed=true; wait "$base_pid" || base_parsed=false
-          cat "$TARGET/head.log" "$TARGET/base.log"
-          if [ "$head_parsed" = false ]; then
-            echo "::warning::dbt parse failed — running every leg so the failure surfaces in them"
-            select_legs --full "dbt parse failed"
-            exit 0
-          fi
-          if [ "$base_parsed" = false ]; then
-            select_legs --full "the base revision's dbt parse failed"
-            exit 0
-          fi
-          select_legs --manifest "$TARGET/head/manifest.json" --base-manifest "$TARGET/base/manifest.json" \
-            --changed "$CHANGED"
 
   # ─── Build the backend once, shared by every shard ────────────────────────
   # One `cargo build` for all three bind-mounted binaries, plus one image build
@@ -394,7 +335,7 @@ jobs:
     # `!cancelled()` so a skipped build-backend (backend untouched → pinned
     # images) does not skip the shards along with it; the result check keeps a
     # FAILED build from letting them run against stale binaries.
-    if: ${{ !cancelled() && github.event_name != 'push' && needs.changes.result == 'success' && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
+    if: ${{ !cancelled() && github.event_name != 'push' && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
     concurrency:
       group: e2e-datapath-${{ needs.changes.outputs.entry || github.run_id }}-${{ matrix.shard }}
@@ -407,8 +348,18 @@ jobs:
       # Every leg reports: a red shard must not cancel its siblings, or their
       # failures (and coverage ledgers) vanish with it.
       fail-fast: false
-      # The fallback only keeps the expression valid on runs that skip this job.
-      matrix: ${{ fromJSON(needs.changes.outputs.matrix || '{"include":[{"shard":"none","trees":"","metrics":false}]}') }}
+      matrix:
+        # One leg per metric class directory under tests/datapath/metrics, and
+        # one for tests/datapath/identity. The suite builds every non-gold
+        # model once per session and clears the warehouse between specs, so a
+        # leg is any set of specs; classes are the natural split because a
+        # reader can find a shard by name.
+        #
+        # `rest` is every class directory not named here, computed at run
+        # time from the tree, so a new class can never silently fall out of
+        # CI. Rebalancing = naming a class here AND excluding it in the run
+        # step's `rest` branch.
+        shard: [ai, git, tasks, rest, identity]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -501,14 +452,25 @@ jobs:
         id: suite
         env:
           SHARD: ${{ matrix.shard }}
-          TREES: ${{ matrix.trees }}
           # pytest block-buffers its output when stdout is a pipe, so a shard
           # killed by the job timeout flushes nothing and leaves no trace of how
           # far it got.
           PYTHONUNBUFFERED: "1"
         run: |
           set -euo pipefail
-          read -ra trees <<< "$TREES"
+          trees=()
+          case "$SHARD" in
+            rest)
+              for dir in tests/datapath/metrics/*/; do
+                name="$(basename "$dir")"
+                case "$name" in ai|git|tasks|schemas|templates|__pycache__) continue ;; esac
+                trees+=("--tree=${dir%/}")
+              done
+              trees+=(--tree=tests/datapath/meta)
+              ;;
+            identity) trees+=(--tree=tests/datapath/identity) ;;
+            *) trees+=("--tree=tests/datapath/metrics/${SHARD}") ;;
+          esac
           [ "${#trees[@]}" -gt 0 ] || { echo "::error::shard ${SHARD} selected no trees"; exit 1; }
           printf 'shard %s → %s\n' "$SHARD" "${trees[*]}"
           # -v names each spec as it starts, --log-cli-level surfaces the dbt
@@ -519,7 +481,7 @@ jobs:
       # The shards' ledgers merge into one directory, which keeps one file per
       # name — so each carries its own or the gate sees a quarter of the coverage.
       - name: Name this shard's assertion ledger
-        if: ${{ !cancelled() && matrix.metrics }}
+        if: ${{ !cancelled() && matrix.shard != 'identity' }}
         env:
           SHARD: ${{ matrix.shard }}
         run: |
@@ -533,7 +495,7 @@ jobs:
       # run. metric_definitions.json is the full builtin catalogue, identical
       # in every shard; the ledgers are per shard and the gate unions them.
       - name: Upload coverage inputs
-        if: ${{ !cancelled() && matrix.metrics }}
+        if: ${{ !cancelled() && matrix.shard != 'identity' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-inputs-metrics-${{ matrix.shard }}
@@ -578,8 +540,8 @@ jobs:
 
   metric-coverage-gate:
     name: Metric coverage gate
-    needs: [changes, e2e-datapath]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.e2e-datapath.result != 'skipped' && needs.changes.outputs.scope != 'none' }}
+    needs: e2e-datapath
+    if: ${{ !cancelled() && needs.e2e-datapath.result != 'skipped' }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 10
     steps:
@@ -598,20 +560,10 @@ jobs:
           merge-multiple: true
           path: coverage-inputs
       - name: Analyse metric coverage
-        env:
-          SCOPE: ${{ needs.changes.outputs.scope }}
-          CLASSES: ${{ needs.changes.outputs.classes }}
-          KNOWN: ${{ needs.changes.outputs.known }}
         run: |
-          scoped=()
-          case "$SCOPE" in
-            full) ;;
-            partial) scoped=(--classes "$CLASSES" --known "$KNOWN") ;;
-            *) echo "::error::unknown leg scope '$SCOPE'"; exit 1 ;;
-          esac
           python3 tests/lib/insight_datapath/metric_coverage.py \
             --universe-file coverage-inputs/metric_definitions.json \
-            --ledger coverage-inputs/metric_assertions-*.json "${scoped[@]}" | tee metric_coverage.md
+            --ledger coverage-inputs/metric_assertions-*.json | tee metric_coverage.md
           rc=${PIPESTATUS[0]}
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat metric_coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$rc" -ne 0 ]; then echo "::error::metric coverage gate failed — builtin metric coverage is incomplete or stale. See the report."; fi
@@ -652,10 +604,9 @@ jobs:
           # A metric the catalogue serves and no spec asserts is a red check,
           # not a report: the gate is what makes a missing spec block.
           GATE: ${{ needs.metric-coverage-gate.result }}
-          SCOPE: ${{ needs.changes.outputs.scope }}
         run: |
           set -euo pipefail
-          echo "changes=$CHANGES relevant=$RELEVANT backend=$BACKEND build=$BUILD suite=$SUITE gate=$GATE scope=$SCOPE"
+          echo "changes=$CHANGES relevant=$RELEVANT backend=$BACKEND build=$BUILD suite=$SUITE gate=$GATE"
 
           # Fail closed. A `changes` job that did not succeed leaves `relevant`
           # empty, which would otherwise read as "irrelevant" and green a
@@ -672,18 +623,11 @@ jobs:
               echo "::error::the backend build did not pass ($BUILD) — the shards had no binaries to run against."
               exit 1
             fi
-            case "$SCOPE" in
-              full|partial) gate_wanted=success ;;
-              none) gate_wanted=skipped ;;
-              *) echo "::error::unknown leg scope '$SCOPE' — the planned legs are unknown."; exit 1 ;;
-            esac
-            if [ "$SUITE" != "success" ]; then
-              echo "::error::suite did not pass ($SUITE) — the E2E suite did not fully run for this change."
-              exit 1
-            fi
-            if [ "$GATE" != "$gate_wanted" ]; then
-              echo "::error::gate is $GATE, expected $gate_wanted for a $SCOPE plan."
-              exit 1
-            fi
-            echo "E2E suite passed: every planned data-path shard ($SCOPE plan) and the coverage gate succeeded."
+            for lane in "suite=$SUITE" "gate=$GATE"; do
+              if [ "${lane#*=}" != "success" ]; then
+                echo "::error::${lane%%=*} did not pass (${lane#*=}) — the E2E suite did not fully run for this change."
+                exit 1
+              fi
+            done
+            echo "E2E suite passed: every data-path shard and the metric coverage gate succeeded."
           fi
