@@ -1,4 +1,4 @@
-//! Seeded-leak checks (insight#2488 AC-4): write the proxy token and a vendor
+//! Seeded-leak checks: write the proxy token and a vendor
 //! git credential through the logging path — each must render as a redaction
 //! marker, never as its value.
 

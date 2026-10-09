@@ -95,7 +95,7 @@ kubectl apply -f src/ingestion/secrets/connectors/bitbucket-cloud.yaml
 | `repository_visibility` | Bitbucket `/2.0/repositories/{workspace}`, unfiltered, one row | full refresh | — |
 | `commits` | proxy `/v1/commits` | incremental, per repository | `committed_date` |
 | `file_changes` | proxy `/v1/file-changes` | incremental, per repository | `committed_date` |
-| `branches` | proxy `/v1/branches` | full refresh, per repository | — |
+| `branches` | proxy `/v1/branches` | incremental, per repository pushed to | `repository_updated_on` |
 | `pull_requests` | Bitbucket `/pullrequests` (all states) | incremental, per repository pushed to | `updated_on` |
 | `pull_request_comments` | `/pullrequests/{id}/comments` | windowed PR parent, full refresh per PR | — |
 | `pull_request_commits` | `/pullrequests/{id}/commits` | windowed PR parent, full refresh per PR | — |
@@ -109,15 +109,20 @@ kubectl apply -f src/ingestion/secrets/connectors/bitbucket-cloud.yaml
 
 `repositories` fans out over the configured workspaces (`ListPartitionRouter`)
 and is the incremental **parent**: every per-repository stream routes through
-`SubstreamPartitionRouter`, and every one but `branches` sets
-`incremental_dependency: true`, so a sync visits only repositories whose
-`updated_on` advanced since one lookback window before the last sync. The CDK
-persists parent state only when the child stream is incremental — `branches`
-is not, so its listing is bounded by the start date and every repository is
-re-read for heads each sync.
+`SubstreamPartitionRouter` and sets `incremental_dependency: true`, so a sync
+visits only repositories whose `updated_on` advanced since one lookback window
+before the last sync. The CDK persists parent state only when the child stream
+is incremental, which is why `branches` carries a cursor: the proxy lists every
+head regardless, and the cursor's only job is to make the listing's state
+persist. It is the repository's `updated_on` stamped onto each head row — the
+vendor's clock — rather than the head's own committer date, which a pusher's
+clock can set in the future and which would then close every later slice.
 
 The vendor moves a repository's `updated_on` on pushes only. For commits, file
-changes and commit authors that bound is exact. For pull requests, pipelines
+changes, branch heads and commit authors that bound is exact — a head moves on
+a push and nothing else — with one exception: a default branch changed in the
+repository settings without a push is reported at that repository's next push.
+For pull requests, pipelines
 and deployments it is the accepted cost of not listing every repository every
 sync: a pull request reviewed, commented on or declined, or a pipeline started
 by a schedule or by hand, on a repository nobody pushed to since the last sync
@@ -143,9 +148,7 @@ the cache. One blocking stream group per level runs `repositories`, then
 read after the first is a cache hit rather than a race to the vendor. The proxy
 walks, pipelines and deployments start together once `repositories` is done:
 their reads share the cache where they do not overlap and read the vendor
-where they do. `branches` is the exception to the shared read: full refresh,
-it persists no cursor, so its copy of the listing opens at the start date and
-reads the vendor on its own. Each child
+where they do. Each child
 still keeps its own copy of the listing's cursor in its state; when two
 children's cursors for a repository differ (one of them lagged), their URLs
 differ, both read the vendor, and nothing is shared or lost. The listing request
@@ -159,10 +162,23 @@ the whole sync, the CDK widens the next window by the previous sync's runtime on
 top of the lookback, and since each stream measures its own runtime their URLs
 stop matching. Sharing is a per-repository-cursor property.
 
-`branches` is full refresh — bronze keeps the latest state per branch, and
-head-movement history is derived by the `snapshot` / `fields_history` dbt
-macros. Its `unique_key` excludes `head_sha`, so the ReplacingMergeTree
-collapses to current state and a head move is a tracked-column change.
+`branches` re-reads every head of a repository it visits — its cursor filters
+nothing, so a head reset to an older commit lands too — and bronze keeps the
+latest state per branch; head-movement history is derived by the `snapshot` /
+`fields_history` dbt macros. Its `unique_key` excludes `head_sha`, so the
+ReplacingMergeTree collapses to current state and a head move is a
+tracked-column change. A branch deleted on the vendor keeps its last row.
+
+Every proxy request carries `X-Max-Staleness` of one hour, below the sync
+interval: a repository is only asked for because it was pushed to since the last
+sync, so the proxy fetches it rather than serving the previous sync's mirror,
+and the streams of one sync that visit the same repository share that fetch. A
+mirror less than an hour old is still served, so a push landing in that hour is
+read by the next sync, whose listing reopens one lookback window back. A walk
+that outlives the window can see another stream's fetch move the refs under it;
+the proxy answers its next page `409` and the stream restarts the walk — commits
+and file changes from the last commit they emitted. The proxy's own default
+window is sized for a daily schedule and is not relied on.
 
 ### Bitbucket-specific behaviours
 

@@ -259,6 +259,7 @@ def test_credential_family_drives_both_the_rest_scheme_and_the_clone_username(
     assert rest["Authorization"].startswith(rest_scheme), rest["Authorization"][:16]
     assert proxy["X-Git-Username"] == clone_username
     assert proxy["X-Repo-Size-Hint"] == "734003200", "the proxy reserves cache from the reported size"
+    assert proxy["X-Max-Staleness"] == "3600", "a pushed repository must not be served from a previous sync's mirror"
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -1621,6 +1622,134 @@ def test_a_resumed_commits_sync_lists_repositories_from_one_window_before_the_sa
         bounds = _repository_listing_bounds(resume_mocker)
         assert bounds, "the resumed run must list repositories"
         assert all(_instant(b) == _instant(one_window_before) for b in bounds), bounds
+
+
+def _branches_page(*rows: dict[str, Any]) -> HttpResponse:
+    return HttpResponse(body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200)
+
+
+def _branch_row(name: str, committed: str, *, is_default: bool = False) -> dict[str, Any]:
+    return {"name": name, "head_sha": "b" * 40, "head_committed_date": committed, "is_default": is_default}
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_resumed_branches_sync_lists_repositories_from_one_window_before_the_saved_cursor(
+    http_mocker: HttpMocker,
+) -> None:
+    """A head moves on a push and a push is what moves the repository's
+    updated_on, so a resumed branches sync walks only the repositories pushed
+    to since one lookback window before the newest update it saw, and every
+    head of such a repository is re-read — the cursor bounds the listing, not
+    the heads, so a head reset below it still lands."""
+    config = BitbucketCloudConfigBuilder().build()
+    one_window_before = "2026-06-19T10:00:00+00:00"
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/branches", query_params=ANY_QUERY_PARAMS),
+        _branches_page(_branch_row("main", "2026-06-15T10:00:00+00:00", is_default=True)),
+    )
+
+    first = read_stream(_CONNECTOR, "branches", config, sync_mode=SyncMode.incremental)
+
+    assert not first.errors
+    assert [_instant(b) for b in _repository_listing_bounds(http_mocker)] == [_instant("2026-06-01T00:00:00+00:00")]
+    saved = first.state_messages[-1].state.stream.stream_state.__dict__
+    parent = saved["parent_state"]["repositories"]["state"]["updated_on"]
+    assert _instant(parent) == _instant("2026-06-20T10:00:00+00:00"), (
+        f"the parent cursor must follow the listing: {saved}"
+    )
+
+    resume_mocker = HttpMocker()
+    with resume_mocker:
+        resume_mocker.get(
+            HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+            HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
+        )
+        resume_mocker.get(
+            HttpRequest(f"{PROXY_URL}/v1/branches", query_params=ANY_QUERY_PARAMS),
+            _branches_page(
+                _branch_row("main", "2026-06-10T10:00:00+00:00", is_default=True),
+                _branch_row("release", "2026-06-16T10:00:00+00:00"),
+            ),
+        )
+
+        second = read_stream(
+            _CONNECTOR,
+            "branches",
+            config,
+            state=[m.state for m in first.state_messages][-1:],
+            sync_mode=SyncMode.incremental,
+        )
+
+        assert not second.errors
+        bounds = _repository_listing_bounds(resume_mocker)
+        assert bounds, "the resumed run must list repositories"
+        assert all(_instant(b) == _instant(one_window_before) for b in bounds), bounds
+        heads = {r.record.data["name"]: r.record.data["head_committed_date"] for r in second.records}
+        assert heads == {"main": "2026-06-10T10:00:00+00:00", "release": "2026-06-16T10:00:00+00:00"}, (
+            f"every head of a pushed repository is re-read, a reset one included: {heads}"
+        )
+        asked = [r.qs for r in resume_mocker._mocker.request_history if "/v1/branches" in str(r.url)]
+        assert asked and all("since" not in q and "until" not in q for q in asked), (
+            f"the proxy lists every head: {asked}"
+        )
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_future_dated_head_never_stops_a_later_branches_sync(http_mocker: HttpMocker) -> None:
+    """A head's date is whatever the pusher's clock said. Were it the cursor, a
+    future one would close every later slice — for its own repository and for
+    every repository that starts from the global value. The cursor reads the
+    vendor's update time instead, so the next sync still asks for both the
+    repository holding the future head and one it has never seen."""
+    config = BitbucketCloudConfigBuilder().build()
+    app, lib = _repo_named("app"), _repo_named("lib") | {"updated_on": "2026-06-25T10:00:00.000000+00:00"}
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [app]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/branches", query_params=ANY_QUERY_PARAMS),
+        _branches_page(_branch_row("main", "2099-01-01T00:00:00+00:00", is_default=True)),
+    )
+
+    first = read_stream(_CONNECTOR, "branches", config, sync_mode=SyncMode.incremental)
+
+    assert not first.errors
+    saved = json.dumps(first.state_messages[-1].state.stream.stream_state.__dict__)
+    assert "2099" not in saved, f"the head's date leaked into state: {saved}"
+
+    resume_mocker = HttpMocker()
+    with resume_mocker:
+        resume_mocker.get(
+            HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+            HttpResponse(body=json.dumps({"values": [app, lib]}), status_code=200),
+        )
+        resume_mocker.get(
+            HttpRequest(f"{PROXY_URL}/v1/branches", query_params=ANY_QUERY_PARAMS),
+            _branches_page(_branch_row("main", "2026-06-24T10:00:00+00:00", is_default=True)),
+        )
+
+        second = read_stream(
+            _CONNECTOR,
+            "branches",
+            config,
+            state=[m.state for m in first.state_messages][-1:],
+            sync_mode=SyncMode.incremental,
+        )
+
+        assert not second.errors
+        asked = sorted(
+            parse_qs(urlparse(r.url).query)["repo"][0]
+            for r in resume_mocker._mocker.request_history
+            if "/v1/branches" in str(r.url)
+        )
+        assert asked == ["https://bitbucket.org/acme/app.git", "https://bitbucket.org/acme/lib.git"], (
+            f"both repositories must be asked for heads: {asked}"
+        )
 
 
 @freezegun.freeze_time(_FROZEN)

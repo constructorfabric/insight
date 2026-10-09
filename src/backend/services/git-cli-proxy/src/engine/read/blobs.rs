@@ -138,7 +138,7 @@ const ENUMERATE_BATCH: usize = 128;
 /// Tree entry mode of a submodule reference.
 const GITLINK_MODE: &str = "160000";
 
-/// Collect both sides of every changed path from `diff-tree --raw` output:
+/// Collect both sides of every changed path from `--raw` output:
 /// `:<src_mode> <dst_mode> <src_oid> <dst_oid> <status>\t<path>`.
 ///
 /// A side whose mode is [`GITLINK_MODE`] is skipped. Its object id names a

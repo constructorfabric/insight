@@ -43,8 +43,7 @@ pub struct GearConfig {
     pub proxy_token: String,
     /// PEM bundle for origins whose TLS chain is not in the system store —
     /// a self-hosted vendor behind a private CA. Empty means "system store
-    /// only", which is correct for the public clouds, so this is the one
-    /// optional field.
+    /// only", which is correct for the public clouds.
     pub ca_cert_path: String,
     /// Accept `file://` origins. Test-harness escape hatch only: the hermetic
     /// suite clones from local fixture repositories. No deployment sets it —
@@ -57,8 +56,6 @@ pub struct GearConfig {
     pub allowed_repo_hosts: Vec<String>,
 }
 
-/// Manual `Debug` that never prints the token — the config is logged on boot
-/// failures and must stay secret-free.
 /// `key:` with nothing after it is YAML null, and it is how a human writes an
 /// empty list. Refusing to start on it is a worse answer than reading it as
 /// one.
@@ -69,6 +66,7 @@ where
     Ok(Option::<Vec<String>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
+/// Never prints the token: gear init logs the whole config at boot.
 impl std::fmt::Debug for GearConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GearConfig")
@@ -303,10 +301,8 @@ mod tests {
 
     #[test]
     fn an_empty_allowlist_may_be_written_as_a_bare_key() {
-        // `allowed_repo_hosts:` with nothing after it is YAML null. The chart
-        // rendered exactly that for the default empty list and the service
-        // refused to boot on it — no unit test saw it, because nothing parsed
-        // the chart's own output.
+        // `allowed_repo_hosts:` with nothing after it is YAML null, which is
+        // how a human writes an empty list.
         let json = r#"{
             "data_dir": "/data",
             "disk_budget_bytes": 10,
