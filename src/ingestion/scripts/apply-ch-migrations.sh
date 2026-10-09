@@ -9,7 +9,10 @@
 # by the clickhouse-migrate Helm Hook Job (post-install,post-upgrade).
 #
 # Steps (same order and contract as init.sh):
-#   1. Create the core databases (staging, silver, app db).
+#   1. Run create-databases.sh — every database this release owns, plus the
+#      role/user provisioning that reads them. It is the only creation site:
+#      the migrations below, the dbt hooks and the connectors-ddl snapshot all
+#      assume their database already stands.
 #   2. Run create-warehouse-placeholders.sh — minimum-viable identity/
 #      staging/silver/insight stubs so gold-view CREATE VIEW type-checks on a
 #      fresh cluster (CH validates referenced tables at parse time). Bronze is
@@ -65,30 +68,7 @@ export CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}"
 
 source "$SCRIPT_DIR/lib/ch-exec.sh"
 
-echo "=== Creating core databases (staging, silver, ${CLICKHOUSE_DATABASE}, presentation) ==="
-# `presentation` (#1964): writable namespace for new gold / results / scratch.
-run_ch <<SQL
-CREATE DATABASE IF NOT EXISTS staging;
-CREATE DATABASE IF NOT EXISTS silver;
-CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_DATABASE};
-CREATE DATABASE IF NOT EXISTS presentation;
-SQL
-
-echo "=== Provisioning presentation access (role + grant-less user) (#1963/#1964) ==="
-bash "$SCRIPT_DIR/bootstrap-db/provision-presentation-access.sh"
-
-echo "=== Provisioning insight-v3-core query access (grant-less reader) ==="
-bash "$SCRIPT_DIR/bootstrap-db/provision-v3-access.sh"
-
-if [[ "${MCP_ENABLED:-false}" == "true" || "${SQL_API_ENABLED:-false}" == "true" ]]; then
-  echo "=== Provisioning MCP SQL explorer access ==="
-  bash "$SCRIPT_DIR/bootstrap-db/provision-mcp-access.sh"
-else
-  echo "=== MCP SQL explorer disabled; skipping access provisioning ==="
-fi
-
-echo "=== Provisioning grafana access (SELECT-only role + grant-less user) (#2888) ==="
-bash "$SCRIPT_DIR/bootstrap-db/provision-grafana-access.sh"
+bash "$SCRIPT_DIR/create-databases.sh"
 
 echo "=== Creating warehouse placeholders (ADR-0007) ==="
 bash "$SCRIPT_DIR/create-warehouse-placeholders.sh"

@@ -1,5 +1,3 @@
-CREATE DATABASE IF NOT EXISTS `silver`;
-
 CREATE TABLE IF NOT EXISTS silver.class_ai_assistant_usage
 (
     `insight_tenant_id` Nullable(String),

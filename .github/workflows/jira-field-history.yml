@@ -106,7 +106,7 @@ jobs:
           # The dbt project's on-run-start hooks write into `staging`, so the
           # databases have to exist before the first dbt invocation — including
           # the unit-test step, which otherwise fails before reading a fixture.
-          for db in staging silver config insight; do
+          for db in staging silver config identity insight; do
             curl -sSf "http://${CLICKHOUSE_HOST}:${CLICKHOUSE_HTTP_PORT}/" \
               -u "${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}" \
               --data-binary "CREATE DATABASE IF NOT EXISTS ${db}"

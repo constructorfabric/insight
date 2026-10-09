@@ -1,5 +1,3 @@
-CREATE DATABASE IF NOT EXISTS `identity`;
-
 CREATE TABLE IF NOT EXISTS identity.identity_inputs
 (
     `unique_key` String,

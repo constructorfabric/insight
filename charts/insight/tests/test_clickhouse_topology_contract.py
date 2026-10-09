@@ -11,6 +11,7 @@ Run: pytest charts/insight/tests
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -22,6 +23,7 @@ CHART = Path(__file__).resolve().parents[1]
 #: Template -> the manifest keys that must carry the topology.
 CONSUMERS = {
     "templates/platform-config.yaml": ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME"),
+    "templates/clickhouse-databases-job.yaml": ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME"),
     "templates/clickhouse-migrate-job.yaml": ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME"),
     "templates/ingestion/reconcile-cron.yaml": (
         "RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE",
@@ -173,3 +175,28 @@ def test_every_dbt_step_reads_the_topology_from_the_platform_config_map(
 
     for name in ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME"):
         assert f"key: {name}" in rendered, f"{template} does not read {name}"
+
+
+#: MariaDB has its own init Job, its own creator and no cluster fork.
+MARIADB_TEMPLATE = "mariadb-init-svcdbs-job.yaml"
+
+HELM_COMMENT = re.compile(r"\{\{-?\s*/\*.*?\*/\s*-?\}\}", re.DOTALL)
+
+
+def test_no_chart_template_creates_a_clickhouse_database() -> None:
+    """`create-databases.sh` is the one site that creates one (#3556), and the
+    cluster mechanism needs it to stay that way: a `Replicated` database engine
+    belongs on that statement, and a template that made a plain database first
+    would win on a fresh cluster — silently, since everything is IF NOT EXISTS.
+
+    Read with the Helm comment blocks stripped: these templates explain the
+    rule in prose, and a guard matching its own documentation fires on every
+    mention."""
+    offenders = {
+        path.name: [line.strip() for line in body.splitlines() if "CREATE DATABASE" in line]
+        for path in sorted((CHART / "templates").glob("*.yaml"))
+        if path.name != MARIADB_TEMPLATE
+        and "CREATE DATABASE" in (body := HELM_COMMENT.sub("", path.read_text(encoding="utf-8")))
+    }
+
+    assert not offenders, f"a chart template creates a ClickHouse database: {offenders}"

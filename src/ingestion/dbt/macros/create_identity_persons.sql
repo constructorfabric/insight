@@ -16,6 +16,9 @@
   it early would make its first run think it is incremental and filter its own
   seed rows away. The resolver degrades on its own when the relation is absent.
 
+  The `identity` database itself is not created here: `create-databases.sh` is
+  the one site that creates a database, and it runs before any dbt build.
+
   SCHEMA CONTRACT: this DDL is a byte-for-byte copy of COLUMNS_DDL in
   src/backend/services/identity-resolution/src/infra/identity_persons.rs —
   the service owns the schema (it mirrors its own MariaDB `persons` log,
@@ -30,8 +33,6 @@
 {% macro create_identity_persons() %}
     {% set on_cluster = insight_on_cluster() %}
     {% set engine = insight_engine('MergeTree') %}
-
-    {% do run_query("CREATE DATABASE IF NOT EXISTS identity " ~ on_cluster) %}
 
     {% do run_query("
         CREATE TABLE IF NOT EXISTS identity.identity_persons " ~ on_cluster ~ "

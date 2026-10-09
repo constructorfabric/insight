@@ -4,7 +4,7 @@
 # regenerate the committed connectors-ddl snapshot (see dump-ddl.sh).
 #
 # Order matters (this is the fix for #1831/#1763):
-#   1. Core databases + the identity schema (init-identity migration).
+#   1. Databases + access (create-databases.sh, the one creation site).
 #   2. Connectors -> bronze (ReplacingMergeTree via append_dedup).
 #   3. dbt run (all): staging + silver + dbt-owned gold.
 #   4. Gold-view migrations (apply-ch-migrations.sh): CREATE OR REPLACE the
@@ -17,7 +17,6 @@ set -euo pipefail
 CONFIG_FILE="${1:?usage: bootstrap-db.sh <connectors-config.yaml>}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MIGRATIONS_DIR="$(cd "${SCRIPT_DIR}/../migrations" && pwd)"
 
 set -a
 source "${SCRIPT_DIR}/pins.env"
@@ -36,21 +35,12 @@ fi
 : "${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}"
 : "${CLICKHOUSE_DATABASE:?CLICKHOUSE_DATABASE must be set}"
 
-# run_ch (lib/ch-exec.sh) fans a multi-statement SQL block out statement-by-
-# statement over the HTTP interface (CH runs one statement per request).
+# Every step below talks to ClickHouse through lib/ch-exec.sh, which selects
+# its backend from CLICKHOUSE_URL.
 export CLICKHOUSE_URL="${CLICKHOUSE_PROTOCOL}://${CLICKHOUSE_HOST}:${CLICKHOUSE_PORT}"
-source "${SCRIPT_DIR}/../lib/ch-exec.sh"
 
-echo "=== 1. Core databases + identity schema (init-identity) ==="
-# `presentation` (#1964); its role + grant-less user follow in step 4.
-run_ch <<SQL
-CREATE DATABASE IF NOT EXISTS staging;
-CREATE DATABASE IF NOT EXISTS silver;
-CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_DATABASE};
-CREATE DATABASE IF NOT EXISTS presentation;
-CREATE DATABASE IF NOT EXISTS product_usage;
-SQL
-run_ch < "${MIGRATIONS_DIR}/20260408000000_init-identity.sql"
+echo "=== 1. Databases + access ==="
+bash "${SCRIPT_DIR}/../create-databases.sh"
 
 echo "=== 2. Creating connector tables (bronze) ==="
 "${SCRIPT_DIR}/seed-connectors.sh" "${CONFIG_FILE}"
@@ -65,7 +55,7 @@ echo "=== 3. Running all dbt models ==="
 
 echo "=== 4. Applying ClickHouse migrations (gold views) + dbt gold ==="
 # Snapshot applicator is a no-op here (generation mode); the real relations
-# already exist from steps 1-3. apply-ch-migrations re-runs init-identity
+# already exist from steps 1-3. apply-ch-migrations re-creates the databases
 # (no-op), applies the gold-view migrations, and heals warm-cluster schemas.
 # SKIP_DBT_GOLD: step 3 already built every tag:gold model with the pinned dbt
 # venv; skip apply-ch-migrations' own gold build, which would need a `dbt` on

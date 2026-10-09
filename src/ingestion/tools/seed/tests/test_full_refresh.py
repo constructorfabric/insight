@@ -76,6 +76,7 @@ def refresh_requests(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 @pytest.fixture
 def offline_silver_step(monkeypatch: pytest.MonkeyPatch) -> None:
     """Everything `silver.run` touches besides the migration script."""
+    monkeypatch.setattr(silver, "apply_create_databases", lambda: None)
     monkeypatch.setattr(silver, "apply_create_warehouse_placeholders", lambda: None)
     monkeypatch.setattr(silver, "ensure_task_config_tables", lambda: None)
     monkeypatch.setattr(silver, "_ch_client", _StubClient)
@@ -157,8 +158,10 @@ def test_config_tables_exist_before_the_generators_write_them(
     monkeypatch: pytest.MonkeyPatch, refresh_requests: list[dict[str, Any]]
 ) -> None:
     """The generators INSERT into config.field_value_map; on a fresh stand dbt
-    has never run, so run() must invoke the owning macro before generating."""
+    has never run, so run() must invoke the owning macro before generating —
+    and the database that macro writes into stands before either of them."""
     order: list[str] = []
+    monkeypatch.setattr(silver, "apply_create_databases", lambda: order.append("databases"))
     monkeypatch.setattr(
         silver, "apply_create_warehouse_placeholders", lambda: order.append("placeholders")
     )
@@ -168,7 +171,7 @@ def test_config_tables_exist_before_the_generators_write_them(
 
     silver.run()
 
-    assert order == ["placeholders", "config_tables", "generate"]
+    assert order == ["databases", "placeholders", "config_tables", "generate"]
 
 
 def test_config_tables_come_from_the_owning_dbt_macro(script_runs: list[ScriptRun]) -> None:

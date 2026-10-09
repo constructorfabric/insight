@@ -408,7 +408,11 @@ def _check_clickhouse(target: ClickHouse, scripts: Path, tenant: str, *, force: 
 
     missing = [
         name
-        for name in ("create-warehouse-placeholders.sh", "apply-ch-migrations.sh")
+        for name in (
+            "create-databases.sh",
+            "create-warehouse-placeholders.sh",
+            "apply-ch-migrations.sh",
+        )
         if not (scripts / name).is_file()
     ]
     if missing:

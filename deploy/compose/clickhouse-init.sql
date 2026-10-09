@@ -1,12 +1,10 @@
-CREATE DATABASE IF NOT EXISTS insight;
--- #1964 writable namespace; role + user provisioned by the seed/migrate path.
-CREATE DATABASE IF NOT EXISTS presentation;
--- #2573 adoption events; the grant below needs it to exist before the role runs.
-CREATE DATABASE IF NOT EXISTS product_usage;
--- Dataset record tables (insight-v3-core); the service's migrate step also
--- creates it, this only lets a stand read the grants before that runs.
-CREATE DATABASE IF NOT EXISTS insight_datasets;
-
+-- Compose-only ClickHouse bootstrap, run once by the server's
+-- docker-entrypoint-initdb.d on a fresh volume.
+--
+-- No CREATE DATABASE here: src/ingestion/scripts/create-databases.sh is the one
+-- site that creates a database, and `dev-compose.sh seed` runs it. A ClickHouse
+-- grant resolves by name, so the roles below stand without their databases.
+--
 -- Local dev password. 01-presentation-role.sql carries this role's grants
 -- but runs later, and a role grant resolves now, so the role starts here.
 CREATE ROLE IF NOT EXISTS insight_v3_ro;

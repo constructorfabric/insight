@@ -73,7 +73,7 @@ CH_PORT="$(yq -r '.clickhouse.port // 8123' "$VALUES")"
 CH_USER="$(yq -r '.clickhouse.username // "insight"' "$VALUES")"
 
 MARIADB_IMAGE="docker.io/bitnamilegacy/mariadb:11.4.4-debian-12-r0"  # mirrors templates/mariadb-init-svcdbs-job.yaml
-CURL_IMAGE="curlimages/curl:8.10.1"  # mirrors templates/clickhouse-init-svcdbs-job.yaml
+CURL_IMAGE="curlimages/curl:8.10.1"  # a public image for the probes below
 
 # Not helm-managed; must survive the wipe. LIMIT: hand-maintained list — a
 # newly-required secret not added here is wiped through silently.
