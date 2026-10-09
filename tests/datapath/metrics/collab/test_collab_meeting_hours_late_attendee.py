@@ -3,7 +3,8 @@
 A session's Zoom time counts only while someone else was in the meeting, so an
 incremental build re-aggregates every date of each meeting touched by a recent
 extract. alice is alone on Dec 20 until bob's row, joined on Dec 21, arrives in a
-later sync; the incremental build then gives her Dec 20 the 20 minutes they shared.
+later sync; the incremental build then gives her Dec 20 the 20 minutes they shared,
+and her focus on that day follows although newer days exist.
 """
 
 from __future__ import annotations
@@ -22,6 +23,9 @@ SPEC = "collab_meeting_hours_late_attendee"
 
 ALICE = "alice@example.com"
 REBUILT_MODELS = "zoom__collab_meeting_activity+"
+WORKDAY_HOURS = 8
+# INVARIANT: focus hours are stored rounded to four decimals.
+FOCUS_HOURS_AFTER = round(WORKDAY_HOURS - 20 / 60, 4)
 
 BOB_LATE_FIELDS = {
     "_airbyte_raw_id": "00000000-0000-0000-0000-000000000009",
@@ -35,7 +39,7 @@ BOB_LATE_FIELDS = {
 }
 
 
-def _alice_dec_20(spec: SpecRun) -> object:
+def _alice_dec_20(spec: SpecRun, metric_key: str = "collab.meeting_hours") -> object:
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -43,7 +47,7 @@ def _alice_dec_20(spec: SpecRun) -> object:
             "body": {
                 "entity": {"type": "person", "ids": [ALICE]},
                 "period": {"from": "2026-12-20", "to": "2026-12-20"},
-                "metrics": [{"metric_key": "collab.meeting_hours", "views": [{"view": "period"}]}],
+                "metrics": [{"metric_key": metric_key, "views": [{"view": "period"}]}],
             },
         }
     )
@@ -60,6 +64,13 @@ def test_late_attendee_reopens_the_earlier_day(
         lambda v: v is not None and float(v) == approx(0.0),
         "alice is alone before bob's row",
     )
+    _alice_dec_20(spec, "collab.focus_time_pct").row(
+        "collab.focus_time_pct", "period", entity_id=ALICE
+    ).check(
+        "value",
+        lambda v: v is not None and float(v) == approx(100.0),
+        "alice's Dec 20 is all focus before bob's row",
+    )
 
     with client(instance_cfg) as connection:
         rows = connection.query(
@@ -74,4 +85,11 @@ def test_late_attendee_reopens_the_earlier_day(
         "value",
         lambda v: v is not None and float(v) == approx(20 / 60),
         "alice's Dec 20 gains the 20 minutes shared with bob",
+    )
+    _alice_dec_20(spec, "collab.focus_time_pct").row(
+        "collab.focus_time_pct", "period", entity_id=ALICE
+    ).check(
+        "value",
+        lambda v: v is not None and float(v) == approx(100 * FOCUS_HOURS_AFTER / WORKDAY_HOURS),
+        "alice's Dec 20 focus loses the same 20 minutes",
     )

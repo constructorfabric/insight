@@ -146,7 +146,9 @@ models:
     description: >
       Daily pre-aggregation of focus_time_pct and dev_time_h per active employee.
       Joins class_collab_meeting_activity (Zoom + M365 Teams meetings) with class_hr_working_hours.
-      One row per person per working day. Incremental with 3-day lookback for late events.
+      One row per person per working day. Incremental: rebuilds the last three days and
+      every older day whose meeting rows changed since the previous build. A working-hours
+      change reaches older days only on a full refresh.
       Users without HR working hours data default to 8h/day.
     columns:
       - name: insight_tenant_id

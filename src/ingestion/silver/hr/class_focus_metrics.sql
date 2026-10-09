@@ -64,8 +64,19 @@ LEFT JOIN {{ ref('class_hr_working_hours') }} wh FINAL
 WHERE ma.person_key != ''
   AND ma.date IS NOT NULL
 {% if is_incremental() %}
-  AND ma.date
-      > (SELECT max(day) - INTERVAL 3 DAY FROM {{ this }})
+  -- INVARIANT: the recent days pick up working-hours changes; changed meeting rows
+  -- re-open older days too, with a one-day margin for connector runs overlapping this one.
+  AND (
+      ma.date > (SELECT max(day) - INTERVAL 3 DAY FROM {{ this }})
+      OR (ma.tenant_id, ma.person_key, ma.date) IN (
+          SELECT
+              tenant_id,
+              person_key,
+              date
+          FROM {{ ref('class_collab_meeting_activity') }}
+          WHERE _version > (SELECT max(_version) FROM {{ this }}) - 86400000
+      )
+  )
 {% endif %}
 GROUP BY
     ma.tenant_id,
