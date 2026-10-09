@@ -161,7 +161,7 @@ argo_render_cronworkflow() {
     --connector "$connector" \
     --connection-name "$connection_name" \
     --schedule "$schedule" \
-    --tenant "$tenant" \
+    --tenant "${INSIGHT_TENANT_ID}" \
     --cron-name "$cron_name" \
     --insight-source-id "$insight_source_id" \
     --dbt-select "$dbt_select" \
@@ -250,7 +250,8 @@ argo_submit_sync_trigger() {
   rendered="$(python3 "${ARGO_PY_DIR}/render_sync_trigger.py" \
     --connector "$connector" \
     --connection-name "$connection_name" \
-    --tenant "$tenant" \
+    --tenant "${INSIGHT_TENANT_ID}" \
+    --tenant-key "$tenant" \
     --insight-source-id "$insight_source_id" \
     --dbt-select "$dbt_select" \
     --bump-kind "$bump_kind" \

@@ -55,7 +55,7 @@ reconcile_compute_source_id() {
 # ---------------------------------------------------------------------------
 # reconcile_compute_connection_name <connector_name> [source_id]
 # Derives the Airbyte connection name for one INSTANCE of a connector: pattern
-#   {connector}-{source_id_label}-{tenant_id}-conn
+#   {connector}-{source_id_label}-{tenant_key}-conn
 # matching the name used when the connection was created.
 #
 # The source id is passed in by every caller that has a plan; resolving it here
@@ -66,7 +66,7 @@ reconcile_compute_connection_name() {
   local connector="$1"
   local source_id_label="${2:-}"
   [[ -n "${source_id_label}" ]] || source_id_label="$(reconcile_compute_source_id "${connector}")"
-  printf '%s-%s-%s-conn' "${connector}" "${source_id_label}" "${INSIGHT_TENANT_ID:-}"
+  printf '%s-%s-%s-conn' "${connector}" "${source_id_label}" "$(reconcile_tenant_key)"
 }
 
 # ---------------------------------------------------------------------------
@@ -109,23 +109,13 @@ reconcile_compute_schedule() {
 }
 
 # ---------------------------------------------------------------------------
-# reconcile_compute_tenant <connector_name>
-# Resolves tenant slug: env INSIGHT_TENANT_ID > Secret metadata > "default".
+# reconcile_tenant_key
+# The tenant segment of Airbyte source/connection names and Argo names: the
+# legacy key a warm install created them with, else the canonical tenant.
+# Airbyte finds a source by its exact name, so this must never change on an
+# install that already has sources. Never the tenant a row is recorded under —
+# that is INSIGHT_TENANT_ID.
 # ---------------------------------------------------------------------------
-reconcile_compute_tenant() {
-  local connector="$1"
-  [[ -n "${INSIGHT_TENANT_ID:-}" ]] && { printf '%s' "${INSIGHT_TENANT_ID}"; return 0; }
-  local namespace="${INSIGHT_NAMESPACE}"
-  local secret_name
-  secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
-  if [[ -z "${secret_name}" ]]; then
-    printf 'default'
-    return 0
-  fi
-  local secret_file
-  secret_file="$(mktemp -t insight-reconcile.XXXXXX)" || { printf 'default'; return 0; }
-  kubectl -n "${namespace}" get secret "${secret_name}" -o json > "${secret_file}" 2>/dev/null || true
-  python3 "${_CN_PY_DIR}/resolve_tenant.py" \
-    --secret-json "${secret_file}" 2>/dev/null || printf 'default'
-  rm -f "${secret_file}"   # explicit cleanup; sourced libs MUST NOT install RETURN traps
+reconcile_tenant_key() {
+  printf '%s' "${INSIGHT_LEGACY_TENANT_KEY:-${INSIGHT_TENANT_ID:?INSIGHT_TENANT_ID must be set}}"
 }

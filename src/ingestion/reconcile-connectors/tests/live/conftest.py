@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -27,7 +28,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+REPO = ROOT.parents[2]
 MAIN = ROOT / "main.sh"
+#: The release a warm install ran before upgrading; its reconcile builds the warm state.
+BASELINE_REF_ENV = "RECONCILE_BASELINE_REF"
 STAND_DIR_MARKER = "insight-reconcile-stand"
 DEFAULT_ORGANIZATION = "00000000-0000-0000-0000-000000000000"
 
@@ -91,27 +95,39 @@ class Airbyte:
         self.url = url.rstrip("/")
         secret = json.loads(kubectl("-n", namespace, "get", "secret", "airbyte-auth-secrets", "-o", "json"))
         data = secret["data"]
-        creds = {
+        self._creds = {
             "client_id": base64.b64decode(data["instance-admin-client-id"]).decode(),
             "client_secret": base64.b64decode(data["instance-admin-client-secret"]).decode(),
             "grant_type": "client_credentials",
         }
-        self.token = self._post("/api/v1/applications/token", creds, auth=False)["access_token"]
+        self._mint_token()
         (workspace,) = self._post(
             "/api/v1/workspaces/list_by_organization_id", {"organizationId": DEFAULT_ORGANIZATION}
         )["workspaces"]
         self.workspace_id = workspace["workspaceId"]
 
+    def _mint_token(self) -> None:
+        self.token = self._post("/api/v1/applications/token", self._creds, auth=False)["access_token"]
+
     def _post(self, path: str, body: dict, auth: bool = True) -> dict:
-        headers = {"Content-Type": "application/json"}
-        if auth:
-            headers["Authorization"] = f"Bearer {self.token}"
-        request = urllib.request.Request(
-            self.url + path, data=json.dumps(body).encode(), headers=headers, method="POST"
-        )
-        with urllib.request.urlopen(request, timeout=60) as response:
-            payload = response.read()
-        return json.loads(payload) if payload else {}
+        """POST JSON; a token that expired during a long reconcile run is re-minted once."""
+        for attempt in (1, 2):
+            headers = {"Content-Type": "application/json"}
+            if auth:
+                headers["Authorization"] = f"Bearer {self.token}"
+            request = urllib.request.Request(
+                self.url + path, data=json.dumps(body).encode(), headers=headers, method="POST"
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    payload = response.read()
+            except urllib.error.HTTPError as error:
+                if error.code == 401 and auth and attempt == 1:
+                    self._mint_token()
+                    continue
+                raise
+            return json.loads(payload) if payload else {}
+        raise AssertionError("unreachable")
 
     def sources(self) -> list[dict]:
         return self._post("/api/v1/sources/list", {"workspaceId": self.workspace_id})["sources"]
@@ -172,10 +188,12 @@ class Stand:
             }
             kubectl("apply", "-f", "-", stdin=json.dumps(manifest))
 
-    def reconcile(self, **tenant_env: str) -> subprocess.CompletedProcess[str]:
+    def reconcile(self, main: Path = MAIN, **tenant_env: str) -> subprocess.CompletedProcess[str]:
         env = {**self.env, **tenant_env}
+        if main != MAIN:
+            env["CONNECTORS_DIR"] = str(main.parents[1] / "connectors")
         result = subprocess.run(
-            [shutil.which("bash", path=env["PATH"]), str(MAIN), "reconcile", "--no-sync-trigger"],
+            [shutil.which("bash", path=env["PATH"]), str(main), "reconcile", "--no-sync-trigger"],
             env=env, capture_output=True, text=True, check=False, timeout=1800,
         )
         assert result.returncode == 0, f"reconcile failed:\n{result.stdout[-4000:]}\n{result.stderr[-4000:]}"
@@ -198,6 +216,26 @@ class Stand:
         kubectl("-n", self.namespace, "delete", "cronworkflows", "--all", "--ignore-not-found")
         kubectl("-n", self.namespace, "delete", "secret", "-l", "app.kubernetes.io/part-of=insight",
                 "--ignore-not-found")
+
+
+@pytest.fixture(scope="session")
+def baseline_main(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """`main.sh` of the release before this change, as a warm install ran it.
+
+    Defaults to where this branch left origin/main; RECONCILE_BASELINE_REF names
+    another release.
+    """
+    ref = os.environ.get(BASELINE_REF_ENV) or subprocess.run(
+        ["git", "-C", str(REPO), "merge-base", "HEAD", "origin/main"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    out = tmp_path_factory.mktemp("baseline")
+    archive = subprocess.run(
+        ["git", "-C", str(REPO), "archive", ref, "src/ingestion"],
+        capture_output=True, check=True,
+    )
+    subprocess.run(["tar", "-x", "-C", str(out)], input=archive.stdout, check=True)
+    return out / "src/ingestion/reconcile-connectors/main.sh"
 
 
 @pytest.fixture(scope="session")

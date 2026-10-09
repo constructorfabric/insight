@@ -280,7 +280,7 @@ for x in json.load(sys.stdin): print(x)')
   else
     local conn_name; conn_name="$(reconcile_compute_connection_name "${name}" "${source_id_label}")"
     local schedule;  schedule="$(reconcile_compute_schedule "${name}" "${secret_name}")"
-    local tenant;    tenant="$(reconcile_compute_tenant "${name}")"
+    local tenant;    tenant="$(reconcile_tenant_key)"
     # `source_id_label` — read above off the connector's one instance — is what
     # the rendered CronWorkflow carries as `insight_source_id` for
     # ingestion-pipeline, and what the schedule is named after.

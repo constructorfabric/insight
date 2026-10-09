@@ -66,7 +66,10 @@ Options:
   -h, --help             Show this usage and exit 0
 
 Environment:
-  INSIGHT_TENANT_ID      Override the cluster ConfigMap tenant_id
+  INSIGHT_TENANT_ID      Canonical tenant UUID (required)
+  INSIGHT_LEGACY_TENANT_KEY
+                         Warm installs only: the tenant segment existing
+                         Airbyte/Argo names and Bronze keys were created with
   AIRBYTE_URL            Airbyte server base URL
                          (e.g., http://airbyte-server.airbyte.svc:8001)
   AIRBYTE_TOKEN_FILE     Path to bearer token file
@@ -75,23 +78,22 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# resolve_tenant_id — resolve insight tenant id with env-wins policy.
+# resolve_tenant_id — the canonical tenant UUID, from INSIGHT_TENANT_ID.
 # @cpt-begin:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1:inst-rr-resolve-tenant
 # (also covers inst-ad-resolve-tenant for the adopt flow)
 # ---------------------------------------------------------------------------
 resolve_tenant_id() {
-  if [[ -n "${INSIGHT_TENANT_ID:-}" ]]; then
-    printf '%s' "${INSIGHT_TENANT_ID}"
-    return 0
-  fi
-  local val
-  val="$(kubectl -n data get cm insight-config \
-          -o jsonpath='{.data.tenant_id}' 2>/dev/null || true)"
-  if [[ -z "${val}" ]]; then
-    printf 'resolve_tenant_id: no INSIGHT_TENANT_ID env and no ConfigMap insight-config in ns data\n' >&2
+  local uuid='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  if [[ ! "${INSIGHT_TENANT_ID:-}" =~ ${uuid} ]]; then
+    printf 'resolve_tenant_id: INSIGHT_TENANT_ID must be the canonical tenant as a lowercase UUID, got %q. A legacy key existing names were created with goes in INSIGHT_LEGACY_TENANT_KEY.\n' \
+      "${INSIGHT_TENANT_ID:-}" >&2
     return 1
   fi
-  printf '%s' "${val}"
+  if [[ "${INSIGHT_LEGACY_TENANT_KEY:-}" =~ [[:space:]] ]]; then
+    printf 'resolve_tenant_id: INSIGHT_LEGACY_TENANT_KEY %q contains whitespace\n' "${INSIGHT_LEGACY_TENANT_KEY}" >&2
+    return 1
+  fi
+  printf '%s' "${INSIGHT_TENANT_ID}"
 }
 # @cpt-end:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1:inst-rr-resolve-tenant
 
@@ -184,16 +186,17 @@ main() {
   # Lifecycle event (stdout JSON → Loki). Replaces the old stderr header;
   # the same fields ride as structured keys so one LogQL filter finds them.
   log_event reconcile.started \
-    "starting ${subcmd} (tenant=${tenant_id})" \
+    "starting ${subcmd} (tenant=${tenant_id}, tenant_key=$(reconcile_tenant_key))" \
     "$(jq -cn \
         --arg tenant "${tenant_id}" \
+        --arg tenant_key "$(reconcile_tenant_key)" \
         --arg subcommand "${subcmd}" \
         --arg connector "${connector:-}" \
         --arg source_id "${source_id:-}" \
         --argjson dry_run "$(( dry_run ))" \
         --argjson no_gc "$(( no_gc ))" \
         --argjson no_sync_trigger "$(( no_sync_trigger ))" \
-        '{tenant: $tenant, subcommand: $subcommand,
+        '{tenant: $tenant, tenant_key: $tenant_key, subcommand: $subcommand,
           connector: (if $connector == "" then "all" else $connector end),
           source_id: (if $source_id == "" then "all" else $source_id end),
           dry_run: ($dry_run == 1), no_gc: ($no_gc == 1),

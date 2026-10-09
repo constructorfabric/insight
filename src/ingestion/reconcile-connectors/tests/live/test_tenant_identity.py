@@ -9,7 +9,8 @@ with no state.
 
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
+
 from conftest import CONNECTORS, Snapshot, Stand
 
 CANONICAL_TENANT = "0f6b3c2e-5d4a-4e7b-9c1d-2a3b4c5d6e7f"
@@ -32,8 +33,9 @@ def _synthetic_state(stand: Stand, connection: dict) -> dict:
     }
 
 
-def _source_tenant(snapshot: Snapshot, name: str) -> str:
-    return snapshot.sources[name]["connectionConfiguration"]["insight_tenant_id"]
+def _source_tenant(snapshot: Snapshot, name: str) -> tuple[str, str]:
+    config = snapshot.sources[name]["connectionConfiguration"]
+    return config["insight_tenant_id"], config["insight_tenant_key"]
 
 
 def test_fresh_install_names_everything_by_the_canonical_tenant(stand: Stand) -> None:
@@ -44,7 +46,7 @@ def test_fresh_install_names_everything_by_the_canonical_tenant(stand: Stand) ->
     for connector in CONNECTORS:
         name = f"{connector}-main-{CANONICAL_TENANT}"
         assert name in first.sources, sorted(first.sources)
-        assert _source_tenant(first, name) == CANONICAL_TENANT
+        assert _source_tenant(first, name) == (CANONICAL_TENANT, CANONICAL_TENANT)
     assert len(first.connections) == len(CONNECTORS), sorted(first.connections)
     assert len(first.cronworkflows) == len(CONNECTORS), sorted(first.cronworkflows)
     for cronworkflow in first.cronworkflows.values():
@@ -61,10 +63,9 @@ def test_fresh_install_names_everything_by_the_canonical_tenant(stand: Stand) ->
     assert set(second.cronworkflows) == set(first.cronworkflows)
 
 
-@pytest.mark.xfail(strict=True, reason="#3661: the legacy tenant key override is not implemented yet")
-def test_warm_install_keeps_its_objects_and_state(stand: Stand) -> None:
+def test_warm_install_keeps_its_objects_and_state(stand: Stand, baseline_main: Path) -> None:
     stand.apply_connector_secrets()
-    stand.reconcile(INSIGHT_TENANT_ID=LEGACY_TENANT_KEY)
+    stand.reconcile(baseline_main, INSIGHT_TENANT_ID=LEGACY_TENANT_KEY)
     for connection in stand.snapshot().connections.values():
         stand.airbyte.set_state(connection["connectionId"], _synthetic_state(stand, connection))
     warm = stand.snapshot()
@@ -82,6 +83,6 @@ def test_warm_install_keeps_its_objects_and_state(stand: Stand) -> None:
     assert upgraded.states == warm.states
     assert set(upgraded.cronworkflows) == set(warm.cronworkflows)
     for name in upgraded.sources:
-        assert _source_tenant(upgraded, name) == CANONICAL_TENANT
+        assert _source_tenant(upgraded, name) == (CANONICAL_TENANT, LEGACY_TENANT_KEY)
     for cronworkflow in upgraded.cronworkflows.values():
         assert cronworkflow["metadata"]["labels"][TENANT_LABEL] == CANONICAL_TENANT

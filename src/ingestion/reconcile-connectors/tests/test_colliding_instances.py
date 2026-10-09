@@ -31,7 +31,7 @@ log_line()          { printf '%s\\n' "$*" >&2; }
 log_event()         { :; }
 reconcile__log()    { printf '%s\\n' "$*" >&2; }
 sweep_run()         { :; }
-reconcile_compute_tenant() { printf 'example-tenant'; }
+reconcile_tenant_key() { printf 'example-tenant'; }
 reconcile_gc_orphans()              { printf 'GC\\n' >> "$CALLS"; }
 reconcile_prune_removed_instances() { printf 'PRUNE\\n' >> "$CALLS"; }
 _reconcile_one_connector()          { printf 'RECONCILE %s %s\\n' "$1" "$8" >> "$CALLS"; }

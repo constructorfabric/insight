@@ -27,7 +27,7 @@ STUBS = """
 log_line()          { printf '%s\\n' "$*" >&2; }
 log_event()         { :; }
 reconcile__log()    { printf '%s\\n' "$*" >&2; }
-reconcile_compute_tenant() { printf 'example-tenant'; }
+reconcile_tenant_key() { printf 'example-tenant'; }
 ab_workspace_id()     { printf 'workspace-1'; }
 ab_list_connections() { printf '[]'; }
 ab_delete_source()    { printf 'DELETE-SOURCE %s\\n' "$1" >> "$CALLS"; }

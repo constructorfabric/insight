@@ -3,8 +3,10 @@
 # Variables (consumed by python/render_sync_trigger.py via string.Template):
 #   ${CONNECTOR}            — connector slug
 #   ${CONNECTION_NAME}      — Airbyte connection name; pattern
-#                              {connector}-{source_id}-{tenant}-conn
-#   ${TENANT}               — tenant slug
+#                              {connector}-{source_id}-{tenant_key}-conn
+#   ${TENANT}               — canonical tenant UUID
+#   ${TENANT_KEY}           — tenant segment of Airbyte/Argo names
+#                              (lib/connector-naming.sh:reconcile_tenant_key)
 #   ${INSIGHT_SOURCE_ID}    — secret annotation insight.cyberfabric.com/source-id
 #   ${DATA_SOURCE}          — connector slug; jira selects its two-step dbt path
 #   ${DBT_SELECT}           — descriptor.dbt_select
@@ -23,7 +25,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: ${CONNECTOR}-${TENANT}-sync-now-
+  generateName: ${CONNECTOR}-${TENANT_KEY}-sync-now-
   namespace: ${INSIGHT_NAMESPACE}
   labels:
     app.kubernetes.io/name: insight-reconcile

@@ -3,11 +3,11 @@
 # envsubst):
 #   ${CONNECTOR}            — connector slug (e.g. "github", "ms-entra")
 #   ${CONNECTION_NAME}      — Airbyte connection name; pattern
-#                              {connector}-{source_id}-{tenant}-conn
+#                              {connector}-{source_id}-{tenant_key}-conn
 #   ${SCHEDULES}            — YAML flow array of cron strings, one per
 #                              schedule; precedence resolved by caller
 #                              (Secret annotation > descriptor.schedule > default)
-#   ${TENANT}               — tenant slug
+#   ${TENANT}               — canonical tenant UUID
 #   ${CRON_NAME}            — object name, from lib/argo.sh:argo_cron_workflow_name
 #                              (Argo caps a CronWorkflow name at 52 characters)
 #   ${INSIGHT_SOURCE_ID}    — secret annotation insight.cyberfabric.com/source-id
