@@ -77,11 +77,11 @@ datapath = [
     "dbt-clickhouse>=1.10,<1.11",
 ]
 dev = [
-    "mypy==2.3.1",
+    "mypy==2.4.0",
     "types-PyYAML>=6.0",
     "types-PyMySQL>=1.1",
     "types-jsonschema>=4.20",
-    "ruff==0.16.9",
+    "ruff==0.16.10",
     # Regenerates tests/stand/api/schemas/analytics.py from the committed
     # analytics OpenAPI document. Dev-only: the generated module is committed,
     # so a test run never needs the generator.
