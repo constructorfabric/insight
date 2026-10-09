@@ -213,12 +213,6 @@ jobs:
             echo "backend=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Stop if a newer queue run replaced this one
-        env:
-          GH_TOKEN: ${{ github.token }}
-          KEY: ${{ steps.entry.outputs.key }}
-        run: .github/scripts/queue_entry_current.sh "$KEY"
-
   # ─── Build the backend once, shared by every shard ────────────────────────
   # One `cargo build` for all three bind-mounted binaries, plus one image build
   # each for gateway and insight-v3-core — the two services that run from
@@ -335,31 +329,13 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  queue-entry:
-    name: Queue entry is current
-    needs: [changes, build-backend]
-    # INVARIANT: the legs' concurrency groups cancel whichever run joins last, so a
-    # replaced queue run must stop here or its legs cancel the replacement's.
-    if: ${{ !cancelled() && github.event_name != 'push' && needs.changes.result == 'success' && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          sparse-checkout: .github/scripts
-      - env:
-          GH_TOKEN: ${{ github.token }}
-          KEY: ${{ needs.changes.outputs.entry }}
-        run: .github/scripts/queue_entry_current.sh "$KEY"
-
   e2e-datapath:
     name: Data path (${{ matrix.shard }})
-    needs: [changes, build-backend, queue-entry]
+    needs: [changes, build-backend]
     # `!cancelled()` so a skipped build-backend (backend untouched → pinned
     # images) does not skip the shards along with it; the result check keeps a
     # FAILED build from letting them run against stale binaries.
-    if: ${{ !cancelled() && github.event_name != 'push' && needs.changes.result == 'success' && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') && needs.queue-entry.result == 'success' }}
+    if: ${{ !cancelled() && github.event_name != 'push' && needs.changes.result == 'success' && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
     concurrency:
       group: e2e-datapath-${{ needs.changes.outputs.entry || github.run_id }}-${{ matrix.shard }}
