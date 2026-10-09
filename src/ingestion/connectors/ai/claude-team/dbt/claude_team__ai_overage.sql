@@ -45,7 +45,7 @@
     settings={'allow_nullable_key': 1},
     full_refresh=false,
     schema='staging',
-    tags=['claude-team', 'silver:class_ai_overage']
+    tags=['claude-team', 'silver:class_ai_overage', 'history']
 ) }}
 
 WITH per_seat_day AS (
@@ -104,7 +104,7 @@ SELECT
     -- month preserves history and gives intra-month idempotency (latest
     -- snapshot wins via _version, same key).
     CAST(concat(
-        coalesce(tenant_id, ''), '-',
+        {{ tenant_key('tenant_id') }}, '-',
         coalesce(source_id, ''), '-',
         coalesce(account_uuid, ''), '-',
         formatDateTime(toStartOfMonth(_airbyte_extracted_at), '%Y-%m')

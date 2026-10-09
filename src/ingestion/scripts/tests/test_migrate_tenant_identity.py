@@ -44,7 +44,18 @@ SCHEMA = f"""
 DROP DATABASE IF EXISTS bronze_example;
 DROP DATABASE IF EXISTS config;
 DROP DATABASE IF EXISTS ingestion_history;
+DROP DATABASE IF EXISTS staging;
 CREATE DATABASE bronze_example;
+CREATE DATABASE staging;
+CREATE TABLE staging.jira__users_snapshot (unique_key String, tenant_id Nullable(String), _tracked_at DateTime)
+  ENGINE = MergeTree ORDER BY tuple();
+CREATE TABLE staging.claude_team__ai_overage (unique_key String, insight_tenant_id String)
+  ENGINE = ReplacingMergeTree ORDER BY unique_key;
+CREATE TABLE staging.jira__users_fields_history (unique_key String, tenant_id String)
+  ENGINE = MergeTree ORDER BY tuple();
+INSERT INTO staging.jira__users_snapshot VALUES ('{LEGACY}-main-u1', '{LEGACY}', now());
+INSERT INTO staging.claude_team__ai_overage VALUES ('{LEGACY}-main-a1-2026-01', '{LEGACY}');
+INSERT INTO staging.jira__users_fields_history VALUES ('{LEGACY}-main-u1', '{LEGACY}');
 CREATE DATABASE config;
 CREATE DATABASE ingestion_history;
 CREATE TABLE bronze_example.events (unique_key String, tenant_id Nullable(String), source_id Nullable(String),
@@ -111,6 +122,17 @@ def test_tenant_columns_move_and_keys_stay() -> None:
         f"['{CANONICAL}']\t2"
     )
     assert "bronze_example.no_tenant" in result.stdout
+
+
+def test_history_tables_move_and_derived_ones_are_left_to_the_full_refresh() -> None:
+    assert migrate().returncode == 0
+    assert ch("SELECT tenant_id, unique_key FROM staging.jira__users_snapshot FORMAT CSV") == (
+        f'"{CANONICAL}","{LEGACY}-main-u1"'
+    )
+    assert ch("SELECT insight_tenant_id, unique_key FROM staging.claude_team__ai_overage FORMAT CSV") == (
+        f'"{CANONICAL}","{LEGACY}-main-a1-2026-01"'
+    )
+    assert ch("SELECT tenant_id FROM staging.jira__users_fields_history") == LEGACY
 
 
 def test_a_second_run_changes_nothing() -> None:

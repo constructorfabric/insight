@@ -6,7 +6,8 @@ naming different tenants is refused rather than resolved — that disagreement i
 exactly the drift that left data under a tenant nobody could read.
 
 A warm install declares the key its existing Bronze rows and Airbyte objects
-were created with in `legacyTenantKeyOverride`; only reconcile hears it.
+were created with in `legacyTenantKeyOverride`; reconcile names objects by it
+and dbt builds history keys by it, and nothing else hears it.
 
 Run: pytest charts/insight/tests
 """
@@ -142,8 +143,23 @@ def test_a_warm_install_gives_reconcile_its_legacy_key(chart_dependencies: None)
     assert found == {"INSIGHT_TENANT_ID": {CANONICAL}, "INSIGHT_LEGACY_TENANT_KEY": {"example-legacy"}}
 
 
+@pytest.mark.parametrize(
+    "template", ["templates/ingestion/dbt-run.yaml", "templates/clickhouse-migrate-job.yaml"]
+)
+def test_dbt_hears_both_the_tenant_and_the_legacy_key(chart_dependencies: None, template: str) -> None:
+    found = _carried(
+        template,
+        [
+            "--set", f"ingestion.reconcile.tenantId={CANONICAL}",
+            "--set", "ingestion.reconcile.legacyTenantKeyOverride=example-legacy",
+        ],
+        ("INSIGHT_TENANT_ID", "INSIGHT_LEGACY_TENANT_KEY"),
+    )
+    assert found == {"INSIGHT_TENANT_ID": {CANONICAL}, "INSIGHT_LEGACY_TENANT_KEY": {"example-legacy"}}
+
+
 @pytest.mark.parametrize("template", ["templates/secrets.yaml", "templates/keycloak-config-job.yaml"])
-def test_the_legacy_key_reaches_nothing_but_reconcile(chart_dependencies: None, template: str) -> None:
+def test_the_legacy_key_reaches_nothing_but_reconcile_and_dbt(chart_dependencies: None, template: str) -> None:
     result = _helm(
         template,
         [

@@ -1,6 +1,6 @@
 {{ config(materialized='incremental', full_refresh=false, incremental_strategy='append', schema='staging',
           engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'],
-          settings={'allow_nullable_key': 1}, tags=['youtrack', 'staging']) }}
+          settings={'allow_nullable_key': 1}, tags=['youtrack', 'staging', 'history']) }}
 
 -- Columns by name: the append inserts by position, and the destination owns
 -- the Bronze column order (it rebuilds the table on a key change, #2877).

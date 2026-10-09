@@ -1,4 +1,7 @@
 {% macro snapshot(source_ref, unique_key_col, check_cols, check_raw_data_cols=[], check_raw_data_all=false, raw_data_exclude_keys=[]) %}
+{#- A snapshot's versions exist nowhere else: tag:history keeps it out of the
+    tenant migration's full refresh (deploy/TENANT_IDENTITY_UPGRADE.md). -#}
+{{ config(tags=['history']) }}
 {#
   Incremental append-only SCD2 snapshot.
   Appends a new row only when tracked columns change.

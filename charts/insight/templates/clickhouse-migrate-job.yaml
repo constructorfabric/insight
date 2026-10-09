@@ -87,4 +87,9 @@ spec:
             - "bash /ingestion/scripts/apply-ch-migrations.sh"
           env:
             {{- include "insight.clickhouse.ddlEnv" . | nindent 12 }}
+            # tenant_key(): the keys history models build (dbt/macros/tenant_key.sql).
+            - name: INSIGHT_TENANT_ID
+              value: {{ include "insight.tenantId" . | quote }}
+            - name: INSIGHT_LEGACY_TENANT_KEY
+              value: {{ (.Values.ingestion.reconcile).legacyTenantKeyOverride | default "" | quote }}
 {{- end }}

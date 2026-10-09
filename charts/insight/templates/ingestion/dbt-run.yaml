@@ -70,6 +70,12 @@ spec:
             value: {{ `"{{inputs.parameters.dbt_exclude}}"` }}
           - name: DBT_FULL_REFRESH
             value: {{ `"{{inputs.parameters.dbt_full_refresh}}"` }}
+          # tenant_key() maps the canonical tenant back to a warm install's
+          # legacy key in the keys history models build.
+          - name: INSIGHT_TENANT_ID
+            value: {{ include "insight.tenantId" . | quote }}
+          - name: INSIGHT_LEGACY_TENANT_KEY
+            value: {{ .Values.ingestion.reconcile.legacyTenantKeyOverride | default "" | quote }}
           - name: CLICKHOUSE_HOST
             value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
           - name: CLICKHOUSE_PORT

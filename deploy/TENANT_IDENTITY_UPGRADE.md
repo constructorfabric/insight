@@ -115,8 +115,11 @@ built from `legacyTenantKeyOverride`.
 
 ### 3.4 Migrate data
 
-1. Rewrite `tenant_id` in every `bronze_*`, `config` and `ingestion_history`
-   table. `unique_key` is not touched. Preview first, then apply:
+1. Rewrite the tenant column of every relation a dbt full refresh cannot
+   reproduce: each `bronze_*`, `config` and `ingestion_history` table, and the
+   dbt models tagged `history` — snapshots and append-only models, listed in
+   `src/ingestion/scripts/tenant-history-tables.txt`. `unique_key` is not
+   touched. Preview first, then apply:
    ```bash
    export CLICKHOUSE_URL=<url> CLICKHOUSE_USER=<user> CLICKHOUSE_PASSWORD=<password>
    src/ingestion/scripts/migrate-tenant-identity.sh \
@@ -127,8 +130,23 @@ built from `legacyTenantKeyOverride`.
    The script refuses, changing nothing, when a table holds a tenant that is
    neither of the two. It prints the rows it moved per table and the tables it
    skipped for having no `tenant_id` column. A second run reports zero rows.
-2. Rebuild every derived layer with a dbt full refresh.
-3. Re-run identity seeding for the canonical tenant.
+2. Rebuild every other derived relation with a dbt full refresh, leaving the
+   history models out — a full refresh rebuilds a snapshot from the current
+   Bronze state and discards every earlier version:
+   ```bash
+   export INSIGHT_TENANT_ID=<TENANT_UUID> INSIGHT_LEGACY_TENANT_KEY=<LEGACY_KEY>
+   dbt run --full-refresh --exclude tag:history
+   ```
+   The two variables keep the keys history models build on the legacy key
+   (`dbt/macros/tenant_key.sql`); the chart passes them to every dbt run.
+3. Re-run identity seeding once, so persons resolve from the identity inputs the
+   full refresh rebuilt under the canonical tenant:
+   ```bash
+   kubectl -n <app-namespace> create job --from=cronjob/<release>-identity-resolution-seed tenant-identity-seed
+   ```
+   The seed reads only the inputs of the configured tenant, and refuses to run
+   when there are none — the sign that Bronze or the identity inputs still
+   carry the legacy key.
 
 ### 3.5 Resume
 

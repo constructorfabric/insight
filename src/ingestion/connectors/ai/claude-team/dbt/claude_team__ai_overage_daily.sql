@@ -35,7 +35,7 @@
     settings={'allow_nullable_key': 1},
     full_refresh=false,
     schema='staging',
-    tags=['claude-team', 'silver:class_ai_overage_daily']
+    tags=['claude-team', 'silver:class_ai_overage_daily', 'history']
 ) }}
 
 WITH latest_per_seat_day AS (
@@ -58,7 +58,7 @@ SELECT
     tenant_id                                           AS insight_tenant_id,
     source_id,
     CAST(concat(
-        coalesce(tenant_id, ''), '-',
+        {{ tenant_key('tenant_id') }}, '-',
         coalesce(source_id, ''), '-',
         coalesce(account_uuid, ''), '-',
         formatDateTime(toDate(_airbyte_extracted_at), '%Y-%m-%d')

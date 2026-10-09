@@ -11,6 +11,7 @@ from insight_datapath.tenant_transition import (
     TransitionError,
     WarmTenant,
     apply_transition,
+    tenant_env,
     warm_tenant,
 )
 
@@ -62,3 +63,15 @@ def test_a_failing_script_fails_the_spec(tmp_path: Path) -> None:
     script.write_text("echo refused >&2; exit 3\n")
     with pytest.raises(TransitionError, match="exited 3"):
         apply_transition(CFG, WarmTenant("example-legacy", CANONICAL), repo_root=tmp_path)
+
+
+def test_a_warm_run_gives_dbt_the_tenant_pair() -> None:
+    environ = {"INSIGHT_TENANT_ID": "stale"}
+    tenant_env(WarmTenant("example-legacy", CANONICAL)).apply(environ)
+    assert environ == {"INSIGHT_TENANT_ID": CANONICAL, "INSIGHT_LEGACY_TENANT_KEY": "example-legacy"}
+
+
+def test_a_cold_run_gives_dbt_no_legacy_key() -> None:
+    environ = {"INSIGHT_TENANT_ID": "stale", "INSIGHT_LEGACY_TENANT_KEY": "stale"}
+    tenant_env(None).apply(environ)
+    assert environ == {}

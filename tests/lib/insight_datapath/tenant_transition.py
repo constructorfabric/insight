@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +41,26 @@ def warm_tenant(option: str | None, canonical: str) -> WarmTenant | None:
             f"warm tenant key {key!r} equals the canonical tenant: there is nothing to upgrade"
         )
     return WarmTenant(legacy_key=key, canonical=canonical)
+
+
+@dataclass(frozen=True)
+class TenantEnv:
+    """The variables dbt's `tenant_key()` reads; empty unless the run is warm."""
+
+    values: dict[str, str]
+
+    def apply(self, environ: MutableMapping[str, str]) -> None:
+        for name, value in self.values.items():
+            if value:
+                environ[name] = value
+            else:
+                environ.pop(name, None)
+
+
+def tenant_env(warm: WarmTenant | None) -> TenantEnv:
+    if warm is None:
+        return TenantEnv({"INSIGHT_TENANT_ID": "", "INSIGHT_LEGACY_TENANT_KEY": ""})
+    return TenantEnv({"INSIGHT_TENANT_ID": warm.canonical, "INSIGHT_LEGACY_TENANT_KEY": warm.legacy_key})
 
 
 def apply_transition(cfg: InstanceConfig, warm: WarmTenant, *, repo_root: Path) -> None:

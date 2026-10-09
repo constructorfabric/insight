@@ -4,12 +4,14 @@
 #
 #   migrate-tenant-identity.sh --canonical-tenant <uuid> --legacy-tenant-key <key> [--dry-run]
 #
-# Rewrites `tenant_id` in every table of the databases connectors and operators
-# write — Bronze (`bronze_*`), operator config (`config`) and the sync ledger
-# (`ingestion_history`). `unique_key` is never touched: rows keep the legacy key
-# segment, and connectors keep writing it through `insight_tenant_key`, so
-# ReplacingMergeTree still collapses old and new rows. Staging, Silver and Gold
-# are derived and are rebuilt by a dbt full refresh afterwards.
+# Rewrites the tenant column of every table whose rows a dbt full refresh cannot
+# reproduce: Bronze (`bronze_*`), operator config (`config`), the sync ledger
+# (`ingestion_history`) and the dbt models tagged `history`
+# (tenant-history-tables.txt). `unique_key` is never touched: rows keep the
+# legacy key segment, connectors keep writing it through `insight_tenant_key`
+# and dbt through `tenant_key()`, so ReplacingMergeTree still collapses old and
+# new rows. Every other Staging, Silver and Gold relation is rebuilt by a dbt
+# full refresh afterwards.
 #
 # Refuses before changing anything when a table holds a tenant that is neither
 # of the two: that install keeps data under several tenants and needs its own
@@ -24,6 +26,7 @@ source "${SCRIPT_DIR}/lib/ch-exec.sh"
 
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 DATABASES_SQL="(database LIKE 'bronze\\_%' OR database IN ('config', 'ingestion_history'))"
+HISTORY_TABLES_FILE="${SCRIPT_DIR}/tenant-history-tables.txt"
 
 usage() {
   echo "usage: $0 --canonical-tenant <uuid> --legacy-tenant-key <key> [--dry-run]" >&2
@@ -46,23 +49,31 @@ done
 
 query() { printf '%s' "$1" | _ch_http_query; }
 
-# database \t table \t engine \t 1 when tenant_id is in the sorting or partition key
+history_sql="$(grep -v '^[[:space:]]*\(#\|$\)' "${HISTORY_TABLES_FILE}" \
+  | awk -F. '{ printf "%s(\x27%s\x27, \x27%s\x27)", (NR > 1 ? ", " : ""), $1, $2 }')"
+[[ -n "${history_sql}" ]] || { echo "no tables listed in ${HISTORY_TABLES_FILE}" >&2; exit 1; }
+
+# database \t table \t tenant column \t engine \t 1 when that column is in the
+# sorting or partition key. dbt history models name it tenant_id or, for a few
+# silver-shaped ones, insight_tenant_id; a UUID-typed column is already canonical.
 tables="$(query "
-  SELECT c.database, c.table, t.engine,
-         toUInt8(hasAny(splitByRegexp('[^A-Za-z0-9_]+', concat(t.sorting_key, ' ', t.partition_key)), ['tenant_id']))
+  SELECT c.database, c.table, c.name, t.engine,
+         toUInt8(has(splitByRegexp('[^A-Za-z0-9_]+', concat(t.sorting_key, ' ', t.partition_key)), c.name))
   FROM system.columns AS c
   INNER JOIN system.tables AS t ON t.database = c.database AND t.name = c.table
-  WHERE c.name = 'tenant_id' AND t.engine LIKE '%MergeTree'
-    AND ${DATABASES_SQL//database/c.database}
+  WHERE t.engine LIKE '%MergeTree'
+    AND ((c.name = 'tenant_id' AND ${DATABASES_SQL//database/c.database})
+      OR (c.name IN ('tenant_id', 'insight_tenant_id') AND c.type NOT LIKE '%UUID%'
+          AND (c.database, c.table) IN (${history_sql})))
   ORDER BY c.database, c.table
   FORMAT TSV")"
 
 refused=0
-while IFS=$'\t' read -r db tbl _engine _keyed; do
+while IFS=$'\t' read -r db tbl col _engine _keyed; do
   [[ -n "${db}" ]] || continue
-  others="$(query "SELECT arrayStringConcat(groupUniqArray(10)(toString(tenant_id)), ', ')
+  others="$(query "SELECT arrayStringConcat(groupUniqArray(10)(toString(${col})), ', ')
     FROM ${db}.\`${tbl}\`
-    WHERE tenant_id IS NOT NULL AND toString(tenant_id) NOT IN ('', '${legacy}', '${canonical}')
+    WHERE ${col} IS NOT NULL AND toString(${col}) NOT IN ('', '${legacy}', '${canonical}')
     FORMAT TSV")"
   if [[ -n "${others}" ]]; then
     echo "REFUSED ${db}.${tbl}: holds other tenants (${others})" >&2
@@ -72,30 +83,30 @@ done <<<"${tables}"
 [[ "${refused}" -eq 0 ]] || { echo "nothing changed: this install holds more than one tenant" >&2; exit 1; }
 
 total=0
-while IFS=$'\t' read -r db tbl engine keyed; do
+while IFS=$'\t' read -r db tbl col engine keyed; do
   [[ -n "${db}" ]] || continue
-  n="$(ch_scalar "SELECT count() FROM ${db}.\`${tbl}\` WHERE toString(tenant_id) = '${legacy}'")"
+  n="$(ch_scalar "SELECT count() FROM ${db}.\`${tbl}\` WHERE toString(${col}) = '${legacy}'")"
   total=$((total + n))
   if [[ "${n}" -eq 0 ]]; then
-    printf '%-60s %10s\n' "${db}.${tbl}" "0"
+    printf '%-60s %10s\n' "${db}.${tbl}.${col}" "0"
     continue
   fi
   if [[ "${keyed}" == "1" && "${engine}" != *Replacing* ]]; then
-    echo "REFUSED ${db}.${tbl}: tenant_id is in the ${engine} key, and copying rows there is not idempotent" >&2
+    echo "REFUSED ${db}.${tbl}: ${col} is in the ${engine} key, and copying rows there is not idempotent" >&2
     exit 1
   fi
-  printf '%-60s %10s%s\n' "${db}.${tbl}" "${n}" "$([[ "${dry_run}" -eq 1 ]] && echo '  (dry run)')"
+  printf '%-60s %10s%s\n' "${db}.${tbl}.${col}" "${n}" "$([[ "${dry_run}" -eq 1 ]] && echo '  (dry run)')"
   [[ "${dry_run}" -eq 0 ]] || continue
   if [[ "${keyed}" == "1" ]]; then
     # ALTER UPDATE cannot rewrite a key column: copy under the new tenant, then
     # drop the originals. A rerun after a failure re-copies onto the same keys.
     run_ch <<SQL
-INSERT INTO ${db}.\`${tbl}\` SELECT * REPLACE ('${canonical}' AS tenant_id) FROM ${db}.\`${tbl}\` WHERE toString(tenant_id) = '${legacy}';
-ALTER TABLE ${db}.\`${tbl}\` DELETE WHERE toString(tenant_id) = '${legacy}' SETTINGS mutations_sync = 2
+INSERT INTO ${db}.\`${tbl}\` SELECT * REPLACE ('${canonical}' AS ${col}) FROM ${db}.\`${tbl}\` WHERE toString(${col}) = '${legacy}';
+ALTER TABLE ${db}.\`${tbl}\` DELETE WHERE toString(${col}) = '${legacy}' SETTINGS mutations_sync = 2
 SQL
   else
     run_ch <<SQL
-ALTER TABLE ${db}.\`${tbl}\` UPDATE tenant_id = '${canonical}' WHERE toString(tenant_id) = '${legacy}' SETTINGS mutations_sync = 2
+ALTER TABLE ${db}.\`${tbl}\` UPDATE ${col} = '${canonical}' WHERE toString(${col}) = '${legacy}' SETTINGS mutations_sync = 2
 SQL
   fi
 done <<<"${tables}"
