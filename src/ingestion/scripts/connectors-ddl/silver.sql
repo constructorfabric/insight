@@ -418,7 +418,8 @@ CREATE TABLE IF NOT EXISTS silver.class_focus_metrics
     `working_hours_per_day` Float64,
     `focus_time_pct` Nullable(Float64),
     `dev_time_h` Nullable(Float64),
-    `_version` Int64
+    `_version` Int64,
+    `source_version` Int64
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY unique_key

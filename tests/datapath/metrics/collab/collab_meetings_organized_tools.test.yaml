@@ -1,0 +1,42 @@
+spec_version: 1
+description: >
+  Metric: collab.meetings_organized — Teams and Zoom organizers add up.
+  How it's computed (bronze → silver → gold):
+    • bronze: the daily Teams activity report per person (meetings organized), and
+      Zoom meetings with their host and participant sessions.
+    • staging: a Zoom meeting counts for its host on the UTC day it started, and
+      only if someone besides the host attended; a host who never joined still
+      organized it.
+    • gold:   per-person sum of meetings organized across both tools, with a tool
+      dimension.
+
+  Cast (Engineering):
+    alice — Teams Dec 15: organized 2. Zoom: hosts zo1 on Dec 15, bob attends → 1.
+            Total 3, split m365 2 / zoom 1.
+    carol — hosts zo2 on Dec 16 and sits in it alone → no meeting organized.
+    dave  — hosts zo3 on Dec 17 without joining; erin and a guest attend → 1.
+  Cases: tools add up and split by tool · a meeting nobody else joined is not
+  organized · a host who never joined still organized the meeting.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_m365.teams_activity:
+    - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-15", lastActivityDate: "2026-12-15", unique_key: org-teams-alice-20261215, meetingsOrganizedCount: 2 }
+
+  bronze_zoom.meetings:
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: org-zo1, id: 901, uuid: zo1, email: alice@example.com, start_time: "2026-12-15T09:00:00Z", end_time: "2026-12-15T09:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: org-zo2, id: 902, uuid: zo2, email: carol@example.com, start_time: "2026-12-16T09:00:00Z", end_time: "2026-12-16T09:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: org-zo3, id: 903, uuid: zo3, email: dave@example.com,  start_time: "2026-12-17T09:00:00Z", end_time: "2026-12-17T09:30:00Z" }
+
+  bronze_zoom.participants:
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: org-p-alice-zo1, meeting_uuid: zo1, participant_uuid: oa1, join_time: "2026-12-15T09:00:00Z", leave_time: "2026-12-15T09:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/bob_participant,   unique_key: org-p-bob-zo1,   meeting_uuid: zo1, participant_uuid: ob1, join_time: "2026-12-15T09:00:00Z", leave_time: "2026-12-15T09:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/carol_participant, unique_key: org-p-carol-zo2, meeting_uuid: zo2, participant_uuid: oc1, join_time: "2026-12-16T09:00:00Z", leave_time: "2026-12-16T09:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: erin@example.com, user_name: Erin, unique_key: org-p-erin-zo3, meeting_uuid: zo3, participant_uuid: oe1, join_time: "2026-12-17T09:00:00Z", leave_time: "2026-12-17T09:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Guest, unique_key: org-p-guest-zo3, meeting_uuid: zo3, participant_uuid: og1, join_time: "2026-12-17T09:00:00Z", leave_time: "2026-12-17T09:30:00Z" }

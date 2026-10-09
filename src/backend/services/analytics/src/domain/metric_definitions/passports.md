@@ -638,7 +638,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: meeting_hours
 - Formula: sum(meeting_hours)
 - Shape: decimal, lower_is_better, unit h
-- Notes: Hours spent in meetings, taking the longest active modality (audio, video, or screen share) per meeting. Zoom reports modality durations as full-session estimates, so its figures may run higher than Microsoft Teams.
+- Notes: Hours spent in meetings. Microsoft Teams reports audio, video and screen-share time only as daily totals, so a Teams day counts the longest of the three, an estimate rather than exact meeting time. Zoom time counts only while someone else was in the meeting, so a room left open or a pause with nobody else adds nothing; Zoom counts all of a session's shared time as video or screen share once the camera or a share was used, so those may run higher than Microsoft Teams.
 
 ## collab.meetings_count — Meetings Attended
 
@@ -646,7 +646,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: meetings_attended
 - Formula: sum(meetings_attended)
 - Shape: integer, higher_is_better, unit meetings
-- Notes: Distinct meetings a person attended across meeting tools.
+- Notes: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do.
 
 ## collab.meeting_free_days — Meeting-Free Days
 
@@ -678,7 +678,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: meetings_organized
 - Formula: sum(meetings_organized)
 - Shape: integer, neutral, unit meetings
-- Notes: Meetings a person organized. Reported only by tools that expose organizer counts.
+- Notes: Meetings a person organized in Microsoft Teams or Zoom. A Zoom meeting counts for its host on the day it started, and only if someone besides the host attended.
 
 ## collab.adhoc_meetings — Ad-hoc Meetings
 
@@ -686,7 +686,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: adhoc_meetings_attended
 - Formula: sum(adhoc_meetings_attended)
 - Shape: integer, neutral, unit meetings
-- Notes: Unscheduled meetings a person attended. Reported only by tools that distinguish ad-hoc from scheduled meetings.
+- Notes: Unscheduled Microsoft Teams meetings a person attended. Zoom does not report this split, so Zoom meetings are not included.
 
 ## collab.scheduled_meetings — Scheduled Meetings
 
@@ -694,7 +694,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: scheduled_meetings_attended
 - Formula: sum(scheduled_meetings_attended)
 - Shape: integer, neutral, unit meetings
-- Notes: Scheduled meetings a person attended. Reported only by tools that distinguish ad-hoc from scheduled meetings.
+- Notes: Scheduled Microsoft Teams meetings a person attended. Zoom does not report this split, so Zoom meetings are not included.
 
 ## tasks.closed — Issues closed
 

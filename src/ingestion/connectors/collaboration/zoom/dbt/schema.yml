@@ -83,7 +83,10 @@ models:
       FINAL on `(tenant, source, uuid)` to pull `logical_meeting_id`,
       then `meetings_attended = uniqExact(logical_meeting_id)` collapses
       host-drop rejoins (issue #258). Bronze re-emits for participants
-      are deduplicated before aggregation.
+      are deduplicated before aggregation. Meeting time and attendance
+      count only while someone else was present; meetings_organized comes
+      from the host on bronze_zoom.meetings. A day can carry organized
+      meetings alone, when the host never joined.
     columns:
       - name: tenant_id
         tests:
@@ -103,11 +106,31 @@ models:
           - not_null
       - name: meetings_attended
         description: >
-          Distinct logical meetings the user attended on this day. Computed
-          as `uniqExact(logical_meeting_id)` over participant rows, where
+          Distinct logical meetings the user attended on this day with someone
+          else present: a session with nobody else is not a meeting. Computed
+          as `uniqExact(logical_meeting_id)` over participant rows that have
+          company time (see audio_duration_seconds), where
           `logical_meeting_id` clusters consecutive sessions sharing the
           same Zoom Meeting ID with inter-session gap ≤ 5 min — this
           collapses host-drop rejoins (observed gaps 11–147 s in production).
           Recurring meetings reusing the same ID across days remain separate
           logical meetings. Back-to-back PMI sessions with < 5-min gap may
           still be merged (known trade-off, see issue #258).
+      - name: meetings_organized
+        description: >
+          Meetings the user organized as host, from bronze_zoom.meetings, on
+          each session's UTC start day. Like meetings_attended, a stitched
+          meeting counts once per day it ran. It counts only if someone besides
+          the host attended; the host need not have joined. Known limit: a host who joins
+          without an email (dial-in, signed-out client) looks like a guest, so a
+          meeting they sat in alone still counts.
+      - name: audio_duration_seconds
+        description: >
+          Seconds the user spent in meetings on this day while someone else was
+          there: each session counts only its overlap with the union of everyone
+          else's sessions, so a room left open, a pause with nobody else and a
+          session alone add nothing. Guests without an email count as company.
+          Known limits: two devices of the same person in one meeting add up, and
+          a session that crosses UTC midnight counts entirely on its join day.
+          video_duration_seconds and screen_share_duration_seconds count the same
+          overlap for sessions with a camera or a share.

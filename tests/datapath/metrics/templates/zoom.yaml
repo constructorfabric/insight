@@ -1,0 +1,118 @@
+# Reusable Zoom records (bronze_zoom.meetings, bronze_zoom.participants).
+# Bases list every schema field (unused = null). _airbyte_extracted_at sits in the future on purpose:
+# zoom__meeting_sessions only stitches meetings extracted within its lookback window of now().
+templates:
+  zoom_meeting:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2030-01-01T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    uuid: null
+    id: null
+    topic: null
+    host: null
+    email: null
+    user_type: null
+    start_time: null
+    end_time: null
+    duration: null
+    participants: null
+    has_pstn: null
+    has_archiving: null
+    has_voip: null
+    has_3rd_party_audio: null
+    has_video: null
+    has_screen_share: null
+    has_recording: null
+    has_sip: null
+    dept: null
+    has_poll: null
+    has_qa: null
+    has_survey: null
+    session_key: null
+    audio_quality: null
+    has_manual_captions: null
+    has_automated_captions: null
+    has_meeting_summary: null
+    avg_jointime_cost: null
+    tenant_id: "{{ tenant }}"
+    source_id: "zoom-test"
+    unique_key: null
+    video_quality: null
+    screen_share_quality: null
+
+  zoom_participant:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2030-01-01T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    version: null
+    id: null
+    user_id: null
+    participant_uuid: null
+    user_name: null
+    device: null
+    client: null
+    ip_address: null
+    internal_ip_addresses: null
+    location: null
+    network_type: null
+    microphone: null
+    speaker: null
+    camera: null
+    data_center: null
+    full_data_center: null
+    connection_type: null
+    video_connection_type: null
+    as_connection_type: null
+    join_time: null
+    leave_time: null
+    share_application: null
+    share_desktop: null
+    share_whiteboard: null
+    recording: null
+    pc_name: null
+    domain: null
+    mac_addr: null
+    harddisk_id: null
+    leave_reason: null
+    email: null
+    registrant_id: null
+    status: null
+    os: null
+    os_version: null
+    browser_name: null
+    browser_version: null
+    device_name: null
+    groupId: null
+    health: null
+    customer_key: null
+    sip_uri: null
+    from_sip_uri: null
+    role: null
+    participant_user_id: null
+    audio_call: null
+    has_archiving: null
+    optional_archiving: null
+    aic_disclaimer: null
+    total_jointime_cost: null
+    is_original_host: null
+    tenant_id: "{{ tenant }}"
+    source_id: "zoom-test"
+    meeting_uuid: null
+    unique_key: null
+
+  alice_participant:
+    $ref: "#/templates/zoom_participant"
+    email: alice@example.com
+    user_name: Alice
+
+  bob_participant:
+    $ref: "#/templates/zoom_participant"
+    email: bob@example.com
+    user_name: Bob
+
+  carol_participant:
+    $ref: "#/templates/zoom_participant"
+    email: carol@example.com
+    user_name: Carol

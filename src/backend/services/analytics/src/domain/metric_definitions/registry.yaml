@@ -2195,7 +2195,7 @@ metrics:
     label: Meeting Hours
     short_label: Mtg hrs
     description: Hours spent in meetings
-    explanation: Hours spent in meetings, taking the longest active modality (audio, video, or screen share) per meeting. Zoom reports modality durations as full-session estimates, so its figures may run higher than Microsoft Teams.
+    explanation: Hours spent in meetings. Microsoft Teams reports audio, video and screen-share time only as daily totals, so a Teams day counts the longest of the three, an estimate rather than exact meeting time. Zoom time counts only while someone else was in the meeting, so a room left open or a pause with nobody else adds nothing; Zoom counts all of a session's shared time as video or screen share once the camera or a share was used, so those may run higher than Microsoft Teams.
     unit: h
     format: decimal
     direction: lower_is_better
@@ -2212,8 +2212,8 @@ metrics:
     subject: meetings
     label: Meetings Attended
     short_label: Mtgs
-    description: Distinct meetings attended
-    explanation: Distinct meetings a person attended across meeting tools.
+    description: Distinct meetings and one-to-one calls attended
+    explanation: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do.
     unit: meetings
     format: integer
     direction: higher_is_better
@@ -2286,7 +2286,7 @@ metrics:
     label: Meetings Organized
     short_label: Mtgs hosted
     description: Meetings organized
-    explanation: Meetings a person organized. Reported only by tools that expose organizer counts.
+    explanation: Meetings a person organized in Microsoft Teams or Zoom. A Zoom meeting counts for its host on the day it started, and only if someone besides the host attended.
     unit: meetings
     format: integer
     direction: neutral
@@ -2304,7 +2304,7 @@ metrics:
     label: Ad-hoc Meetings
     short_label: Ad-hoc mtgs
     description: Unscheduled meetings attended
-    explanation: Unscheduled meetings a person attended. Reported only by tools that distinguish ad-hoc from scheduled meetings.
+    explanation: Unscheduled Microsoft Teams meetings a person attended. Zoom does not report this split, so Zoom meetings are not included.
     unit: meetings
     format: integer
     direction: neutral
@@ -2322,7 +2322,7 @@ metrics:
     label: Scheduled Meetings
     short_label: Sched. mtgs
     description: Scheduled meetings attended
-    explanation: Scheduled meetings a person attended. Reported only by tools that distinguish ad-hoc from scheduled meetings.
+    explanation: Scheduled Microsoft Teams meetings a person attended. Zoom does not report this split, so Zoom meetings are not included.
     unit: meetings
     format: integer
     direction: neutral

@@ -1,0 +1,54 @@
+spec_version: 1
+description: >
+  Metric: collab.meetings_count — Teams and Zoom add up under one definition of a
+  meeting, and Zoom counts each meeting once.
+  How it's computed (bronze → silver → gold):
+    • bronze: the daily Teams activity report per person (meetings attended and
+      one-to-one calls), and Zoom meetings with their participant sessions.
+    • staging: sessions of one Zoom meeting that restart within five minutes stitch into one meeting; a
+      Zoom meeting counts on the UTC day the person joined it.
+    • gold:   per-person sum of meetings attended across both tools, with a tool
+      dimension. A Teams one-to-one call counts as a meeting, as a two-person Zoom
+      meeting does; every Zoom meeting here has a guest without an email, who counts
+      as company.
+
+  Cast (Engineering):
+    alice — Teams Dec 10: 2 meetings and 1 call → 3. Zoom Dec 10: meeting 111 restarted after two minutes
+            (one meeting), plus
+            meeting 222 → Zoom 2, total 5.
+    bob   — Zoom meeting 333 restarted after ten minutes → two meetings.
+    carol — joins Zoom meeting 444 at 23:30 UTC on Dec 31 → counts on Dec 31.
+  Cases: a Teams call counts as a meeting · tools add up and split by tool · a restart within five minutes is one
+  meeting, after it two · the UTC join day decides the date.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_m365.teams_activity:
+    - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-10", lastActivityDate: "2026-12-10", unique_key: mtg-teams-alice-20261210, meetingsAttendedCount: 2, callCount: 1 }
+
+  bronze_zoom.meetings:
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: zm-111-a, id: 111, uuid: m111-a, start_time: "2026-12-10T10:00:00Z", end_time: "2026-12-10T10:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: zm-111-b, id: 111, uuid: m111-b, start_time: "2026-12-10T10:32:00Z", end_time: "2026-12-10T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: zm-222,   id: 222, uuid: m222,   start_time: "2026-12-10T14:00:00Z", end_time: "2026-12-10T14:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: zm-333-a, id: 333, uuid: m333-a, start_time: "2026-12-11T09:00:00Z", end_time: "2026-12-11T09:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: zm-333-b, id: 333, uuid: m333-b, start_time: "2026-12-11T09:40:00Z", end_time: "2026-12-11T10:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: zm-444,   id: 444, uuid: m444,   start_time: "2026-12-31T23:30:00Z", end_time: "2027-01-01T00:20:00Z" }
+
+  bronze_zoom.participants:
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: zp-alice-111a, meeting_uuid: m111-a, participant_uuid: pa1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T10:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: zp-alice-111b, meeting_uuid: m111-b, participant_uuid: pa2, join_time: "2026-12-10T10:32:00Z", leave_time: "2026-12-10T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: zp-alice-222,  meeting_uuid: m222,   participant_uuid: pa3, join_time: "2026-12-10T14:00:00Z", leave_time: "2026-12-10T14:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/bob_participant,   unique_key: zp-bob-333a,   meeting_uuid: m333-a, participant_uuid: pb1, join_time: "2026-12-11T09:00:00Z", leave_time: "2026-12-11T09:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/bob_participant,   unique_key: zp-bob-333b,   meeting_uuid: m333-b, participant_uuid: pb2, join_time: "2026-12-11T09:40:00Z", leave_time: "2026-12-11T10:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/carol_participant, unique_key: zp-carol-444,  meeting_uuid: m444,   participant_uuid: pc1, join_time: "2026-12-31T23:30:00Z", leave_time: "2027-01-01T00:20:00Z" }
+    # a guest without an email joins every meeting: guests count as company.
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, unique_key: zp-guest-m111-a, meeting_uuid: m111-a, participant_uuid: g-m111-a, user_name: Guest, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T10:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, unique_key: zp-guest-m111-b, meeting_uuid: m111-b, participant_uuid: g-m111-b, user_name: Guest, join_time: "2026-12-10T10:32:00Z", leave_time: "2026-12-10T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, unique_key: zp-guest-m222, meeting_uuid: m222, participant_uuid: g-m222, user_name: Guest, join_time: "2026-12-10T14:00:00Z", leave_time: "2026-12-10T14:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, unique_key: zp-guest-m333-a, meeting_uuid: m333-a, participant_uuid: g-m333-a, user_name: Guest, join_time: "2026-12-11T09:00:00Z", leave_time: "2026-12-11T09:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, unique_key: zp-guest-m333-b, meeting_uuid: m333-b, participant_uuid: g-m333-b, user_name: Guest, join_time: "2026-12-11T09:40:00Z", leave_time: "2026-12-11T10:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, unique_key: zp-guest-m444, meeting_uuid: m444, participant_uuid: g-m444, user_name: Guest, join_time: "2026-12-31T23:30:00Z", leave_time: "2027-01-01T00:20:00Z" }
