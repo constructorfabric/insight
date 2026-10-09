@@ -2213,7 +2213,7 @@ metrics:
     label: Meetings Attended
     short_label: Mtgs
     description: Distinct meetings and one-to-one calls attended
-    explanation: Distinct meetings a person attended across meeting tools, one-to-one calls included, so a two-person call counts the same in every tool.
+    explanation: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do.
     unit: meetings
     format: integer
     direction: higher_is_better

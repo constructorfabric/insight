@@ -167,7 +167,7 @@ models:
         tests:
           - not_null
       - name: meetings_count
-        description: "Number of Zoom meeting participation events on this day"
+        description: "Meetings and one-to-one calls attended on this day, across Teams and Zoom"
         tests:
           - not_null
       - name: meeting_hours

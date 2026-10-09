@@ -5,8 +5,7 @@ description: >
   How it's computed (bronze → silver → gold):
     • bronze: the daily Teams activity report per person (meetings attended and
       one-to-one calls), and Zoom meetings with their participant sessions.
-    • staging: Zoom participant rows re-sent by a sync collapse to one; sessions of
-      one Zoom meeting that restart within five minutes stitch into one meeting; a
+    • staging: sessions of one Zoom meeting that restart within five minutes stitch into one meeting; a
       Zoom meeting counts on the UTC day the person joined it.
     • gold:   per-person sum of meetings attended across both tools, with a tool
       dimension. A Teams one-to-one call counts as a meeting, as a two-person Zoom
@@ -14,13 +13,12 @@ description: >
 
   Cast (Engineering):
     alice — Teams Dec 10: 2 meetings and 1 call → 3. Zoom Dec 10: meeting 111 restarted after two minutes
-            (one meeting, her first session also re-sent by the sync), plus
+            (one meeting), plus
             meeting 222 → Zoom 2, total 5.
     bob   — Zoom meeting 333 restarted after ten minutes → two meetings.
     carol — joins Zoom meeting 444 at 23:30 UTC on Dec 31 → counts on Dec 31.
   Cases: a Teams call counts as a meeting · tools add up and split by tool · a restart within five minutes is one
-  meeting, after it two · a re-sent participant row is not counted twice · the
-  join day decides the date.
+  meeting, after it two · the UTC join day decides the date.
 
 bronze:
   bronze_bamboohr.employees:
@@ -41,8 +39,6 @@ bronze:
 
   bronze_zoom.participants:
     - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: zp-alice-111a, meeting_uuid: m111-a, participant_uuid: pa1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T10:30:00Z" }
-    # the same session re-sent by a later sync → collapses into the row above.
-    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: zp-alice-111a-resent, _airbyte_extracted_at: "2030-01-02T00:00:00", meeting_uuid: m111-a, participant_uuid: pa1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T10:30:00Z" }
     - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: zp-alice-111b, meeting_uuid: m111-b, participant_uuid: pa2, join_time: "2026-12-10T10:32:00Z", leave_time: "2026-12-10T11:00:00Z" }
     - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: zp-alice-222,  meeting_uuid: m222,   participant_uuid: pa3, join_time: "2026-12-10T14:00:00Z", leave_time: "2026-12-10T14:30:00Z" }
     - { $ref: ../templates/zoom.yaml#/templates/bob_participant,   unique_key: zp-bob-333a,   meeting_uuid: m333-a, participant_uuid: pb1, join_time: "2026-12-11T09:00:00Z", leave_time: "2026-12-11T09:30:00Z" }

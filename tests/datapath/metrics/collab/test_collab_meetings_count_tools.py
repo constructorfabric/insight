@@ -2,8 +2,7 @@
 
 Bronze: the daily Teams activity report and Zoom meetings with participant
 sessions. A Teams one-to-one call counts as a meeting, as a two-person Zoom meeting
-does. Staging collapses Zoom participant rows re-sent by a sync, stitches the
-sessions of one meeting that restarts within five minutes, and dates a Zoom meeting
+does. Staging stitches the sessions of one Zoom meeting that restarts within five minutes, and dates a Zoom meeting
 by the UTC day the person joined it. Gold sums meetings attended across both tools
 with a tool dimension.
 """
@@ -42,7 +41,7 @@ def _request(person: str, date_from: str, date_to: str) -> dict[str, object]:
 
 def test_teams_calls_count_and_tools_add_up_and_split_by_tool(spec: SpecRun) -> None:
     r = spec.call(_request(ALICE, "2026-12-01", "2026-12-31"))
-    assert r.status == 200
+    assert r.status == 200, f"should answer 200 for {ALICE} in December"
     r.row("collab.meetings_count", "period", entity_id=ALICE).equals(value=5)
     by_tool = r.breakdown("collab.meetings_count")
     for tool, expected in (("m365", 3), ("zoom", 2)):

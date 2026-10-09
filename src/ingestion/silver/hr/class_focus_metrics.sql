@@ -18,7 +18,7 @@ SELECT
         ma.person_key, '-',
         toString(ma.date)
     )                                                               AS unique_key,
-    toInt64(sum(ma.meetings_attended))                              AS meetings_count,
+    toInt64(sum(ma.meetings_attended + ifNull(ma.calls_count, 0)))  AS meetings_count,
     -- Use the longest modality (audio / video / screen-share) to avoid under-
     -- counting M365 Teams participants who joined muted but with camera or
     -- screen-share on. For Zoom, audio_duration is full participation time

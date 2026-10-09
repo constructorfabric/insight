@@ -79,7 +79,7 @@ SELECT
         p.tenant_id, '-',
         p.source_id, '-',
         lower(p.email), '-',
-        toString(toDate(parseDateTimeBestEffortOrNull(p.join_time)))
+        toString(toDate(parseDateTimeBestEffortOrNull(p.join_time), 'UTC'))
     )) AS unique_key,
     p.email AS user_id,
     -- Pick one display name when the same email surfaces under multiple
@@ -90,7 +90,7 @@ SELECT
     toNullable(coalesce(any(p.user_name), '')) AS user_name,
     p.email AS email,
     lower(p.email) AS person_key,
-    toDate(parseDateTimeBestEffortOrNull(p.join_time)) AS date,
+    toDate(parseDateTimeBestEffortOrNull(p.join_time), 'UTC') AS date,
     CAST(NULL AS Nullable(Int64)) AS calls_count,
     CAST(NULL AS Nullable(Int64)) AS meetings_organized,
     -- uniqExact over logical_meeting_id collapses host-drop rejoins into one.
@@ -157,8 +157,8 @@ LEFT JOIN {{ ref('zoom__meeting_sessions') }} AS ml FINAL
 -- participants arrive across several sync batches.
 WHERE (
     (SELECT count() FROM {{ this }}) = 0
-    OR toDate(parseDateTimeBestEffortOrNull(p.join_time)) IN (
-        SELECT DISTINCT toDate(parseDateTimeBestEffortOrNull(join_time))
+    OR toDate(parseDateTimeBestEffortOrNull(p.join_time), 'UTC') IN (
+        SELECT DISTINCT toDate(parseDateTimeBestEffortOrNull(join_time), 'UTC')
         FROM {{ source('bronze_zoom', 'participants') }}
         WHERE _airbyte_extracted_at
               > (SELECT max(_airbyte_extracted_at) FROM {{ source('bronze_zoom', 'participants') }}) - INTERVAL 3 DAY
@@ -169,4 +169,4 @@ GROUP BY
     p.tenant_id,
     p.source_id,
     p.email,
-    toDate(parseDateTimeBestEffortOrNull(p.join_time))
+    toDate(parseDateTimeBestEffortOrNull(p.join_time), 'UTC')

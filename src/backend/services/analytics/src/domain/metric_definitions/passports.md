@@ -646,7 +646,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: meetings_attended
 - Formula: sum(meetings_attended)
 - Shape: integer, higher_is_better, unit meetings
-- Notes: Distinct meetings a person attended across meeting tools, one-to-one calls included, so a two-person call counts the same in every tool.
+- Notes: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do.
 
 ## collab.meeting_free_days — Meeting-Free Days
 
