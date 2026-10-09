@@ -150,7 +150,7 @@ The same decision under a different name in each layer:
 | --- | --- | --- |
 | Chart values | `clickhouse.clusterMode` / `clickhouse.clusterName` | [`values.yaml`](./values.yaml) |
 | Chart helpers | `insight.clickhouse.clusterMode` / `insight.clickhouse.clusterName` | [`templates/_helpers.tpl`](./templates/_helpers.tpl) |
-| Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-migrate` Job, `apply-ch-migrations.sh` |
+| Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-databases` and `clickhouse-migrate` Jobs (one shared env block, `insight.clickhouse.ddlEnv`), `create-databases.sh`, `apply-ch-migrations.sh` |
 | Reconcile | `RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE` / `RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME` | `reconcile-cron.yaml`, consumed by `compose_destination_config.py` as the destination's `use_replicated_engines` / `cluster_name` |
 | dbt | project vars `cluster_mode` / `cluster_name`, read by the `insight_engine` macro every model's engine is declared through and by the `insight_on_cluster` clause the `on-run-start` hooks qualify their raw DDL with; the project-level `+engine` default for a model that declares none; the adapter's `cluster:` profile key and the quorum `custom_settings`, both written by the one profile writer | `dbt_project.yml`, `dbt/macros/insight_engine.sql`, `scripts/dbt_profiles.py` |
 | Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name` | `libs/insight-clickhouse`, `insight-v3-core` gear config |
@@ -164,6 +164,15 @@ profile body from `src/ingestion/scripts/dbt_profiles.py`, so a step cannot
 reach a clustered warehouse with a standalone profile. The engine default is
 the one thing that profile cannot carry: dbt-clickhouse resolves `engine` from
 the model config alone, so it lives in `dbt_project.yml`.
+
+One statement carries the whole fork: `src/ingestion/scripts/create-databases.sh`
+is the only site that creates a ClickHouse database, so a `Replicated` database
+engine has exactly one place to appear. Inside such a database every later DDL
+is logged in Keeper and replayed on every replica, which is what lets the
+migrations, the dbt hooks and the DDL snapshot stay topology-blind. The
+`clickhouse-databases` pre-install Hook and the `clickhouse-migrate`
+post-install Hook both run that script; `clickhouse.createDatabases: false`
+turns the pre-install one off for a warehouse provisioned out of band.
 
 Flipping the values does not by itself make an install clustered — the
 creators act on them task by task (epic #2010), and the clustered path is not
@@ -184,6 +193,7 @@ Key groups:
 - `identityResolution.*` — identity-resolution service (must stay deployed; `rosterSourceType` for email-mode logins)
 - `keycloak.deploy` + `keycloakConfig.*` — the in-stack identity broker and its realms-as-code hook
 - `clickhouse.clusterMode` / `clickhouse.clusterName` — warehouse topology, see [ClickHouse topology](#clickhouse-topology)
+- `clickhouse.createDatabases` — whether the release creates its own ClickHouse databases (see below)
 - `clickhouse.fieldValueMap.*` — insert-only seed of operator-authored `config.field_value_map` / `config.field_value_defaults` rows from a TSV ConfigMap (post-upgrade hook, weight 300)
 - `previews.*`, `gitCliProxy.*`, `frontend.*` — optional services, on by default
 - `ingestion.templates.enabled` — whether to ship Argo WorkflowTemplates; requires Argo CRDs to be present in the cluster

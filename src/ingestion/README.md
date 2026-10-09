@@ -313,6 +313,8 @@ src/ingestion/
 │
 ├── scripts/                         # ClickHouse migrations + in-toolbox helpers
 │   ├── migrations/                  #   gold-view migrations (*.sql)
+│   ├── create-databases.sh          #   THE database-creation site + the grants
+│   │                                #   (clickhouse-databases Hook Job)
 │   ├── apply-ch-migrations.sh       #   migration runner (clickhouse-migrate Hook Job)
 │   ├── create-warehouse-placeholders.sh # applies connectors-ddl/ DDL snapshot
 │   ├── connectors-ddl/              #   CI-generated SHOW CREATE snapshot, no

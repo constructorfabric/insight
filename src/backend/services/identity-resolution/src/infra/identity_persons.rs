@@ -265,8 +265,8 @@ impl IdentityPersonsWriter for ClickHouseIdentityPersonsWriter {
         // Unique per run: concurrent syncs never touch each other's staging.
         let staging = format!("{STAGING_PREFIX}{}", Uuid::now_v7().simple());
 
-        // The database normally pre-exists (init-identity migration), but a
-        // fresh environment may not have run it yet — idempotent and cheap.
+        // The database normally pre-exists (the deploy's create-databases.sh),
+        // but a fresh environment may not have run it yet — idempotent and cheap.
         self.execute(&format!("CREATE DATABASE IF NOT EXISTS {DATABASE}"))
             .await?;
         // Target first: EXCHANGE requires both sides to exist, and the very

@@ -25,13 +25,14 @@
   unbound row even in a month when only one of them invoiced.
 
   Called from `on-run-start` so the table exists before any model reads it.
+
+  The `config` database itself is not created here: `create-databases.sh` is
+  the one site that creates a database, and it runs before any dbt build.
 -#}
 
 {% macro create_ai_config_tables() %}
     {% set on_cluster = insight_on_cluster() %}
     {% set engine = insight_engine('ReplacingMergeTree', '_version') %}
-
-    {% do run_query("CREATE DATABASE IF NOT EXISTS config " ~ on_cluster) %}
 
     {% do run_query("
         CREATE TABLE IF NOT EXISTS config.ai_seat_tier_map " ~ on_cluster ~ "

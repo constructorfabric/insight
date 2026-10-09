@@ -157,7 +157,8 @@ rebuilding from the rendered release alone will miss all of it.
   users. The rest are created **in-server by the umbrella's own hook Jobs**:
   `insight-mariadb-init-svcdbs` (as root, using `insight-db-creds`'s
   `mariadb-root-password`, `CREATE DATABASE` for `identity`+`keycloak` + grant)
-  and `insight-clickhouse-init-svcdbs` (`insight`+`presentation`). That is why
+  and `insight-clickhouse-databases` (every ClickHouse database the release
+  holds, plus the roles and grant-less users that read them). That is why
   the root password must be in `insight-db-creds` even though no DSN uses it.
   Other hooks: `insight-keycloak-config` (drift-reverting realm apply) and
   `insight-clickhouse-migrate`. Every hook has `ttlSecondsAfterFinished: 600` —

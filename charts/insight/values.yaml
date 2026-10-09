@@ -303,24 +303,18 @@ clickhouse:
     # Fixed Secret name — chart convention (one Insight per namespace).
     name: "insight-db-creds"
     key: "clickhouse-password"
-  # Databases the chart's pre-install Hook Job (clickhouse-init-svcdbs-job)
-  # creates against the external ClickHouse via CREATE DATABASE IF NOT
-  # EXISTS. Connector-specific bronze schemas (bronze_jira, bronze_slack, …)
-  # are created by ingestion pipelines themselves; only schemas required
-  # at startup live here.
-  initDatabases:
-    - insight
-    # Empty writable namespace for new gold / saved-query results / scratch
-    # (#1964). The read-only presentation_ro role + grant-less `presentation`
-    # user are provisioned by the clickhouse-migrate Hook (apply-ch-migrations
-    # -> provision-presentation-access.sh).
-    - presentation
-    # Adoption events (#2573). Here rather than in the migration alone because
-    # the presentation_ro grant references it before that migration runs.
-    - product_usage
-    # Dataset record tables (insight-v3-core). The service's migrate step
-    # creates it too; listed so the database stands before the first deploy.
-    - insight_datasets
+  # When true (default), a pre-install/pre-upgrade Hook Job
+  # (clickhouse-databases-job) runs src/ingestion/scripts/create-databases.sh
+  # against the external ClickHouse: every database the release holds, plus the
+  # roles and grant-less users that read them, before the app pods roll. WHICH
+  # databases is not an operator decision — the script names them, and it is
+  # the only site that creates one (#3556). Connector bronze databases
+  # (bronze_jira, bronze_slack, …) are not among them: the Airbyte destination
+  # creates those at sync time.
+  # Set false where the warehouse is provisioned out of band. The deploy hook
+  # still converges them later (clickhouse-migrate -> apply-ch-migrations.sh),
+  # so the service user needs CREATE DATABASE either way.
+  createDatabases: true
   # When true (default), a post-install/post-upgrade Hook Job
   # (clickhouse-migrate-job) applies the gold-view migrations
   # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against

@@ -1,5 +1,3 @@
-CREATE DATABASE IF NOT EXISTS `insight`;
-
 CREATE TABLE IF NOT EXISTS insight.account_attribute_values
 (
     `insight_tenant_id` String,
