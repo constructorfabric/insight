@@ -41,7 +41,7 @@
 
 WITH observations AS (
     SELECT
-        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        {{ tenant_uuid('tenant_id') }} AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
         'github' AS insight_source_type,
         account_id AS source_account_id,
@@ -63,7 +63,7 @@ WITH observations AS (
     -- The unowned e-mail claims itself, so the console has an account to show
     -- and a value to search on.
     SELECT
-        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        {{ tenant_uuid('tenant_id') }} AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
         'github-commit-email' AS insight_source_type,
         email AS source_account_id,
@@ -80,7 +80,7 @@ WITH observations AS (
     -- rather than deciding on an e-mail alone. The persons-seed also names the
     -- person it mints from this.
     SELECT
-        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        {{ tenant_uuid('tenant_id') }} AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
         'github-commit-email' AS insight_source_type,
         email AS source_account_id,

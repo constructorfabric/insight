@@ -17,6 +17,7 @@
 -- carries no versions to dedup.
 
 SELECT
+    toString(insight_tenant_id)          AS tenant_id,
     insight_source_type                  AS source_type,
     insight_source_id                    AS source_id,
     lower(trimBoth(assumeNotNull(value_effective))) AS account_id,
@@ -27,9 +28,10 @@ WHERE value_type = 'id'
   AND value_effective IS NOT NULL
   AND trimBoth(value_effective) != ''
 ORDER BY
+    tenant_id,
     source_type,
     source_id,
     account_id,
     created_at DESC,
     id DESC
-LIMIT 1 BY source_type, source_id, account_id
+LIMIT 1 BY tenant_id, source_type, source_id, account_id

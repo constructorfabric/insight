@@ -16,12 +16,9 @@
 //!
 //! Guards (both overridable with `--force`, both recorded as a `failed`
 //! operation so the journal explains why nothing was written):
-//!   * empty input — 0 `identity_inputs` rows means a broken/misconfigured
-//!     pipeline (wrong ClickHouse URL/database, wiped stand), not "no people";
-//!   * wrong tenant — `persons` rows exist under OTHER tenants and none under
-//!     the configured one: seeding would mint a parallel person universe
-//!     under the wrong tenant (the HOTFIX(#1550) failure mode), which the append-only
-//!     log cannot undo. A genuinely fresh install (empty `persons`) passes.
+//!   * empty input — 0 `identity_inputs` rows for the tenant means a broken or
+//!     misconfigured pipeline (wrong ClickHouse URL/database, a wiped stand, or
+//!     inputs stamped with another tenant), not "no people".
 
 use std::time::Duration;
 
@@ -104,16 +101,8 @@ pub async fn run(
             "unsupported mode '{mode}'; only '{LINK_BY_EMAIL_MODE}' is available"
         )));
     }
-    // SINGLE-TENANT BY DESIGN, gated on HOTFIX(#1550): one run seeds exactly
-    // one tenant — the configured one. A true multi-tenant mode ("enumerate
-    // tenants, seed each") is NOT possible yet: the identity_inputs reader
-    // deliberately reads the WHOLE table with no tenant filter (see the
-    // HOTFIX(#1550) block in `infra::identity_inputs` — the dbt producer
-    // hashes tenant ids, so there is nothing to filter on), which means every
-    // tenant's run would ingest every other tenant's rows and mint duplicate
-    // person universes. Once the producer writes real tenant UUIDs and the
-    // reader filter returns, this becomes a loop over tenants — the runner is
-    // already per-tenant everywhere below (lock name, journal row, writes).
+    // One run seeds one tenant, the configured one; several tenants are seeded
+    // by one run each. The reader returns only that tenant's identity inputs.
     let db = db::connect(&config.database_url).await?;
     // Same boot gate as the server: a seed against a schema behind this build
     // would fail per-query mid-run instead of upfront.
@@ -126,8 +115,7 @@ pub async fn run(
     // narrow: exactly ONE distinct tenant is the only unambiguous case —
     // writing under the sole tenant the data already lives under is what an
     // operator would configure anyway. Zero (fresh install) or several
-    // tenants → refuse and demand explicit config; guessing there recreates
-    // the HOTFIX(#1550) wrong-tenant hazard the guards exist to prevent.
+    // tenants → refuse and demand explicit config.
     let distinct = seed_repo::distinct_tenants(&db, 2).await?;
     let tenant = match resolve_tenant(&config.tenant_default_id, &distinct) {
         Ok(t) => t,
@@ -271,8 +259,7 @@ async fn guarded_seed(
         let rows = reader.stream(tenant).await?;
         tracing::info!(input_rows = rows.len(), "persons-seed: input streamed");
 
-        let presence = seed_repo::tenant_presence(db, tenant).await?;
-        if let Err(msg) = input_guards(rows.len(), presence, tenant, force) {
+        if let Err(msg) = input_guards(rows.len(), tenant, force) {
             return Err(SeedRunError::Guard(msg));
         }
 
@@ -329,84 +316,46 @@ pub(crate) fn resolve_tenant(
     }
 }
 
-/// The pure guard decision (see the module docs): refuse an empty input and
-/// refuse a wrong-tenant run; `--force` overrides both. The returned message
-/// is operator-facing — it lands verbatim in the operation's `error_message`
-/// and the Job log.
-fn input_guards(
-    input_rows: usize,
-    presence: seed_repo::TenantPresence,
-    tenant: Uuid,
-    force: bool,
-) -> Result<(), String> {
-    if force {
+/// The pure guard decision (see the module docs): refuse an empty input;
+/// `--force` overrides it. The returned message is operator-facing — it lands
+/// verbatim in the operation's `error_message` and the Job log.
+fn input_guards(input_rows: usize, tenant: Uuid, force: bool) -> Result<(), String> {
+    if force || input_rows > 0 {
         return Ok(());
     }
-    if input_rows == 0 {
-        return Err(
-            "input guard: identity_inputs returned 0 rows — the ingestion pipeline looks \
-             broken or misconfigured (wrong ClickHouse URL/database?); re-run with --force \
-             to seed anyway"
-                .to_owned(),
-        );
-    }
-    if !presence.has_own && presence.has_other {
-        return Err(format!(
-            "tenant guard: persons already holds rows under other tenant(s) and none under \
-             the configured tenant {tenant} — seeding would mint a parallel person set under \
-             a wrong tenant; fix tenant_default_id or re-run with --force"
-        ));
-    }
-    Ok(())
+    Err(format!(
+        "input guard: identity_inputs returned 0 rows for tenant {tenant} — the ingestion \
+         pipeline looks broken or misconfigured (wrong ClickHouse URL/database, or inputs \
+         stamped with another tenant?); re-run with --force to seed anyway"
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infra::db::seed_repo::TenantPresence;
 
     fn tenant() -> Uuid {
         Uuid::from_u128(9)
     }
 
-    fn presence(has_own: bool, has_other: bool) -> TenantPresence {
-        TenantPresence { has_own, has_other }
-    }
-
     #[test]
-    fn empty_input_refused_and_names_the_table() -> anyhow::Result<()> {
-        let Err(err) = input_guards(0, presence(false, false), tenant(), false) else {
+    fn empty_input_refused_and_names_the_table_and_tenant() -> anyhow::Result<()> {
+        let Err(err) = input_guards(0, tenant(), false) else {
             anyhow::bail!("empty input must be refused");
         };
         assert!(err.contains("identity_inputs"), "{err}");
-        Ok(())
-    }
-
-    #[test]
-    fn wrong_tenant_refused_and_names_the_tenant() -> anyhow::Result<()> {
-        let Err(err) = input_guards(10, presence(false, true), tenant(), false) else {
-            anyhow::bail!("wrong-tenant run must be refused");
-        };
-        assert!(err.contains("tenant"), "{err}");
         assert!(err.contains(&tenant().to_string()), "{err}");
         Ok(())
     }
 
     #[test]
-    fn force_overrides_both_guards() {
-        assert!(input_guards(0, presence(false, false), tenant(), true).is_ok());
-        assert!(input_guards(10, presence(false, true), tenant(), true).is_ok());
+    fn force_overrides_the_guard() {
+        assert!(input_guards(0, tenant(), true).is_ok());
     }
 
     #[test]
-    fn fresh_install_passes_unforced() {
-        // Non-empty input, persons entirely empty — the bootstrap shape.
-        assert!(input_guards(10, presence(false, false), tenant(), false).is_ok());
-    }
-
-    #[test]
-    fn steady_state_passes_unforced() {
-        assert!(input_guards(10, presence(true, true), tenant(), false).is_ok());
+    fn a_tenant_with_inputs_passes_whatever_other_tenants_exist() {
+        assert!(input_guards(10, tenant(), false).is_ok());
     }
 
     #[tokio::test]

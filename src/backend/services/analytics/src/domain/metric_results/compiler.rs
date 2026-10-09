@@ -2045,7 +2045,7 @@ fn resolved_observation_from(
             let person_params = placeholders(req.entity.len());
             (
                 format!(
-                    "(obs.entity_id IN (SELECT email FROM {PERSON_MAP_RELATION} WHERE person_id IN ({person_params})) \
+                    "((toString(obs.tenant_id), obs.entity_id) IN (SELECT tenant_id, email FROM {PERSON_MAP_RELATION} WHERE person_id IN ({person_params})) \
                       OR coalesce(obs.account_id, '') != ''){date_scope}"
                 ),
                 format!("resolved_person_id IN ({person_params})"),
@@ -2055,7 +2055,7 @@ fn resolved_observation_from(
             let date_scope = scan_of(req, params);
             (
                 format!(
-                    "(obs.entity_id IN (SELECT email FROM {PERSON_MAP_RELATION} \
+                    "((toString(obs.tenant_id), obs.entity_id) IN (SELECT tenant_id, email FROM {PERSON_MAP_RELATION} \
                       WHERE toString(person_id) IN (SELECT entity_id FROM cohort)) \
                       OR coalesce(obs.account_id, '') != ''){date_scope}"
                 ),
@@ -2093,11 +2093,13 @@ fn resolved_observation_from(
                 ) AS resolved_person_id
             FROM {table} AS obs
             LEFT JOIN {ACCOUNT_ASSIGNMENT_RELATION} AS account_map
-                ON account_map.source_type = obs.account_source_type
+                ON account_map.tenant_id = toString(obs.tenant_id)
+               AND account_map.source_type = obs.account_source_type
                AND account_map.source_id = {account_source_uuid}
                AND account_map.account_id = {account_id}
             LEFT JOIN {PERSON_MAP_RELATION} AS person_map
-                ON person_map.email = obs.entity_id
+                ON person_map.tenant_id = toString(obs.tenant_id)
+               AND person_map.email = obs.entity_id
             WHERE {inner_where}
         ) AS resolved
         WHERE {resolved_filter}
@@ -3819,10 +3821,20 @@ mod tests {
                 .sql
                 .contains("LEFT JOIN identity.person_map AS person_map")
         );
-        assert!(query.sql.contains("ON person_map.email = obs.entity_id"));
+        assert!(
+            query
+                .sql
+                .contains("ON person_map.tenant_id = toString(obs.tenant_id)")
+        );
+        assert!(query.sql.contains("AND person_map.email = obs.entity_id"));
+        assert!(
+            query
+                .sql
+                .contains("ON account_map.tenant_id = toString(obs.tenant_id)")
+        );
         assert!(
             query.sql.contains(
-                "(obs.entity_id IN (SELECT email FROM identity.person_map WHERE person_id IN (?, ?)) OR coalesce(obs.account_id, '') != '')"
+                "((toString(obs.tenant_id), obs.entity_id) IN (SELECT tenant_id, email FROM identity.person_map WHERE person_id IN (?, ?)) OR coalesce(obs.account_id, '') != '')"
             ),
             "the prune keeps the requested people's email parts plus every account-carrying row"
         );
