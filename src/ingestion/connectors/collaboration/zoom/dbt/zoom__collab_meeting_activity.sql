@@ -73,6 +73,7 @@
 -- #263.
 
 {%- set participants = source('bronze_zoom', 'participants') %}
+{%- set meetings = source('bronze_zoom', 'meetings') %}
 WITH
 {%- if is_incremental() %}
 -- Watermark on the source EXTRACT time, not the meeting date: re-pulled rows carry a
@@ -84,18 +85,31 @@ recently_extracted_meetings AS (
     FROM {{ participants }}
     WHERE _airbyte_extracted_at
           > (SELECT max(_airbyte_extracted_at) FROM {{ participants }}) - INTERVAL 3 DAY
+    UNION DISTINCT
+    SELECT DISTINCT uuid AS meeting_uuid
+    FROM {{ meetings }}
+    WHERE _airbyte_extracted_at
+          > (SELECT max(_airbyte_extracted_at) FROM {{ meetings }}) - INTERVAL 3 DAY
 ),
 
 dates_to_rebuild AS (
     SELECT DISTINCT toDate(parseDateTimeBestEffortOrNull(join_time), 'UTC') AS date
     FROM {{ participants }}
     WHERE meeting_uuid IN (SELECT meeting_uuid FROM recently_extracted_meetings)
+    UNION DISTINCT
+    SELECT DISTINCT toDate(parseDateTimeBestEffortOrNull(start_time), 'UTC') AS date
+    FROM {{ meetings }}
+    WHERE uuid IN (SELECT meeting_uuid FROM recently_extracted_meetings)
 ),
 
 meetings_in_scope AS (
     SELECT DISTINCT meeting_uuid
     FROM {{ participants }}
     WHERE toDate(parseDateTimeBestEffortOrNull(join_time), 'UTC') IN (SELECT date FROM dates_to_rebuild)
+    UNION DISTINCT
+    SELECT DISTINCT uuid AS meeting_uuid
+    FROM {{ meetings }}
+    WHERE toDate(parseDateTimeBestEffortOrNull(start_time), 'UTC') IN (SELECT date FROM dates_to_rebuild)
 ),
 {%- endif %}
 
@@ -190,66 +204,125 @@ sessions_with_company AS (
         AND c.meeting_uuid = own.meeting_uuid
         AND c.attendee = lower(own.email)
     WHERE own.email IS NOT NULL AND own.email != ''
+),
+
+attended_days AS (
+    SELECT
+        p.tenant_id AS tenant_id,
+        p.source_id AS source_id,
+        lower(p.email) AS person_key,
+        toDate(p.joined_at, 'UTC') AS date,
+        any(p.email) AS attendee_email,
+        -- Pick one display name when the same email surfaces under multiple spellings.
+        coalesce(any(p.user_name), '') AS attendee_name,
+        -- uniqExact over logical_meeting_id collapses host-drop rejoins into one;
+        -- meeting_uuid stands in while the meeting row is not yet stitched.
+        toInt64(uniqExactIf(coalesce(ml.logical_meeting_id, p.meeting_uuid), p.company_seconds > 0)) AS meetings_attended,
+        toInt64(sum(p.company_seconds)) AS audio_duration_seconds,
+        -- #263: gate by per-participant `camera` device name, not by the meeting-level
+        -- `has_video` flag (see header for the full-session over-estimate caveat).
+        toInt64(sumIf(p.company_seconds, p.camera IS NOT NULL AND p.camera != '')) AS video_duration_seconds,
+        toInt64(sumIf(
+            p.company_seconds,
+            coalesce(p.share_desktop, false)
+            OR coalesce(p.share_application, false)
+            OR coalesce(p.share_whiteboard, false)
+        )) AS screen_share_duration_seconds
+    FROM sessions_with_company AS p
+    LEFT JOIN {{ ref('zoom__meeting_sessions') }} AS ml FINAL
+        ON p.meeting_uuid = ml.uuid
+        AND p.tenant_id = ml.tenant_id
+        AND p.source_id = ml.source_id
+    GROUP BY tenant_id, source_id, person_key, date
+),
+
+hosted_meetings AS (
+    SELECT
+        tenant_id,
+        source_id,
+        uuid AS meeting_uuid,
+        lower(email) AS host,
+        toDate(parseDateTimeBestEffortOrNull(start_time), 'UTC') AS date
+    FROM {{ meetings }}
+    WHERE email IS NOT NULL AND email != ''
+      AND uuid IS NOT NULL AND uuid != ''
+      AND parseDateTimeBestEffortOrNull(start_time) IS NOT NULL
+    {%- if is_incremental() %}
+      AND (
+          (SELECT count() FROM {{ this }}) = 0
+          OR uuid IN (SELECT meeting_uuid FROM meetings_in_scope)
+      )
+    {%- endif %}
+    ORDER BY _airbyte_extracted_at DESC
+    LIMIT 1 BY uuid
+),
+
+organized_days AS (
+    -- A hosted meeting counts only if someone besides the host attended it.
+    SELECT
+        h.tenant_id AS tenant_id,
+        h.source_id AS source_id,
+        h.host AS person_key,
+        h.date AS date,
+        toInt64(uniqExact(coalesce(ml.logical_meeting_id, h.meeting_uuid))) AS meetings_organized
+    FROM hosted_meetings AS h
+    INNER JOIN (
+        SELECT DISTINCT tenant_id, source_id, meeting_uuid, attendee
+        FROM attendance
+    ) AS a
+        ON a.tenant_id = h.tenant_id
+        AND a.source_id = h.source_id
+        AND a.meeting_uuid = h.meeting_uuid
+        AND a.attendee != h.host
+    LEFT JOIN {{ ref('zoom__meeting_sessions') }} AS ml FINAL
+        ON h.meeting_uuid = ml.uuid
+        AND h.tenant_id = ml.tenant_id
+        AND h.source_id = ml.source_id
+    GROUP BY tenant_id, source_id, person_key, date
+),
+
+person_days AS (
+    SELECT
+        tenant_id, source_id, person_key, date, attendee_email, attendee_name,
+        meetings_attended, audio_duration_seconds, video_duration_seconds, screen_share_duration_seconds,
+        toInt64(0) AS meetings_organized
+    FROM attended_days
+    UNION ALL
+    SELECT
+        tenant_id, source_id, person_key, date, person_key AS attendee_email, '' AS attendee_name,
+        toInt64(0), toInt64(0), toInt64(0), toInt64(0),
+        meetings_organized
+    FROM organized_days
 )
 
 SELECT
-    p.tenant_id,
-    p.source_id AS insight_source_id,
-    MD5(concat(
-        p.tenant_id, '-',
-        p.source_id, '-',
-        lower(p.email), '-',
-        toString(toDate(p.joined_at, 'UTC'))
-    )) AS unique_key,
-    p.email AS user_id,
-    -- Pick one display name when the same email surfaces under multiple
-    -- spellings (e.g., "Jane Doe" vs "janedoe"). Without
-    -- this, GROUP BY would split them and produce two rows with identical
-    -- unique_key — the staging model's `unique_key` is keyed on
-    -- (tenant, source, lower(email), date), so user_name is non-keying.
-    toNullable(coalesce(any(p.user_name), '')) AS user_name,
-    p.email AS email,
-    lower(p.email) AS person_key,
-    toDate(p.joined_at, 'UTC') AS date,
+    tenant_id,
+    source_id AS insight_source_id,
+    MD5(concat(tenant_id, '-', source_id, '-', person_key, '-', toString(date))) AS unique_key,
+    if(countIf(attendee_name != '') > 0, anyIf(attendee_email, attendee_name != ''), any(attendee_email)) AS user_id,
+    toNullable(max(attendee_name)) AS user_name,
+    if(countIf(attendee_name != '') > 0, anyIf(attendee_email, attendee_name != ''), any(attendee_email)) AS email,
+    person_key,
+    date,
     CAST(NULL AS Nullable(Int64)) AS calls_count,
-    CAST(NULL AS Nullable(Int64)) AS meetings_organized,
-    -- uniqExact over logical_meeting_id collapses host-drop rejoins into one;
-    -- meeting_uuid stands in while the meeting row is not yet stitched.
-    toInt64(uniqExactIf(coalesce(ml.logical_meeting_id, p.meeting_uuid), p.company_seconds > 0)) AS meetings_attended,
+    toNullable(sum(meetings_organized)) AS meetings_organized,
+    sum(meetings_attended) AS meetings_attended,
     CAST(NULL AS Nullable(Int64)) AS adhoc_meetings_organized,
     CAST(NULL AS Nullable(Int64)) AS adhoc_meetings_attended,
     CAST(NULL AS Nullable(Int64)) AS scheduled_meetings_organized,
     CAST(NULL AS Nullable(Int64)) AS scheduled_meetings_attended,
-    toInt64(sum(p.company_seconds)) AS audio_duration_seconds,
-    -- #263: gate by per-participant `camera` device name (NULL/'' means
-    -- the participant did not use a camera in this session), not by the
-    -- meeting-level `has_video` flag from sessions. See header for the
-    -- over-estimate caveat (any-video-ever-in-session counts the whole
-    -- session).
-    toInt64(sumIf(p.company_seconds, p.camera IS NOT NULL AND p.camera != '')) AS video_duration_seconds,
-    toInt64(sumIf(
-        p.company_seconds,
-        coalesce(p.share_desktop, false)
-        OR coalesce(p.share_application, false)
-        OR coalesce(p.share_whiteboard, false)
-    )) AS screen_share_duration_seconds,
+    toNullable(sum(audio_duration_seconds)) AS audio_duration_seconds,
+    toNullable(sum(video_duration_seconds)) AS video_duration_seconds,
+    toNullable(sum(screen_share_duration_seconds)) AS screen_share_duration_seconds,
     CAST(NULL AS Nullable(String)) AS report_period,
     now() AS collected_at,
     'insight_zoom' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version
-FROM sessions_with_company AS p
-LEFT JOIN {{ ref('zoom__meeting_sessions') }} AS ml FINAL
-    ON p.meeting_uuid = ml.uuid
-    AND p.tenant_id = ml.tenant_id
-    AND p.source_id = ml.source_id
+FROM person_days
 {%- if is_incremental() %}
 WHERE (
     (SELECT count() FROM {{ this }}) = 0
-    OR toDate(p.joined_at, 'UTC') IN (SELECT date FROM dates_to_rebuild)
+    OR date IN (SELECT date FROM dates_to_rebuild)
 )
 {%- endif %}
-GROUP BY
-    p.tenant_id,
-    p.source_id,
-    p.email,
-    toDate(p.joined_at, 'UTC')
+GROUP BY tenant_id, source_id, person_key, date

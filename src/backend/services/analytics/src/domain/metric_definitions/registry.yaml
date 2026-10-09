@@ -2286,7 +2286,7 @@ metrics:
     label: Meetings Organized
     short_label: Mtgs hosted
     description: Meetings organized
-    explanation: Meetings a person organized. Reported only by tools that expose organizer counts.
+    explanation: Meetings a person organized in Microsoft Teams or Zoom. A Zoom meeting counts for its host on the day it started, and only if someone besides the host attended.
     unit: meetings
     format: integer
     direction: neutral
@@ -2304,7 +2304,7 @@ metrics:
     label: Ad-hoc Meetings
     short_label: Ad-hoc mtgs
     description: Unscheduled meetings attended
-    explanation: Unscheduled meetings a person attended. Reported only by tools that distinguish ad-hoc from scheduled meetings.
+    explanation: Unscheduled Microsoft Teams meetings a person attended. Zoom does not report this split, so Zoom meetings are not included.
     unit: meetings
     format: integer
     direction: neutral
@@ -2322,7 +2322,7 @@ metrics:
     label: Scheduled Meetings
     short_label: Sched. mtgs
     description: Scheduled meetings attended
-    explanation: Scheduled meetings a person attended. Reported only by tools that distinguish ad-hoc from scheduled meetings.
+    explanation: Scheduled Microsoft Teams meetings a person attended. Zoom does not report this split, so Zoom meetings are not included.
     unit: meetings
     format: integer
     direction: neutral
