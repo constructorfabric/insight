@@ -56,7 +56,8 @@ SELECT
         ),
         4
     )                                                               AS dev_time_h,
-    toUnixTimestamp64Milli(now64())                                 AS _version
+    toUnixTimestamp64Milli(now64())                                 AS _version,
+    max(ma._version)                                                AS source_version
 FROM {{ ref('class_collab_meeting_activity') }} ma FINAL
 LEFT JOIN {{ ref('class_hr_working_hours') }} wh FINAL
     ON ma.person_key = lower(wh.email)
@@ -64,17 +65,21 @@ LEFT JOIN {{ ref('class_hr_working_hours') }} wh FINAL
 WHERE ma.person_key != ''
   AND ma.date IS NOT NULL
 {% if is_incremental() %}
-  -- INVARIANT: the recent days pick up working-hours changes; changed meeting rows
-  -- re-open older days too, with a one-day margin for connector runs overlapping this one.
+  -- INVARIANT: the recent days pick up working-hours changes; any older person-day is
+  -- re-derived once a meeting row newer than the one it was derived from arrives.
   AND (
       ma.date > (SELECT max(day) - INTERVAL 3 DAY FROM {{ this }})
       OR (ma.tenant_id, ma.person_key, ma.date) IN (
           SELECT
-              tenant_id,
-              person_key,
-              date
-          FROM {{ ref('class_collab_meeting_activity') }}
-          WHERE _version > (SELECT max(_version) FROM {{ this }}) - 86400000
+              changed.tenant_id,
+              changed.person_key,
+              changed.date
+          FROM {{ ref('class_collab_meeting_activity') }} AS changed FINAL
+          LEFT JOIN {{ this }} AS derived FINAL
+              ON derived.insight_tenant_id = changed.tenant_id
+              AND derived.email = changed.person_key
+              AND derived.day = changed.date
+          WHERE changed._version > ifNull(derived.source_version, 0)
       )
   )
 {% endif %}
