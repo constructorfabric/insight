@@ -131,6 +131,7 @@ models:
           attendee's arrival to the last one's departure, so a room left open
           adds nothing and a session alone adds zero. Guests without an email
           count as company. Known limits: gaps between visitors inside that span
-          still count, and two devices of the same person in one meeting add up.
+          still count, two devices of the same person in one meeting add up, and
+          a session that crosses UTC midnight counts entirely on its join day.
           video_duration_seconds and screen_share_duration_seconds apply the same
           clamp to sessions with a camera or a share.
