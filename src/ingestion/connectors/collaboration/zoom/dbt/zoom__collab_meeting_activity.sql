@@ -39,18 +39,16 @@
 --
 --   p.camera             Nullable(String)  -- camera device name. NULL/'' when
 --                                             no camera was used (mic-only join).
---                                             Empirically ≈26% non-NULL — the
---                                             real "user had video on" signal.
 --                                             Caveat: `p.video_connection_type`
 --                                             is the network transport (Reliable
---                                             UDP / P2P / TCP / ...) and is
---                                             populated for ~99% of rows — it
---                                             is NOT a camera-on flag.
+--                                             UDP / P2P / TCP / ...) and is set
+--                                             for audio-only joins too — it is
+--                                             NOT a camera-on flag.
 --   p.share_desktop      Nullable(Bool)
 --   p.share_application  Nullable(Bool)
 --   p.share_whiteboard   Nullable(Bool)
 --
--- We use those signals to gate the session length, so a participant who
+-- We use those signals to gate the session's company time, so a participant who
 -- never turned on the camera contributes video_duration_seconds=0
 -- (matching the Teams semantics directionally). We deliberately DO NOT
 -- use the `has_video` / `has_screen_share` flags carried through
@@ -61,7 +59,7 @@
 -- Known limitation that this fix does NOT eliminate: if a Zoom
 -- participant turned the camera on for one minute and then off for the
 -- remaining 59, their `camera` device name is still populated for the
--- session and their full session length is attributed to
+-- session and all of that session's company time is attributed to
 -- `video_duration_seconds`. Zoom rows therefore still OVER-ESTIMATE
 -- video / screen-share duration vs the true minute-of-X numbers M365
 -- produces. Cross-vendor aggregates that sum `video_duration_seconds`
@@ -139,7 +137,7 @@ deduped_participants AS (
     LIMIT 1 BY meeting_uuid, participant_uuid, joined_at
 ),
 
-attendance AS (
+attendee_sessions AS (
     SELECT
         tenant_id,
         source_id,
@@ -149,35 +147,146 @@ attendance AS (
             lower(email),
             concat('guest:', ifNull(participant_uuid, ''))
         ) AS attendee,
-        min(joined_at) AS first_join,
-        max(left_at) AS last_leave
+        joined_at,
+        left_at
     FROM deduped_participants
+),
+
+attendance AS (
+    SELECT DISTINCT
+        tenant_id,
+        source_id,
+        meeting_uuid,
+        attendee
+    FROM attendee_sessions
+),
+
+attendee_presence AS (
+    -- INVARIANT: an attendee's own overlapping sessions merge into one presence, so
+    -- presence counts people, not devices.
+    SELECT
+        tenant_id,
+        source_id,
+        meeting_uuid,
+        sipHash64(attendee) AS attendee_hash,
+        arrayFold(
+            (merged, span) -> if(
+                length(merged) > 0 AND span.1 <= merged[-1].2,
+                arrayPushBack(arrayPopBack(merged), (merged[-1].1, greatest(merged[-1].2, span.2))),
+                arrayPushBack(merged, span)
+            ),
+            arraySort(groupArray((
+                toInt64(toUnixTimestamp(assumeNotNull(joined_at))),
+                toInt64(toUnixTimestamp(assumeNotNull(left_at)))
+            ))),
+            CAST([], 'Array(Tuple(Int64, Int64))')
+        ) AS presence_spans
+    FROM attendee_sessions
+    WHERE left_at IS NOT NULL AND left_at > joined_at
     GROUP BY tenant_id, source_id, meeting_uuid, attendee
 ),
 
-companions AS (
+presence_changes AS (
     SELECT
-        me.tenant_id,
-        me.source_id,
-        me.meeting_uuid,
-        me.attendee,
-        min(other.first_join) AS others_from,
-        max(other.last_leave) AS others_until,
-        count() AS others
-    FROM attendance AS me
-    INNER JOIN attendance AS other
-        ON other.tenant_id = me.tenant_id
-        AND other.source_id = me.source_id
-        AND other.meeting_uuid = me.meeting_uuid
-        AND other.attendee != me.attendee
-    GROUP BY me.tenant_id, me.source_id, me.meeting_uuid, me.attendee
+        tenant_id,
+        source_id,
+        meeting_uuid,
+        change.1 AS changed_at,
+        change.2 AS present_delta,
+        attendee_hash
+    FROM attendee_presence
+    ARRAY JOIN arrayFlatten(arrayMap(
+        span -> [(span.1, toInt64(1)), (span.2, toInt64(-1))],
+        presence_spans
+    )) AS change
+),
+
+presence_steps AS (
+    SELECT
+        tenant_id,
+        source_id,
+        meeting_uuid,
+        changed_at,
+        sum(present_delta) AS present_delta,
+        groupBitXor(attendee_hash) AS attendee_toggle
+    FROM presence_changes
+    GROUP BY tenant_id, source_id, meeting_uuid, changed_at
+),
+
+presence_segments AS (
+    SELECT
+        tenant_id,
+        source_id,
+        meeting_uuid,
+        changed_at AS segment_from,
+        leadInFrame(changed_at) OVER meeting_timeline AS segment_until,
+        sum(present_delta) OVER meeting_so_far AS present,
+        groupBitXor(attendee_toggle) OVER meeting_so_far AS present_hashes
+    FROM presence_steps
+    WINDOW
+        meeting_timeline AS (
+            PARTITION BY tenant_id, source_id, meeting_uuid
+            ORDER BY changed_at
+            ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+        ),
+        meeting_so_far AS (
+            PARTITION BY tenant_id, source_id, meeting_uuid
+            ORDER BY changed_at
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        )
+),
+
+solo_segments AS (
+    -- INVARIANT: with exactly one person present, the XOR of present hashes is that
+    -- person's hash, because each presence span toggles its hash in and out once.
+    SELECT
+        tenant_id,
+        source_id,
+        meeting_uuid,
+        present_hashes AS attendee_hash,
+        segment_from,
+        segment_until
+    FROM presence_segments
+    WHERE present = 1 AND segment_until > segment_from
 ),
 
 sessions_with_company AS (
+    -- INVARIANT: company time is the session minus the stretches where its attendee was
+    -- the only person present, so a pause with nobody else adds nothing.
     SELECT
+        own.tenant_id AS tenant_id,
+        own.source_id AS source_id,
+        own.meeting_uuid AS meeting_uuid,
+        own.email AS email,
+        own.user_name AS user_name,
+        own.camera AS camera,
+        own.share_desktop AS share_desktop,
+        own.share_application AS share_application,
+        own.share_whiteboard AS share_whiteboard,
+        own.joined_at AS joined_at,
+        greatest(0, ifNull(dateDiff('second', own.joined_at, own.left_at), 0)) AS session_seconds,
+        -- WORKAROUND: an unmatched LEFT JOIN gives NULL or 0 depending on join_use_nulls,
+        -- and greatest()/least() skip NULL, so test for a match before clipping.
+        toInt64(greatest(0, session_seconds - sum(if(
+            ifNull(solo.segment_until, 0) = 0,
+            0,
+            greatest(0,
+                least(toInt64(toUnixTimestamp(own.left_at)), solo.segment_until)
+                - greatest(toInt64(toUnixTimestamp(own.joined_at)), solo.segment_from)
+            )
+        )))) AS company_seconds
+    FROM deduped_participants AS own
+    LEFT JOIN solo_segments AS solo
+        ON solo.tenant_id = own.tenant_id
+        AND solo.source_id = own.source_id
+        AND solo.meeting_uuid = own.meeting_uuid
+        AND solo.attendee_hash = sipHash64(lower(own.email))
+    WHERE own.email IS NOT NULL AND own.email != ''
+    GROUP BY
         own.tenant_id,
         own.source_id,
         own.meeting_uuid,
+        own.participant_uuid,
         own.email,
         own.user_name,
         own.camera,
@@ -185,24 +294,7 @@ sessions_with_company AS (
         own.share_application,
         own.share_whiteboard,
         own.joined_at,
-        -- WORKAROUND: an unmatched LEFT JOIN gives NULL or 0 depending on join_use_nulls,
-        -- and greatest()/least() skip NULL, so test the count before clamping.
-        if(
-            ifNull(c.others, 0) = 0,
-            0,
-            greatest(0, ifNull(dateDiff(
-                'second',
-                greatest(own.joined_at, c.others_from),
-                least(own.left_at, c.others_until)
-            ), 0))
-        ) AS company_seconds
-    FROM deduped_participants AS own
-    LEFT JOIN companions AS c
-        ON c.tenant_id = own.tenant_id
-        AND c.source_id = own.source_id
-        AND c.meeting_uuid = own.meeting_uuid
-        AND c.attendee = lower(own.email)
-    WHERE own.email IS NOT NULL AND own.email != ''
+        own.left_at
 ),
 
 attended_days AS (

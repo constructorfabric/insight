@@ -2195,7 +2195,7 @@ metrics:
     label: Meeting Hours
     short_label: Mtg hrs
     description: Hours spent in meetings
-    explanation: Hours spent in meetings, taking the longest active modality (audio, video, or screen share) per meeting. Zoom time counts only while someone else was in the meeting, so a room left open adds nothing; Zoom video and screen-share time are full-session estimates and may run higher than Microsoft Teams.
+    explanation: Hours spent in meetings. Microsoft Teams reports audio, video and screen-share time only as daily totals, so a Teams day counts the longest of the three, an estimate rather than exact meeting time. Zoom time counts only while someone else was in the meeting, so a room left open or a pause with nobody else adds nothing; Zoom counts all of a session's shared time as video or screen share once the camera or a share was used, so those may run higher than Microsoft Teams.
     unit: h
     format: decimal
     direction: lower_is_better

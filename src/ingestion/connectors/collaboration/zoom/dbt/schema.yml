@@ -127,11 +127,10 @@ models:
       - name: audio_duration_seconds
         description: >
           Seconds the user spent in meetings on this day while someone else was
-          there: each session is clamped to the span from the first other
-          attendee's arrival to the last one's departure, so a room left open
-          adds nothing and a session alone adds zero. Guests without an email
-          count as company. Known limits: gaps between visitors inside that span
-          still count, two devices of the same person in one meeting add up, and
+          there: each session counts only its overlap with the union of everyone
+          else's sessions, so a room left open, a pause with nobody else and a
+          session alone add nothing. Guests without an email count as company.
+          Known limits: two devices of the same person in one meeting add up, and
           a session that crosses UTC midnight counts entirely on its join day.
-          video_duration_seconds and screen_share_duration_seconds apply the same
-          clamp to sessions with a camera or a share.
+          video_duration_seconds and screen_share_duration_seconds count the same
+          overlap for sessions with a camera or a share.

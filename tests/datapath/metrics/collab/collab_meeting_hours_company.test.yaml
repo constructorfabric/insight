@@ -6,8 +6,8 @@ description: >
     • bronze: the daily Teams activity report per person (audio, video and
       screen-share durations), and Zoom participant sessions.
     • staging: Zoom participant rows re-sent by a sync collapse to one; a person's
-      session time counts from the first other arrival to the last other
-      departure; a session with nobody else adds no time and is not a meeting.
+      session counts only while at least one other attendee is in it; a
+      session with nobody else adds no time and is not a meeting.
     • gold:   meeting hours = the longest of audio, video and screen share, summed
       across Teams and Zoom.
 
@@ -19,9 +19,13 @@ description: >
     carol — leaves her room z2 open from 08:00 on Dec 12 into the next day; dave
             drops by 08:00–08:06 → 0.1 h, one meeting.
     erin  — alone in z3 on Dec 13 for an hour → no time, no meeting.
+    heidi — Dec 14: in z4 09:00–12:00; dave 09:00–10:00, a guest 11:00–12:00 →
+            2 h, not the 3 h between the first arrival and the last departure.
+            Dec 15: in z5 10:00–11:00, right after dave (09:00–10:00) and right
+            before a guest (11:00–12:00) → no time, no meeting.
   Cases: only time with company counts · a room left open adds nothing beyond the
-  company · a solo session is no meeting · a re-sent session is not counted twice ·
-  Teams and Zoom hours add up.
+  company · a pause with nobody else adds nothing · a solo session is no meeting ·
+  a re-sent session is not counted twice · Teams and Zoom hours add up.
 
 bronze:
   bronze_bamboohr.employees:
@@ -30,6 +34,7 @@ bronze:
     - $ref: ../templates/people.yaml#/templates/carol
     - $ref: ../templates/people.yaml#/templates/dave
     - $ref: ../templates/people.yaml#/templates/erin
+    - $ref: ../templates/people.yaml#/templates/heidi
 
   bronze_m365.teams_activity:
     - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-10", lastActivityDate: "2026-12-10", unique_key: hrs-teams-alice-20261210, meetingsAttendedCount: 1, audioDuration: "PT1H" }
@@ -42,3 +47,9 @@ bronze:
     - { $ref: ../templates/zoom.yaml#/templates/carol_participant, unique_key: zh-carol-z2, meeting_uuid: z2, participant_uuid: hc1, join_time: "2026-12-12T08:00:00Z", leave_time: "2026-12-13T10:00:00Z" }
     - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: dave@example.com, user_name: Dave, unique_key: zh-dave-z2, meeting_uuid: z2, participant_uuid: hd1, join_time: "2026-12-12T08:00:00Z", leave_time: "2026-12-12T08:06:00Z" }
     - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: erin@example.com, user_name: Erin, unique_key: zh-erin-z3, meeting_uuid: z3, participant_uuid: he1, join_time: "2026-12-13T09:00:00Z", leave_time: "2026-12-13T10:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: heidi@example.com, user_name: Heidi, unique_key: zh-heidi-z4, meeting_uuid: z4, participant_uuid: hh4, join_time: "2026-12-14T09:00:00Z", leave_time: "2026-12-14T12:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: dave@example.com, user_name: Dave, unique_key: zh-dave-z4, meeting_uuid: z4, participant_uuid: hd4, join_time: "2026-12-14T09:00:00Z", leave_time: "2026-12-14T10:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Guest, unique_key: zh-guest-z4, meeting_uuid: z4, participant_uuid: hg4, join_time: "2026-12-14T11:00:00Z", leave_time: "2026-12-14T12:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: heidi@example.com, user_name: Heidi, unique_key: zh-heidi-z5, meeting_uuid: z5, participant_uuid: hh5, join_time: "2026-12-15T10:00:00Z", leave_time: "2026-12-15T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: dave@example.com, user_name: Dave, unique_key: zh-dave-z5, meeting_uuid: z5, participant_uuid: hd5, join_time: "2026-12-15T09:00:00Z", leave_time: "2026-12-15T10:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Guest, unique_key: zh-guest-z5, meeting_uuid: z5, participant_uuid: hg5, join_time: "2026-12-15T11:00:00Z", leave_time: "2026-12-15T12:00:00Z" }
