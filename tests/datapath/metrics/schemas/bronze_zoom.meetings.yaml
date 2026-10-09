@@ -1,0 +1,44 @@
+# Mirrors the bronze_zoom.meetings table destination-clickhouse creates.
+schemas:
+  bronze_zoom.meetings:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
+      uuid: {type: [string, "null"]}
+      id: {type: [number, "null"]}
+      topic: {type: [string, "null"]}
+      host: {type: [string, "null"]}
+      email: {type: [string, "null"]}
+      user_type: {type: [string, "null"]}
+      start_time: {type: [string, "null"]}
+      end_time: {type: [string, "null"]}
+      duration: {type: [string, "null"]}
+      participants: {type: [number, "null"]}
+      has_pstn: {type: [boolean, "null"]}
+      has_archiving: {type: [boolean, "null"]}
+      has_voip: {type: [boolean, "null"]}
+      has_3rd_party_audio: {type: [boolean, "null"]}
+      has_video: {type: [boolean, "null"]}
+      has_screen_share: {type: [boolean, "null"]}
+      has_recording: {type: [boolean, "null"]}
+      has_sip: {type: [boolean, "null"]}
+      dept: {type: [string, "null"]}
+      has_poll: {type: [boolean, "null"]}
+      has_qa: {type: [boolean, "null"]}
+      has_survey: {type: [boolean, "null"]}
+      session_key: {type: [string, "null"]}
+      audio_quality: {type: [string, "null"]}
+      has_manual_captions: {type: [boolean, "null"]}
+      has_automated_captions: {type: [boolean, "null"]}
+      has_meeting_summary: {type: [boolean, "null"]}
+      avg_jointime_cost: {type: [number, "null"]}
+      tenant_id: {type: [string, "null"]}
+      source_id: {type: [string, "null"]}
+      unique_key: {type: [string, "null"]}
+      video_quality: {type: [string, "null"]}
+      screen_share_quality: {type: [string, "null"]}

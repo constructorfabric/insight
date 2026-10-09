@@ -52,6 +52,7 @@ meeting_source AS (
         {{ normalized_email('person_key') }} AS entity_id,
         date AS metric_date,
         meetings_attended,
+        calls_count,
         meetings_organized,
         adhoc_meetings_attended,
         scheduled_meetings_attended,
@@ -155,7 +156,7 @@ deliberate_activity AS (
             UNION ALL
             SELECT tenant_id, entity_id, metric_date, tool_value, 'meetings' AS modality
             FROM meeting_source
-            WHERE meetings_attended > 0
+            WHERE meetings_attended + ifNull(calls_count, 0) > 0
         )
     )
 ),
@@ -237,7 +238,7 @@ value_measures AS (
 
     UNION ALL
 
-    {{ sum_measure('meetings_attended', 'meeting_source', 'meetings_attended', 'tool_dimensions') }}
+    {{ sum_measure('meetings_attended', 'meeting_source', 'meetings_attended + ifNull(calls_count, 0)', 'tool_dimensions') }}
 
     UNION ALL
 

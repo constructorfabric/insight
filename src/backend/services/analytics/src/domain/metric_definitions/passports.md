@@ -646,7 +646,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: meetings_attended
 - Formula: sum(meetings_attended)
 - Shape: integer, higher_is_better, unit meetings
-- Notes: Distinct meetings a person attended across meeting tools.
+- Notes: Distinct meetings a person attended across meeting tools, one-to-one calls included, so a two-person call counts the same in every tool.
 
 ## collab.meeting_free_days — Meeting-Free Days
 
