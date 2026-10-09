@@ -72,20 +72,60 @@
 -- separate stream, new rate-limit budget. Tracked as a follow-up to
 -- #263.
 
--- A person's time in a session counts only while someone else was in the
--- meeting (from the first other arrival to the last other departure), so a
--- personal room left open for hours adds nothing; a session with nobody else
--- is not a meeting. Guests without an email count as company; another device
--- of the same person does not.
-WITH deduped_participants AS (
-    -- Drop bronze re-emit duplicates: Airbyte re-emits identical rows per
-    -- (meeting_uuid, participant_uuid, join_time), which would inflate durations.
-    SELECT *
-    FROM {{ source('bronze_zoom', 'participants') }}
-    WHERE parseDateTimeBestEffortOrNull(join_time) IS NOT NULL
-    ORDER BY _airbyte_extracted_at DESC
-    LIMIT 1 BY meeting_uuid, participant_uuid, join_time
+{%- set participants = source('bronze_zoom', 'participants') %}
+WITH
+{%- if is_incremental() %}
+-- Watermark on the source EXTRACT time, not the meeting date: re-pulled rows carry a
+-- fresh `_airbyte_extracted_at` (see the zoom header on backfill-strand history).
+-- INVARIANT: a session's company time depends on every attendee of its meeting, so a
+-- late attendee re-opens all dates of that meeting, not only the late row's own date.
+recently_extracted_meetings AS (
+    SELECT DISTINCT meeting_uuid
+    FROM {{ participants }}
+    WHERE _airbyte_extracted_at
+          > (SELECT max(_airbyte_extracted_at) FROM {{ participants }}) - INTERVAL 3 DAY
 ),
+
+dates_to_rebuild AS (
+    SELECT DISTINCT toDate(parseDateTimeBestEffortOrNull(join_time), 'UTC') AS date
+    FROM {{ participants }}
+    WHERE meeting_uuid IN (SELECT meeting_uuid FROM recently_extracted_meetings)
+),
+
+meetings_in_scope AS (
+    SELECT DISTINCT meeting_uuid
+    FROM {{ participants }}
+    WHERE toDate(parseDateTimeBestEffortOrNull(join_time), 'UTC') IN (SELECT date FROM dates_to_rebuild)
+),
+{%- endif %}
+
+deduped_participants AS (
+    SELECT
+        tenant_id,
+        source_id,
+        meeting_uuid,
+        participant_uuid,
+        email,
+        user_name,
+        camera,
+        share_desktop,
+        share_application,
+        share_whiteboard,
+        parseDateTimeBestEffortOrNull(join_time) AS joined_at,
+        parseDateTimeBestEffortOrNull(leave_time) AS left_at
+    FROM {{ participants }}
+    WHERE parseDateTimeBestEffortOrNull(join_time) IS NOT NULL
+    {%- if is_incremental() %}
+      AND (
+          (SELECT count() FROM {{ this }}) = 0
+          OR meeting_uuid IN (SELECT meeting_uuid FROM meetings_in_scope)
+      )
+    {%- endif %}
+    -- WORKAROUND: Airbyte re-emits identical participant rows; keep the latest one.
+    ORDER BY _airbyte_extracted_at DESC
+    LIMIT 1 BY meeting_uuid, participant_uuid, joined_at
+),
+
 attendance AS (
     SELECT
         tenant_id,
@@ -96,11 +136,12 @@ attendance AS (
             lower(email),
             concat('guest:', ifNull(participant_uuid, ''))
         ) AS attendee,
-        min(parseDateTimeBestEffortOrNull(join_time)) AS first_join,
-        max(parseDateTimeBestEffortOrNull(leave_time)) AS last_leave
+        min(joined_at) AS first_join,
+        max(left_at) AS last_leave
     FROM deduped_participants
     GROUP BY tenant_id, source_id, meeting_uuid, attendee
 ),
+
 companions AS (
     SELECT
         me.tenant_id,
@@ -117,7 +158,40 @@ companions AS (
         AND other.meeting_uuid = me.meeting_uuid
         AND other.attendee != me.attendee
     GROUP BY me.tenant_id, me.source_id, me.meeting_uuid, me.attendee
+),
+
+sessions_with_company AS (
+    SELECT
+        own.tenant_id,
+        own.source_id,
+        own.meeting_uuid,
+        own.email,
+        own.user_name,
+        own.camera,
+        own.share_desktop,
+        own.share_application,
+        own.share_whiteboard,
+        own.joined_at,
+        -- WORKAROUND: an unmatched LEFT JOIN gives NULL or 0 depending on join_use_nulls,
+        -- and greatest()/least() skip NULL, so test the count before clamping.
+        if(
+            ifNull(c.others, 0) = 0,
+            0,
+            greatest(0, ifNull(dateDiff(
+                'second',
+                greatest(own.joined_at, c.others_from),
+                least(own.left_at, c.others_until)
+            ), 0))
+        ) AS company_seconds
+    FROM deduped_participants AS own
+    LEFT JOIN companions AS c
+        ON c.tenant_id = own.tenant_id
+        AND c.source_id = own.source_id
+        AND c.meeting_uuid = own.meeting_uuid
+        AND c.attendee = lower(own.email)
+    WHERE own.email IS NOT NULL AND own.email != ''
 )
+
 SELECT
     p.tenant_id,
     p.source_id AS insight_source_id,
@@ -125,7 +199,7 @@ SELECT
         p.tenant_id, '-',
         p.source_id, '-',
         lower(p.email), '-',
-        toString(toDate(parseDateTimeBestEffortOrNull(p.join_time), 'UTC'))
+        toString(toDate(p.joined_at, 'UTC'))
     )) AS unique_key,
     p.email AS user_id,
     -- Pick one display name when the same email surfaces under multiple
@@ -136,30 +210,23 @@ SELECT
     toNullable(coalesce(any(p.user_name), '')) AS user_name,
     p.email AS email,
     lower(p.email) AS person_key,
-    toDate(parseDateTimeBestEffortOrNull(p.join_time), 'UTC') AS date,
+    toDate(p.joined_at, 'UTC') AS date,
     CAST(NULL AS Nullable(Int64)) AS calls_count,
     CAST(NULL AS Nullable(Int64)) AS meetings_organized,
-    -- uniqExact over logical_meeting_id collapses host-drop rejoins into one.
-    -- Falls back to participant.meeting_uuid when the JOIN misses (meeting
-    -- row not yet stitched) — preserves "one row → one meeting" behavior
-    -- consistent with the previous count(*) for unstitched data.
+    -- uniqExact over logical_meeting_id collapses host-drop rejoins into one;
+    -- meeting_uuid stands in while the meeting row is not yet stitched.
     toInt64(uniqExactIf(coalesce(ml.logical_meeting_id, p.meeting_uuid), p.company_seconds > 0)) AS meetings_attended,
     CAST(NULL AS Nullable(Int64)) AS adhoc_meetings_organized,
     CAST(NULL AS Nullable(Int64)) AS adhoc_meetings_attended,
     CAST(NULL AS Nullable(Int64)) AS scheduled_meetings_organized,
     CAST(NULL AS Nullable(Int64)) AS scheduled_meetings_attended,
-    toInt64(sum(
-        p.company_seconds
-    )) AS audio_duration_seconds,
+    toInt64(sum(p.company_seconds)) AS audio_duration_seconds,
     -- #263: gate by per-participant `camera` device name (NULL/'' means
     -- the participant did not use a camera in this session), not by the
     -- meeting-level `has_video` flag from sessions. See header for the
     -- over-estimate caveat (any-video-ever-in-session counts the whole
     -- session).
-    toInt64(sumIf(
-        p.company_seconds,
-        p.camera IS NOT NULL AND p.camera != ''
-    )) AS video_duration_seconds,
+    toInt64(sumIf(p.company_seconds, p.camera IS NOT NULL AND p.camera != '')) AS video_duration_seconds,
     toInt64(sumIf(
         p.company_seconds,
         coalesce(p.share_desktop, false)
@@ -170,52 +237,19 @@ SELECT
     now() AS collected_at,
     'insight_zoom' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version
-FROM (
-    SELECT
-        own.*,
-        -- WORKAROUND: an unmatched LEFT JOIN gives NULL or 0 depending on join_use_nulls.
-        if(
-            ifNull(c.others, 0) = 0,
-            0,
-            greatest(0, ifNull(dateDiff(
-                'second',
-                greatest(parseDateTimeBestEffortOrNull(own.join_time), c.others_from),
-                least(parseDateTimeBestEffortOrNull(own.leave_time), c.others_until)
-            ), 0))
-        ) AS company_seconds
-    FROM deduped_participants AS own
-    LEFT JOIN companions AS c
-        ON c.tenant_id = own.tenant_id
-        AND c.source_id = own.source_id
-        AND c.meeting_uuid = own.meeting_uuid
-        AND c.attendee = lower(own.email)
-    WHERE own.email IS NOT NULL AND own.email != ''
-) AS p
+FROM sessions_with_company AS p
 LEFT JOIN {{ ref('zoom__meeting_sessions') }} AS ml FINAL
     ON p.meeting_uuid = ml.uuid
     AND p.tenant_id = ml.tenant_id
     AND p.source_id = ml.source_id
-{% if is_incremental() %}
--- Watermark on the source EXTRACT time, not the meeting date. A forward-only
--- `join_time > max(date) - 3d` filter permanently strands backfilled / late-arriving
--- history: this is exactly how the Zoom meeting_hours undercount happened on virtuozzo —
--- bronze held the full history but staging kept only the last few days, so the monthly
--- total collapsed to ~one week. Re-pulled rows always carry a fresh `_airbyte_extracted_at`,
--- so we reprocess every meeting date touched by a recent extract. The whole date is
--- re-aggregated from full bronze, so per-day SUMs stay correct even when a day's
--- participants arrive across several sync batches.
+{%- if is_incremental() %}
 WHERE (
     (SELECT count() FROM {{ this }}) = 0
-    OR toDate(parseDateTimeBestEffortOrNull(p.join_time), 'UTC') IN (
-        SELECT DISTINCT toDate(parseDateTimeBestEffortOrNull(join_time), 'UTC')
-        FROM {{ source('bronze_zoom', 'participants') }}
-        WHERE _airbyte_extracted_at
-              > (SELECT max(_airbyte_extracted_at) FROM {{ source('bronze_zoom', 'participants') }}) - INTERVAL 3 DAY
-    )
+    OR toDate(p.joined_at, 'UTC') IN (SELECT date FROM dates_to_rebuild)
 )
-{% endif %}
+{%- endif %}
 GROUP BY
     p.tenant_id,
     p.source_id,
     p.email,
-    toDate(parseDateTimeBestEffortOrNull(p.join_time), 'UTC')
+    toDate(p.joined_at, 'UTC')

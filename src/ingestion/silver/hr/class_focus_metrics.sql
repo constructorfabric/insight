@@ -21,7 +21,7 @@ SELECT
     toInt64(sum(ma.meetings_attended + ifNull(ma.calls_count, 0)))  AS meetings_count,
     -- Use the longest modality (audio / video / screen-share) to avoid under-
     -- counting M365 Teams participants who joined muted but with camera or
-    -- screen-share on. For Zoom, audio_duration is full participation time
+    -- screen-share on. For Zoom, audio_duration is the time with company present
     -- and always dominates, so greatest(...) reduces to audio.
     ROUND(
         sum(greatest(

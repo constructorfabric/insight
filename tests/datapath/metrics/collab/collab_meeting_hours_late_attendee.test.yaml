@@ -1,0 +1,24 @@
+spec_version: 1
+description: >
+  Metric: collab.meeting_hours — an attendee who arrives in a later sync re-opens
+  every day of that meeting.
+  How it's computed (bronze → silver → gold):
+    • bronze: Zoom participant sessions, synced in batches.
+    • staging: a session's time counts only while someone else was in the meeting,
+      so an incremental build re-aggregates every date of each meeting touched by a
+      recent extract, not only the dates of the newly extracted rows.
+    • gold:   per-person sum of meeting hours.
+
+  Cast (Engineering): alice joins Zoom meeting z9 at 23:50 UTC on Dec 20 and stays
+  until 00:30. The first sync carries only her row, so she is alone. A later sync
+  brings bob, who joined at 00:10 on Dec 21; after the incremental build alice's
+  Dec 20 gains the 20 minutes they shared.
+  Cases: alone before the late row · the late row re-opens the earlier day.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+
+  bronze_zoom.participants:
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: late-alice-z9, meeting_uuid: z9, participant_uuid: la1, join_time: "2026-12-20T23:50:00Z", leave_time: "2026-12-21T00:30:00Z" }

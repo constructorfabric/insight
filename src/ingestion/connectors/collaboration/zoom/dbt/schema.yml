@@ -103,11 +103,23 @@ models:
           - not_null
       - name: meetings_attended
         description: >
-          Distinct logical meetings the user attended on this day. Computed
-          as `uniqExact(logical_meeting_id)` over participant rows, where
+          Distinct logical meetings the user attended on this day with someone
+          else present: a session with nobody else is not a meeting. Computed
+          as `uniqExact(logical_meeting_id)` over participant rows that have
+          company time (see audio_duration_seconds), where
           `logical_meeting_id` clusters consecutive sessions sharing the
           same Zoom Meeting ID with inter-session gap ≤ 5 min — this
           collapses host-drop rejoins (observed gaps 11–147 s in production).
           Recurring meetings reusing the same ID across days remain separate
           logical meetings. Back-to-back PMI sessions with < 5-min gap may
           still be merged (known trade-off, see issue #258).
+      - name: audio_duration_seconds
+        description: >
+          Seconds the user spent in meetings on this day while someone else was
+          there: each session is clamped to the span from the first other
+          attendee's arrival to the last one's departure, so a room left open
+          adds nothing and a session alone adds zero. Guests without an email
+          count as company. Known limits: gaps between visitors inside that span
+          still count, and two devices of the same person in one meeting add up.
+          video_duration_seconds and screen_share_duration_seconds apply the same
+          clamp to sessions with a camera or a share.
