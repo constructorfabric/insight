@@ -35,7 +35,10 @@ removed, and each change sets it to what the change added — an id-merge would
 keep the old value whenever the replaced text differs from it by a byte.
 Missing source changes cannot be recovered by either rule.
 
-Only the creation marker is synthesized at issue creation. A snapshot
+The creation marker is synthesized at issue creation. An issue created at or
+after the source's earliest activity also gets a `synthetic_initial` row per
+changed field, holding that field's state before its first change; for an issue
+created earlier the feed may lack changes, so no initial value is claimed. A snapshot
 disagreement is `snapshot_diff`; a field absent from a subsequent complete issue
 snapshot is `retired_field`. A `snapshot_diff` is dated by source facts, never
 by when it was collected, so a re-sync cannot move it: a resolved state at the
@@ -108,6 +111,8 @@ attributes a multi-assignee issue to an arbitrary first member.
 ## Deletions and links
 
 An explicit comment `deleted` flag reaches comments and lifecycle history.
+A comment row stored without `id`/`issue_id` takes its id from its
+`{tenant}-{source}-{id}` key and its issue from the issue snapshot that lists it.
 Work-item deletion is unknown without authoritative evidence (`is_deleted=NULL`).
 A missing census row is not interpreted as deletion or access loss: this Bronze
 contract does not supply a completed-run boundary that proves an absence.

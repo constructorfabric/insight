@@ -60,6 +60,29 @@ WITH changes AS (
         l.author_id, l.field_id, l.field_id AS field_name, 'multi' AS field_cardinality, l.pairs, l.collected_at, l.delta_action
     FROM {{ ref('youtrack__lifecycle_events') }} AS l
     INNER JOIN {{ ref('youtrack__issues') }} AS i USING (insight_source_id, issue_id)
+), feed_starts AS (
+    SELECT insight_source_id, min(event_at) AS feed_start_at
+    FROM {{ ref('youtrack__activities') }} GROUP BY insight_source_id
+), first_changes AS (
+    SELECT insight_source_id, issue_id, field_id,
+        argMin(id_readable, (event_at, _seq)) AS id_readable, argMin(field_name, (event_at, _seq)) AS field_name,
+        argMin(field_cardinality, (event_at, _seq)) AS field_cardinality, argMin(collected_at, (event_at, _seq)) AS collected_at
+    FROM changes GROUP BY insight_source_id, issue_id, field_id
+), initials AS (
+    -- INVARIANT: only an issue created inside the activity feed has every change since
+    -- its creation in hand; earlier, what the first seen change replaced is a guess.
+    SELECT c.insight_source_id, c.issue_id, c.id_readable, fs.event_id, i.created_at AS event_at,
+        'synthetic_initial' AS event_kind,
+        toUInt32(row_number() OVER (PARTITION BY c.insight_source_id, c.issue_id ORDER BY c.field_id)) AS _seq, CAST(NULL AS Nullable(String)) AS author_id,
+        c.field_id, c.field_name, c.field_cardinality, fs.pairs, c.collected_at, 'set' AS delta_action
+    FROM first_changes AS c
+    INNER JOIN {{ ref('youtrack__field_states') }} AS fs
+        ON fs.insight_source_id = c.insight_source_id AND fs.issue_id = c.issue_id
+        AND fs.field_id = c.field_id AND fs.event_id = concat('initial:', c.issue_id)
+    INNER JOIN {{ ref('youtrack__issues') }} AS i
+        ON i.insight_source_id = c.insight_source_id AND i.issue_id = c.issue_id
+    INNER JOIN feed_starts AS f ON f.insight_source_id = c.insight_source_id
+    WHERE i.created_at >= f.feed_start_at
 ), origins AS (
     SELECT insight_source_id, issue_id, min(event_at) AS first_event_at
     FROM changes GROUP BY insight_source_id, issue_id
@@ -71,6 +94,8 @@ WITH changes AS (
     SELECT * FROM lifecycle
     UNION ALL
     SELECT * FROM retired
+    UNION ALL
+    SELECT * FROM initials
     UNION ALL
     SELECT i.insight_source_id, i.issue_id, i.id_readable, concat('initial:', i.issue_id), i.created_at,
         'synthetic_initial', toUInt32(0), i.reporter_id, 'created', 'Created', 'single',
