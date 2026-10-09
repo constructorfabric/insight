@@ -225,7 +225,7 @@ streams:
             # letter-case change) does not fork the member into a second
             # bronze row.
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org }}:{{ (record.get('node') or {}).get('databaseId') or '' }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org }}:{{ (record.get('node') or {}).get('databaseId') or '' }}"
             value_type: string
       - type: RemoveFields
         field_pointers:
@@ -252,6 +252,11 @@ spec:
         title: Insight Tenant ID
         description: Tenant isolation identifier, injected as `tenant_id` on every record.
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         title: Source Instance ID

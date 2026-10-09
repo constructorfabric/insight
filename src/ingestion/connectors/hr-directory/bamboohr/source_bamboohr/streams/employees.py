@@ -205,9 +205,10 @@ class EmployeesStream(Stream):
     name = "employees"
     primary_key = "unique_key"
 
-    def __init__(self, client: BambooClient, tenant_id: str, source_id: str) -> None:
+    def __init__(self, client: BambooClient, tenant_id: str, source_id: str, tenant_key: str | None = None) -> None:
         self._client = client
         self._tenant_id = tenant_id
+        self._tenant_key = tenant_key or tenant_id
         self._source_id = source_id
 
     def read_records(
@@ -273,7 +274,7 @@ class EmployeesStream(Stream):
         record["raw_data"] = payload
         record["tenant_id"] = self._tenant_id
         record["source_id"] = self._source_id
-        record["unique_key"] = f"{self._tenant_id}-{self._source_id}-{employee_id}"
+        record["unique_key"] = f"{self._tenant_key}-{self._source_id}-{employee_id}"
         return record
 
     def get_json_schema(self) -> Mapping[str, Any]:

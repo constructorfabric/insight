@@ -400,7 +400,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - collected_at
@@ -443,7 +443,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - field_id
@@ -650,7 +650,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - project_id
@@ -865,7 +865,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['accountId'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['accountId'] }}
           - type: AddedFieldDefinition
             path:
               - account_id
@@ -1090,7 +1090,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - jira_id
@@ -1354,7 +1354,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - id_readable
@@ -1569,7 +1569,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - comment_id
@@ -1835,7 +1835,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - worklog_id
@@ -2126,7 +2126,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - sprint_id
@@ -2285,7 +2285,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - status_id
@@ -2454,7 +2454,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - priority_id
@@ -2556,7 +2556,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - issuetype_id
@@ -2700,7 +2700,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - resolution_id
@@ -2883,7 +2883,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - id_readable
@@ -3007,7 +3007,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - project_id
@@ -3188,7 +3188,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - jira_id
@@ -3294,7 +3294,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['worklogId'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['worklogId'] }}
           - type: AddedFieldDefinition
             path:
               - worklog_id
@@ -3404,7 +3404,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.board_id }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.board_id }}
           - type: AddedFieldDefinition
             path:
               - board_id
@@ -3551,6 +3551,11 @@ spec:
         description: Tenant isolation identifier for the ingestion layer
         title: Insights Tenant ID
         order: 3
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         description: Instance discriminator (e.g., jira-team-alpha)

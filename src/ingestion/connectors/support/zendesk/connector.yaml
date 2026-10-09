@@ -246,7 +246,7 @@ streams:
             value: "{% set v = ((record.get('metric_set') or {}).get('full_resolution_time_in_minutes') or {}).get('calendar') %}{{ (v * 60) | int if v is not none else none }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
           - type: AddedFieldDefinition
             path: [metadata]
             value: "{{ record | tojson }}"
@@ -336,7 +336,7 @@ streams:
             value: "{{ record['updated_at'] }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
 
   # ── Stream 2: support_agents ────────────────────────────────────────
   # Full refresh — agent roster is small; Zendesk has no reliable
@@ -423,7 +423,7 @@ streams:
             value: "{{ record.get('name') or none }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
           - type: AddedFieldDefinition
             path: [group_id]
             value: "{{ record['default_group_id'] | string if record.get('default_group_id') else none }}"
@@ -574,7 +574,7 @@ streams:
             value: "{% set v = record.get('reason') or record.get('reason_code') or none %}{{ v | string if v is not none else none }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
 
   # ── Stream 4: support_ticket_events ─────────────────────────────────
   # Per-ticket audit log (Ticket Audits API) — the ONLY honest source of
@@ -708,7 +708,7 @@ streams:
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
 
 # default_concurrency MUST be >= 2 (jira's hard-won lesson): with 1 worker the
 # concurrent CDK self-deadlocks once a sync generates ~10k partitions — the
@@ -737,6 +737,11 @@ spec:
         title: Insight Tenant ID
         description: Tenant isolation identifier, injected as `tenant_id` on every record.
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         title: Source Instance ID

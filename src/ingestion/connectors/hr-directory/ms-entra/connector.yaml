@@ -192,7 +192,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}
 
 spec:
@@ -213,6 +213,11 @@ spec:
         description: Insight platform tenant ID.
         order: 0
         title: Insight Tenant ID
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         description: Insight source instance ID (e.g. ms-entra-main).

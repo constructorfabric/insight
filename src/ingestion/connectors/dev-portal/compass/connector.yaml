@@ -349,7 +349,7 @@ streams:
             value: "{{ ((((record.get('component') or {}).get('relationships') or {}).get('pageInfo')) or {}).get('hasNextPage') or false }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ (record.get('component') or {}).get('id') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ (record.get('component') or {}).get('id') }}"
             value_type: string
       - type: RemoveFields
         field_pointers:
@@ -457,7 +457,7 @@ streams:
             value: "{{ (record.get('changeMetadata') or {}).get('lastUserModificationAt') or none }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record.get('id') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record.get('id') }}"
             value_type: string
       - type: RemoveFields
         field_pointers:
@@ -637,7 +637,7 @@ streams:
             value: "{{ ((record.get('score') or {}).get('criteriaScores')) or [] }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.scorecard_id }}:{{ (record.get('node') or {}).get('id') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.scorecard_id }}:{{ (record.get('node') or {}).get('id') }}"
             value_type: string
       - type: RemoveFields
         field_pointers:
@@ -751,7 +751,7 @@ streams:
             value: "{{ (record.get('team') or {}).get('isVerified') or false }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ (record.get('team') or {}).get('id') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ (record.get('team') or {}).get('id') }}"
             value_type: string
       - type: RemoveFields
         field_pointers:
@@ -915,7 +915,7 @@ streams:
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.team_id }}:{{ (record.get('member') or {}).get('id') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.team_id }}:{{ (record.get('member') or {}).get('id') }}"
             value_type: string
       - type: RemoveFields
         field_pointers:
@@ -1181,7 +1181,7 @@ streams:
           # forks into a new bronze row instead of replacing the previous one.
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.component_id }}:{{ record.get('updateSequenceNumber') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.component_id }}:{{ record.get('updateSequenceNumber') }}"
             value_type: string
       - type: RemoveFields
         field_pointers:
@@ -1214,6 +1214,11 @@ spec:
         title: Insight Tenant ID
         description: Tenant isolation identifier, injected as `tenant_id` on every record.
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         title: Source Instance ID

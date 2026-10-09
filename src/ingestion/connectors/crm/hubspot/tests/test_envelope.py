@@ -28,6 +28,16 @@ class TestEnvelope:
         # collected_at is a UTC second-precision ISO timestamp.
         assert out["collected_at"].endswith("Z")
 
+    def test_a_warm_install_keys_by_its_legacy_tenant_key(self):
+        out = envelope(
+            {"id": "1", "properties": {}},
+            tenant_id="T",
+            tenant_key="example-legacy",
+            source_id="S",
+            allowed_property_names=frozenset(),
+        )
+        assert (out["tenant_id"], out["unique_key"]) == ("T", "example-legacy-S-1")
+
     def test_property_outside_allowlist_reaches_raw_data_only(self):
         out = wrap({"id": "1", "properties": {"amount": "10", "my_custom": "x", "uncurated_std": "y"}})
         assert out["properties_amount"] == "10"

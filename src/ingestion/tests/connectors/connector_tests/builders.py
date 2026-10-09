@@ -29,6 +29,10 @@ class ConfigBuilder:
         self._config["insight_tenant_id"] = tenant_id
         return self
 
+    def with_tenant_key(self, tenant_key: str) -> "ConfigBuilder":
+        self._config["insight_tenant_key"] = tenant_key
+        return self
+
     def with_source_id(self, source_id: str) -> "ConfigBuilder":
         self._config["insight_source_id"] = source_id
         return self

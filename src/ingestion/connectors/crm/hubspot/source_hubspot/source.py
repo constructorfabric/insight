@@ -124,6 +124,7 @@ class SourceHubspot(AbstractSource):
             hubspot_api=hubspot,
             access_token=config["hubspot_access_token"],
             tenant_id=config["insight_tenant_id"],
+            tenant_key=config.get("insight_tenant_key"),
             source_id=config["insight_source_id"],
             start_date=start_date,
         )

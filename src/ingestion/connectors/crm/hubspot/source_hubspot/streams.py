@@ -80,6 +80,7 @@ class HubspotStream(Stream, ABC):
         tenant_id: str,
         source_id: str,
         start_date: pendulum.DateTime,
+        tenant_key: Optional[str] = None,
     ) -> None:
         self._stream_name = stream_name
         self._hubspot = hubspot_api
@@ -91,6 +92,7 @@ class HubspotStream(Stream, ABC):
             self._object_type, frozenset()
         )
         self._tenant_id = tenant_id
+        self._tenant_key = tenant_key
         self._source_id = source_id
         self._start_date = start_date
         self._envelope_collisions_seen: set = set()
@@ -260,6 +262,7 @@ class HubspotStream(Stream, ABC):
             yield envelope(
                 record,
                 tenant_id=self._tenant_id,
+                tenant_key=self._tenant_key,
                 source_id=self._source_id,
                 allowed_property_names=self._allowed_property_names,
                 collision_seen=self._envelope_collisions_seen,
@@ -513,6 +516,7 @@ class OwnersStream(HubspotStream):
             yield envelope(
                 record,
                 tenant_id=self._tenant_id,
+                tenant_key=self._tenant_key,
                 source_id=self._source_id,
                 allowed_property_names=self._allowed_property_names,
                 collision_seen=self._envelope_collisions_seen,

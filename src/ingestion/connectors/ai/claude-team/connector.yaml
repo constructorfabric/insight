@@ -89,7 +89,7 @@ streams:
             value: "{{ config['insight_source_id'] }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['account']['uuid'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['account']['uuid'] }}"
           - type: AddedFieldDefinition
             path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
@@ -148,7 +148,7 @@ streams:
             value: "{{ config['insight_source_id'] }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['uuid'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['uuid'] }}"
           - type: AddedFieldDefinition
             path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
@@ -275,7 +275,7 @@ streams:
           # replaces its own row rather than adding a second.
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['account_uuid'] }}-{{ now_utc().strftime('%Y-%m-%d') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['account_uuid'] }}-{{ now_utc().strftime('%Y-%m-%d') }}"
           - type: AddedFieldDefinition
             path: [snapshot_date]
             value: "{{ now_utc().strftime('%Y-%m-%d') }}"
@@ -417,7 +417,7 @@ streams:
             value: "{{ config['insight_source_id'] }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ record['email'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ record['email'] }}"
           - type: AddedFieldDefinition
             path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
@@ -546,7 +546,7 @@ streams:
             # completeness gate needs the reference belonging to the read it
             # is judging, not the day's newest one. Same move as
             # claude_team_overage_spend in 3.2.0.
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
           - type: AddedFieldDefinition
             path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
@@ -576,6 +576,11 @@ spec:
         title: Insight Tenant ID
         description: Tenant isolation identifier (UUID), injected as `tenant_id` field into every record
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       claude_org_id:
         type: string
         title: Claude.ai Organisation UUID

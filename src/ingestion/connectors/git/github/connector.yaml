@@ -702,7 +702,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
       - type: RemoveFields
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
@@ -826,7 +826,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}
 
   # ── file_changes (git-cli-proxy) ───────────────────────────────────
   - type: DeclarativeStream
@@ -943,7 +943,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}:{{ record['filename'] | replace(':', '%3A') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}:{{ record['filename'] | replace(':', '%3A') }}
 
   # ── branches (git-cli-proxy) ──────────────────────────────────
   - type: DeclarativeStream
@@ -1020,7 +1020,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['name'] | replace(':', '%3A') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['name'] | replace(':', '%3A') }}
 
   # ── Commit authors (git-cli-proxy + GitHub API) ─────────────────────────
   # A commit names an e-mail and no account, so a commit reaches a person only
@@ -1233,7 +1233,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:author:{{ stream_slice.extra_fields['author_email'] | replace(':', '%3A') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:author:{{ stream_slice.extra_fields['author_email'] | replace(':', '%3A') }}
       - type: RemoveFields
         # Hoisted above; the commit payload itself belongs to the proxy streams.
         field_pointers:
@@ -1443,7 +1443,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['id'] }}
       - type: RemoveFields
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
@@ -1644,7 +1644,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pull_number }}:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pull_number }}:{{ record['id'] }}
       - type: RemoveFields
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
@@ -1836,7 +1836,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pull_number }}:{{ record['sha'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pull_number }}:{{ record['sha'] }}
       - type: RemoveFields
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
@@ -2009,7 +2009,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['number'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['number'] }}
       - type: RemoveFields
         # Hoisted above; the camelCase originals stay out of bronze.
         field_pointers:
@@ -2144,7 +2144,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:comment:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:comment:{{ record['id'] }}
       - type: RemoveFields
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
@@ -2307,7 +2307,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:review_comment:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:review_comment:{{ record['id'] }}
       - type: RemoveFields
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
@@ -2501,7 +2501,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:issue:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:issue:{{ record['id'] }}
       - type: RemoveFields
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
@@ -2644,7 +2644,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:project:{{ (record.get('id') or '') | replace(':', '%3A') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:project:{{ (record.get('id') or '') | replace(':', '%3A') }}
       - type: RemoveFields
         # Hoisted above; the nested count shapes stay out of bronze.
         field_pointers:
@@ -2833,7 +2833,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:issue_links:{{ record.get('number') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:issue_links:{{ record.get('number') }}
       - type: RemoveFields
         # Hoisted above; the camelCase and nested originals stay out of bronze.
         field_pointers:
@@ -3011,7 +3011,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:project:{{ (stream_partition.project_id or '') | replace(':', '%3A') }}:field:{{ (record.get('id') or '') | replace(':', '%3A') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:project:{{ (stream_partition.project_id or '') | replace(':', '%3A') }}:field:{{ (record.get('id') or '') | replace(':', '%3A') }}
       - type: RemoveFields
         # Hoisted above; the camelCase and nested originals stay out of bronze.
         field_pointers:
@@ -3223,7 +3223,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:project:{{ (stream_partition.project_id or '') | replace(':', '%3A') }}:item:{{ (record.get('id') or '') | replace(':', '%3A') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:project:{{ (stream_partition.project_id or '') | replace(':', '%3A') }}:item:{{ (record.get('id') or '') | replace(':', '%3A') }}
       - type: RemoveFields
         # Hoisted above; the camelCase and nested originals stay out of bronze.
         field_pointers:
@@ -3359,7 +3359,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:issue_field:{{ (record.get('id') or '') | replace(':', '%3A') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:issue_field:{{ (record.get('id') or '') | replace(':', '%3A') }}
       - type: RemoveFields
         # Hoisted above; the camelCase and nested originals stay out of bronze.
         field_pointers:
@@ -3463,7 +3463,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:issue_type:{{ (record.get('id') or '') | replace(':', '%3A') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:issue_type:{{ (record.get('id') or '') | replace(':', '%3A') }}
       - type: RemoveFields
         # Hoisted above; the camelCase originals stay out of bronze.
         field_pointers:
@@ -3631,7 +3631,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:run:{{ record['id'] }}:{{ record.get('run_attempt', 1) }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:run:{{ record['id'] }}:{{ record.get('run_attempt', 1) }}
       - type: RemoveFields
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
@@ -3764,7 +3764,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:deploy:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:deploy:{{ record['id'] }}
       - type: RemoveFields
         # Hoisted above; the nested and renamed originals stay out of bronze.
         field_pointers:
@@ -3967,7 +3967,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.deployment_id }}:status:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.deployment_id }}:status:{{ record['id'] }}
       - type: RemoveFields
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
@@ -4176,7 +4176,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:pull_request:{{ stream_partition.pull_number }}:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:pull_request:{{ stream_partition.pull_number }}:{{ record['id'] }}
       - type: RemoveFields
         # Hoisted above; the camelCase and nested originals stay out of bronze.
         field_pointers:
@@ -4560,7 +4560,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:issue:{{ stream_partition.issue_number }}:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:issue:{{ stream_partition.issue_number }}:{{ record['id'] }}
       - type: RemoveFields
         # Hoisted above; the camelCase and nested originals stay out of bronze.
         field_pointers:
@@ -4629,6 +4629,11 @@ spec:
         description: Insight tenant identifier stamped onto every emitted record.
         title: Insight Tenant ID
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         description: >-

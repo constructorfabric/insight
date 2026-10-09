@@ -656,7 +656,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
       - type: RemoveFields
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
@@ -804,7 +804,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['sha'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['sha'] }}
 
   # ── Per-file changes (git-cli-proxy) ────────────────────────────────────
   - type: DeclarativeStream
@@ -914,7 +914,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['sha'] }}:{{ record['filename'] | replace(':', '%3A') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['sha'] }}:{{ record['filename'] | replace(':', '%3A') }}
 
   # ── Branches (git-cli-proxy) ────────────────────────────────────────────
   # Full refresh — bronze keeps the latest head per branch. No head_sha in the
@@ -992,7 +992,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['name'] | replace(':', '%3A') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['name'] | replace(':', '%3A') }}
 
   # ── Merge requests (GitLab API) ─────────────────────────────────────────
   # One listing per scope, all states, ascending by updated_at with the stored
@@ -1170,7 +1170,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['project_id'] }}:{{ record['iid'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['project_id'] }}:{{ record['iid'] }}
       - type: RemoveFields
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
@@ -1315,7 +1315,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['iid'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['iid'] }}
       - type: RemoveFields
         field_pointers:
           - [iid]
@@ -1470,7 +1470,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_slice.extra_fields['iid'] }}:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_slice.extra_fields['iid'] }}:{{ record['id'] }}
       - type: RemoveFields
         field_pointers:
           - [author]
@@ -1604,7 +1604,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_slice.extra_fields['iid'] }}:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_slice.extra_fields['iid'] }}:{{ record['id'] }}
       - type: RemoveFields
         field_pointers:
           - [id]
@@ -1709,7 +1709,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_slice.extra_fields['iid'] }}:state:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_slice.extra_fields['iid'] }}:state:{{ record['id'] }}
       - type: RemoveFields
         field_pointers:
           - [user]
@@ -1820,7 +1820,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_slice.extra_fields['iid'] }}:label:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_slice.extra_fields['iid'] }}:label:{{ record['id'] }}
       - type: RemoveFields
         field_pointers:
           - [user]
@@ -1898,7 +1898,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.scope }}:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.scope }}:{{ record['id'] }}
       - type: RemoveFields
         field_pointers:
           - [avatar_url]
@@ -2094,7 +2094,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['id'] }}
       - type: RemoveFields
         field_pointers:
           - [user]
@@ -2183,7 +2183,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.project_id }}:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.project_id }}:{{ record['id'] }}
       - type: RemoveFields
         field_pointers:
           - [project]
@@ -2324,7 +2324,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.project_id }}:{{ record['id'] }}:{{ record.get('status') or '' }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.project_id }}:{{ record['id'] }}:{{ record.get('status') or '' }}
       - type: RemoveFields
         field_pointers:
           - [environment]
@@ -2409,7 +2409,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
       - type: RemoveFields
         field_pointers:
           - [avatar_url]
@@ -2679,7 +2679,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_partition.author_email | lower | replace(':', '%3A') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_partition.author_email | lower | replace(':', '%3A') }}
       - type: RemoveFields
         # The search returns whole user profiles; only the pairing is kept.
         field_pointers:
@@ -2768,6 +2768,11 @@ spec:
         description: Insight tenant identifier stamped onto every emitted record.
         title: Insight Tenant ID
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         description: >-

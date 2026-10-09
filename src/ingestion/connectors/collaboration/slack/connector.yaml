@@ -86,7 +86,7 @@ definitions:
             - type: AddedFieldDefinition
               path:
                 - unique_key
-              value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['user_id'] }}-{{ record['date'] }}"
+              value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['user_id'] }}-{{ record['date'] }}"
 
 streams:
   - $ref: "#/definitions/streams/users_details"
@@ -107,6 +107,11 @@ spec:
         title: Insight Tenant ID
         description: Tenant isolation identifier stamped onto every emitted record.
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         title: Insight Source ID

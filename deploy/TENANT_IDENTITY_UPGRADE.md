@@ -92,7 +92,7 @@ every derived layer.
    kubectl -n <app-namespace> get workflows --field-selector status.phase=Running
    ```
 
-### 3.3 Change values and deploy *(lands with #3661)*
+### 3.3 Change values and deploy
 
 ```yaml
 ingestion:
@@ -101,16 +101,32 @@ ingestion:
     legacyTenantKeyOverride: "<LEGACY_KEY>"
 ```
 
-Deploy the chart version that contains the tenant identity change.
+Remove `global.tenantDefaultId` from the values, or set it to the same UUID: two
+different values fail the render.
 
-### 3.4 Migrate data *(lands with #3661)*
+Operator-authored config bundles (the TSV files the `clickhouse-field-value-map`
+hook loads) carry a `tenant_id` column. Change it from `<LEGACY_KEY>` to
+`<TENANT_UUID>` in the same change: the loader skips keys that already carry a
+decision, and after §3.4 the stored decisions are under `<TENANT_UUID>`.
 
-1. Rewrite tenant columns in Bronze and config tables. `unique_key` is not touched:
+Deploy the chart version that contains the tenant identity change. Reconcile
+keeps every Airbyte source, connection and schedule name, because they are
+built from `legacyTenantKeyOverride`.
+
+### 3.4 Migrate data
+
+1. Rewrite `tenant_id` in every `bronze_*`, `config` and `ingestion_history`
+   table. `unique_key` is not touched. Preview first, then apply:
    ```bash
+   export CLICKHOUSE_URL=<url> CLICKHOUSE_USER=<user> CLICKHOUSE_PASSWORD=<password>
+   src/ingestion/scripts/migrate-tenant-identity.sh \
+     --canonical-tenant <TENANT_UUID> --legacy-tenant-key <LEGACY_KEY> --dry-run
    src/ingestion/scripts/migrate-tenant-identity.sh \
      --canonical-tenant <TENANT_UUID> --legacy-tenant-key <LEGACY_KEY>
    ```
-   The script is idempotent: a second run reports zero changed rows.
+   The script refuses, changing nothing, when a table holds a tenant that is
+   neither of the two. It prints the rows it moved per table and the tables it
+   skipped for having no `tenant_id` column. A second run reports zero rows.
 2. Rebuild every derived layer with a dbt full refresh.
 3. Re-run identity seeding for the canonical tenant.
 

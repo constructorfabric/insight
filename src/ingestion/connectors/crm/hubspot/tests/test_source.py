@@ -121,6 +121,10 @@ class TestStreams:
         assert streams["deals"]._source_id == "S"
         assert streams["deals"]._start_date == pendulum.datetime(2024, 1, 1, tz="UTC")
 
+    def test_streams_key_by_the_configured_tenant_key(self, source):
+        streams = {s.name: s for s in source.streams({**CONFIG, "insight_tenant_key": "example-legacy"})}
+        assert (streams["deals"]._tenant_id, streams["deals"]._tenant_key) == ("T", "example-legacy")
+
     def test_resolve_stream_list_appends_archived_siblings(self, source):
         names = source._resolve_stream_list(CONFIG)
         assert names[: len(CURATED_STREAMS)] == list(CURATED_STREAMS)

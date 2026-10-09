@@ -72,7 +72,10 @@ name: zendesk
 # from images.cdk.image). MUST be `nocode`/absent for declarative connectors:
 # reconcile only branches on `nocode` vs `cdk` — any other value (e.g.
 # `declarative`) falls through to the cdk image path and fails with no image.
-version: "2.0.0"
+# 2.1.0: the tenant segment of unique_key comes from insight_tenant_key, so a
+#   warm install keeps its keys when tenant_id moves to the canonical tenant
+#   UUID. MINOR per ADR-0015: no stored key changes.
+version: "2.1.0"
 type: nocode
 schedule: "0 5 * * *"       # 05:00 UTC daily
 workflow: sync               # Argo workflow template: ingestion-pipeline

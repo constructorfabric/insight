@@ -294,7 +294,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
   - type: DeclarativeStream
     name: meetings
     retriever:
@@ -561,7 +561,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['uuid'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['uuid'] }}
   - type: DeclarativeStream
     name: participants
     retriever:
@@ -1090,7 +1090,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.meeting_uuid }}-{{ record['participant_uuid'] }}-{{ record['join_time'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.meeting_uuid }}-{{ record['participant_uuid'] }}-{{ record['join_time'] }}
 
 spec:
   type: Spec
@@ -1109,6 +1109,11 @@ spec:
         description: Insight tenant identifier stamped onto every emitted record.
         title: Insight Tenant ID
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         title: Insight Source ID

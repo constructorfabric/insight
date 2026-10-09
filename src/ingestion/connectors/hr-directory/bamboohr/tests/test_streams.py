@@ -255,3 +255,29 @@ class TestMetaFields:
 
         assert deprecated["unique"] == "d9"
         assert active["unique_key"] != deprecated["unique_key"]
+
+
+class TestWarmInstallTenantKey:
+    """A warm install keys rows by its legacy tenant key and stamps the canonical tenant."""
+
+    KEY = "example-legacy"
+
+    def test_employees(self):
+        client = FakeClient({"meta/fields": [], "reports/custom": custom_report([EMPLOYEE])})
+        stream = EmployeesStream(client=client, tenant_id=TENANT, source_id=SOURCE, tenant_key=self.KEY)
+        (record,) = read(stream)
+        assert (record["tenant_id"], record["unique_key"]) == (TENANT, f"{self.KEY}-{SOURCE}-42")
+
+    def test_leave_requests(self):
+        client = FakeClient({"time_off/requests": [{"id": "7"}]})
+        stream = LeaveRequestsStream(
+            client=client, tenant_id=TENANT, source_id=SOURCE, start_date="2020-01-01", tenant_key=self.KEY
+        )
+        (record,) = read(stream)
+        assert (record["tenant_id"], record["unique_key"]) == (TENANT, f"{self.KEY}-{SOURCE}-7")
+
+    def test_meta_fields(self):
+        client = FakeClient({"meta/fields": [meta_field(9, alias="jobTitle")]})
+        stream = MetaFieldsStream(client=client, tenant_id=TENANT, source_id=SOURCE, tenant_key=self.KEY)
+        (record,) = read(stream)
+        assert (record["tenant_id"], record["unique_key"]) == (TENANT, f"{self.KEY}-{SOURCE}-9")

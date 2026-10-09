@@ -1894,11 +1894,12 @@ test_stand_tree_matches_charts() {
     echo "NOTE: no origin/main here — ${subtree}/ unchecked, ${flag} is the caller's call." >&2
     return 0; }
 
-  # A service's own test tree is compiled by `cargo test`, never by the image
-  # build, so a change there cannot make the published image describe this tree
-  # any less well.
+  # A service's own test tree is compiled by `cargo test`, and its Helm chart is
+  # read by Kubernetes installs only — neither reaches the image build, so a
+  # change there cannot make the published image describe this tree any less well.
   local changed
-  changed="$(git diff --name-only origin/main -- "$subtree" ":(exclude)$subtree/services/*/tests/**" 2>/dev/null | head -5)"
+  changed="$(git diff --name-only origin/main -- "$subtree" \
+    ":(exclude)$subtree/services/*/tests/**" ":(exclude)$subtree/services/*/helm/**" 2>/dev/null | head -5)"
   [[ -z "$changed" ]] && return 0
 
   echo "ERROR: this tree changes ${subtree}/ relative to origin/main:" >&2

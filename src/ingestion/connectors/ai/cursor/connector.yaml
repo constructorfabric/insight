@@ -112,7 +112,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
 
   # ── Stream 2: cursor_audit_logs (incremental, GET) ──
   - type: DeclarativeStream
@@ -172,7 +172,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['event_id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['event_id'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -277,7 +277,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}-{{ record['timestamp'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}-{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -373,7 +373,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}-{{ record['timestamp'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}-{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -491,7 +491,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userId'] }}-{{ record['date'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userId'] }}-{{ record['date'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
@@ -528,6 +528,11 @@ spec:
         title: Insight Tenant ID
         description: Tenant isolation identifier
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         title: Insight Source ID

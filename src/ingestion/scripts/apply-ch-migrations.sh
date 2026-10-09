@@ -181,6 +181,14 @@ echo "=== Healing Jira bronze issue identity ==="
 #    heal must not overlap a Jira sync.
 _jira_issue_id_lookup='staging._jira_issue_id_by_key'
 
+# The tenant segment of a row's existing key. A warm install's keys keep the
+# legacy tenant key after tenant_id moved to the canonical UUID
+# (deploy/TENANT_IDENTITY_UPGRADE.md), so the rebuilt key takes the segment
+# from the key it replaces, never from tenant_id.
+_jira_key_tenant="if(position(unique_key, concat('-', source_id, '-')) > 1,
+  substring(unique_key, 1, position(unique_key, concat('-', source_id, '-')) - 1),
+  tenant_id)"
+
 # Counts only the rows the lookup can actually fill: a key no issue stream ever
 # delivered stays NULL forever, and counting it would re-run the mutation on
 # every deploy. Worklogs carry Jira's own issueId and count whenever it is set.
@@ -204,7 +212,7 @@ _jira_rows_needing_issue_id() {
 
 _jira_rows_keyed_by_issue_key() {
   local table="$1"
-  ch_scalar "SELECT count() FROM bronze_jira.${table} WHERE coalesce(unique_key, '') != concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(jira_id, ''))"
+  ch_scalar "SELECT count() FROM bronze_jira.${table} WHERE NOT endsWith(coalesce(unique_key, ''), concat('-', coalesce(source_id, ''), '-', coalesce(jira_id, '')))"
 }
 
 heal_jira_substream_issue_id() {
@@ -314,7 +322,7 @@ heal_jira_issue_key() {
 DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
 CREATE TABLE bronze_jira.${table}__rekey AS bronze_jira.${table};
 INSERT INTO bronze_jira.${table}__rekey
-SELECT * REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)
+SELECT * REPLACE (concat(${_jira_key_tenant}, '-', source_id, '-', jira_id) AS unique_key)
 FROM bronze_jira.${table}
 WHERE _airbyte_raw_id IN (
     SELECT argMax(_airbyte_raw_id, _airbyte_extracted_at)
@@ -345,7 +353,7 @@ SQL
   # and a row copied twice collapses on its key.
   if ! run_ch <<SQL
 INSERT INTO bronze_jira.${table}
-SELECT * REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)
+SELECT * REPLACE (concat(${_jira_key_tenant}, '-', source_id, '-', jira_id) AS unique_key)
 FROM bronze_jira.${table}__rekey
 WHERE _airbyte_extracted_at >= fromUnixTimestamp64Milli(${copy_start_ms}) - INTERVAL 1 HOUR;
 SQL

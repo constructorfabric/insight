@@ -39,9 +39,12 @@ class ActiveDirectoryUsersStream(Stream):
     name = "users"
     primary_key = "unique_key"
 
-    def __init__(self, config: Mapping[str, Any], tenant_id: str, source_id: str):
+    def __init__(
+        self, config: Mapping[str, Any], tenant_id: str, source_id: str, tenant_key: str | None = None
+    ):
         self._config = config
         self._tenant_id = tenant_id
+        self._tenant_key = tenant_key or tenant_id
         self._source_id = source_id
 
     # ------------------------------------------------------------------ helpers
@@ -69,7 +72,7 @@ class ActiveDirectoryUsersStream(Stream):
 
     def _make_unique_key(self, object_guid: str) -> str:
         """Composite key per Connector Spec §4.6: `{tenant}-{source}-{natural_key}`."""
-        return f"{self._tenant_id}-{self._source_id}-{object_guid}"
+        return f"{self._tenant_key}-{self._source_id}-{object_guid}"
 
     def _to_record(self, entry: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
         attrs = entry.get("attributes") or {}

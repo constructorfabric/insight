@@ -34,9 +34,12 @@ class WhosOutStream(Stream):
     name = "whos_out"
     primary_key = "unique_key"
 
-    def __init__(self, client: BambooClient, tenant_id: str, source_id: str, start_date: str) -> None:
+    def __init__(
+        self, client: BambooClient, tenant_id: str, source_id: str, start_date: str, tenant_key: str | None = None
+    ) -> None:
         self._client = client
         self._tenant_id = tenant_id
+        self._tenant_key = tenant_key or tenant_id
         self._source_id = source_id
         self._start_date = start_date
 
@@ -70,7 +73,7 @@ class WhosOutStream(Stream):
             "window_end": end,
             "tenant_id": self._tenant_id,
             "source_id": self._source_id,
-            "unique_key": json.dumps([self._tenant_id, self._source_id], separators=(",", ":")),
+            "unique_key": json.dumps([self._tenant_key, self._source_id], separators=(",", ":")),
         }
 
         logger.info("BambooHR whos_out stream emitted one snapshot containing %d entries", len(rows))
