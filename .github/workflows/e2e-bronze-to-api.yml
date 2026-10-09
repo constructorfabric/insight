@@ -114,7 +114,19 @@ jobs:
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
       backend: ${{ steps.filter.outputs.backend }}
+      entry: ${{ steps.entry.outputs.key }}
     steps:
+      # INVARIANT: a PR holds one live queue entry, so an older run with this key is dead.
+      - id: entry
+        env:
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$QUEUE_REF" =~ /pr-([0-9]+)-[0-9a-f]+$ ]]; then
+            echo "key=pr-${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "key=run-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The diff needs both endpoints; the default shallow fetch has
@@ -155,13 +167,27 @@ jobs:
             echo "no merge base between $BASE and $HEAD — running"
             exit 0
           fi
-          changed="$(git diff --name-only "$base_point" "$HEAD")"
+          changed="$(git diff --name-only --no-renames "$base_point" "$HEAD")"
           echo "$changed" | sed 's/^/  /'
 
           # Ignored because nothing in this suite reads these paths.
           # INVARIANT: services/*/helm/Chart.yaml is NOT ignored — dev-compose.sh
           # takes the image the stand pulls from its appVersion.
-          IGNORED_PATHS='^src/backend/services/[^/]+/helm/|^src/ingestion/tests/|^src/ingestion/tools/seed/tests/|^(src/backend|tests)/.*\.md$'
+          # INVARIANT: dbt parses every .sql, .yml and .md under its model paths — never ignore those.
+          ignored=(
+            '^src/backend/services/[^/]+/helm/'
+            '^(src/backend|tests)/.*\.md$'
+            '^src/ingestion/tests/'
+            '^src/ingestion/tools/seed/tests/'
+            '^src/ingestion/tools/(declarative-connector|toolbox)/'
+            '^src/ingestion/(config|connections|reconcile-connectors|secrets|workflows)/'
+            '^src/ingestion/[^/]+\.(md|sh)$'
+            '^src/ingestion/(scripts|tools)/.*\.md$'
+            '^src/ingestion/scripts/tests/'
+            '^src/ingestion/connectors/[^/]+/[^/]+/tests/.*\.(py|json)$'
+            '^src/ingestion/dbt/.*\.py$'
+          )
+          IGNORED_PATHS="$(IFS='|'; printf '%s' "${ignored[*]}")"
           IMAGE_PIN_PATHS='^src/backend/services/[^/]+/helm/Chart\.yaml$'
           # `|| true`: a grep selecting nothing exits 1 — set -e fails the step.
           changes_to_test="$(printf '%s\n' "$changed" | grep -vE "$IGNORED_PATHS" || true)"
@@ -173,7 +199,7 @@ jobs:
             echo "  affects this run: nothing — no changed file can reach this suite"
           fi
 
-          if echo "$changes_to_test" | grep -qE '^(src/ingestion/|src/backend/|tests/datapath/|tests/lib/|tests/pyproject\.toml|tests/uv\.lock|dev-compose\.sh|docker-compose\.yml|\.env\.compose\.example|deploy/compose/|\.github/workflows/e2e-bronze-to-api\.yml)'; then
+          if grep -qE '^(src/ingestion/|src/backend/|tests/datapath/|tests/lib/|tests/pyproject\.toml|tests/uv\.lock|dev-compose\.sh|docker-compose\.yml|\.env\.compose\.example|deploy/compose/|\.github/workflows/e2e-bronze-to-api\.yml)' <<< "$changes_to_test"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
@@ -181,7 +207,7 @@ jobs:
           fi
           # A backend change means the pinned images no longer describe this
           # tree, so the stand compiles the backend instead of pulling it.
-          if echo "$changes_to_test" | grep -qE '^src/backend/'; then
+          if grep -qE '^src/backend/' <<< "$changes_to_test"; then
             echo "backend=true" >> "$GITHUB_OUTPUT"
           else
             echo "backend=false" >> "$GITHUB_OUTPUT"
@@ -197,6 +223,9 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.relevant == 'true' && needs.changes.outputs.backend == 'true' }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    concurrency:
+      group: e2e-build-backend-${{ needs.changes.outputs.entry || github.run_id }}
+      cancel-in-progress: true
     timeout-minutes: 80
     permissions:
       contents: read
@@ -306,8 +335,11 @@ jobs:
     # `!cancelled()` so a skipped build-backend (backend untouched → pinned
     # images) does not skip the shards along with it; the result check keeps a
     # FAILED build from letting them run against stale binaries.
-    if: ${{ !cancelled() && github.event_name != 'push' && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
+    if: ${{ !cancelled() && github.event_name != 'push' && needs.changes.result == 'success' && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    concurrency:
+      group: e2e-datapath-${{ needs.changes.outputs.entry || github.run_id }}-${{ matrix.shard }}
+      cancel-in-progress: true
     timeout-minutes: 80
     permissions:
       contents: read
