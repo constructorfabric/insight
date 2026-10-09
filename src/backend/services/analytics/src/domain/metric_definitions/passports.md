@@ -638,7 +638,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: meeting_hours
 - Formula: sum(meeting_hours)
 - Shape: decimal, lower_is_better, unit h
-- Notes: Hours spent in meetings, taking the longest active modality (audio, video, or screen share) per meeting. Zoom reports modality durations as full-session estimates, so its figures may run higher than Microsoft Teams.
+- Notes: Hours spent in meetings, taking the longest active modality (audio, video, or screen share) per meeting. Zoom time counts only while someone else was in the meeting, so a room left open adds nothing; Zoom video and screen-share time are full-session estimates and may run higher than Microsoft Teams.
 
 ## collab.meetings_count — Meetings Attended
 

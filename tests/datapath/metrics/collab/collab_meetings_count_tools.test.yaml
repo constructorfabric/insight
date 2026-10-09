@@ -9,7 +9,8 @@ description: >
       Zoom meeting counts on the UTC day the person joined it.
     • gold:   per-person sum of meetings attended across both tools, with a tool
       dimension. A Teams one-to-one call counts as a meeting, as a two-person Zoom
-      meeting does.
+      meeting does; every Zoom meeting here has a guest without an email, who counts
+      as company.
 
   Cast (Engineering):
     alice — Teams Dec 10: 2 meetings and 1 call → 3. Zoom Dec 10: meeting 111 restarted after two minutes
@@ -44,3 +45,10 @@ bronze:
     - { $ref: ../templates/zoom.yaml#/templates/bob_participant,   unique_key: zp-bob-333a,   meeting_uuid: m333-a, participant_uuid: pb1, join_time: "2026-12-11T09:00:00Z", leave_time: "2026-12-11T09:30:00Z" }
     - { $ref: ../templates/zoom.yaml#/templates/bob_participant,   unique_key: zp-bob-333b,   meeting_uuid: m333-b, participant_uuid: pb2, join_time: "2026-12-11T09:40:00Z", leave_time: "2026-12-11T10:00:00Z" }
     - { $ref: ../templates/zoom.yaml#/templates/carol_participant, unique_key: zp-carol-444,  meeting_uuid: m444,   participant_uuid: pc1, join_time: "2026-12-31T23:30:00Z", leave_time: "2027-01-01T00:20:00Z" }
+    # a guest without an email joins every meeting: guests count as company.
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, unique_key: zp-guest-m111-a, meeting_uuid: m111-a, participant_uuid: g-m111-a, user_name: Guest, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T10:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, unique_key: zp-guest-m111-b, meeting_uuid: m111-b, participant_uuid: g-m111-b, user_name: Guest, join_time: "2026-12-10T10:32:00Z", leave_time: "2026-12-10T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, unique_key: zp-guest-m222, meeting_uuid: m222, participant_uuid: g-m222, user_name: Guest, join_time: "2026-12-10T14:00:00Z", leave_time: "2026-12-10T14:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, unique_key: zp-guest-m333-a, meeting_uuid: m333-a, participant_uuid: g-m333-a, user_name: Guest, join_time: "2026-12-11T09:00:00Z", leave_time: "2026-12-11T09:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, unique_key: zp-guest-m333-b, meeting_uuid: m333-b, participant_uuid: g-m333-b, user_name: Guest, join_time: "2026-12-11T09:40:00Z", leave_time: "2026-12-11T10:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, unique_key: zp-guest-m444, meeting_uuid: m444, participant_uuid: g-m444, user_name: Guest, join_time: "2026-12-31T23:30:00Z", leave_time: "2027-01-01T00:20:00Z" }

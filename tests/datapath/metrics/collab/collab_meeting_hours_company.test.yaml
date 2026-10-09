@@ -1,0 +1,44 @@
+spec_version: 1
+description: >
+  Metrics: collab.meeting_hours and collab.meetings_count — Zoom meeting time counts
+  only while someone else was in the meeting.
+  How it's computed (bronze → silver → gold):
+    • bronze: the daily Teams activity report per person (audio, video and
+      screen-share durations), and Zoom participant sessions.
+    • staging: Zoom participant rows re-sent by a sync collapse to one; a person's
+      session time counts from the first other arrival to the last other
+      departure; a session with nobody else adds no time and is not a meeting.
+    • gold:   meeting hours = the longest of audio, video and screen share, summed
+      across Teams and Zoom.
+
+  Cast (Engineering):
+    alice — Teams Dec 10: one hour of audio. Zoom Dec 10: in meeting z1 10:00–11:00
+            (her session also re-sent by the sync), bob there 10:15–10:45 → 0.5 h.
+            Total 1.5 h.
+    bob   — the same Zoom meeting, alice there the whole time → 0.5 h.
+    carol — leaves her room z2 open from 08:00 on Dec 12 into the next day; dave
+            drops by 08:00–08:06 → 0.1 h, one meeting.
+    erin  — alone in z3 on Dec 13 for an hour → no time, no meeting.
+  Cases: only time with company counts · a room left open adds nothing beyond the
+  company · a solo session is no meeting · a re-sent session is not counted twice ·
+  Teams and Zoom hours add up.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_m365.teams_activity:
+    - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-10", lastActivityDate: "2026-12-10", unique_key: hrs-teams-alice-20261210, meetingsAttendedCount: 1, audioDuration: "PT1H" }
+
+  bronze_zoom.participants:
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: zh-alice-z1, meeting_uuid: z1, participant_uuid: ha1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T11:00:00Z" }
+    # the same session re-sent by a later sync → collapses into the row above.
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: zh-alice-z1-resent, _airbyte_extracted_at: "2030-01-02T00:00:00", meeting_uuid: z1, participant_uuid: ha1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/bob_participant,   unique_key: zh-bob-z1,   meeting_uuid: z1, participant_uuid: hb1, join_time: "2026-12-10T10:15:00Z", leave_time: "2026-12-10T10:45:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/carol_participant, unique_key: zh-carol-z2, meeting_uuid: z2, participant_uuid: hc1, join_time: "2026-12-12T08:00:00Z", leave_time: "2026-12-13T10:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: dave@example.com, user_name: Dave, unique_key: zh-dave-z2, meeting_uuid: z2, participant_uuid: hd1, join_time: "2026-12-12T08:00:00Z", leave_time: "2026-12-12T08:06:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: erin@example.com, user_name: Erin, unique_key: zh-erin-z3, meeting_uuid: z3, participant_uuid: he1, join_time: "2026-12-13T09:00:00Z", leave_time: "2026-12-13T10:00:00Z" }
