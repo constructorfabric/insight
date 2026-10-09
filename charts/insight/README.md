@@ -153,7 +153,7 @@ The same decision under a different name in each layer:
 | Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-databases` and `clickhouse-migrate` Jobs (one shared env block, `insight.clickhouse.ddlEnv`), `create-databases.sh`, `apply-ch-migrations.sh` |
 | Reconcile | `RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE` / `RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME` | `reconcile-cron.yaml`, consumed by `compose_destination_config.py` as the destination's `use_replicated_engines` / `cluster_name` |
 | dbt | project vars `cluster_mode` / `cluster_name`, read by the `insight_engine` macro every model's engine is declared through and by the `insight_on_cluster` clause the `on-run-start` hooks qualify their raw DDL with; the project-level `+engine` default for a model that declares none; the adapter's `cluster:` profile key and the quorum `custom_settings`, both written by the one profile writer | `dbt_project.yml`, `dbt/macros/insight_engine.sql`, `scripts/dbt_profiles.py` |
-| Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name` | `libs/insight-clickhouse`, `insight-v3-core` gear config |
+| Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name` | `libs/insight-clickhouse`, `insight-v3-core` and `identity-resolution` gear config |
 
 Tests that must know the topology read `CLICKHOUSE_CLUSTER_MODE` /
 `CLICKHOUSE_CLUSTER_NAME` from their harness, defaulting to a single node.
