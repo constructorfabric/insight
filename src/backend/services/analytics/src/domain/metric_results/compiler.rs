@@ -2116,10 +2116,16 @@ fn resolved_observation_from(
     }
 }
 
+/// `tenant_id` is aliased back to its bare name: the identity maps joined beside
+/// the relation carry it too, and an unaliased `obs.tenant_id` would surface
+/// under its qualified name, which the outer SELECT cannot see.
 fn qualified_resolved_columns(alias: &str) -> String {
     RESOLVED_OBSERVATION_COLUMNS
         .split(", ")
-        .map(|column| format!("{alias}.{column}"))
+        .map(|column| match column {
+            "tenant_id" => format!("{alias}.tenant_id AS tenant_id"),
+            _ => format!("{alias}.{column}"),
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -3827,6 +3833,7 @@ mod tests {
                 .contains("ON person_map.tenant_id = toString(obs.tenant_id)")
         );
         assert!(query.sql.contains("AND person_map.email = obs.entity_id"));
+        assert!(query.sql.contains("obs.tenant_id AS tenant_id"));
         assert!(
             query
                 .sql
