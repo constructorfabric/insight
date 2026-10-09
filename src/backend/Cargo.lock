@@ -140,7 +140,7 @@ dependencies = [
  "insight-migration",
  "insight-openapi",
  "jsonwebtoken",
- "opentelemetry",
+ "opentelemetry 0.33.0",
  "p256 0.14.0",
  "redis",
  "reqwest 0.12.28",
@@ -552,7 +552,7 @@ dependencies = [
  "insight-openapi",
  "jsonwebtoken",
  "openidconnect",
- "opentelemetry",
+ "opentelemetry 0.33.0",
  "p256 0.14.0",
  "rand 0.10.3",
  "rdkafka",
@@ -1022,7 +1022,7 @@ dependencies = [
  "inventory",
  "matchit 0.9.2",
  "nanoid",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "parking_lot",
  "rust-embed",
  "serde",
@@ -1198,7 +1198,7 @@ dependencies = [
  "humantime",
  "inventory",
  "jsonwebtoken",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "parking_lot",
  "regex",
  "reqwest 0.13.4",
@@ -1356,7 +1356,7 @@ dependencies = [
  "http",
  "inventory",
  "nix 0.31.3",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "parking_lot",
@@ -1730,7 +1730,7 @@ dependencies = [
  "heck 0.5.0",
  "inventory",
  "lru",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "parking_lot",
  "sea-orm",
  "sea-orm-migration",
@@ -3155,7 +3155,7 @@ dependencies = [
  "insight-http-metrics",
  "insight-log-context",
  "insight-openapi",
- "opentelemetry",
+ "opentelemetry 0.33.0",
  "reqwest 0.12.28",
  "rustix",
  "serde",
@@ -3738,7 +3738,7 @@ dependencies = [
  "insight-log-context",
  "insight-migration",
  "insight-openapi",
- "opentelemetry",
+ "opentelemetry 0.33.0",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "sea-orm",
@@ -3840,7 +3840,7 @@ name = "insight-http-metrics"
 version = "0.1.0"
 dependencies = [
  "axum",
- "opentelemetry",
+ "opentelemetry 0.33.0",
  "opentelemetry_sdk",
  "tokio",
  "tower",
@@ -4827,6 +4827,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "opentelemetry"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cdb0b1b267eb9db3331b434ed9ddab10d50e280a9adf9d13e5233e2002b61b5"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "opentelemetry-http"
 version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4835,7 +4849,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "http",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "reqwest 0.13.4",
 ]
 
@@ -4846,7 +4860,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9966929966d17620d7c316c643ba62631826e10021409357772d5eea84f62c35"
 dependencies = [
  "http",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "opentelemetry-http",
  "opentelemetry-proto",
  "opentelemetry_sdk",
@@ -4864,7 +4878,7 @@ version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56d658ba1faf63f7b9c492cfbe6e0ec365440a16132d3270c1065f7b33f1b638"
 dependencies = [
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "opentelemetry_sdk",
  "prost",
  "tonic",
@@ -4880,7 +4894,7 @@ dependencies = [
  "futures-channel",
  "futures-executor",
  "futures-util",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "percent-encoding",
  "portable-atomic",
  "rand 0.9.4",
@@ -7929,7 +7943,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adbc64cba7137545b8044cb1fe9814f7aacf3c6b5f9b45be8bb5db538befdb26"
 dependencies = [
  "js-sys",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "smallvec",
  "tracing",
  "tracing-core",
