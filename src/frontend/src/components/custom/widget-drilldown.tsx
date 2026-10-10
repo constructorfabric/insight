@@ -23,6 +23,7 @@ import { nextSort } from "@/lib/metrics/evidence-rows";
 import { drilldownPagesQuery, metricQuery } from "@/queries/custom";
 import type { RunOptions } from "@/api/custom-client";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
+import { DIALOG_FILL_WINDOW } from "@/lib/dialog-size";
 import { cn } from "@/lib/utils";
 
 /** Which of the dialog's three views is showing. */
@@ -74,7 +75,7 @@ export function WidgetDrilldown({
       <DialogContent
         className={cn(
           filling
-            ? "h-[96vh] w-[98vw] max-w-[98vw] content-start"
+            ? cn(DIALOG_FILL_WINDOW, "content-start")
             : "w-[min(96vw,80rem)] max-w-[min(96vw,80rem)]"
         )}
       >

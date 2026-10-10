@@ -91,6 +91,65 @@ describe("MetricEvidenceTable", () => {
     ).toHaveLength(columns.length + 1);
   });
 
+  it("widens a number column to hold a long heading on two lines", () => {
+    renderTable({
+      columns: [
+        { key: "short", label: "Lines added", type: "number" as const },
+        {
+          key: "long",
+          label: "invoiced_subscription_invoices",
+          type: "number" as const,
+        },
+      ],
+      rows: [{ values: { short: 1, long: 2 } }],
+    });
+    const header = screen.getAllByRole("row")[0]!;
+    const [, short, long] = header.style.gridTemplateColumns
+      .split(/\s+/)
+      .map((track) => Number.parseFloat(track));
+
+    expect(short).toBe(7);
+    expect(long).toBeGreaterThan(short!);
+    expect(long).toBeLessThan(
+      "invoiced_subscription_invoices".length * 0.5 + 2.75
+    );
+  });
+
+  it("breaks a snake_case heading only after its underscores and keeps the whole name", () => {
+    renderTable({
+      columns: [
+        {
+          key: "long",
+          label: "invoiced_subscription_invoices",
+          type: "number" as const,
+          sortable: true,
+        },
+      ],
+      rows: [{ values: { long: 2 } }],
+    });
+    const heading = screen.getByTitle("invoiced_subscription_invoices");
+
+    expect(heading).toHaveTextContent("invoiced_subscription_invoices");
+    expect(heading.querySelectorAll("wbr")).toHaveLength(2);
+  });
+
+  it("lets a long number heading with no underscore break anywhere rather than spill", () => {
+    renderTable({
+      columns: [
+        {
+          key: "long",
+          label: "invoicedSubscriptionInvoices",
+          type: "number" as const,
+        },
+      ],
+      rows: [{ values: { long: 2 } }],
+    });
+
+    expect(screen.getByTitle("invoicedSubscriptionInvoices")).toHaveClass(
+      "wrap-anywhere"
+    );
+  });
+
   it("numbers the rows in the order they are drawn when asked to", () => {
     renderTable({ numbered: true });
     const [header, ...body] = screen.getAllByRole("row");

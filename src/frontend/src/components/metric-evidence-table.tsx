@@ -45,8 +45,37 @@ function columnLayout(column: MetricEvidenceColumn) {
   if (column.key === "destination_branch") return { basisRem: 11, grow: 1 };
   if (column.key === "branch_scope") return { basisRem: 9, grow: 0.25 };
   if (column.key === "date") return { basisRem: 8, grow: 0 };
-  if (column.type === "number") return { basisRem: 7, grow: 0 };
+  if (column.type === "number")
+    return { basisRem: valueRem(column.label), grow: 0 };
   return { basisRem: 9, grow: 1 };
+}
+
+const CHAR_REM = 0.5;
+const HEADING_CHROME_REM = 2.75;
+const VALUE_MIN_REM = 7;
+const VALUE_MAX_REM = 14;
+
+function headingParts(label: string): string[] {
+  return label.split(/(?<=[_\s])/);
+}
+
+function twoLineChars(label: string): number {
+  const parts = headingParts(label);
+  let widest = label.length;
+  let first = 0;
+
+  for (const part of parts.slice(0, -1)) {
+    first += part.length;
+    widest = Math.min(widest, Math.max(first, label.length - first));
+  }
+
+  return widest;
+}
+
+function valueRem(label: string): number {
+  const rem = twoLineChars(label) * CHAR_REM + HEADING_CHROME_REM;
+
+  return Math.min(VALUE_MAX_REM, Math.max(VALUE_MIN_REM, rem));
 }
 
 const EXPANDER_REM = 2.25;
@@ -209,14 +238,22 @@ export function MetricEvidenceTable({
               const numeric = column.type === "number";
               const label = (
                 <span
+                  title={column.label}
                   className={cn(
                     "min-w-0",
                     numeric
-                      ? "text-right leading-tight whitespace-normal"
+                      ? "line-clamp-2 text-right leading-tight wrap-anywhere whitespace-normal"
                       : "truncate"
                   )}
                 >
-                  {column.label}
+                  {numeric
+                    ? headingParts(column.label).map((part, index) => (
+                        <Fragment key={index}>
+                          {index > 0 ? <wbr /> : null}
+                          {part}
+                        </Fragment>
+                      ))
+                    : column.label}
                 </span>
               );
               return (

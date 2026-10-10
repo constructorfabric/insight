@@ -89,7 +89,7 @@ export function spansYears(values: unknown[]): boolean {
   return years.size > 1;
 }
 
-function toNumber(value: unknown): number | null {
+export function toNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim() !== "") {
     const parsed = Number(value);

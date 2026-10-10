@@ -97,8 +97,6 @@ export function SlopeSection({
             >
               <CartesianGrid
                 vertical={false}
-                strokeDasharray="3 3"
-                stroke="var(--border)"
               />
               <XAxis
                 dataKey="stage"
