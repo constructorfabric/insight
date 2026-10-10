@@ -82,8 +82,6 @@ Functional requirements define WHAT the system must do. Group by feature area or
 
 - [ ] `p1` - **ID**: `cpt-{system}-fr-{slug}`
 
-**Vector** (optional): {one of Efficiency | Reliability | Performance | Security | Versatility, only where a single vector is intrinsic to this requirement; omit it when scenarios verify it under different vectors}
-
 The system **MUST** {do something specific and verifiable}.
 
 **Rationale**: {Why this requirement exists — business value or stakeholder need.}
@@ -132,7 +130,7 @@ a valid entry. The order is a display convention, not a ranking. See the
 
 - [ ] `p1` - **ID**: `cpt-{system}-nfr-{slug}`
 
-**Vector** (optional): {the vector intrinsic to this obligation, where one is; omit it when scenarios verify it under different vectors}
+**Vector** (optional): {the vector intrinsic to this obligation, where one is; otherwise the 6.1 row that cites this NFR names it}
 
 The system **MUST** {agreed observable quality expectation}.
 

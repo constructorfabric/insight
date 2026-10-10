@@ -61,13 +61,12 @@ in DESIGN and FEATURE; a PRD need not prescribe a test harness.
 Keep one authoritative FR/NFR definition and ID. An NFR carries `**Threshold**` and
 `**Rationale**`; the threshold may be an absolute invariant rather than a number.
 
-A vector qualifies a **claim**, not a requirement and not a section. The same
-requirement is often verified under different vectors depending on what a
-scenario asserts about it — that a resolver returns the right person is
-Reliability, that it covers every source is Versatility. So a requirement
-carries `**Vector**` only where one vector is intrinsic to it, such as a
-latency budget or an isolation property. Where scenarios span vectors, the
-requirement carries none and each scenario names its own.
+A vector qualifies a **quality obligation**, never a functional requirement.
+A functional requirement is proven by the tests that cite it; which vector a
+test's claim resembles says nothing about the requirement. An NFR carries
+`**Vector**` where one vector is intrinsic to it, such as a latency budget or
+an isolation property; otherwise the PRD's 6.1 row that cites the NFR names
+the vector. FEATURE table 7.2 reads the vector from those two places.
 
 Before that tag is written, the same word names a different thing: the
 vector as an elicitation lens run over the module. It is generative — a
@@ -127,5 +126,7 @@ and cannot gate a change.
 
 FEATURE section 1.2 references applicable FR/NFR IDs. Flows, algorithms and DoDs
 describe its contribution. Preserve canonical section 6 Acceptance Criteria as
-the feature's readable completion checklist. Insight's section 7 Testing maps
-the feature's claims to vector-attributed scenarios and exact executable tests.
+the feature's readable completion checklist. Insight's section 7 Testing is
+derived from test citations: 7.1 lists functional requirements with their
+citing tests, 7.2 lists NFRs with vector, metric, target, collected value and
+source.

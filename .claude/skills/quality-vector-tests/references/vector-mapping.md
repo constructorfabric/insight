@@ -1,14 +1,14 @@
-# Vector mapping — which scenario goes under which quality vector
+# Vector mapping — which NFR goes under which quality vector
 
 The [authoring guide](../../../../.cf-studio/config/kits/sdlc/guides/quality-vectors.md)
-owns the product definitions. These are common Insight probes, not exhaustive
-definitions. Each scenario has one primary vector for its verification claim;
-independent claims in different vectors use assertion-focused tests sharing setup.
-The test suite is a separate dimension, described in SKILL.md.
+owns the product definitions. These are common Insight probes for deciding which
+vector an NFR belongs to and what a measurement of it looks like. A vector
+qualifies an NFR and its metric; a functional requirement carries none, and a
+test carries none beyond the pytest selection marker.
 
 ## The five vectors and what belongs to each
 
-| Vector | Guiding question | Scenarios that live here | Common miss |
+| Vector | Guiding question | NFRs that live here | Common miss |
 |---|---|---|---|
 | **Efficiency** | What does it cost to deliver, operate and use this capability? | Compute and storage per unit of useful work; resource growth during a soak; operator effort for setup, recovery or upgrades; user effort in an agreed workflow. | Select the cost that matters to the requirement. Neither storage nor human effort is negligible by definition. Test coverage measures evidence, not operating cost. |
 | **Reliability** | Can the user trust the dashboard — right, current, up and recoverable? | Differential/parity checks; reconciliation against evidence; data and pagination integrity; source freshness; sync recovery; service availability and dependency-failure behavior. | Test coverage informs confidence but does not measure product reliability. Choose assertions for the actual consistency, correctness or recovery obligation. |

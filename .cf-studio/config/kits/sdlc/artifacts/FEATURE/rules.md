@@ -17,8 +17,8 @@ DO:
   - LOAD DESIGN for domain types and components
   - LOAD {cf-studio-path}/config/artifacts.toml to resolve FEATURE path (artifacts_dir default `architecture`, subdir `features/`)
   - LOAD {feature_template} for structure
-  - RUN author content: actor flows (complete user journeys), algorithms (processing logic), state machines (entity lifecycle), DoD/acceptance criteria, test scenarios
-  - RUN author `## 7. Testing`: one checkbox scenario per line, each carrying exactly one quality vector (Efficiency, Reliability, Performance, Security, Versatility), one suite tag, and a do → expect pass criterion; declare the owning feature ID once and link each scenario to the relevant PRD FR/NFR subset from section 1.2, to the feature criterion it covers where one applies — a `cpt-{system}-dod-{feature-slug}-{slug}` or a section 6 acceptance criterion — and to its test when implemented
+  - RUN author content: actor flows (complete user journeys), algorithms (processing logic), state machines (entity lifecycle), DoD/acceptance criteria
+  - RUN fill the `## 7. Testing` tables (their shape comes from {feature_template}) with `python3 .claude/skills/quality-vector-tests/scripts/feature_testing.py <FEATURE path> --write`; a test proves a requirement by citing it (`@cpt-test:<fr-or-nfr-id>:p1`), and the tool replaces the rows of 7.1 (functional requirements → citing tests, suite, end to end) and 7.2 (vector → NFR → metric → target → collected today → source); author only the `Collected today` and `Note` cells
   - RUN define featstatus ID under H1 (before `## Feature Context`): `cpt-{system}-featstatus-{feature-slug}` (status rollup, not to_code)
   - RUN assign IDs: flow `cpt-{system}-flow-{feature-slug}-{slug}`, algo `cpt-{system}-algo-{feature-slug}-{slug}`, state `cpt-{system}-state-{feature-slug}-{slug}`, dod `cpt-{system}-dod-{feature-slug}-{slug}`
   - RUN assign priority markers `p1`-`p9` per feature priority
@@ -34,8 +34,8 @@ RULES:
   - ALWAYS treat {feature_checklist} as the source of semantic quality criteria
   - NEVER duplicate semantic criteria already in {feature_checklist}
   - ALWAYS preserve the canonical section 6 Acceptance Criteria checklist; do not introduce AC IDs or AC coverage ratios to link tests
-  - ALWAYS trace PRD FR/NFR -> FEATURE Requirements and feature ID -> scenario -> executable test, carrying the covered feature criterion where one applies; tests cite the feature path, feature ID and stable scenario number, and keep the criterion reference an implemented scenario already names
-  - ALWAYS give each authored Testing scenario one primary vector and one suite tag — gated by {feature_checklist}; use `../../guides/quality-vectors.md` (relative to this file) only for advisory scope, shared-test attribution and changed-scenario guidance; coverage of all five vector categories is not required — a feature legitimately may not exercise every vector, and no category's absence alone creates a readiness gate
+  - ALWAYS bind tests to requirements, never to scenarios: a test cites the PRD FR/NFR (or the FEATURE DoD) it proves with `@cpt-test:<id>:p1`; section 7 is derived from those citations, and every requirement in section 1.2 is either cited by a test or carries a `Note` with the reason and owner — gated by {feature_checklist}
+  - NEVER attach a quality vector to a functional requirement or to a test row: vectors belong to NFRs and the metrics that measure them (table 7.2); an end-to-end citation (`stand-api`, `stand-ui`, `identity-e2e`, `metric-spec`, `ingestion-e2e`) is the preferred proof, a unit-only citation is shown but is not a gate, and a vector with no NFR in this feature is not a gap; use `../../guides/quality-vectors.md` (relative to this file) for advisory NFR and measurement guidance
   - NEVER include placeholder content (TODO, TBD, FIXME)
   - NEVER create duplicate IDs within the document
 
@@ -43,6 +43,7 @@ INVARIANTS:
   - ALWAYS on edit of existing FEATURE: increment version in frontmatter and keep changelog of significant changes
   - ALWAYS on significant flow/algo/state/dod change: add `-v{N}` suffix to ID; matching code marker is `@cpt-{kind}:cpt-{system}-{kind}-{slug}-v2:p{N}`
   - ALWAYS when all flows/algos/states/DoD `[x]`: mark feature `[x]` in DECOMPOSITION and update status (→ IMPLEMENTED), which cascades to PRD/DESIGN
+  - ALWAYS treat a regeneration of the section 7 tables as maintenance, not an edit: it bumps no version and needs no changelog entry
 ```
 
 ```pdsl

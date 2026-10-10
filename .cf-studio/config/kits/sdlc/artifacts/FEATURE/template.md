@@ -131,20 +131,24 @@ The system **MUST** {clear description of what to implement}.
 
 **Feature**: `cpt-{system}-feature-{slug}`
 
-{Brief scope, primary risk, fixtures and test boundaries. This Testing section is
-an Insight extension; keep Acceptance Criteria above in the canonical kit form.
-Use the [quality-vector guide](../../guides/quality-vectors.md) for shared
-obligations, test attribution and scenario changes.}
+{Brief scope, primary risk, fixtures and test boundaries. This section is an
+Insight extension; keep Acceptance Criteria above in the canonical kit form.
+A test proves a requirement by citing it on the line above the test
+(`@cpt-test:<requirement-id>:p1`). The rows of the two tables below are filled
+from those citations by the `quality-vector-tests` skill's
+`scripts/feature_testing.py <this file> --write`; the headings and header rows
+stay as they are here. Edit only the `Collected today` and `Note` cells; a
+requirement with no citing test needs a `Note` naming the reason and the
+owner.}
 
-- [ ] 1. **{Scenario name}** — {Vector} · {suite-tag} — {do → expect}.
-  **Requirements**: {the FR/NFR subset this proves, e.g. `cpt-{system}-fr-{slug}`, `cpt-{system}-nfr-{slug}`}.
-  **Covers**: {the feature criterion it verifies, where one applies — a `cpt-{system}-dod-{feature-slug}-{slug}` or a section 6 acceptance criterion; omit when none does}.
-  **Test**: {exact test link when implemented, otherwise "Not implemented"}.
+### 7.1 Requirement verification
 
-{When useful, explain a considered vector with no applicable obligation as
-`**{Vector}** — n/a: {reason}.` Categories do not impose new requirements.}
+| Requirement | Tests citing it | Suite | End to end | Note |
+|---|---|---|---|---|
+| `cpt-{system}-fr-{slug}` | {filled from citations} | {suite} | {yes or no} | {reason and owner when uncited} |
 
-{Each requirement above is also declared in section 1.2. Implemented tests cite
-the feature ID, FEATURE path and scenario number, and carry the suite's vector
-attribution; a scenario naming a covered criterion keeps that reference once
-implemented. Passing evidence separately identifies revision and conditions.}
+### 7.2 Quality metrics
+
+| Vector | NFR | Metric | Target | Collected today | Source | Note |
+|---|---|---|---|---|---|---|
+| {vector} | `cpt-{system}-nfr-{slug}` | {NFR heading} | {threshold} | {value, date, environment} | {citing tests; DESIGN verification cell} | {reason and owner when no source} |
