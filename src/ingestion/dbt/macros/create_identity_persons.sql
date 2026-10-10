@@ -1,9 +1,10 @@
 {#-
-  Creates `identity.identity_persons` — the persons-log copy that dbt does NOT
-  own the DATA of. It is written exclusively by the identity-resolution
-  service's persons-sync (full snapshot + atomic EXCHANGE swap). The
-  `account_assignment` view reads it, `person_map` builds on that, and the
-  analytics runtime joins `person_map` when it serves a person.
+  THE creator of `identity.identity_persons` — the persons-log copy that dbt
+  does NOT own the DATA of. It is written exclusively by the
+  identity-resolution service's persons-sync (full snapshot + atomic EXCHANGE
+  swap), which issues no CREATE for it (#3552). The `account_assignment` view
+  reads it, `person_map` builds on that, and the analytics runtime joins
+  `person_map` when it serves a person.
 
   Called from `on-run-start`
   so a build on an environment where the sync has never run — fresh cluster,
@@ -28,6 +29,11 @@
   alters an existing table; the service's own staging-swap upgrades the live
   schema on its next run) but a fresh environment would create the stale
   shape — keep them in lockstep.
+
+  An install whose first persons-sync beats its first dbt run has no table for
+  the swap to exchange with, and the sync renames its own staging into place.
+  That is the same shape by the contract above, and this hook finds it created
+  on the next build.
 -#}
 
 {% macro create_identity_persons() %}

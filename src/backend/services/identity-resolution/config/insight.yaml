@@ -128,3 +128,9 @@ gears:
       clickhouse_database: "identity"
       clickhouse_user: ""
       clickhouse_password: ""
+      # Warehouse topology (epic #2010): whether the relations this service
+      # creates replicate, and the cluster its DDL is qualified with. Injected
+      # per-deployment via APP__gears__identity_resolution__config__clickhouse_cluster_*;
+      # a standalone single node here.
+      clickhouse_cluster_mode: false
+      clickhouse_cluster_name: ""
