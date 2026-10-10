@@ -2,7 +2,7 @@
 /**
  * The rail's open state.
  *
- * Every case here is about the interaction rather than the look, because the
+ * Most cases here are about the interaction rather than the look, because the
  * look is the easy half. The one that matters is the click: a click navigates
  * and leaves the pointer sitting on the rail, so without an explicit dismissal
  * the rail reopens on top of the pane the click was aimed at. That failed
@@ -156,6 +156,11 @@ describe("LensRail", () => {
     mocks.layout = "phone";
     rail();
     expect(screen.queryByTestId("lens-rail")).not.toBeInTheDocument();
+  });
+
+  it("uncaps the brand mark so WebKit does not shrink the product name to an ellipsis", () => {
+    rail();
+    expect(screen.getByRole("img", { name: "Constructor Fabric" })).toHaveClass("max-w-none");
   });
 });
 
