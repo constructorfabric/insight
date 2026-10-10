@@ -36,7 +36,7 @@
 --   verify against a tenant with a connected GitHub app.
 {{ config(
     materialized='incremental',
-    incremental_strategy='append',
+    incremental_strategy='delete+insert',
     unique_key='unique_key',
     engine=insight_engine('ReplacingMergeTree', '_version'),
     order_by=['unique_key'],
