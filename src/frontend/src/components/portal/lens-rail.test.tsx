@@ -157,6 +157,11 @@ describe("LensRail", () => {
     rail();
     expect(screen.queryByTestId("lens-rail")).not.toBeInTheDocument();
   });
+
+  it("uncaps the brand mark so WebKit does not shrink the product name to an ellipsis", () => {
+    rail();
+    expect(screen.getByRole("img", { name: "Constructor Fabric" })).toHaveClass("max-w-none");
+  });
 });
 
 afterEach(() => {
