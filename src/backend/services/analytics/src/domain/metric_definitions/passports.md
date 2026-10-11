@@ -640,6 +640,14 @@ is an order statistic instead, and always answers with one that did.
 - Shape: decimal, lower_is_better, unit h
 - Notes: Hours spent in meetings, taking the longest active modality (audio, video, or screen share) per meeting. Zoom reports modality durations as full-session estimates, so its figures may run higher than Microsoft Teams.
 
+## collab.calendar_meeting_hours — Calendar Meeting Hours
+
+- Source: collab (collab_metric_observations)
+- Reads: calendar_meeting_hours
+- Formula: sum(calendar_meeting_hours)
+- Shape: decimal, lower_is_better, unit h
+- Notes: Hours a person's calendar is taken up by meetings, whether or not they joined, counted on UTC days. A meeting is one they accepted, or organized with someone else invited, and that shows them as busy; tentative and unanswered invitations, cancelled and all-day events, and events longer than eight hours are left out, and overlapping meetings count once. Ad-hoc calls that were never on the calendar do not appear here; Meeting Hours counts time actually spent in calls. Stays empty until reading calendars is switched on for Microsoft 365.
+
 ## collab.meetings_count — Meetings Attended
 
 - Source: collab (collab_metric_observations)

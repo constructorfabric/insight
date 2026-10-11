@@ -196,6 +196,8 @@ sources:
         evidence_granularity: source_summary
       - key: meeting_hours
         evidence_granularity: source_summary
+      - key: calendar_meeting_hours
+        evidence_granularity: source_summary
       - key: meetings_attended
         evidence_granularity: source_summary
       - key: meetings_organized
@@ -2205,6 +2207,26 @@ metrics:
     inputs:
       - input_role: value
         measure_key: meeting_hours
+    dimensions:
+      - tool
+  - metric_key: collab.calendar_meeting_hours
+    source_key: collab
+    subject: meetings
+    tags:
+      - duration
+    label: Calendar Meeting Hours
+    short_label: Cal mtg hrs
+    description: Hours booked by accepted or organized calendar meetings
+    explanation: Hours a person's calendar is taken up by meetings, whether or not they joined, counted on UTC days. A meeting is one they accepted, or organized with someone else invited, and that shows them as busy; tentative and unanswered invitations, cancelled and all-day events, and events longer than eight hours are left out, and overlapping meetings count once. Ad-hoc calls that were never on the calendar do not appear here; Meeting Hours counts time actually spent in calls. Stays empty until reading calendars is switched on for Microsoft 365.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: calendar_meeting_hours
     dimensions:
       - tool
   - metric_key: collab.meetings_count

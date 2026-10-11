@@ -397,6 +397,10 @@ const COLLABORATION_COLLECTION: MetricCollectionConfig = {
       ],
     },
     {
+      key: "collab.calendar_meeting_hours",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
       key: "collab.meetings_count",
       views: [{ view: "period" }, { view: "peer" }],
     },

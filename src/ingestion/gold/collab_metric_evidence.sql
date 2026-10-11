@@ -68,6 +68,22 @@ meeting_source AS (
     WHERE person_key LIKE '%@%'
       AND date IS NOT NULL
 ),
+calendar_source AS (
+    SELECT
+        tenant_id,
+        {{ normalized_email('person_key') }} AS entity_id,
+        date AS metric_date,
+        meeting_seconds,
+        replaceOne(data_source, 'insight_', '') AS tool_value,
+        {{ collab_tool_label('tool_value', m365_label='Microsoft Outlook') }} AS tool_label,
+        CAST(
+            [tuple('tool', tool_value, tool_label)]
+            AS Array(Tuple(key String, value String, label Nullable(String)))
+        ) AS tool_dimensions
+    FROM {{ ref('class_collab_calendar_activity') }} FINAL
+    WHERE person_key LIKE '%@%'
+      AND date IS NOT NULL
+),
 email_source AS (
     SELECT
         tenant_id,
@@ -238,6 +254,10 @@ value_measures AS (
     UNION ALL
 
     {{ sum_measure('meetings_attended', 'meeting_source', 'meetings_attended', 'tool_dimensions') }}
+
+    UNION ALL
+
+    {{ sum_measure('calendar_meeting_hours', 'calendar_source', 'meeting_seconds / 3600.0', 'tool_dimensions') }}
 
     UNION ALL
 

@@ -21,8 +21,47 @@ sources:
       - name: teams_activity
       - name: onedrive_activity
       - name: sharepoint_activity
+      - name: calendar_events
+        # INVARIANT: empty unless m365_calendar is on, so it carries no freshness check.
+        freshness: null
 
 models:
+  - name: m365__collab_calendar_activity
+    description: >
+      Calendar meeting time per person per UTC day from M365 calendar events →
+      staging, feeds class_collab_calendar_activity. A meeting is an accepted
+      invitation, or one the person organized with at least one other person
+      invited, shown as busy, not cancelled, not all-day and at most eight hours.
+      Tentative and unanswered invitations do not count. Overlapping meetings
+      count once, and a meeting across midnight is split between the two days.
+      Known limit: an event deleted from the calendar after it took place keeps
+      its last stored state.
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: person_key
+        tests:
+          - not_null
+      - name: date
+        tests:
+          - not_null
+      - name: meetings
+        description: "Distinct meetings that took up part of this day"
+        tests:
+          - not_null
+      - name: meeting_seconds
+        description: "Seconds of this day covered by at least one meeting"
+        tests:
+          - not_null
+
   - name: m365__collab_chat_activity
     description: "M365 Teams chat activity → staging, feeds class_collab_chat_activity"
     columns:

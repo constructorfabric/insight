@@ -155,6 +155,42 @@ models:
           • insight_slack → NULL — Slack has no urgent flag concept in
             the analytics export.
 
+  - name: class_collab_calendar_activity
+    description: >
+      Unified daily calendar meeting time per user from all calendar sources
+      (M365). Time booked by accepted meetings, not time attended; see
+      m365__collab_calendar_activity for the meeting rule.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Source instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+      - name: person_key
+        description: "lower(email) — cross-source identity join key"
+        tests:
+          - not_null
+      - name: date
+        description: "Calendar date (UTC)"
+        tests:
+          - not_null
+      - name: meetings
+        description: "Distinct meetings that took up part of this day"
+      - name: meeting_seconds
+        description: "Seconds of this day covered by at least one meeting, overlaps counted once"
+      - name: data_source
+        description: "Source discriminator: insight_m365"
+        tests:
+          - not_null
+
   - name: class_collab_meeting_activity
     description: "Unified daily meeting activity per user from all collaboration sources (M365 Teams, Zoom)"
     columns:
