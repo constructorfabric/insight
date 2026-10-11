@@ -4,7 +4,8 @@ An active day has a deliberate action under any of the person's addresses. Bread
 counts the modalities behind those days, a meeting-free day is an active day without
 meeting time under any address, and focus is 100 minus meeting hours as a share of
 working hours over the active days, with one working day per day however many
-addresses were active and a day's meetings counted up to its working hours.
+addresses were active and a day's meetings counted up to its working hours. Both
+leave out addresses no meeting source ever reported, whose meeting time is unknown.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ SPEC = "collab_derived_days"
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
 CAROL = "carol@example.com"
+DAVE = "dave@example.com"
 
 DECEMBER = ("2026-12-01", "2026-12-31")
 EMPTY_WINDOW = ("2026-11-01", "2026-11-30")
@@ -51,6 +53,12 @@ EXPECTED = {
         "collab.meeting_free_days": 1,
         "collab.focus_time_pct": 100.0,
     },
+    DAVE: {
+        "collab.active_days": 1,
+        "collab.breadth": 1,
+        "collab.meeting_free_days": None,
+        "collab.focus_time_pct": None,
+    },
 }
 
 
@@ -70,7 +78,7 @@ def _call(
     )
 
 
-@pytest.mark.parametrize("person", [ALICE, BOB, CAROL])
+@pytest.mark.parametrize("person", [ALICE, BOB, CAROL, DAVE])
 def test_derived_metrics_count_each_active_day_once(spec: SpecRun, person: str) -> None:
     """Each person's four derived metrics follow the active days of the cast."""
     r = _call(spec, person, DECEMBER, DERIVED_METRICS, {"view": "period"})
@@ -89,7 +97,9 @@ def test_derived_metrics_count_each_active_day_once(spec: SpecRun, person: str) 
         ("2026-12-19", 100.0),
     ],
 )
-def test_focus_shares_one_working_day_across_addresses(spec: SpecRun, day: str, focus: float) -> None:
+def test_focus_shares_one_working_day_across_addresses(
+    spec: SpecRun, day: str, focus: float
+) -> None:
     """Wednesday's Teams chat and Zoom meeting under two addresses share one working
     day, and Thursday's ten meeting hours count as the whole eight-hour day."""
     r = _call(spec, ALICE, DECEMBER, (FOCUS,), {"view": "timeseries", "bucket": "day"})

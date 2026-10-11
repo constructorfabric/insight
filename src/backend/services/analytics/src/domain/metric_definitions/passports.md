@@ -654,7 +654,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: meeting_free_day
 - Formula: sum(meeting_free_day)
 - Shape: integer, higher_is_better, unit days
-- Notes: Days on which a person was actively collaborating but spent no time in meetings or calls — a proxy for uninterrupted working days.
+- Notes: Days on which a person was actively collaborating but spent no time in meetings or calls — a proxy for uninterrupted working days. Only addresses some meeting source reports on count, so a person no meeting tool knows has no value.
 
 ## collab.focus_time_pct — Focus Time
 
@@ -662,7 +662,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: workday_meeting_hours, working_hours
 - Formula: 100 * (workday_meeting_hours / working_hours) -> -1*x + 100, clamped to [0, 100]
 - Shape: percent, higher_is_better
-- Notes: Share of the workday not spent in meetings or calls, over the days a person was active: 100 minus meeting hours as a share of scheduled working hours. Meeting time counts up to the working hours of the day and address it was recorded under. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them.
+- Notes: Share of the workday not spent in meetings or calls, over the days a person was active: 100 minus meeting hours as a share of scheduled working hours. Meeting time counts up to the working hours of the day and address it was recorded under. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them. Only addresses some meeting source reports on count, so a person no meeting tool knows has no value.
 
 ## collab.breadth — Collaboration Breadth
 

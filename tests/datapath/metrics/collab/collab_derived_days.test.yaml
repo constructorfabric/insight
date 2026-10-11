@@ -13,7 +13,8 @@ description: >
       active day with no meeting time under any address. Focus is 100 minus the
       meeting hours as a share of working hours over the active days; meeting
       time counts up to the working hours of the day and address it came from, and
-      two addresses share one working day.
+      two addresses share one working day. Both leave out addresses no meeting
+      source ever reported.
 
   Cast (Engineering, 8 working hours a day):
     alice — Mon Dec 14 email · Tue Teams meeting 2 h · Wed Teams chat, and a 4 h
@@ -24,10 +25,13 @@ description: >
             focus 100 − 100·3/16 = 81.25.
     carol — Wed email, and a Zoom session nobody else joined → 1 day, 1 modality,
             1 free day, focus 100.
+    dave  — Tue email, and no meeting source has ever reported him → 1 active day,
+            1 modality, no meeting-free days and no focus: his meeting time is
+            unknown.
   Cases: one active day across two addresses and tools · a meeting under either
   address ends a meeting-free day · days without any meeting count toward focus ·
   a day's meetings count up to its working hours · a solo Zoom session is no
-  meeting · a weekend day with activity counts · an empty window is null.
+  meeting · a person no meeting source knows has no focus and no meeting-free days · a weekend day with activity counts · an empty window is null.
 
 identity_aliases:
   alice@example.com: [alice.zoom@example.org]
@@ -37,6 +41,7 @@ bronze:
     - $ref: ../templates/people.yaml#/templates/alice
     - $ref: ../templates/people.yaml#/templates/bob
     - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
 
   bronze_ms_entra.users:
     # alice's second address is its own directory account, so only the operator's
@@ -58,6 +63,7 @@ bronze:
     - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-14", lastActivityDate: "2026-12-14", unique_key: dd-email-alice-20261214, sendCount: 2 }
     - { $ref: ../templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-12-15", lastActivityDate: "2026-12-15", unique_key: dd-email-bob-20261215,   sendCount: 1 }
     - { $ref: ../templates/m365_email.yaml#/templates/carol_email, reportRefreshDate: "2026-12-16", lastActivityDate: "2026-12-16", unique_key: dd-email-carol-20261216, sendCount: 1 }
+    - { $ref: ../templates/m365_email.yaml#/templates/dave_email,  reportRefreshDate: "2026-12-15", lastActivityDate: "2026-12-15", unique_key: dd-email-dave-20261215,  sendCount: 1 }
 
   bronze_m365.teams_activity:
     - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-15", lastActivityDate: "2026-12-15", unique_key: dd-teams-alice-20261215, meetingsAttendedCount: 1, audioDuration: "PT2H" }

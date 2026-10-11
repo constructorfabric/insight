@@ -156,6 +156,19 @@ deliberate_activity AS (
         )
     )
 ),
+meeting_covered_days AS (
+    -- INVARIANT: an address no meeting source ever reported has unknown meeting time,
+    -- so its days are neither meeting-free nor focus days.
+    SELECT DISTINCT
+        tenant_id,
+        entity_id,
+        metric_date
+    FROM deliberate_activity
+    WHERE (tenant_id, entity_id) IN (
+        SELECT DISTINCT tenant_id, entity_id
+        FROM meeting_source
+    )
+),
 meeting_free_source AS (
     SELECT
         tenant_id,
@@ -164,13 +177,13 @@ meeting_free_source AS (
         if(sum(meeting_seconds) = 0, 1, 0) AS meeting_free_flag,
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
     FROM (
-        SELECT DISTINCT
+        SELECT
             tenant_id,
             entity_id,
             metric_date,
             0 AS meeting_seconds,
             1 AS is_active
-        FROM deliberate_activity
+        FROM meeting_covered_days
         UNION ALL
         SELECT
             tenant_id,
@@ -194,10 +207,7 @@ workday_source AS (
         if(hours.working_hours_per_day > 0, hours.working_hours_per_day, 8.0) AS working_hours,
         least(ifNull(meetings.meeting_hours, 0), working_hours) AS workday_meeting_hours,
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
-    FROM (
-        SELECT DISTINCT tenant_id, entity_id, metric_date
-        FROM deliberate_activity
-    ) AS active_days
+    FROM meeting_covered_days AS active_days
     LEFT JOIN (
         SELECT
             tenant_id,

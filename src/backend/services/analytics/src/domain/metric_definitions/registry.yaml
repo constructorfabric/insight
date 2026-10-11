@@ -2232,7 +2232,7 @@ metrics:
     label: Meeting-Free Days
     short_label: Mtg-free days
     description: Active days with no meeting time
-    explanation: Days on which a person was actively collaborating but spent no time in meetings or calls — a proxy for uninterrupted working days.
+    explanation: Days on which a person was actively collaborating but spent no time in meetings or calls — a proxy for uninterrupted working days. Only addresses some meeting source reports on count, so a person no meeting tool knows has no value.
     unit: days
     format: integer
     direction: higher_is_better
@@ -2251,7 +2251,7 @@ metrics:
     label: Focus Time
     short_label: Focus %
     description: Share of the workday outside meetings
-    explanation: 'Share of the workday not spent in meetings or calls, over the days a person was active: 100 minus meeting hours as a share of scheduled working hours. Meeting time counts up to the working hours of the day and address it was recorded under. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them.'
+    explanation: 'Share of the workday not spent in meetings or calls, over the days a person was active: 100 minus meeting hours as a share of scheduled working hours. Meeting time counts up to the working hours of the day and address it was recorded under. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them. Only addresses some meeting source reports on count, so a person no meeting tool knows has no value.'
     format: percent
     direction: higher_is_better
     entity_type: person
