@@ -228,10 +228,11 @@ sources:
       - key: meeting_free_day
         evidence_granularity: derived_population
         alias_collapse: min
-      - key: focus_hours
+      - key: workday_meeting_hours
         evidence_granularity: derived_population
       - key: working_hours
         evidence_granularity: derived_population
+        alias_collapse: max
     dimensions:
       - tool
       - scope
@@ -2050,7 +2051,7 @@ metrics:
     subject: activity
     label: Active Days
     description: Days with collaboration activity
-    explanation: Distinct days on which a person took a deliberate collaboration action — sending a message, sending email, engaging or sharing a file, or attending a meeting. Passive activity such as receiving or reading email is excluded.
+    explanation: Distinct days on which a person took a deliberate collaboration action — sending a message, sending email, engaging or sharing a file, or attending a meeting or call. Passive activity such as receiving or reading email is excluded.
     unit: days
     format: integer
     direction: higher_is_better
@@ -2231,7 +2232,7 @@ metrics:
     label: Meeting-Free Days
     short_label: Mtg-free days
     description: Active days with no meeting time
-    explanation: Days on which a person was actively collaborating but spent no time in meetings — a proxy for uninterrupted working days.
+    explanation: Days on which a person was actively collaborating but spent no time in meetings or calls — a proxy for uninterrupted working days.
     unit: days
     format: integer
     direction: higher_is_better
@@ -2250,16 +2251,21 @@ metrics:
     label: Focus Time
     short_label: Focus %
     description: Share of the workday outside meetings
-    explanation: 'Share of the workday not spent in meetings: meeting-free hours divided by scheduled working hours. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them.'
+    explanation: 'Share of the workday not spent in meetings or calls, over the days a person was active: 100 minus meeting hours as a share of scheduled working hours. Meeting time counts up to the working hours of the day and address it was recorded under. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them.'
     format: percent
     direction: higher_is_better
     entity_type: person
     computation: !ratio
       scale: 100.0
+    transform:
+      multiplier: -1.0
+      offset: 100.0
+      clamp_min: 0.0
+      clamp_max: 100.0
     peer_cohort_key: org_unit
     inputs:
       - input_role: numerator
-        measure_key: focus_hours
+        measure_key: workday_meeting_hours
       - input_role: denominator
         measure_key: working_hours
     dimensions: []

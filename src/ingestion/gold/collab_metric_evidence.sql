@@ -112,17 +112,14 @@ document_source AS (
     WHERE person_key LIKE '%@%'
       AND date IS NOT NULL
 ),
-focus_source AS (
+working_hours_source AS (
     SELECT
         insight_tenant_id AS tenant_id,
         {{ normalized_email('email') }} AS entity_id,
-        day AS metric_date,
-        dev_time_h,
-        working_hours_per_day,
-        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
-    FROM {{ ref('class_focus_metrics') }} FINAL
+        max(working_hours_per_day) AS working_hours_per_day
+    FROM {{ ref('class_hr_working_hours') }} FINAL
     WHERE email LIKE '%@%'
-      AND day IS NOT NULL
+    GROUP BY tenant_id, entity_id
 ),
 deliberate_activity AS (
     SELECT
@@ -187,6 +184,39 @@ meeting_free_source AS (
     )
     GROUP BY tenant_id, entity_id, metric_date
     HAVING max(is_active) = 1
+),
+workday_source AS (
+    SELECT
+        active_days.tenant_id AS tenant_id,
+        active_days.entity_id AS entity_id,
+        active_days.metric_date AS metric_date,
+        -- WORKAROUND: under join_use_nulls=0 an unmatched LEFT JOIN yields 0, not NULL.
+        if(hours.working_hours_per_day > 0, hours.working_hours_per_day, 8.0) AS working_hours,
+        least(ifNull(meetings.meeting_hours, 0), working_hours) AS workday_meeting_hours,
+        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
+    FROM (
+        SELECT DISTINCT tenant_id, entity_id, metric_date
+        FROM deliberate_activity
+    ) AS active_days
+    LEFT JOIN (
+        SELECT
+            tenant_id,
+            entity_id,
+            metric_date,
+            sum(greatest(
+                ifNull(audio_duration_seconds, 0),
+                ifNull(video_duration_seconds, 0),
+                ifNull(screen_share_duration_seconds, 0)
+            )) / 3600.0 AS meeting_hours
+        FROM meeting_source
+        GROUP BY tenant_id, entity_id, metric_date
+    ) AS meetings
+        ON meetings.tenant_id = active_days.tenant_id
+       AND meetings.entity_id = active_days.entity_id
+       AND meetings.metric_date = active_days.metric_date
+    LEFT JOIN working_hours_source AS hours
+        ON hours.tenant_id = active_days.tenant_id
+       AND hours.entity_id = active_days.entity_id
 ),
 value_measures AS (
     {{ sum_measure('total_chat_messages', 'chat_source', 'total_chat_messages', 'tool_dimensions') }}
@@ -253,11 +283,11 @@ value_measures AS (
 
     UNION ALL
 
-    {{ sum_measure('focus_hours', 'focus_source', 'dev_time_h', 'no_dimensions') }}
+    {{ sum_measure('workday_meeting_hours', 'workday_source', 'workday_meeting_hours', 'no_dimensions') }}
 
     UNION ALL
 
-    {{ sum_measure('working_hours', 'focus_source', 'working_hours_per_day', 'no_dimensions') }}
+    {{ sum_measure('working_hours', 'workday_source', 'working_hours', 'no_dimensions') }}
 
     UNION ALL
 
@@ -308,7 +338,7 @@ SELECT
     ) AS record_id,
     measure_key AS record_kind,
     if(
-        measure_key IN ('focus_hours', 'working_hours', 'meeting_free_day'),
+        measure_key IN ('workday_meeting_hours', 'working_hours', 'meeting_free_day'),
         'derived_population',
         'source_summary'
     ) AS granularity,

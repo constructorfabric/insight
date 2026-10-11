@@ -766,7 +766,7 @@ models:
                   - meetings_organized
                   - adhoc_meetings_attended
                   - scheduled_meetings_attended
-                  - focus_hours
+                  - workday_meeting_hours
                   - working_hours
                   - chat_active_day
                   - meeting_free_day
@@ -790,7 +790,7 @@ models:
           tool discriminator (data_source with the insight_ prefix stripped)
           with static product labels; `scope` (files_shared only) carries the
           recipient scope (internal/external). Empty for whole-person
-          measures (focus_hours, working_hours, meeting_free_day,
+          measures (workday_meeting_hours, working_hours, meeting_free_day,
           active_modality).
 
   - name: task_metric_observations
