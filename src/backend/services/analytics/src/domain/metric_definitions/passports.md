@@ -555,18 +555,18 @@ is an order statistic instead, and always answers with one that did.
 ## collab.dm_ratio — DM Ratio
 
 - Source: collab (collab_metric_observations)
-- Reads: direct_and_group_messages, total_chat_messages
-- Formula: 100 * (direct_and_group_messages / total_chat_messages)
+- Reads: direct_and_group_messages, split_chat_messages
+- Formula: 100 * (direct_and_group_messages / split_chat_messages)
 - Shape: percent, lower_is_better
-- Notes: Direct and group-chat messages divided by all chat messages. A lower ratio means more communication happens in open channels. Tools that do not distinguish message types report no value.
+- Notes: Direct and group-chat messages divided by all chat messages, counted only in tools that tell the two apart, such as Microsoft Teams and Slack. Messages from tools without that split, such as Zulip, are left out, and a person with only those tools has no value. A lower ratio means more communication happens in open channels.
 
 ## collab.msgs_per_active_day — Messages per Active Day
 
 - Source: collab (collab_metric_observations)
 - Reads: total_chat_messages, chat_active_day
-- Formula: total_chat_messages / chat_active_day
+- Formula: total_chat_messages / distinct_count(chat_active_day)
 - Shape: decimal, higher_is_better, unit messages/day
-- Notes: Chat messages sent divided by days with chat messages. Each tool's active days count separately.
+- Notes: Chat messages sent divided by the distinct days with chat messages in any tool, so a day spent in two tools counts once.
 
 ## collab.active_days — Active Days
 
