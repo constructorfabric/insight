@@ -169,6 +169,7 @@ MATRIX: Sequence[Expectation] = (
     Expectation("collab.active_days", "collab", Tier.EXACT_DISTINCT_DATES),
     Expectation("collab.adhoc_meetings", "collab", Tier.EXACT_SUM),
     Expectation("collab.breadth", "collab", Tier.STRUCTURAL_ONLY),
+    Expectation("collab.calendar_meeting_hours", "collab", Tier.EXACT_SUM),
     Expectation("collab.channel_posts", "collab", Tier.EXACT_SUM),
     Expectation("collab.dm_ratio", "collab", Tier.EXACT_RATIO, scale=100.0),
     Expectation("collab.emails_read", "collab", Tier.EXACT_SUM),

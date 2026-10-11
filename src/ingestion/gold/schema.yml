@@ -762,6 +762,7 @@ models:
                   - files_shared_external
                   - files_shared
                   - meeting_hours
+                  - calendar_meeting_hours
                   - meetings_attended
                   - meetings_organized
                   - adhoc_meetings_attended
