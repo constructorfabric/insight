@@ -75,6 +75,12 @@ fn client_or_skip() -> Option<insight_clickhouse::Client> {
 /// fanned out the way `lib/ch-exec.sh` fans it out: drop whole-line comments,
 /// split on `;`.
 async fn apply_migration(ch: &insight_clickhouse::Client) {
+    // INVARIANT: migrations never create databases (create-databases.sh does), so the test must.
+    ch.query("CREATE DATABASE IF NOT EXISTS ingestion_history")
+        .execute()
+        .await
+        .expect("create database");
+
     let body: String = MIGRATION
         .lines()
         .filter(|line| !line.trim_start().starts_with("--"))
