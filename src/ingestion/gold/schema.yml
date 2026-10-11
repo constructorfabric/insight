@@ -754,6 +754,7 @@ models:
                   - total_chat_messages
                   - channel_posts
                   - direct_and_group_messages
+                  - split_chat_messages
                   - emails_sent
                   - emails_received
                   - emails_read
@@ -782,8 +783,8 @@ models:
           - not_null
       - name: subject_key
         description: >
-          Distinct-count subject: the date for active_day, the modality for
-          active_modality. NULL for sum and presence measures.
+          Distinct-count subject: the date for active_day and chat_active_day,
+          the modality for active_modality. NULL for sum and presence measures.
       - name: dimensions
         description: >
           Array(Tuple(key, value, label)). `tool` carries the collaboration

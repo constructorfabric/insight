@@ -4,7 +4,7 @@ models:
   - name: class_collab_chat_activity
     description: >
       Unified daily chat activity per user from all collaboration sources
-      (M365 Teams, Slack).
+      (M365 Teams, Slack, Zulip). Zulip reports only `total_chat_messages`.
 
       ## Aggregation guidance for Gold / analytics consumers
 
@@ -36,25 +36,22 @@ models:
         defensible but not identical (Slack value is broader by
         replies).
 
-      **Identity:** roughly,
-        `total_chat_messages ≈ direct_and_group_messages + channel_posts (+ channel_replies for m365)`.
-      The "≈" is because m365's `total_chat_messages` formula uses
-      `teamChatMessageCount` rather than `postMessages` for the channel
-      half, and the two are not strictly equal (see
-      `m365__collab_chat_activity.sql` header).
+      **Identity:**
+        `total_chat_messages = direct_and_group_messages + channel_posts (+ channel_replies for m365)`
+      for m365, whose report defines the channel message count as original
+      posts plus replies; for Slack the direct half is a residual clipped at
+      zero, so the total can fall short of the sum.
 
       **Do not mix families.**
       • `total_chat_messages + direct_and_group_messages` — double-counts the DM half.
       • `total_chat_messages + channel_posts` — double-counts the channel half.
-      • `direct_and_group_messages + direct_messages` — double-counts (for Slack `direct_messages` is NULL anyway; for m365 `direct_messages = direct_and_group_messages` because group is unsurfaced).
+      • `direct_and_group_messages + direct_messages` — double-counts (for Slack `direct_messages` is NULL anyway; for m365 `direct_messages = direct_and_group_messages`).
       • `direct_messages + group_chat_messages` — both are NULL (m365) or one is NULL (Slack). Use `direct_and_group_messages`.
 
-      **Cross-vendor warning:** the m365 contribution to
-      `direct_and_group_messages` is a strict subset (1:1 DMs only —
-      group chats unsurfaced by Microsoft). A SUM across both
-      `data_source` values systematically under-counts Teams users
-      who chat heavily in group DMs. Document that caveat in any
-      cross-vendor Gold metric.
+      **Cross-vendor note:** Microsoft counts private-chat messages without
+      telling one-to-one from group chats, and Slack's residual mixes DMs
+      and MPIMs, so `direct_and_group_messages` is comparable across the
+      two; Zulip leaves it NULL.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -83,9 +80,10 @@ models:
           - not_null
       - name: direct_messages
         description: >
-          1:1 private chat message count.
+          Private chat message count.
           • insight_m365  → `privateChatMessageCount` from
-            `getTeamsUserActivityUserDetail`. Exact 1:1 DM count.
+            `getTeamsUserActivityUserDetail`: messages in private chats,
+            which the report does not split into one-to-one and group.
           • insight_slack → NULL. The `admin.analytics.getFile?type=member`
             endpoint reports `messages_posted_count` (total) and
             `channel_messages_posted_count` (channel slice) but does NOT
@@ -96,11 +94,9 @@ models:
           Multi-party (group) DM message count. **#431: unavailable from
           both vendors' report-grade endpoints.**
           • insight_m365  → NULL. Microsoft's
-            `getTeamsUserActivityUserDetail` does not expose a group-chat
-            counter; `teamChatMessageCount` (previously mis-mapped here)
-            is in fact **channel posts**, not group DMs. Surfacing group
-            chats would require the content-bearing `/chats` API with
-            `Chat.Read.All` scope.
+            `getTeamsUserActivityUserDetail` counts group-chat messages
+            inside `privateChatMessageCount` without a separate counter;
+            `teamChatMessageCount` is channel messages, not group DMs.
           • insight_slack → NULL. Same gap — `admin.analytics.getFile`
             does not separate MPIM from DM.
           Until a content-stream connector lands on either side, group-chat
@@ -114,25 +110,19 @@ models:
           • insight_slack → `messages_posted_count` minus
             `channel_messages_posted_count` (clipped at 0). Includes
             DMs + MPIMs together; no further split available.
-          • insight_m365  → `privateChatMessageCount` (1:1 DMs only).
-            Microsoft does not surface a group-chat counter in this
-            endpoint, so the m365 contribution to this column **excludes
-            group chats** — it is a strict subset of the Slack semantic.
-            Cross-vendor sums therefore systematically under-count Teams
-            users who are heavy group-chat users. If/when an m365 group-
-            chat stream is added, this asymmetry resolves.
+          • insight_m365  → `privateChatMessageCount`: private-chat
+            messages, which Microsoft does not split into one-to-one and group.
+          • insight_zulip_proxy → NULL: the source reports one daily total.
       - name: total_chat_messages
         description: >
-          Total chat-surface message count. Semantics differ per vendor —
-          intentionally NOT a clean cross-vendor metric.
+          Messages the user sent on any chat surface that day.
           • insight_m365  → `privateChatMessageCount + teamChatMessageCount`
-            (1:1 DMs + team-channel messages). Excludes group chats
-            (unsurfaced — see `group_chat_messages`) and channel replies.
+            (private-chat messages plus channel posts and replies).
           • insight_slack → `messages_posted_count` (everything the user
             posted: DMs + MPIMs + channel posts + channel replies).
-          Slack's value is a superset (it includes replies); m365's is
-          narrower (it excludes group chats and replies). Treat as
-          "chat engagement signal" not "comparable absolute count".
+          • insight_zulip_proxy → messages the user sent that day.
+          Comparable as "messages sent" across the three, though each
+          vendor counts its own surfaces.
       - name: channel_posts
         description: >
           Channel-level message count (thread starts, not replies).

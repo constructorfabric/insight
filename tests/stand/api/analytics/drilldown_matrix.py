@@ -184,7 +184,7 @@ MATRIX: Sequence[Expectation] = (
     Expectation("collab.meetings_count", "collab", Tier.EXACT_SUM),
     Expectation("collab.meetings_organized", "collab", Tier.EXACT_SUM),
     Expectation("collab.messages_sent", "collab", Tier.EXACT_SUM),
-    Expectation("collab.msgs_per_active_day", "collab", Tier.COLLAPSE_BOUNDED_RATIO, scale=1.0),
+    Expectation("collab.msgs_per_active_day", "collab", Tier.EXACT_RATIO, scale=1.0),
     Expectation("collab.scheduled_meetings", "collab", Tier.EXACT_SUM),
     Expectation("git.active_days", "git", Tier.EXACT_DISTINCT_DATES),
     Expectation("git.approval_to_merge_time_h", "git", Tier.EXACT_MEDIAN),

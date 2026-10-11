@@ -1,0 +1,51 @@
+spec_version: 1
+description: >
+  Metrics: collab.messages_sent, collab.channel_posts, collab.dm_ratio and
+  collab.msgs_per_active_day across Microsoft Teams, Slack and Zulip, #3691 #3677
+  #3678 #3692.
+  How it's computed (bronze → silver → gold):
+    • bronze: the daily Teams activity report, Slack member analytics, and Zulip's
+      daily message total per sender with its user directory.
+    • silver: per person per day — Teams private-chat plus channel messages
+      (channel = posts + replies), Slack's total and channel slice, Zulip's total
+      only; a Zulip total re-sent by a sync keeps its latest value.
+    • gold:   messages sent = all totals; channel posts = channel messages where a
+      tool reports them; DM ratio = direct messages over the totals of the tools
+      that tell direct from channel apart; messages per active day = messages over
+      the distinct days with messages in any tool.
+
+  Cast (Engineering):
+    alice — Teams Dec 7: 6 private, 4 in channels (3 posts, 1 reply). Zulip under
+            a second address: 10 on Dec 7, 20 on Dec 8 (first sent as 18).
+            → 40 messages, 4 channel posts, DM 60%, 20 per active day.
+    bob   — Zulip only, 12 on Dec 7 → 12 messages, no channel posts, no DM ratio.
+    carol — Slack Dec 7: 20 messages, 5 in channels → 5 channel posts, DM 75%.
+  Cases: totals add across tools · channel posts only where reported · a tool
+  without a split leaves the DM ratio alone · a day in two tools is one active
+  day · a re-sent Zulip total keeps its latest value.
+
+identity_aliases:
+  alice@example.com: [alice.zulip@example.org]
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_m365.teams_activity:
+    - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-07", lastActivityDate: "2026-12-07", unique_key: chat-teams-alice-20261207, privateChatMessageCount: 6, teamChatMessageCount: 4, postMessages: 3, replyMessages: 1 }
+
+  bronze_zulip_proxy.users:
+    - { $ref: ../templates/zulip.yaml#/templates/zulip_user, id: 101, email: alice.zulip@example.org, full_name: Alice, unique_key: zulip-user-101 }
+    - { $ref: ../templates/zulip.yaml#/templates/zulip_user, id: 102, email: bob@example.com, full_name: Bob, unique_key: zulip-user-102 }
+
+  bronze_zulip_proxy.messages:
+    - { $ref: ../templates/zulip.yaml#/templates/zulip_message_day, uniq: z-101-20261207, unique_key: z-101-20261207, sender_id: 101, count: 10, created_at: "2026-12-07T00:00:00.000Z" }
+    - { $ref: ../templates/zulip.yaml#/templates/zulip_message_day, uniq: z-101-20261208, unique_key: z-101-20261208, sender_id: 101, count: 18, created_at: "2026-12-08T00:00:00.000Z" }
+    # the same day re-sent by a later sync with its final count → the later value wins.
+    - { $ref: ../templates/zulip.yaml#/templates/zulip_message_day, uniq: z-101-20261208, unique_key: z-101-20261208, _airbyte_extracted_at: "2030-01-02T00:00:00", sender_id: 101, count: 20, created_at: "2026-12-08T00:00:00.000Z" }
+    - { $ref: ../templates/zulip.yaml#/templates/zulip_message_day, uniq: z-102-20261207, unique_key: z-102-20261207, sender_id: 102, count: 12, created_at: "2026-12-07T00:00:00.000Z" }
+
+  bronze_slack.users_details:
+    - { $ref: ../templates/slack_chat.yaml#/templates/slack_user_day, user_id: U0CAROL, email_address: carol@example.com, date: "2026-12-07", unique_key: slack-carol-20261207, messages_posted_count: 20, channel_messages_posted_count: 5 }

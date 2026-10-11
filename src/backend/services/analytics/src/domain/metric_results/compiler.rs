@@ -1530,6 +1530,8 @@ fn ratio_denominator_expr_over(
     }
 }
 
+// INVARIANT: a distinct-count denominator counts (person, subject) pairs, so a rollup
+// over several people keeps each person's days apart instead of pooling equal dates.
 fn ratio_denominator_expr(
     aggregation: RatioDenominatorAggregation,
     sum_condition: &str,
@@ -1538,7 +1540,7 @@ fn ratio_denominator_expr(
     match aggregation {
         RatioDenominatorAggregation::Sum => format!("sumIf(value, {sum_condition})"),
         RatioDenominatorAggregation::DistinctCount => {
-            format!("uniqExactIf(subject_key, {distinct_condition})")
+            format!("uniqExactIf((entity_id, subject_key), {distinct_condition})")
         }
     }
 }
@@ -1791,7 +1793,7 @@ fn ratio_sides_expr(def: &MetricDefinition) -> (String, Vec<String>) {
     let denominator_expr = ratio_denominator_expr_over(
         *denominator_aggregation,
         &format!("{OBS}.value"),
-        &format!("{OBS}.subject_key"),
+        &format!("({OBS}.entity_id, {OBS}.subject_key)"),
         &format!("{OBS}.measure_key = ? AND {OBS}.value IS NOT NULL"),
         &format!("{OBS}.measure_key = ? AND {OBS}.subject_key IS NOT NULL"),
     );
@@ -2432,11 +2434,9 @@ mod tests {
         let query =
             compile_timeseries_query(&metric, &request(), QueryBucket::Week, &[], &[], None);
 
-        assert!(
-            query
-                .sql
-                .contains("uniqExactIf(subject_key, measure_key = ? AND subject_key IS NOT NULL)")
-        );
+        assert!(query.sql.contains(
+            "uniqExactIf((entity_id, subject_key), measure_key = ? AND subject_key IS NOT NULL)"
+        ));
         assert_eq!(query.params[0], "accepted_edit_actions");
         assert_eq!(query.params[1], "tool_use_offered");
     }

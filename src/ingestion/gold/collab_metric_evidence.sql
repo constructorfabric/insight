@@ -201,6 +201,12 @@ value_measures AS (
 
     UNION ALL
 
+    -- INVARIANT: only tools that tell direct from channel messages apart feed this,
+    -- so a total without that split never dilutes the direct share.
+    {{ sum_measure('split_chat_messages', 'chat_source', 'if(direct_and_group_messages IS NULL, NULL, total_chat_messages)', 'tool_dimensions') }}
+
+    UNION ALL
+
     {{ sum_measure('emails_sent', 'email_source', 'sent_count', 'tool_dimensions') }}
 
     UNION ALL
@@ -261,10 +267,6 @@ value_measures AS (
 
     UNION ALL
 
-    {{ sum_measure('chat_active_day', 'chat_source', 'if(total_chat_messages > 0, 1, NULL)', 'tool_dimensions') }}
-
-    UNION ALL
-
     {{ sum_measure('meeting_free_day', 'meeting_free_source', 'meeting_free_flag', 'no_dimensions') }}
 ),
 active_day_grain AS (
@@ -274,6 +276,15 @@ active_day_grain AS (
         metric_date,
         tool_dimensions
     FROM deliberate_activity
+),
+chat_active_day_grain AS (
+    SELECT DISTINCT
+        tenant_id,
+        entity_id,
+        metric_date,
+        tool_dimensions
+    FROM chat_source
+    WHERE total_chat_messages > 0
 ),
 active_modality_grain AS (
     SELECT DISTINCT
@@ -290,6 +301,10 @@ subject_measures AS (
     UNION ALL
 
     {{ distinct_measure('active_modality', 'active_modality_grain', 'modality', 'no_dimensions') }}
+
+    UNION ALL
+
+    {{ distinct_measure('chat_active_day', 'chat_active_day_grain', 'metric_date', 'tool_dimensions') }}
 )
 SELECT
     assumeNotNull(tenant_id) AS tenant_id,

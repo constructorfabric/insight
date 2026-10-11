@@ -194,6 +194,8 @@ sources:
         evidence_granularity: source_summary
       - key: direct_and_group_messages
         evidence_granularity: source_summary
+      - key: split_chat_messages
+        evidence_granularity: source_summary
       - key: meeting_hours
         evidence_granularity: source_summary
       - key: meetings_attended
@@ -223,8 +225,7 @@ sources:
       - key: active_modality
         evidence_granularity: derived_population
       - key: chat_active_day
-        evidence_granularity: source_summary
-        alias_collapse: max
+        evidence_granularity: derived_population
       - key: meeting_free_day
         evidence_granularity: derived_population
         alias_collapse: min
@@ -2008,7 +2009,7 @@ metrics:
     label: DM Ratio
     short_label: DM %
     description: Share of messages sent in direct or group chats
-    explanation: Direct and group-chat messages divided by all chat messages. A lower ratio means more communication happens in open channels. Tools that do not distinguish message types report no value.
+    explanation: Direct and group-chat messages divided by all chat messages, counted only in tools that tell the two apart, such as Microsoft Teams and Slack. Messages from tools without that split, such as Zulip, are left out, and a person with only those tools has no value. A lower ratio means more communication happens in open channels.
     format: percent
     direction: lower_is_better
     entity_type: person
@@ -2019,7 +2020,7 @@ metrics:
       - input_role: numerator
         measure_key: direct_and_group_messages
       - input_role: denominator
-        measure_key: total_chat_messages
+        measure_key: split_chat_messages
     dimensions:
       - tool
   - metric_key: collab.msgs_per_active_day
@@ -2030,13 +2031,14 @@ metrics:
     label: Messages per Active Day
     short_label: Msgs/day
     description: Chat messages divided by chat-active days
-    explanation: Chat messages sent divided by days with chat messages. Each tool's active days count separately.
+    explanation: Chat messages sent divided by the distinct days with chat messages in any tool, so a day spent in two tools counts once.
     unit: messages/day
     format: decimal
     direction: higher_is_better
     entity_type: person
     computation: !ratio
       scale: 1.0
+      denominator_aggregation: distinct_count
     peer_cohort_key: org_unit
     inputs:
       - input_role: numerator
