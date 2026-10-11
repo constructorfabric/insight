@@ -1,0 +1,19 @@
+{
+  "@odata.etag": "W/\"synthetic-etag\"",
+  "id": "AAMkAGI-synthetic-event-1",
+  "iCalUId": "040000008200E00074C5B7101A82E008-synthetic-1",
+  "type": "singleInstance",
+  "isAllDay": false,
+  "isCancelled": false,
+  "isOrganizer": false,
+  "showAs": "busy",
+  "start": {"dateTime": "2026-06-15T09:00:00.0000000", "timeZone": "UTC"},
+  "end": {"dateTime": "2026-06-15T09:30:00.0000000", "timeZone": "UTC"},
+  "responseStatus": {"response": "accepted", "time": "2026-06-10T08:00:00Z"},
+  "attendees": [
+    {"type": "required", "status": {"response": "accepted", "time": "0001-01-01T00:00:00Z"}, "emailAddress": {"name": "Alice Alpha", "address": "alice.alpha@example.com"}},
+    {"type": "required", "status": {"response": "none", "time": "0001-01-01T00:00:00Z"}, "emailAddress": {"name": "Bob Beta", "address": "bob@example.com"}},
+    {"type": "optional", "status": {"response": "none", "time": "0001-01-01T00:00:00Z"}, "emailAddress": {"name": "Carol Gamma", "address": "carol@example.com"}},
+    {"type": "resource", "status": {"response": "accepted", "time": "0001-01-01T00:00:00Z"}, "emailAddress": {"name": "Room 1", "address": "room1@example.com"}}
+  ]
+}
