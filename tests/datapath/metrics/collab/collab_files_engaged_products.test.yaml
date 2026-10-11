@@ -1,0 +1,38 @@
+spec_version: 1
+description: >
+  Metric: collab.files_engaged — OneDrive and SharePoint add up, and the SharePoint
+  feeder applies the same rules as the others.
+  How it's computed (bronze → silver → gold):
+    • bronze: the daily OneDrive and SharePoint activity reports per mailbox, each
+      with the files a user uploaded, downloaded, modified or viewed.
+    • staging: a row whose assigned-product list is empty is an unlicensed account
+      and is dropped; a report day that is a copy of an earlier report (rows with
+      activity whose last activity date is older) is dropped whole.
+    • gold:   per-person sum of files viewed or edited across both products.
+
+  Cast (Engineering):
+    alice — Dec 10: 10 on OneDrive and 5 on SharePoint → 15.
+    bob   — OneDrive Dec 10: 4 (licensed control); SharePoint Dec 11: 9 with an
+            empty product list → dropped. December takes 4.
+    carol — SharePoint Dec 12: 6, a real day; Dec 13 repeats it with the last
+            activity still Dec 12 → dropped. December takes 6.
+  Cases: products add up · unlicensed SharePoint row dropped beside a licensed one ·
+  carried-forward SharePoint day dropped.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_m365.onedrive_activity:
+    - { $ref: ../templates/m365_onedrive.yaml#/templates/alice_onedrive, reportRefreshDate: "2026-12-10", lastActivityDate: "2026-12-10", unique_key: prod-od-alice-20261210, viewedOrEditedFileCount: 10 }
+    - { $ref: ../templates/m365_onedrive.yaml#/templates/bob_onedrive,   reportRefreshDate: "2026-12-10", lastActivityDate: "2026-12-10", unique_key: prod-od-bob-20261210,   viewedOrEditedFileCount: 4 }
+
+  bronze_m365.sharepoint_activity:
+    - { $ref: ../templates/m365_sharepoint.yaml#/templates/alice_sharepoint, reportRefreshDate: "2026-12-10", lastActivityDate: "2026-12-10", unique_key: prod-sp-alice-20261210, viewedOrEditedFileCount: 5 }
+    # bob, SharePoint: an empty product list marks an unlicensed account → dropped.
+    - { $ref: ../templates/m365_sharepoint.yaml#/templates/bob_sharepoint,   reportRefreshDate: "2026-12-11", lastActivityDate: "2026-12-11", unique_key: prod-sp-bob-20261211,   assignedProducts: "[]", viewedOrEditedFileCount: 9 }
+    # carol, SharePoint: a real day, then a copy of it stamped with the next date → copy dropped.
+    - { $ref: ../templates/m365_sharepoint.yaml#/templates/carol_sharepoint, reportRefreshDate: "2026-12-12", lastActivityDate: "2026-12-12", unique_key: prod-sp-carol-20261212, viewedOrEditedFileCount: 6 }
+    - { $ref: ../templates/m365_sharepoint.yaml#/templates/carol_sharepoint, reportRefreshDate: "2026-12-13", lastActivityDate: "2026-12-12", unique_key: prod-sp-carol-20261213, viewedOrEditedFileCount: 6 }
