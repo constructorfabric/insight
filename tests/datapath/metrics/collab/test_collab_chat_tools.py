@@ -103,3 +103,34 @@ def test_dm_ratio_breakdown_leaves_a_tool_without_split_empty(spec: SpecRun) -> 
     assert by_tool.get("zulip_proxy") is None, (
         f"Zulip has no split and must carry no share, got {by_tool}"
     )
+
+
+def test_team_rollup_keeps_each_persons_active_days_apart(spec: SpecRun) -> None:
+    """Zulip: alice 30 messages over 2 days, bob 12 over 1 day → 42 over 3 person-days."""
+    r = spec.call(
+        {
+            "url": "/v1/metric-results",
+            "method": "POST",
+            "body": {
+                "entity": {"type": "person", "ids": [ALICE, BOB]},
+                "period": {"from": "2026-12-01", "to": "2026-12-31"},
+                "metrics": [
+                    {
+                        "metric_key": "collab.msgs_per_active_day",
+                        "views": [{"view": "rollup", "dimensions": ["tool"]}],
+                    }
+                ],
+            },
+        }
+    )
+    assert r.status == 200, "should answer 200 for the team rollup"
+    r.row(
+        "collab.msgs_per_active_day",
+        "rollup",
+        dimensions={"key": "tool", "value": "zulip_proxy"},
+    ).equals(value=14, contributing_entity_count=2)
+    r.row(
+        "collab.msgs_per_active_day",
+        "rollup",
+        dimensions={"key": "tool", "value": "m365"},
+    ).equals(value=10, contributing_entity_count=1)
