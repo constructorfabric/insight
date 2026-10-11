@@ -1,0 +1,66 @@
+spec_version: 1
+description: >
+  Metric: collab.calendar_meeting_hours — hours a person's calendar is taken up by
+  meetings they accepted or organized with someone else invited, #3742.
+  How it's computed (bronze → silver → gold):
+    • bronze: one calendar event per person per occurrence; each sync re-reads the
+      27 finished UTC days before it, and a later read of an event replaces the
+      earlier one.
+    • staging: an event is a meeting when it is accepted, or organized with at
+      least one other person invited; shown as busy; not cancelled, not all-day
+      and at most eight hours long. Each person-day counts the time covered by at
+      least one meeting, so overlaps count once; a meeting across midnight is
+      split between the UTC days, and only days inside the read window count.
+      A day a later read leaves empty goes back to zero.
+    • gold:   calendar meeting hours = those seconds / 3600, summed over days.
+
+  Cast (Engineering): alice only, read by the sync of Dec 31 (window Dec 4 – Dec 30).
+    Dec 3/4  — accepted 23:00 → 01:00 across the window start → 1 h on Dec 4 only.
+    Dec 7    — accepted 09:00–10:00 and 09:30–10:30 → 1.5 h; tentative, declined,
+               unanswered, cancelled, all-day and "free" events add nothing.
+    Dec 8    — organized alone 09:00–10:00 → nothing; organized with two invited
+               10:00–11:00 (also re-sent by a sync) → 1 h.
+    Dec 9/10 — accepted 23:00 → 01:00 → 1 h on each day.
+    Dec 11   — accepted ten-hour event → nothing.
+    Dec 14   — accepted 1 h, later read again as cancelled → nothing.
+    Dec 15   — 10:00–11:00 inside 09:00–12:00, then 11:30–12:30 → 3.5 h.
+    Dec 16   — exactly eight hours → 8 h; a later sync moves it to Dec 24.
+    Dec 17   — 23:00 → 00:00 → 1 h, nothing on Dec 18.
+    Dec 21   — organized with an unknown invitee count → nothing.
+    Dec 22   — the sign-in name in another letter case → still alice, 1 h.
+    Dec 30/31 — accepted 23:00 → 01:00 across the window end → 1 h on Dec 30 only.
+  Cases: overlaps and containment count once · only accepted or organized-with-others
+  counts · midnight split · window edges · long, cancelled and re-sent events · a
+  moved event empties its old day.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+
+  bronze_m365.calendar_events:
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e0, unique_key: cal-alice-e0, start_time: "2026-12-03T23:00:00.0000000", end_time: "2026-12-04T01:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e1, unique_key: cal-alice-e1, start_time: "2026-12-07T09:00:00.0000000", end_time: "2026-12-07T10:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e2, unique_key: cal-alice-e2, start_time: "2026-12-07T09:30:00.0000000", end_time: "2026-12-07T10:30:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e3, unique_key: cal-alice-e3, response: tentativelyAccepted, showAs: tentative, start_time: "2026-12-07T11:00:00.0000000", end_time: "2026-12-07T12:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e4, unique_key: cal-alice-e4, response: declined, showAs: free, start_time: "2026-12-07T13:00:00.0000000", end_time: "2026-12-07T14:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e5, unique_key: cal-alice-e5, response: notResponded, start_time: "2026-12-07T14:00:00.0000000", end_time: "2026-12-07T15:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e6, unique_key: cal-alice-e6, isCancelled: true, start_time: "2026-12-07T15:00:00.0000000", end_time: "2026-12-07T16:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e7, unique_key: cal-alice-e7, isAllDay: true, start_time: "2026-12-07T00:00:00.0000000", end_time: "2026-12-08T00:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e8, unique_key: cal-alice-e8, showAs: free, start_time: "2026-12-07T16:00:00.0000000", end_time: "2026-12-07T17:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e9, unique_key: cal-alice-e9, response: organizer, isOrganizer: true, other_invitees: 0, start_time: "2026-12-08T09:00:00.0000000", end_time: "2026-12-08T10:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e10, unique_key: cal-alice-e10, response: organizer, isOrganizer: true, other_invitees: 2, start_time: "2026-12-08T10:00:00.0000000", end_time: "2026-12-08T11:00:00.0000000" }
+    # the same event re-sent by a later read → collapses into the row above.
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e10, unique_key: cal-alice-e10, _airbyte_extracted_at: "2026-12-31T03:00:00", response: organizer, isOrganizer: true, other_invitees: 2, start_time: "2026-12-08T10:00:00.0000000", end_time: "2026-12-08T11:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e11, unique_key: cal-alice-e11, start_time: "2026-12-09T23:00:00.0000000", end_time: "2026-12-10T01:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e12, unique_key: cal-alice-e12, start_time: "2026-12-11T08:00:00.0000000", end_time: "2026-12-11T18:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e13, unique_key: cal-alice-e13, start_time: "2026-12-14T09:00:00.0000000", end_time: "2026-12-14T10:00:00.0000000" }
+    # a later read of the same event finds it cancelled → the meeting no longer counts.
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e13, unique_key: cal-alice-e13, _airbyte_extracted_at: "2026-12-31T03:00:00", isCancelled: true, start_time: "2026-12-14T09:00:00.0000000", end_time: "2026-12-14T10:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e14, unique_key: cal-alice-e14, start_time: "2026-12-15T09:00:00.0000000", end_time: "2026-12-15T12:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e15, unique_key: cal-alice-e15, start_time: "2026-12-15T10:00:00.0000000", end_time: "2026-12-15T11:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e15b, unique_key: cal-alice-e15b, start_time: "2026-12-15T11:30:00.0000000", end_time: "2026-12-15T12:30:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e16, unique_key: cal-alice-e16, start_time: "2026-12-16T08:00:00.0000000", end_time: "2026-12-16T16:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e17, unique_key: cal-alice-e17, start_time: "2026-12-17T23:00:00.0000000", end_time: "2026-12-18T00:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e18, unique_key: cal-alice-e18, response: organizer, isOrganizer: true, other_invitees: null, start_time: "2026-12-21T09:00:00.0000000", end_time: "2026-12-21T10:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e19, unique_key: cal-alice-e19, userPrincipalName: Alice@Example.com, start_time: "2026-12-22T09:00:00.0000000", end_time: "2026-12-22T10:00:00.0000000" }
+    - { $ref: ../templates/m365_calendar.yaml#/templates/alice_event, id: e20, unique_key: cal-alice-e20, start_time: "2026-12-30T23:00:00.0000000", end_time: "2026-12-31T01:00:00.0000000" }
