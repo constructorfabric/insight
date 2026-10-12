@@ -1,6 +1,8 @@
 """One built data path per spec module, and the completeness rule over its tests.
 
-A spec module names its fixture in `SPEC` and asserts one case per test. The path is
+A spec module names its fixture in `SPEC` and asserts one case per test. A module may
+also name another spec in `NEIGHBOUR`, which is seeded and minted under a second tenant
+beside it, so the module's reads prove that tenant stays out of sight. The path is
 built once for the module; each test then reads through `spec.call(...)` and is held to
 the rule the retired engine enforced — a selected row owes its view's required fields.
 """
@@ -19,7 +21,7 @@ from insight_datapath.fixture_loader import load
 from insight_datapath.instance import InstanceConfig
 from insight_datapath.metric_definitions import collect
 from insight_datapath.metric_expect import Ledger
-from insight_datapath.spec_runner import SpecRun, run_spec
+from insight_datapath.spec_runner import NEIGHBOUR_TENANT, Neighbour, SpecRun, run_spec
 from insight_datapath.subjects import Subjects
 from insight_datapath.tenant_transition import WarmTenant
 from insight_stand.manifest import Manifest
@@ -59,16 +61,16 @@ def spec(
         raise pytest.UsageError(
             f"{request.module.__name__}: a spec module must set SPEC = '<fixture name>'"
         )
-    loaded = load(
-        Path(request.module.__file__).parent / f"{name}.test.yaml",
-        substitutions={
-            "tenant": bronze_tenant,
-            "supervisor_email": caller_session.email,
-            "supervisor_name": caller_session.person.display_name,
-        },
-    )
+    module_dir = Path(request.module.__file__).parent
+    substitutions = {
+        "tenant": bronze_tenant,
+        "supervisor_email": caller_session.email,
+        "supervisor_name": caller_session.person.display_name,
+    }
+    loaded = load(module_dir / f"{name}.test.yaml", substitutions=substitutions)
     if loaded.skip:
         pytest.skip(loaded.skip)
+    neighbour = _neighbour(request, module_dir, substitutions, subjects, warm)
     return run_spec(
         loaded,
         ch_seeder=ch_seeder,
@@ -80,7 +82,28 @@ def spec(
         bindings=bindings,
         ledger=LEDGER,
         warm=warm,
+        neighbour=neighbour,
     )
+
+
+def _neighbour(
+    request: pytest.FixtureRequest,
+    module_dir: Path,
+    substitutions: dict[str, str],
+    subjects: Subjects,
+    warm: WarmTenant | None,
+) -> Neighbour | None:
+    name = getattr(request.module, "NEIGHBOUR", None)
+    if not name:
+        return None
+    if warm is not None:
+        pytest.skip("a warm install upgrades the one tenant it holds; a neighbour is a second one")
+    loaded = load(
+        module_dir / f"{name}.test.yaml", substitutions={**substitutions, "tenant": NEIGHBOUR_TENANT}
+    )
+    if loaded.skip:
+        raise pytest.UsageError(f"{request.module.__name__}: NEIGHBOUR names a skipped spec")
+    return Neighbour(spec=loaded, subjects=subjects.for_tenant(NEIGHBOUR_TENANT))
 
 
 @pytest.fixture(autouse=True)
