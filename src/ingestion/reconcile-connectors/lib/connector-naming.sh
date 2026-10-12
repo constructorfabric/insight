@@ -117,5 +117,5 @@ reconcile_compute_schedule() {
 # that is INSIGHT_TENANT_ID.
 # ---------------------------------------------------------------------------
 reconcile_tenant_key() {
-  printf '%s' "${INSIGHT_LEGACY_TENANT_KEY:-${INSIGHT_TENANT_ID:?INSIGHT_TENANT_ID must be set}}"
+  printf '%s' "${INSIGHT_TENANT_KEY:-${INSIGHT_TENANT_ID:?INSIGHT_TENANT_ID must be set}}"
 }

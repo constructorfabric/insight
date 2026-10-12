@@ -90,6 +90,6 @@ spec:
             # tenant_key(): the keys history models build (dbt/macros/tenant_key.sql).
             - name: INSIGHT_TENANT_ID
               value: {{ include "insight.tenantId" . | quote }}
-            - name: INSIGHT_LEGACY_TENANT_KEY
-              value: {{ (.Values.ingestion.reconcile).legacyTenantKeyOverride | default "" | quote }}
+            - name: INSIGHT_TENANT_KEY
+              value: {{ include "insight.tenantKey" . | quote }}
 {{- end }}

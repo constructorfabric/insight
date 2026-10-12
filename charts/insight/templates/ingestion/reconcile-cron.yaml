@@ -133,10 +133,8 @@ spec:
               value: {{ include "insight.clickhouse.clusterName" . | quote }}
             - name: INSIGHT_TENANT_ID
               value: {{ required "ingestion.reconcile.tenantId is required (the canonical tenant UUID)" (include "insight.tenantId" .) | quote }}
-            {{- with .Values.ingestion.reconcile.legacyTenantKeyOverride }}
-            - name: INSIGHT_LEGACY_TENANT_KEY
-              value: {{ . | quote }}
-            {{- end }}
+            - name: INSIGHT_TENANT_KEY
+              value: {{ include "insight.tenantKey" . | quote }}
             # ARGO_INSTANCE_ID — set only when the cluster's Argo workflow
             # controller runs with `instanceID:` configured. Empty value
             # leaves the controller-instanceid label off the rendered

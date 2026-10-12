@@ -65,7 +65,7 @@ def _resolve(tenant: str, legacy_key: str = "") -> subprocess.CompletedProcess[s
     script = f"""
     set -uo pipefail
     eval "$(sed -n '/^resolve_tenant_id()/,/^}}/p' "{ROOT}/main.sh")"
-    INSIGHT_TENANT_ID='{tenant}' INSIGHT_LEGACY_TENANT_KEY='{legacy_key}' resolve_tenant_id
+    INSIGHT_TENANT_ID='{tenant}' INSIGHT_TENANT_KEY='{legacy_key}' resolve_tenant_id
     """
     return subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
 
@@ -80,7 +80,7 @@ def test_the_canonical_tenant_is_accepted() -> None:
 def test_anything_but_a_lowercase_uuid_is_refused(value: str) -> None:
     result = _resolve(value)
     assert result.returncode != 0
-    assert "INSIGHT_LEGACY_TENANT_KEY" in result.stderr
+    assert "INSIGHT_TENANT_KEY" in result.stderr
 
 
 def test_a_legacy_key_with_whitespace_is_refused() -> None:

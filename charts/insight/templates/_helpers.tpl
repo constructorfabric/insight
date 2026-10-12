@@ -246,6 +246,14 @@ Empty when neither is set (a multi-tenant install relying on the token claim).
 {{- end -}}
 
 {{/*
+insight.tenantKey is the tenant segment of Bronze keys and Airbyte/Argo names:
+legacyTenantKeyOverride on a warm install, the canonical tenant everywhere else.
+*/}}
+{{- define "insight.tenantKey" -}}
+{{- default (include "insight.tenantId" .) (((.Values.ingestion | default dict).reconcile | default dict).legacyTenantKeyOverride) -}}
+{{- end -}}
+
+{{/*
 ==============================================================================
  APP SERVICE HOSTS
 ==============================================================================

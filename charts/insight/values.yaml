@@ -587,6 +587,9 @@ analytics:
     # installation; when off, the catalog omits them and the CI lens renders
     # its honest not-enabled state.
     tenantMetricsEnabled: false
+    # Filter every metric read to the session tenant. Turning it off serves
+    # every tenant's rows to every caller.
+    enforceTenantScope: true
   mcp:
     port: 8086
     maxConcurrentQueries: 16

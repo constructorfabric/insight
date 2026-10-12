@@ -134,7 +134,7 @@ built from `legacyTenantKeyOverride`.
    history models out — a full refresh rebuilds a snapshot from the current
    Bronze state and discards every earlier version:
    ```bash
-   export INSIGHT_TENANT_ID=<TENANT_UUID> INSIGHT_LEGACY_TENANT_KEY=<LEGACY_KEY>
+   export INSIGHT_TENANT_ID=<TENANT_UUID> INSIGHT_TENANT_KEY=<LEGACY_KEY>
    dbt run --full-refresh --exclude tag:history
    ```
    The two variables keep the keys history models build on the legacy key

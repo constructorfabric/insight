@@ -74,8 +74,8 @@ spec:
           # legacy key in the keys history models build.
           - name: INSIGHT_TENANT_ID
             value: {{ include "insight.tenantId" . | quote }}
-          - name: INSIGHT_LEGACY_TENANT_KEY
-            value: {{ .Values.ingestion.reconcile.legacyTenantKeyOverride | default "" | quote }}
+          - name: INSIGHT_TENANT_KEY
+            value: {{ include "insight.tenantKey" . | quote }}
           - name: CLICKHOUSE_HOST
             value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
           - name: CLICKHOUSE_PORT

@@ -67,9 +67,9 @@ Options:
 
 Environment:
   INSIGHT_TENANT_ID      Canonical tenant UUID (required)
-  INSIGHT_LEGACY_TENANT_KEY
-                         Warm installs only: the tenant segment existing
-                         Airbyte/Argo names and Bronze keys were created with
+  INSIGHT_TENANT_KEY     Tenant segment of Airbyte/Argo names and Bronze keys:
+                         a warm install's legacy key, else the tenant UUID
+                         (the default when unset)
   AIRBYTE_URL            Airbyte server base URL
                          (e.g., http://airbyte-server.airbyte.svc:8001)
   AIRBYTE_TOKEN_FILE     Path to bearer token file
@@ -85,12 +85,12 @@ EOF
 resolve_tenant_id() {
   local uuid='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
   if [[ ! "${INSIGHT_TENANT_ID:-}" =~ ${uuid} ]]; then
-    printf 'resolve_tenant_id: INSIGHT_TENANT_ID must be the canonical tenant as a lowercase UUID, got %q. A legacy key existing names were created with goes in INSIGHT_LEGACY_TENANT_KEY.\n' \
+    printf 'resolve_tenant_id: INSIGHT_TENANT_ID must be the canonical tenant as a lowercase UUID, got %q. A legacy key existing names were created with goes in INSIGHT_TENANT_KEY.\n' \
       "${INSIGHT_TENANT_ID:-}" >&2
     return 1
   fi
-  if [[ "${INSIGHT_LEGACY_TENANT_KEY:-}" =~ [[:space:]] ]]; then
-    printf 'resolve_tenant_id: INSIGHT_LEGACY_TENANT_KEY %q contains whitespace\n' "${INSIGHT_LEGACY_TENANT_KEY}" >&2
+  if [[ "${INSIGHT_TENANT_KEY:-}" =~ [[:space:]] ]]; then
+    printf 'resolve_tenant_id: INSIGHT_TENANT_KEY %q contains whitespace\n' "${INSIGHT_TENANT_KEY}" >&2
     return 1
   fi
   printf '%s' "${INSIGHT_TENANT_ID}"

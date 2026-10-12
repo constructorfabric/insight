@@ -46,7 +46,7 @@ secrets/connectors/                       # K8s Secret templates
 Tenant identity lives in the install's values, not in a repo file. Reconcile reads two variables:
 
 - `INSIGHT_TENANT_ID` — the canonical tenant UUID (`ingestion.reconcile.tenantId`). Every record is stamped with it as `insight_tenant_id`.
-- `INSIGHT_LEGACY_TENANT_KEY` — warm installs only (`ingestion.reconcile.legacyTenantKeyOverride`): the tenant segment existing Airbyte source/connection names, Argo schedule names and Bronze `unique_key`s were created with. Without it they use the canonical UUID. See [deploy/TENANT_IDENTITY_UPGRADE.md](../../deploy/TENANT_IDENTITY_UPGRADE.md).
+- `INSIGHT_TENANT_KEY` — warm installs only (`ingestion.reconcile.legacyTenantKeyOverride`): the tenant segment existing Airbyte source/connection names, Argo schedule names and Bronze `unique_key`s were created with. Without it they use the canonical UUID. See [deploy/TENANT_IDENTITY_UPGRADE.md](../../deploy/TENANT_IDENTITY_UPGRADE.md).
 
 All credentials and connector parameters are in K8s Secrets. Active connectors are discovered automatically by label `app.kubernetes.io/part-of=insight`:
 

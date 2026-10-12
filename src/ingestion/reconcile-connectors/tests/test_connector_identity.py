@@ -43,7 +43,7 @@ def resolve(call: str, *, secret: str, annotation: str, legacy_key: str = "") ->
     export INSIGHT_NAMESPACE=insight
     export CONNECTORS_DIR="{ROOT}/../connectors"
     export INSIGHT_TENANT_ID={TENANT}
-    export INSIGHT_LEGACY_TENANT_KEY={legacy_key}
+    export INSIGHT_TENANT_KEY={legacy_key}
     source "{ROOT}/lib/connector-naming.sh"
     disc_match_descriptor_to_secret() {{ {secret}; }}
     kubectl() {{ {annotation}; }}
@@ -112,7 +112,7 @@ class TestTheIdentityIsReadNotInvented:
         script = f"""
         set -uo pipefail
         export INSIGHT_NAMESPACE=insight CONNECTORS_DIR="{ROOT}/../connectors"
-        unset INSIGHT_TENANT_ID INSIGHT_LEGACY_TENANT_KEY
+        unset INSIGHT_TENANT_ID INSIGHT_TENANT_KEY
         source "{ROOT}/lib/connector-naming.sh"
         reconcile_tenant_key
         """

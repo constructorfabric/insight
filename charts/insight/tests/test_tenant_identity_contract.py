@@ -122,13 +122,17 @@ def test_a_tenant_that_is_not_a_lowercase_uuid_is_refused(chart_dependencies: No
     assert "legacyTenantKeyOverride" in result.stderr
 
 
-def test_a_fresh_install_gives_reconcile_no_legacy_key(chart_dependencies: None) -> None:
-    found = _carried(
+@pytest.mark.parametrize(
+    "template",
+    [
         "templates/ingestion/reconcile-cron.yaml",
-        ["--set", f"ingestion.reconcile.tenantId={CANONICAL}"],
-        ("INSIGHT_LEGACY_TENANT_KEY",),
-    )
-    assert found == {}
+        "templates/ingestion/dbt-run.yaml",
+        "templates/clickhouse-migrate-job.yaml",
+    ],
+)
+def test_a_fresh_install_keys_by_the_canonical_tenant(chart_dependencies: None, template: str) -> None:
+    found = _carried(template, ["--set", f"ingestion.reconcile.tenantId={CANONICAL}"], ("INSIGHT_TENANT_KEY",))
+    assert found == {"INSIGHT_TENANT_KEY": {CANONICAL}}
 
 
 def test_a_warm_install_gives_reconcile_its_legacy_key(chart_dependencies: None) -> None:
@@ -138,9 +142,9 @@ def test_a_warm_install_gives_reconcile_its_legacy_key(chart_dependencies: None)
             "--set", f"ingestion.reconcile.tenantId={CANONICAL}",
             "--set", "ingestion.reconcile.legacyTenantKeyOverride=example-legacy",
         ],
-        ("INSIGHT_TENANT_ID", "INSIGHT_LEGACY_TENANT_KEY"),
+        ("INSIGHT_TENANT_ID", "INSIGHT_TENANT_KEY"),
     )
-    assert found == {"INSIGHT_TENANT_ID": {CANONICAL}, "INSIGHT_LEGACY_TENANT_KEY": {"example-legacy"}}
+    assert found == {"INSIGHT_TENANT_ID": {CANONICAL}, "INSIGHT_TENANT_KEY": {"example-legacy"}}
 
 
 @pytest.mark.parametrize(
@@ -153,9 +157,9 @@ def test_dbt_hears_both_the_tenant_and_the_legacy_key(chart_dependencies: None, 
             "--set", f"ingestion.reconcile.tenantId={CANONICAL}",
             "--set", "ingestion.reconcile.legacyTenantKeyOverride=example-legacy",
         ],
-        ("INSIGHT_TENANT_ID", "INSIGHT_LEGACY_TENANT_KEY"),
+        ("INSIGHT_TENANT_ID", "INSIGHT_TENANT_KEY"),
     )
-    assert found == {"INSIGHT_TENANT_ID": {CANONICAL}, "INSIGHT_LEGACY_TENANT_KEY": {"example-legacy"}}
+    assert found == {"INSIGHT_TENANT_ID": {CANONICAL}, "INSIGHT_TENANT_KEY": {"example-legacy"}}
 
 
 @pytest.mark.parametrize("template", ["templates/secrets.yaml", "templates/keycloak-config-job.yaml"])

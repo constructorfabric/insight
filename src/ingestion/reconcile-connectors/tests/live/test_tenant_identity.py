@@ -71,7 +71,7 @@ def test_warm_install_keeps_its_objects_and_state(stand: Stand, baseline_main: P
     warm = stand.snapshot()
     assert len(warm.sources) == len(CONNECTORS), sorted(warm.sources)
 
-    stand.reconcile(INSIGHT_TENANT_ID=CANONICAL_TENANT, INSIGHT_LEGACY_TENANT_KEY=LEGACY_TENANT_KEY)
+    stand.reconcile(INSIGHT_TENANT_ID=CANONICAL_TENANT, INSIGHT_TENANT_KEY=LEGACY_TENANT_KEY)
     upgraded = stand.snapshot()
 
     assert {n: s["sourceId"] for n, s in upgraded.sources.items()} == {

@@ -40,7 +40,7 @@ These fields are set by `reconcile-connectors.sh` and should NOT be in the Secre
 | Field | Source |
 |-------|--------|
 | `insight_tenant_id` | the canonical tenant UUID (`INSIGHT_TENANT_ID`) |
-| `insight_tenant_key` | tenant segment of `unique_key` (`INSIGHT_LEGACY_TENANT_KEY`, else the tenant UUID) |
+| `insight_tenant_key` | tenant segment of `unique_key` (`INSIGHT_TENANT_KEY`, else the tenant UUID) |
 | `insight_source_id` | `insight.cyberfabric.com/source-id` annotation |
 
 Connector credentials are stored in the K8s Secret. Platform identifiers (`insight_tenant_id`, `insight_source_id`) are injected separately by reconcile from the cluster ConfigMap and Secret annotations.

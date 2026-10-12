@@ -59,8 +59,8 @@ class TenantEnv:
 
 def tenant_env(warm: WarmTenant | None) -> TenantEnv:
     if warm is None:
-        return TenantEnv({"INSIGHT_TENANT_ID": "", "INSIGHT_LEGACY_TENANT_KEY": ""})
-    return TenantEnv({"INSIGHT_TENANT_ID": warm.canonical, "INSIGHT_LEGACY_TENANT_KEY": warm.legacy_key})
+        return TenantEnv({"INSIGHT_TENANT_ID": "", "INSIGHT_TENANT_KEY": ""})
+    return TenantEnv({"INSIGHT_TENANT_ID": warm.canonical, "INSIGHT_TENANT_KEY": warm.legacy_key})
 
 
 def apply_transition(cfg: InstanceConfig, warm: WarmTenant, *, repo_root: Path) -> None:
