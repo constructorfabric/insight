@@ -91,11 +91,11 @@ def ch_script(sql: str) -> None:
         ch(statement)
 
 
-def migrate(*args: str) -> subprocess.CompletedProcess[str]:
+def migrate(*args: str, legacy: str | None = LEGACY) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "CLICKHOUSE_URL": CH_URL, "CLICKHOUSE_USER": CH_USER, "CLICKHOUSE_PASSWORD": CH_PASSWORD}
+    legacy_args = ["--legacy-tenant-key", legacy] if legacy else []
     return subprocess.run(
-        [shutil.which("bash") or "bash", str(MIGRATE), "--canonical-tenant", CANONICAL, "--legacy-tenant-key", LEGACY,
-         *args],
+        [shutil.which("bash") or "bash", str(MIGRATE), "--canonical-tenant", CANONICAL, *legacy_args, *args],
         env=env, capture_output=True, text=True, check=False, timeout=300,
     )
 
@@ -140,7 +140,36 @@ def test_a_second_run_changes_nothing() -> None:
     assert migrate().returncode == 0
     second = migrate()
     assert second.returncode == 0, second.stderr
-    assert f"rows under '{LEGACY}': 0" in second.stdout
+    assert f"rows moved to '{CANONICAL}': 0" in second.stdout
+
+
+def test_a_row_without_a_tenant_moves_with_the_legacy_key() -> None:
+    """On an install holding one tenant, a row that carries none can only be that tenant's."""
+    ch("INSERT INTO bronze_example.events VALUES ('main-7', NULL, 'main', 7), ('main-8', '', 'main', 8)")
+
+    result = migrate()
+
+    assert result.returncode == 0, result.stderr
+    assert ch("SELECT groupUniqArray(tenant_id) FROM bronze_example.events FINAL") == f"['{CANONICAL}']"
+
+
+def test_without_a_legacy_key_only_rows_without_a_tenant_move() -> None:
+    assert migrate().returncode == 0
+    ch("INSERT INTO bronze_example.events VALUES ('main-7', NULL, 'main', 7)")
+
+    result = migrate(legacy=None)
+
+    assert result.returncode == 0, result.stderr
+    assert ch("SELECT groupUniqArray(tenant_id), count() FROM bronze_example.events FINAL") == (
+        f"['{CANONICAL}']\t3"
+    )
+
+
+def test_a_row_without_a_tenant_is_left_where_another_tenant_lives() -> None:
+    ch("INSERT INTO bronze_example.events VALUES ('main-7', NULL, 'main', 7), ('other-main-9', 'other-tenant', 'main', 9)")
+
+    assert migrate().returncode != 0
+    assert ch("SELECT countIf(tenant_id IS NULL) FROM bronze_example.events") == "1"
 
 
 def test_a_dry_run_changes_nothing() -> None:
@@ -208,20 +237,28 @@ def heal_field_observations() -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_an_observation_takes_the_tenant_its_key_was_written_under() -> None:
-    """The heal reads the tenant back from the key, the transition then moves it to the
-    canonical one, and a key naming no tenant Bronze holds stays unattributed."""
-    ch_script(YOUTRACK_OBSERVATIONS)
-
-    healed = heal_field_observations()
-    assert healed.returncode == 0, healed.stderr
-    assert migrate().returncode == 0
-
-    rows = ch(
+def observations() -> list[str]:
+    return ch(
         "SELECT field_id, ifNull(tenant_id, 'NULL'), unique_key FROM staging.youtrack__field_observations"
         " ORDER BY field_id FORMAT TSV"
     ).splitlines()
-    assert rows == [
-        f"f1\t{CANONICAL}\t{LEGACY}-yt-main-f1-2026-01-05 00:00:00",
+
+
+def test_an_observation_takes_the_tenant_its_key_was_written_under() -> None:
+    """The heal reads the tenant back from the key and leaves a key naming no tenant Bronze
+    holds unattributed; the transition then moves both onto the install's one tenant."""
+    ch_script(YOUTRACK_OBSERVATIONS)
+
+    healed = heal_field_observations()
+
+    assert healed.returncode == 0, healed.stderr
+    assert observations() == [
+        f"f1\t{LEGACY}\t{LEGACY}-yt-main-f1-2026-01-05 00:00:00",
         "f2\tNULL\tother-yt-main-f2-2026-01-05 00:00:00",
+    ]
+
+    assert migrate().returncode == 0
+    assert observations() == [
+        f"f1\t{CANONICAL}\t{LEGACY}-yt-main-f1-2026-01-05 00:00:00",
+        f"f2\t{CANONICAL}\tother-yt-main-f2-2026-01-05 00:00:00",
     ]

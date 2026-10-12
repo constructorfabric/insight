@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Move a warm install's stored tenant from its legacy key to the canonical
-# tenant UUID (deploy/TENANT_IDENTITY_UPGRADE.md §3.4).
+# Move a warm install's stored tenant from its legacy key, and rows that carry
+# no tenant at all, to the canonical tenant UUID
+# (deploy/TENANT_IDENTITY_UPGRADE.md §3.4).
 #
-#   migrate-tenant-identity.sh --canonical-tenant <uuid> --legacy-tenant-key <key> [--dry-run]
+#   migrate-tenant-identity.sh --canonical-tenant <uuid> [--legacy-tenant-key <key>] [--dry-run]
+#
+# Without a legacy key only the rows with an empty tenant move.
 #
 # Rewrites the tenant column of every table whose rows a dbt full refresh cannot
 # reproduce: Bronze (`bronze_*`), operator config (`config`), the sync ledger
@@ -14,8 +17,9 @@
 # full refresh afterwards.
 #
 # Refuses before changing anything when a table holds a tenant that is neither
-# of the two: that install keeps data under several tenants and needs its own
-# plan. Idempotent — a second run changes nothing.
+# of the two: that install keeps data under several tenants, so a row without
+# one cannot be attributed and the install needs its own plan. Idempotent — a
+# second run changes nothing.
 #
 # Required env: CLICKHOUSE_URL, CLICKHOUSE_USER, CLICKHOUSE_PASSWORD.
 set -euo pipefail
@@ -29,7 +33,7 @@ DATABASES_SQL="(database LIKE 'bronze\\_%' OR database IN ('config', 'ingestion_
 HISTORY_TABLES_FILE="${SCRIPT_DIR}/tenant-history-tables.txt"
 
 usage() {
-  echo "usage: $0 --canonical-tenant <uuid> --legacy-tenant-key <key> [--dry-run]" >&2
+  echo "usage: $0 --canonical-tenant <uuid> [--legacy-tenant-key <key>] [--dry-run]" >&2
   exit 64
 }
 
@@ -43,9 +47,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ "${canonical}" =~ ${UUID_RE} ]] || { echo "--canonical-tenant must be a lowercase UUID, got '${canonical}'" >&2; exit 64; }
-[[ -n "${legacy}" && "${legacy}" != *"'"* && "${legacy}" != *'\'* ]] \
-  || { echo "--legacy-tenant-key must be non-empty and contain no quote or backslash" >&2; exit 64; }
-[[ "${legacy}" != "${canonical}" ]] || { echo "the legacy key equals the canonical tenant: nothing to migrate" >&2; exit 64; }
+[[ "${legacy}" != *"'"* && "${legacy}" != *'\'* ]] \
+  || { echo "--legacy-tenant-key must contain no quote or backslash" >&2; exit 64; }
+[[ "${legacy}" != "${canonical}" ]] || { echo "the legacy key equals the canonical tenant: omit --legacy-tenant-key" >&2; exit 64; }
 
 query() { printf '%s' "$1" | _ch_http_query; }
 
@@ -85,7 +89,8 @@ done <<<"${tables}"
 total=0
 while IFS=$'\t' read -r db tbl col engine keyed; do
   [[ -n "${db}" ]] || continue
-  n="$(ch_scalar "SELECT count() FROM ${db}.\`${tbl}\` WHERE toString(${col}) = '${legacy}'")"
+  moved="ifNull(toString(${col}), '') IN ('', '${legacy}')"
+  n="$(ch_scalar "SELECT count() FROM ${db}.\`${tbl}\` WHERE ${moved}")"
   total=$((total + n))
   if [[ "${n}" -eq 0 ]]; then
     printf '%-60s %10s\n' "${db}.${tbl}.${col}" "0"
@@ -101,12 +106,12 @@ while IFS=$'\t' read -r db tbl col engine keyed; do
     # ALTER UPDATE cannot rewrite a key column: copy under the new tenant, then
     # drop the originals. A rerun after a failure re-copies onto the same keys.
     run_ch <<SQL
-INSERT INTO ${db}.\`${tbl}\` SELECT * REPLACE ('${canonical}' AS ${col}) FROM ${db}.\`${tbl}\` WHERE toString(${col}) = '${legacy}';
-ALTER TABLE ${db}.\`${tbl}\` DELETE WHERE toString(${col}) = '${legacy}' SETTINGS mutations_sync = 2
+INSERT INTO ${db}.\`${tbl}\` SELECT * REPLACE ('${canonical}' AS ${col}) FROM ${db}.\`${tbl}\` WHERE ${moved};
+ALTER TABLE ${db}.\`${tbl}\` DELETE WHERE ${moved} SETTINGS mutations_sync = 2
 SQL
   else
     run_ch <<SQL
-ALTER TABLE ${db}.\`${tbl}\` UPDATE ${col} = '${canonical}' WHERE toString(${col}) = '${legacy}' SETTINGS mutations_sync = 2
+ALTER TABLE ${db}.\`${tbl}\` UPDATE ${col} = '${canonical}' WHERE ${moved} SETTINGS mutations_sync = 2
 SQL
   fi
 done <<<"${tables}"
@@ -118,4 +123,4 @@ without="$(query "
     AND (database, name) NOT IN (SELECT database, table FROM system.columns WHERE name = 'tenant_id')
   FORMAT TSV")"
 [[ -z "${without}" ]] || echo "tables without a tenant_id column (not migrated): ${without}"
-echo "rows under '${legacy}': ${total}$([[ "${dry_run}" -eq 1 ]] && echo ' (dry run: nothing changed)')"
+echo "rows moved to '${canonical}': ${total}$([[ "${dry_run}" -eq 1 ]] && echo ' (dry run: nothing changed)')"

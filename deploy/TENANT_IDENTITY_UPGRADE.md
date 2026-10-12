@@ -51,8 +51,12 @@ SELECT tenant_id, count() FROM <database>.<table> GROUP BY tenant_id
   The value they carry is the legacy tenant key. It must also be the tenant segment
   of the existing Airbyte source names (`<connector>-<source-id>-<legacy key>`).
 - **Rows already carry only the canonical UUID** and Airbyte source names contain it
-  → follow §3 without a legacy key: leave `legacyTenantKeyOverride` empty and skip
-  step 1 of §3.4. The full refresh and the identity seed still run.
+  → follow §3 without a legacy key: leave `legacyTenantKeyOverride` empty and run
+  step 1 of §3.4 without `--legacy-tenant-key`. The full refresh and the identity
+  seed still run.
+
+Rows whose `tenant_id` is empty belong to no tenant and no reader sees them. On an
+install that holds one tenant they are that tenant's: §3.4 step 1 moves them to it.
 
 If Bronze carries more than one distinct non-canonical value, stop: the install has
 data under several tenants and needs a separate plan.
@@ -135,8 +139,10 @@ connection and schedule name, because they are built from `legacyTenantKeyOverri
 1. Rewrite the tenant column of every relation a dbt full refresh cannot
    reproduce: each `bronze_*`, `config` and `ingestion_history` table, and the
    dbt models tagged `history` — snapshots and append-only models, listed in
-   `src/ingestion/scripts/tenant-history-tables.txt`. `unique_key` is not
-   touched. Preview first, then apply:
+   `src/ingestion/scripts/tenant-history-tables.txt`. Rows under `<LEGACY_KEY>`
+   and rows with an empty tenant move to `<TENANT_UUID>`; `unique_key` is not
+   touched. Without a legacy key, omit `--legacy-tenant-key`. Preview first, then
+   apply:
    ```bash
    export CLICKHOUSE_URL=<url> CLICKHOUSE_USER=<user> CLICKHOUSE_PASSWORD=<password>
    src/ingestion/scripts/migrate-tenant-identity.sh \
@@ -145,8 +151,9 @@ connection and schedule name, because they are built from `legacyTenantKeyOverri
      --canonical-tenant <TENANT_UUID> --legacy-tenant-key <LEGACY_KEY>
    ```
    The script refuses, changing nothing, when a table holds a tenant that is
-   neither of the two. It prints the rows it moved per table and the tables it
-   skipped for having no `tenant_id` column. A second run reports zero rows.
+   neither of the two: rows with an empty tenant cannot be attributed there. It
+   prints the rows it moved per table and the tables it skipped for having no
+   `tenant_id` column. A second run reports zero rows.
 2. Rebuild every other derived relation with a dbt full refresh, leaving the
    history models out — a full refresh rebuilds a snapshot from the current
    Bronze state and discards every earlier version. Submit the chart's `dbt-run`
@@ -185,7 +192,7 @@ values, redeploy, and unsuspend.
 
 ## 4. Verification
 
-- [ ] Every Bronze and config table holds only `<TENANT_UUID>` in its tenant column.
+- [ ] Every Bronze and config table holds only `<TENANT_UUID>` in its tenant column, and no empty one.
 - [ ] Every Bronze table keeps the row count and `uniqExact(unique_key)` recorded in §3.1.
 - [ ] Staging, Silver and Gold carry only `<TENANT_UUID>`; no task-tracking Silver
       class holds a row with an empty `tenant_id`.
