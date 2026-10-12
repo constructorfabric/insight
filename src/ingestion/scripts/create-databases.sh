@@ -8,10 +8,9 @@
 # They all route here now, and every one of them may assume its database
 # already stands.
 #
-# Epic #2010 puts the whole cluster fork on this one statement: inside a
-# `Replicated` database every later DDL is logged in Keeper and replayed on
-# every replica, so no `ON CLUSTER` clause is needed anywhere else. That holds
-# only while this stays the only site.
+# INVARIANT: a clustered install gets each database `ON CLUSTER` with the
+# server's default engine, which replicates nothing inside it — every relation's
+# creator names a `Replicated*` engine and its own `ON CLUSTER`.
 #
 # Bronze is not here and will not be. `bronze_*` is created by
 # destination-clickhouse at sync time from the connector's own catalogue, and

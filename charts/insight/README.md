@@ -165,18 +165,27 @@ reach a clustered warehouse with a standalone profile. The engine default is
 the one thing that profile cannot carry: dbt-clickhouse resolves `engine` from
 the model config alone, so it lives in `dbt_project.yml`.
 
-One statement carries the whole fork: `src/ingestion/scripts/create-databases.sh`
-is the only site that creates a ClickHouse database, so a `Replicated` database
-engine has exactly one place to appear. Inside such a database every later DDL
-is logged in Keeper and replayed on every replica, which is what lets the
-migrations, the dbt hooks and the DDL snapshot stay topology-blind. The
-`clickhouse-databases` pre-install Hook and the `clickhouse-migrate`
-post-install Hook both run that script; `clickhouse.createDatabases: false`
-turns the pre-install one off for a warehouse provisioned out of band.
+`src/ingestion/scripts/create-databases.sh` is the only site that creates a
+ClickHouse database. On a clustered install it creates each one `ON CLUSTER`,
+so it exists on every replica, with the server's default database engine
+(`Atomic`). Nothing inside such a database replicates on its own: every
+relation's creator must name a `Replicated*` engine and qualify its DDL
+`ON CLUSTER` itself, as dbt, the `on-run-start` hooks and the Bronze
+destination do. The `clickhouse-databases` pre-install Hook and the
+`clickhouse-migrate` post-install Hook both run that script;
+`clickhouse.createDatabases: false` turns the pre-install one off for a
+warehouse provisioned out of band.
 
 Flipping the values does not by itself make an install clustered — the
-creators act on them task by task (epic #2010), and the clustered path is not
-supported until its CI lane is green.
+creators act on them task by task (epic #2010). The connectors-ddl
+placeholders, the numbered migrations and the deploy hook's heals still create
+plain relations on whichever replica answers, so the clustered path is not
+supported until the replicated leg of
+[`cluster-mode.yml`](../../.github/workflows/cluster-mode.yml) runs the full
+deploy hook strictly. Its rig
+([`src/ingestion/tests/cluster-rig`](../../src/ingestion/tests/cluster-rig/README.md))
+also spells out what a clustered ClickHouse must provide before Insight installs
+onto it.
 
 ## Values reference
 

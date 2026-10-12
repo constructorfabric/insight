@@ -10,10 +10,9 @@ Platform, managed warehouse, …); this Job dials `clickhouse.host` directly and
 waits for `/ping` to succeed before running the DDL.
 
 Which databases a release holds is not an operator decision, so there is no
-list here: the script names them. The epic's cluster mechanism rests on this
-being the only creator — inside a `Replicated` database, DDL is logged in
-Keeper and replayed on every replica, and no other creation site may make a
-plain one first (#3556).
+list here: the script names them. On a clustered install it creates each
+database `ON CLUSTER`, so every replica holds it before any relation's creator
+runs (#3556).
 
 The grants ride along, because the script provisions the roles and grant-less
 users beside the databases they read. That is why this Hook carries the full
