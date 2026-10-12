@@ -2089,7 +2089,7 @@ metrics:
     explanation: Emails a person received.
     unit: emails
     format: integer
-    direction: higher_is_better
+    direction: neutral
     entity_type: person
     computation: sum
     peer_cohort_key: org_unit

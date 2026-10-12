@@ -589,7 +589,7 @@ is an order statistic instead, and always answers with one that did.
 - Source: collab (collab_metric_observations)
 - Reads: emails_received
 - Formula: sum(emails_received)
-- Shape: integer, higher_is_better, unit emails
+- Shape: integer, neutral, unit emails
 - Notes: Emails a person received.
 
 ## collab.emails_read — Email Read Actions
