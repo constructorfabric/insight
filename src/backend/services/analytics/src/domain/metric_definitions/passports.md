@@ -630,7 +630,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: files_shared
 - Formula: sum(files_shared)
 - Shape: integer, neutral, unit files
-- Notes: Files a person shared with recipients inside or outside the organization.
+- Notes: Files a person shared with recipients inside or outside the organization. A file shared both inside and outside counts once in each, and a share with a group counts as inside even when the group has outside members.
 
 ## collab.meeting_hours — Meeting Hours
 
