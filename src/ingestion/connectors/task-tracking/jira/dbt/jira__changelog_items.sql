@@ -67,16 +67,16 @@ parsed AS (
         created_at,
         author_account_id,
         extracted_at,
-        JSONExtractString(item_raw, 'fieldId')                 AS field_id,
+        {{ jira_changelog_item_field_id('item_raw') }}         AS field_id,
         JSONExtractString(item_raw, 'field')                   AS field_name,
         nullIf(JSONExtractString(item_raw, 'from'), '')        AS value_from,
         nullIf(JSONExtractString(item_raw, 'fromString'), '')  AS value_from_string,
         nullIf(JSONExtractString(item_raw, 'to'), '')          AS value_to,
         nullIf(JSONExtractString(item_raw, 'toString'), '')    AS value_to_string
     FROM exploded
-    -- Jira sometimes emits phantom changelog items with `fieldId=""` (typically system-level
-    -- events like "WorklogId"/"RemoteIssueLink" that don't have a proper field mapping).
-    WHERE JSONExtractString(item_raw, 'fieldId') != ''
+    -- An item with no field id is a system event no field holds ("WorklogId",
+    -- "RemoteIssueLink", "Key", ...); see `jira_changelog_item_field_id`.
+    WHERE field_id != ''
 )
 -- Dedup duplicates within a single changelog: Jira sometimes emits the same (fieldId, from/to)
 -- twice in one items[] array. Group by the natural content-identity key.
