@@ -2121,7 +2121,7 @@ metrics:
     subject: documents
     label: Files Engaged
     description: Files viewed or edited
-    explanation: Files a person viewed or edited.
+    explanation: Files a person viewed, edited, uploaded or downloaded in OneDrive and SharePoint, counted once per file per day and summed over the period. A day the OneDrive client syncs a folder counts every synced file, so one sync day can outweigh weeks of ordinary work.
     unit: files
     format: integer
     direction: neutral
