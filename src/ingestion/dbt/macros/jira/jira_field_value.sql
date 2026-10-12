@@ -172,51 +172,50 @@
 {#- The linked issue's key, from a link element of the issue resource.
 
     A link element is `{"id": <the link's own id>, "outwardIssue"|"inwardIssue":
-    {"key": ...}}`. The link's own id is what `jira_json_obj_id` would take, and
-    it appears nowhere in the changelog — which names the linked issue by key.
-    So the key is the identifier on both sides, and the link id is discarded; it
-    is recoverable from the issue JSON.
-
-    A SUBTASK element is the referenced issue itself, with the key at the top
-    level, so the same rule applies one level shallower.
-
-    Direction is not part of the identity: which side of a link the issue is on
-    is a property of the link, not of the element — the changelog's rendered
-    text carries it ("blocks", "is caused by"), which is why the display keeps
-    that text where it has it. -#}
+    {"id": ..., "key": ...}, "type": {...}}`; the link's own id appears nowhere
+    in the changelog, so it is discarded. A SUBTASK element is the referenced
+    issue itself, with its id and key at the top level. -#}
 {% macro jira_json_link_key(v) %}
     coalesce(
         nullIf(JSONExtractString({{ v }}, 'outwardIssue', 'key'), ''),
         nullIf(JSONExtractString({{ v }}, 'inwardIssue', 'key'), ''),
-        {#- `subtasks` carries the same `schema_items` as `issuelinks` and so the
-            same kind, but its element IS the referenced issue rather than a link
-            to it: the key sits at the top level and there is no link object. A
-            link element never has a top-level `key`, so probing it last is
-            unambiguous. Without this the whole field normalizes to empty
-            strings — parallel arrays of nothing, which no test but the round
-            trip would notice. -#}
+        {#- A link element never has a top-level `key`, so probing it last tells
+            a subtask apart without reading the field id. -#}
         nullIf(JSONExtractString({{ v }}, 'key'), ''),
         ''
     )
 {% endmacro %}
 
 
-{#- kind = link_array: the linked issue key as both value and identifier, which
-    is what makes the two sides reconcile at all.
+{#- The linked issue's immutable id, beside `jira_json_link_key`. A link
+    element's top-level `id` is the LINK's, so it is read only for a subtask,
+    which `key` at the top level identifies. -#}
+{% macro jira_json_link_issue_id(v) %}
+    coalesce(
+        nullIf(JSONExtractString({{ v }}, 'outwardIssue', 'id'), ''),
+        nullIf(JSONExtractString({{ v }}, 'inwardIssue', 'id'), ''),
+        if(JSONExtractString({{ v }}, 'key') != '', nullIf(JSONExtractString({{ v }}, 'id'), ''), NULL),
+        ''
+    )
+{% endmacro %}
 
-    The keys are deduplicated because two link objects can name the same issue —
-    one issue related to another by two link types is two elements of
-    `issuelinks` and one element here. The changelog cannot express the
-    difference either: it names the linked issue, so a second link to an issue
-    already linked reconciles against the element that is already present.
-    Leaving the repeat in makes the snapshot longer than any history that could
-    reproduce it, and the round trip reports the field forever. -#}
+
+{#- kind = link_array: the linked issue's immutable id as the identifier and its
+    key as the display (§3.7). The changelog names the linked issue by key, and
+    the journal resolves that key to the same id through `jira__issue_keys`; an
+    element with no id stays identified by its key, which a key's project prefix
+    keeps apart from every numeric id.
+
+    One element per linked issue: two link objects can name the same issue — one
+    issue related to another by two link types — and the changelog cannot tell
+    them apart either, so `element_wise_presence` counts them instead. -#}
 {% macro jira_norm_link_array(v) %}
+    {%- set elements = "arrayDistinct(arrayMap(x -> (coalesce(nullIf(" ~ jira_json_link_issue_id('x') ~ ", ''), "
+                       ~ jira_json_link_key('x') ~ "), " ~ jira_json_link_key('x') ~ "), "
+                       ~ "JSONExtractArrayRaw(if(" ~ v ~ " IN ('', 'null'), '[]', " ~ v ~ "))))" -%}
     (
-        CAST(arrayDistinct(arrayMap(x -> {{ jira_json_link_key('x') }},
-             JSONExtractArrayRaw(if({{ v }} IN ('', 'null'), '[]', {{ v }})))) AS Array(String)),
-        CAST(arrayDistinct(arrayMap(x -> {{ jira_json_link_key('x') }},
-             JSONExtractArrayRaw(if({{ v }} IN ('', 'null'), '[]', {{ v }})))) AS Array(String))
+        CAST(arrayMap(e -> e.1, {{ elements }}) AS Array(String)),
+        CAST(arrayMap(e -> e.2, {{ elements }}) AS Array(String))
     )
 {% endmacro %}
 

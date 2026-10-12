@@ -25,10 +25,9 @@
 
 {% macro jira_field_id_type(kind) %}
     multiIf(
-        {{ kind }} IN ('string_array', 'issue_ref', 'link_array',
-                       'long_text'),                                'string_literal',
+        {{ kind }} IN ('string_array', 'issue_ref', 'long_text'),   'string_literal',
         {{ kind }} = 'user',                                        'account_id',
-        {{ kind }} IN ('option', 'obj', 'obj_array',
+        {{ kind }} IN ('option', 'obj', 'obj_array', 'link_array',
                        'option_array', 'legacy_list'),              'opaque_id',
         'none'
     )

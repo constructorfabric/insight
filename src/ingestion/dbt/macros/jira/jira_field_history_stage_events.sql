@@ -48,6 +48,20 @@ events AS (
        AND k.field_id = ci.field_id
 ),
 
+-- A link item names the linked issue by the key it had then; the snapshot names
+-- it by its immutable id, so the key is resolved to that id (§3.7). A key with
+-- no id keeps naming the element, which then matches no snapshot element.
+resolved_events AS (
+    SELECT
+        e.* REPLACE (
+            if(COALESCE(ik.issue_id, '') != '', (assumeNotNull(ik.issue_id), e.element.2), e.element) AS element
+        )
+    FROM events AS e
+    LEFT JOIN {{ ref('jira__issue_key_ids') }} AS ik FINAL
+        ON ik.insight_source_id = e.insight_source_id
+       AND ik.issue_key = if(e.field_kind = 'link_array', e.element.1, '')
+),
+
 -- An item with nothing on either side carries no information (§6). Neither does
 -- one whose two sides are spelled identically: Jira writes those as a
 -- by-product of recalculating a field it did not change — a remaining estimate
@@ -63,7 +77,7 @@ events AS (
 -- naming the same element on both sides is the RENAME of that element, whose
 -- whole purpose is to carry the new display.
 live_events AS (
-    SELECT * FROM events
+    SELECT * FROM resolved_events
     WHERE is_live
 ),
 

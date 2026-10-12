@@ -191,7 +191,7 @@ def _link(key: str, sentence: str, *, removed: bool = False) -> dict[str, Any]:
                     {
                         "id": "157916",
                         "type": {"name": "Duplicate"},
-                        "outwardIssue": {"key": "TST-9", "fields": {"summary": "other"}},
+                        "outwardIssue": {"id": "20009", "key": "TST-9", "fields": {"summary": "other"}},
                     }
                 ]
             },
@@ -199,22 +199,22 @@ def _link(key: str, sentence: str, *, removed: bool = False) -> dict[str, Any]:
     ],
     events=[event("TST-1", 101, "2026-01-06T10:00:00", [_link("TST-9", "This issue duplicates TST-9")])],
 )
-def test_a_link_is_identified_by_the_linked_issue_key(scenario: Scenario) -> None:
+def test_a_link_is_identified_by_the_linked_issue_id(scenario: Scenario) -> None:
     """The issue resource names the LINK OBJECT by its own id, with the linked
-    issue's key nested inside; the changelog names the LINKED ISSUE by key and
-    never mentions the link's id at all.
+    issue's id and key nested inside; the changelog names the LINKED ISSUE by
+    the key it had then and never mentions the link's id at all.
 
-    Identifying by the link id — which is what a component-shaped normalizer
-    does — leaves the two sides with no id in common, so every issue holding a
-    link disagrees with its own history. The key is the only identifier both
-    sides carry.
+    Identifying by the link id leaves the two sides with no id in common, and
+    identifying by the key splits one link in two once the linked issue moves.
+    The changelog's key resolves to the linked issue's id instead, here from
+    the very link object the snapshot holds.
     """
     rows = scenario.journal(field=LINKS)
-    assert [r["value_ids"] for r in rows] == [[], ["TST-9"]]
+    assert [r["value_ids"] for r in rows] == [[], ["20009"]]
     # The rendered sentence is the display where the changelog supplies one; the
     # resource has no equivalent text, so its row carries the key.
     assert rows[-1]["value_displays"] == ["This issue duplicates TST-9"]
-    assert rows[-1]["value_id_type"] == "string_literal"
+    assert rows[-1]["value_id_type"] == "opaque_id"
     assert scenario.round_trip_holds()
 
 
@@ -333,17 +333,17 @@ SUBTASKS_FIELD = field(SUBTASKS, name="Sub-tasks", schema_type="array", schema_i
         )
     ],
 )
-def test_subtasks_are_identified_by_the_child_key(scenario: Scenario) -> None:
+def test_subtasks_are_identified_by_the_child_id(scenario: Scenario) -> None:
     """Jira reports `subtasks` with the same `schema_items` as `issuelinks`, so
     it lands in the same kind — but its element is the referenced issue itself,
-    with the key at the top level and no link object around it.
+    with its id and key at the top level and no link object around it.
 
     Probing only the link-object paths normalizes the whole field to empty
     strings: parallel arrays of nothing, which every array-shape test accepts
     and only the round trip catches.
     """
     rows = scenario.journal(field=SUBTASKS)
-    assert [r["value_ids"] for r in rows] == [["TST-2", "TST-3"]]
+    assert [r["value_ids"] for r in rows] == [["1", "2"]]
     assert rows[0]["value_displays"] == ["TST-2", "TST-3"]
     assert scenario.round_trip_holds()
 

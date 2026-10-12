@@ -535,11 +535,11 @@ link added or removed. It is not an `obj_array`, because the two sides identify
 the element differently:
 
 - the **issue resource** holds the LINK OBJECT: `{"id": <the link's own id>,
-  "outwardIssue" | "inwardIssue": {"key": ...}, "type": {...}}`. A
+  "outwardIssue" | "inwardIssue": {"id": ..., "key": ...}, "type": {...}}`. A
   component-shaped normalizer takes the top-level `id`, which is the link's own;
-- the **changelog** names the LINKED ISSUE by key in the id side, with a
-  rendered sentence in the display side ("This issue duplicates PROJ-1"). The
-  link's own id appears nowhere in it.
+- the **changelog** names the LINKED ISSUE by the key it had at the time in the
+  id side, with a rendered sentence in the display side ("This issue duplicates
+  PROJ-1"). The link's own id appears nowhere in it.
 
 So identifying by the link id leaves the two sides with no id in common, and
 every issue holding a link disagrees with its own history. Measured, this was
@@ -547,9 +547,29 @@ the single largest remaining round-trip class after the metadata-driven parsing
 landed — and it looked like a fold defect until the two shapes were put side by
 side.
 
-The key is the identifier on both sides, and the link id is discarded; it stays
-in the issue JSON. Direction is not part of the identity: an issue holds each
-link once, and which side of it the issue is on is carried by the rendered text.
+The element is the linked issue's immutable id, and the link id is discarded;
+it stays in the issue JSON. The snapshot reads the id from the link object. The
+changelog's key resolves to it through `jira__issue_key_ids`, which holds every
+key an issue is known to have had: its own bronze rows (one per key the
+connector saw), the `Key` items a move writes on the moved issue's own
+changelog, the link objects every snapshot holds, and parent changes, which
+name the parent by id and by key. Identifying by the key instead split one link
+in two when the linked issue moved — the addition named the old key, the
+removal the new one. A `subtasks` element is the child issue itself and is
+identified by its id the same way.
+
+A key no input names — an issue in a project the connector cannot read and
+that no synced issue now links to, or one deleted before it was read — stays
+the element's identifier. A key carries its project prefix, so it never
+collides with an id, and such a key never meets the snapshot: every link the
+snapshot holds names its id. Resolution reads other issues' data, so a key that
+first resolves after an issue's journal rows were written reaches those rows on
+the issue's next recompute, not before.
+
+Direction is not part of the identity: an issue holds each link once, and which
+side of it the issue is on is carried by the rendered text. `class_task_links`
+reads the link TYPE from the same two shapes, as its own producer
+(`jira__task_links`).
 
 Two consequences worth stating:
 
@@ -560,7 +580,7 @@ Two consequences worth stating:
   present while the links held at creation plus those added outnumber those
   removed, so removing one of two links to an issue leaves the issue linked.
   The links held at creation are the fewest that keep that count from going
-  negative.
+  negative. `class_task_links` keeps the two apart by type.
 - **a remote link is logged in the same field.** A link to a Confluence page
   emits an item whose id side is the remote link's numeric id, and no such
   element exists in `issuelinks` at all — remote links are a separate REST
