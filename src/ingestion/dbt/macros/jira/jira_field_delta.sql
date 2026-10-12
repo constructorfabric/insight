@@ -233,9 +233,15 @@
   resolved them, because `duration` folds zero to the empty state and `null -> 0`
   is a real event. Element-wise kinds are exempt from the second rule: an item
   naming the same element on both sides is the RENAME of that element.
+
+  A `link_array` item whose id side is all digits is a REMOTE link (a Confluence
+  page, a web link): Jira logs it in `issuelinks`, but it is a separate resource
+  and never appears in the field, whose elements are issue keys (§3.7).
 -#}
 {% macro jira_item_is_live(kind, from_id, from_str, to_id, to_str) %}
     ({{ jira_delta_action(kind, from_id, from_str, to_id, to_str) }} != 'none'
+     AND NOT ({{ kind }} = 'link_array'
+              AND match(COALESCE({{ to_id }}, {{ from_id }}, ''), '^[0-9]+$'))
      AND ({{ kind }} IN {{ jira_element_wise_kinds() }}
           OR NOT (COALESCE({{ from_id }}, '') = COALESCE({{ to_id }}, '')
                   AND COALESCE({{ from_str }}, '') = COALESCE({{ to_str }}, ''))))

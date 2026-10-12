@@ -250,6 +250,44 @@ def test_links_added_and_removed_accumulate(scenario: Scenario) -> None:
     assert scenario.round_trip_holds()
 
 
+@case(
+    fields=[LINKS_FIELD],
+    issues=[
+        issue("TST-1", fields={LINKS: [{"id": "4", "type": {"name": "Duplicate"}, "outwardIssue": {"key": "TST-9"}}]})
+    ],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_link("TST-9", "This issue relates to TST-9")]),
+        event("TST-1", 102, "2026-01-07T10:00:00", [_link("TST-9", "This issue duplicates TST-9")]),
+        event("TST-1", 103, "2026-01-08T10:00:00", [_link("TST-9", "This issue relates to TST-9", removed=True)]),
+    ],
+)
+def test_removing_one_of_two_links_to_an_issue_keeps_the_other(scenario: Scenario) -> None:
+    """Two links to one issue are one element, because both sides name the
+    element by the linked issue's key. Removing one of them leaves the issue
+    linked, so the element stays until its last link goes."""
+    assert scenario.states(LINKS) == [[], ["TST-9"], ["TST-9"], ["TST-9"]]
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[LINKS_FIELD],
+    issues=[
+        issue("TST-1", fields={LINKS: [{"id": "5", "type": {"name": "Relates"}, "outwardIssue": {"key": "TST-9"}}]})
+    ],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_link("TST-9", "This issue relates to TST-9")]),
+        event("TST-1", 102, "2026-01-07T10:00:00", [_link("70001", 'This issue links to "Page (Confluence)"')]),
+    ],
+)
+def test_a_remote_link_is_not_an_element_of_the_field(scenario: Scenario) -> None:
+    """Jira logs a remote link (a Confluence page, a web link) in `issuelinks`
+    under the remote link's numeric id, but the field itself never holds it, so
+    the journal keeps it out rather than carrying an element no snapshot can
+    confirm."""
+    assert scenario.states(LINKS) == [[], ["TST-9"]]
+    assert scenario.round_trip_holds()
+
+
 SUBTASKS = "subtasks"
 SUBTASKS_FIELD = field(SUBTASKS, name="Sub-tasks", schema_type="array", schema_items="issuelinks")
 

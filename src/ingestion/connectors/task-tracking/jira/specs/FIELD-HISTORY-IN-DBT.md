@@ -337,7 +337,7 @@ convention to invert:
 | kind | separator | why it is unambiguous |
 |---|---|---|
 | `string_array` | single space | Jira rejects a label containing whitespace, so a space is always a separator and a comma is always content |
-| `option_array` | `[`, comma followed by a space, `]` on the id side; bare comma on the display side | ids are numeric, so the bracket form parses without ambiguity; displays are matched positionally to ids |
+| `option_array` | `[`, comma followed by a space, `]` on the id side; bare comma on the display side | ids are numeric, so the bracket form parses without ambiguity; displays are matched positionally to ids. An id side naming no element — absent, or `[]` beside displays, as a migrated instance writes — yields to the displays, minus the literal `[]` an empty list renders as |
 | `legacy_list` | `", "` | the pre-2020 Sprint serialization |
 
 ### 3.4 Id spaces that do not reconcile
@@ -556,13 +556,16 @@ Two consequences worth stating:
 - **two links to the same issue with different types collapse into one
   element.** The changelog gives them the same id, so the pipeline cannot hold
   them apart, and a display would be the only difference — which the contract
-  does not treat as identity.
+  does not treat as identity. The element therefore COUNTS its links: it is
+  present while the links held at creation plus those added outnumber those
+  removed, so removing one of two links to an issue leaves the issue linked.
+  The links held at creation are the fewest that keep that count from going
+  negative.
 - **a remote link is logged in the same field.** A link to a Confluence page
   emits an item whose id side is the remote link's numeric id, and no such
   element exists in `issuelinks` at all — remote links are a separate REST
-  resource. Those rows carry an id the current value can never confirm. They are
-  a small fraction of the field's items and are left as they arrive rather than
-  detected by content.
+  resource. An issue key always carries its project prefix, so an all-digit id
+  side identifies these items unambiguously, and `jira_item_is_live` drops them.
 
 ## 4. Value normalization
 
