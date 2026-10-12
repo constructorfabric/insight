@@ -138,6 +138,19 @@ element_wise_presence AS (
         if(e.field_kind = 'link_array',
            arrayMap(n -> held_at_creation + n > 0, net_ops),
            arrayMap(o -> o.2 = 'add', e.ops))                                 AS present_after,
+        -- An operation opens a span when the element is present after it. A
+        -- `link_array` element already present keeps its span, so a second link
+        -- or the removal of one of two leaves its place in the list; any other
+        -- kind opens one at every `add`, which is how a rename takes effect.
+        arrayMap(k -> present_after[k]
+                      AND (e.field_kind != 'link_array'
+                           OR NOT if(k = 1, held_at_creation > 0, present_after[k - 1])),
+                 arrayEnumerate(e.ops))                                       AS opens_span,
+        -- For the span opened at creation (position 1) and at each operation
+        -- (position k + 1): the operation that ends it, or 0 when none does.
+        arrayMap(k -> arrayFirstIndex(j -> j > k AND (opens_span[j] OR NOT present_after[j]),
+                                      arrayEnumerate(e.ops)),
+                 range(toUInt64(length(e.ops) + 1)))                          AS span_breaks,
         -- The pair a span carries: its own for an `add`, the latest add's
         -- before it for a `remove` the element outlives.
         arrayMap(p -> if(p = '', e.first_pair, p),
@@ -180,23 +193,26 @@ element_wise_untouched AS (
        AND e.element_id = p.element_id
 ),
 
--- (first event of the span, last event of the span, the pair to carry). An
--- operation the element is present after opens a span that runs until this
--- element's NEXT operation; presence at creation opens one that runs until its
--- FIRST. An operation that leaves it absent opens nothing.
+-- (first event of the span, last event of the span, the pair to carry). A span
+-- opened at creation or by an operation (`opens_span`) runs until the element's
+-- next operation that opens another or leaves it absent (`span_breaks`), or to
+-- the end of the sequence when none does.
 element_wise_spans AS (
     SELECT
         e.insight_source_id                               AS insight_source_id,
         e.issue_id                                        AS issue_id,
         e.field_id                                        AS field_id,
         arrayJoin(arrayConcat(
-            if(e.held_at_creation > 0 AND e.first_seq > 1,
-               [(toUInt64(0), toUInt64(e.first_seq - 1), e.first_pair)],
+            if(e.held_at_creation > 0,
+               [(toUInt64(0),
+                 if(e.span_breaks[1] = 0, x.last_seq, toUInt64(e.ops[e.span_breaks[1]].1 - 1)),
+                 e.first_pair)],
                CAST([] AS Array(Tuple(UInt64, UInt64, String)))),
             arrayMap(k -> (e.ops[k].1,
-                           if(k = length(e.ops), x.last_seq, toUInt64(e.ops[k + 1].1 - 1)),
+                           if(e.span_breaks[k + 1] = 0, x.last_seq,
+                              toUInt64(e.ops[e.span_breaks[k + 1]].1 - 1)),
                            e.carried_pairs[k]),
-                     arrayFilter(k -> e.present_after[k], arrayEnumerate(e.ops)))
+                     arrayFilter(k -> e.opens_span[k], arrayEnumerate(e.ops)))
         ))                                                AS span
     FROM element_wise_presence AS e
     INNER JOIN element_wise_extent AS x

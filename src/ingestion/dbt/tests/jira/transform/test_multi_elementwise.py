@@ -272,6 +272,33 @@ def test_removing_one_of_two_links_to_an_issue_keeps_the_other(scenario: Scenari
 @case(
     fields=[LINKS_FIELD],
     issues=[
+        issue(
+            "TST-1",
+            fields={
+                LINKS: [
+                    {"id": "7", "type": {"name": "Relates"}, "outwardIssue": {"key": "TST-9"}},
+                    {"id": "8", "type": {"name": "Relates"}, "outwardIssue": {"key": "TST-8"}},
+                ]
+            },
+        )
+    ],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_link("TST-9", "This issue relates to TST-9")]),
+        event("TST-1", 102, "2026-01-07T10:00:00", [_link("TST-8", "This issue relates to TST-8")]),
+        event("TST-1", 103, "2026-01-08T10:00:00", [_link("TST-9", "This issue duplicates TST-9")]),
+        event("TST-1", 104, "2026-01-09T10:00:00", [_link("TST-9", "This issue duplicates TST-9", removed=True)]),
+    ],
+)
+def test_a_second_link_keeps_the_linked_issue_in_place(scenario: Scenario) -> None:
+    """The element never left the list, so neither the second link to it nor
+    the removal of one of the two moves it behind elements added later."""
+    assert scenario.states(LINKS) == [[], ["TST-9"], ["TST-9", "TST-8"], ["TST-9", "TST-8"], ["TST-9", "TST-8"]]
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[LINKS_FIELD],
+    issues=[
         issue("TST-1", fields={LINKS: [{"id": "5", "type": {"name": "Relates"}, "outwardIssue": {"key": "TST-9"}}]})
     ],
     events=[
