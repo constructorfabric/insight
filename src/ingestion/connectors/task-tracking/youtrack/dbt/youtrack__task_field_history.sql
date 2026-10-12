@@ -80,7 +80,7 @@ WITH changes AS (
     FROM {{ ref('youtrack__activities') }} GROUP BY insight_source_id, issue_id, field_id
 ), initial_states AS (
     SELECT insight_source_id, issue_id, field_id, event_id, pairs
-    FROM {{ ref('youtrack__field_states') }} WHERE startsWith(event_id, 'initial:')
+    FROM {{ ref('youtrack__field_states') }} FINAL WHERE startsWith(event_id, 'initial:')
 ), initials AS (
     -- INVARIANT: only an issue created inside the activity feed has every change since
     -- its creation in hand; earlier, what the first seen change replaced is a guess.
