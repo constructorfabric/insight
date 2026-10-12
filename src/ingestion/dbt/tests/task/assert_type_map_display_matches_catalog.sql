@@ -42,7 +42,8 @@ SELECT
     a.target_value      AS issue_kind
 FROM authored AS a
 INNER JOIN {{ ref('class_task_issuetypes') }} AS t FINAL
-    ON t.insight_source_id = a.insight_source_id
+    ON t.tenant_id = a.tenant_id
+    AND t.insight_source_id = a.insight_source_id
     AND t.data_source = a.data_source
     AND t.issue_type_id = a.source_key
 -- Either name clears the row: an operator records whichever the console showed.

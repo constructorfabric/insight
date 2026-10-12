@@ -985,6 +985,60 @@ for _task_link_table in github__task_links youtrack__task_links; do
   heal_task_link_ids "${_task_link_table}"
 done
 
+echo "=== Healing task class producer tenants ==="
+# Every producer of a task class carries its tenant right after unique_key;
+# the class unions them positionally, so one not yet rebuilt since this deploy
+# must already hold the column where its rebuilt siblings do.
+heal_task_producer_tenant() {
+  local table="$1" type="$2" anchor="$3"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS tenant_id ${type} AFTER ${anchor};
+ALTER TABLE staging.${table} MODIFY COLUMN tenant_id ${type} AFTER ${anchor};
+SQL
+}
+
+# INVARIANT: these producers normalize the tenant to String, so their old rows must read '' rather than NULL.
+heal_task_producer_tenant jira__field_history_derived String unique_key
+heal_task_producer_tenant jira__comment_lifecycle_events String unique_key
+heal_task_producer_tenant jira__worklog_lifecycle_events String unique_key
+heal_task_producer_tenant jira__catalogue_first_seen String insight_source_id
+for _task_producer in \
+  jira__availability_events \
+  jira__task_comments jira__task_worklogs jira__task_field_metadata \
+  youtrack__task_comments youtrack__task_field_history youtrack__task_field_metadata \
+  youtrack__task_issuetypes youtrack__task_links youtrack__task_projects youtrack__task_sprints \
+  youtrack__task_statuses youtrack__task_worklogs \
+  github__task_field_history github__task_links; do
+  heal_task_producer_tenant "${_task_producer}" 'Nullable(String)' unique_key
+done
+
+echo "=== Healing YouTrack field observation tenants ==="
+# The append-only observations predate their tenant column and cannot be
+# rebuilt. A row's key leads with the tenant key it was written under, so the
+# tenant is read back from the key against the tenants Bronze holds, longest
+# first. Runs before migrate-tenant-identity.sh, which moves a legacy value on.
+heal_youtrack_field_observation_tenant() {
+  ch_table_is_real staging youtrack__field_observations || return 0
+  echo "  staging.youtrack__field_observations"
+  run_ch <<'SQL'
+ALTER TABLE staging.youtrack__field_observations ADD COLUMN IF NOT EXISTS tenant_id Nullable(String) AFTER unique_key;
+ALTER TABLE staging.youtrack__field_observations MODIFY COLUMN tenant_id Nullable(String) AFTER unique_key;
+SQL
+  ch_table_exists bronze_youtrack youtrack_custom_fields || return 0
+  local tenants
+  tenants="$(printf '%s' "SELECT arrayReverseSort(t -> length(t), groupUniqArray(assumeNotNull(tenant_id))) FROM bronze_youtrack.youtrack_custom_fields WHERE tenant_id IS NOT NULL FORMAT TabSeparatedRaw" | _ch_http_query)" || return 1
+  # SAFETY: run_ch splits statements on `;`, so a tenant carrying one is refused rather than split.
+  [[ "${tenants}" == \[*\] && "${tenants}" != *';'* ]] || { echo "ERROR: unreadable YouTrack tenants: ${tenants}" >&2; return 1; }
+  [[ "${tenants}" != "[]" ]] || return 0
+  run_ch <<SQL
+ALTER TABLE staging.youtrack__field_observations UPDATE tenant_id = nullIf(arrayFirst(t -> startsWith(unique_key, concat(t, '-', insight_source_id, '-')), ${tenants}), '') WHERE tenant_id IS NULL SETTINGS mutations_sync = 2;
+SQL
+}
+
+heal_youtrack_field_observation_tenant
+
 # The cohort and coverage relations are dbt VIEWs (identity resolves at query
 # time). A cluster that predates that holds them as MergeTree TABLEs, and dbt's
 # view materialization replaces via CREATE OR REPLACE VIEW, which is not

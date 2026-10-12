@@ -4,6 +4,7 @@
 -- Initial rows use set (single) or add (multi) — this test only covers changelog kind.
 
 SELECT
+    tenant_id,
     insight_source_id,
     data_source,
     issue_id,

@@ -45,6 +45,7 @@ DROP DATABASE IF EXISTS bronze_example;
 DROP DATABASE IF EXISTS config;
 DROP DATABASE IF EXISTS ingestion_history;
 DROP DATABASE IF EXISTS staging;
+DROP DATABASE IF EXISTS bronze_youtrack;
 CREATE DATABASE bronze_example;
 CREATE DATABASE staging;
 CREATE TABLE staging.jira__users_snapshot (unique_key String, tenant_id Nullable(String), _tracked_at DateTime)
@@ -182,3 +183,45 @@ def test_a_warm_key_on_the_issue_id_is_not_rebuilt_again() -> None:
         f" FROM ({row})"
     )
     assert keyed_by_issue_key == "0"
+
+
+YOUTRACK_OBSERVATIONS = f"""
+CREATE DATABASE bronze_youtrack;
+CREATE TABLE bronze_youtrack.youtrack_custom_fields (unique_key String, tenant_id Nullable(String), source_id Nullable(String),
+  id Nullable(String)) ENGINE = ReplacingMergeTree ORDER BY unique_key;
+INSERT INTO bronze_youtrack.youtrack_custom_fields VALUES ('{LEGACY}-yt-main-f1', '{LEGACY}', 'yt-main', 'f1');
+CREATE TABLE staging.youtrack__field_observations (unique_key String, insight_source_id String, field_id String)
+  ENGINE = ReplacingMergeTree ORDER BY unique_key;
+INSERT INTO staging.youtrack__field_observations VALUES ('{LEGACY}-yt-main-f1-2026-01-05 00:00:00', 'yt-main', 'f1');
+INSERT INTO staging.youtrack__field_observations VALUES ('other-yt-main-f2-2026-01-05 00:00:00', 'yt-main', 'f2')
+"""
+
+
+def heal_field_observations() -> subprocess.CompletedProcess[str]:
+    functions = r"sed -n '/^ch_table_is_real() {/,/^}/p; /^heal_youtrack_field_observation_tenant() {/,/^}/p'"
+    env = {**os.environ, "CLICKHOUSE_URL": CH_URL, "CLICKHOUSE_USER": CH_USER, "CLICKHOUSE_PASSWORD": CH_PASSWORD}
+    return subprocess.run(
+        [shutil.which("bash") or "bash", "-c",
+         f"set -euo pipefail; source '{SCRIPTS / 'lib/ch-exec.sh'}'; eval \"$({functions} '{APPLY}')\";"
+         " heal_youtrack_field_observation_tenant; heal_youtrack_field_observation_tenant"],
+        env=env, capture_output=True, text=True, check=False, timeout=120,
+    )
+
+
+def test_an_observation_takes_the_tenant_its_key_was_written_under() -> None:
+    """The heal reads the tenant back from the key, the transition then moves it to the
+    canonical one, and a key naming no tenant Bronze holds stays unattributed."""
+    ch_script(YOUTRACK_OBSERVATIONS)
+
+    healed = heal_field_observations()
+    assert healed.returncode == 0, healed.stderr
+    assert migrate().returncode == 0
+
+    rows = ch(
+        "SELECT field_id, ifNull(tenant_id, 'NULL'), unique_key FROM staging.youtrack__field_observations"
+        " ORDER BY field_id FORMAT TSV"
+    ).splitlines()
+    assert rows == [
+        f"f1\t{CANONICAL}\t{LEGACY}-yt-main-f1-2026-01-05 00:00:00",
+        "f2\tNULL\tother-yt-main-f2-2026-01-05 00:00:00",
+    ]
