@@ -113,6 +113,11 @@ def build_output(connection: Connection, *, correlated_subqueries: bool, threads
     if cluster_name:
         output["cluster"] = cluster_name
 
+    if cluster_mode():
+        # WORKAROUND: the adapter's connect-time EXCHANGE probe spreads its
+        # CREATE/DROP over replicas behind a load balancer and leaks the tables.
+        output["check_exchange"] = False
+
     settings = session_settings(correlated_subqueries=correlated_subqueries)
     if settings:
         output["custom_settings"] = settings

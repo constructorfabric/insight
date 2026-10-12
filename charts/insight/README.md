@@ -198,8 +198,15 @@ carries its own remedy, and the flag never converts a database that already
 stands.
 
 Flipping the values does not by itself make an install clustered — the
-creators act on them task by task (epic #2010), and the clustered path is not
-supported until its CI lane is green.
+creators act on them task by task (epic #2010). The numbered migrations and
+the deploy hook's heals still create plain relations on whichever replica
+answers, so the clustered path is not
+supported until the replicated leg of
+[`cluster-mode.yml`](../../.github/workflows/cluster-mode.yml) runs the full
+deploy hook strictly. Its rig
+([`src/ingestion/tests/cluster-rig`](../../src/ingestion/tests/cluster-rig/README.md))
+also spells out what a clustered ClickHouse must provide before Insight installs
+onto it.
 
 ## Values reference
 
