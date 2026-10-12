@@ -1,8 +1,8 @@
 # Tenant identity: install and upgrade runbook
 
-> **Status: draft.** Tracks [#3661](https://github.com/constructorfabric/insight/issues/3661).
-> Steps marked *(lands with #3661)* describe behaviour that is not released yet;
-> do not run this runbook against an install until the release notes say it is complete.
+Applies to the first release that contains
+[#3661](https://github.com/constructorfabric/insight/issues/3661). Every install that
+already holds data runs §3 once when it upgrades to that release.
 
 Insight identifies a tenant by one canonical UUID. It is the value in every data
 tenant column, in identity, in authorization and in analytics filtering.
@@ -22,6 +22,11 @@ legacy key once.
 
 **Fresh installs never set `legacyTenantKeyOverride`.** Without it, keys and names
 use the canonical UUID.
+
+The same release scopes every derived relation by tenant: the task-tracking Silver
+classes gain a `tenant_id` column, and the keys dbt builds for them and for their
+staging models now lead with the tenant. Those relations are rebuilt from Bronze
+once, by the full refresh in §3.4.
 
 ---
 
@@ -46,7 +51,8 @@ SELECT tenant_id, count() FROM <database>.<table> GROUP BY tenant_id
   The value they carry is the legacy tenant key. It must also be the tenant segment
   of the existing Airbyte source names (`<connector>-<source-id>-<legacy key>`).
 - **Rows already carry only the canonical UUID** and Airbyte source names contain it
-  → nothing to migrate; follow §2 for the values change only.
+  → follow §3 without a legacy key: leave `legacyTenantKeyOverride` empty and skip
+  step 1 of §3.4. The full refresh and the identity seed still run.
 
 If Bronze carries more than one distinct non-canonical value, stop: the install has
 data under several tenants and needs a separate plan.
@@ -71,11 +77,19 @@ every derived layer.
 ### 3.1 Preflight
 
 1. Record the canonical UUID (`<TENANT_UUID>`) and the legacy key (`<LEGACY_KEY>`) found in §1.
-2. Take backups:
+2. Check which tenant signed-in users get. Analytics filters every metric read to
+   the session tenant (`analytics.metricCatalog.enforceTenantScope`, on by default),
+   so the session tenant must be `<TENANT_UUID>`. It is the IdP token's tenant claim
+   when the token carries one, otherwise `authenticator.oidc.defaultTenantId`, and
+   `ingestion.reconcile.tenantId` when that is empty. If the values set
+   `authenticator.oidc.defaultTenantId` to anything else, stop and decide which
+   tenant the install serves before continuing: with the two apart, every metric
+   reads empty after the upgrade.
+3. Take backups:
    - ClickHouse: every `bronze_*` database and the `config` database;
    - the Airbyte database (sources, connections, connection state);
    - the identity MariaDB database.
-3. Record the current state for comparison after the upgrade:
+4. Record the current state for comparison after the upgrade:
    - Airbyte: source ids and names, connection ids and names, connection state;
    - Argo: CronWorkflow names in the app namespace;
    - ClickHouse: row count and `uniqExact(unique_key)` of each Bronze table.
@@ -101,17 +115,20 @@ ingestion:
     legacyTenantKeyOverride: "<LEGACY_KEY>"
 ```
 
-Remove `global.tenantDefaultId` from the values, or set it to the same UUID: two
-different values fail the render.
+`global.tenantDefaultId` is removed. If the values still carry it, move its value
+to `ingestion.reconcile.tenantId` and delete the key: the render fails while it is
+present. Leave `analytics.metricCatalog.enforceTenantScope` at its default `true`.
 
 Operator-authored config bundles (the TSV files the `clickhouse-field-value-map`
 hook loads) carry a `tenant_id` column. Change it from `<LEGACY_KEY>` to
 `<TENANT_UUID>` in the same change: the loader skips keys that already carry a
 decision, and after §3.4 the stored decisions are under `<TENANT_UUID>`.
 
-Deploy the chart version that contains the tenant identity change. Reconcile
-keeps every Airbyte source, connection and schedule name, because they are
-built from `legacyTenantKeyOverride`.
+Deploy the chart version that contains the tenant identity change. Its
+ClickHouse migration hook adds the `tenant_id` column to the task-tracking Silver
+classes; rows already there carry an empty tenant until §3.4 rebuilds them, so
+task metrics read empty in between. Reconcile keeps every Airbyte source,
+connection and schedule name, because they are built from `legacyTenantKeyOverride`.
 
 ### 3.4 Migrate data
 
@@ -132,13 +149,18 @@ built from `legacyTenantKeyOverride`.
    skipped for having no `tenant_id` column. A second run reports zero rows.
 2. Rebuild every other derived relation with a dbt full refresh, leaving the
    history models out — a full refresh rebuilds a snapshot from the current
-   Bronze state and discards every earlier version:
+   Bronze state and discards every earlier version. Submit the chart's `dbt-run`
+   template, which already carries `INSIGHT_TENANT_ID` and `INSIGHT_TENANT_KEY`:
+   ```bash
+   argo -n <app-namespace> submit --from workflowtemplate/dbt-run --wait \
+     -p dbt_select='*' -p dbt_exclude='tag:history' -p dbt_full_refresh=true
+   ```
+   The two variables keep the keys history models build on the legacy key
+   (`dbt/macros/tenant_key.sql`). Run outside the cluster, export them yourself:
    ```bash
    export INSIGHT_TENANT_ID=<TENANT_UUID> INSIGHT_TENANT_KEY=<LEGACY_KEY>
    dbt run --full-refresh --exclude tag:history
    ```
-   The two variables keep the keys history models build on the legacy key
-   (`dbt/macros/tenant_key.sql`); the chart passes them to every dbt run.
 3. Re-run identity seeding once, so persons resolve from the identity inputs the
    full refresh rebuilt under the canonical tenant:
    ```bash
@@ -165,7 +187,8 @@ values, redeploy, and unsuspend.
 
 - [ ] Every Bronze and config table holds only `<TENANT_UUID>` in its tenant column.
 - [ ] Every Bronze table keeps the row count and `uniqExact(unique_key)` recorded in §3.1.
-- [ ] Staging, Silver and Gold carry only `<TENANT_UUID>`.
+- [ ] Staging, Silver and Gold carry only `<TENANT_UUID>`; no task-tracking Silver
+      class holds a row with an empty `tenant_id`.
 - [ ] Airbyte source and connection ids are unchanged, and connection state matches §3.1.
 - [ ] No new Airbyte sources or connections exist, and no CronWorkflow appeared or disappeared.
 - [ ] Sources' `insight_tenant_id` configuration is `<TENANT_UUID>`.

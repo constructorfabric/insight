@@ -120,9 +120,6 @@ global:
     # list. We use bitnamilegacy (see mariadb.image / redis.image) so we
     # have to allow "insecure" images — otherwise the chart refuses to deploy.
     allowInsecureImages: true
-  # Deprecated: set ingestion.reconcile.tenantId. Still read when that is
-  # empty; setting both to different values fails the render.
-  tenantDefaultId: ""
   # ═════════════════════════════════════════════════════════════════════════
   #  OBSERVABILITY — logs & traces EMISSION (the product contract)
   # ═════════════════════════════════════════════════════════════════════════
@@ -251,7 +248,7 @@ ingestion:
     argoInstanceId: "" # Optional. Set only if the cluster's Argo workflow controller runs with `instanceID:` configured (e.g. "argo-workflows-insight" on dev-vhc). Empty leaves the controller-instanceid label off — controllers without instanceID accept that.
     # The canonical tenant UUID: data tenant columns, identity, authorization
     # and filtering, and the tenant segment of Bronze keys and Airbyte/Argo
-    # names on a fresh install. Supersedes global.tenantDefaultId.
+    # names on a fresh install.
     tenantId: ""
     # Warm installs only: the tenant key existing Bronze `unique_key`s and
     # Airbyte source/connection names were created with. Fresh installs leave

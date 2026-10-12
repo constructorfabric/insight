@@ -1,9 +1,8 @@
 """One canonical tenant UUID, read from one value, in every consumer.
 
-`ingestion.reconcile.tenantId` is the canonical tenant. The deprecated
-`global.tenantDefaultId` is still read while installs move off it, and the two
-naming different tenants is refused rather than resolved — that disagreement is
-exactly the drift that left data under a tenant nobody could read.
+`ingestion.reconcile.tenantId` is the canonical tenant. The removed
+`global.tenantDefaultId` is refused rather than ignored: an install still
+carrying it would otherwise lose its tenant silently on upgrade.
 
 A warm install declares the key its existing Bronze rows and Airbyte objects
 were created with in `legacyTenantKeyOverride`; reconcile names objects by it
@@ -98,21 +97,14 @@ def test_every_consumer_hears_the_canonical_tenant(
     assert found == {name: {CANONICAL} for name in names}
 
 
-@pytest.mark.parametrize(("template", "names"), CONSUMERS.items())
-def test_the_deprecated_global_is_read_when_the_canonical_value_is_empty(
-    chart_dependencies: None, template: str, names: tuple[str, ...]
-) -> None:
-    overrides = ["--set", "ingestion.reconcile.tenantId=", "--set", f"global.tenantDefaultId={CANONICAL}"]
-    assert _carried(template, overrides, names) == {name: {CANONICAL} for name in names}
-
-
-def test_two_different_tenants_are_refused(chart_dependencies: None) -> None:
+@pytest.mark.parametrize("reconcile", [CANONICAL, ""], ids=["beside the tenant", "alone"])
+def test_the_removed_global_tenant_is_refused(chart_dependencies: None, reconcile: str) -> None:
     result = _helm(
         "templates/secrets.yaml",
-        ["--set", f"ingestion.reconcile.tenantId={CANONICAL}", "--set", f"global.tenantDefaultId={OTHER}"],
+        ["--set", f"ingestion.reconcile.tenantId={reconcile}", "--set", f"global.tenantDefaultId={CANONICAL}"],
     )
-    assert result.returncode != 0
-    assert "name different tenants" in result.stderr
+    assert result.returncode != 0, "a leftover global.tenantDefaultId must fail the render"
+    assert "global.tenantDefaultId is removed" in result.stderr
 
 
 @pytest.mark.parametrize("value", ["example-legacy", CANONICAL.upper()])
