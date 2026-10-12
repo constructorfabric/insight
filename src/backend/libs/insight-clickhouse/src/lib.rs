@@ -5,6 +5,8 @@
 //! - [`QueryBuilder`] — parameterized query builder (no string interpolation)
 //! - [`Config`] — connection configuration
 //! - [`Topology`] — whether the target `ClickHouse` replicates
+//! - [`Ddl`] / [`TableSpec`] — the one place data-layer statements are written
+//! - [`MissingRelation`] — the one reading of "the warehouse has no such relation"
 //! - [`Error`] — error types
 //!
 //! # Usage
@@ -25,12 +27,17 @@
 //! ```
 
 pub mod config;
+mod consistency;
+pub mod ddl;
 pub mod error;
+pub mod missing_relation;
 pub mod query;
 pub mod topology;
 
 pub use config::Config;
+pub use ddl::{Ddl, TableSpec};
 pub use error::Error;
+pub use missing_relation::MissingRelation;
 pub use query::QueryBuilder;
 pub use topology::Topology;
 
@@ -86,6 +93,75 @@ impl Client {
             q = q.with_setting("max_memory_usage", max_memory_bytes.to_string());
         }
         q
+    }
+
+    /// Returns a query whose answer includes every row a
+    /// [`consistent_insert`](Self::consistent_insert) on this warehouse has
+    /// confirmed — the read half of a sequence whose next decision depends on
+    /// this caller's own write.
+    ///
+    /// Identical to [`query`](Self::query) on a standalone warehouse.
+    pub fn consistent_query(&self, sql: &str) -> clickhouse::query::Query {
+        let mut query = self.query(sql);
+        for (name, value) in consistency::read_settings(&self.config.topology) {
+            query = query.with_setting(*name, *value);
+        }
+        query
+    }
+
+    /// Returns an insert a following [`consistent_query`](Self::consistent_query)
+    /// is guaranteed to see.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] if the insert handle cannot be opened.
+    pub async fn consistent_insert<T: clickhouse::Row>(
+        &self,
+        table: &str,
+    ) -> Result<clickhouse::insert::Insert<T>, Error> {
+        let mut insert = self.inner.insert::<T>(table).await?;
+        for (name, value) in consistency::write_settings(&self.config.topology) {
+            insert = insert.with_setting(*name, *value);
+        }
+        Ok(insert)
+    }
+
+    /// Returns the statement `ddl` renders to, once this connection has
+    /// agreed that it is its own to run.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidQuery`] if the statement names a database other
+    /// than the one this connection is scoped to — a service changes the data
+    /// layer in its own database and nowhere else.
+    pub fn ddl_sql(&self, ddl: &Ddl) -> Result<String, Error> {
+        if ddl.database() != self.config.database {
+            tracing::warn!(
+                statement = %ddl.database(),
+                own = %self.config.database,
+                "rejected DDL aimed outside this connection's database"
+            );
+            return Err(Error::InvalidQuery(format!(
+                "this connection owns `{}`, so it cannot change `{}`",
+                self.config.database,
+                ddl.database()
+            )));
+        }
+
+        Ok(ddl.render())
+    }
+
+    /// Runs `ddl` against the warehouse.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] if the statement is not this connection's to run, or
+    /// if the warehouse refuses it.
+    pub async fn execute_ddl(&self, ddl: &Ddl) -> Result<(), Error> {
+        let sql = self.ddl_sql(ddl)?;
+        tracing::debug!(sql = %sql, "running data-layer DDL");
+        self.query(&sql).execute().await?;
+        Ok(())
     }
 
     /// Returns a [`QueryBuilder`] scoped to the given tenant.
@@ -200,5 +276,58 @@ mod tests {
         let client = Client::new(Config::new("http://localhost:8123", "insight"));
         let err = client.tenant_query("gold.pr; DROP TABLE x", Uuid::nil());
         assert!(matches!(err, Err(Error::InvalidQuery(_))));
+    }
+
+    fn create_in(database: &str) -> Ddl {
+        Ddl::create_table(TableSpec::merge_tree(
+            database,
+            "records",
+            &[("id", "UUID")],
+            &["id"],
+        ))
+    }
+
+    #[test]
+    fn a_statement_carries_no_cluster_clause_on_either_topology() -> Result<(), Error> {
+        // The `Replicated` database engine replays every DDL inside it, so a
+        // clause here would be a second answer to the same question.
+        for topology in [Topology::Standalone, Topology::new(true, "insight_cluster")] {
+            let client =
+                Client::new(Config::new("http://ch:8123", "identity").with_topology(topology));
+
+            let sql = client.ddl_sql(&create_in("identity"))?;
+
+            assert!(!sql.contains("ON CLUSTER"), "{sql}");
+            assert!(!sql.contains("ReplicatedMergeTree"), "{sql}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn every_statement_aimed_at_another_service_s_database_is_refused() {
+        let client = Client::new(Config::new("http://ch:8123", "insight_datasets"));
+
+        let refused = [
+            create_in("silver"),
+            Ddl::drop_table("silver", "class_commits"),
+            Ddl::exchange_tables("silver", "a", "b"),
+            Ddl::rename_table("silver", "a", "b"),
+        ];
+
+        for statement in refused {
+            assert!(
+                matches!(client.ddl_sql(&statement), Err(Error::InvalidQuery(_))),
+                "a service changes its own database and nowhere else: {statement:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_consistent_query_builds_a_handle_on_either_topology() {
+        for topology in [Topology::Standalone, Topology::new(true, "insight_cluster")] {
+            let client =
+                Client::new(Config::new("http://ch:8123", "identity").with_topology(topology));
+            let _q = client.consistent_query("SELECT count() FROM identity.identity_persons");
+        }
     }
 }

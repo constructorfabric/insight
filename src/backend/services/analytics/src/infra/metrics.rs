@@ -7,6 +7,7 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use insight_clickhouse::MissingRelation;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 
@@ -90,7 +91,7 @@ pub(crate) enum ErrorClass {
 
 impl ErrorClass {
     pub(crate) fn classify(message: &str) -> Self {
-        if message.contains("UNKNOWN_TABLE") || message.contains("Code: 60.") {
+        if MissingRelation::from_message(message).is_some() {
             return Self::RelationMissing;
         }
         if RESOURCE_LIMIT_MARKERS

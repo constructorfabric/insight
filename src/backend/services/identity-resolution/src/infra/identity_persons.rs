@@ -31,14 +31,15 @@
 //!
 //! On a replicated warehouse the verify and the guard are read behind a load
 //! balancer, so they can reach a replica that has not merged the parts this
-//! run just wrote — see [`QUORUM_INSERT_SETTINGS`].
+//! run just wrote; the insert and those reads go through the shared client's
+//! read-after-write pair.
 
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
 use clickhouse::Row;
-use insight_clickhouse::{Client, Config, Topology};
+use insight_clickhouse::{Client, Config, Ddl, TableSpec, Topology};
 use sea_orm::prelude::DateTime;
 use serde::Serialize;
 use uuid::Uuid;
@@ -58,18 +59,7 @@ const STAGING_PREFIX: &str = "identity_persons_staging_";
 /// still be writing to it.
 const STAGING_GC_AGE_SECONDS: u32 = 3600;
 
-/// Read-after-write for the verify → guard → swap sequence on a replicated
-/// warehouse. Without a quorum the count read can reach a replica that has not
-/// merged this run's parts and abort a complete snapshot as short.
-/// `insert_quorum_parallel = 0` is what gives [`CONSISTENT_READ_SETTINGS`] its
-/// meaning: ClickHouse does not guarantee sequential consistency while quorum
-/// inserts run in parallel.
-const QUORUM_INSERT_SETTINGS: [(&str, &str); 2] =
-    [("insert_quorum", "auto"), ("insert_quorum_parallel", "0")];
-/// Pins the reads the swap decides on to the quorum-confirmed parts.
-const CONSISTENT_READ_SETTINGS: [(&str, &str); 1] = [("select_sequential_consistency", "1")];
-
-/// Column block of this run's staging table, and so — through the swap — of the
+/// Columns of this run's staging table, and so — through the swap — of the
 /// live table's next schema. Mirrors the MariaDB `persons` log
 /// (`001_persons.sql`, nullability per
 /// `009_align_existing_tables_to_conventions.sql`) minus the generated
@@ -77,22 +67,24 @@ const CONSISTENT_READ_SETTINGS: [(&str, &str); 1] = [("select_sequential_consist
 /// `identity_inputs`). Keep in sync with `create_identity_persons.sql`, the
 /// hook that creates the live table: it is the shape a build meets before the
 /// first sync, and the shape a fresh install's `RENAME` has to match.
-const COLUMNS_DDL: &str = r"
-    id                  UInt64,
-    value_type          String,
-    insight_source_type String,
-    insight_source_id   UUID,
-    insight_tenant_id   UUID,
-    value_id            Nullable(String),
-    value_full_text     Nullable(String),
-    value               Nullable(String),
-    value_effective     Nullable(String),
-    person_id           UUID,
-    author_person_id    UUID,
-    reason              Nullable(String),
-    created_at          DateTime64(6, 'UTC'),
-    _synced_at          DateTime64(3, 'UTC')
-";
+const COLUMNS: [(&str, &str); 14] = [
+    ("id", "UInt64"),
+    ("value_type", "String"),
+    ("insight_source_type", "String"),
+    ("insight_source_id", "UUID"),
+    ("insight_tenant_id", "UUID"),
+    ("value_id", "Nullable(String)"),
+    ("value_full_text", "Nullable(String)"),
+    ("value", "Nullable(String)"),
+    ("value_effective", "Nullable(String)"),
+    ("person_id", "UUID"),
+    ("author_person_id", "UUID"),
+    ("reason", "Nullable(String)"),
+    ("created_at", "DateTime64(6, 'UTC')"),
+    ("_synced_at", "DateTime64(3, 'UTC')"),
+];
+/// The log's primary key, and the order a reader of the snapshot gets.
+const SORT_KEY: [&str; 1] = ["id"];
 
 /// Wire row for the `RowBinary` insert. Field order and names must match the
 /// DDL above — the clickhouse client sends `INSERT INTO … (field names)`.
@@ -135,15 +127,23 @@ enum Target {
     Absent,
 }
 
+/// The table this run stages into.
+///
+/// No `IF NOT EXISTS`: the name carries this run's UUIDv7, so anything
+/// already holding it is a collision no retry resolves.
+fn staging_spec(staging: &str) -> Ddl {
+    Ddl::create_table(TableSpec::merge_tree(
+        DATABASE, staging, &COLUMNS, &SORT_KEY,
+    ))
+}
+
 /// The statement that makes this run's staging the live table. `EXCHANGE` needs
 /// both sides, so an absent target is reached by `RENAME` — publishing the
 /// snapshot without declaring a schema the hook does not write itself.
-fn swap_sql(staging: &str, target: Target) -> String {
+fn swap_ddl(staging: &str, target: Target) -> Ddl {
     match target {
-        Target::Published => {
-            format!("EXCHANGE TABLES {DATABASE}.`{staging}` AND {DATABASE}.{TARGET}")
-        }
-        Target::Absent => format!("RENAME TABLE {DATABASE}.`{staging}` TO {DATABASE}.{TARGET}"),
+        Target::Published => Ddl::exchange_tables(DATABASE, staging, TARGET),
+        Target::Absent => Ddl::rename_table(DATABASE, staging, TARGET),
     }
 }
 
@@ -177,18 +177,6 @@ impl ClickHouseIdentityPersonsWriter {
         Ok(())
     }
 
-    /// A read the swap decides on, pinned to the quorum-confirmed parts when
-    /// the warehouse replicates.
-    fn consistent_query(&self, sql: &str) -> clickhouse::query::Query {
-        let mut query = self.client.query(sql);
-        if self.client.config().topology.is_replicated() {
-            for (name, value) in CONSISTENT_READ_SETTINGS {
-                query = query.with_setting(name, value);
-            }
-        }
-        query
-    }
-
     /// Whether the live table exists. Read fresh for every swap: the hook that
     /// creates it runs on its own schedule, not this service's.
     async fn target_state(&self) -> anyhow::Result<Target> {
@@ -212,6 +200,7 @@ impl ClickHouseIdentityPersonsWriter {
     /// clocks feeding `_synced_at` are the service's own.
     async fn guard_watermark(&self, synced_at: chrono::DateTime<Utc>) -> anyhow::Result<()> {
         let published_ms: i64 = self
+            .client
             .consistent_query(&format!(
                 "SELECT toUnixTimestamp64Milli(max(_synced_at)) FROM {DATABASE}.{TARGET}"
             ))
@@ -262,7 +251,8 @@ impl ClickHouseIdentityPersonsWriter {
                 continue;
             }
             match self
-                .execute(&format!("DROP TABLE IF EXISTS {DATABASE}.`{name}`"))
+                .client
+                .execute_ddl(&Ddl::drop_table(DATABASE, &name))
                 .await
             {
                 Ok(()) => tracing::info!(table = %name, "persons-sync: dropped orphaned staging"),
@@ -282,12 +272,7 @@ impl ClickHouseIdentityPersonsWriter {
         rows: &[PersonsLogRow],
         synced_at: chrono::DateTime<Utc>,
     ) -> anyhow::Result<()> {
-        let mut insert = self.client.inner().insert::<WireRow>(staging).await?;
-        if self.client.config().topology.is_replicated() {
-            for (name, value) in QUORUM_INSERT_SETTINGS {
-                insert = insert.with_setting(name, value);
-            }
-        }
+        let mut insert = self.client.consistent_insert::<WireRow>(staging).await?;
         for row in rows {
             insert.write(&to_wire_row(row, synced_at)).await?;
         }
@@ -295,6 +280,7 @@ impl ClickHouseIdentityPersonsWriter {
 
         // A lost batch must never be swapped in as "the new truth".
         let count: u64 = self
+            .client
             .consistent_query(&format!("SELECT count() FROM {DATABASE}.`{staging}`"))
             .fetch_one()
             .await?;
@@ -313,7 +299,7 @@ impl ClickHouseIdentityPersonsWriter {
             Target::Absent => {}
         }
 
-        self.execute(&swap_sql(staging, target)).await?;
+        self.client.execute_ddl(&swap_ddl(staging, target)).await?;
         Ok(())
     }
 
@@ -356,11 +342,7 @@ impl IdentityPersonsWriter for ClickHouseIdentityPersonsWriter {
             .await?;
         self.drop_stale_stagings().await;
 
-        self.execute(&format!(
-            "CREATE TABLE {DATABASE}.`{staging}` ({COLUMNS_DDL}) \
-             ENGINE = MergeTree ORDER BY id"
-        ))
-        .await?;
+        self.client.execute_ddl(&staging_spec(&staging)).await?;
 
         let result = self.fill_and_swap(&staging, rows, synced_at).await;
 
@@ -368,7 +350,8 @@ impl IdentityPersonsWriter for ClickHouseIdentityPersonsWriter {
         // it holds the previous snapshot; after a failure, the partial write.
         // Best-effort — an orphan is reclaimed by the next run's GC.
         if let Err(e) = self
-            .execute(&format!("DROP TABLE IF EXISTS {DATABASE}.`{staging}`"))
+            .client
+            .execute_ddl(&Ddl::drop_table(DATABASE, &staging))
             .await
         {
             tracing::warn!(error = %e, table = %staging, "persons-sync: dropping own staging failed");
@@ -435,35 +418,84 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn a_published_table_is_swapped_for_atomically() {
-        let sql = swap_sql("identity_persons_staging_abc", Target::Published);
-
-        assert_eq!(
-            sql,
-            "EXCHANGE TABLES identity.`identity_persons_staging_abc` AND identity.identity_persons"
-        );
+    fn swap(target: Target) -> anyhow::Result<String> {
+        Ok(writer(Topology::Standalone)
+            .client
+            .ddl_sql(&swap_ddl("identity_persons_staging_abc", target))?)
     }
 
     #[test]
-    fn a_table_no_creator_has_made_yet_is_renamed_into_place() {
-        let sql = swap_sql("identity_persons_staging_abc", Target::Absent);
-
+    fn a_published_table_is_swapped_for_atomically() -> anyhow::Result<()> {
         assert_eq!(
-            sql,
-            "RENAME TABLE identity.`identity_persons_staging_abc` TO identity.identity_persons"
+            swap(Target::Published)?,
+            "EXCHANGE TABLES `identity`.`identity_persons_staging_abc` \
+             AND `identity`.`identity_persons`"
         );
+        Ok(())
     }
 
     #[test]
-    fn publishing_never_creates_the_table_dbt_owns() {
+    fn a_table_no_creator_has_made_yet_is_renamed_into_place() -> anyhow::Result<()> {
+        assert_eq!(
+            swap(Target::Absent)?,
+            "RENAME TABLE `identity`.`identity_persons_staging_abc` \
+             TO `identity`.`identity_persons`"
+        );
+        Ok(())
+    }
+
+    fn writer(topology: Topology) -> ClickHouseIdentityPersonsWriter {
+        ClickHouseIdentityPersonsWriter::connect("http://ch:8123", "", "", topology)
+    }
+
+    /// The `Replicated` database engine replays the statement on every replica
+    /// and converts the engine on the way in, so the staging a clustered
+    /// install creates is the one a single-node install creates.
+    #[test]
+    fn a_clustered_install_stages_through_the_same_statement() -> anyhow::Result<()> {
+        let clustered = writer(Topology::new(true, "insight_cluster"))
+            .client
+            .ddl_sql(&staging_spec("identity_persons_staging_abc"))?;
+        let standalone = writer(Topology::Standalone)
+            .client
+            .ddl_sql(&staging_spec("identity_persons_staging_abc"))?;
+
+        assert_eq!(clustered, standalone);
+        Ok(())
+    }
+
+    /// The staging table is what the swap publishes, so its shape is the live
+    /// table's next schema.
+    #[test]
+    fn the_staging_table_is_the_shape_the_swap_publishes() -> anyhow::Result<()> {
+        let sql = writer(Topology::Standalone)
+            .client
+            .ddl_sql(&staging_spec("identity_persons_staging_abc"))?;
+
+        assert!(
+            sql.starts_with("CREATE TABLE `identity`.`identity_persons_staging_abc` ("),
+            "{sql}"
+        );
+        assert!(sql.ends_with(") ENGINE = MergeTree ORDER BY id"), "{sql}");
+        for (name, data_type) in COLUMNS {
+            assert!(
+                sql.contains(&format!("\n    {name} {data_type}")),
+                "`{name} {data_type}` must be declared: {sql}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn publishing_never_creates_the_table_dbt_owns() -> anyhow::Result<()> {
         for target in [Target::Published, Target::Absent] {
-            let sql = swap_sql("identity_persons_staging_abc", target);
+            let sql = swap(target)?;
 
             assert!(
                 !sql.contains("CREATE"),
                 "the swap must not become a second creator: {sql}"
             );
         }
+        Ok(())
     }
 }

@@ -5,6 +5,7 @@
 //! and the ingestion pipeline are all unreachable.
 
 use chrono::{DateTime, Utc};
+use insight_clickhouse::MissingRelation;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -196,17 +197,6 @@ fn sync_history(scope: &str) -> String {
         order = *ROW_ORDER
     )
 }
-
-/// `UNKNOWN_TABLE` and `UNKNOWN_DATABASE`. The ledger is absent on an install
-/// whose migration has not run and on a stand where nothing records, and the
-/// page must say "nothing has been read yet" there rather than fail.
-///
-/// SAFETY: the trailing period is load-bearing. Without it `Code: 60` also
-/// prefixes `Code: 600`, `Code: 601` and so on — so a future ClickHouse error
-/// in that range would be classified as an absent ledger and the page would
-/// serve an empty list during a real failure. The live test pins that this is
-/// the shape ClickHouse actually produces.
-const ABSENT_RELATION_CODES: [&str; 2] = ["Code: 60.", "Code: 81."];
 
 #[derive(Debug, Deserialize, clickhouse::Row)]
 struct SealedTickRow {
@@ -447,9 +437,7 @@ pub(super) fn absent_ledger(error: &clickhouse::error::Error) -> bool {
     let clickhouse::error::Error::BadResponse(payload) = error else {
         return false;
     };
-    ABSENT_RELATION_CODES
-        .iter()
-        .any(|code| payload.trim_start().starts_with(code))
+    MissingRelation::from_message(payload).is_some()
 }
 
 #[cfg(test)]

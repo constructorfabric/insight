@@ -112,3 +112,62 @@ async fn dropping_names_the_table_and_tolerates_its_absence() -> R {
 
     Ok(())
 }
+
+/// A client that dials nothing: these pin the statement `provision` would
+/// send, which is decided before any of it reaches a server.
+fn tables_on(database: &str, topology: insight_clickhouse::Topology) -> DatasetTables {
+    DatasetTables::new(insight_clickhouse::Client::new(
+        insight_clickhouse::Config::new("http://ch:8123", database).with_topology(topology),
+    ))
+}
+
+fn provision_sql(tables: &DatasetTables, table: &str) -> Result<String, DatasetTableError> {
+    Ok(tables.client.ddl_sql(&tables.ingest_spec(table))?)
+}
+
+/// A table is recognised as this service's by the key `system.tables` reads
+/// back, so the key the create writes has to render into exactly that text.
+#[test]
+fn the_sort_key_the_create_writes_is_the_one_a_reader_recognises() -> R {
+    let tables = tables_on("insight_datasets", insight_clickhouse::Topology::Standalone);
+
+    let sql = provision_sql(&tables, "ds_commits_1")?;
+
+    assert!(
+        sql.ends_with(&format!("ORDER BY ({INGEST_SORTING_KEY})")),
+        "a key no reader matches would make every table of ours look foreign: {sql}"
+    );
+
+    Ok(())
+}
+
+/// The `Replicated` database engine replays the statement on every replica and
+/// converts the engine on the way in, so a clustered install sends exactly what
+/// a single-node one sends.
+#[test]
+fn a_clustered_install_provisions_the_same_statement() -> R {
+    let clustered = tables_on(
+        "insight_datasets",
+        insight_clickhouse::Topology::new(true, "insight_cluster"),
+    );
+    let standalone = tables_on("insight_datasets", insight_clickhouse::Topology::Standalone);
+
+    assert_eq!(
+        provision_sql(&clustered, "ds_commits_1")?,
+        provision_sql(&standalone, "ds_commits_1")?
+    );
+
+    Ok(())
+}
+
+#[test]
+fn the_create_names_the_datasets_database_and_no_other() {
+    let spec = tables_on("insight_datasets", insight_clickhouse::Topology::Standalone)
+        .ingest_spec("ds_commits_1");
+    let elsewhere = tables_on("silver", insight_clickhouse::Topology::Standalone);
+
+    assert!(
+        elsewhere.client.ddl_sql(&spec).is_err(),
+        "a dataset's table belongs in the datasets database and nowhere else"
+    );
+}

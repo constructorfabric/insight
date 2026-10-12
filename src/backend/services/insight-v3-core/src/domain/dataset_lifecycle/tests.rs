@@ -16,6 +16,17 @@ struct NoTable {
     sorting_key: String,
 }
 
+/// The table a recorded create names, without its database or its quotes.
+fn created_table(ddl: &str) -> String {
+    ddl.split("IF NOT EXISTS ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|qualified| qualified.rsplit('.').next())
+        .unwrap_or_else(|| panic!("the create names a table: {ddl}"))
+        .trim_matches('`')
+        .to_owned()
+}
+
 fn name(value: &str) -> DefinitionName {
     DefinitionName::parse(value).unwrap_or_else(|error| panic!("the name parses: {error}"))
 }
@@ -375,14 +386,9 @@ async fn an_attempt_that_lost_the_dataset_takes_away_the_table_it_made() -> R {
     let made = recording.query().await;
     let dropped = dropping.query().await;
     assert!(dropped.contains("DROP TABLE"), "{dropped}");
-    let table = made
-        .split("IF NOT EXISTS ")
-        .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-        .unwrap_or_else(|| panic!("the create names a table: {made}"))
-        .trim_matches('`');
+    let table = created_table(&made);
     assert!(
-        dropped.contains(table),
+        dropped.contains(&table),
         "the table taken away must be the one this attempt made: {dropped}"
     );
 
@@ -409,15 +415,7 @@ async fn removing_a_dataset_takes_its_records_and_its_row_with_it() -> R {
     assert!(fixture.datasets.get(&name("commits")).await?.is_none());
     let dropped = dropping.query().await;
     assert!(dropped.contains("DROP TABLE"), "{dropped}");
-    let table = made
-        .query()
-        .await
-        .split("IF NOT EXISTS ")
-        .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-        .unwrap_or_else(|| panic!("the create names a table"))
-        .trim_matches('`')
-        .to_owned();
+    let table = created_table(&made.query().await);
     assert!(
         dropped.contains(&table),
         "the table dropped must be the one the row named: {dropped}"

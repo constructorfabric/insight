@@ -144,6 +144,11 @@ release, and they are the only place an operator sets it:
   leaves every other replica without the relation. Every creator downstream
   reads the pair from this release, so this is the one place it is checked.
 
+Reading the pair is not the same as emitting a clause, and the table below says
+which layer does what. The Rust services emit neither `ON CLUSTER` nor a
+`Replicated` engine: their DDL rides on the database the one creation site
+makes, for the reason in the note after the table.
+
 The same decision under a different name in each layer:
 
 | Layer | Name | Where |
@@ -153,7 +158,7 @@ The same decision under a different name in each layer:
 | Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-databases` and `clickhouse-migrate` Jobs (one shared env block, `insight.clickhouse.ddlEnv`), `create-databases.sh`, `apply-ch-migrations.sh` |
 | Reconcile | `RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE` / `RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME` | `reconcile-cron.yaml`, consumed by `compose_destination_config.py` as the destination's `use_replicated_engines` / `cluster_name` |
 | dbt | project vars `cluster_mode` / `cluster_name`, read by the `insight_engine` macro every model's engine is declared through and by the `insight_on_cluster` clause the `on-run-start` hooks qualify their raw DDL with; the project-level `+engine` default for a model that declares none; the adapter's `cluster:` profile key and the quorum `custom_settings`, both written by the one profile writer | `dbt_project.yml`, `dbt/macros/insight_engine.sql`, `scripts/dbt_profiles.py` |
-| Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name` | `libs/insight-clickhouse`, `insight-v3-core` and `identity-resolution` gear config |
+| Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name`, decides the read-after-write settings a swap needs and nothing else. Data-layer DDL is one `insight_clickhouse::Ddl` statement per change (create, drop, exchange, rename) and carries no `ON CLUSTER` and no `Replicated` prefix: the database engine above replays it on every replica | `libs/insight-clickhouse` (`topology.rs`, `ddl.rs`, `consistency.rs`), `insight-v3-core` and `identity-resolution` gear config |
 
 Tests that must know the topology read `CLICKHOUSE_CLUSTER_MODE` /
 `CLICKHOUSE_CLUSTER_NAME` from their harness, defaulting to a single node.
