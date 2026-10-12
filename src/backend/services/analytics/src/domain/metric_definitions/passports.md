@@ -606,7 +606,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: files_engaged
 - Formula: sum(files_engaged)
 - Shape: integer, neutral, unit files
-- Notes: Files a person viewed, edited, uploaded or downloaded in OneDrive and SharePoint, counted once per file per day and summed over the period. A day the OneDrive client syncs a folder counts every synced file, so one sync day can outweigh weeks of ordinary work.
+- Notes: Files a person viewed, edited, uploaded or downloaded in OneDrive and SharePoint, counted once per file per day and summed over the period. A bulk upload or download counts every file, so one such day can outweigh weeks of ordinary work. Files the OneDrive sync client syncs are reported separately and do not count.
 
 ## collab.files_shared_internal — Files Shared (Internal)
 
