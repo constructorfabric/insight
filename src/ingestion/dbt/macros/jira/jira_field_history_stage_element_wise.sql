@@ -148,9 +148,12 @@ element_wise_presence AS (
                  arrayEnumerate(e.ops))                                       AS opens_span,
         -- For the span opened at creation (position 1) and at each operation
         -- (position k + 1): the operation that ends it, or 0 when none does.
-        arrayMap(k -> arrayFirstIndex(j -> j > k AND (opens_span[j] OR NOT present_after[j]),
-                                      arrayEnumerate(e.ops)),
-                 range(toUInt64(length(e.ops) + 1)))                          AS span_breaks,
+        -- One backward pass: each position takes the nearest break at or after it.
+        arrayConcat(
+            arrayReverseFill(b -> b != 0,
+                             arrayMap(j -> if(opens_span[j] OR NOT present_after[j], j, 0),
+                                      arrayEnumerate(e.ops))),
+            [0])                                                              AS span_breaks,
         -- The pair a span carries: its own for an `add`, the latest add's
         -- before it for a `remove` the element outlives.
         arrayMap(p -> if(p = '', e.first_pair, p),
