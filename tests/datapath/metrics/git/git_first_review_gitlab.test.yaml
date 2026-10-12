@@ -31,19 +31,19 @@ bronze:
   bronze_gitlab.users:
     # The author's address comes from the user record; a merge request names
     # only the account.
-    - {$ref: ../templates/gitlab_git.yaml#/templates/user, unique_key: gl-user-alice, id: 700, username: alice-gl, name: Alice Alpha, email: alice@example.com}
-    - {$ref: ../templates/gitlab_git.yaml#/templates/user, unique_key: gl-user-bob, id: 701, username: bob-gl, name: Bob Beta, email: bob@example.com}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/user, unique_key: gl-user-alice, id: 740, username: alice-gl, name: Alice Alpha, email: alice@example.com}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/user, unique_key: gl-user-bob, id: 741, username: bob-gl, name: Bob Beta, email: bob@example.com}
 
   bronze_gitlab.pull_requests:
-    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-201, iid: 201, id: 90201, author_id: 700, author_username: alice-gl, author_name: Alice Alpha, reviewers: '[{"id": 701, "username": "bob-gl"}]', created_at: "2026-10-01T00:00:00Z", merged_at: "2026-10-03T00:00:00Z", merge_commit_sha: gl-merge-201}
-    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-202, iid: 202, id: 90202, author_id: 700, author_username: alice-gl, author_name: Alice Alpha, reviewers: '[{"id": 701, "username": "bob-gl"}]', created_at: "2026-10-01T00:00:00Z", merged_at: "2026-10-03T00:00:00Z", merge_commit_sha: gl-merge-202}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-201, iid: 201, id: 90201, author_id: 740, author_username: alice-gl, author_name: Alice Alpha, reviewers: '[{"id": 741, "username": "bob-gl"}]', created_at: "2026-10-01T00:00:00Z", merged_at: "2026-10-03T00:00:00Z", merge_commit_sha: gl-merge-201}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-202, iid: 202, id: 90202, author_id: 740, author_username: alice-gl, author_name: Alice Alpha, reviewers: '[{"id": 741, "username": "bob-gl"}]', created_at: "2026-10-01T00:00:00Z", merged_at: "2026-10-03T00:00:00Z", merge_commit_sha: gl-merge-202}
 
   bronze_gitlab.pull_request_notes:
     # Request 201: a comment and a milestone note precede the approval; only
     # the approval is a review, so the first review lands at 10 hours.
-    - {$ref: ../templates/gitlab_git.yaml#/templates/note, unique_key: gl-note-501, mr_iid: 201, id: 501, body: looks fine so far, system: false, author_id: 701, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-10-01T05:00:00Z", updated_at: "2026-10-01T05:00:00Z"}
-    - {$ref: ../templates/gitlab_git.yaml#/templates/note, unique_key: gl-note-502, mr_iid: 201, id: 502, body: changed milestone to %1, system: true, author_id: 700, author_username: alice-gl, author_name: Alice Alpha, created_at: "2026-10-01T07:00:00Z", updated_at: "2026-10-01T07:00:00Z"}
-    - {$ref: ../templates/gitlab_git.yaml#/templates/note, unique_key: gl-note-503, mr_iid: 201, id: 503, body: approved this merge request, system: true, author_id: 701, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-10-01T10:00:00Z", updated_at: "2026-10-01T10:00:00Z"}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/note, unique_key: gl-note-501, mr_iid: 201, id: 501, body: looks fine so far, system: false, author_id: 741, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-10-01T05:00:00Z", updated_at: "2026-10-01T05:00:00Z"}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/note, unique_key: gl-note-502, mr_iid: 201, id: 502, body: changed milestone to %1, system: true, author_id: 740, author_username: alice-gl, author_name: Alice Alpha, created_at: "2026-10-01T07:00:00Z", updated_at: "2026-10-01T07:00:00Z"}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/note, unique_key: gl-note-503, mr_iid: 201, id: 503, body: approved this merge request, system: true, author_id: 741, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-10-01T10:00:00Z", updated_at: "2026-10-01T10:00:00Z"}
     # Request 202: a request for changes is a review too, and the earlier one.
-    - {$ref: ../templates/gitlab_git.yaml#/templates/note, unique_key: gl-note-504, mr_iid: 202, id: 504, body: requested changes, system: true, author_id: 701, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-10-01T20:00:00Z", updated_at: "2026-10-01T20:00:00Z"}
-    - {$ref: ../templates/gitlab_git.yaml#/templates/note, unique_key: gl-note-505, mr_iid: 202, id: 505, body: approved this merge request, system: true, author_id: 701, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-10-02T06:00:00Z", updated_at: "2026-10-02T06:00:00Z"}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/note, unique_key: gl-note-504, mr_iid: 202, id: 504, body: requested changes, system: true, author_id: 741, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-10-01T20:00:00Z", updated_at: "2026-10-01T20:00:00Z"}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/note, unique_key: gl-note-505, mr_iid: 202, id: 505, body: approved this merge request, system: true, author_id: 741, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-10-02T06:00:00Z", updated_at: "2026-10-02T06:00:00Z"}
