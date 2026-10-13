@@ -98,8 +98,8 @@
 <!-- /toc -->
 
 **Artifact**: Feature (FEATURE)
-**Version**: 2.1
-**Last Updated**: 2026-09-09
+**Version**: 2.0
+**Last Updated**: 2026-02-03
 **Purpose**: Comprehensive quality checklist for FEATURE artifacts
 ---
 

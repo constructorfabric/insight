@@ -106,8 +106,8 @@ owner.
    its description field. Do not invent marker kinds: the `@cpt-{flow|algo|state|dod}`
    scope and begin/end markers belong in implementation code under FULL
    traceability, not in tests.
-3. Check a DoD item `[x]` only when its implementation is in place and the tests
-   naming it pass.
+3. Check a DoD item `[x]` only when its implementation is in place, the tests
+   naming it pass, and — under FULL traceability — its code markers exist.
 4. Record passing evidence separately: tested revision, fixture/version, run
    command, conditions and result. Skipped tests, missing personas and absent
    source fixtures are not passing evidence.

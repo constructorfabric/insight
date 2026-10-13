@@ -127,6 +127,6 @@ and cannot gate a change.
 FEATURE section 1.2 references applicable FR/NFR IDs. Flows, algorithms and DoDs
 describe its contribution, and section 6 Acceptance Criteria is the feature's
 readable completion checklist. Tests prove the DoD items: a test names the DoD
-or flow ID it verifies, and a DoD is checked once its implementation is in place
-and those tests pass. A FEATURE carries no vectors of its own; they stay on the
+or flow ID it verifies, and a DoD is checked once its implementation is in place,
+those tests pass and, under FULL traceability, its code markers exist. A FEATURE carries no vectors of its own; they stay on the
 PRD's NFRs.
