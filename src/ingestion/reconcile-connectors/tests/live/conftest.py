@@ -111,6 +111,7 @@ class Airbyte:
 
     def _post(self, path: str, body: dict, auth: bool = True) -> dict:
         """POST JSON; a token that expired during a long reconcile run is re-minted once."""
+        assert self.url.startswith(("http://", "https://")), self.url
         for attempt in (1, 2):
             headers = {"Content-Type": "application/json"}
             if auth:
@@ -119,6 +120,7 @@ class Airbyte:
                 self.url + path, data=json.dumps(body).encode(), headers=headers, method="POST"
             )
             try:
+                # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
                 with urllib.request.urlopen(request, timeout=60) as response:
                     payload = response.read()
             except urllib.error.HTTPError as error:

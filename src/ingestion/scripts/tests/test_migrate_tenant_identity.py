@@ -77,11 +77,13 @@ INSERT INTO ingestion_history.sync_events VALUES ('{LEGACY}', 'e1', now()), ('{L
 
 
 def ch(sql: str) -> str:
+    assert CH_URL and CH_URL.startswith(("http://", "https://")), CH_URL
     request = urllib.request.Request(
         f"{CH_URL}/",
         data=sql.encode(),
         headers={"X-ClickHouse-User": CH_USER, "X-ClickHouse-Key": CH_PASSWORD},
     )
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
     with urllib.request.urlopen(request, timeout=60) as response:
         return response.read().decode().strip()
 
@@ -229,10 +231,12 @@ INSERT INTO staging.youtrack__field_observations VALUES ('other-yt-main-f2-2026-
 def heal_field_observations() -> subprocess.CompletedProcess[str]:
     functions = r"sed -n '/^ch_table_is_real() {/,/^}/p; /^heal_youtrack_field_observation_tenant() {/,/^}/p'"
     env = {**os.environ, "CLICKHOUSE_URL": CH_URL, "CLICKHOUSE_USER": CH_USER, "CLICKHOUSE_PASSWORD": CH_PASSWORD}
+    script = (
+        f"set -euo pipefail; source '{SCRIPTS / 'lib/ch-exec.sh'}'; eval \"$({functions} '{APPLY}')\";"
+        " heal_youtrack_field_observation_tenant; heal_youtrack_field_observation_tenant"
+    )
     return subprocess.run(
-        [shutil.which("bash") or "bash", "-c",
-         f"set -euo pipefail; source '{SCRIPTS / 'lib/ch-exec.sh'}'; eval \"$({functions} '{APPLY}')\";"
-         " heal_youtrack_field_observation_tenant; heal_youtrack_field_observation_tenant"],
+        [shutil.which("bash") or "bash", "-c", script],
         env=env, capture_output=True, text=True, check=False, timeout=120,
     )
 
