@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Apply the ClickHouse gold-view migrations against an EXTERNAL ClickHouse.
+# Apply the ClickHouse schema migrations against an EXTERNAL ClickHouse.
 #
 # This is the in-cluster, network-mode counterpart to the ClickHouse half
 # of scripts/init.sh. init.sh `kubectl exec`s into a bundled CH StatefulSet
@@ -14,12 +14,15 @@
 #      the migrations below, the dbt hooks and the connectors-ddl snapshot all
 #      assume their database already stands.
 #   2. Run create-warehouse-placeholders.sh — minimum-viable identity/
-#      staging/silver/insight stubs so gold-view CREATE VIEW type-checks on a
+#      staging/silver/insight stubs so a gold CREATE VIEW type-checks on a
 #      fresh cluster (CH validates referenced tables at parse time). Bronze is
 #      not among them: the Airbyte destination is its only creator.
 #   3. Apply migrations/*.sql in lexicographic order.
-#   4. Build the dbt gold models (tag:gold) so dbt-owned views exist at
-#      deploy time instead of after the first connector sync.
+#
+# No dbt: a connector sync rebuilds its own models, gold included, because
+# every descriptor's selector ends in `+` (#3561). A deploy therefore leaves
+# gold exactly as the last sync built it, and a relation no sync has built yet
+# is answered as not-ready rather than as a failure.
 #
 # Bookkeeping: none — every migration is re-run on every invocation and
 # MUST stay idempotent/re-runnable (CREATE OR REPLACE / IF NOT EXISTS).
@@ -35,24 +38,17 @@
 #   CLICKHOUSE_CLUSTER_NAME  the cluster the ON CLUSTER clause names
 # Both default to a standalone single node.
 #
-# Options:
-#   --full-refresh   rebuild the selected dbt models from source instead of
-#                    appending to them. The deploy Hook never passes it; the
-#                    seed's silver step does, because a seed REPLACES the org
-#                    and the incremental identity feeders would otherwise
-#                    carry the previous roster forward (see below).
+# Options: none beyond --help. Building models is build-gold.sh's job.
 set -euo pipefail
 
-FULL_REFRESH=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --full-refresh) FULL_REFRESH=1; shift ;;
     -h|--help)
       awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}"
       exit 0 ;;
     *)
       echo "apply-ch-migrations.sh: unknown argument: $1" >&2
-      echo "usage: apply-ch-migrations.sh [--full-refresh]" >&2
+      echo "usage: apply-ch-migrations.sh" >&2
       exit 2 ;;
   esac
 done
@@ -61,14 +57,58 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 : "${CLICKHOUSE_URL:?CLICKHOUSE_URL must be set (e.g. http://ch-host:8123)}"
 : "${CLICKHOUSE_DATABASE:?CLICKHOUSE_DATABASE must be set (the Insight app database)}"
-# Read by the dbt profile below and, through the environment, by the cluster
-# vars in dbt_project.yml. Exported so both see the same values.
+# Exported so create-databases.sh, which this script runs as a child, reads the
+# same topology this one was given.
 export CLICKHOUSE_CLUSTER_MODE="${CLICKHOUSE_CLUSTER_MODE:-false}"
 export CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}"
 
 source "$SCRIPT_DIR/lib/ch-topology.sh"
 
 bash "$SCRIPT_DIR/create-databases.sh"
+
+# The cohort and coverage relations are dbt VIEWs (identity resolves at query
+# time). A cluster that predates that holds them as MergeTree TABLEs, and dbt's
+# view materialization replaces via CREATE OR REPLACE VIEW, which is not
+# guaranteed to replace a table. It runs BEFORE the snapshot below, whose own
+# CREATE OR REPLACE VIEW would otherwise meet that table and abort the deploy;
+# the snapshot then stands the view up in the same run, and the next sync
+# rebuilds its body from the model.
+#
+# SAFETY: renamed, never dropped. The backup outlives this deploy — an operator
+# can rename it back — and a later deploy drops it once the live relation is a
+# View again.
+heal_gold_view_relation() {
+  local db="$1" table="$2" backup="${2}__pre_view_backup"
+  local engine
+  engine="$(
+    printf "SELECT engine FROM system.tables WHERE database='%s' AND name='%s'" "$db" "$table" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+
+  if [[ "$engine" == "View" ]]; then
+    ch_table_exists "$db" "$backup" || return 0
+    echo "  ${db}.${backup} (superseded by the view, dropping)"
+    run_ch <<SQL
+DROP TABLE IF EXISTS ${db}.${backup};
+SQL
+    return 0
+  fi
+
+  # Absent: nothing has built it yet. A backup that exists stays until a view
+  # supersedes it.
+  [[ -n "$engine" ]] || return 0
+
+  echo "  ${db}.${table} (${engine}, renamed to ${backup}; the snapshot stands the view up)"
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${db}.${backup};
+RENAME TABLE ${db}.${table} TO ${db}.${backup};
+SQL
+}
+
+echo "=== Healing gold identity relations still held as tables ==="
+heal_gold_view_relation insight metric_entity_cohorts_current
+heal_gold_view_relation insight identity_resolution_coverage
 
 echo "=== Creating warehouse placeholders (ADR-0007) ==="
 bash "$SCRIPT_DIR/create-warehouse-placeholders.sh"
@@ -518,8 +558,8 @@ SQL
 # follow: `author_display`, `delta_value_id`, `delta_value_display` and then
 # `title` left it, and the four discriminators became LowCardinality(String).
 # The silver side is in migrations/*.sql; the arms change here because a
-# staging table exists only after dbt has built it, and dbt runs after the
-# migrations.
+# staging table exists only after dbt has built it, and dbt runs on the next
+# sync, after these migrations.
 #
 # They cannot be skipped. All three models are `incremental`, so their tables
 # survive a run carrying whatever columns they were created with, and
@@ -667,10 +707,10 @@ echo "=== Healing git file-change object id columns ==="
 # here because these tables exist only after a connector has run.
 #
 # bronze_github.file_changes is healed for a different reason: the GitHub
-# staging model READS the two columns, and the destination only widens the table
-# on the connector's next sync — which lands after this deploy's dbt run,
-# leaving the staging model (and every git model downstream of it) failing on an
-# unknown identifier until then.
+# staging model READS the two columns, and nothing but the destination widens
+# that table — so a deploy that lands between an upgrade and the first sync
+# would otherwise leave the staging model (and every git model downstream of it)
+# failing on an unknown identifier.
 #
 # Existing rows heal to NULL and carry an oid from the first sync that
 # re-collects them. Idempotent.
@@ -1031,93 +1071,5 @@ done
 for _task_link_table in github__task_links youtrack__task_links; do
   heal_task_link_ids "${_task_link_table}"
 done
-
-# The cohort and coverage relations are dbt VIEWs (identity resolves at query
-# time). A cluster that predates that holds them as MergeTree TABLEs, and dbt's
-# view materialization replaces via CREATE OR REPLACE VIEW, which is not
-# guaranteed to replace a table.
-#
-# SAFETY: renamed, never dropped, and only when the gold build that recreates
-# them is about to run. A failed build aborts the script (set -e) with the data
-# still in `<table>__pre_view_backup`, which an operator can rename back; the
-# backup is dropped only after the build succeeds.
-GOLD_VIEW_QUARANTINE=()
-
-quarantine_gold_table_for_view() {
-  local db="$1" table="$2"
-  local engine
-  engine="$(
-    printf "SELECT engine FROM system.tables WHERE database='%s' AND name='%s'" "$db" "$table" |
-      _ch_http_query |
-      tr -d '[:space:]'
-  )"
-  [[ -n "$engine" && "$engine" != "View" ]] || return 0
-  echo "  ${db}.${table} (${engine}, renamed to ${table}__pre_view_backup)"
-  run_ch <<SQL
-DROP TABLE IF EXISTS ${db}.${table}__pre_view_backup;
-RENAME TABLE ${db}.${table} TO ${db}.${table}__pre_view_backup;
-SQL
-  GOLD_VIEW_QUARANTINE+=("${db}.${table}__pre_view_backup")
-}
-
-drop_gold_view_quarantine() {
-  local relation
-  for relation in "${GOLD_VIEW_QUARANTINE[@]:-}"; do
-    [[ -n "$relation" ]] || continue
-    echo "  ${relation}"
-    run_ch <<SQL
-DROP TABLE IF EXISTS ${relation};
-SQL
-  done
-}
-
-# SKIP_DBT_GOLD=1 (set by bootstrap-db snapshot generation) skips this step:
-# generation already built every tag:gold model with the pinned dbt venv
-# (run-dbt.sh) BEFORE the migrations ran, and re-running here would need a `dbt`
-# on PATH — which outside the prod toolbox (local dev, the connectors-ddl CI
-# workflow) is absent or the wrong build (dbt-fusion 2.0). Real deploys leave it
-# unset and rely on this step to materialise gold at deploy time.
-if [[ "${SKIP_DBT_GOLD:-}" == "1" ]]; then
-  echo "=== Skipping gold dbt build (SKIP_DBT_GOLD=1; gold pre-built by generation) ==="
-else
-# DBT_GOLD_SELECT widens the selection (space-separated dbt selectors);
-# the seed's silver step adds +identity_inputs, deploys leave it unset.
-read -r -a _dbt_select <<<"${DBT_GOLD_SELECT:-tag:gold}"
-# SAFETY: appended after the override so no caller can narrow the selector and
-# leave the map views at the snapshot's point-in-time bodies.
-_dbt_select+=("tag:identity:map")
-echo "=== Quarantining gold identity relations still held as tables ==="
-quarantine_gold_table_for_view insight metric_entity_cohorts_current
-quarantine_gold_table_for_view insight identity_resolution_coverage
-
-# INVARIANT: never export DBT_FULL_REFRESH — reconcile-connectors owns that
-# name, and env reaches every child.
-_dbt_flags=()
-if [[ "$FULL_REFRESH" == "1" ]]; then
-  _dbt_flags+=(--full-refresh)
-fi
-echo "=== Building gold models (dbt run --select ${_dbt_select[*]} ${_dbt_flags[*]:-}) ==="
-# Gold views are dbt-owned but must exist at DEPLOY time, not first-sync
-# time: the analytics service marks metric definitions schema-error while
-# an observation view is missing, which blanks those metrics for every
-# frontend request until the first connector sync builds the view (hours
-# on a scheduled instance). The placeholders created above guarantee every
-# relation the views reference exists, so this run type-checks on a fresh
-# cluster — the same guarantee the scoped per-connector dbt runs rely on
-# for sideways refs. Idempotent: views are create-or-replace and
-# table-materialized gold models rebuild via atomic swap. Table builds
-# are bounded by the models' own query_settings (memory, threads, disk
-# spill), so this step degrades to a slower build rather than failing
-# the deploy on data volume.
-DBT_PROFILES_DIR="$(mktemp -d)"
-export DBT_PROFILES_DIR
-python3 "$SCRIPT_DIR/dbt_profiles.py" --target migrate --correlated-subqueries \
-  --profiles-dir "$DBT_PROFILES_DIR"
-(cd "$SCRIPT_DIR/../dbt" && dbt run --profiles-dir "$DBT_PROFILES_DIR" --log-format json --select "${_dbt_select[@]}" ${_dbt_flags[@]+"${_dbt_flags[@]}"})
-
-echo "=== Dropping quarantined pre-view tables (gold build succeeded) ==="
-drop_gold_view_quarantine
-rm -rf "$DBT_PROFILES_DIR"
-fi
 
 echo "=== ClickHouse migrations complete ==="

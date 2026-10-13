@@ -3,8 +3,8 @@ Insight sample-data seed — orchestrator.
 
 Subcommands:
     identity   Persons, org_chart, person_roles (MariaDB).
-    silver     CREATE silver tables + apply gold view migrations + INSERT
-               sample rows (ClickHouse). Phase 2 — placeholder for now.
+    silver     CREATE silver tables + apply the migrations + INSERT sample
+               rows + build gold (ClickHouse).
     analytics  The catalogue rows no endpoint can create — a
                tenant metric-definition override (MariaDB, analytics database).
     gold       Rebuild the dbt gold models only (after a persons-seed run).

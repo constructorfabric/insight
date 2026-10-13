@@ -1,7 +1,7 @@
 {{ config(
     materialized='view',
     schema='identity',
-    tags=['identity', 'identity:map']
+    tags=['identity', 'identity:map', 'sync:always']
 ) }}
 
 -- INVARIANT: `id DESC` breaks ties within a `created_at`. The journal's slot

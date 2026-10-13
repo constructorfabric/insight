@@ -69,9 +69,8 @@ CHART            ?= oci://ghcr.io/constructorfabric/charts/insight
 LOCAL_CHART      ?= ../../charts/insight
 INSIGHT_VERSION  ?= $(shell cat .insight-version 2>/dev/null)
 VALUES           ?= environments/$(ENV)/values.yaml
-# Covers rollout waits plus the post-upgrade clickhouse-migrate hook; the
-# gold build inside that hook spills to disk under memory pressure, which
-# trades speed for reliability — give it room before --atomic rolls back.
+# Covers rollout waits plus the post-upgrade clickhouse-migrate hook, whose
+# heals can mutate large relations — give it room before --atomic rolls back.
 TIMEOUT          ?= 30m
 RENDER_DIR       := .deploy
 

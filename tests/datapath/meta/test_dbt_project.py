@@ -2,8 +2,9 @@
 
 These read the manifest the session's runner already parsed, so they cost a lookup
 rather than a build. Two of them are product contracts rather than rig ones: a
-connector model no deploy pass selects is never materialized on a real sync, and the
-identity map ships as a stale placeholder unless the deploy selects it.
+connector model no sync pass selects is never materialized on a real sync, and a
+model no graph walk reaches ships as a stale placeholder unless something else
+selects it.
 """
 
 from __future__ import annotations
@@ -16,13 +17,17 @@ import pytest
 from insight_datapath.dbt_runner import PROFILE_SCHEMA, DbtError, DbtRunner
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-MIGRATIONS_SCRIPT = REPO_ROOT / "src/ingestion/scripts/apply-ch-migrations.sh"
+BUILD_GOLD_SCRIPT = REPO_ROOT / "src/ingestion/scripts/build-gold.sh"
+DBT_RUN_TEMPLATE = REPO_ROOT / "charts/insight/templates/ingestion/dbt-run.yaml"
 
 MAP_TAG = "identity:map"
 MAP_MODELS = {"account_assignment", "person_map"}
 
+#: What every sync adds to its own selection, for the models no graph walk reaches.
+ALWAYS_TAG = "sync:always"
+
 #: The three tag-scoped passes the jira pipeline is built by; it has no catch-all.
-JIRA_DEPLOY_PASSES = ("tag:staging,tag:jira", "tag:silver,tag:jira+", "tag:gold,tag:jira+")
+JIRA_SYNC_PASSES = ("tag:staging,tag:jira", "tag:silver,tag:jira+", "tag:gold,tag:jira+")
 
 
 @pytest.fixture(scope="module")
@@ -80,8 +85,7 @@ def test_a_relation_is_named_by_the_schema_dbt_writes_it_to(dbt_runner: DbtRunne
 def test_a_model_holding_no_rows_never_reaches_the_ledger(dbt_runner: DbtRunner) -> None:
     """A view and an ephemeral model have nothing to truncate."""
     assert (
-        dbt_runner.materialized_relations(["github__task_users", "cursor__event_cost_daily"])
-        == []
+        dbt_runner.materialized_relations(["github__task_users", "cursor__event_cost_daily"]) == []
     )
 
 
@@ -106,12 +110,12 @@ def test_every_materialized_model_declares_its_schema(manifest: dict[str, Any]) 
     )
 
 
-def test_every_jira_model_is_built_by_some_deploy_pass(manifest: dict[str, Any]) -> None:
+def test_every_jira_model_is_built_by_some_sync_pass(manifest: dict[str, Any]) -> None:
     """A jira model no pass selects is never materialized on a real sync, and its silver
     consumers fail on a table that does not exist. Ephemeral models are inlined by their
     consumers, so no pass builds them standalone."""
     covered: set[str] = set()
-    for expression in JIRA_DEPLOY_PASSES:
+    for expression in JIRA_SYNC_PASSES:
         covered |= _selected(manifest, expression)
     gaps = sorted(
         node["name"]
@@ -120,14 +124,15 @@ def test_every_jira_model_is_built_by_some_deploy_pass(manifest: dict[str, Any])
         and node.get("config", {}).get("materialized") != "ephemeral"
         and uid not in covered
     )
-    assert gaps == [], f"built by no deploy pass ({', '.join(JIRA_DEPLOY_PASSES)}): {gaps}"
+    assert gaps == [], f"built by no sync pass ({', '.join(JIRA_SYNC_PASSES)}): {gaps}"
 
 
-def test_the_identity_map_models_carry_the_tag_the_deploy_selects(
+def test_the_identity_map_models_carry_the_tag_the_datapath_rig_selects(
     manifest: dict[str, Any],
 ) -> None:
     """An untagged map model ships as an empty placeholder from the DDL snapshot, and
-    every person read resolves against it without erroring."""
+    every person read resolves against it without erroring. What rebuilds them on a
+    real install is `sync:always`; this tag is how the data-path rig names them."""
     tagged = {node["name"] for node in _models(manifest).values() if MAP_TAG in _tags(node)}
     assert tagged == MAP_MODELS
 
@@ -138,13 +143,44 @@ def test_the_person_map_is_a_view_in_the_identity_schema(manifest: dict[str, Any
     assert person_map["config"]["materialized"] == "view"
 
 
-def test_the_migrations_script_appends_the_map_tag_after_reading_any_override() -> None:
-    """A caller passing DBT_GOLD_SELECT must not be able to drop the map from the build."""
-    script = MIGRATIONS_SCRIPT.read_text(encoding="utf-8")
-    override = '_dbt_select <<<"${DBT_GOLD_SELECT:-'
-    append = '_dbt_select+=("tag:identity:map")'
+def test_a_model_no_graph_walk_reaches_is_tagged_for_every_sync(
+    manifest: dict[str, Any],
+) -> None:
+    """A model with no dbt parents sits outside every `tag:<connector>+` walk, so a
+    sync builds it only because of this tag — and nothing else builds it at all."""
+    rootless = sorted(
+        node["name"]
+        for node in _models(manifest).values()
+        if not node["depends_on"]["nodes"] and ALWAYS_TAG not in _tags(node)
+    )
+    assert rootless == [], f"reached by no selector and not tagged {ALWAYS_TAG}: {rootless}"
+
+
+def test_a_model_every_sync_rebuilds_is_a_view(manifest: dict[str, Any]) -> None:
+    """A table here would be rebuilt by every connector's sync, and a major-version
+    bump's `--full-refresh` is global — it would wipe the model from one connector's
+    sync and refill it from another's, the cross-connector cascade ADR-0015 forbids."""
+    not_views = sorted(
+        node["name"]
+        for node in _models(manifest).values()
+        if ALWAYS_TAG in _tags(node) and node["config"]["materialized"] != "view"
+    )
+    assert not_views == [], f"tagged {ALWAYS_TAG} but not a view: {not_views}"
+
+
+def test_every_sync_adds_the_always_tag_to_its_selection() -> None:
+    """Without it the untagged models are stale wherever no deploy ever built them."""
+    template = DBT_RUN_TEMPLATE.read_text(encoding="utf-8")
+    assert f'DBT_SELECT="${{DBT_SELECT:+${{DBT_SELECT}} tag:{ALWAYS_TAG}}}"' in template
+
+
+def test_the_gold_build_appends_the_always_tag_after_reading_any_override() -> None:
+    """A caller passing --select must not be able to drop those models from the build."""
+    script = BUILD_GOLD_SCRIPT.read_text(encoding="utf-8")
+    override = '_dbt_select <<<"$DBT_SELECT_ARG"'
+    append = f'_dbt_select+=("tag:{ALWAYS_TAG}")'
     assert override in script, "the gold selector line moved; keep this contract with it"
-    assert append in script, "the map tag is never appended, so an override leaves it stale"
+    assert append in script, "the tag is never appended, so an override leaves them stale"
     assert script.index(override) < script.index(append), (
-        "the append must follow the override read, or an override drops the map"
+        "the append must follow the override read, or an override drops them"
     )

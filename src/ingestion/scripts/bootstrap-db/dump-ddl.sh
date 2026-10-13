@@ -13,8 +13,8 @@ DDL_DIR="${SCRIPT_DIR}/../connectors-ddl"
 # Reads merge(REGEXP('^bronze_')). The dump always runs against a warehouse that has
 # bronze, so the snapshot could only ever carry that form — and on a cluster that has
 # not synced, every read of it fails with CANNOT_EXTRACT_TABLE_STRUCTURE. The gold
-# model answers that case with a typed empty relation and the deploy builds tag:gold
-# on every run (src/ingestion/gold/bronze_insert_events.sql).
+# model answers that case with a typed empty relation, and its `sync:always` tag puts
+# it in every sync's selection (src/ingestion/gold/bronze_insert_events.sql).
 EXCLUDED_RELATION="insight.bronze_insert_events"
 
 ch() {

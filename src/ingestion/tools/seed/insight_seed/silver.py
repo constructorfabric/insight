@@ -27,16 +27,18 @@ at /ingestion (docker-compose.yml `seed-sample.volumes`):
    each generator module.
 
 3. `apply-ch-migrations.sh` — applies migrations/*.sql (class contract
-   heals, the contract-version stamp), the staging label repair,
-   and `dbt run --select tag:gold` to build the dbt-owned gold models. Run
-   AFTER seeding so the materialized gold models are built over real seeded
-   silver instead of empty placeholders.
+   heals, the contract-version stamp) and the staging label repair.
 
    Re-running create-warehouse-placeholders.sh from inside this script is a
-   no-op on the seeded tables (IF NOT EXISTS, no DROP/TRUNCATE), and the
-   dbt on-run-start `drop_silver_placeholders_at_start` hook does NOT fire
-   because `--select tag:gold` never materializes a staging model (the
-   hook's required second factor) — so the seeded rows survive.
+   no-op on the seeded tables (IF NOT EXISTS, no DROP/TRUNCATE).
+
+4. `build-gold.sh` — builds the dbt-owned gold models. A deploy builds no
+   models (a connector sync does, #3561) and a seed has no sync to ride on,
+   so the seed calls this itself. Run AFTER seeding so the materialized gold
+   models are built over real seeded silver instead of empty placeholders.
+   The dbt on-run-start `drop_silver_placeholders_at_start` hook does NOT
+   fire, because `tag:gold` never materializes a staging model (the hook's
+   required second factor) — so the seeded rows survive.
 
 All steps are idempotent — re-running converges on the same end state.
 """
@@ -80,8 +82,8 @@ def _ingestion_scripts_dir() -> Path:
     In the seed-sample container the whole ingestion tree is bind-mounted
     at /ingestion (docker-compose.yml `seed-sample.volumes`), mirroring the
     toolbox image layout the scripts resolve their relative paths against
-    (apply-ch-migrations.sh cd's into ../dbt). Host runs resolve it relative
-    to this file: this package lives inside the ingestion tree it seeds.
+    (build-gold.sh cd's into ../dbt). Host runs resolve it relative to this
+    file: this package lives inside the ingestion tree it seeds.
     """
     mounted = Path("/ingestion/scripts")
     if mounted.is_dir():
@@ -92,7 +94,7 @@ def _ingestion_scripts_dir() -> Path:
 
 def _script_env() -> dict[str, str]:
     """Env for the ingestion shell scripts (create-databases.sh,
-    create-warehouse-placeholders.sh, apply-ch-migrations.sh) —
+    create-warehouse-placeholders.sh, apply-ch-migrations.sh, build-gold.sh) —
     CLICKHOUSE_URL/USER/PASSWORD/DATABASE per lib/ch-exec.sh + those scripts'
     own asserts."""
     target = config.parse_clickhouse(os.environ)
@@ -107,7 +109,7 @@ def _script_env() -> dict[str, str]:
 
 def _ch_client() -> clickhouse_connect.driver.client.Client:
     target = config.parse_clickhouse(os.environ)
-    # Views (gold) are created by apply-ch-migrations.sh, not this client;
+    # Views (gold) are created by build-gold.sh, not this client;
     # the compose CH ships join_use_nulls=1 as a profile default
     # (deploy/compose/clickhouse-user-defaults.xml) so those CREATE VIEWs
     # type-check server-side. This client only INSERTs silver rows.
@@ -206,15 +208,38 @@ CI_CHAIN_SELECT = (
 )
 
 
-def apply_ch_migrations(dbt_select: str | None = None, *, full_refresh: bool = False) -> None:
-    """Apply gold-view migrations + build dbt-owned gold models.
+def _ingestion_script(name: str) -> Path:
+    script = _ingestion_scripts_dir() / name
+    if not script.is_file():
+        raise FileNotFoundError(
+            f"{name} not found at {script}. In compose, the "
+            "seed-sample container must mount /ingestion; on a host run, "
+            "this package must sit inside the ingestion tree (src/ingestion/tools/seed)."
+        )
+    return script
+
+
+def apply_ch_migrations() -> None:
+    """Apply the warehouse migrations.
 
     Runs the ingestion repo's apply-ch-migrations.sh — the exact script the
     k8s clickhouse-migrate Hook Job runs. It re-creates placeholders (no-op
-    here), applies migrations/*.sql, repairs staging labels, and runs
-    `dbt run --select tag:gold` (widened by `dbt_select` when given). Must
-    run AFTER seeding so the materialized gold model reflects seeded silver
-    (see module docstring).
+    here), applies migrations/*.sql and repairs staging labels. It builds no
+    models: `build_gold` does that, after the rows are in.
+    """
+    script = _ingestion_script("apply-ch-migrations.sh")
+    subprocess.run(["bash", str(script)], env=_script_env(), check=True)
+    LOG.info("migrations: %s applied", script.name)
+
+
+def build_gold(dbt_select: str | None = None, *, full_refresh: bool = False) -> None:
+    """Build the dbt-owned gold models over what the seed just wrote.
+
+    A deploy builds no models — a connector sync does (#3561) — and seeded
+    silver arrives without a sync, so the seed runs build-gold.sh itself. Must
+    run AFTER seeding so the materialized gold models reflect seeded silver
+    (see module docstring). `dbt_select` widens the script's `tag:gold`
+    default.
 
     `full_refresh` rebuilds the selected models from source rather than
     appending to them. It is a GLOBAL dbt flag, so it reaches every selected
@@ -228,28 +253,18 @@ def apply_ch_migrations(dbt_select: str | None = None, *, full_refresh: bool = F
     describing the previous accounts, persons-seed resolves that stale set,
     and gold serves the old org with no error at any layer.
     """
-    script = _ingestion_scripts_dir() / "apply-ch-migrations.sh"
-    if not script.is_file():
-        raise FileNotFoundError(
-            f"migrations script not found at {script}. In compose, the "
-            "seed-sample container must mount /ingestion; on a host run, "
-            "this package must sit inside the ingestion tree (src/ingestion/tools/seed)."
-        )
+    script = _ingestion_script("build-gold.sh")
 
-    env = _script_env()
-    # Never inherited: the selector is exactly what the caller passes, or the
-    # script's own tag:gold default.
-    if dbt_select is None:
-        env.pop("DBT_GOLD_SELECT", None)
-    else:
-        env["DBT_GOLD_SELECT"] = dbt_select
     # INVARIANT: a flag, never DBT_FULL_REFRESH — that name is
     # reconcile-connectors' and env reaches every child.
     argv = ["bash", str(script)]
+    if dbt_select is not None:
+        argv += ["--select", dbt_select]
     if full_refresh:
         argv.append("--full-refresh")
-    subprocess.run(argv, env=env, check=True)
-    LOG.info("migrations + gold: %s applied", script.name)
+
+    subprocess.run(argv, env=_script_env(), check=True)
+    LOG.info("gold: %s built", script.name)
 
 
 def generate_rows(
@@ -307,10 +322,11 @@ def run() -> None:
         LOG.info("ClickHouse version: %s", client.server_version)
         # 2. Seed silver rows into the created tables.
         generate_rows(client)
-        # 3. Real deploy mechanism: migrations + gold + identity inputs. Gold
-        #    builds unresolved here — the orchestrator runs the persons-seed/
-        #    sync pair and then the `gold` subcommand to rebuild it.
-        apply_ch_migrations(
+        # 3. Real deploy mechanism: the migrations, then gold + identity
+        #    inputs. Gold builds unresolved here — the orchestrator runs the
+        #    persons-seed/sync pair and then the `gold` subcommand to rebuild it.
+        apply_ch_migrations()
+        build_gold(
             dbt_select=" ".join(
                 ["tag:gold", IDENTITY_INPUTS_SELECT, AI_INVOICE_SELECT, *CI_CHAIN_SELECT]
             ),
@@ -322,13 +338,19 @@ def run() -> None:
 
 
 def run_gold() -> None:
-    """Rebuild the dbt gold models only — gold resolves entity ids at BUILD
-    time, so bindings from a persons-seed/sync land only on a rebuild."""
+    """Rebuild the dbt gold models — gold resolves entity ids at BUILD time, so
+    bindings from a persons-seed/sync land only on a rebuild.
+
+    The migrations run first so this step stands on its own: compose has no
+    migrate service, and a `gold` asked for before any `silver` would otherwise
+    meet a warehouse nothing has created.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     apply_ch_migrations()
+    build_gold()
     LOG.info("DONE: gold models rebuilt over the current identity map.")
 
 

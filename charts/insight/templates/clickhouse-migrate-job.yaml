@@ -1,9 +1,9 @@
 {{/*
 ==============================================================================
- ClickHouse gold-view migrations
+ ClickHouse schema migrations
 ==============================================================================
 
-Helm Hook Job that applies the gold-view migrations
+Helm Hook Job that applies the schema migrations
 (`src/ingestion/scripts/migrations/*.sql`) against the external ClickHouse.
 
 Why a Hook Job: the migrations used to be applied by `scripts/init.sh`,
@@ -19,11 +19,10 @@ the HTTP backend in lib/ch-exec.sh).
 Hook timing: `post-install,post-upgrade`. The post-* phase runs after the
 main release (so the `clickhouse-databases` pre-install Hook has created
 the app database and the app pods have rolled). post-* over pre-* is safe
-because gold-view consumers (analytics) resolve VIEW source tables
-lazily at query time, so views materialising shortly after pod startup is
-fine. (hook-weight 200 runs this AFTER the keycloak-config hook (100): helm
-executes same-phase hooks serially, and the quick realm import should
-not queue behind the dbt gold build.)
+because gold consumers (analytics) resolve VIEW source tables lazily at
+query time, so a relation materialising after pod startup is fine.
+(hook-weight 200 runs this AFTER the keycloak-config hook (100): helm
+executes same-phase hooks serially.)
 
 Failure behavior: a failed migration is NOT silently tolerated. Helm blocks
 on the hook Job, so a non-zero exit fails `helm upgrade` (and, under the
@@ -36,12 +35,12 @@ Idempotent: migrations are re-run on every upgrade and are CREATE OR
 REPLACE / IF NOT EXISTS; placeholders are guarded by `ch_table_exists`.
 No migration ledger — same contract as the legacy init.sh path.
 
-The script's final step builds the dbt gold models (`dbt run --select
-tag:gold`) so dbt-owned views exist right after deploy instead of after
-the first connector sync — the analytics service reports metrics as
-unavailable while an observation view is missing. The toolbox image
-already bundles the dbt project; placeholders guarantee the view DDL
-type-checks on a fresh cluster.
+The script builds no models (#3561). A connector sync rebuilds its own,
+gold included, because every descriptor's dbt selector ends in `+`, so a
+deploy no longer has to widen silver by hand ahead of a gold build. The
+placeholders above still stand every gold relation the snapshot carries up
+empty; the ones it does not carry are absent until the first sync, which
+the analytics service answers as not-ready rather than as a failure.
 
 Gated on `clickhouse.runMigrations` (default true) AND the availability of
 `ingestion.toolboxImage` (the image that ships the migration SQL).
