@@ -35,8 +35,9 @@ date: 2026-09-07
   - [5.9 Query Optimization](#59-query-optimization)
   - [5.10 Data Access](#510-data-access)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
-  - [6.1 NFR Inclusions](#61-nfr-inclusions)
-  - [6.2 NFR Exclusions](#62-nfr-exclusions)
+  - [6.1 Quality Vector Analysis](#61-quality-vector-analysis)
+  - [6.2 NFR Inclusions](#62-nfr-inclusions)
+  - [6.3 NFR Exclusions](#63-nfr-exclusions)
 - [7. Public Library Interfaces](#7-public-library-interfaces)
   - [7.1 Public API Surface](#71-public-api-surface)
   - [7.2 External Integration Contracts](#72-external-integration-contracts)
@@ -67,7 +68,7 @@ date: 2026-09-07
 
 | Term | Definition |
 |------|------------|
-| Quality vector | One of the five axes Constructor Fabric measures quality on: Efficiency, Reliability, Performance, Security, Versatility, in that priority order |
+| Quality vector | One of the five axes Constructor Fabric measures quality on: Efficiency, Reliability, Performance, Security, Versatility, always listed in that order as a display convention, not a ranking |
 | North-star metric | The single primary indicator for a quality vector |
 | Reference organization | The synthetic sizing baseline used when measuring against a threshold |
 
@@ -291,9 +292,19 @@ The system **MUST** let data be downloaded manually, in a report.
 
 ## 6. Non-Functional Requirements
 
-### 6.1 NFR Inclusions
+### 6.1 Quality Vector Analysis
 
-One requirement per quality vector, in the priority order the vectors carry.
+| Quality Vector | Show-Stopper Requirement | Rationale |
+|-----------------|---------------------------|-----------|
+| Efficiency | None — no show-stopper; obligations covered by `cpt-insightspec-v3-nfr-efficiency` | The core runs beside the existing services on stands already sized for Insight, so a footprint that grows release over release makes it costlier to roll out, but a missed budget is a regression to fix, not a reason the core cannot ship |
+| Reliability | Ingest and read MUST stay available, `cpt-insightspec-v3-nfr-reliability` | Data sent over the ingest API lands only through the core, and every v3 dashboard reads through it; while it is down that data is not stored and those dashboards do not answer |
+| Performance | None — no show-stopper; obligations covered by `cpt-insightspec-v3-nfr-performance` | A dashboard that is slow to open is opened less, which erodes the value of every dashboard built on the core, but a missed open-time budget degrades the product rather than making it unusable |
+| Security | None — no obligation; Security is material and 6.2 carries no covering NFR (gap): the show-stopper is a viewer reading data beyond their own reach through a metric, widget, dashboard, the chat or MCP, and access control (5.3) is not yet specified; `cpt-insightspec-v3-nfr-security` covers scan findings only | Insight promises each person sees only the part of the organization their role grants; a core whose metrics, dashboards or chat answer past that boundary exposes people's data to every viewer, whatever the scans report |
+| Versatility | New data, widget types, dashboards and alerts MUST land without service or renderer code changes, `cpt-insightspec-v3-nfr-versatility` | Every goal in 1.3 is "easy to add"; a core that needs engineering for each new source, widget, dashboard or alert fails its purpose |
+
+### 6.2 NFR Inclusions
+
+One requirement per quality vector.
 
 #### Efficiency
 
@@ -336,7 +347,7 @@ Adding data, a widget type, a dashboard or an alert **MUST NOT** require changes
 **Threshold**: a new data source lands through the ingest contract alone; a new widget type ships as a schema change alone; a new dashboard and a new alert are created through the product, with no code change.
 
 
-### 6.2 NFR Exclusions
+### 6.3 NFR Exclusions
 
 None. Every project-default NFR applies.
 

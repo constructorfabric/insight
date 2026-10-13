@@ -44,8 +44,9 @@ date: 2026-07-06
   - [5.15 Internal Endpoint Reachability](#515-internal-endpoint-reachability)
   - [5.16 View-As Override](#516-view-as-override)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
-  - [6.1 NFR Inclusions](#61-nfr-inclusions)
-  - [6.2 NFR Exclusions](#62-nfr-exclusions)
+  - [6.1 Quality Vector Analysis](#61-quality-vector-analysis)
+  - [6.2 NFR Inclusions](#62-nfr-inclusions)
+  - [6.3 NFR Exclusions](#63-nfr-exclusions)
 - [7. Public Library Interfaces](#7-public-library-interfaces)
   - [7.1 Public API Surface](#71-public-api-surface)
   - [7.2 External Integration Contracts](#72-external-integration-contracts)
@@ -487,7 +488,17 @@ Viewer identity remains exclusively gateway-authored: no client-supplied header 
 
 ## 6. Non-Functional Requirements
 
-### 6.1 NFR Inclusions
+### 6.1 Quality Vector Analysis
+
+| Quality Vector | Show-Stopper Requirement | Rationale |
+|-----------------|---------------------------|-----------|
+| Efficiency | None — no show-stopper; obligations covered by `cpt-insightspec-nfr-auth-rate-limit` | One stateless deployment per installation on the HA Redis the stand already runs (3.1, 11); the only cost that can run away is compute under a login flood, which that obligation bounds |
+| Reliability | When Redis is unreachable the service MUST fail closed — no exchange served from a cache, readiness down, `cpt-insightspec-nfr-auth-fail-closed` | Redis is the single source of truth for who is logged in (2.2); a degraded mode would keep revoked and deactivated users logged in, defeating the revocation goals in 1.3, whereas the outage itself is an accepted forced re-login (11, 12) |
+| Performance | None — no show-stopper; obligations covered by `cpt-insightspec-nfr-auth-exchange-p95` | The exchange sits on every API request, so its latency is paid by every screen; the gateway's exchange cache bounds how often it is paid, and the budget is carried at `p2` rather than as an unviability condition |
+| Security | Every session-cookie response MUST carry the full hardened attribute set or fail closed, `cpt-insightspec-nfr-auth-cookie-attrs` | The module exists to take IdP tokens out of the browser (1.2); a cookie readable by script or sent cross-site hands the session to the very XSS the design removes. `cpt-insightspec-nfr-auth-audit` and `cpt-insightspec-nfr-auth-rate-limit` carry the remaining Security obligations |
+| Versatility | None — not material because v1 serves one bundled SPA and internal services (4.2) against one customer OIDC provider per installation, whose required support is pinned by the OIDC Provider Contract (7.2) and the assumptions in 11 | Breadth is bounded by design: a new provider shape is a contract change rather than configuration, and the only per-installation variation the module owes is the session lifetime knobs in `cpt-insightspec-nfr-auth-session-ttl` |
+
+### 6.2 NFR Inclusions
 
 #### Session Lookup Latency
 
@@ -537,7 +548,7 @@ If Redis is unreachable, `/internal/authz` and `/auth/*` mutations **MUST** fail
 
 **Threshold**: Zero exchanges served without a live Redis session read.
 
-### 6.2 NFR Exclusions
+### 6.3 NFR Exclusions
 
 - **HTTPS enforcement / HSTS**: owned by the nginx gateway, the component all traffic crosses (see [Gateway DESIGN](../gateway/DESIGN.md)). The authenticator is plain HTTP behind it, network-scoped per 5.15.
 - **Per-route rate limiting on `/api/*`**: gateway `limit_req` (coarse) plus per-service middleware; not an authenticator concern.

@@ -24,8 +24,9 @@ date: 2026-08-27
   - [5.1 Experiment Management](#51-experiment-management)
   - [5.2 Guardrails](#52-guardrails)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
-  - [6.1 NFR Inclusions](#61-nfr-inclusions)
-  - [6.2 NFR Exclusions](#62-nfr-exclusions)
+  - [6.1 Quality Vector Analysis](#61-quality-vector-analysis)
+  - [6.2 NFR Inclusions](#62-nfr-inclusions)
+  - [6.3 NFR Exclusions](#63-nfr-exclusions)
 - [7. Public Library Interfaces](#7-public-library-interfaces)
   - [7.1 Public API Surface](#71-public-api-surface)
   - [7.2 External Integration Contracts](#72-external-integration-contracts)
@@ -161,7 +162,17 @@ The creating caller's identity comes from the verified gateway JWT and is stampe
 
 ## 6. Non-Functional Requirements
 
-### 6.1 NFR Inclusions
+### 6.1 Quality Vector Analysis
+
+| Quality Vector | Show-Stopper Requirement | Rationale |
+|-----------------|---------------------------|-----------|
+| Efficiency | None — no obligation; Efficiency is material and 6.2 carries no covering NFR (gap) | Every live experiment is a pod on the shared stand, so forgotten previews cost real capacity; the live-count cap and TTL that bound it are functional requirements (`cpt-insightspec-previews-fr-cap-ttl`) and 6.2 states no resource target for the service or its experiments |
+| Reliability | None — no show-stopper; obligations covered by `cpt-insightspec-previews-nfr-bounded-access`, `cpt-insightspec-previews-nfr-offline-contract` | Kubernetes is the only store (1.1), so the service has no state of its own to lose; a hung call or a drifted contract delays one author's preview, and a create that fails partway rolls back by functional requirement (`cpt-insightspec-previews-fr-kube-store`) |
+| Performance | None — not material because preview provisioning is a low-rate operator action on a single replica (6.3) and readiness is the cluster's to report, not the API's (3.1) | Nobody waits on this API at scale; a slow create delays one preview, never the product |
+| Security | The service MUST never touch anything outside its one configured namespace and the three experiment kinds, `cpt-insightspec-previews-nfr-bounded-access` | A service that mutates the cluster is an escalation target (12); an API that could reach another namespace or set a pod field turns a preview tool into cluster admin for any authenticated user |
+| Versatility | None — not material because experiments are frontend-only on one shared preview host, with a hardcoded image repository and a fixed pod shape (1.4, 4.2, 12) | Breadth is excluded by design to bound the blast radius (1.3); a new shape goes through the manual chart, the stated escape hatch, not through this API |
+
+### 6.2 NFR Inclusions
 
 #### Bounded Cluster Access
 
@@ -175,7 +186,7 @@ The service only ever creates, lists, and deletes objects in its one configured 
 
 The OpenAPI document is emitted offline from the same route table the server mounts, and CI gates the committed document against drift.
 
-### 6.2 NFR Exclusions
+### 6.3 NFR Exclusions
 
 - No horizontal scaling requirements: preview provisioning is a low-rate operator action; a single replica suffices.
 - No persistence or backup requirements: the cluster state is the data.
