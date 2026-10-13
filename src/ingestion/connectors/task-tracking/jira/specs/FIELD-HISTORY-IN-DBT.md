@@ -337,7 +337,7 @@ convention to invert:
 | kind | separator | why it is unambiguous |
 |---|---|---|
 | `string_array` | single space | Jira rejects a label containing whitespace, so a space is always a separator and a comma is always content |
-| `option_array` | `[`, comma followed by a space, `]` on the id side; bare comma on the display side | ids are numeric, so the bracket form parses without ambiguity; displays are matched positionally to ids |
+| `option_array` | `[`, comma followed by a space, `]` on the id side; bare comma on the display side | ids are numeric, so the bracket form parses without ambiguity; displays are matched positionally to ids. An id side naming no element — absent, or `[]` beside displays, as a migrated instance writes — yields to the displays, minus the literal `[]` an empty list renders as |
 | `legacy_list` | `", "` | the pre-2020 Sprint serialization |
 
 ### 3.4 Id spaces that do not reconcile
@@ -535,11 +535,11 @@ link added or removed. It is not an `obj_array`, because the two sides identify
 the element differently:
 
 - the **issue resource** holds the LINK OBJECT: `{"id": <the link's own id>,
-  "outwardIssue" | "inwardIssue": {"key": ...}, "type": {...}}`. A
+  "outwardIssue" | "inwardIssue": {"id": ..., "key": ...}, "type": {...}}`. A
   component-shaped normalizer takes the top-level `id`, which is the link's own;
-- the **changelog** names the LINKED ISSUE by key in the id side, with a
-  rendered sentence in the display side ("This issue duplicates PROJ-1"). The
-  link's own id appears nowhere in it.
+- the **changelog** names the LINKED ISSUE by the key it had at the time in the
+  id side, with a rendered sentence in the display side ("This issue duplicates
+  PROJ-1"). The link's own id appears nowhere in it.
 
 So identifying by the link id leaves the two sides with no id in common, and
 every issue holding a link disagrees with its own history. Measured, this was
@@ -547,22 +547,45 @@ the single largest remaining round-trip class after the metadata-driven parsing
 landed — and it looked like a fold defect until the two shapes were put side by
 side.
 
-The key is the identifier on both sides, and the link id is discarded; it stays
-in the issue JSON. Direction is not part of the identity: an issue holds each
-link once, and which side of it the issue is on is carried by the rendered text.
+The element is the linked issue's immutable id, and the link id is discarded;
+it stays in the issue JSON. The snapshot reads the id from the link object. The
+changelog's key resolves to it through `jira__issue_key_ids`, which holds every
+key an issue is known to have had: its own bronze rows (one per key the
+connector saw), the `Key` items a move writes on the moved issue's own
+changelog, the link objects every snapshot holds, and parent changes, which
+name the parent by id and by key. Identifying by the key instead split one link
+in two when the linked issue moved — the addition named the old key, the
+removal the new one. A `subtasks` element is the child issue itself and is
+identified by its id the same way.
+
+A key no input names — an issue in a project the connector cannot read and
+that no synced issue now links to, or one deleted before it was read — stays
+the element's identifier. A key carries its project prefix, so it never
+collides with an id, and such a key never meets the snapshot: every link the
+snapshot holds names its id. Resolution reads other issues' data, so a key that
+first resolves after an issue's journal rows were written reaches those rows on
+the issue's next recompute, not before.
+
+Direction is not part of the identity: an issue holds each link once, and which
+side of it the issue is on is carried by the rendered text. `class_task_links`
+reads the link TYPE from the same two shapes, as its own producer
+(`jira__task_links`).
 
 Two consequences worth stating:
 
 - **two links to the same issue with different types collapse into one
   element.** The changelog gives them the same id, so the pipeline cannot hold
   them apart, and a display would be the only difference — which the contract
-  does not treat as identity.
+  does not treat as identity. The element therefore COUNTS its links: it is
+  present while the links held at creation plus those added outnumber those
+  removed, so removing one of two links to an issue leaves the issue linked.
+  The links held at creation are the fewest that keep that count from going
+  negative. `class_task_links` keeps the two apart by type.
 - **a remote link is logged in the same field.** A link to a Confluence page
   emits an item whose id side is the remote link's numeric id, and no such
   element exists in `issuelinks` at all — remote links are a separate REST
-  resource. Those rows carry an id the current value can never confirm. They are
-  a small fraction of the field's items and are left as they arrive rather than
-  detected by content.
+  resource. An issue key always carries its project prefix, so an all-digit id
+  side identifies these items unambiguously, and `jira_item_is_live` drops them.
 
 ## 4. Value normalization
 

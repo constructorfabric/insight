@@ -977,7 +977,9 @@ CREATE TABLE IF NOT EXISTS silver.class_task_links
     `evidence` Enum8('event' = 1, 'observation' = 2),
     `origin_event_id` Nullable(String),
     `collected_at` DateTime64(3),
-    `_version` UInt64
+    `_version` UInt64,
+    `issue_id` Nullable(String),
+    `target_id` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY unique_key
