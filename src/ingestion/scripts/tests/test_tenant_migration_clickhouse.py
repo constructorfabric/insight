@@ -38,6 +38,7 @@ DATABASES = (
     "config",
     "ingestion_history",
 )
+RESET = [step for db in DATABASES for step in (f"DROP DATABASE IF EXISTS {db} SYNC", f"CREATE DATABASE {db}")]
 TABLES = (
     "bronze_example.items",
     "bronze_example.colon_items",
@@ -113,9 +114,8 @@ def _statements(sql: str) -> list[str]:
 
 @pytest.fixture
 def warehouse(ch: ClickHouse) -> ClickHouse:
-    for database in DATABASES:
-        ch.execute(f"DROP DATABASE IF EXISTS {database} SYNC")
-        ch.execute(f"CREATE DATABASE {database}")
+    for statement in RESET:
+        ch.execute(statement)
     for statement in _statements(SCHEMA):
         ch.execute(statement)
     return ch

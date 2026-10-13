@@ -50,17 +50,20 @@ class ClickHouse:
             method="POST",
         )
         try:
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             response: HTTPResponse = urllib.request.urlopen(request, timeout=TIMEOUT_SECS)
             return response
         except urllib.error.HTTPError as error:
             raise ClickHouseError(error.read().decode("utf-8", "replace").strip()) from error
 
-    def execute(self, sql: str) -> str:
-        with self._request(sql.encode("utf-8")) as response:
+    def execute(self, sql: str, *, fmt: str | None = None) -> str:
+        """Run one statement; `fmt` names the output format without touching the SQL."""
+        params = {"default_format": fmt} if fmt else None
+        with self._request(sql.encode("utf-8"), params=params) as response:
             return response.read().decode("utf-8")
 
     def rows(self, sql: str) -> list[list[str]]:
-        text = self.execute(sql + "\nFORMAT TabSeparatedRaw")
+        text = self.execute(sql, fmt="TabSeparatedRaw")
         return [line.split("\t") for line in text.splitlines() if line]
 
     def scalar(self, sql: str) -> int:
@@ -74,8 +77,8 @@ class ClickHouse:
         """Stream a SELECT to `path` as gzip-compressed Native."""
         with (
             self._request(
-                (sql + "\nFORMAT Native").encode("utf-8"),
-                params={"enable_http_compression": "1"},
+                sql.encode("utf-8"),
+                params={"enable_http_compression": "1", "default_format": "Native"},
                 headers={"Accept-Encoding": "gzip"},
             ) as response,
             path.open("wb") as out,

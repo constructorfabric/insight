@@ -21,9 +21,9 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from tenant_migration import keys
+from tenant_migration import ddl, keys
 from tenant_migration.clickhouse import ClickHouse
-from tenant_migration.inventory import BACKUP, COPY, REJECTED, RESTORE, Table
+from tenant_migration.inventory import BACKUP, COPY, REJECTED, RESTORE, Relation, Table
 from tenant_migration.inventory import WORK_SUFFIXES as WORK
 from tenant_migration.plan import Plan, TablePlan
 
@@ -35,23 +35,6 @@ CREATE_TABLE = re.compile(r"^CREATE TABLE \S+")
 
 class MigrationError(RuntimeError):
     pass
-
-
-@dataclass(frozen=True)
-class Relation:
-    database: str
-    name: str
-
-    @classmethod
-    def parse(cls, relation: str) -> Relation:
-        database, name = relation.split(".", 1)
-        return cls(database, name)
-
-    def sql(self, suffix: str = "") -> str:
-        return f"`{self.database}`.`{self.name}{suffix}`"
-
-    def __str__(self) -> str:
-        return f"{self.database}.{self.name}"
 
 
 @dataclass(frozen=True)
@@ -86,8 +69,7 @@ def _comments(ch: ClickHouse, rel: Relation) -> dict[str, str]:
 
 
 def _set_comment(ch: ClickHouse, rel: Relation, suffix: str, comment: str) -> None:
-    escaped = comment.replace("\\", "\\\\").replace("'", "\\'")
-    ch.execute(f"ALTER TABLE {rel.sql(suffix)} MODIFY COMMENT '{escaped}'")
+    ch.execute(ddl.set_comment(rel, suffix, comment))
 
 
 def _replacements(table: Table, tenants: keys.Tenants) -> str:
@@ -105,9 +87,7 @@ def dump(ch: ClickHouse, plan: Plan, directory: Path) -> None:
     for t in plan.changing:
         table = t.table
         rel = Relation(table.database, table.name)
-        (directory / f"{table.relation}.sql").write_text(
-            ch.execute(f"SHOW CREATE TABLE {table.sql()} FORMAT TabSeparatedRaw")
-        )
+        (directory / f"{table.relation}.sql").write_text(ch.execute(ddl.show_create(table.rel), fmt="TabSeparatedRaw"))
         counted = measure(ch, table)
         ch.dump(f"SELECT * FROM {table.sql()}", directory / f"{table.relation}.native.gz")
         entries.append(
@@ -132,25 +112,23 @@ def migrate_table(ch: ClickHouse, t: TablePlan, tenants: keys.Tenants) -> Measur
     expected = Measure(rows=before.rows, keys=measure(ch, table, key=new_key).keys if new_key else 0)
 
     try:
-        ch.execute(f"CREATE TABLE {table.sql(COPY)} AS {table.sql()}")
+        ch.execute(ddl.create_like(rel, COPY))
         _set_comment(ch, rel, COPY, MIGRATED)
-        ch.execute(
-            f"INSERT INTO {table.sql(COPY)} SELECT * REPLACE ({_replacements(table, tenants)}) FROM {table.sql()}"
-        )
+        ch.execute(ddl.insert_rewritten(rel, COPY, _replacements(table, tenants)))
         copied = measure(ch, table, COPY)
         if not _same(by_keys, before, measure(ch, table)) or not _same(by_keys, expected, copied):
             raise MigrationError(f"{rel}: copy holds {copied}, expected {expected}")
     except Exception as error:
         with contextlib.suppress(Exception):
-            ch.execute(f"DROP TABLE IF EXISTS {table.sql(COPY)}")
+            ch.execute(ddl.drop(rel, COPY))
         raise MigrationError(f"{rel}: not migrated, the table is unchanged — {error}") from error
 
     try:
-        ch.execute(f"EXCHANGE TABLES {table.sql()} AND {table.sql(COPY)}")
+        ch.execute(ddl.exchange(rel, "", COPY))
         live = measure(ch, table)
         if _comments(ch, rel).get("") != MIGRATED or not _same(by_keys, copied, live):
             raise MigrationError(f"{rel}: swapped-in table reads {live}, expected {copied}")
-        ch.execute(f"RENAME TABLE {table.sql(COPY)} TO {table.sql(BACKUP)}")
+        ch.execute(ddl.rename(rel, COPY, BACKUP))
     except Exception as error:
         raise MigrationError(f"{rel}: failed at the swap — {error}. {_compensate(ch, rel)}") from error
     return live
@@ -190,12 +168,12 @@ def rollback_relation(ch: ClickHouse, rel: Relation) -> bool:
 
     original = originals[0]
     if original and "" in comments:
-        ch.execute(f"EXCHANGE TABLES {rel.sql()} AND {rel.sql(original)}")
+        ch.execute(ddl.exchange(rel, "", original))
     elif original:
-        ch.execute(f"RENAME TABLE {rel.sql(original)} TO {rel.sql()}")
+        ch.execute(ddl.rename(rel, original, ""))
 
     aside = next(s for s in (COPY, BACKUP) if _comments(ch, rel).get(s) == MIGRATED)
-    ch.execute(f"RENAME TABLE {rel.sql(aside)} TO {rel.sql(REJECTED)}")
+    ch.execute(ddl.rename(rel, aside, REJECTED))
     return True
 
 
@@ -228,7 +206,7 @@ def finalize(ch: ClickHouse) -> list[str]:
             _set_comment(ch, rel, "", kept[0] if kept else "")
         for suffix in WORK:
             if suffix in comments:
-                ch.execute(f"DROP TABLE {rel.sql(suffix)}")
+                ch.execute(ddl.drop(rel, suffix, if_exists=False))
                 dropped.append(f"{rel}{suffix}")
     return dropped
 
@@ -253,22 +231,22 @@ def restore_relation(ch: ClickHouse, dump_dir: Path, entry: dict[str, object]) -
     if comments.get("") != RESTORED:
         if REJECTED in comments:
             raise MigrationError(f"{rel}{REJECTED} exists — finalize before restoring")
-        ch.execute(f"DROP TABLE IF EXISTS {rel.sql(RESTORE)}")
+        ch.execute(ddl.drop(rel, RESTORE))
         ch.execute(_retarget((dump_dir / f"{rel}.sql").read_text(), rel, RESTORE))
         _set_comment(ch, rel, RESTORE, RESTORED)
         ch.load(rel.sql(RESTORE), dump_dir / f"{rel}.native.gz")
         if not _matches_dump(ch, rel, RESTORE, entry):
-            ch.execute(f"DROP TABLE IF EXISTS {rel.sql(RESTORE)}")
+            ch.execute(ddl.drop(rel, RESTORE))
             raise MigrationError(f"{rel}: the dump does not load to what the manifest recorded")
         if "" in comments:
-            ch.execute(f"EXCHANGE TABLES {rel.sql()} AND {rel.sql(RESTORE)}")
+            ch.execute(ddl.exchange(rel, "", RESTORE))
         else:
-            ch.execute(f"RENAME TABLE {rel.sql(RESTORE)} TO {rel.sql()}")
+            ch.execute(ddl.rename(rel, RESTORE, ""))
 
     if _comments(ch, rel).get("") != RESTORED or not _matches_dump(ch, rel, "", entry):
         raise MigrationError(f"{rel}: the live table is not the restored one — run `restore` again")
     if RESTORE in _comments(ch, rel):
-        ch.execute(f"RENAME TABLE {rel.sql(RESTORE)} TO {rel.sql(REJECTED)}")
+        ch.execute(ddl.rename(rel, RESTORE, REJECTED))
     _set_comment(ch, rel, "", str(entry["comment"]))
 
 

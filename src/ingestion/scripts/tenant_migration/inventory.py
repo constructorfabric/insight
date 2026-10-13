@@ -7,13 +7,17 @@ beside this module.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from importlib import resources
+from importlib import (
+    resources,
+)  # nosemgrep: python.lang.compatibility.python37.python37-compatibility-importlib2 — requires-python >= 3.12
 
 from tenant_migration.clickhouse import ClickHouse
 from tenant_migration.keys import Columns
 
 HISTORY_TABLES = "history-tables.txt"
+IDENTIFIER = re.compile(r"^[A-Za-z0-9_]+$")
 COPY, BACKUP, REJECTED, RESTORE = "__tenant_copy", "__tenant_backup", "__tenant_rejected", "__tenant_restore"
 WORK_SUFFIXES = (COPY, BACKUP, REJECTED, RESTORE)
 
@@ -24,6 +28,29 @@ STRING_TYPES = ("String", "Nullable(String)", "LowCardinality(String)", "LowCard
 
 
 @dataclass(frozen=True)
+class Relation:
+    """A table by database and name, both plain identifiers."""
+
+    database: str
+    name: str
+
+    def __post_init__(self) -> None:
+        if not (IDENTIFIER.match(self.database) and IDENTIFIER.match(self.name)):
+            raise ValueError(f"not a plain identifier: {self.database}.{self.name}")
+
+    @classmethod
+    def parse(cls, relation: str) -> Relation:
+        database, name = relation.split(".", 1)
+        return cls(database, name)
+
+    def sql(self, suffix: str = "") -> str:
+        return f"`{self.database}`.`{self.name}{suffix}`"
+
+    def __str__(self) -> str:
+        return f"{self.database}.{self.name}"
+
+
+@dataclass(frozen=True)
 class Table:
     database: str
     name: str
@@ -31,11 +58,15 @@ class Table:
     columns: Columns
 
     @property
+    def rel(self) -> Relation:
+        return Relation(self.database, self.name)
+
+    @property
     def relation(self) -> str:
-        return f"{self.database}.{self.name}"
+        return str(self.rel)
 
     def sql(self, suffix: str = "") -> str:
-        return f"`{self.database}`.`{self.name}{suffix}`"
+        return self.rel.sql(suffix)
 
     @property
     def replacing(self) -> bool:
@@ -70,6 +101,8 @@ def _scope_sql(history: list[tuple[str, str]]) -> str:
 
 def classify(database: str, name: str, engine: str, types: dict[str, str]) -> Table | Unfit:
     relation = f"{database}.{name}"
+    if not (IDENTIFIER.match(database) and IDENTIFIER.match(name)):
+        return Unfit(relation, "a name that is not a plain identifier")
     tenant = next((c for c in TENANT_COLUMNS if c in types), None)
     source = next((c for c in SOURCE_COLUMNS if c in types), None)
     key = KEY_COLUMN if KEY_COLUMN in types else None
