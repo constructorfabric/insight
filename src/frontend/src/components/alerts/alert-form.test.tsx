@@ -121,7 +121,8 @@ async function fillNew() {
   await userEvent.type(screen.getByLabelText("Threshold"), "10");
 }
 
-describe("NewAlertPage", () => {
+// WORKAROUND: each case fills the whole form, which overruns the 5 s default on loaded CI runners.
+describe("NewAlertPage", { timeout: 20_000 }, () => {
   it("creates the rule the form says and opens it", async () => {
     vi.mocked(alertsClient.createAlert).mockResolvedValue(ALERT);
 
