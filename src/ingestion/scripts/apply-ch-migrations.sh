@@ -66,7 +66,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 export CLICKHOUSE_CLUSTER_MODE="${CLICKHOUSE_CLUSTER_MODE:-false}"
 export CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}"
 
-source "$SCRIPT_DIR/lib/ch-exec.sh"
+source "$SCRIPT_DIR/lib/ch-topology.sh"
 
 bash "$SCRIPT_DIR/create-databases.sh"
 
@@ -74,10 +74,14 @@ echo "=== Creating warehouse placeholders (ADR-0007) ==="
 bash "$SCRIPT_DIR/create-warehouse-placeholders.sh"
 
 echo "=== Applying ClickHouse migrations ==="
+# A migration that creates a relation spells its engine family behind the
+# `/*@@REPLICATED@@*/` marker, which ch_render_topology expands for the
+# declared topology: the plain family stands on every replica holding whatever
+# rows reached the node that answered.
 shopt -s nullglob
 for migration in "$SCRIPT_DIR/migrations"/*.sql; do
   echo "  $(basename "$migration")"
-  run_ch < "$migration"
+  ch_render_topology < "$migration" | run_ch
 done
 
 echo "=== Healing GitHub Projects V2 bronze keys ==="

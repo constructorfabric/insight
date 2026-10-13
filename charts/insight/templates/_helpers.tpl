@@ -140,6 +140,10 @@ Contract per dep (all infra is external — out-of-chart L2):
   value: {{ .Values.global.mcp.enabled | quote }}
 - name: SQL_API_ENABLED
   value: {{ .Values.global.sqlApi.enabled | quote }}
+# Whether the custom assistant's ClickHouse reader is provisioned at all. Its
+# role holds SELECT on every table, so it follows the service (#3558).
+- name: INSIGHT_V3_CORE_ENABLED
+  value: {{ (((.Values.global).insightV3Core).deploy) | default false | quote }}
 {{- if or .Values.global.mcp.enabled .Values.global.sqlApi.enabled }}
 - name: CLICKHOUSE_MCP_PASSWORD
   valueFrom:

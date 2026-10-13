@@ -126,6 +126,9 @@ services:
       # connect read-only on first `up` (#1964). Role file is the canonical one.
       - ./src/ingestion/scripts/bootstrap-db/presentation-role.sql:/docker-entrypoint-initdb.d/01-presentation-role.sql:ro
       - ./deploy/compose/presentation-user.sql:/docker-entrypoint-initdb.d/02-presentation-user.sql:ro
+      # insight_v3_ro's grants. 00-init.sql creates the role and its user; this
+      # is what the role can read. Role file is the canonical one.
+      - ./src/ingestion/scripts/bootstrap-db/v3-role.sql:/docker-entrypoint-initdb.d/03-v3-role.sql:ro
       # Profile override — see the file for the join_use_nulls rationale.
       - ./deploy/compose/clickhouse-user-defaults.xml:/etc/clickhouse-server/users.d/seed-defaults.xml:ro
       # Keeps the server's own cap under mem_limit — see the file.
@@ -898,6 +901,10 @@ services:
       MCP_ENABLED: "${MCP_ENABLED:-false}"
       SQL_API_ENABLED: "${SQL_API_ENABLED:-false}"
       CLICKHOUSE_MCP_PASSWORD: "${CLICKHOUSE_MCP_PASSWORD:-}"
+      # insight-v3-core is always part of this stack, so its reader is always
+      # provisioned. A chart install follows global.insightV3Core.deploy; here
+      # it converges a warm volume, whose initdb scripts ran once and long ago.
+      INSIGHT_V3_CORE_ENABLED: "true"
       # apply-ch-migrations.sh runs `dbt run` from /ingestion/dbt. The
       # ingestion tree is bind-mounted read-only (below), so redirect dbt's
       # writable outputs (target/, logs/) to a writable scratch dir.

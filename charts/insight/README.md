@@ -155,7 +155,7 @@ The same decision under a different name in each layer:
 | --- | --- | --- |
 | Chart values | `clickhouse.clusterMode` / `clickhouse.clusterName` | [`values.yaml`](./values.yaml) |
 | Chart helpers | `insight.clickhouse.clusterMode` / `insight.clickhouse.clusterName` | [`templates/_helpers.tpl`](./templates/_helpers.tpl) |
-| Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-databases` and `clickhouse-migrate` Jobs (one shared env block, `insight.clickhouse.ddlEnv`), `create-databases.sh`, `apply-ch-migrations.sh` |
+| Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-databases` and `clickhouse-migrate` Jobs (one shared env block, `insight.clickhouse.ddlEnv`), and `scripts/lib/ch-topology.sh`, which renders the database engine `create-databases.sh` creates with, expands the `/*@@REPLICATED@@*/` marker a numbered migration spells its engine behind, and refuses a deploy the warehouse cannot serve |
 | Reconcile | `RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE` / `RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME` | `reconcile-cron.yaml`, consumed by `compose_destination_config.py` as the destination's `use_replicated_engines` / `cluster_name` |
 | dbt | project vars `cluster_mode` / `cluster_name`, read by the `insight_engine` macro every model's engine is declared through and by the `insight_on_cluster` clause the `on-run-start` hooks qualify their raw DDL with; the project-level `+engine` default for a model that declares none; the adapter's `cluster:` profile key and the quorum `custom_settings`, both written by the one profile writer | `dbt_project.yml`, `dbt/macros/insight_engine.sql`, `scripts/dbt_profiles.py` |
 | Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name`, decides the read-after-write settings a swap needs and nothing else. Data-layer DDL is one `insight_clickhouse::Ddl` statement per change (create, drop, exchange, rename) and carries no `ON CLUSTER` and no `Replicated` prefix: the database engine above replays it on every replica | `libs/insight-clickhouse` (`topology.rs`, `ddl.rs`, `consistency.rs`), `insight-v3-core` and `identity-resolution` gear config |
@@ -170,14 +170,32 @@ reach a clustered warehouse with a standalone profile. The engine default is
 the one thing that profile cannot carry: dbt-clickhouse resolves `engine` from
 the model config alone, so it lives in `dbt_project.yml`.
 
-One statement carries the whole fork: `src/ingestion/scripts/create-databases.sh`
-is the only site that creates a ClickHouse database, so a `Replicated` database
-engine has exactly one place to appear. Inside such a database every later DDL
-is logged in Keeper and replayed on every replica, which is what lets the
-migrations, the dbt hooks and the DDL snapshot stay topology-blind. The
+One statement carries most of the fork: `src/ingestion/scripts/create-databases.sh`
+is the only site that creates a ClickHouse database, so the `Replicated`
+database engine has exactly one place to appear. Inside such a database every
+later DDL is logged in Keeper and replayed on every replica, which is what lets
+a creator state a table without naming a cluster. The
 `clickhouse-databases` pre-install Hook and the `clickhouse-migrate`
 post-install Hook both run that script; `clickhouse.createDatabases: false`
 turns the pre-install one off for a warehouse provisioned out of band.
+
+Replaying the DDL is not replicating the rows, though. A table still declares
+its own `Replicated*` engine, or it stands on every replica holding whatever
+reached the node that answered — which is why the dbt models render a prefix
+through `insight_engine` and the numbered migrations spell their engine behind
+`/*@@REPLICATED@@*/` — a SQL comment, so the file stays executable unrendered
+for the harnesses that apply it against a single node.
+
+Three things a clustered install needs belong to the server, not to this
+release, so the deploy checks them before it creates or grants anything:
+Keeper, the `{shard}` / `{replica}` macros the database engine names, and a
+`<replicated>` entry under `<user_directories>` on every node. Without the last
+one, SQL-created roles and users are node-local and authentication through the
+load balancer succeeds or fails by which replica answers. A standalone deploy
+is checked in the one direction that loses data silently: it refuses to emit
+standalone DDL into a database that is already `Replicated`. Each refusal
+carries its own remedy, and the flag never converts a database that already
+stands.
 
 Flipping the values does not by itself make an install clustered — the
 creators act on them task by task (epic #2010), and the clustered path is not
@@ -193,7 +211,7 @@ Key groups:
 - `global.*` — cluster-wide defaults (pull secrets, storage class, `tenantDefaultId`, `observability.logs.{level,format}`, `observability.otlp.endpoint`)
 - `<dep>.host` / `<dep>.port` / `<dep>.passwordSecret` (Redpanda: `<dep>.brokers`) — external-infra wiring for ClickHouse, MariaDB, Redis, Redpanda
 - `gateway` / `authenticator` / `analytics` — **mandatory** app services (no deploy flag; the gateway is the single entrance and the product is one unit)
-- `global.insightV3Core.deploy` + `insightV3Core.*` — insight-v3-core, off by default (it needs `insightV3Core.ingest.tokenSecret` to exist first); the same flag drops the gateway's v3 routes
+- `global.insightV3Core.deploy` + `insightV3Core.*` — insight-v3-core, off by default (it needs `insightV3Core.ingest.tokenSecret` to exist first); the same flag drops the gateway's v3 routes and the `insight_v3_ro` ClickHouse role, which reads every table so that an install without the assistant does not carry it. Turning the flag off on a running install strips that role's grants; the role and its user are left standing, since the deploy did not create the identity
 - `authenticator.oidc.*` — OIDC upstream and login-resolution mode (`resolveBy: external_id | email`)
 - `identityResolution.*` — identity-resolution service (must stay deployed; `rosterSourceType` for email-mode logins)
 - `keycloak.deploy` + `keycloakConfig.*` — the in-stack identity broker and its realms-as-code hook

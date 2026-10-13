@@ -8,5 +8,5 @@ CREATE TABLE IF NOT EXISTS silver.class_person_absences
     start_date Date,
     end_date Date
 )
-ENGINE = ReplacingMergeTree
+ENGINE = /*@@REPLICATED@@*/ReplacingMergeTree
 ORDER BY unique_key;
