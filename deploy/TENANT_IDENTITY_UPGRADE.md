@@ -63,13 +63,16 @@ data under several tenants and needs a separate plan.
 
 ## 2. Fresh install
 
-1. Generate a lowercase UUID and set it once:
+1. Set the tenant UUID your sign-in already carries — the `tenant_id` Keycloak
+   stamps on every identity-provider connection — once, in lowercase:
    ```yaml
    ingestion:
      reconcile:
        tenantId: "<TENANT_UUID>"
    ```
-   Do not set `legacyTenantKeyOverride`.
+   A different value fails every read: analytics, identity and the core API filter
+   by the session tenant. Generate a new UUID only when no realm assigns one yet,
+   and give the realm the same value. Do not set `legacyTenantKeyOverride`.
 2. Deploy the chart as described in [HELM_DEPLOY.md](HELM_DEPLOY.md).
 3. Verify with [§4](#4-verification).
 
