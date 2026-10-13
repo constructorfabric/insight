@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from collections.abc import Iterator
 
 import pytest
 from airbyte_cdk.models import SyncMode
@@ -17,7 +17,7 @@ GUID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
 CONFIG = {"ad_search_base": "DC=example,DC=test", "ad_page_size": "50"}
 
 
-def _entry(**attributes: Any) -> dict[str, Any]:
+def _entry(**attributes: object) -> dict[str, object]:
     return {
         "type": "searchResEntry",
         "dn": "CN=Alice Alpha,OU=People,DC=example,DC=test",
@@ -58,7 +58,7 @@ def test_a_user_maps_to_the_shared_directory_shape() -> None:
 @pytest.mark.parametrize(
     ("uac", "enabled", "status"), [(512, True, "Active"), (514, False, "Terminated"), (None, None, None)]
 )
-def test_a_disabled_account_reads_as_terminated(uac: Any, enabled: bool | None, status: str | None) -> None:
+def test_a_disabled_account_reads_as_terminated(uac: int | None, enabled: bool | None, status: str | None) -> None:
     record = _stream()._to_record(_entry(userAccountControl=uac))
 
     assert (record["accountEnabled"], record["status"]) == (enabled, status), f"uac {uac!r}"
@@ -73,7 +73,9 @@ def test_a_guid_formatted_by_the_library_is_used_when_the_raw_one_is_missing() -
 @pytest.mark.parametrize(
     ("value", "expected"), [("x", ["x"]), (["x", None, ""], ["x"]), ([""], None), ("", None), (None, None)]
 )
-def test_a_multi_valued_attribute_drops_empty_values(value: Any, expected: list[str] | None) -> None:
+def test_a_multi_valued_attribute_drops_empty_values(
+    value: str | list[str | None] | None, expected: list[str] | None
+) -> None:
     assert ActiveDirectoryUsersStream._multi({"k": value}, "k") == expected, f"should read {value!r}"
 
 
@@ -84,15 +86,15 @@ def test_an_entry_without_a_guid_is_skipped() -> None:
 
 
 class FakeConnection:
-    def __init__(self, entries: list[dict] | None = None, error: Exception | None = None) -> None:
+    def __init__(self, entries: list[dict[str, object]] | None = None, error: Exception | None = None) -> None:
         self.entries = entries or []
         self.error = error
-        self.searched: dict[str, Any] = {}
+        self.searched: dict[str, object] = {}
         self.unbound = False
         self.extend = self
         self.standard = self
 
-    def paged_search(self, **kwargs: Any) -> Any:
+    def paged_search(self, **kwargs: object) -> Iterator[dict[str, object]]:
         self.searched = kwargs
         if self.error:
             raise self.error

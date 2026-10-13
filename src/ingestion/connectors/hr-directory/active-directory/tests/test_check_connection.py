@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
 
 import pytest
 from ldap3.core.exceptions import LDAPBindError, LDAPSocketOpenError
@@ -20,13 +20,15 @@ CONFIG = {
 
 
 class FakeConnection:
-    def __init__(self, ok: bool = True, result: dict | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self, ok: bool = True, result: dict[str, object] | None = None, error: Exception | None = None
+    ) -> None:
         self.ok = ok
         self.result = result
         self.error = error
         self.unbound = False
 
-    def search(self, **_: Any) -> bool:
+    def search(self, **_: object) -> bool:
         if self.error:
             raise self.error
         return self.ok
@@ -35,8 +37,10 @@ class FakeConnection:
         self.unbound = True
 
 
-def _check(monkeypatch: pytest.MonkeyPatch, conn: Any, config: dict = CONFIG) -> tuple[bool, Any]:
-    def connect(_: Any) -> Any:
+def _check(
+    monkeypatch: pytest.MonkeyPatch, conn: FakeConnection | Exception, config: Mapping[str, object] = CONFIG
+) -> tuple[bool, str | None]:
+    def connect(_: Mapping[str, object]) -> FakeConnection:
         if isinstance(conn, Exception):
             raise conn
         return conn
@@ -50,7 +54,7 @@ def test_a_missing_identity_field_is_refused_before_any_bind(monkeypatch: pytest
     ok, reason = _check(monkeypatch, AssertionError("must not bind"), {**CONFIG, field: "  "})
 
     assert ok is False
-    assert field in reason
+    assert field in str(reason)
 
 
 def test_a_readable_search_base_passes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -64,7 +68,7 @@ def test_a_failed_bind_names_the_server(monkeypatch: pytest.MonkeyPatch) -> None
     ok, reason = _check(monkeypatch, LDAPBindError("invalid credentials"))
 
     assert ok is False
-    assert "dc1.example.test" in reason
+    assert "dc1.example.test" in str(reason)
 
 
 def test_an_unreadable_search_base_reports_the_directory_answer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -73,7 +77,7 @@ def test_an_unreadable_search_base_reports_the_directory_answer(monkeypatch: pyt
     ok, reason = _check(monkeypatch, conn)
 
     assert ok is False
-    assert "noSuchObject" in reason
+    assert "noSuchObject" in str(reason)
     assert conn.unbound
 
 
@@ -83,7 +87,7 @@ def test_a_search_that_raises_is_a_failed_check(monkeypatch: pytest.MonkeyPatch)
     ok, reason = _check(monkeypatch, conn)
 
     assert ok is False
-    assert "connection reset" in reason
+    assert "connection reset" in str(reason)
     assert conn.unbound
 
 
