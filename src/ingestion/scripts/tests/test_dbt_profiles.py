@@ -131,6 +131,18 @@ def test_a_single_node_waits_for_no_quorum() -> None:
     assert "custom_settings" not in _output()
 
 
+def test_a_clustered_install_skips_the_exchange_probe(monkeypatch) -> None:
+    """The probe's CREATE / EXCHANGE / DROP reach different replicas behind a
+    load balancer and leak its tables there."""
+    monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", "true")
+
+    assert _output()["check_exchange"] is False
+
+
+def test_a_single_node_keeps_the_exchange_probe() -> None:
+    assert "check_exchange" not in _output()
+
+
 def test_the_connection_comes_from_host_and_port() -> None:
     connection = connection_from_env()
 

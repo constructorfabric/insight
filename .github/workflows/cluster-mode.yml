@@ -1,0 +1,65 @@
+name: Cluster mode
+
+# Deploys onto a two-replica ClickHouse behind a round-robin proxy with
+# CLICKHOUSE_CLUSTER_MODE on, and onto a single node with it off, then asserts
+# what every node holds: src/ingestion/tests/cluster-rig/README.md.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/ingestion/scripts/**"
+      - "src/ingestion/dbt/**"
+      - "src/ingestion/gold/**"
+      - "src/ingestion/silver/**"
+      - "src/ingestion/connectors/**"
+      - "src/ingestion/reconcile-connectors/python/**"
+      - "src/ingestion/tests/cluster-rig/**"
+      - "deploy/compose/clickhouse-memory.xml"
+      - ".github/workflows/cluster-mode.yml"
+      - ".github/runners/insight-vhc/**"
+  push:
+    branches: [main]
+    paths:
+      - "src/ingestion/scripts/**"
+      - "src/ingestion/dbt/**"
+      - "src/ingestion/gold/**"
+      - "src/ingestion/silver/**"
+      - "src/ingestion/connectors/**"
+      - "src/ingestion/reconcile-connectors/python/**"
+      - "src/ingestion/tests/cluster-rig/**"
+      - "deploy/compose/clickhouse-memory.xml"
+      - ".github/workflows/cluster-mode.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  rig:
+    name: Deploy onto a ${{ matrix.topology }} warehouse
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        topology: [standalone, replicated]
+    env:
+      RIG_TOPOLOGY: ${{ matrix.topology }}
+      CLICKHOUSE_MEM_LIMIT: 2g
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # INVARIANT: same major as the toolbox image that runs the deploy hook.
+          python-version: "3.12"
+
+      - name: Deploy and assert
+        run: src/ingestion/tests/cluster-rig/run.sh
