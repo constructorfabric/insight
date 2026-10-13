@@ -191,6 +191,7 @@ async fn guarded_sync(
         &config.clickhouse_url,
         &config.clickhouse_user,
         &config.clickhouse_password,
+        config.topology(),
     );
 
     let run = async {

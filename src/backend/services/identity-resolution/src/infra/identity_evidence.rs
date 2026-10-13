@@ -9,7 +9,7 @@
 use std::time::Duration;
 
 use clickhouse::Row;
-use insight_clickhouse::{Client, Config};
+use insight_clickhouse::{Client, Config, MissingRelation};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -298,7 +298,7 @@ impl ClickHouseEvidenceReader {
         );
         let rows: Vec<FoldedRow> = match self.client.query(&sql).fetch_all().await {
             Ok(rows) => rows,
-            Err(e) if is_missing_relation(&e) => {
+            Err(e) if MissingRelation::from_error(&e).is_some() => {
                 return Ok(EvidenceSnapshot {
                     accounts: Vec::new(),
                     truncated: false,
@@ -499,7 +499,9 @@ impl ClickHouseEvidenceReader {
 
         let mut rows: Vec<FoldedRow> = match query.bind(page_size + 1).fetch_all().await {
             Ok(rows) => rows,
-            Err(e) if is_missing_relation(&e) => return Ok(AccountPage::default()),
+            Err(e) if MissingRelation::from_error(&e).is_some() => {
+                return Ok(AccountPage::default());
+            }
             Err(e) => return Err(e.into()),
         };
 
@@ -545,7 +547,7 @@ impl ClickHouseEvidenceReader {
             // A fresh install has no evidence relation yet — dbt creates it on
             // its first silver build. That is "nothing observed", not a failure
             // to answer.
-            Err(e) if is_missing_relation(&e) => Ok(false),
+            Err(e) if MissingRelation::from_error(&e).is_some() => Ok(false),
             Err(e) => Err(e.into()),
         }
     }
@@ -574,7 +576,7 @@ impl ClickHouseEvidenceReader {
             Ok(found) => found,
             // Same reading as `has_account`: no relation yet is "nothing
             // observed", not a failure to answer.
-            Err(e) if is_missing_relation(&e) => None,
+            Err(e) if MissingRelation::from_error(&e).is_some() => None,
             Err(e) => return Err(e.into()),
         };
 
@@ -597,18 +599,6 @@ impl ClickHouseEvidenceReader {
             email: non_empty(row.email),
         }))
     }
-}
-
-/// ClickHouse reports an absent table as `UNKNOWN_TABLE` (code 60) — and a
-/// fresh install lacks the whole `identity` database until its first build,
-/// which reads as `UNKNOWN_DATABASE` (code 81). Both mean "nothing observed
-/// yet", never a failure to answer.
-fn is_missing_relation(error: &clickhouse::error::Error) -> bool {
-    let message = error.to_string();
-    message.contains("UNKNOWN_TABLE")
-        || message.contains("code: 60")
-        || message.contains("UNKNOWN_DATABASE")
-        || message.contains("code: 81")
 }
 
 fn non_empty(value: String) -> Option<String> {
@@ -665,33 +655,6 @@ mod tests {
             binding_id: "gh-1".to_owned(),
             order_label: String::new(),
         }
-    }
-
-    #[test]
-    fn an_absent_database_reads_as_no_observations_like_an_absent_table() {
-        // A fresh install has neither `identity.identity_inputs` nor the
-        // `identity` database itself — dbt creates both on its first build.
-        for (label, message) in [
-            (
-                "absent table",
-                "Code: 60. DB::Exception: ... (UNKNOWN_TABLE)",
-            ),
-            (
-                "absent database",
-                "Code: 81. DB::Exception: Database identity does not exist. (UNKNOWN_DATABASE)",
-            ),
-        ] {
-            let error = clickhouse::error::Error::BadResponse(message.to_owned());
-            assert!(
-                is_missing_relation(&error),
-                "should read as missing: {label}"
-            );
-        }
-
-        let real = clickhouse::error::Error::BadResponse(
-            "Code: 241. DB::Exception: Memory limit exceeded".to_owned(),
-        );
-        assert!(!is_missing_relation(&real), "a real failure must surface");
     }
 
     #[test]

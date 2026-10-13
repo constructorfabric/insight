@@ -307,6 +307,7 @@ jobs:
           CLICKHOUSE_USER: insight
           CLICKHOUSE_PASSWORD: insight
           CLICKHOUSE_DATABASE: insight
+          CLICKHOUSE_URL: http://127.0.0.1:8123
         run: |
           set -euo pipefail
           # pins.env is plain KEY=VALUE (same load as connectors-ddl), so the
@@ -314,6 +315,8 @@ jobs:
           . src/ingestion/scripts/bootstrap-db/pins.env
           export CLICKHOUSE_SERVER_IMAGE
           .github/workflows/scripts/start-clickhouse.sh insight-clickhouse
+          # INVARIANT: migrations assume their databases exist, as on a deploy.
+          bash src/ingestion/scripts/create-databases.sh
 
       - name: Coverage (${{ matrix.entry.name }} -> Cobertura)
         if: ${{ matrix.entry.cover }}

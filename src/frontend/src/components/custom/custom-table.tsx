@@ -32,7 +32,9 @@ const SHOWN = 200;
  */
 function Cell({ value, unit }: { value: unknown; unit: string }) {
   if (value === null || value === undefined) return <>{"\u2014"}</>;
-  if (unit) return <>{groupedNumber(value, unit)}</>;
+  if (unit || typeof value === "number") {
+    return <>{groupedNumber(value, unit)}</>;
+  }
 
   const text = String(value);
   if (!/^https?:\/\/\S+$/.test(text)) return <>{text}</>;
