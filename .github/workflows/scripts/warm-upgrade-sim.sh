@@ -368,10 +368,58 @@ assert_jira_catalogue_first_seen_kept() {
   echo "=== Jira catalogue first sync kept through the upgrade ==="
 }
 
+# The YouTrack field observations predate their tenant column. The upgrade adds
+# it beside the key and reads each old row's tenant back from its key, against
+# the tenants bronze holds; a row whose key names none keeps NULL for the tenant
+# migration. Same fixture rules as above: only the columns the heal reads.
+seed_youtrack_field_observation_warm_state() {
+  echo "=== Seeding the pre-tenant YouTrack field observations ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  run_ch <<'SQL'
+CREATE DATABASE IF NOT EXISTS bronze_youtrack;
+CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_custom_fields
+(
+    unique_key String, tenant_id Nullable(String), source_id Nullable(String),
+    _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+INSERT INTO bronze_youtrack.youtrack_custom_fields (unique_key, tenant_id, source_id, _airbyte_raw_id, _airbyte_extracted_at)
+VALUES ('warm-yt-1-field-1', 'warm', 'yt-1', 'raw-y1', '2026-01-01 00:00:00');
+
+CREATE TABLE IF NOT EXISTS staging.youtrack__field_observations
+(
+    unique_key String, insight_source_id String, field_id String, field_name String,
+    field_type String, observed_at DateTime64(3), _version UInt64
+)
+ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key;
+INSERT INTO staging.youtrack__field_observations
+VALUES
+    ('warm-yt-1-field-1-2026-01-01 00:00:00', 'yt-1', 'field-1', 'Priority', 'enum', '2026-01-01 00:00:00', 1),
+    ('stray-yt-1-field-2-2026-01-01 00:00:00', 'yt-1', 'field-2', 'State', 'state', '2026-01-01 00:00:00', 1);
+SQL
+}
+
+assert_youtrack_field_observation_tenants() {
+  echo "=== Asserting the field observations carry their tenant ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  local got
+  local expected="2|field-1:warm;field-2:NULL"
+  got="$(printf "SELECT concat(
+      toString((SELECT position FROM system.columns WHERE database = 'staging' AND table = 'youtrack__field_observations' AND name = 'tenant_id')), '|',
+      arrayStringConcat(groupArray(concat(field_id, ':', ifNull(tenant_id, 'NULL'))), ';'))
+    FROM (SELECT field_id, tenant_id FROM staging.youtrack__field_observations FINAL ORDER BY field_id)" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=warm upgrade left YouTrack field observations without a tenant::Expected '${expected}' — the tenant column right after unique_key, the row keyed by a bronze tenant carrying it, the row keyed by none left NULL — but got '${got}'."
+    exit 1
+  fi
+  echo "=== YouTrack field observations carry their tenant ==="
+}
+
 seed_warm_bronze
 seed_git_close_time_warm_state
 seed_jira_issue_identity_warm_state
 seed_jira_catalogue_first_seen_warm_state
+seed_youtrack_field_observation_warm_state
 
 echo "=== Step 2: deploy the working tree onto the warm state ==="
 dbt_venv_for "$REPO_ROOT/src/ingestion/scripts/bootstrap-db/pins.env" "$WORKDIR/branch-venv"
@@ -384,6 +432,7 @@ fi
 assert_git_close_time_recovered
 assert_jira_issue_identity_recovered
 assert_jira_catalogue_first_seen_kept
+assert_youtrack_field_observation_tenants
 
 echo "=== Step 3: build gold over the warm silver, as the first sync would ==="
 if ! PATH="$WORKDIR/branch-venv/bin:$PATH" \
