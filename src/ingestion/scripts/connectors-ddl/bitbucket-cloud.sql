@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.branches
     `name` Nullable(String),
     `head_sha` Nullable(String),
     `head_committed_date` Nullable(String),
-    `is_default` Nullable(Bool)
+    `is_default` Nullable(Bool),
+    `repository_updated_on` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key

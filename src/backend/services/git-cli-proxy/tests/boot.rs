@@ -127,8 +127,8 @@ async fn wait_healthy(port: u16) -> R {
 fn fixture_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let origin = root.join("origin");
     std::fs::create_dir_all(&origin)?;
-    // Explicit, distinct commit dates: the walk order is
-    // (committed_date, sha), so same-second commits would order by sha and
+    // Explicit, distinct commit dates: the walk orders by (committed
+    // instant, sha), so same-second commits would order by sha and
     // make the assertions depend on hash values.
     let script = "git init -q -b main . && \
          git config uploadpack.allowFilter true && \
@@ -1282,8 +1282,8 @@ async fn a_file_row_carries_the_name_git_has_on_disk() -> R {
 async fn a_submodule_does_not_force_a_repository_out_of_the_blobless_cache() -> R {
     // The gitlink id belongs to the submodule. Requesting it from the
     // superproject's origin fails with "not our ref", which this service reads
-    // as an origin refusing promisor wants — so a single submodule used to
-    // promote the whole repository to a full clone, permanently.
+    // as an origin refusing promisor wants and answers with a permanent full
+    // clone of the whole repository.
     let server = spawn_server("submodule", TOKEN)?;
     wait_healthy(server.port).await?;
     let repo = submodule_origin(&server.dir)?;
@@ -1311,9 +1311,8 @@ async fn a_submodule_does_not_force_a_repository_out_of_the_blobless_cache() -> 
 
 #[tokio::test]
 async fn a_copied_file_reports_the_status_the_contract_lists() -> R {
-    // DESIGN §4.2 lists `copied` and says collapsing it into `modified` would
-    // misreport it — but the invocation passed `-M` alone, under which git
-    // never emits a `C` status and the row came back as `added`.
+    // The contract lists `copied`; git emits a `C` status only under `-C`,
+    // never under `-M` alone, where the row would come back as `added`.
     let server = spawn_server("copying", TOKEN)?;
     wait_healthy(server.port).await?;
     let repo = copying_origin(&server.dir)?;

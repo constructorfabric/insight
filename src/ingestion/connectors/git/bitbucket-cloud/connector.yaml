@@ -304,6 +304,9 @@ definitions:
       # The proxy reserves cache headroom from the repository's reported size
       # instead of its per-repository cap.
       X-Repo-Size-Hint: "{{ stream_slice.extra_fields.get('size') or '' }}"
+      # INVARIANT: below the sync interval, so a repository pushed to since the
+      # last sync is fetched rather than served from that sync's mirror.
+      X-Max-Staleness: "3600"
     error_handler: *proxy_error_handler
 
 check:
@@ -872,6 +875,7 @@ streams:
           head_sha: {type: [string, "null"]}
           head_committed_date: {type: [string, "null"]}
           is_default: {type: [boolean, "null"]}
+          repository_updated_on: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -909,12 +913,24 @@ streams:
             partition_field: repo_clone_url
             extra_fields:
               - [size]
-            # No `incremental_dependency` here: this stream is full refresh, so
-            # the CDK persists no parent state and the listing opens at the
-            # start date every sync. Branch heads are cheap and must be re-read
-            # for every repository each sync.
+              - [updated_on]
+            incremental_dependency: true
             stream:
               $ref: "#/streams/0"
+    # INVARIANT: the cursor exists only so the listing's state persists, and it
+    # reads the vendor's clock: a head's own date can lie in the future and
+    # would close every later slice.
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: repository_updated_on
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['bitbucket_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields:
@@ -930,6 +946,9 @@ streams:
           - type: AddedFieldDefinition
             path: [repository]
             value: "{{ stream_partition.repo_clone_url }}"
+          - type: AddedFieldDefinition
+            path: [repository_updated_on]
+            value: "{{ stream_slice.extra_fields.get('updated_on') or '' }}"
           # No head_sha in the key: the key identifies the BRANCH, so the RMT
           # collapses to its latest state and a head move is a change the
           # downstream snapshot macro can see.
