@@ -5,7 +5,6 @@ from __future__ import annotations
 import ssl
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 import pytest
 from source_active_directory import ldap_client
@@ -17,7 +16,7 @@ GUID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
     ("value", "expected"),
     [(None, True), (True, True), (False, False), ("false", False), (" No ", False), ("1", True), (0, False)],
 )
-def test_a_tls_switch_reads_strings_as_the_operator_meant_them(value: Any, expected: bool) -> None:
+def test_a_tls_switch_reads_strings_as_the_operator_meant_them(value: bool | str | int | None, expected: bool) -> None:
     assert ldap_client._as_bool(value, default=True) is expected, f"should read {value!r} as {expected}"
 
 
@@ -29,7 +28,7 @@ def test_an_unreadable_tls_switch_is_refused() -> None:
 @pytest.mark.parametrize(
     ("config", "use_ssl", "expected"), [({}, True, 636), ({}, False, 389), ({"ad_port": "3269"}, True, 3269)]
 )
-def test_the_port_follows_tls_unless_one_is_named(config: dict, use_ssl: bool, expected: int) -> None:
+def test_the_port_follows_tls_unless_one_is_named(config: dict[str, object], use_ssl: bool, expected: int) -> None:
     assert ldap_client._port(config, use_ssl) == expected
 
 
@@ -49,9 +48,9 @@ def test_a_plain_server_carries_no_tls() -> None:
 
 
 def test_a_connection_binds_with_the_configured_account(monkeypatch: pytest.MonkeyPatch) -> None:
-    opened: dict[str, Any] = {}
+    opened: dict[str, object] = {}
 
-    def fake_connection(server: Any, **kwargs: Any) -> str:
+    def fake_connection(server: object, **kwargs: object) -> str:
         opened.update(kwargs, server=server)
         return "bound"
 
@@ -74,7 +73,9 @@ def test_a_connection_binds_with_the_configured_account(monkeypatch: pytest.Monk
     [(None, None), (uuid.UUID(GUID).bytes_le, GUID), (f"{{{GUID.upper()}}}", GUID), (12345, "12345")],
     ids=["absent", "binary", "braced string", "anything else"],
 )
-def test_an_object_guid_reads_as_the_guid_directory_tools_show(raw: Any, expected: str | None) -> None:
+def test_an_object_guid_reads_as_the_guid_directory_tools_show(
+    raw: bytes | str | int | None, expected: str | None
+) -> None:
     assert ldap_client.guid_to_str(raw) == expected
 
 
@@ -90,12 +91,12 @@ def test_an_object_guid_reads_as_the_guid_directory_tools_show(raw: Any, expecte
     ],
     ids=["absent", "parsed", "generalized", "bytes", "impossible date", "free text"],
 )
-def test_a_generalized_time_reads_as_utc_iso(value: Any, expected: str | None) -> None:
+def test_a_generalized_time_reads_as_utc_iso(value: datetime | str | bytes | None, expected: str | None) -> None:
     assert ldap_client.generalized_time_to_iso(value) == expected
 
 
 @pytest.mark.parametrize(
     ("uac", "expected"), [(None, None), ("", None), (512, True), ("514", False), ("garbage", None)]
 )
-def test_the_disable_bit_decides_whether_an_account_is_enabled(uac: Any, expected: bool | None) -> None:
+def test_the_disable_bit_decides_whether_an_account_is_enabled(uac: str | int | None, expected: bool | None) -> None:
     assert ldap_client.account_enabled(uac) is expected, f"should read {uac!r} as {expected}"
