@@ -236,7 +236,7 @@ export function LensRail() {
             <img
               src={brandSymbol}
               alt="Constructor Fabric"
-              className="size-8 shrink-0"
+              className="size-8 max-w-none shrink-0"
               width={32}
               height={32}
             />

@@ -11,6 +11,7 @@ Run: pytest charts/insight/tests
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -19,19 +20,41 @@ import yaml
 
 CHART = Path(__file__).resolve().parents[1]
 
-#: Template -> the manifest keys that must carry the topology.
-CONSUMERS = {
-    "templates/platform-config.yaml": ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME"),
-    "templates/clickhouse-migrate-job.yaml": ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME"),
-    "templates/ingestion/reconcile-cron.yaml": (
-        "RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE",
-        "RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME",
+#: (template, the manifest keys in it that must carry the topology). A template
+#: appears once per consumer it renders -- `secrets.yaml` holds one Secret per
+#: service, and each service reads the pair under its own gear name.
+CONSUMERS = [
+    ("templates/platform-config.yaml", ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME")),
+    ("templates/clickhouse-databases-job.yaml", ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME")),
+    ("templates/clickhouse-migrate-job.yaml", ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME")),
+    (
+        "templates/ingestion/reconcile-cron.yaml",
+        ("RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE", "RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME"),
     ),
-    "templates/secrets.yaml": (
-        "APP__gears__insight_v3_core__config__clickhouse_cluster_mode",
-        "APP__gears__insight_v3_core__config__clickhouse_cluster_name",
+    (
+        "templates/secrets.yaml",
+        (
+            "APP__gears__insight_v3_core__config__clickhouse_cluster_mode",
+            "APP__gears__insight_v3_core__config__clickhouse_cluster_name",
+        ),
     ),
-}
+    (
+        "templates/secrets.yaml",
+        (
+            "APP__gears__identity_resolution__config__clickhouse_cluster_mode",
+            "APP__gears__identity_resolution__config__clickhouse_cluster_name",
+        ),
+    ),
+]
+
+PLATFORM_CONFIG_KEYS = ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME")
+
+
+def _consumer_id(value: str | tuple[str, ...]) -> str:
+    """A case is named by its template and the first key it looks for: one template
+    renders several consumers, so the template alone would name two cases alike."""
+    return value if isinstance(value, str) else value[0]
+
 
 #: The v3-core Secret only renders for an install that deploys the service.
 BASE = ["--set", "global.insightV3Core.deploy=true"]
@@ -106,7 +129,7 @@ def _env_of(node: object, names: tuple[str, ...]) -> dict[str, str]:
     return found
 
 
-@pytest.mark.parametrize(("template", "names"), CONSUMERS.items())
+@pytest.mark.parametrize(("template", "names"), CONSUMERS, ids=_consumer_id)
 def test_an_install_that_says_nothing_is_a_standalone_single_node(
     chart_dependencies: None, template: str, names: tuple[str, ...]
 ) -> None:
@@ -116,7 +139,7 @@ def test_an_install_that_says_nothing_is_a_standalone_single_node(
     assert found == {mode: "false", name: ""}, f"{template} must default to standalone"
 
 
-@pytest.mark.parametrize(("template", "names"), CONSUMERS.items())
+@pytest.mark.parametrize(("template", "names"), CONSUMERS, ids=_consumer_id)
 def test_every_consumer_hears_the_same_cluster(chart_dependencies: None, template: str, names: tuple[str, ...]) -> None:
     found = _values(_render(template, CLUSTERED), names)
 
@@ -149,7 +172,7 @@ def test_a_cluster_may_be_named_anything_clickhouse_reads_as_an_identifier(chart
             "templates/platform-config.yaml",
             [*BASE, "--set", "clickhouse.clusterMode=true", "--set", f"clickhouse.clusterName={name}"],
         ),
-        CONSUMERS["templates/platform-config.yaml"],
+        PLATFORM_CONFIG_KEYS,
     )
 
     assert found == {"CLICKHOUSE_CLUSTER_MODE": "true", "CLICKHOUSE_CLUSTER_NAME": name}
@@ -173,3 +196,28 @@ def test_every_dbt_step_reads_the_topology_from_the_platform_config_map(
 
     for name in ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME"):
         assert f"key: {name}" in rendered, f"{template} does not read {name}"
+
+
+#: MariaDB has its own init Job, its own creator and no cluster fork.
+MARIADB_TEMPLATE = "mariadb-init-svcdbs-job.yaml"
+
+HELM_COMMENT = re.compile(r"\{\{-?\s*/\*.*?\*/\s*-?\}\}", re.DOTALL)
+
+
+def test_no_chart_template_creates_a_clickhouse_database() -> None:
+    """`create-databases.sh` is the one site that creates one (#3556), and the
+    cluster mechanism needs it to stay that way: a `Replicated` database engine
+    belongs on that statement, and a template that made a plain database first
+    would win on a fresh cluster — silently, since everything is IF NOT EXISTS.
+
+    Read with the Helm comment blocks stripped: these templates explain the
+    rule in prose, and a guard matching its own documentation fires on every
+    mention."""
+    offenders = {
+        path.name: [line.strip() for line in body.splitlines() if "CREATE DATABASE" in line]
+        for path in sorted((CHART / "templates").glob("*.yaml"))
+        if path.name != MARIADB_TEMPLATE
+        and "CREATE DATABASE" in (body := HELM_COMMENT.sub("", path.read_text(encoding="utf-8")))
+    }
+
+    assert not offenders, f"a chart template creates a ClickHouse database: {offenders}"

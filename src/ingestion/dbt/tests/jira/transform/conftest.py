@@ -227,8 +227,12 @@ def warehouse() -> Warehouse:
             correlated_subqueries=True,
         )
         profiles_dir.joinpath("profiles.yml").write_text(yaml.safe_dump(profile))
+        # Every database this rig touches. A throwaway warehouse makes its own:
+        # on a deployment create-databases.sh is the one creation site, and
+        # neither the snapshot nor an on-run-start hook carries a CREATE DATABASE.
         wh.execute("CREATE DATABASE IF NOT EXISTS staging")
         wh.execute("CREATE DATABASE IF NOT EXISTS silver")
+        wh.execute("CREATE DATABASE IF NOT EXISTS identity")
         wh.execute("CREATE DATABASE IF NOT EXISTS config")
         wh.execute("CREATE DATABASE IF NOT EXISTS insight")
         create_bronze("jira", port=wh.port, user=wh.user, password=wh.password, database="default")

@@ -1,9 +1,10 @@
 {#-
-  Creates `identity.identity_persons` — the persons-log copy that dbt does NOT
-  own the DATA of. It is written exclusively by the identity-resolution
-  service's persons-sync (full snapshot + atomic EXCHANGE swap). The
-  `account_assignment` view reads it, `person_map` builds on that, and the
-  analytics runtime joins `person_map` when it serves a person.
+  THE creator of `identity.identity_persons` — the persons-log copy that dbt
+  does NOT own the DATA of. It is written exclusively by the
+  identity-resolution service's persons-sync (full snapshot + atomic EXCHANGE
+  swap), which issues no CREATE for it (#3552). The `account_assignment` view
+  reads it, `person_map` builds on that, and the analytics runtime joins
+  `person_map` when it serves a person.
 
   Called from `on-run-start`
   so a build on an environment where the sync has never run — fresh cluster,
@@ -16,6 +17,9 @@
   it early would make its first run think it is incremental and filter its own
   seed rows away. The resolver degrades on its own when the relation is absent.
 
+  The `identity` database itself is not created here: `create-databases.sh` is
+  the one site that creates a database, and it runs before any dbt build.
+
   SCHEMA CONTRACT: this DDL is a byte-for-byte copy of COLUMNS_DDL in
   src/backend/services/identity-resolution/src/infra/identity_persons.rs —
   the service owns the schema (it mirrors its own MariaDB `persons` log,
@@ -25,13 +29,16 @@
   alters an existing table; the service's own staging-swap upgrades the live
   schema on its next run) but a fresh environment would create the stale
   shape — keep them in lockstep.
+
+  An install whose first persons-sync beats its first dbt run has no table for
+  the swap to exchange with, and the sync renames its own staging into place.
+  That is the same shape by the contract above, and this hook finds it created
+  on the next build.
 -#}
 
 {% macro create_identity_persons() %}
     {% set on_cluster = insight_on_cluster() %}
     {% set engine = insight_engine('MergeTree') %}
-
-    {% do run_query("CREATE DATABASE IF NOT EXISTS identity " ~ on_cluster) %}
 
     {% do run_query("
         CREATE TABLE IF NOT EXISTS identity.identity_persons " ~ on_cluster ~ "

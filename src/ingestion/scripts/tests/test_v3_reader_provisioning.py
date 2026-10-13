@@ -17,21 +17,13 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 PROVISION_SCRIPT = SCRIPTS / "bootstrap-db" / "provision-v3-access.sh"
+CREATE_DATABASES = SCRIPTS / "create-databases.sh"
 MIGRATIONS = SCRIPTS / "apply-ch-migrations.sh"
 
 READER_ROLE = "insight_v3_ro"
 
 #: Anything that could change data. `ALL` covers `GRANT ALL PRIVILEGES`.
-WRITE_PRIVILEGES = (
-    "INSERT",
-    "ALTER",
-    "DROP",
-    "TRUNCATE",
-    "DELETE",
-    "UPDATE",
-    "CREATE TABLE",
-    "ALL",
-)
+WRITE_PRIVILEGES = ("INSERT", "ALTER", "DROP", "TRUNCATE", "DELETE", "UPDATE", "CREATE TABLE", "ALL")
 
 
 def statements() -> list[str]:
@@ -40,24 +32,19 @@ def statements() -> list[str]:
     heredoc = re.search(r"run_ch <<SQL\n(.*?)\nSQL\n", body, re.S)
     assert heredoc, "the script no longer provisions through a run_ch heredoc"
 
-    return [
-        " ".join(statement.split()).upper()
-        for statement in heredoc.group(1).split(";")
-        if statement.strip()
-    ]
+    return [" ".join(statement.split()).upper() for statement in heredoc.group(1).split(";") if statement.strip()]
 
 
 def test_the_reader_is_granted_the_read_only_role_and_defaults_to_it() -> None:
     granted = [s for s in statements() if s.startswith("GRANT ")]
 
     assert granted, "the reader is granted nothing, so it can read nothing"
-    assert all(
-        s.startswith(f"GRANT {READER_ROLE.upper()} TO ") for s in granted
-    ), f"every grant must be the {READER_ROLE} role itself: {granted}"
-    assert any(
-        s.startswith("ALTER USER") and f"DEFAULT ROLE {READER_ROLE.upper()}" in s
-        for s in statements()
-    ), f"the reader must default to {READER_ROLE}, or it queries with no role at all"
+    assert all(s.startswith(f"GRANT {READER_ROLE.upper()} TO ") for s in granted), (
+        f"every grant must be the {READER_ROLE} role itself: {granted}"
+    )
+    assert any(s.startswith("ALTER USER") and f"DEFAULT ROLE {READER_ROLE.upper()}" in s for s in statements()), (
+        f"the reader must default to {READER_ROLE}, or it queries with no role at all"
+    )
 
 
 def test_no_privilege_reaches_the_reader_directly() -> None:
@@ -66,15 +53,17 @@ def test_no_privilege_reaches_the_reader_directly() -> None:
             continue
         for privilege in WRITE_PRIVILEGES:
             assert privilege not in statement, (
-                f"{privilege} is granted to the account itself, outside the "
-                f"read-only role: {statement}"
+                f"{privilege} is granted to the account itself, outside the read-only role: {statement}"
             )
 
 
-def test_the_migration_run_provisions_the_reader() -> None:
-    called = MIGRATIONS.read_text()
-
-    assert PROVISION_SCRIPT.name in called, (
+def test_the_deploy_provisions_the_reader() -> None:
+    """The grants run beside the databases they read, and the deploy hook
+    reaches them through that one script."""
+    assert PROVISION_SCRIPT.name in CREATE_DATABASES.read_text(), (
         "nothing calls the provisioning script, so a deployment leaves the "
         "assistant querying as the service's own read-write user"
+    )
+    assert CREATE_DATABASES.name in MIGRATIONS.read_text(), (
+        f"{MIGRATIONS.name} no longer runs {CREATE_DATABASES.name}, so a deploy provisions nothing"
     )

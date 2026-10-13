@@ -24,7 +24,6 @@
 --
 -- Spec: docs/components/backend/analytics/specs/connector-health.
 
-CREATE DATABASE IF NOT EXISTS ingestion_history;
 
 CREATE TABLE IF NOT EXISTS ingestion_history.sync_events (
     event_id         UUID DEFAULT generateUUIDv4(),

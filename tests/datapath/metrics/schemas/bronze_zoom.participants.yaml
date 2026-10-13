@@ -1,0 +1,66 @@
+# Mirrors the bronze_zoom.participants table destination-clickhouse creates.
+schemas:
+  bronze_zoom.participants:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
+      version: {type: [string, "null"]}
+      id: {type: [string, "null"]}
+      user_id: {type: [string, "null"]}
+      participant_uuid: {type: [string, "null"]}
+      user_name: {type: [string, "null"]}
+      device: {type: [string, "null"]}
+      client: {type: [string, "null"]}
+      ip_address: {type: [string, "null"]}
+      internal_ip_addresses: {type: [string, "null"]}
+      location: {type: [string, "null"]}
+      network_type: {type: [string, "null"]}
+      microphone: {type: [string, "null"]}
+      speaker: {type: [string, "null"]}
+      camera: {type: [string, "null"]}
+      data_center: {type: [string, "null"]}
+      full_data_center: {type: [string, "null"]}
+      connection_type: {type: [string, "null"]}
+      video_connection_type: {type: [string, "null"]}
+      as_connection_type: {type: [string, "null"]}
+      join_time: {type: [string, "null"]}
+      leave_time: {type: [string, "null"]}
+      share_application: {type: [boolean, "null"]}
+      share_desktop: {type: [boolean, "null"]}
+      share_whiteboard: {type: [boolean, "null"]}
+      recording: {type: [boolean, "null"]}
+      pc_name: {type: [string, "null"]}
+      domain: {type: [string, "null"]}
+      mac_addr: {type: [string, "null"]}
+      harddisk_id: {type: [string, "null"]}
+      leave_reason: {type: [string, "null"]}
+      email: {type: [string, "null"]}
+      registrant_id: {type: [string, "null"]}
+      status: {type: [string, "null"]}
+      os: {type: [string, "null"]}
+      os_version: {type: [string, "null"]}
+      browser_name: {type: [string, "null"]}
+      browser_version: {type: [string, "null"]}
+      device_name: {type: [string, "null"]}
+      groupId: {type: [string, "null"]}
+      health: {type: [string, "null"]}
+      customer_key: {type: [string, "null"]}
+      sip_uri: {type: [string, "null"]}
+      from_sip_uri: {type: [string, "null"]}
+      role: {type: [string, "null"]}
+      participant_user_id: {type: [string, "null"]}
+      audio_call: {type: [string, "null"]}
+      has_archiving: {type: [boolean, "null"]}
+      optional_archiving: {type: [string, "null"]}
+      aic_disclaimer: {type: [string, "null"]}
+      total_jointime_cost: {type: [number, "null"]}
+      is_original_host: {type: [boolean, "null"]}
+      tenant_id: {type: [string, "null"]}
+      source_id: {type: [string, "null"]}
+      meeting_uuid: {type: [string, "null"]}
+      unique_key: {type: [string, "null"]}

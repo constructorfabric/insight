@@ -165,7 +165,13 @@ def warehouse(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Warehouse]:
         password=connection.password,
         database="default",
     )
+    # Every database this rig touches. A throwaway warehouse makes its own:
+    # on a deployment create-databases.sh is the one creation site, and
+    # neither the snapshot nor an on-run-start hook carries a CREATE DATABASE.
     client.command("CREATE DATABASE IF NOT EXISTS staging")
+    client.command("CREATE DATABASE IF NOT EXISTS silver")
+    client.command("CREATE DATABASE IF NOT EXISTS identity")
+    client.command("CREATE DATABASE IF NOT EXISTS config")
     silver_ddl = (INGESTION / "scripts/connectors-ddl/silver.sql").read_text()
     for stmt in silver_ddl.split(";"):
         match = re.search(r"CREATE TABLE IF NOT EXISTS silver\.(class_task_\w+)", stmt)

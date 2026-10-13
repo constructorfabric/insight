@@ -1,0 +1,104 @@
+{{/*
+==============================================================================
+ ClickHouse databases and the access that reads them
+==============================================================================
+
+Helm Hook Job that runs `src/ingestion/scripts/create-databases.sh` — the one
+site that creates a ClickHouse database — against whatever `clickhouse.host`
+resolves to. ClickHouse is external (out-of-chart L2 — gitops L2, Constructor
+Platform, managed warehouse, …); this Job dials `clickhouse.host` directly and
+waits for `/ping` to succeed before running the DDL.
+
+Which databases a release holds is not an operator decision, so there is no
+list here: the script names them. The epic's cluster mechanism rests on this
+being the only creator — inside a `Replicated` database, DDL is logged in
+Keeper and replayed on every replica, and no other creation site may make a
+plain one first (#3556).
+
+The grants ride along, because the script provisions the roles and grant-less
+users beside the databases they read. That is why this Hook carries the full
+DDL environment rather than a connection alone.
+
+ClickHouse auth model: the service user (`clickhouse.username`, which the
+operator MUST set — no default) is the bootstrap user; there is no
+separate root in this chart's contract. The external CH MUST grant the
+service user CREATE DATABASE — that's the operator-side contract.
+
+Hook timing: `pre-install,pre-upgrade`, weight 5 (after the weight -5 Secrets).
+The databases and the `presentation` user stand before the app pods that read
+them roll; the post-install `clickhouse-migrate` Hook runs the same script
+again through apply-ch-migrations.sh, as a no-op, so an install that skips this
+one still converges — later.
+
+Prerequisite: `insight-db-creds` must exist in the namespace BEFORE
+helm install/upgrade runs (gitops mode applies it first, upgrades
+inherit it from prior install). Fresh autoGenerate-mode installs on
+a brand-new namespace need the Secret template itself converted to a
+hook — tracked separately.
+
+Idempotent. `CREATE DATABASE IF NOT EXISTS` is a no-op on second-and-
+later runs, and every provisioning step the script runs converges rather than
+recreates. Connector bronze databases are not here and never will be: the
+Airbyte destination creates them at sync time from the connector's own
+catalogue.
+
+Gated on `clickhouse.createDatabases` (default true — an operator whose
+warehouse is provisioned out of band turns it off) AND the availability of
+`ingestion.toolboxImage` (the image that ships the script).
+==============================================================================
+*/}}
+{{- if and .Values.clickhouse.createDatabases .Values.ingestion.toolboxImage }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "insight.fullname" . }}-clickhouse-databases
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse-databases
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "insight.fullname" . }}-clickhouse-databases
+        app.kubernetes.io/component: clickhouse-databases
+    spec:
+      # Suppress the legacy `<SVC>_SERVICE_HOST/PORT/…` Docker-link env-vars
+      # kubelet auto-injects for every Service in the namespace at pod-start
+      # (see apiGateway deployment for the longer explanation).
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: db-init
+          image: {{ .Values.ingestion.toolboxImage | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [bash]
+          args:
+            - "-c"
+            - |
+              set -eu
+              # A deadline, not an attempt count: a probe that connects and then
+              # stalls holds the loop open, so each one is capped too.
+              echo "Waiting for ClickHouse at ${CLICKHOUSE_URL}..."
+              deadline=$(( $(date +%s) + 120 ))
+              until curl -sS -o /dev/null --fail --max-time 5 "${CLICKHOUSE_URL%/}/ping" 2>/dev/null; do
+                if [ "$(date +%s)" -ge "${deadline}" ]; then
+                  echo "ERROR: ClickHouse did not answer /ping within 120s" >&2
+                  exit 1
+                fi
+                sleep 2
+              done
+              echo "ClickHouse reachable."
+              bash /ingestion/scripts/create-databases.sh
+          env:
+            {{- include "insight.clickhouse.ddlEnv" . | nindent 12 }}
+{{- end }}

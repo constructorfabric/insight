@@ -2,13 +2,17 @@
 ClickHouse silver-layer sample-data generation.
 
 Table + gold-layer setup uses the SAME mechanism as a real deployment —
-the seed does not reimplement any DDL. It runs the exact two scripts the
+the seed does not reimplement any DDL. It runs the exact scripts the
 k8s clickhouse-migrate Hook Job runs, from the ingestion tree bind-mounted
 at /ingestion (docker-compose.yml `seed-sample.volumes`):
 
-1. `create-warehouse-placeholders.sh` — applies the CI-generated DDL
-   snapshot from scripts/connectors-ddl/*.sql (CREATE DATABASE + every
-   identity/staging/silver/insight relation, all IF NOT EXISTS / OR REPLACE).
+1. `create-databases.sh` — every database a deployment holds, plus the
+   roles and users that read them. It is the one site that creates a
+   database, so the snapshot below carries relations only.
+
+   Then `create-warehouse-placeholders.sh` — applies the CI-generated DDL
+   snapshot from scripts/connectors-ddl/*.sql (every identity/staging/silver/
+   insight relation, all IF NOT EXISTS / OR REPLACE).
    This gives the generators the real production schemas to write into.
 
    Bronze is NOT in that snapshot: `destination-clickhouse` is its only
@@ -22,8 +26,8 @@ at /ingestion (docker-compose.yml `seed-sample.volumes`):
    tables. Volumes scale by team profile + persona; per-day caps live in
    each generator module.
 
-3. `apply-ch-migrations.sh` — applies migrations/*.sql (identity DDL, class
-   contract heals, the contract-version stamp), the staging label repair,
+3. `apply-ch-migrations.sh` — applies migrations/*.sql (class contract
+   heals, the contract-version stamp), the staging label repair,
    and `dbt run --select tag:gold` to build the dbt-owned gold models. Run
    AFTER seeding so the materialized gold models are built over real seeded
    silver instead of empty placeholders.
@@ -87,9 +91,10 @@ def _ingestion_scripts_dir() -> Path:
 
 
 def _script_env() -> dict[str, str]:
-    """Env for the ingestion shell scripts (create-warehouse-placeholders.sh,
-    apply-ch-migrations.sh) — CLICKHOUSE_URL/USER/PASSWORD/DATABASE per
-    lib/ch-exec.sh + apply-ch-migrations.sh's own asserts."""
+    """Env for the ingestion shell scripts (create-databases.sh,
+    create-warehouse-placeholders.sh, apply-ch-migrations.sh) —
+    CLICKHOUSE_URL/USER/PASSWORD/DATABASE per lib/ch-exec.sh + those scripts'
+    own asserts."""
     target = config.parse_clickhouse(os.environ)
     return {
         **os.environ,
@@ -114,22 +119,37 @@ def _ch_client() -> clickhouse_connect.driver.client.Client:
     )
 
 
+def apply_create_databases() -> None:
+    """Every database a deployment holds, plus the access that reads them.
+
+    Runs the ingestion repo's create-databases.sh — the one creation site, and
+    the first thing the k8s clickhouse-migrate Hook Job runs. Nothing after it
+    carries a CREATE DATABASE: not the placeholder snapshot, not a migration,
+    not a dbt on-run-start hook.
+    """
+    _run_ingestion_script("create-databases.sh")
+
+
 def apply_create_warehouse_placeholders() -> None:
-    """CREATE DATABASE + identity/staging/silver/insight placeholder tables.
+    """The identity/staging/silver/insight placeholder tables.
 
     Runs the ingestion repo's create-warehouse-placeholders.sh — the exact
     script the k8s clickhouse-migrate Hook Job runs — so placeholder DDL
     has a single source of truth and cannot drift.
     """
-    script = _ingestion_scripts_dir() / "create-warehouse-placeholders.sh"
+    _run_ingestion_script("create-warehouse-placeholders.sh")
+
+
+def _run_ingestion_script(name: str) -> None:
+    script = _ingestion_scripts_dir() / name
     if not script.is_file():
         raise FileNotFoundError(
-            f"placeholders script not found at {script}. In compose, the "
+            f"deploy script not found at {script}. In compose, the "
             "seed-sample container must mount /ingestion; on a host run, "
             "this package must sit inside the ingestion tree (src/ingestion/tools/seed)."
         )
     subprocess.run(["bash", str(script)], env=_script_env(), check=True)
-    LOG.info("placeholders: %s applied", script.name)
+    LOG.info("deploy script: %s applied", script.name)
 
 
 def ensure_task_config_tables() -> None:
@@ -276,7 +296,8 @@ def run() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    # 1. Real deploy mechanism: create the placeholder tables.
+    # 1. Real deploy mechanism: the databases, then the placeholder tables.
+    apply_create_databases()
     apply_create_warehouse_placeholders()
     # config.* tables are dbt-owned (on-run-start macro) but the generators
     # write config.field_value_map before dbt's first run on a fresh stand.

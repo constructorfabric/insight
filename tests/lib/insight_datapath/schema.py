@@ -4,7 +4,7 @@ A stand raised with `test-stand minimal` has identity and nothing else, so the
 databases a spec seeds do not exist yet. This builds them in the order
 `bootstrap-db.sh` converges a fresh cluster in:
 
-    1. CREATE DATABASE staging | insight
+    1. CREATE DATABASE for every database a deployment holds
     2. Run the real connectors into the real destination (`bronze.create_bronze`)
     3. Apply the scripts/connectors-ddl snapshot (identity, staging, silver, insight)
     4. Run scripts/migrations/*.sql
@@ -40,16 +40,30 @@ LOG = logging.getLogger("datapath.schema")
 #: file applied here would pre-empt it.
 WAREHOUSE_SNAPSHOT = ("identity", "staging", "silver", "insight")
 
+#: The databases a deployment gets from `src/ingestion/scripts/create-databases.sh`,
+#: minus the app database, which the instance names. Nothing else creates them:
+#: neither the snapshot nor a migration nor a dbt hook carries a CREATE DATABASE.
+DATABASES = (
+    "staging",
+    "silver",
+    "identity",
+    "config",
+    "presentation",
+    "product_usage",
+    "ingestion_history",
+    "insight_datasets",
+)
+
 
 def apply_all(cfg: InstanceConfig, *, repo_root: Path, project: str) -> int:
     """Bootstrap the warehouse, then apply every *.sql migration."""
-    # 1. App DB exists (some migrations DROP VIEW insight.* before recreating).
+    # 1. Every database, as create-databases.sh makes them on a deployment
     ch.ensure_database(cfg, cfg.ch_database)
-    # 2. staging DB — dbt models live here in prod
-    ch.ensure_database(cfg, "staging")
-    # 3. Bronze, from the connectors themselves
+    for database in DATABASES:
+        ch.ensure_database(cfg, database)
+    # 2. Bronze, from the connectors themselves
     create_bronze(cfg, repo_root=repo_root, project=project)
-    # 4. identity/staging/silver/insight, which a deployment gets from dbt
+    # 3. identity/staging/silver/insight, which a deployment gets from dbt
     applied = apply_warehouse_snapshot(cfg, repo_root=repo_root)
     LOG.info("applied %d warehouse-snapshot statements", applied)
 

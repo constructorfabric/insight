@@ -17,6 +17,10 @@
 # .github/workflows/connectors-ddl.yml re-runs that pipeline on every PR and
 # fails on any drift; it validates, it never commits.
 #
+# The snapshot carries relations only — never a `CREATE DATABASE`. Its
+# databases stand already: apply-ch-migrations.sh runs create-databases.sh, the
+# one creation site, before this.
+#
 # Apply order is the dependency order: identity and staging first (gold reads
 # identity_inputs and the identity_persons mirror through resolve_person_id),
 # then silver, then insight, whose views read silver. Statements are separated

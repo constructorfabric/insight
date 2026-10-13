@@ -14,7 +14,6 @@
 -- Idempotent: this channel has no ledger and re-runs on every deploy.
 -- The class tables always exist here (placeholders precede migrations).
 ALTER TABLE silver.class_task_worklogs DROP COLUMN IF EXISTS insight_tenant_id;
-ALTER TABLE silver.class_task_worklogs DROP COLUMN IF EXISTS issue_id;
 ALTER TABLE silver.class_task_worklogs DROP COLUMN IF EXISTS author_email;
 ALTER TABLE silver.class_task_worklogs DROP COLUMN IF EXISTS worklog_seconds;
 

@@ -25,9 +25,8 @@ __CH_EXEC_SH=1
 : "${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}"
 
 # Execute the SQL piped on stdin as one statement over the HTTP interface.
-# The body is sent verbatim as the POST payload (--data-binary), mirroring
-# clickhouse-init-svcdbs-job.yaml — form encoding would mangle the SQL into
-# `query=CREATE+...` (Code 62).
+# The body is sent verbatim as the POST payload (--data-binary) — form
+# encoding would mangle the SQL into `query=CREATE+...` (Code 62).
 #
 # Credentials go via ClickHouse's native auth headers, NOT `-u`: the
 # username header is harmless in argv, but the password is fed through a
