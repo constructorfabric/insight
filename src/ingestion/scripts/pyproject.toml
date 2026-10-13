@@ -30,3 +30,4 @@ py-modules = [
     "insight_logging",
     "load_field_value_map",
 ]
+packages = ["tenant_migration"]
