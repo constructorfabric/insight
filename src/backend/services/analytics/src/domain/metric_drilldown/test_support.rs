@@ -18,7 +18,7 @@ use super::dto::{
 use super::presentation::presentation_columns;
 use super::sort::MetricDrilldownSort;
 
-pub(super) fn input(role: MetricInputRole, measure_key: &str) -> MetricInput {
+pub(crate) fn input(role: MetricInputRole, measure_key: &str) -> MetricInput {
     MetricInput {
         role,
         observation: ObservationSource::Managed(
@@ -40,7 +40,7 @@ fn detail_column(key: &str, label: &str, r#type: EvidenceColumnType) -> Evidence
 }
 
 /// The declaration a commit measure carries in the registry.
-pub(super) fn commit_presentation() -> EvidencePresentation {
+pub(crate) fn commit_presentation() -> EvidencePresentation {
     EvidencePresentation {
         detail_columns: vec![
             detail_column("ref", "Ref", EvidenceColumnType::String),
@@ -54,11 +54,11 @@ pub(super) fn commit_presentation() -> EvidencePresentation {
     }
 }
 
-pub(super) fn commit_input(role: MetricInputRole, measure_key: &str) -> EvidenceInput {
+pub(crate) fn commit_input(role: MetricInputRole, measure_key: &str) -> EvidenceInput {
     collapsing_commit_input(role, measure_key, AliasCollapse::Sum)
 }
 
-pub(super) fn collapsing_commit_input(
+pub(crate) fn collapsing_commit_input(
     role: MetricInputRole,
     measure_key: &str,
     alias_collapse: AliasCollapse,
@@ -71,7 +71,7 @@ pub(super) fn collapsing_commit_input(
     }
 }
 
-pub(super) fn definition(spec: ComputationSpec, dimensions: &[&str]) -> MetricDefinition {
+pub(crate) fn definition(spec: ComputationSpec, dimensions: &[&str]) -> MetricDefinition {
     MetricDefinition {
         base: MetricBase {
             key: "git.example".to_owned(),
@@ -91,7 +91,7 @@ pub(super) fn definition(spec: ComputationSpec, dimensions: &[&str]) -> MetricDe
     }
 }
 
-pub(super) fn plan(spec: ComputationSpec, inputs: Vec<EvidenceInput>) -> EvidencePlan {
+pub(crate) fn plan(spec: ComputationSpec, inputs: Vec<EvidenceInput>) -> EvidencePlan {
     EvidencePlan {
         definition: definition(spec, &["repository", "category"]),
         relation: EvidenceRelation::parse("git_metric_evidence")
@@ -101,7 +101,7 @@ pub(super) fn plan(spec: ComputationSpec, inputs: Vec<EvidenceInput>) -> Evidenc
     }
 }
 
-pub(super) fn row() -> EvidenceQueryRow {
+pub(crate) fn row() -> EvidenceQueryRow {
     EvidenceQueryRow {
             entity_id: "person@example.com".to_owned(),
             person_id: String::new(),
@@ -133,7 +133,7 @@ pub(super) fn row() -> EvidenceQueryRow {
 pub(super) const TEST_PERSON: Uuid = Uuid::from_u128(0x019e_2830_0000_7000_8000_0000_0000_0001);
 pub(super) const TEST_TENANT: Uuid = Uuid::from_u128(0x019e_2830_0000_7000_8000_0000_0000_00aa);
 
-pub(super) fn validated(plan: EvidencePlan) -> ValidatedMetricDrilldown {
+pub(crate) fn validated(plan: EvidencePlan) -> ValidatedMetricDrilldown {
     let selection = MetricDrilldownSelection {
         metric_key: plan.definition.key().to_owned(),
         entity: MetricDrilldownEntity::Person {

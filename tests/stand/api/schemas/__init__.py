@@ -54,6 +54,7 @@ from .analytics import (
     IngestionIntensityResponse,
     MetricDefinitionListResponse,
     MetricResultsResponse,
+    NotReadyReason,
     ReportPreviewResponse,
     RunResponse,
     SavedQuery,
@@ -75,6 +76,9 @@ from .analytics import (
 )
 from .analytics import (
     MetricResultViewDto5 as RollupView,
+)
+from .analytics import (
+    MetricResultViewDto8 as NotReadyView,
 )
 from .common import (
     EXTRACTOR_REJECTION_CONTENT_TYPE,
@@ -162,6 +166,8 @@ __all__: Sequence[str] = (
     "MeResponse",
     "MetricDefinitionListResponse",
     "MetricResultsResponse",
+    "NotReadyReason",
+    "NotReadyView",
     "Operation",
     "PeriodView",
     "PersonAccountsResponse",

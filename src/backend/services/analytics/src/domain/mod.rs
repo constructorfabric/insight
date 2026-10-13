@@ -9,6 +9,7 @@ pub mod metric_definitions;
 pub mod metric_drilldown;
 pub mod metric_key;
 pub mod metric_results;
+pub mod not_ready;
 pub(crate) mod person_absences;
 pub(crate) mod person_visibility;
 pub mod query_gate;
