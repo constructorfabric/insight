@@ -6,9 +6,10 @@ Airbyte and Kubernetes. They skip unless the stand's environment is exported:
     eval "$(src/ingestion/reconcile-connectors/tests/live/stand.sh env)"
     pytest src/ingestion/reconcile-connectors/tests/live
 
-Every call goes through the stand's KUBECONFIG. A KUBECONFIG outside the stand's
-state directory is refused: reconcile runs kubectl without --context, and these
-tests create and delete Secrets, sources and schedules.
+They run only when KUBECONFIG lies in the stand's state directory and holds the
+stand's kind context alone — a guard against pointing them somewhere by
+accident, not a proof of which cluster answers: reconcile runs kubectl without
+--context, and these tests create and delete Secrets, sources and schedules.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ MAIN = ROOT / "main.sh"
 #: The release a warm install ran before upgrading; its reconcile builds the warm state.
 BASELINE_REF_ENV = "RECONCILE_BASELINE_REF"
 STAND_DIR_MARKER = "insight-reconcile-stand"
+STAND_CONTEXT = "kind-insight-reconcile"
 DEFAULT_ORGANIZATION = "00000000-0000-0000-0000-000000000000"
 
 #: Connectors with static schemas, so reconcile can discover them without credentials
@@ -69,6 +71,11 @@ def _modern_bash() -> str:
 def _stand_env() -> dict[str, str] | None:
     kubeconfig = os.environ.get("KUBECONFIG", "")
     if STAND_DIR_MARKER not in kubeconfig or not os.environ.get("AIRBYTE_URL"):
+        return None
+    contexts = subprocess.run(
+        ["kubectl", "config", "get-contexts", "-o", "name"], capture_output=True, text=True, check=False
+    )
+    if contexts.stdout.split() != [STAND_CONTEXT]:
         return None
     env = dict(os.environ)
     # reconcile's helpers run as `python3` and need this interpreter's packages (pyyaml).
