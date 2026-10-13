@@ -6,7 +6,8 @@
 # bronze forgets the first extraction as its parts merge — so this is a copy,
 # counted against the original, swapped in, counted again, and only then is the
 # original dropped. The tenant comes from the source's bronze rows; a source
-# bronze no longer holds keeps an empty tenant.
+# bronze no longer holds keeps an empty tenant, and a source bronze holds under
+# more than one tenant refuses the heal — the old row cannot say whose it was.
 #
 # Guarded on the exact engine the topology needs, so a converged warehouse pays
 # one SELECT and a table left on the wrong family is rebuilt. Column order and
@@ -23,10 +24,22 @@ _catalogue_source_count() {
 # pass the engine guard on every later deploy.
 _catalogue_tenants_select() {
   local bronze
+  local shared
   bronze="$(ch_scalar "SELECT count() FROM system.tables WHERE database = 'bronze_jira' AND name = 'jira_fields'")" || return 1
   if [[ "${bronze}" -eq 0 ]]; then
     echo "SELECT '' AS insight_source_id, '' AS tenant_id WHERE 0"
     return 0
+  fi
+  shared="$(ch_scalar "SELECT count() FROM (
+      SELECT COALESCE(source_id, '') AS insight_source_id
+      FROM bronze_jira.jira_fields
+      WHERE COALESCE(source_id, '') IN (SELECT insight_source_id FROM staging.jira__catalogue_first_seen)
+      GROUP BY insight_source_id
+      HAVING uniqExact(COALESCE(tenant_id, '')) > 1
+    )")" || return 1
+  if [[ "${shared}" -ne 0 ]]; then
+    echo "  staging.jira__catalogue_first_seen: ${shared} source(s) appear in bronze under several tenants — refusing to guess whose boundary each row is" >&2
+    return 1
   fi
   echo "SELECT DISTINCT COALESCE(source_id, '') AS insight_source_id, COALESCE(tenant_id, '') AS tenant_id
           FROM bronze_jira.jira_fields"

@@ -97,8 +97,12 @@ def _appends(node: dict[str, Any]) -> bool:
 
 
 def _keeps_history(node: dict[str, Any]) -> bool:
+    """A snapshot, or an incremental model refusing a full refresh — a `table` model
+    is rebuilt on every run whatever its `full_refresh` says."""
+    config = node["config"]
     is_snapshot = SNAPSHOT_MACRO in node["depends_on"]["macros"]
-    return node["config"].get("full_refresh") is False or is_snapshot
+    refuses = config.get("full_refresh") is False and config["materialized"] == "incremental"
+    return refuses or is_snapshot
 
 
 def _listed_relations(path: Path) -> set[str]:
@@ -136,13 +140,13 @@ def test_the_rebuildable_list_names_untagged_append_models(models: Models) -> No
     assert not stale, f"no longer an untagged append-only model: {stale}"
 
 
-def test_a_history_model_is_keeps_history_by_a_full_refresh_it_did_not_ask_for(
+def test_a_tagged_model_is_a_snapshot_or_an_incremental_model_refusing_a_full_refresh(
     models: Models,
 ) -> None:
     """Only a snapshot may be refreshed — the seed replaces an org that way."""
     exposed = sorted(name for name, n in models.items() if _tagged(n) and not _keeps_history(n))
 
-    assert not exposed, f"set full_refresh=false on: {exposed}"
+    assert not exposed, f"make incremental with full_refresh=false: {exposed}"
 
 
 def test_the_history_list_names_exactly_the_tagged_relations(models: Models) -> None:

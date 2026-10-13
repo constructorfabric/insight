@@ -32,6 +32,7 @@ _ch_http_query() {
     *"name='jira__catalogue_first_seen'"*) echo 1 ;;
     *"AND engine = "*) echo "$CONVERGED" ;;
     *"name = 'jira_fields'"*) [[ "$BRONZE" == "<fail>" ]] && return 1; echo "$BRONZE" ;;
+    *"HAVING uniqExact"*) echo "$SHARED" ;;
     *"uniqExact(insight_source_id)"*) echo 2 ;;
     *) ;;
   esac
@@ -46,7 +47,9 @@ class Run:
     statements: list[str]
 
 
-def _heal(tmp_path: Path, *, cluster_mode: str = "false", converged: str = "0", bronze: str = "1") -> Run:
+def _heal(
+    tmp_path: Path, *, cluster_mode: str = "false", converged: str = "0", bronze: str = "1", shared: str = "0"
+) -> Run:
     log = tmp_path / "statements.log"
     log.touch()
     result = subprocess.run(
@@ -57,6 +60,7 @@ def _heal(tmp_path: Path, *, cluster_mode: str = "false", converged: str = "0", 
             "LOG": str(log),
             "CONVERGED": converged,
             "BRONZE": bronze,
+            "SHARED": shared,
             "CLICKHOUSE_URL": "http://clickhouse.invalid:8123",
             "CLICKHOUSE_USER": "test",
             "CLICKHOUSE_PASSWORD": "test",
@@ -119,3 +123,11 @@ def test_absent_bronze_copies_every_source_with_an_empty_tenant(tmp_path: Path) 
     inserts = _sent(run, "INSERT INTO")
     assert run.returncode == 0, run.statements
     assert len(inserts) == 1 and "bronze_jira.jira_fields" not in inserts[0], inserts
+
+
+def test_a_source_bronze_holds_under_several_tenants_keeps_the_original_table(tmp_path: Path) -> None:
+    run = _heal(tmp_path, shared="1")
+
+    assert run.returncode != 0, "the heal must refuse to copy one boundary to several tenants"
+    for verb in ("CREATE TABLE", "INSERT INTO", "EXCHANGE TABLES", "DROP TABLE"):
+        assert not _sent(run, verb), f"sent {verb} for an ambiguous source"
