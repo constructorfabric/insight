@@ -170,6 +170,7 @@ export function MetricEvidenceDialog({
     () => pages?.flatMap((page) => page.rows) ?? [],
     [pages]
   );
+  const notReady = pages?.[0]?.not_ready != null;
   const columns = useMemo(() => {
     const columns = query.data?.pages[0]?.columns ?? [];
     const order = new Map([
@@ -499,7 +500,14 @@ export function MetricEvidenceDialog({
               </Button>
             </div>
           ) : rows.length === 0 ? (
-            needle === "" ? (
+            notReady ? (
+              // Not "no supporting data for this selection": the selection was
+              // never read against built data, so nothing is claimed about it.
+              <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                No data yet — these records appear once the connector behind
+                them has synced.
+              </div>
+            ) : needle === "" ? (
               <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
                 No supporting data for this selection
               </div>

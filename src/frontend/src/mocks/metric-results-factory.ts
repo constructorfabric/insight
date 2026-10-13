@@ -1,5 +1,6 @@
 import type {
   MetricErrorView,
+  MetricNotReadyView,
   MetricResult,
   MetricResultView,
   MetricResultsRequest,
@@ -112,6 +113,20 @@ export function buildMetricErrorView(
     code: "QUERY_FAILED",
     message:
       "This metric could not be computed; the rest of the results are unaffected. An administrator can see the underlying error.",
+    ...overrides,
+  };
+}
+
+/**
+ * A view whose data has not been built yet — what a fresh install answers
+ * before the first connector sync, in a requested view's slot.
+ */
+export function buildMetricNotReadyView(
+  overrides: Partial<Omit<MetricNotReadyView, "view">> = {},
+): MetricNotReadyView {
+  return {
+    view: "not_ready",
+    reason: "SOURCE_RELATION_MISSING",
     ...overrides,
   };
 }

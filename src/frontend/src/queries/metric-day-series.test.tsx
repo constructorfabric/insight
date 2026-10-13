@@ -67,13 +67,17 @@ function harness() {
   return { wrapper };
 }
 
-async function readings(selection: MetricEvidenceSelection = SELECTION) {
+async function series(selection: MetricEvidenceSelection = SELECTION) {
   const { wrapper } = harness();
   const { result } = renderHook(() => useMetricDaySeries(selection), {
     wrapper,
   });
   await waitFor(() => expect(result.current.isSuccess).toBe(true));
   return result.current.data;
+}
+
+async function readings(selection: MetricEvidenceSelection = SELECTION) {
+  return (await series(selection))?.readings;
 }
 
 beforeEach(() => {
@@ -132,7 +136,7 @@ describe("useMetricDaySeries", () => {
         {
           metric_key: SELECTION.metric_key,
           views: [
-            { view: "error", code: "SOURCE_RELATION_MISSING", message: "gone" },
+            { view: "error", code: "QUERY_FAILED", message: "broken" },
           ],
         },
       ],
@@ -201,6 +205,26 @@ describe("useMetricDaySeries", () => {
       metrics: [{ metric_key: SELECTION.metric_key, views: [] }],
     } as unknown as client.MetricResultsResponse);
     expect(await readings()).toEqual([]);
+  });
+
+  it("answers a not-ready view as no data yet, not as a failure or an empty period", async () => {
+    // Nothing failed, so there is nothing to retry — but the period was never
+    // read either, so it cannot be reported as quiet.
+    vi.mocked(client.queryMetricResults).mockResolvedValue({
+      metrics: [
+        {
+          metric_key: SELECTION.metric_key,
+          views: [{ view: "not_ready", reason: "SOURCE_RELATION_MISSING" }],
+        },
+      ],
+    } as unknown as client.MetricResultsResponse);
+
+    expect(await series()).toEqual({ readings: [], notReady: true });
+  });
+
+  it("marks a read over built data as ready, so a quiet period stays a quiet period", async () => {
+    answers([]);
+    expect(await series()).toEqual({ readings: [], notReady: false });
   });
 
   it("does not read without a session", async () => {

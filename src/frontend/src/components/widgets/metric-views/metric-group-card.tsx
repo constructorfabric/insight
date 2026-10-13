@@ -175,6 +175,12 @@ export function MetricGroupCard({
       })
     ),
   ];
+  // Nothing here has been built yet, which is a different claim from "no
+  // metrics with data for this period" — and not a failure, so it never
+  // outranks a message the reader has to act on.
+  const notReady = def.collection.metrics.some(
+    (metricConfig) => data.byKey.get(metricConfig.key)?.notReady != null
+  );
 
   return (
     <Card
@@ -235,7 +241,7 @@ export function MetricGroupCard({
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-3">
         {isEmpty ? (
-          errorNotes.length > 0 ? null : <GroupCardEmpty />
+          errorNotes.length > 0 ? null : <GroupCardEmpty notReady={notReady} />
         ) : (
           <>
             {preview.length > 0 ? (
