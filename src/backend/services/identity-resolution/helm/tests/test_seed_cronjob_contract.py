@@ -246,11 +246,20 @@ def test_cronjob_loads_the_observability_contract_like_the_deployment(default_do
 
 
 @pytest.mark.parametrize("job", JOBS)
-def test_the_secret_is_the_jobs_only_tenant_source(job: str) -> None:
-    docs = _subchart_docs("--set", f"{job}.tenantDefaultId={TENANT}")
-
-    container = _job_container(_cronjob(docs, job))
+def test_the_secret_is_the_jobs_only_tenant_source(default_docs, job: str) -> None:
+    container = _job_container(_cronjob(default_docs, job))
     assert "env" not in container, container.get("env")
+
+
+@pytest.mark.parametrize("enabled", ["true", "false"])
+def test_a_standalone_install_still_setting_the_seed_tenant_is_refused(enabled: str) -> None:
+    """Ignoring it would run the seed under whatever tenant the Secret holds, or none."""
+    rc, _, err = _render(
+        SUBCHART, *SUBCHART_BASE, "--set", f"seed.enabled={enabled}", "--set", f"seed.tenantDefaultId={TENANT}"
+    )
+
+    assert rc != 0, f"seed.enabled={enabled}: the removed key rendered"
+    assert "seed.tenantDefaultId is removed" in err, err
 
 
 @pytest.mark.parametrize("job", JOBS)
