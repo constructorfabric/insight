@@ -193,6 +193,9 @@ class Warehouse:
         # across runs on purpose (`jira__catalogue_first_seen`, the journal):
         # every scenario seeds its own bronze and reads its own answer. The
         # tests that are ABOUT the persistence build again without the flag.
+        # The catalogue refuses a full refresh, so it is emptied by hand.
+        if full_refresh:
+            self.execute("TRUNCATE TABLE IF EXISTS staging.jira__catalogue_first_seen")
         self.dbt(
             "run",
             "--select",

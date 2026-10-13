@@ -17,7 +17,8 @@
 #      staging/silver/insight stubs so gold-view CREATE VIEW type-checks on a
 #      fresh cluster (CH validates referenced tables at parse time). Bronze is
 #      not among them: the Airbyte destination is its only creator.
-#   3. Apply migrations/*.sql in lexicographic order.
+#   3. Apply migrations/*.sql in lexicographic order, each engine token
+#      rendered for the topology (ch_render_engines).
 #   4. Build the dbt gold models (tag:gold) so dbt-owned views exist at
 #      deploy time instead of after the first connector sync.
 #
@@ -77,8 +78,12 @@ echo "=== Applying ClickHouse migrations ==="
 shopt -s nullglob
 for migration in "$SCRIPT_DIR/migrations"/*.sql; do
   echo "  $(basename "$migration")"
-  run_ch < "$migration"
+  ch_render_engines < "$migration" | run_ch
 done
+
+echo "=== Healing the engines of migration-created tables ==="
+source "$SCRIPT_DIR/lib/heal-migration-engines.sh"
+heal_migration_engines
 
 echo "=== Healing GitHub Projects V2 bronze keys ==="
 # Both relations were briefly keyed with the collection day inside `unique_key`.
@@ -428,6 +433,10 @@ heal_jira_issue_key() {
 heal_jira_substream_issue_id
 heal_jira_issue_key jira_issue
 heal_jira_issue_key jira_issue_keys
+
+echo "=== Healing the Jira catalogue first-sync record ==="
+source "$SCRIPT_DIR/lib/heal-jira-catalogue-first-seen.sh"
+heal_jira_catalogue_first_seen
 
 echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional

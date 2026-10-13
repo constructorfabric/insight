@@ -107,6 +107,7 @@ mod tests {
     use super::{PersonAbsenceContext, compile};
     use crate::domain::metric_results::ValidatedEntitySelection;
     use crate::domain::metric_results::ValidatedMetricResultsRequest;
+    use crate::domain::standalone_migration::standalone;
 
     type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -135,6 +136,7 @@ mod tests {
     }
 
     async fn prepare_warehouse(client: &insight_clickhouse::Client) -> R {
+        let absence_migration = standalone(ABSENCE_MIGRATION);
         for statement in [
             "CREATE DATABASE IF NOT EXISTS identity",
             "CREATE DATABASE IF NOT EXISTS silver",
@@ -142,7 +144,7 @@ mod tests {
              (source_type String, source_id UUID, account_id String, person_id UUID,
               created_at DateTime64(6))
              ENGINE = MergeTree ORDER BY (source_type, source_id, account_id)",
-            ABSENCE_MIGRATION,
+            absence_migration.as_str(),
         ] {
             client.query(statement).execute().await?;
         }

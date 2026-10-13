@@ -23,6 +23,7 @@ use chrono::{Duration, SecondsFormat, Utc};
 
 use super::model::SyncStatus;
 use super::read::{absent_ledger, read_health, read_syncs};
+use crate::domain::standalone_migration::standalone;
 
 const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 
@@ -75,7 +76,8 @@ fn client_or_skip() -> Option<insight_clickhouse::Client> {
 /// fanned out the way `lib/ch-exec.sh` fans it out: drop whole-line comments,
 /// split on `;`.
 async fn apply_migration(ch: &insight_clickhouse::Client) {
-    let body: String = MIGRATION
+    let migration = standalone(MIGRATION);
+    let body: String = migration
         .lines()
         .filter(|line| !line.trim_start().starts_with("--"))
         .collect::<Vec<_>>()

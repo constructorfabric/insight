@@ -11,6 +11,9 @@
 # Exposes:
 #   run_ch           — execute a (multi-statement) SQL block read from stdin.
 #   ch_table_exists  — `ch_table_exists <db> <table>`; exit 0 if present.
+#   ch_scalar        — one numeric answer of a SELECT, or failure.
+#   ch_engine        — `ch_engine <family>`; the family the topology creates.
+#   ch_render_engines — stdin SQL with every `{{ch_engine:<family>}}` rendered.
 #
 # Required env:
 #   CLICKHOUSE_URL       e.g. http://ch-host:8123
@@ -83,4 +86,34 @@ ch_table_exists() {
   result="$(printf "SELECT count() FROM system.tables WHERE database='%s' AND name='%s'" \
     "$db" "$tbl" | _ch_http_query | tr -d '[:space:]')"
   [[ "$result" == "1" ]]
+}
+
+# The engine family a hand-written CREATE uses, as `insight_engine` decides it
+# for dbt models: `Replicated*` where CLICKHOUSE_CLUSTER_MODE declares a
+# replicated warehouse, the plain family elsewhere.
+ch_engine() {
+  local mode
+  mode="$(printf '%s' "${CLICKHOUSE_CLUSTER_MODE:-false}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  case "${mode}" in
+    1 | true | yes | on) printf 'Replicated%s' "$1" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# A numbered migration names its engine as `{{ch_engine:<family>}}`, since a
+# literal family is invisible to the topology. A token naming no plain
+# MergeTree family is left unrendered and fails the render.
+ch_render_engines() {
+  local sql
+  local prefix
+  sql="$(cat)"
+  prefix="$(ch_engine '')"
+
+  sql="$(printf '%s\n' "${sql}" | sed -E "s/\{\{ch_engine:((Replacing|Summing|Aggregating|Collapsing|VersionedCollapsing)?MergeTree)\}\}/${prefix}\1/g")"
+  if [[ "${sql}" == *'{{ch_engine'* ]]; then
+    echo "ch_render_engines: unrendered engine token — name a plain MergeTree family" >&2
+    return 1
+  fi
+
+  printf '%s\n' "${sql}"
 }
