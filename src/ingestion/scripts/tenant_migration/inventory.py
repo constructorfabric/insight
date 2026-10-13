@@ -1,19 +1,21 @@
 """Which tables hold a tenant the migration moves, and in which columns.
 
 Bronze, operator config and the sync ledger are found by database; the dbt
-relations a rebuild cannot reproduce come from `tenant-history-tables.txt`.
+relations a rebuild cannot reproduce come from `history-tables.txt`, packaged
+beside this module.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from importlib import resources
 
 from tenant_migration.clickhouse import ClickHouse
 from tenant_migration.keys import Columns
 
-HISTORY_TABLES = Path(__file__).resolve().parents[1] / "tenant-history-tables.txt"
-WORK_SUFFIXES = ("__tenant_copy", "__tenant_backup", "__tenant_rejected", "__tenant_restore")
+HISTORY_TABLES = "history-tables.txt"
+COPY, BACKUP, REJECTED, RESTORE = "__tenant_copy", "__tenant_backup", "__tenant_rejected", "__tenant_restore"
+WORK_SUFFIXES = (COPY, BACKUP, REJECTED, RESTORE)
 
 TENANT_COLUMNS = ("tenant_id", "insight_tenant_id")
 SOURCE_COLUMNS = ("source_id", "insight_source_id")
@@ -48,11 +50,12 @@ class Unfit:
     reason: str
 
 
-def history_relations(path: Path = HISTORY_TABLES) -> list[tuple[str, str]]:
-    lines = (line.strip() for line in path.read_text(encoding="utf-8").splitlines())
+def history_relations() -> list[tuple[str, str]]:
+    text = resources.files("tenant_migration").joinpath(HISTORY_TABLES).read_text(encoding="utf-8")
+    lines = (line.strip() for line in text.splitlines())
     relations = [tuple(line.split(".", 1)) for line in lines if line and not line.startswith("#")]
     if not relations:
-        raise SystemExit(f"no relations listed in {path}")
+        raise SystemExit(f"no relations listed in {HISTORY_TABLES}")
     return [(database, name) for database, name in relations]
 
 

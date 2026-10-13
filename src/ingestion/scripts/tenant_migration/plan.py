@@ -79,7 +79,7 @@ def refusals(tables: list[TablePlan], unfit_with_rows: list[tuple[Unfit, int]]) 
             reasons.append(
                 f"{t.table.relation}: {t.ambiguous} key(s) start like a moving tenant but not with it and their source"
             )
-        if t.moving and t.leftovers:
+        if t.leftovers:
             reasons.append(
                 f"{t.table.relation}: an earlier run left {', '.join(t.leftovers)} — finalize or roll back first"
             )

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tenant_migration import apply as migration
 from tenant_migration.__main__ import main
-from tenant_migration.clickhouse import ClickHouse
+from tenant_migration.clickhouse import ClickHouse, ClickHouseError
 from tenant_migration.inventory import discover, history_relations
 from tenant_migration.keys import Tenants
 from tenant_migration.plan import Plan, survey
@@ -51,7 +52,7 @@ TABLES = (
 SCHEMA = f"""
 CREATE TABLE bronze_example.items (unique_key String, tenant_id Nullable(String), source_id Nullable(String),
     payload String, _airbyte_extracted_at DateTime64(3))
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key COMMENT 'synthetic items';
 INSERT INTO bronze_example.items VALUES
     ('{OLD}-main-PROJ-7', '{OLD}', 'main', 'the old tenant, whose own key holds the source name', '2026-01-02 00:00:00'),
     ('-main-PROJ-7', NULL, 'main', 'the same entity written before the tenant was stamped', '2026-01-01 00:00:00'),
@@ -187,12 +188,23 @@ def test_the_entity_written_twice_keeps_its_newest_row(warehouse: ClickHouse, tm
     assert payload == [["the old tenant, whose own key holds the source name"]]
 
 
-def test_a_second_run_finds_nothing_to_move(warehouse: ClickHouse, tmp_path: Path) -> None:
+def test_a_second_run_waits_for_finalize_and_then_finds_nothing_to_move(warehouse: ClickHouse, tmp_path: Path) -> None:
     _apply(warehouse, _plan(warehouse), tmp_path)
 
-    plan = _plan(warehouse)
+    waiting = _plan(warehouse)
+    migration.finalize(warehouse)
+    settled = _plan(warehouse)
 
-    assert plan.changing == [] and plan.refusals == [], plan.refusals
+    assert waiting.changing == [] and any("finalize or roll back first" in r for r in waiting.refusals)
+    assert settled.changing == [] and settled.refusals == [], settled.refusals
+
+
+def test_finalize_gives_a_rewritten_table_its_own_comment_back(warehouse: ClickHouse, tmp_path: Path) -> None:
+    _apply(warehouse, _plan(warehouse), tmp_path)
+
+    migration.finalize(warehouse)
+
+    assert _comment(warehouse, "bronze_example", "items") == "synthetic items"
 
 
 def test_rollback_puts_back_what_was_there_keeping_only_the_comment_ids_it_filled(
@@ -221,6 +233,137 @@ def test_the_dump_restores_the_original_after_backups_are_gone(warehouse: ClickH
     migration.restore(warehouse, tmp_path / "dump")
 
     assert _fingerprint(warehouse) == before
+    assert _comment(warehouse, "bronze_example", "items") == "synthetic items"
+
+
+def test_the_dump_restores_a_table_that_is_gone(warehouse: ClickHouse, tmp_path: Path) -> None:
+    before = _fingerprint(warehouse)
+    _apply(warehouse, _plan(warehouse), tmp_path)
+    migration.finalize(warehouse)
+    warehouse.execute("DROP TABLE staging.slack__users_snapshot")
+
+    migration.restore(warehouse, tmp_path / "dump")
+
+    assert _fingerprint(warehouse) == before
+
+
+@dataclass(frozen=True)
+class Interrupted(ClickHouse):
+    """ClickHouse that loses one reply: the statement runs, the caller hears nothing.
+
+    It fires at the first statement starting with `at`, or at the first one sent
+    after a statement starting with `after`. Unless `once`, every statement after
+    that fails too, as if the connection were gone.
+    """
+
+    at: str = ""
+    after: str = ""
+    once: bool = False
+    seen: list[str] = field(default_factory=list)
+
+    def execute(self, sql: str) -> str:
+        statement = sql.lstrip()
+        fired = "lost" in self.seen
+        if fired and not self.once:
+            raise ClickHouseError("connection lost")
+        if not fired:
+            if self.after and statement.startswith(self.after) and "armed" not in self.seen:
+                self.seen.append("armed")
+                return super().execute(sql)
+            hit = statement.startswith(self.at) if self.at else "armed" in self.seen
+            if hit:
+                super().execute(sql)
+                self.seen.append("lost")
+                raise ClickHouseError("connection lost")
+        return super().execute(sql)
+
+
+def _interrupted(ch: ClickHouse, *, at: str = "", after: str = "", once: str = "") -> Interrupted:
+    return Interrupted(url=ch.url, user=ch.user, password=ch.password, at=at, after=after, once=bool(once))
+
+
+def _comment(ch: ClickHouse, database: str, name: str) -> str:
+    rows = ch.rows(f"SELECT comment FROM system.tables WHERE database = '{database}' AND name = '{name}'")
+    return rows[0][0] if rows and rows[0] else ""
+
+
+WITHOUT_COMMENT_IDS = [t for t in TABLES if t != "bronze_youtrack.youtrack_comments"]
+
+BOUNDARIES = {
+    "the swap's reply is lost": {"at": "EXCHANGE TABLES"},
+    "the check after the swap fails": {"after": "EXCHANGE TABLES"},
+    "the rename after the swap is lost": {"at": "RENAME TABLE"},
+}
+
+
+@pytest.mark.parametrize("where", BOUNDARIES.values(), ids=BOUNDARIES.keys())
+def test_an_apply_cut_off_after_the_swap_is_rolled_back_by_a_later_run(
+    warehouse: ClickHouse, tmp_path: Path, where: dict[str, str]
+) -> None:
+    before = _fingerprint(warehouse)
+    plan = _plan(warehouse)
+
+    with pytest.raises(migration.MigrationError, match="run `rollback`"):
+        _apply(_interrupted(warehouse, **where), plan, tmp_path)
+    migration.rollback(warehouse)
+    migration.finalize(warehouse)
+
+    after = _fingerprint(warehouse)
+    assert {t: after[t] for t in WITHOUT_COMMENT_IDS} == {t: before[t] for t in WITHOUT_COMMENT_IDS}
+    assert warehouse.scalar("SELECT count() FROM system.tables WHERE name LIKE '%\\_\\_tenant\\_%'") == 0
+
+
+def test_an_apply_that_loses_one_reply_puts_the_original_back_itself(warehouse: ClickHouse, tmp_path: Path) -> None:
+    before = _fingerprint(warehouse)
+    once = _interrupted(warehouse, at="RENAME TABLE", once="yes")
+
+    with pytest.raises(migration.MigrationError, match="The original is live again"):
+        _apply(once, _plan(warehouse), tmp_path)
+
+    after = _fingerprint(warehouse)
+    assert {t: after[t] for t in WITHOUT_COMMENT_IDS} == {t: before[t] for t in WITHOUT_COMMENT_IDS}
+
+
+def test_an_apply_cut_off_after_the_swap_can_be_kept_by_finalize(warehouse: ClickHouse, tmp_path: Path) -> None:
+    with pytest.raises(migration.MigrationError):
+        _apply(_interrupted(warehouse, at="RENAME TABLE"), _plan(warehouse), tmp_path)
+
+    migration.finalize(warehouse)
+
+    first = _first_migrated(warehouse)
+    assert _column(warehouse, first, "tenant_id") == [NEW] * len(_column(warehouse, first, "tenant_id"))
+    assert warehouse.scalar("SELECT count() FROM system.tables WHERE name LIKE '%\\_\\_tenant\\_%'") == 0
+
+
+def _first_migrated(ch: ClickHouse) -> str:
+    """The table an interrupted apply reached first: the first one with rows, in plan order."""
+    return next(t.table.relation for t in _plan(ch).tables if t.rows)
+
+
+def test_a_rollback_cut_off_mid_swap_is_finished_by_the_next_one(warehouse: ClickHouse, tmp_path: Path) -> None:
+    before = _fingerprint(warehouse)
+    _apply(warehouse, _plan(warehouse), tmp_path)
+
+    with pytest.raises(ClickHouseError):
+        migration.rollback(_interrupted(warehouse, at="EXCHANGE TABLES"))
+    migration.rollback(warehouse)
+
+    after = _fingerprint(warehouse)
+    assert {t: after[t] for t in WITHOUT_COMMENT_IDS} == {t: before[t] for t in WITHOUT_COMMENT_IDS}
+
+
+def test_a_restore_cut_off_mid_swap_is_finished_by_the_next_one(warehouse: ClickHouse, tmp_path: Path) -> None:
+    before = _fingerprint(warehouse)
+    _apply(warehouse, _plan(warehouse), tmp_path)
+    migration.finalize(warehouse)
+
+    with pytest.raises(ClickHouseError):
+        migration.restore(_interrupted(warehouse, at="EXCHANGE TABLES"), tmp_path / "dump")
+    migration.restore(warehouse, tmp_path / "dump")
+
+    assert _fingerprint(warehouse) == before
+    displaced = _column(warehouse, "bronze_bamboohr.whos_out__tenant_rejected", "unique_key")
+    assert displaced == [f'["{NEW}","bamboo"]'], "the table the restore displaced is kept, not dropped"
 
 
 @pytest.mark.parametrize(

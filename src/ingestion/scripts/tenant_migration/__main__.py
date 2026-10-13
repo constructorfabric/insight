@@ -9,6 +9,11 @@
 `--old-tenant` is the tenant segment the install's keys were written with; rows
 with an empty tenant move too. Run with connectors and dbt stopped.
 
+`apply` keeps each original until `finalize`. After an interruption anywhere,
+`rollback` puts the originals back and `finalize` keeps what is live; both, and
+`restore`, read the state from the warehouse and can be run again until they
+succeed.
+
 Required env: CLICKHOUSE_URL, CLICKHOUSE_USER, CLICKHOUSE_PASSWORD.
 """
 
@@ -20,7 +25,7 @@ from pathlib import Path
 
 from tenant_migration import apply as migration
 from tenant_migration.clickhouse import ClickHouse, ClickHouseError
-from tenant_migration.inventory import discover, history_relations
+from tenant_migration.inventory import BACKUP, discover, history_relations
 from tenant_migration.keys import TenantError, Tenants
 from tenant_migration.plan import Plan, survey
 from tenant_migration.prerequisites import fill_youtrack_comment_ids
@@ -68,7 +73,7 @@ def run(args: argparse.Namespace, ch: ClickHouse) -> int:
             ch, plan, args.dump_dir, before_rewrite=[lambda: fill_youtrack_comment_ids(ch, plan.tenants)]
         )
         print(migration.describe(moved))
-        print(f"migrated {len(moved)} table(s); originals kept as *{migration.BACKUP} until `finalize`")
+        print(f"migrated {len(moved)} table(s); originals kept as *{BACKUP} until `finalize` or `rollback`")
         return 0
     if args.command == "rollback":
         print("\n".join(f"rolled back {r}" for r in migration.rollback(ch)) or "nothing to roll back")
