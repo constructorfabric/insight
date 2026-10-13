@@ -1,7 +1,7 @@
 {{ config(materialized='table', schema='staging', tags=['youtrack', 'staging', 'silver:class_task_links'], engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], settings={'allow_nullable_key': 1}) }}
 
 WITH observations AS (
-    SELECT insight_source_id, issue_id, id_readable, observed_at,
+    SELECT tenant_id, insight_source_id, issue_id, id_readable, observed_at,
         arrayFlatten(arrayMap(l -> arrayMap(t -> (
             concat(JSONExtractString(l, 'linkType', 'id'), ':', JSONExtractString(l, 'direction')),
             JSONExtractString(t, 'id'), JSONExtractString(t, 'idReadable')),
@@ -12,10 +12,10 @@ WITH observations AS (
         l -> length(JSONExtractArrayRaw(l, 'trimmedIssues')) > length(JSONExtractArrayRaw(l, 'issues')),
         JSONExtractArrayRaw(payload, 'links'))
 ), timelines AS (
-    SELECT insight_source_id, issue_id,
+    SELECT tenant_id, insight_source_id, issue_id,
         argMax(id_readable, observed_at) AS id_readable,
         arraySort(x -> x.1, groupArray((observed_at, links))) AS versions
-    FROM observations GROUP BY insight_source_id, issue_id
+    FROM observations GROUP BY tenant_id, insight_source_id, issue_id
 ), edges AS (
     SELECT *, arrayJoin(arrayDistinct(arrayMap(l -> (l.1, l.2), arrayFlatten(arrayMap(v -> v.2, versions))))) AS link
     FROM timelines

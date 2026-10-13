@@ -483,6 +483,32 @@ heal_jira_substream_issue_id
 heal_jira_issue_key jira_issue
 heal_jira_issue_key jira_issue_keys
 
+echo "=== Healing YouTrack field observation tenants ==="
+# The append-only observations predate their tenant column and cannot be
+# rebuilt. A row's key leads with the tenant it was written under followed by
+# its source, so the tenant is read back from the key against the tenants
+# Bronze holds, longest first; a row matching none keeps NULL for the tenant
+# migration to move. Idempotent: only NULL tenants are written.
+heal_youtrack_field_observation_tenant() {
+  local tenants
+  ch_table_exists staging youtrack__field_observations || return 0
+  echo "  staging.youtrack__field_observations"
+  run_ch <<'SQL'
+ALTER TABLE staging.youtrack__field_observations ADD COLUMN IF NOT EXISTS tenant_id Nullable(String) AFTER unique_key;
+ALTER TABLE staging.youtrack__field_observations MODIFY COLUMN tenant_id Nullable(String) AFTER unique_key;
+SQL
+  ch_table_exists bronze_youtrack youtrack_custom_fields || return 0
+  tenants="$(printf '%s' "SELECT arrayReverseSort(t -> length(t), groupUniqArray(assumeNotNull(tenant_id))) FROM bronze_youtrack.youtrack_custom_fields WHERE tenant_id IS NOT NULL FORMAT TabSeparatedRaw" | _ch_http_query)" || return 1
+  # SAFETY: run_ch splits statements on `;`, so a tenant carrying one is refused rather than split.
+  [[ "${tenants}" == \[*\] && "${tenants}" != *';'* ]] || { echo "ERROR: unreadable YouTrack tenants: ${tenants}" >&2; return 1; }
+  [[ "${tenants}" != "[]" ]] || return 0
+  run_ch <<SQL
+ALTER TABLE staging.youtrack__field_observations UPDATE tenant_id = nullIf(arrayFirst(t -> startsWith(unique_key, concat(t, '-', insight_source_id, '-')), ${tenants}), '') WHERE tenant_id IS NULL SETTINGS mutations_sync = 2;
+SQL
+}
+
+heal_youtrack_field_observation_tenant
+
 echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional
 # incremental inserts, positional union). Labels left the contract (they
