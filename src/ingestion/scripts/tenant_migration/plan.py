@@ -86,13 +86,25 @@ def refusals(tables: list[TablePlan], unfit_with_rows: list[tuple[Unfit, int]]) 
     return reasons
 
 
+def _literal(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _rows_of(ch: ClickHouse, unfit: Unfit) -> int:
+    """Read from system.tables: an unfit table's own name may not be a plain identifier.
+
+    A MergeTree that reports no count is taken to hold rows, so it is refused.
+    """
+    database, name = unfit.relation.split(".", 1)
+    return ch.scalar(
+        "SELECT ifNull(total_rows, 1) FROM system.tables"
+        f" WHERE database = {_literal(database)} AND name = {_literal(name)}"
+    )
+
+
 def survey(ch: ClickHouse, found: list[Table | Unfit], tenants: Tenants) -> Plan:
     tables = [survey_table(ch, t, tenants) for t in found if isinstance(t, Table)]
-    unfit = [
-        (u, ch.scalar(f"SELECT count() FROM `{u.relation.replace('.', '`.`', 1)}`"))
-        for u in found
-        if isinstance(u, Unfit)
-    ]
+    unfit = [(u, _rows_of(ch, u)) for u in found if isinstance(u, Unfit)]
     reasons = refusals(tables, [(u, n) for u, n in unfit if n])
     reasons += [f"{stale} — deploy this release before migrating" for stale in jira_issues_keyed_by_issue_key(ch)]
     return Plan(
