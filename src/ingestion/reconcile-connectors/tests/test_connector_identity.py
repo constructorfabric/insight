@@ -33,13 +33,17 @@ ANNOTATED = "printf 'claude-team-second'"
 UNANNOTATED = "printf ''"
 
 
-def resolve(call: str, *, secret: str, annotation: str) -> str:
+TENANT = "00000000-0000-4000-8000-000000000001"
+
+
+def resolve(call: str, *, secret: str, annotation: str, legacy_key: str = "") -> str:
     """Run one naming helper with the cluster replaced by two stubs."""
     script = f"""
     set -uo pipefail
     export INSIGHT_NAMESPACE=insight
     export CONNECTORS_DIR="{ROOT}/../connectors"
-    export INSIGHT_TENANT_ID=example-tenant
+    export INSIGHT_TENANT_ID={TENANT}
+    export INSIGHT_TENANT_KEY={legacy_key}
     source "{ROOT}/lib/connector-naming.sh"
     disc_match_descriptor_to_secret() {{ {secret}; }}
     kubectl() {{ {annotation}; }}
@@ -92,18 +96,29 @@ class TestTheIdentityIsReadNotInvented:
             == "main"
         )
 
-    def test_the_tenant_is_the_installs_own_not_the_secrets(self) -> None:
-        """One reconcile run drives one tenant — the chart requires it and the
-        loop exports it — so the tenant a row is recorded under is the
-        install's, whatever any Secret says."""
+    def test_a_fresh_install_names_by_the_canonical_tenant(self) -> None:
+        assert resolve("reconcile_tenant_key", secret=A_SECRET, annotation=ANNOTATED) == TENANT
+
+    def test_a_warm_install_names_by_its_legacy_key(self) -> None:
+        """Airbyte finds a source by its exact name: a warm install's sources
+        were created under the legacy key, and renaming them would orphan them
+        and their sync state."""
         assert (
-            resolve(
-                'reconcile_compute_tenant "claude-team"',
-                secret=A_SECRET,
-                annotation=ANNOTATED,
-            )
-            == "example-tenant"
+            resolve("reconcile_tenant_key", secret=A_SECRET, annotation=ANNOTATED, legacy_key="example-legacy")
+            == "example-legacy"
         )
+
+    def test_naming_refuses_to_run_without_a_tenant(self) -> None:
+        script = f"""
+        set -uo pipefail
+        export INSIGHT_NAMESPACE=insight CONNECTORS_DIR="{ROOT}/../connectors"
+        unset INSIGHT_TENANT_ID INSIGHT_TENANT_KEY
+        source "{ROOT}/lib/connector-naming.sh"
+        reconcile_tenant_key
+        """
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+        assert result.returncode != 0
+        assert result.stdout == ""
 
 
 class TestTheNameAndTheRecordCannotDisagree:
@@ -118,5 +133,16 @@ class TestTheNameAndTheRecordCannotDisagree:
                 secret=A_SECRET,
                 annotation=ANNOTATED,
             )
-            == "claude-team-claude-team-second-example-tenant-conn"
+            == f"claude-team-claude-team-second-{TENANT}-conn"
+        )
+
+    def test_a_warm_installs_connection_keeps_its_legacy_name(self) -> None:
+        assert (
+            resolve(
+                'reconcile_compute_connection_name "claude-team"',
+                secret=A_SECRET,
+                annotation=ANNOTATED,
+                legacy_key="example-legacy",
+            )
+            == "claude-team-claude-team-second-example-legacy-conn"
         )

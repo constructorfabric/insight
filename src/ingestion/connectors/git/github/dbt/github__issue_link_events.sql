@@ -58,7 +58,7 @@ WITH linked AS (
 )
 
 SELECT
-    CAST(concat(insight_source_id, '-github-link-', event_id) AS String)    AS unique_key,
+    CAST(concat(coalesce(tenant_id, ''), '-', insight_source_id, '-github-link-', event_id) AS String) AS unique_key,
     CAST(insight_source_id AS String)                                      AS insight_source_id,
     CAST(tenant_id AS String)                                              AS tenant_id,
     CAST('github' AS String)                                               AS data_source,

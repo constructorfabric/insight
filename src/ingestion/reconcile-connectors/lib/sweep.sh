@@ -144,7 +144,7 @@ sweep__build_work() {
     # A descriptor no Secret names is not installed here, and reconcile agrees:
     # it deletes such a connector's source rather than driving it.
     [[ -n "${secret_name}" ]] || continue
-    tenant="$(reconcile_compute_tenant "${name}")"
+    tenant="${INSIGHT_TENANT_ID}"
     conn_name="$(reconcile_compute_connection_name "${name}" "${source_id}")"
     # Not piped into `head`: without `pipefail` that hides a nonzero exit from
     # the filter, and a failed lookup would read as "no connection yet" — which

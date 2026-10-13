@@ -261,7 +261,7 @@ or from other existing Secrets via `keycloakConfig.extraEnv`. Never put
 placeholder syntax in realm YAML comments — config-cli substitution
 scans comments and fails the import.
 
-The tenant is pinned per environment: `global.tenantDefaultId` reaches
+The tenant is pinned per environment: `ingestion.reconcile.tenantId` reaches
 the import as `INSIGHT_TENANT_ID` (e.g.
 `033dcbad-2374-4548-a9fa-04e2d5e0889a`), stamped by each IdP's
 `hardcoded-attribute-idp-mapper` — never derived from upstream claims,

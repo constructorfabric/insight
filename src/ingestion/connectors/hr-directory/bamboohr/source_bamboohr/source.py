@@ -64,19 +64,21 @@ class SourceBamboohr(AbstractSource):
     def streams(self, config: Mapping[str, Any]) -> list[Stream]:
         client = _client(config)
         tenant_id = config["insight_tenant_id"]
+        tenant_key = config.get("insight_tenant_key")
         source_id = config["insight_source_id"]
         start_date = config.get("bamboohr_start_date") or DEFAULT_START_DATE
 
         return [
-            EmployeesStream(client=client, tenant_id=tenant_id, source_id=source_id),
+            EmployeesStream(client=client, tenant_id=tenant_id, tenant_key=tenant_key, source_id=source_id),
             LeaveRequestsStream(
                 client=client,
                 tenant_id=tenant_id,
+                tenant_key=tenant_key,
                 source_id=source_id,
                 start_date=start_date,
             ),
-            MetaFieldsStream(client=client, tenant_id=tenant_id, source_id=source_id),
-            WhosOutStream(client=client, tenant_id=tenant_id, source_id=source_id, start_date=start_date),
+            MetaFieldsStream(client=client, tenant_id=tenant_id, tenant_key=tenant_key, source_id=source_id),
+            WhosOutStream(client=client, tenant_id=tenant_id, tenant_key=tenant_key, source_id=source_id, start_date=start_date),
         ]
 
 

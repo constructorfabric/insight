@@ -232,9 +232,9 @@ keycloakConfig:
   #     truth, not two copies to rotate.
   #
   # It does NOT carry the tenant id, and must not be made to. The Job sets
-  # INSIGHT_TENANT_ID in its own `env:` block from `global.tenantDefaultId`, so
-  # storing it here would add another copy of that UUID to the list already
-  # enumerated at `global.tenantDefaultId` — one that drifts silently because
+  # INSIGHT_TENANT_ID in its own `env:` block from `ingestion.reconcile.tenantId`,
+  # so storing it here would add another copy of that UUID to the list already
+  # enumerated at `ingestion.reconcile.tenantId` — one that drifts silently because
   # the Job's own value would keep winning.
   #
   # And it does not carry any external IdP's OAuth credentials. An earlier
@@ -255,25 +255,12 @@ keycloakConfig:
 # ═══════════════════════════════════════════════════════════════════════════
 #  Global
 # ═══════════════════════════════════════════════════════════════════════════
-global:
-  # The stand's single tenant. Not a credential — an identifier the deploy
-  # cannot work without: the chart's default is empty, and an empty tenant
-  # fails closed in the analytics metric-catalog resolver and in
-  # identity-resolution's bootstrap-admin seed.
-  #
-  # This UUID has to stay equal to THREE other places or the stand
-  # silently half-works: `ingestion.reconcile.tenantId` below,
-  # `authenticator.oidc.defaultTenantId` below, and the value the seeder
-  # discovers from the composed `insight-identity-resolution-config` Secret
-  # at seed time (src/ingestion/tools/seed/seed-stand.sh reads it from the
-  # cluster rather than taking a flag, so a drift here silently seeds a
-  # tenant nobody can log into).
-  tenantDefaultId: "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
-  # Not set, and worth knowing why: `global.observability.otlp.endpoint` is left at
-  # the chart's empty default, which means every service emits structured
-  # JSON to stdout and exports no OTLP. There is no collector on this stand
-  # to export to (all `system.*` toggles in inventory.yaml are false), and a
-  # non-empty endpoint pointed at nothing costs every pod a retry loop.
+# Not set, and worth knowing why: `global.observability.otlp.endpoint` is left at
+# the chart's empty default, which means every service emits structured
+# JSON to stdout and exports no OTLP. There is no collector on this stand
+# to export to (all `system.*` toggles in inventory.yaml are false), and a
+# non-empty endpoint pointed at nothing costs every pod a retry loop.
+global: {}
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Datastores — all external, all operator-managed, none deployed by us
@@ -380,8 +367,13 @@ ingestion:
     # outside the release. See README.md, "What this env does not own".
     enabled: true
   reconcile:
-    # Must equal `global.tenantDefaultId`. Two copies of one UUID is a drift
-    # risk the chart does not check for us.
+    # The stand's single tenant. Not a credential — an identifier the deploy
+    # cannot work without: an empty tenant fails closed in the analytics
+    # metric-catalog resolver and in identity-resolution's bootstrap-admin seed.
+    #
+    # It has to stay equal to `authenticator.oidc.defaultTenantId` below; the
+    # seeder reads it back from the composed `insight-identity-resolution-config`
+    # Secret, so it needs no copy of its own.
     tenantId: "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
     destinationName: clickhouse-bronze
     # `<argo-release-name>-<argo-namespace>` — the instance id the Argo
@@ -659,7 +651,7 @@ authenticator:
     externalIdClaim: "idp_sub"
 
     # Fallback tenant for an id_token without a tenant claim. Must equal
-    # `global.tenantDefaultId`; empty would fail closed.
+    # `ingestion.reconcile.tenantId`; empty would fail closed.
     defaultTenantId: "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -714,7 +706,7 @@ identityResolution:
       limits: {cpu: 500m, memory: 512Mi}
       # No `tenantDefaultId` here: for an umbrella install the composed
       # identity-resolution config Secret already carries the tenant from
-      # `global.tenantDefaultId`. Setting it here would add a fourth copy of
+      # `ingestion.reconcile.tenantId`. Setting it here would add another copy of
       # the same UUID that can drift; the key exists for standalone installs
       # whose Secret does not carry one.
 

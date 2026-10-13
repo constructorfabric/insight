@@ -198,7 +198,7 @@ reconcile_cascade_delete() {
     return 0
   fi
   local tenant
-  tenant="$(reconcile_compute_tenant "${connector}")"
+  tenant="$(reconcile_tenant_key)"
   local workspace_id
   workspace_id="$(ab_workspace_id)"
 
@@ -1351,8 +1351,9 @@ _reconcile_one_connector() {
   [[ "${def_action}" == "republish" ]] && data_changed=1
 
   # Layer 2 — source
-  local tenant_id="${INSIGHT_TENANT_ID:-}"
-  local expected_source_name="${name}-${source_id_label}-${tenant_id}"
+  local tenant_key
+  tenant_key="$(reconcile_tenant_key)"
+  local expected_source_name="${name}-${source_id_label}-${tenant_key}"
 
   # Fields the platform owns rather than the tenant. The K8s Secret carries
   # connector-specific credentials only; identity (`insight_tenant_id`,
@@ -1376,7 +1377,8 @@ _reconcile_one_connector() {
 
   local source_cfg_json
   source_cfg_json="$(python3 "${_RECONCILE_PY_DIR}/compose_source_config.py" \
-    --tenant-id "${tenant_id}" --source-id "${source_id_label}" \
+    --tenant-id "${INSIGHT_TENANT_ID}" --tenant-key "${tenant_key}" \
+    --source-id "${source_id_label}" \
     --injected "${injected_json}" <<<"${secret_data_json}")"
 
   # Destination ClickHouse schema (bronze namespace) comes ONLY from
@@ -1477,7 +1479,7 @@ _reconcile_one_connector() {
   local conn_name schedule tenant
   conn_name="$(reconcile_compute_connection_name "${name}" "${source_id_label}")"
   schedule="$(reconcile_compute_schedule "${name}" "${secret_name}")"
-  tenant="$(reconcile_compute_tenant "${name}")"
+  tenant="$(reconcile_tenant_key)"
   if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
     log_line INFO "${name}: would create/update Argo CronWorkflow"
   else
@@ -1545,7 +1547,8 @@ reconcile_prune_removed_instances() {
     return 0
   fi
 
-  local tenant="${INSIGHT_TENANT_ID:-}"
+  local tenant
+  tenant="$(reconcile_tenant_key)"
   local workspace_id sources_json plan_file definitions_file
   workspace_id="$(ab_workspace_id)" || return 0
   sources_json="$(ab_list_sources "${workspace_id}")" || return 0
@@ -1615,7 +1618,7 @@ _reconcile_mark_colliding_connectors() {
     # One instance cannot collide with itself, and an unusable name on its own
     # is reported by the apply that tries it rather than twice.
     (( ${#ids[@]} > 1 )) || continue
-    tenant="$(reconcile_compute_tenant "${name}")"
+    tenant="$(reconcile_tenant_key)"
     # The guard's own words: it refuses a collapsed pair and an over-cap name
     # for different reasons, and naming one of them here would mislabel the
     # other.

@@ -2,16 +2,20 @@
 """Compose an Airbyte source config from a K8s Secret's data plus platform fields.
 
 CLI:
-  compose_source_config.py --tenant-id T --source-id S [--injected JSON]
+  compose_source_config.py --tenant-id T --tenant-key K --source-id S [--injected JSON]
 
 Stdin:  the Secret's decoded stringData object (extract_secret_data.py output).
 Stdout: the source config as JSON.
 Exit:   0 on success, 1 on JSON decode error.
 
 The Secret carries connector-specific credentials only. Identity
-(`insight_tenant_id`, `insight_source_id`) and any `--injected` fields are
-platform-owned: they are added here so an operator never duplicates them into
-the Secret payload.
+(`insight_tenant_id`, `insight_tenant_key`, `insight_source_id`) and any
+`--injected` fields are platform-owned: they are added here so an operator never
+duplicates them into the Secret payload.
+
+`insight_tenant_id` is the canonical tenant every record is stamped with;
+`insight_tenant_key` is the tenant segment of a record's `unique_key`, which a
+warm install keeps at its legacy value so existing rows still deduplicate.
 """
 
 import argparse
@@ -19,11 +23,12 @@ import json
 import sys
 
 
-def compose(secret_data: dict, tenant_id: str, source_id: str, injected: dict) -> dict:
+def compose(secret_data: dict, tenant_id: str, tenant_key: str, source_id: str, injected: dict) -> dict:
     return {
         **secret_data,
         **injected,
         "insight_tenant_id": tenant_id,
+        "insight_tenant_key": tenant_key,
         "insight_source_id": source_id,
     }
 
@@ -31,6 +36,7 @@ def compose(secret_data: dict, tenant_id: str, source_id: str, injected: dict) -
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tenant-id", required=True)
+    parser.add_argument("--tenant-key", required=True)
     parser.add_argument("--source-id", required=True)
     parser.add_argument("--injected", default="{}")
     args = parser.parse_args()
@@ -42,7 +48,7 @@ def main() -> int:
         print(f"compose_source_config: bad JSON: {exc}", file=sys.stderr)
         return 1
 
-    print(json.dumps(compose(secret_data, args.tenant_id, args.source_id, injected)))
+    print(json.dumps(compose(secret_data, args.tenant_id, args.tenant_key, args.source_id, injected)))
     return 0
 
 

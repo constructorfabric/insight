@@ -112,6 +112,7 @@ class SourceActiveDirectory(AbstractSource):
             ActiveDirectoryUsersStream(
                 config=config,
                 tenant_id=config["insight_tenant_id"],
+                tenant_key=config.get("insight_tenant_key"),
                 source_id=config["insight_source_id"],
             )
         ]

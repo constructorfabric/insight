@@ -21,6 +21,7 @@ from insight_datapath.instance import InstanceConfig, resolve_instance
 from insight_datapath.reset import refuse_a_seeded_warehouse, session_floor
 from insight_datapath.schema import apply_all, restart_analytics
 from insight_datapath.subjects import Subjects
+from insight_datapath.tenant_transition import WARM_KEY_ENV, WarmTenant, tenant_env, warm_tenant
 from insight_stand.manifest import Manifest, load_manifest
 from insight_stand.personas import ADMIN_OPERATOR_FIXTURE, PersonaSession, open_session
 from insight_stand.stand import resolve_endpoint
@@ -55,6 +56,17 @@ def _instance_name() -> str:
     return f"insight-{suffix.lstrip('-')}" if suffix.strip("-") else "insight"
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--warm-tenant-key",
+        default=None,
+        help=(
+            "Seed Bronze under this legacy tenant key and run the tenant transition before "
+            f"each spec builds, as an upgraded install would (env: {WARM_KEY_ENV})."
+        ),
+    )
+
+
 @pytest.fixture(scope="session")
 def instance_cfg() -> InstanceConfig:
     """Which instance's databases this run seeds and clears."""
@@ -70,6 +82,18 @@ def stand_manifest() -> Manifest:
 def tenant(stand_manifest: Manifest) -> str:
     """The tenant this instance serves, which every seeded row belongs to."""
     return stand_manifest.tenant
+
+
+@pytest.fixture(scope="session")
+def warm(request: pytest.FixtureRequest, tenant: str) -> WarmTenant | None:
+    """Set when this run plays an upgraded install whose Bronze predates the canonical tenant."""
+    return warm_tenant(request.config.getoption("--warm-tenant-key"), tenant)
+
+
+@pytest.fixture(scope="session")
+def bronze_tenant(tenant: str, warm: WarmTenant | None) -> str:
+    """The tenant value a spec's Bronze rows carry when they are seeded."""
+    return warm.legacy_key if warm else tenant
 
 
 @pytest.fixture(scope="session")
@@ -128,13 +152,19 @@ def warehouse_floor(instance_cfg: InstanceConfig, warehouse_schema: int) -> int:
 
 
 @pytest.fixture(scope="session")
-def dbt_runner(instance_cfg: InstanceConfig, warehouse_floor: int) -> Iterator[DbtRunner]:
+def dbt_runner(
+    instance_cfg: InstanceConfig, warehouse_floor: int, warm: WarmTenant | None
+) -> Iterator[DbtRunner]:
     """dbt against this instance, with every non-gold model materialized once.
 
     The closure build is what makes relation existence a session constant: a spec
     builds only its own slice, and a compile-time probe for a relation another
     connector owns must answer the same however few specs have run.
+
+    In warm mode dbt hears the tenant pair the way the chart passes it, so
+    `tenant_key()` keeps building the legacy key a warm install's history holds.
     """
+    tenant_env(warm).apply(os.environ)
     runner = DbtRunner(
         instance_cfg,
         project_dir=REPO_ROOT / "src/ingestion/dbt",

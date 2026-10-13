@@ -43,7 +43,8 @@ These fields are set by `reconcile-connectors.sh` and should NOT be in the Secre
 
 | Field | Source |
 |-------|--------|
-| `insight_tenant_id` | `tenant_id` from ConfigMap `insight-config` (ns `data`) or `INSIGHT_TENANT_ID` env |
+| `insight_tenant_id` | the canonical tenant UUID (`INSIGHT_TENANT_ID`) |
+| `insight_tenant_key` | tenant segment of `unique_key` (`INSIGHT_TENANT_KEY`, else the tenant UUID) |
 | `insight_source_id` | `insight.cyberfabric.com/source-id` annotation |
 
 All connector parameters are in the K8s Secret. Tenant identity is read from the cluster ConfigMap.

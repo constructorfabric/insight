@@ -248,7 +248,7 @@ streams:
             value: "{{ record.get('created_time') }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
 
   # ── Stream 2: chatgpt_team_chat_activity ────────────────────────────
   # Per-user per-day chat usage. Endpoint:
@@ -321,7 +321,7 @@ streams:
             value: "{{ stream_interval.start_time }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ record['email'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ record['email'] }}"
 
   # ── Stream 3: chatgpt_team_codex_user_daily ─────────────────────────
   # Per-user per-day Codex usage. Endpoint:
@@ -427,7 +427,7 @@ streams:
             value: "{{ ((record.get('code_attribution') or {}).get('lines_of_code') or {}).get('added') }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ record['email'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ record['email'] }}"
 
   # ── Stream 4: chatgpt_team_codex_user_daily_org ─────────────────────
   # The leaderboard envelope without its rows. Same endpoint as stream 3,
@@ -501,7 +501,7 @@ streams:
             # it ends with — so the gate needs the reference belonging to the
             # read it judges, not the day's newest one.
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
 
   # ── Stream 5: chatgpt_team_codex_sessions_daily ─────────────────────
   # Per-user per-day Codex usage as the vendor's session/message aggregate.
@@ -643,7 +643,7 @@ streams:
             # reintroduce the off-by-one the shared cursor's missing end bound
             # was fixed to avoid.
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['date'] }}-{{ record['user_id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['date'] }}-{{ record['user_id'] }}"
 
   # ── Stream 6: chatgpt_team_subscription_usage ───────────────────────
   # Per-model spend for the current window. Endpoint:
@@ -709,7 +709,7 @@ streams:
             value: "{{ record['label'] }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}-{{ record['label'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}-{{ record['label'] }}"
 
   # ── Stream 7: chatgpt_team_subscription_balance ─────────────────────
   # Current balance snapshot. Same endpoint as stream 5, but extracts the
@@ -767,7 +767,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%d') }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}"
 
   # ── Stream 8: chatgpt_team_account_settings ─────────────────────────
   # Workspace-level seat defaults. Endpoint:
@@ -822,7 +822,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%d') }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}"
 
 spec:
   type: Spec
@@ -841,6 +841,11 @@ spec:
         title: Insight Tenant ID
         description: Tenant isolation identifier, injected as `tenant_id` on every record.
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       chatgpt_account_id:
         type: string
         title: ChatGPT Account ID

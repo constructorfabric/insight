@@ -20,6 +20,8 @@ def test_sync_trigger_omits_retired_enrich_parameter() -> None:
             "--connection-name",
             "jira-main-example-conn",
             "--tenant",
+            "00000000-0000-4000-8000-000000000001",
+            "--tenant-key",
             "example",
             "--insight-source-id",
             "main",

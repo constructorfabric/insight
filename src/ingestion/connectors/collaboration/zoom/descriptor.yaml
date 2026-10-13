@@ -14,7 +14,10 @@ name: zoom
 # 2.0.0 (major): meeting time counts only while someone else was in the meeting,
 #   and a session with nobody else is not a meeting. MAJOR so reconcile runs the
 #   one-shot `dbt --full-refresh` that recomputes history already in staging/silver.
-version: "2.0.0"
+# 2.1.0: the tenant segment of unique_key comes from insight_tenant_key, so a
+#   warm install keeps its keys when tenant_id moves to the canonical tenant
+#   UUID. MINOR per ADR-0015: no stored key changes.
+version: "2.1.0"
 schedule: 0 3 * * *
 dbt_select: tag:zoom+
 workflow: sync

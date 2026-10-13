@@ -61,7 +61,7 @@ streams:
             value: "{{ config['insight_source_id'] }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
           - type: AddedFieldDefinition
             path: [project_json]
             value: "{{ record | tojson | tojson }}"
@@ -139,7 +139,7 @@ streams:
             value: "{{ config['insight_source_id'] }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
           - type: AddedFieldDefinition
             path: [user_json]
             value: "{{ record | tojson | tojson }}"
@@ -227,7 +227,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}-{{ now_utc().strftime('%Y%m%dT%H%M%S%f') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}-{{ now_utc().strftime('%Y%m%dT%H%M%S%f') }}"
       - type: RemoveFields
         field_pointers:
           - [fieldType]
@@ -356,7 +356,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.project_id }}-{{ record['id'] }}-{{ now_utc().strftime('%Y%m%dT%H%M%S%f') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.project_id }}-{{ record['id'] }}-{{ now_utc().strftime('%Y%m%dT%H%M%S%f') }}"
       - type: RemoveFields
         field_pointers:
           - [condition]
@@ -671,7 +671,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_slice.extra_fields['project_id'] }}-{{ stream_slice.extra_fields['project_field_id'] }}-{{ ('values' if stream_partition.get('values_bundle_id') else 'groups' if stream_partition.get('user_groups_bundle_id') else 'individuals' if stream_partition.get('user_individuals_bundle_id') else 'aggregatedUsers') }}-{{ record['id'] }}-{{ stream_slice.extra_fields['snapshot_observed_at'].replace('-', '').replace(':', '').replace('.', '') }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_slice.extra_fields['project_id'] }}-{{ stream_slice.extra_fields['project_field_id'] }}-{{ ('values' if stream_partition.get('values_bundle_id') else 'groups' if stream_partition.get('user_groups_bundle_id') else 'individuals' if stream_partition.get('user_individuals_bundle_id') else 'aggregatedUsers') }}-{{ record['id'] }}-{{ stream_slice.extra_fields['snapshot_observed_at'].replace('-', '').replace(':', '').replace('.', '') }}
       - type: RemoveFields
         field_pointers:
           - [id]
@@ -758,7 +758,7 @@ streams:
             value: "{{ config['insight_source_id'] }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
           - type: AddedFieldDefinition
             path: [agile_json]
             value: "{{ record | tojson | tojson }}"
@@ -895,7 +895,7 @@ streams:
             value: "{{ stream_partition.agile_id }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.agile_id }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.agile_id }}-{{ record['id'] }}"
           - type: AddedFieldDefinition
             path: [sprint_json]
             value: "{{ record | tojson | tojson }}"
@@ -991,7 +991,7 @@ streams:
             value: "{{ config['insight_source_id'] }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -1090,7 +1090,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
       - type: RemoveFields
         field_pointers:
           - [customFields]
@@ -1324,7 +1324,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
       - type: RemoveFields
         field_pointers:
           - [customFields]
@@ -1474,7 +1474,7 @@ streams:
             value: "{{ record | tojson | tojson }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
       - type: RemoveFields
         field_pointers:
           - [category]
@@ -1561,7 +1561,7 @@ streams:
             value: "{{ record | tojson | tojson }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
       - type: RemoveFields
         field_pointers:
           - [duration]
@@ -1732,7 +1732,7 @@ streams:
             value: "{{ record | tojson | tojson }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
       - type: RemoveFields
         field_pointers:
           - [attachments]
@@ -1905,7 +1905,7 @@ streams:
             value: "{{ record | tojson | tojson }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.issue_id }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.issue_id }}-{{ record['id'] }}"
       - type: RemoveFields
         field_pointers:
           - [linkType]
@@ -2179,7 +2179,7 @@ streams:
             value: "{{ record | tojson | tojson }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.issue_id }}-{{ record['id'] }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.issue_id }}-{{ record['id'] }}"
       - type: RemoveFields
         field_pointers:
           - [id]
@@ -2261,7 +2261,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}-{{ now_utc().strftime('%Y%m%dT%H%M%S%f') }}"
+            value: "{{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}-{{ now_utc().strftime('%Y%m%dT%H%M%S%f') }}"
       - type: RemoveFields
         field_pointers:
           - [project]
@@ -2304,6 +2304,11 @@ spec:
         type: string
         title: Insight Tenant ID
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         title: Insight Source ID

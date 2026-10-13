@@ -30,6 +30,7 @@
             "destinationName": { "type": "string" },
             "argoInstanceId": { "type": "string" },
             "tenantId": { "type": "string" },
+            "legacyTenantKeyOverride": { "type": "string" },
             "resources": {
               "type": "object",
               "properties": {

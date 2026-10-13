@@ -180,11 +180,9 @@ pub struct MetricCatalogConfig {
     /// Env: `APP__gears__analytics__config__metric_catalog__tenant_metrics_enabled`.
     pub tenant_metrics_enabled: bool,
 
-    /// Enforce the per-tenant observation filter (#1967) on metric reads.
-    /// Defaults to `false`: the ingested `tenant_id` in the bronze/silver/gold
-    /// pipeline is not yet aligned to the JWT tenant, so an exact
-    /// `tenant_id = <session>` match would silently empty every metric read.
-    /// Flip to `true` per environment once the ingest tenant is aligned (#1829).
+    /// Enforce the per-tenant observation filter on metric reads. Every layer
+    /// carries the canonical tenant UUID the session tenant names; a warm
+    /// install reads empty until its tenant migration has run.
     ///
     /// Env: `APP__gears__analytics__config__metric_catalog__enforce_tenant_scope`.
     pub enforce_tenant_scope: bool,
@@ -199,7 +197,7 @@ impl Default for MetricCatalogConfig {
     fn default() -> Self {
         Self {
             tenant_metrics_enabled: false,
-            enforce_tenant_scope: false,
+            enforce_tenant_scope: true,
             periodic_validation_enabled: true,
         }
     }

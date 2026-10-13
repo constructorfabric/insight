@@ -88,7 +88,7 @@ UMBRELLA_BASE = [
     "--set",
     "redpanda.brokers=rp:9092",
     "--set",
-    "ingestion.reconcile.tenantId=default",
+    "ingestion.templates.enabled=false",
     "--set",
     "authenticator.oidc.issuerUrl=https://idp",
     "--set",
@@ -296,7 +296,7 @@ def test_umbrella_refuses_enabled_seed_without_a_tenant(umbrella_deps) -> None:
 
 
 def test_umbrella_renders_the_cronjobs_with_a_tenant(umbrella_deps) -> None:
-    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}")
+    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", f"ingestion.reconcile.tenantId={TENANT}")
     assert rc == 0, err
     docs = _docs(out)
     for job in JOBS:
@@ -329,7 +329,7 @@ def test_umbrella_carries_the_roster_source_to_the_gear_that_reads_it(umbrella_d
         umbrella_deps,
         *UMBRELLA_BASE,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"ingestion.reconcile.tenantId={TENANT}",
         "--set",
         "identityResolution.rosterSourceType=bamboohr",
     )
@@ -339,7 +339,7 @@ def test_umbrella_carries_the_roster_source_to_the_gear_that_reads_it(umbrella_d
 
 
 def test_umbrella_names_no_roster_by_default(umbrella_deps) -> None:
-    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}")
+    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", f"ingestion.reconcile.tenantId={TENANT}")
     assert rc == 0, err
 
     assert _umbrella_gear_config(out)["roster_source_type"] == "", "an upgrade must not start minting persons by itself"

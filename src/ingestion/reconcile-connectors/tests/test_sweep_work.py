@@ -57,7 +57,7 @@ def build_work(plan: str = DEFAULT_PLAN, *, unreadable: bool = False) -> subproc
     source "{ROOT}/lib/sweep.sh"
     log_line() {{ printf '%s\\n' "$*" >&2; }}
     disc_load_instances() {{ {loader}; }}
-    reconcile_compute_tenant() {{ printf 'default'; }}
+    INSIGHT_TENANT_ID=00000000-0000-4000-8000-000000000001
     reconcile_compute_connection_name() {{ printf '%s-%s-default-conn' "$1" "$2"; }}
     sweep__build_work "tick-1" {json.dumps(CONNECTIONS)}
     """
@@ -118,7 +118,7 @@ class TestEveryInstanceIsItsOwnRow:
         assert result.returncode == 0, result.stderr
         work = json.loads(result.stdout)
         for connector in work["connectors"]:
-            assert connector["tenant_id"] == "default", connector
+            assert connector["tenant_id"] == "00000000-0000-4000-8000-000000000001", connector
             assert connector["source_id"] == "main", connector
 
     def test_two_instances_of_one_connector_are_two_entries(self) -> None:

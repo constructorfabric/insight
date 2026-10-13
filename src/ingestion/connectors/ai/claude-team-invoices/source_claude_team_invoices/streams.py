@@ -89,6 +89,7 @@ class InvoiceLines(Stream, CheckpointMixin):
         self._proxy_token = config["proxy_auth_token"]
         self._org_id = config["claude_org_id"]
         self._tenant_id = config["insight_tenant_id"]
+        self._tenant_key = config.get("insight_tenant_key") or self._tenant_id
         self._source_id = config["insight_source_id"]
         self._session = requests.Session()
         self._chained = False
@@ -163,7 +164,7 @@ class InvoiceLines(Stream, CheckpointMixin):
         record["source_id"] = self._source_id
         record["data_source"] = "insight_claude_team"
         record["collected_at"] = _now_iso()
-        record["unique_key"] = "-".join([self._tenant_id, self._source_id, *(str(p) for p in unique_key_parts(record))])
+        record["unique_key"] = "-".join([self._tenant_key, self._source_id, *(str(p) for p in unique_key_parts(record))])
         return record
 
     @property

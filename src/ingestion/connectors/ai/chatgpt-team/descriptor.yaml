@@ -110,7 +110,10 @@ name: chatgpt-team
 #   shape and the RMT promotion step is gone (#2877). MINOR per ADR-0015:
 #   reconcile must republish this connector so the connection catalog is
 #   refreshed; nothing already stored changes meaning.
-version: "3.3.0"
+# 3.4.0: the tenant segment of unique_key comes from insight_tenant_key, so a
+#   warm install keeps its keys when tenant_id moves to the canonical tenant
+#   UUID. MINOR per ADR-0015: no stored key changes.
+version: "3.4.0"
 # Daily at 04:00 UTC — off-peak. The customer's proxy runs a single browser
 # instance, so we avoid scheduling chatgpt-team next to anything else that
 # may also hit it (same rationale as claude-team).

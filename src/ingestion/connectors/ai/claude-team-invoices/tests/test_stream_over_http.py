@@ -120,6 +120,18 @@ def test_the_chain_yields_the_invoice_row_and_one_record_per_line(stream: Invoic
     assert own["unique_key"] != line["unique_key"]
 
 
+def test_a_warm_install_keys_rows_by_its_legacy_tenant_key(http: rm_module.Mocker) -> None:
+    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+    stream = InvoiceLines({**CONFIG, "insight_tenant_key": "example-legacy"})
+
+    records = list(stream.read_records(sync_mode="full_refresh"))
+
+    assert records
+    for record in records:
+        assert record["tenant_id"] == CONFIG["insight_tenant_id"]
+        assert record["unique_key"].startswith(f"example-legacy-{CONFIG['insight_source_id']}-")
+
+
 def test_each_hop_carries_the_credential_that_authorises_it(stream: InvoiceLines, http: rm_module.Mocker) -> None:
     register_chain(http, [{"data": [subscription_line()], "has_more": False}])
 

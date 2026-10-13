@@ -225,6 +225,33 @@ http://{{ .Values.airbyte.releaseName }}-airbyte-server-svc.{{ include "insight.
 
 {{/*
 ==============================================================================
+ TENANT (deploy/TENANT_IDENTITY_UPGRADE.md)
+==============================================================================
+insight.tenantId is the canonical tenant UUID: data tenant columns, identity,
+authorization and filtering. Empty when unset (a multi-tenant install relying
+on the token claim). The removed global.tenantDefaultId is refused, never read.
+*/}}
+{{- define "insight.tenantId" -}}
+{{- if ((.Values.global | default dict).tenantDefaultId) -}}
+{{- fail "global.tenantDefaultId is removed. Move its value to ingestion.reconcile.tenantId; a legacy key used by existing Bronze data goes in ingestion.reconcile.legacyTenantKeyOverride (deploy/TENANT_IDENTITY_UPGRADE.md)." -}}
+{{- end -}}
+{{- $tenant := (((.Values.ingestion | default dict).reconcile | default dict).tenantId | default "") -}}
+{{- if and $tenant (not (regexMatch "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" $tenant)) -}}
+{{- fail (printf "ingestion.reconcile.tenantId must be the canonical tenant as a lowercase UUID, got %q. A legacy key used by existing Bronze data goes in ingestion.reconcile.legacyTenantKeyOverride (deploy/TENANT_IDENTITY_UPGRADE.md)." $tenant) -}}
+{{- end -}}
+{{- $tenant -}}
+{{- end -}}
+
+{{/*
+insight.tenantKey is the tenant segment of Bronze keys and Airbyte/Argo names:
+legacyTenantKeyOverride on a warm install, the canonical tenant everywhere else.
+*/}}
+{{- define "insight.tenantKey" -}}
+{{- default (include "insight.tenantId" .) (((.Values.ingestion | default dict).reconcile | default dict).legacyTenantKeyOverride) -}}
+{{- end -}}
+
+{{/*
+==============================================================================
  APP SERVICE HOSTS
 ==============================================================================
 App services are mandatory umbrella components — no deploy flag.

@@ -125,6 +125,21 @@ def test_tenant_source_stamping_and_transformations(http_mocker: HttpMocker) -> 
 
 
 @freezegun.freeze_time(NOW)
+def test_a_warm_install_keys_rows_by_its_legacy_tenant_key(http_mocker: HttpMocker) -> None:
+    """The record is stamped with the canonical tenant; its unique_key keeps the
+    legacy key the rows already stored under it were written with."""
+    config = ZendeskConfigBuilder().with_tenant_key("example-legacy").build()
+    http_mocker.get(
+        HttpRequest(_URL, query_params=ANY_QUERY_PARAMS), _response([_agent(3001, "sam.rivera@example.com")])
+    )
+
+    rec = read_stream(_CONNECTOR, _STREAM, config).records[0].record.data
+
+    assert rec["tenant_id"] == config["insight_tenant_id"]
+    assert rec["unique_key"].startswith(f"example-legacy-{config['insight_source_id']}-")
+
+
+@freezegun.freeze_time(NOW)
 def test_pagination_multi_page(http_mocker: HttpMocker) -> None:
     """meta.has_more drives a second request carrying page[after]. Sending
     per_page instead of page[size] returns no `meta` at all, which the cursor

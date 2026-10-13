@@ -8,7 +8,7 @@
     tags=['staging', 'jira']
 ) }}
 
--- When the connector first read the field catalogue, per source — written once
+-- When the connector first read the field catalogue, per tenant and source — written once
 -- and kept. See `connectors/task-tracking/jira/specs/FIELD-HISTORY-IN-DBT.md`
 -- §3.2: it is the line between a field deleted before the connector ever
 -- looked and a field whose metadata has not arrived.
@@ -23,10 +23,12 @@
 
 SELECT
     COALESCE(source_id, '')                               AS insight_source_id,
+    COALESCE(tenant_id, '')                               AS tenant_id,
     min(_airbyte_extracted_at)                            AS catalogue_first_sync,
     now64(3)                                              AS recorded_at
 FROM {{ source('bronze_jira', 'jira_fields') }}
 {% if is_incremental() %}
-WHERE COALESCE(source_id, '') NOT IN (SELECT insight_source_id FROM {{ this }})
+WHERE (COALESCE(tenant_id, ''), COALESCE(source_id, ''))
+      NOT IN (SELECT tenant_id, insight_source_id FROM {{ this }})
 {% endif %}
-GROUP BY insight_source_id
+GROUP BY tenant_id, insight_source_id

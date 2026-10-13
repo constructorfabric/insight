@@ -23,9 +23,9 @@ Insight Connector = Airbyte Connector + descriptor + dbt transformations + crede
 | `descriptor.yaml` | Schedule, streams, dbt_select, workflow type, `version` | Connector developer |
 | `credentials.yaml.example` | Template listing required credentials | Connector developer |
 | `dbt/` | Bronze → Silver transformations | Connector developer |
-| `ConfigMap insight-config` (key `tenant_id`) | Tenant identity for the cluster | Platform admin |
+| `ingestion.reconcile.tenantId` (chart value) | Canonical tenant UUID of the install | Platform admin |
 
-Connector developers create the package. Credentials are managed via K8s Secrets — never in repo. The cluster's tenant identity is read from the `insight-config` ConfigMap in namespace `insight` (or overridden with the `INSIGHT_TENANT_ID` env var).
+Connector developers create the package. Credentials are managed via K8s Secrets — never in repo. The install's tenant is the chart value `ingestion.reconcile.tenantId`, which reaches reconcile as `INSIGHT_TENANT_ID`.
 
 ### Credential Separation
 
@@ -43,20 +43,10 @@ secrets/connectors/                       # K8s Secret templates
   m365.yaml                               #   Real credentials (gitignored)
 ```
 
-Tenant identity lives in the cluster, not in a repo file:
+Tenant identity lives in the install's values, not in a repo file. Reconcile reads two variables:
 
-```yaml
-# kubectl -n insight get cm insight-config -o yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: insight-config
-  namespace: insight
-data:
-  tenant_id: acme_corp
-```
-
-The reconcile entrypoint reads `tenant_id` from this ConfigMap, or from `INSIGHT_TENANT_ID` if set (env wins).
+- `INSIGHT_TENANT_ID` — the canonical tenant UUID (`ingestion.reconcile.tenantId`). Every record is stamped with it as `insight_tenant_id`.
+- `INSIGHT_TENANT_KEY` — warm installs only (`ingestion.reconcile.legacyTenantKeyOverride`): the tenant segment existing Airbyte source/connection names, Argo schedule names and Bronze `unique_key`s were created with. Without it they use the canonical UUID. See [deploy/TENANT_IDENTITY_UPGRADE.md](../../deploy/TENANT_IDENTITY_UPGRADE.md).
 
 All credentials and connector parameters are in K8s Secrets. Active connectors are discovered automatically by label `app.kubernetes.io/part-of=insight`:
 
@@ -426,15 +416,7 @@ kubectl delete secret insight-{connector}-{source-id} -n insight
 
 ## Adding a New Tenant
 
-A cluster has exactly one tenant identity, stored in the `insight-config` ConfigMap. To set or change it:
-
-```bash
-kubectl -n insight create configmap insight-config \
-  --from-literal=tenant_id=acme \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-Then deploy:
+An install has exactly one tenant, the UUID in `ingestion.reconcile.tenantId`; it is set once and never changed after the first sync. Then deploy:
 
 ```bash
 ./secrets/apply.sh --connectors-only

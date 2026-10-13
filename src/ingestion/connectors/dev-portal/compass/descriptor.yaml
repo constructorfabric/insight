@@ -11,7 +11,10 @@ type: nocode
 #   shape and the RMT promotion step is gone (#2877). MINOR per ADR-0015:
 #   reconcile must republish this connector so the connection catalog is
 #   refreshed; nothing already stored changes meaning.
-version: "1.1.0"
+# 1.2.0: the tenant segment of unique_key comes from insight_tenant_key, so a
+#   warm install keeps its keys when tenant_id moves to the canonical tenant
+#   UUID. MINOR per ADR-0015: no stored key changes.
+version: "1.2.0"
 # Daily is a floor, not a preference: the Compass event feed is a rolling
 # window with no backfill, so a skipped run loses deployment events for good.
 schedule: "0 2 * * *"

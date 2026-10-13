@@ -28,11 +28,11 @@
 #   .identityResolution.databaseName (defaults to "identity")
 #   .insightV3Core.existingSecret (optional; when set, compose that Secret and
 #                                  require insight-v3-core-token to exist)
-#   .global.tenantDefaultId      (optional; empty disables the resolver
-#                                 on both identity-resolution and
-#                                 analytics. Single source of truth for
-#                                 the single-tenant UUID — matches the
-#                                 chart's `global.tenantDefaultId` knob.)
+#   .ingestion.reconcile.tenantId (optional; empty disables the resolver
+#                                 on identity-resolution. The canonical
+#                                 tenant UUID, the chart's
+#                                 `insight.tenantId`. A leftover
+#                                 .global.tenantDefaultId is refused.)
 #   .identityUrl                 (optional; the identity URL ANALYTICS calls.
 #                                 Empty = the default
 #                                 `http://<release>-identity-resolution:8082`.
@@ -82,7 +82,11 @@ CH_DB=$(   yq -r '.clickhouse.database'      "$VALUES")
 CORE_CONFIG_SECRET=$(yq -r '.insightV3Core.existingSecret // ""' "$VALUES")
 RD_HOST=$( yq -r '.redis.host'               "$VALUES")
 RD_PORT=$( yq -r '.redis.port       // 6379' "$VALUES")
-TENANT_DEFAULT=$(yq -r '.global.tenantDefaultId          // ""' "$VALUES")
+TENANT_DEFAULT=$(yq -r '.ingestion.reconcile.tenantId    // ""' "$VALUES")
+if [[ -n "$(yq -r '.global.tenantDefaultId // ""' "$VALUES")" ]]; then
+  echo "ERROR: global.tenantDefaultId is removed; move its value to ingestion.reconcile.tenantId (deploy/TENANT_IDENTITY_UPGRADE.md)" >&2
+  exit 1
+fi
 IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN=$(yq -r '.identityResolution.bootstrapAdminPersonId // ""' "$VALUES")
 IDENTITY_RESOLUTION_DB=$(yq -r '.identityResolution.databaseName // "identity"' "$VALUES")
 CORE_DB=$(yq -r '.insightV3Core.databaseName // "insight_v3"' "$VALUES")

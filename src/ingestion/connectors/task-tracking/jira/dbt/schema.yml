@@ -61,15 +61,17 @@ models:
   - name: jira__catalogue_first_seen
     description: "Per-source instant of the first field-catalogue sync, written once and kept: bronze keeps only each field's latest extraction once its parts merge, so the value cannot be recomputed later. Input to the recency guard of specs/FIELD-HISTORY-IN-DBT.md §3.2."
   - name: jira__task_field_kind
-    description: "Per-source field classification into the closed field_kind enum that drives value normalization and delta application. Matched on Jira type constants, never on instance-specific field ids. See specs/FIELD-HISTORY-IN-DBT.md."
+    description: "Per-tenant, per-source field classification into the closed field_kind enum that drives value normalization and delta application. Matched on Jira type constants, never on instance-specific field ids. See specs/FIELD-HISTORY-IN-DBT.md."
   - name: jira__changelog_entry_ranks
     description: "Rank of each changelog entry among the entries its issue recorded at the same instant, from the from→to chains of every field they touch, then the numeric changelog id. One row per entry of such an instant; an entry alone at its instant has none and ranks 0. Read by jira__field_history_derived into event_order. See specs/FIELD-HISTORY-IN-DBT.md §5."
     columns:
       - name: unique_key
-        description: "Source, issue and changelog id."
+        description: "Tenant, source, issue and changelog id."
         tests:
           - unique
           - not_null
+      - name: tenant_id
+        description: "Tenant the issue belongs to; Jira ids are unique only within one tenant's source."
       - name: changelog_id
         description: "The entry, as the changelog id string the journal carries as event_id."
       - name: entry_rank

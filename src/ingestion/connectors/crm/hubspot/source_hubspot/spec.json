@@ -17,6 +17,12 @@
         "description": "Tenant isolation identifier for the ingestion layer. Used as a partition key in Bronze and joined to silver tables.",
         "order": 0
       },
+      "insight_tenant_key": {
+        "type": "string",
+        "title": "Insight Tenant Key",
+        "description": "Tenant segment of unique_key; insight_tenant_id when absent",
+        "airbyte_hidden": true
+      },
       "insight_source_id": {
         "type": "string",
         "title": "Insight Source ID",

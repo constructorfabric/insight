@@ -33,6 +33,7 @@
 -- catalogue table forgets its older extractions as its parts merge.
 
 SELECT
+    ci.tenant_id                                          AS tenant_id,
     ci.insight_source_id                                  AS insight_source_id,
     CAST('jira' AS String)                                AS data_source,
     ci.field_id                                           AS field_id,
@@ -46,8 +47,10 @@ SELECT
     max(ci.created_at) > any(c.catalogue_first_sync)      AS metadata_is_missing
 FROM {{ ref('jira__changelog_items') }} AS ci
 LEFT ANTI JOIN {{ ref('jira__task_field_kind') }} AS k
-    ON k.insight_source_id = ci.insight_source_id
+    ON k.tenant_id = ci.tenant_id
+   AND k.insight_source_id = ci.insight_source_id
    AND k.field_id = ci.field_id
 LEFT JOIN {{ ref('jira__catalogue_first_seen') }} AS c
-    ON c.insight_source_id = ci.insight_source_id
-GROUP BY ci.insight_source_id, ci.field_id
+    ON c.tenant_id = ci.tenant_id
+   AND c.insight_source_id = ci.insight_source_id
+GROUP BY ci.tenant_id, ci.insight_source_id, ci.field_id

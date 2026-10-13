@@ -305,7 +305,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
           - path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}
 
   - type: DeclarativeStream
@@ -377,7 +377,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
           - path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}
 
   - type: DeclarativeStream
@@ -435,7 +435,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
           - path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ stream_partition.page_id }}-{{ record['number'] }}
 
   # ─── Comments (issue #285) ────────────────────────────────────────────
@@ -502,7 +502,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
           - path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}
 
   - type: DeclarativeStream
@@ -562,7 +562,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
           - path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}
 
   - type: DeclarativeStream
@@ -628,7 +628,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
           - path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}
 
   - type: DeclarativeStream
@@ -688,7 +688,7 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
           - path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ record['id'] }}
 
 # default_concurrency MUST be >= 2. With 1 worker the concurrent CDK
@@ -720,6 +720,11 @@ spec:
         description: Insight tenant identifier stamped onto every emitted record.
         title: Insight Tenant ID
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         description: >-

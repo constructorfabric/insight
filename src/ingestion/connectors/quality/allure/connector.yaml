@@ -179,7 +179,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - allure_url
@@ -572,7 +572,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
   - type: DeclarativeStream
     name: test_results
     primary_key:
@@ -1207,7 +1207,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
   - type: DeclarativeStream
     name: launch_environment
     primary_key:
@@ -1560,7 +1560,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.launch_id }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.launch_id }}-{{ record['id'] }}
   - type: DeclarativeStream
     name: launch_errors
     primary_key:
@@ -1917,7 +1917,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
   - type: DeclarativeStream
     name: test_cases
     primary_key:
@@ -2511,7 +2511,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
   - type: DeclarativeStream
     name: custom_fields
     primary_key:
@@ -2778,7 +2778,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['projectId'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['projectId'] }}-{{ record['id'] }}
 
   - type: DeclarativeStream
     name: categories
@@ -3010,7 +3010,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.project_id }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.project_id }}-{{ record['id'] }}
   - type: DeclarativeStream
     name: category_matchers
     primary_key:
@@ -3282,7 +3282,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.project_id }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.project_id }}-{{ record['id'] }}
   - type: DeclarativeStream
     name: defects
     primary_key:
@@ -3657,7 +3657,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
   - type: DeclarativeStream
     name: defect_test_results
     primary_key:
@@ -3987,7 +3987,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.defect_id }}-{{ record['id'] }}
+              {{ config.get('insight_tenant_key') or config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.defect_id }}-{{ record['id'] }}
 
 concurrency_level:
   type: ConcurrencyLevel
@@ -4009,6 +4009,11 @@ spec:
         description: Insight tenant identifier stamped onto every emitted record.
         title: Insight Tenant ID
         order: 0
+      insight_tenant_key:
+        type: string
+        title: Insight Tenant Key
+        description: Tenant segment of unique_key; insight_tenant_id when absent
+        airbyte_hidden: true
       insight_source_id:
         type: string
         description: Insight source identifier stamped onto every emitted record.

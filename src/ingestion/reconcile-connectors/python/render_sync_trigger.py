@@ -40,6 +40,7 @@ def main() -> int:
     p.add_argument("--connector", required=True)
     p.add_argument("--connection-name", required=True)
     p.add_argument("--tenant", required=True)
+    p.add_argument("--tenant-key", required=True)
     p.add_argument("--insight-source-id", required=True)
     p.add_argument("--dbt-select", default="")
     p.add_argument("--bump-kind", default="none", choices=["none", "patch", "minor", "major", "migration"])
@@ -62,6 +63,7 @@ def main() -> int:
         "CONNECTOR": args.connector,
         "CONNECTION_NAME": args.connection_name,
         "TENANT": args.tenant,
+        "TENANT_KEY": args.tenant_key,
         "INSIGHT_SOURCE_ID": args.insight_source_id,
         "DATA_SOURCE": data_source,
         "DBT_SELECT": args.dbt_select,

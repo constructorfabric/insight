@@ -9,7 +9,8 @@ set -euo pipefail
 #
 # Required args:
 #   <connector>         connector descriptor name (matches connectors/*/<name>/descriptor.yaml .name)
-#   <tenant_id>         tenant identifier
+#   <tenant_key>        tenant segment of the connection name: the legacy key
+#                       on a warm install, else the canonical tenant UUID
 # Optional args:
 #   <insight_source_id> when set, used directly; otherwise resolved from Secret annotations
 #                       insight.cyberfabric.com/{connector,tenant,source-id}
@@ -22,8 +23,8 @@ set -euo pipefail
 : "${INSIGHT_NAMESPACE:?must be set to the umbrella release namespace, e.g. export INSIGHT_NAMESPACE=insight}"
 export KUBECONFIG INSIGHT_NAMESPACE
 
-CONNECTOR="${1:?Usage: $0 <connector> <tenant_id> [<insight_source_id>]}"
-TENANT="${2:?Usage: $0 <connector> <tenant_id> [<insight_source_id>]}"
+CONNECTOR="${1:?Usage: $0 <connector> <tenant_key> [<insight_source_id>]}"
+TENANT="${2:?Usage: $0 <connector> <tenant_key> [<insight_source_id>]}"
 SOURCE_ID="${3:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

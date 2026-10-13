@@ -86,6 +86,14 @@ def test_snapshot_keys_isolate_tenants_and_sources() -> None:
     assert len(keys) == 4
 
 
+def test_a_warm_install_keys_its_snapshot_by_the_legacy_tenant_key() -> None:
+    stream = WhosOutStream(FakeClient({PATH: []}), TENANT, SOURCE, "2024-01-01", tenant_key="example-legacy")
+    [record] = list(stream.read_records(SyncMode.full_refresh))
+
+    assert record["tenant_id"] == TENANT
+    assert record["unique_key"] == json.dumps(["example-legacy", SOURCE], separators=(",", ":"))
+
+
 def test_history_window_changes_do_not_change_snapshot_key() -> None:
     keys = set()
     for start in ["2024-01-01", "2025-01-01"]:

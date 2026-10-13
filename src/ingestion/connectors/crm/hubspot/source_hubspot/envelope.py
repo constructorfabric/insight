@@ -77,6 +77,7 @@ def envelope(
     source_id: str,
     allowed_property_names: frozenset,
     collision_seen: Optional[MutableSet[str]] = None,
+    tenant_key: Optional[str] = None,
 ) -> MutableMapping[str, Any]:
     """Return a copy of ``record`` with Insight metadata injected.
 
@@ -94,7 +95,8 @@ def envelope(
     - Serializes the whole incoming record into ``raw_data`` so properties
       outside the advertised schema are still recoverable downstream.
     - Adds ``tenant_id`` / ``source_id`` / ``unique_key`` / ``data_source`` /
-      ``collected_at``.
+      ``collected_at``. ``unique_key`` leads with ``tenant_key`` (the install's
+      legacy key, if it has one) so existing rows keep deduplicating.
 
     ``collision_seen`` gates one-shot-per-stream warnings on reserved-name
     collisions.
@@ -144,7 +146,7 @@ def envelope(
 
     out["tenant_id"] = tenant_id
     out["source_id"] = source_id
-    out["unique_key"] = f"{tenant_id}-{source_id}-{hs_id}"
+    out["unique_key"] = f"{tenant_key or tenant_id}-{source_id}-{hs_id}"
     out["data_source"] = DATA_SOURCE
     out["collected_at"] = _now_iso()
     return out
