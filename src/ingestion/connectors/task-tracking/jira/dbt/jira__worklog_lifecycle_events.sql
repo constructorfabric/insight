@@ -22,7 +22,7 @@
 WITH transitions AS (
     SELECT
         entity_id                                               AS worklog_id,
-        tenant_id,
+        COALESCE(tenant_id, '')                                 AS tenant_id,
         source_id,
         multiIf(
             field_name = 'is_deleted' AND new_value = '1',          'remove',
@@ -42,12 +42,13 @@ WITH transitions AS (
 -- issue; `assert_jira_substream_rows_without_issue_id` reports those.
 worklog_issue AS (
     SELECT
+        COALESCE(tenant_id, '')                                 AS tenant_id,
         source_id,
         toString(worklog_id)                                    AS worklog_id,
         any(COALESCE(jira_id, issueId))                         AS jira_id
     FROM {{ source('bronze_jira', 'jira_worklogs') }}
     WHERE worklog_id IS NOT NULL
-    GROUP BY source_id, worklog_id
+    GROUP BY tenant_id, source_id, worklog_id
 ),
 
 -- The identity timestamp is event_at, not detection time: detection time comes
@@ -57,6 +58,7 @@ worklog_issue AS (
 -- millisecond timestamp for add/set and the tombstone's for remove.
 resolved AS (
     SELECT
+        t.tenant_id                                             AS tenant_id,
         t.source_id                                             AS source_id,
         t.worklog_id                                            AS worklog_id,
         t.action                                                AS action,
@@ -76,14 +78,15 @@ resolved AS (
         )                                                       AS event_at
     FROM transitions AS t
     LEFT JOIN {{ ref('jira__worklog_state') }} AS st FINAL
-        ON st.tenant_id = t.tenant_id
+        ON COALESCE(st.tenant_id, '') = t.tenant_id
         AND st.source_id = t.source_id
         AND st.worklog_id = t.worklog_id
     LEFT JOIN worklog_issue AS own
-        ON own.source_id = t.source_id
+        ON own.tenant_id = t.tenant_id
+        AND own.source_id = t.source_id
         AND own.worklog_id = t.worklog_id
     LEFT JOIN {{ ref('jira__issue_availability_state') }} AS av FINAL
-        ON av.tenant_id = t.tenant_id
+        ON COALESCE(av.tenant_id, '') = t.tenant_id
         AND av.source_id = t.source_id
         AND av.jira_id = own.jira_id
     WHERE t.action != ''
@@ -121,7 +124,7 @@ FROM (
     SELECT
         *,
         toUInt32(row_number() OVER (
-            PARTITION BY source_id, jira_id, toUnixTimestamp64Milli(event_at)
+            PARTITION BY tenant_id, source_id, jira_id, toUnixTimestamp64Milli(event_at)
             ORDER BY toUInt64OrZero(worklog_id), worklog_id,
                      multiIf(action = 'add', 0, action = 'set', 1, 2)
         ) - 1)                                                  AS same_instant_rank
