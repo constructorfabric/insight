@@ -541,7 +541,7 @@ is an order statistic instead, and always answers with one that did.
 - Source: collab (collab_metric_observations)
 - Reads: total_chat_messages
 - Formula: sum(total_chat_messages)
-- Shape: integer, higher_is_better, unit messages
+- Shape: integer, neutral, unit messages
 - Notes: Chat messages a person sent across messaging tools. Counts are not directly comparable between tools: Slack includes thread replies, and Microsoft 365 combines private-chat and channel messages.
 
 ## collab.channel_posts — Channel Posts
@@ -549,7 +549,7 @@ is an order statistic instead, and always answers with one that did.
 - Source: collab (collab_metric_observations)
 - Reads: channel_posts
 - Formula: sum(channel_posts)
-- Shape: integer, higher_is_better, unit messages
+- Shape: integer, neutral, unit messages
 - Notes: Channel posts plus thread replies across messaging tools. Tools that report posts and replies separately are folded so counts stay comparable.
 
 ## collab.dm_ratio — DM Ratio
@@ -557,7 +557,7 @@ is an order statistic instead, and always answers with one that did.
 - Source: collab (collab_metric_observations)
 - Reads: direct_and_group_messages, split_chat_messages
 - Formula: 100 * (direct_and_group_messages / split_chat_messages)
-- Shape: percent, lower_is_better
+- Shape: percent, neutral
 - Notes: Direct and group-chat messages divided by all chat messages, counted only in tools that tell the two apart, such as Microsoft Teams and Slack. Messages from tools without that split, such as Zulip, are left out, and a person with only those tools has no value. A lower ratio means more communication happens in open channels.
 
 ## collab.msgs_per_active_day — Messages per Active Day
@@ -565,7 +565,7 @@ is an order statistic instead, and always answers with one that did.
 - Source: collab (collab_metric_observations)
 - Reads: total_chat_messages, chat_active_day
 - Formula: total_chat_messages / distinct_count(chat_active_day)
-- Shape: decimal, higher_is_better, unit messages/day
+- Shape: decimal, neutral, unit messages/day
 - Notes: Chat messages sent divided by the distinct days with chat messages in any tool, so a day spent in two tools counts once.
 
 ## collab.active_days — Active Days
@@ -581,7 +581,7 @@ is an order statistic instead, and always answers with one that did.
 - Source: collab (collab_metric_observations)
 - Reads: emails_sent
 - Formula: sum(emails_sent)
-- Shape: integer, higher_is_better, unit emails
+- Shape: integer, neutral, unit emails
 - Notes: Emails a person sent.
 
 ## collab.emails_received — Emails Received
@@ -589,7 +589,7 @@ is an order statistic instead, and always answers with one that did.
 - Source: collab (collab_metric_observations)
 - Reads: emails_received
 - Formula: sum(emails_received)
-- Shape: integer, higher_is_better, unit emails
+- Shape: integer, neutral, unit emails
 - Notes: Emails a person received.
 
 ## collab.emails_read — Email Read Actions
@@ -605,15 +605,15 @@ is an order statistic instead, and always answers with one that did.
 - Source: collab (collab_metric_observations)
 - Reads: files_engaged
 - Formula: sum(files_engaged)
-- Shape: integer, higher_is_better, unit files
-- Notes: Files a person viewed or edited.
+- Shape: integer, neutral, unit files
+- Notes: Files a person viewed, edited, uploaded or downloaded in OneDrive and SharePoint, counted once per file per day and summed over the period. A bulk upload or download counts every file, so one such day can outweigh weeks of ordinary work. Files the OneDrive sync client syncs are reported separately and do not count.
 
 ## collab.files_shared_internal — Files Shared (Internal)
 
 - Source: collab (collab_metric_observations)
 - Reads: files_shared_internal
 - Formula: sum(files_shared_internal)
-- Shape: integer, higher_is_better, unit files
+- Shape: integer, neutral, unit files
 - Notes: Files a person shared with people inside the organization.
 
 ## collab.files_shared_external — Files Shared (External)
@@ -621,7 +621,7 @@ is an order statistic instead, and always answers with one that did.
 - Source: collab (collab_metric_observations)
 - Reads: files_shared_external
 - Formula: sum(files_shared_external)
-- Shape: integer, higher_is_better, unit files
+- Shape: integer, neutral, unit files
 - Notes: Files a person shared with people outside the organization.
 
 ## collab.files_shared — Files Shared
@@ -629,8 +629,8 @@ is an order statistic instead, and always answers with one that did.
 - Source: collab (collab_metric_observations)
 - Reads: files_shared
 - Formula: sum(files_shared)
-- Shape: integer, higher_is_better, unit files
-- Notes: Files a person shared with recipients inside or outside the organization.
+- Shape: integer, neutral, unit files
+- Notes: Files a person shared with recipients inside or outside the organization. A file shared both inside and outside counts once in each, and a share with a group counts as inside even when the group has outside members.
 
 ## collab.meeting_hours — Meeting Hours
 
@@ -645,7 +645,7 @@ is an order statistic instead, and always answers with one that did.
 - Source: collab (collab_metric_observations)
 - Reads: meetings_attended
 - Formula: sum(meetings_attended)
-- Shape: integer, higher_is_better, unit meetings
+- Shape: integer, lower_is_better, unit meetings
 - Notes: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do.
 
 ## collab.meeting_free_days — Meeting-Free Days

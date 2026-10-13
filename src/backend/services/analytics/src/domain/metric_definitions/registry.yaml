@@ -1974,7 +1974,7 @@ metrics:
     explanation: 'Chat messages a person sent across messaging tools. Counts are not directly comparable between tools: Slack includes thread replies, and Microsoft 365 combines private-chat and channel messages.'
     unit: messages
     format: integer
-    direction: higher_is_better
+    direction: neutral
     entity_type: person
     computation: sum
     peer_cohort_key: org_unit
@@ -1992,7 +1992,7 @@ metrics:
     explanation: Channel posts plus thread replies across messaging tools. Tools that report posts and replies separately are folded so counts stay comparable.
     unit: messages
     format: integer
-    direction: higher_is_better
+    direction: neutral
     entity_type: person
     computation: sum
     peer_cohort_key: org_unit
@@ -2011,7 +2011,7 @@ metrics:
     description: Share of messages sent in direct or group chats
     explanation: Direct and group-chat messages divided by all chat messages, counted only in tools that tell the two apart, such as Microsoft Teams and Slack. Messages from tools without that split, such as Zulip, are left out, and a person with only those tools has no value. A lower ratio means more communication happens in open channels.
     format: percent
-    direction: lower_is_better
+    direction: neutral
     entity_type: person
     computation: !ratio
       scale: 100.0
@@ -2034,7 +2034,7 @@ metrics:
     explanation: Chat messages sent divided by the distinct days with chat messages in any tool, so a day spent in two tools counts once.
     unit: messages/day
     format: decimal
-    direction: higher_is_better
+    direction: neutral
     entity_type: person
     computation: !ratio
       scale: 1.0
@@ -2073,7 +2073,7 @@ metrics:
     explanation: Emails a person sent.
     unit: emails
     format: integer
-    direction: higher_is_better
+    direction: neutral
     entity_type: person
     computation: sum
     peer_cohort_key: org_unit
@@ -2091,7 +2091,7 @@ metrics:
     explanation: Emails a person received.
     unit: emails
     format: integer
-    direction: higher_is_better
+    direction: neutral
     entity_type: person
     computation: sum
     peer_cohort_key: org_unit
@@ -2123,10 +2123,10 @@ metrics:
     subject: documents
     label: Files Engaged
     description: Files viewed or edited
-    explanation: Files a person viewed or edited.
+    explanation: Files a person viewed, edited, uploaded or downloaded in OneDrive and SharePoint, counted once per file per day and summed over the period. A bulk upload or download counts every file, so one such day can outweigh weeks of ordinary work. Files the OneDrive sync client syncs are reported separately and do not count.
     unit: files
     format: integer
-    direction: higher_is_better
+    direction: neutral
     entity_type: person
     computation: sum
     peer_cohort_key: org_unit
@@ -2144,7 +2144,7 @@ metrics:
     explanation: Files a person shared with people inside the organization.
     unit: files
     format: integer
-    direction: higher_is_better
+    direction: neutral
     entity_type: person
     computation: sum
     peer_cohort_key: org_unit
@@ -2162,7 +2162,7 @@ metrics:
     explanation: Files a person shared with people outside the organization.
     unit: files
     format: integer
-    direction: higher_is_better
+    direction: neutral
     entity_type: person
     computation: sum
     peer_cohort_key: org_unit
@@ -2177,10 +2177,10 @@ metrics:
     label: Files Shared
     short_label: Files shared
     description: Files shared with any recipient
-    explanation: Files a person shared with recipients inside or outside the organization.
+    explanation: Files a person shared with recipients inside or outside the organization. A file shared both inside and outside counts once in each, and a share with a group counts as inside even when the group has outside members.
     unit: files
     format: integer
-    direction: higher_is_better
+    direction: neutral
     entity_type: person
     computation: sum
     peer_cohort_key: org_unit
@@ -2218,7 +2218,7 @@ metrics:
     explanation: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do.
     unit: meetings
     format: integer
-    direction: higher_is_better
+    direction: lower_is_better
     entity_type: person
     computation: sum
     peer_cohort_key: org_unit
