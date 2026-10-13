@@ -1,3 +1,6 @@
+{{- if (.Values.seed).tenantDefaultId }}
+{{- fail "identityResolution.seed.tenantDefaultId is removed (seed.tenantDefaultId when this chart is installed on its own): the seed reads its tenant only from its config Secret. In the insight chart set authenticator.oidc.defaultTenantId; standalone, put APP__gears__identity_resolution__config__tenant_default_id in existingSecret. Then delete the key." }}
+{{- end }}
 {{- if .Values.seed.enabled }}
 # Scheduled persons-seed (#1690): rebuilds the identity org projection
 # (`persons` / `org_chart`) from ClickHouse
