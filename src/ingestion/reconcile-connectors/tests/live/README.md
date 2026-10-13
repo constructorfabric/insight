@@ -15,9 +15,11 @@ src/ingestion/reconcile-connectors/tests/live/stand.sh down
 ```
 
 `stand.sh env` exports a `KUBECONFIG` that names only the stand's cluster. The
-tests refuse any other: reconcile calls kubectl without `--context` and these
-tests delete Secrets, sources and schedules. Without the stand's environment the
-tests skip, so the CI run of `tests/` is unaffected.
+tests skip unless `KUBECONFIG` lies in the stand's state directory and holds only
+the `kind-insight-reconcile` context — a guard against an accidental run, not a
+check of which cluster answers. Reconcile calls kubectl without `--context` and
+these tests delete Secrets, sources and schedules. Without the stand's
+environment the tests skip, so the CI run of `tests/` is unaffected.
 
 The ledger sweep at the end of a reconcile tick reads ClickHouse at the
 in-cluster address, which the host cannot resolve; its warning in the log is

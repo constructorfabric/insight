@@ -218,6 +218,33 @@ argo_delete_cronworkflow() {
   return "$rc"
 }
 
+# Every schedule this instance holds under a tenant other than `tenant`, found
+# by the connector and tenant labels the render stamps on it rather than by any
+# record of a rename — so a pass cut off before removing one leaves it to the
+# next. Only names this instance (or a shape naming no instance) would carry
+# under that tenant are removed; a sibling instance's schedule never matches.
+argo_delete_former_tenant_cronworkflows() {
+  local connector="$1" tenant="$2" source_id="$3"
+  local listed name other candidate rc=0
+  if ! listed="$(kubectl -n "${INSIGHT_NAMESPACE}" get cronworkflows.argoproj.io \
+        -l "insight.cyberfabric.com/connector=${connector}" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.insight\.cyberfabric\.com/tenant}{"\n"}{end}' 2>&1)"; then
+    printf '%s: kubectl get cronworkflows failed: %s\n' "$connector" "$listed" >&2
+    return 1
+  fi
+
+  while IFS=$'\t' read -r name other; do
+    [[ -n "${name}" && -n "${other}" && "${other}" != "${tenant}" ]] || continue
+    while IFS= read -r candidate; do
+      [[ "${candidate}" == "${name}" ]] || continue
+      _argo_delete_cronworkflow_named "${name}" || rc=1
+      break
+    done < <(argo_cron_workflow_name "$connector" "$other" "$source_id" 2>/dev/null; printf '\n'
+             _argo_superseded_names "$connector" "$other" "")
+  done <<<"${listed}"
+  return "$rc"
+}
+
 # Only this instance's own schedule. Its siblings keep theirs, and the shapes
 # that name no instance are left where they are: they are shared, and removing
 # one instance is not a reason to touch what the others may still be using.

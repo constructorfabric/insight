@@ -11,24 +11,30 @@
 # --context, and the operator's current context may point at a shared cluster.
 set -euo pipefail
 
-CLUSTER="${RECONCILE_STAND_CLUSTER:-insight-reconcile}"
-STATE_DIR="${RECONCILE_STAND_DIR:-${HOME}/.cache/insight-reconcile-stand}"
-AIRBYTE_PORT="${RECONCILE_STAND_AIRBYTE_PORT:-18001}"
-CLICKHOUSE_PORT="${RECONCILE_STAND_CLICKHOUSE_PORT:-18123}"
+CLUSTER=insight-reconcile
+STATE_DIR="${HOME}/.cache/insight-reconcile-stand"
+AIRBYTE_PORT=18001
+CLICKHOUSE_PORT=18123
 
 NS_INFRA=insight-infra
 NS_APP=insight
-# Pinned with deploy/gitops/Makefile (AIRBYTE_VERSION, ARGO_VERSION).
-AIRBYTE_VERSION=1.9.2
-ARGO_VERSION=1.0.13
-CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:25.3
 # docker.io no longer serves the minio/minio tag the Airbyte chart pins. The
 # chart's bucket hook runs `/bin/mc config host add`, which a 2025 mc loops on,
 # so the replacement keeps the 2023 builds.
 MINIO_IMAGE=insight-reconcile-stand/minio:2023.11.20
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
+LIVE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${LIVE_DIR}/../../../../.." && pwd)"
 GITOPS="${REPO_ROOT}/deploy/gitops"
+
+gitops_pin() {
+  local pin
+  pin="$(sed -n "s/^$1 *?= *//p" "${GITOPS}/Makefile")"
+  [[ -n "${pin}" ]] || { printf '%s is not pinned in %s/Makefile\n' "$1" "${GITOPS}" >&2; exit 1; }
+  printf '%s' "${pin}"
+}
+AIRBYTE_VERSION="$(gitops_pin AIRBYTE_VERSION)"
+ARGO_VERSION="$(gitops_pin ARGO_VERSION)"
 
 export KUBECONFIG="${STATE_DIR}/kubeconfig"
 mkdir -p "${STATE_DIR}"
@@ -38,33 +44,7 @@ log() { printf '\033[36m[reconcile-stand]\033[0m %s\n' "$*" >&2; }
 cluster_exists() { kind get clusters 2>/dev/null | grep -qx "${CLUSTER}"; }
 
 install_clickhouse() {
-  kubectl apply -n "${NS_INFRA}" -f - <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata: {name: clickhouse}
-spec:
-  replicas: 1
-  selector: {matchLabels: {app: clickhouse}}
-  template:
-    metadata: {labels: {app: clickhouse}}
-    spec:
-      containers:
-        - name: clickhouse
-          image: ${CLICKHOUSE_IMAGE}
-          env:
-            - {name: CLICKHOUSE_USER, value: insight}
-            - {name: CLICKHOUSE_PASSWORD, value: insight-local}
-            - {name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: "1"}
-          ports: [{containerPort: 8123}, {containerPort: 9000}]
-          readinessProbe: {httpGet: {path: /ping, port: 8123}}
----
-apiVersion: v1
-kind: Service
-metadata: {name: clickhouse}
-spec:
-  selector: {app: clickhouse}
-  ports: [{name: http, port: 8123}, {name: native, port: 9000}]
-EOF
+  kubectl apply -n "${NS_INFRA}" -f "${LIVE_DIR}/clickhouse.yaml"
   kubectl -n "${NS_INFRA}" rollout status deploy/clickhouse --timeout=5m
 }
 

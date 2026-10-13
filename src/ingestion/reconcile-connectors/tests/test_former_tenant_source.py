@@ -104,26 +104,37 @@ def test_a_rename_that_would_have_to_choose_is_refused(sources: list[dict], reas
     assert result.stdout == ""
 
 
-#: Airbyte answered from files the test writes; every write is recorded. The
-#: reconcile log is left real: it writes to stdout, which is where the result goes.
+#: Airbyte answered from files the test writes; every write is recorded. An
+#: update whose reply is lost has still renamed the source, as Airbyte would.
 RENAME_STUBS = """
 ab_workspace_id()     { printf 'ws-1'; }
 ab_list_sources()     { cat "$SOURCES"; }
-ab_list_connections() { cat "$CONNECTIONS"; }
-ab_update_source()    { printf 'UPDATE_SOURCE %s %s\\n' "$1" "$3" >> "$CALLS"; }
-ab_rename_connection(){ printf 'RENAME_CONNECTION %s %s\\n' "$1" "$2" >> "$CALLS"; }
+ab_update_source()    {
+  printf 'UPDATE_SOURCE %s %s\\n' "$1" "$3" >> "$CALLS"
+  [[ -z "${LOSE_REPLY:-}" ]] && return 0
+  python3 - "$SOURCES" "$3" "$2" <<'PY'
+import json, sys
+path, name, config = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+sources = json.load(open(path))
+sources[0]["name"] = name
+sources[0]["connectionConfiguration"].update(config)
+json.dump(sources, open(path, "w"))
+PY
+  return 1
+}
 """
 
 
-def rename(tmp_path: Path, sources: list[dict]) -> tuple[int, str, list[str]]:
-    (tmp_path / "sources.json").write_text(json.dumps(sources), encoding="utf-8")
-    connections = [{"connectionId": "conn-1", "sourceId": "src-1", "name": f"jira-main-{FORMER}-conn"}]
-    (tmp_path / "connections.json").write_text(json.dumps(connections), encoding="utf-8")
+def rename(
+    tmp_path: Path, sources: list[dict] | None = None, *, lose_reply: bool = False
+) -> tuple[int, str, list[str]]:
+    if sources is not None:
+        (tmp_path / "sources.json").write_text(json.dumps(sources), encoding="utf-8")
     calls = tmp_path / "calls"
     script = f"""
     set -uo pipefail
     export INSIGHT_NAMESPACE=insight CONNECTORS_DIR="{ROOT}/../connectors" AIRBYTE_URL=http://127.0.0.1:1
-    export SOURCES="{tmp_path / "sources.json"}" CONNECTIONS="{tmp_path / "connections.json"}" CALLS="{calls}"
+    export SOURCES="{tmp_path / "sources.json"}" CALLS="{calls}" LOSE_REPLY="{"1" if lose_reply else ""}"
     source "{ROOT}/lib/reconcile.sh"
     {RENAME_STUBS}
     reconcile_rename_former_tenant jira {DEFINITION} main {TENANT} jira-main-{TENANT} '{{"insight_tenant_id": "{TENANT}"}}'
@@ -133,12 +144,21 @@ def rename(tmp_path: Path, sources: list[dict]) -> tuple[int, str, list[str]]:
     return result.returncode, result.stdout, recorded
 
 
-def test_reconcile_renames_the_source_and_its_connection_and_names_the_former_tenant(tmp_path: Path) -> None:
-    code, stdout, calls = rename(tmp_path, [source(f"jira-main-{FORMER}", "main", FORMER)])
+def test_reconcile_renames_the_source_in_one_update(tmp_path: Path) -> None:
+    code, _, calls = rename(tmp_path, [source(f"jira-main-{FORMER}", "main", FORMER)])
 
     assert code == 0
-    assert stdout == FORMER, "the caller removes the schedule named for the former tenant"
-    assert calls == [f"UPDATE_SOURCE src-1 jira-main-{TENANT}", f"RENAME_CONNECTION conn-1 jira-main-{TENANT}-conn"]
+    assert calls == [f"UPDATE_SOURCE src-1 jira-main-{TENANT}"]
+
+
+def test_a_rename_whose_reply_was_lost_is_not_repeated(tmp_path: Path) -> None:
+    first, _, _ = rename(tmp_path, [source(f"jira-main-{FORMER}", "main", FORMER)], lose_reply=True)
+    (tmp_path / "calls").unlink()
+
+    second, _, calls = rename(tmp_path)
+
+    assert first != 0, "the lost reply is reported"
+    assert (second, calls) == (0, []), "the next pass sees the source already renamed"
 
 
 def test_reconcile_writes_nothing_when_it_would_have_to_choose(tmp_path: Path) -> None:
