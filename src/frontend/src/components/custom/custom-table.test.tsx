@@ -37,6 +37,20 @@ describe("<CustomTable>", () => {
     expect(screen.getByText("83.9%")).toBeInTheDocument();
   });
 
+  it("writes a number the way the expanded view writes it, not as the raw float", () => {
+    render(
+      <CustomTable
+        result={{
+          columns: ["tool", "cost"],
+          rows: [["editor", 1234.5678901234999]],
+        }}
+      />
+    );
+
+    expect(screen.getByText("1,234.6")).toBeInTheDocument();
+    expect(screen.queryByText("1234.5678901234999")).not.toBeInTheDocument();
+  });
+
   it("leaves anything that is not a URL as text", () => {
     render(
       <CustomTable

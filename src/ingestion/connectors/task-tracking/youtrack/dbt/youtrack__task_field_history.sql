@@ -1,4 +1,15 @@
-{{ config(materialized='table', schema='staging', tags=['youtrack', 'staging', 'silver:class_task_field_history'], engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], settings={'allow_nullable_key': 1}) }}
+{{ config(
+    materialized='table',
+    schema='staging',
+    tags=['youtrack', 'staging', 'silver:class_task_field_history'],
+    engine=insight_engine('ReplacingMergeTree', '_version'),
+    order_by=['unique_key'],
+    settings={'allow_nullable_key': 1},
+    query_settings={
+        'max_bytes_before_external_group_by': 2000000000,
+        'max_bytes_before_external_sort': 2000000000,
+    },
+) }}
 
 WITH changes AS (
     SELECT a.insight_source_id AS insight_source_id, a.issue_id AS issue_id,
@@ -65,23 +76,24 @@ WITH changes AS (
     FROM {{ ref('youtrack__activities') }} GROUP BY insight_source_id
 ), first_changes AS (
     SELECT insight_source_id, issue_id, field_id,
-        argMin(id_readable, (event_at, _seq)) AS id_readable, argMin(field_name, (event_at, _seq)) AS field_name,
-        argMin(field_cardinality, (event_at, _seq)) AS field_cardinality, argMin(collected_at, (event_at, _seq)) AS collected_at
-    FROM changes GROUP BY insight_source_id, issue_id, field_id
+        argMin(field_name, event_at) AS field_name, argMin(field_cardinality, event_at) AS field_cardinality
+    FROM {{ ref('youtrack__activities') }} GROUP BY insight_source_id, issue_id, field_id
+), initial_states AS (
+    SELECT insight_source_id, issue_id, field_id, event_id, pairs
+    FROM {{ ref('youtrack__field_states') }} FINAL WHERE startsWith(event_id, 'initial:')
 ), initials AS (
     -- INVARIANT: only an issue created inside the activity feed has every change since
     -- its creation in hand; earlier, what the first seen change replaced is a guess.
-    SELECT c.insight_source_id, c.issue_id, c.id_readable, fs.event_id, i.created_at AS event_at,
+    SELECT s.insight_source_id, s.issue_id, i.id_readable, s.event_id, i.created_at AS event_at,
         'synthetic_initial' AS event_kind,
-        toUInt32(row_number() OVER (PARTITION BY c.insight_source_id, c.issue_id ORDER BY c.field_id)) AS _seq, CAST(NULL AS Nullable(String)) AS author_id,
-        c.field_id, c.field_name, c.field_cardinality, fs.pairs, c.collected_at, 'set' AS delta_action
-    FROM first_changes AS c
-    INNER JOIN {{ ref('youtrack__field_states') }} AS fs
-        ON fs.insight_source_id = c.insight_source_id AND fs.issue_id = c.issue_id
-        AND fs.field_id = c.field_id AND fs.event_id = concat('initial:', c.issue_id)
+        toUInt32(row_number() OVER (PARTITION BY s.insight_source_id, s.issue_id ORDER BY s.field_id)) AS _seq, CAST(NULL AS Nullable(String)) AS author_id,
+        s.field_id, c.field_name, c.field_cardinality, s.pairs, i.observed_at AS collected_at, 'set' AS delta_action
+    FROM initial_states AS s
+    INNER JOIN first_changes AS c
+        ON c.insight_source_id = s.insight_source_id AND c.issue_id = s.issue_id AND c.field_id = s.field_id
     INNER JOIN {{ ref('youtrack__issues') }} AS i
-        ON i.insight_source_id = c.insight_source_id AND i.issue_id = c.issue_id
-    INNER JOIN feed_starts AS f ON f.insight_source_id = c.insight_source_id
+        ON i.insight_source_id = s.insight_source_id AND i.issue_id = s.issue_id
+    INNER JOIN feed_starts AS f ON f.insight_source_id = s.insight_source_id
     WHERE i.created_at >= f.feed_start_at
 ), origins AS (
     SELECT insight_source_id, issue_id, min(event_at) AS first_event_at

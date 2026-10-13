@@ -10,9 +10,15 @@ const COMPACT = new Intl.NumberFormat("en", {
   notation: "compact",
   maximumFractionDigits: 1,
 });
-const GROUPED = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
+const GROUPED = new Intl.NumberFormat("en", {
+  maximumFractionDigits: 1,
+  signDisplay: "negative",
+});
 /** Below ten, one decimal hides the difference between 2.5 and 2.54. */
-const GROUPED_SMALL = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
+const GROUPED_SMALL = new Intl.NumberFormat("en", {
+  maximumFractionDigits: 2,
+  signDisplay: "negative",
+});
 const DAY = new Intl.DateTimeFormat("en", { month: "short", day: "numeric" });
 const DAY_IN_YEAR = new Intl.DateTimeFormat("en", {
   month: "short",

@@ -491,8 +491,17 @@ mod tests {
         use axum::http::StatusCode;
 
         let cases = [
-            ("UNKNOWN_TABLE", StatusCode::BAD_REQUEST),
+            (
+                "Code: 60. DB::Exception: Table x does not exist. (UNKNOWN_TABLE)",
+                StatusCode::BAD_REQUEST,
+            ),
             ("Code: 60. Table x does not exist", StatusCode::BAD_REQUEST),
+            // A failure that merely quotes an absent relation is still a
+            // failure: the code it reports is its own, not the nested one.
+            (
+                "Code: 279. All connection tries failed: Code: 60. (UNKNOWN_TABLE)",
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
             ("QUOTA_EXCEEDED", StatusCode::TOO_MANY_REQUESTS),
             (
                 "Code: 241. Memory limit exceeded",

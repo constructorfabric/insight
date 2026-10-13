@@ -8,22 +8,23 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use clickhouse::sql::Identifier;
+use insight_clickhouse::{Ddl, MissingRelation, TableSpec};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
 /// The shape every dataset's table has. A table of any other shape in the
 /// datasets database belongs to something else and is never touched.
+const COLUMNS: [(&str, &str); 4] = [
+    ("id", "UUID"),
+    ("table_name", "String"),
+    ("raw_data", "String"),
+    ("received_at", "DateTime64(3, 'UTC')"),
+];
+const SORT_KEY: [&str; 3] = ["table_name", "received_at", "id"];
+/// The same key as `system.tables` reads it back, which is how a table is
+/// recognised as one of ours. A test pins the two together.
 const INGEST_SORTING_KEY: &str = "table_name, received_at, id";
-const CREATE_TABLE: &str = "CREATE TABLE IF NOT EXISTS ? (
-    id UUID,
-    table_name String,
-    raw_data String,
-    received_at DateTime64(3, 'UTC')
-)
-ENGINE = MergeTree
-ORDER BY (table_name, received_at, id)";
-const DROP_TABLE: &str = "DROP TABLE IF EXISTS ?";
 /// One page of records. The id breaks an equal ordering value so that two
 /// reads of the same page agree on what is in it.
 const READ_PAGE: &str = "SELECT id, received_at, raw_data FROM ?
@@ -39,10 +40,6 @@ const READ_TIMEOUT_SECS: u64 = 10;
 const INSERT_SEND_TIMEOUT_SECS: u64 = 10;
 const INSERT_END_TIMEOUT_SECS: u64 = 30;
 const INSERT_TOTAL_TIMEOUT_SECS: u64 = 35;
-/// `ClickHouse` reports a missing relation as error 60 inside a message rather
-/// than as a variant, and only the code is stable across a real server's text
-/// and a header-only reply.
-const UNKNOWN_TABLE_CODE: &str = "Code: 60";
 
 /// What a table of that name in the datasets database is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,16 +199,21 @@ impl DatasetTables {
             Shape::Absent | Shape::Ingest => {}
         }
 
-        let create = self
-            .client
-            .inner()
-            .query(CREATE_TABLE)
-            .bind(Identifier(table));
-        tokio::time::timeout(self.ddl_timeout, create.execute())
+        let create = self.ingest_spec(table);
+        tokio::time::timeout(self.ddl_timeout, self.client.execute_ddl(&create))
             .await
             .map_err(|_| DatasetTableError::Timeout)??;
 
         Ok(())
+    }
+
+    /// The ingest shape, in the one database this service creates tables in.
+    /// Naming any other is refused by the client the spec is rendered through.
+    fn ingest_spec(&self, table: &str) -> Ddl {
+        Ddl::create_table(
+            TableSpec::merge_tree(&self.client.config().database, table, &COLUMNS, &SORT_KEY)
+                .keep_existing(),
+        )
     }
 
     /// Drops a table this service made.
@@ -220,12 +222,8 @@ impl DatasetTables {
     /// declaration names it, or this attempt made it moments ago and lost the
     /// dataset before anything could point at it.
     pub(crate) async fn drop_table(&self, table: &str) -> Result<(), DatasetTableError> {
-        let drop = self
-            .client
-            .inner()
-            .query(DROP_TABLE)
-            .bind(Identifier(table));
-        tokio::time::timeout(self.ddl_timeout, drop.execute())
+        let drop = Ddl::drop_table(&self.client.config().database, table);
+        tokio::time::timeout(self.ddl_timeout, self.client.execute_ddl(&drop))
             .await
             .map_err(|_| DatasetTableError::Timeout)??;
 
@@ -253,6 +251,10 @@ pub(crate) enum DatasetTableError {
     Timeout,
     #[error("the datasets database did not answer")]
     ClickHouse(clickhouse::error::Error),
+    /// A create aimed outside the datasets database. The shared client logs
+    /// the pair at the point it refuses the spec.
+    #[error("the dataset's table was aimed at a database this service does not own")]
+    NotOurDatabase,
 }
 
 #[derive(Debug, Deserialize, Serialize, clickhouse::Row)]
@@ -324,12 +326,18 @@ impl From<clickhouse::error::Error> for DatasetTableError {
     fn from(error: clickhouse::error::Error) -> Self {
         match error {
             clickhouse::error::Error::TimedOut => Self::Timeout,
-            clickhouse::error::Error::BadResponse(ref message)
-                if message.contains(UNKNOWN_TABLE_CODE) =>
-            {
-                Self::Vanished
-            }
+            ref reported if MissingRelation::from_error(reported).is_some() => Self::Vanished,
             error => Self::ClickHouse(error),
+        }
+    }
+}
+
+impl From<insight_clickhouse::Error> for DatasetTableError {
+    fn from(error: insight_clickhouse::Error) -> Self {
+        match error {
+            insight_clickhouse::Error::Clickhouse(reported) => Self::from(reported),
+            insight_clickhouse::Error::Timeout => Self::Timeout,
+            insight_clickhouse::Error::InvalidQuery(_) => Self::NotOurDatabase,
         }
     }
 }
