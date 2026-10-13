@@ -104,3 +104,22 @@ def test_each_tenant_snapshots_its_own_issue(scenario: Scenario) -> None:
     )
 
     assert [(r["tenant_id"], list(r["value_ids"])) for r in rows] == [(TENANT_ID, ["5"]), (OTHER_TENANT, ["9"])]
+
+
+def test_each_tenant_resolves_an_issue_key_to_its_own_issue(scenario: Scenario) -> None:
+    """The same readable key names a different issue in each tenant's site."""
+    catalogue = [field(POINTS, name="Story Points", schema_type="number")]
+    scenario.seed(fields=catalogue, issues=[issue("TST-1", fields={POINTS: 5}, jira_id="1001")])
+    scenario.seed(
+        fields=_as_other_tenant(catalogue),
+        issues=_as_other_tenant([issue("TST-1", fields={POINTS: 9}, jira_id="2002")]),
+    )
+    scenario.build()
+
+    rows = _rows(
+        scenario,
+        "SELECT tenant_id, issue_id FROM staging.jira__issue_key_ids"
+        " WHERE insight_source_id = {src:String} AND issue_key = 'TST-1' ORDER BY tenant_id",
+    )
+
+    assert [(r["tenant_id"], r["issue_id"]) for r in rows] == [(TENANT_ID, "1001"), (OTHER_TENANT, "2002")]
