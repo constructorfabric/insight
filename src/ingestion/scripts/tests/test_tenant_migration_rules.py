@@ -90,8 +90,11 @@ def test_a_plan_is_refused_for_every_reason_it_cannot_be_applied(plan: TablePlan
     assert len(found) == 1 and reason in found[0], found
 
 
-def test_a_leftover_beside_a_table_that_no_longer_moves_is_no_refusal() -> None:
-    assert refusals([_plan(moving=0, leftovers=("bronze_example.items__tenant_backup",))], []) == []
+def test_work_left_by_an_earlier_run_is_refused_even_where_nothing_moves() -> None:
+    """A finished run waits for finalize or rollback; a new one must not start beside it."""
+    found = refusals([_plan(moving=0, leftovers=("bronze_example.items__tenant_backup",))], [])
+
+    assert len(found) == 1 and "finalize or roll back first" in found[0], found
 
 
 def test_an_unfit_table_with_rows_is_refused_and_an_empty_one_is_not() -> None:
