@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from importlib import (
-    resources,
-)  # nosemgrep: python.lang.compatibility.python37.python37-compatibility-importlib2 — requires-python >= 3.12
+
+# nosemgrep: python.lang.compatibility.python37.python37-compatibility-importlib2 — requires-python >= 3.12
+from importlib import resources
 
 from tenant_migration.clickhouse import ClickHouse
 from tenant_migration.keys import Columns

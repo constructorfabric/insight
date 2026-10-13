@@ -261,7 +261,7 @@ class Interrupted(ClickHouse):
     once: bool = False
     seen: list[str] = field(default_factory=list)
 
-    def execute(self, sql: str) -> str:
+    def execute(self, sql: str, *, fmt: str | None = None) -> str:
         statement = sql.lstrip()
         fired = "lost" in self.seen
         if fired and not self.once:
@@ -269,13 +269,13 @@ class Interrupted(ClickHouse):
         if not fired:
             if self.after and statement.startswith(self.after) and "armed" not in self.seen:
                 self.seen.append("armed")
-                return super().execute(sql)
+                return super().execute(sql, fmt=fmt)
             hit = statement.startswith(self.at) if self.at else "armed" in self.seen
             if hit:
-                super().execute(sql)
+                super().execute(sql, fmt=fmt)
                 self.seen.append("lost")
                 raise ClickHouseError("connection lost")
-        return super().execute(sql)
+        return super().execute(sql, fmt=fmt)
 
 
 def _interrupted(ch: ClickHouse, *, at: str = "", after: str = "", once: str = "") -> Interrupted:
