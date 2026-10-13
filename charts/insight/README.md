@@ -155,7 +155,7 @@ The same decision under a different name in each layer:
 | --- | --- | --- |
 | Chart values | `clickhouse.clusterMode` / `clickhouse.clusterName` | [`values.yaml`](./values.yaml) |
 | Chart helpers | `insight.clickhouse.clusterMode` / `insight.clickhouse.clusterName` | [`templates/_helpers.tpl`](./templates/_helpers.tpl) |
-| Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-databases` and `clickhouse-migrate` Jobs (one shared env block, `insight.clickhouse.ddlEnv`), `create-databases.sh`, `apply-ch-migrations.sh` |
+| Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-databases` and `clickhouse-migrate` Jobs (one shared env block, `insight.clickhouse.ddlEnv`), `create-databases.sh`, `apply-ch-migrations.sh`, whose numbered migrations name their engine as `{{ch_engine:<family>}}` for `ch_render_engines` (`lib/ch-exec.sh`) to render |
 | Reconcile | `RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE` / `RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME` | `reconcile-cron.yaml`, consumed by `compose_destination_config.py` as the destination's `use_replicated_engines` / `cluster_name` |
 | dbt | project vars `cluster_mode` / `cluster_name`, read by the `insight_engine` macro every model's engine is declared through and by the `insight_on_cluster` clause the `on-run-start` hooks qualify their raw DDL with; the project-level `+engine` default for a model that declares none; the adapter's `cluster:` profile key and the quorum `custom_settings`, both written by the one profile writer | `dbt_project.yml`, `dbt/macros/insight_engine.sql`, `scripts/dbt_profiles.py` |
 | Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name`, decides the read-after-write settings a swap needs and nothing else. Data-layer DDL is one `insight_clickhouse::Ddl` statement per change (create, drop, exchange, rename) and carries no `ON CLUSTER` and no `Replicated` prefix: the database engine above replays it on every replica | `libs/insight-clickhouse` (`topology.rs`, `ddl.rs`, `consistency.rs`), `insight-v3-core` and `identity-resolution` gear config |
@@ -174,7 +174,10 @@ One statement carries the whole fork: `src/ingestion/scripts/create-databases.sh
 is the only site that creates a ClickHouse database, so a `Replicated` database
 engine has exactly one place to appear. Inside such a database every later DDL
 is logged in Keeper and replayed on every replica, which is what lets the
-migrations, the dbt hooks and the DDL snapshot stay topology-blind. The
+migrations, the dbt hooks and the DDL snapshot stay blind to `ON CLUSTER`. It
+replays the DDL, never the rows: a table that holds data still needs a
+`Replicated*` engine, which is why models and migrations name their family
+through `insight_engine` and `{{ch_engine:...}}` rather than as a literal. The
 `clickhouse-databases` pre-install Hook and the `clickhouse-migrate`
 post-install Hook both run that script; `clickhouse.createDatabases: false`
 turns the pre-install one off for a warehouse provisioned out of band.

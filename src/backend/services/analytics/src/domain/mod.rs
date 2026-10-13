@@ -15,3 +15,5 @@ pub mod query_gate;
 pub mod reports;
 pub mod saved_query;
 pub(crate) mod spreadsheet;
+#[cfg(test)]
+pub(crate) mod standalone_migration;

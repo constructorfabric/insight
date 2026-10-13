@@ -23,6 +23,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import sys
 import threading
 import urllib.parse
@@ -54,6 +55,9 @@ BASE_HOUR = 8
 DAY = "2026-08-27"
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "scripts" / "migrations"
+
+#: `ch_render_engines` on a single node: the token becomes the plain family it names.
+SINGLE_NODE_ENGINE = re.compile(r"\{\{ch_engine:(\w+)\}\}")
 
 #: The relation as a released install holds it: no identity columns. Written out
 #: rather than derived from the migration, so a future edit to the migration
@@ -254,7 +258,7 @@ def _apply_migration(path: Path) -> None:
     simplified: a migration this passes but that channel cannot split is a
     migration that fails at deploy time only.
     """
-    body = path.read_text(encoding="utf-8")
+    body = SINGLE_NODE_ENGINE.sub(r"\1", path.read_text(encoding="utf-8"))
     sql = "\n".join(
         line for line in body.splitlines() if not line.lstrip().startswith("--")
     )
