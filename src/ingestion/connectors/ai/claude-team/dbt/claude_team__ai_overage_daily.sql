@@ -35,7 +35,7 @@
     settings={'allow_nullable_key': 1},
     full_refresh=false,
     schema='staging',
-    tags=['claude-team', 'silver:class_ai_overage_daily']
+    tags=['claude-team', 'silver:class_ai_overage_daily', 'history']
 ) }}
 
 WITH latest_per_seat_day AS (
