@@ -728,15 +728,10 @@ async fn metric_results_answers_200_with_generic_error_views_when_clickhouse_is_
     result.map_err(Into::into)
 }
 
-/// Creates the identity relations a person-entity read joins, and maps one
-/// e-mail to one person. Both must exist or the read fails outright — dbt owns
-/// them in a deployment, so a live test has to stand them up itself.
-async fn seed_identity_relations(
-    ch: &insight_clickhouse::Client,
-    tenant_id: Uuid,
-    email: &str,
-    person_id: Uuid,
-) -> anyhow::Result<()> {
+/// Creates the identity relations a person-entity read joins. Both must exist
+/// or the read fails outright — dbt owns them in a deployment, so a live test
+/// has to stand them up itself.
+async fn create_identity_relations(ch: &insight_clickhouse::Client) -> anyhow::Result<()> {
     ch.query("CREATE DATABASE IF NOT EXISTS identity")
         .execute()
         .await?;
@@ -754,8 +749,69 @@ async fn seed_identity_relations(
     )
     .execute()
     .await?;
+    Ok(())
+}
+
+async fn map_email(
+    ch: &insight_clickhouse::Client,
+    tenant_id: Uuid,
+    email: &str,
+    person_id: Uuid,
+) -> anyhow::Result<()> {
+    ch.query("INSERT INTO identity.person_map SELECT ?, ?, toUUID(?)")
+        .bind(tenant_id.to_string())
+        .bind(email)
+        .bind(person_id.to_string())
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Binds an account the way the identity journal does: the source instance is
+/// keyed by the hash of the connector's raw `source_id`.
+async fn bind_account(
+    ch: &insight_clickhouse::Client,
+    tenant_id: Uuid,
+    account: &ObservedAccount<'_>,
+    person_id: Uuid,
+) -> anyhow::Result<()> {
+    ch.query(
+        "INSERT INTO identity.account_assignment \
+         SELECT ?, ?, toUUID(UUIDNumToString(sipHash128(?))), ?, toUUID(?), now64(6)",
+    )
+    .bind(tenant_id.to_string())
+    .bind(account.source_type)
+    .bind(account.source_id)
+    .bind(account.account_id)
+    .bind(person_id.to_string())
+    .execute()
+    .await?;
+    Ok(())
+}
+
+#[derive(Debug)]
+struct ObservedAccount<'a> {
+    source_type: &'a str,
+    source_id: &'a str,
+    account_id: &'a str,
+}
+
+/// The serving contract this build reads: `entity_id` is the SOURCE identity
+/// and the runtime resolves it through the identity relations while it serves.
+async fn create_observation_relation(
+    ch: &insight_clickhouse::Client,
+    relation: &str,
+) -> anyhow::Result<()> {
+    ch.query("CREATE DATABASE IF NOT EXISTS insight")
+        .execute()
+        .await?;
     ch.query(&format!(
-        "INSERT INTO identity.person_map VALUES ('{tenant_id}', '{email}', '{person_id}')"
+        "CREATE TABLE {relation} (tenant_id UUID, source_key String, entity_type String, \
+         entity_id String, account_source_type String, account_source_id String, \
+         account_id String, metric_date Date, measure_key String, observed_at DateTime64(3), \
+         value Float64, subject_key Nullable(String), \
+         dimensions Array(Tuple(key String, value String, label Nullable(String)))) \
+         ENGINE = MergeTree ORDER BY (tenant_id, metric_date)"
     ))
     .execute()
     .await?;
@@ -778,23 +834,7 @@ async fn metric_results_mixes_data_and_not_ready_views_in_one_response() -> Test
     let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
     let suffix = fixture.tenant_id.simple().to_string();
     let relation = format!("insight.test_{suffix}_metric_observations");
-    ch.query("CREATE DATABASE IF NOT EXISTS insight")
-        .execute()
-        .await?;
-    // The serving contract this build reads: `entity_id` is the SOURCE identity
-    // and the runtime resolves it through the identity relations while it
-    // serves, so the fixture seeds an e-mail and a map row rather than a
-    // pre-resolved person id.
-    ch.query(&format!(
-        "CREATE TABLE {relation} (tenant_id UUID, source_key String, entity_type String, \
-         entity_id String, account_source_type String, account_source_id String, \
-         account_id String, metric_date Date, measure_key String, observed_at DateTime64(3), \
-         value Float64, subject_key Nullable(String), \
-         dimensions Array(Tuple(key String, value String, label Nullable(String)))) \
-         ENGINE = MergeTree ORDER BY (tenant_id, metric_date)"
-    ))
-    .execute()
-    .await?;
+    create_observation_relation(&ch, &relation).await?;
     // Per-suffix so parallel runs never contend for one e-mail in the shared map.
     let person_email = format!("person-{suffix}@example.test");
     ch.query(&format!(
@@ -806,7 +846,8 @@ async fn metric_results_mixes_data_and_not_ready_views_in_one_response() -> Test
     ))
     .execute()
     .await?;
-    seed_identity_relations(&ch, fixture.tenant_id, &person_email, VISIBLE_PERSON).await?;
+    create_identity_relations(&ch).await?;
+    map_email(&ch, fixture.tenant_id, &person_email, VISIBLE_PERSON).await?;
 
     let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
     let result: anyhow::Result<()> = async {
@@ -981,6 +1022,10 @@ async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure(
     // relations its cursor pins exist, the read answers with records and no
     // marker. Without this the not-ready path above would pass against a
     // handler that never answers anything else.
+
+async fn another_tenants_identity_never_claims_this_tenants_observations() -> TestResult {
+    // Both tenants know the same address and the same account, each as its own
+    // person. Only the reading tenant's person may receive the observations.
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
@@ -1012,6 +1057,25 @@ async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure(
         "INSERT INTO {evidence} VALUES ('{tenant}', 'test_{suffix}', 'person', \
          '{person_email}', '', '', '', toDate('2026-07-05'), now64(3), 'value_count', \
          'rec-1', 'commit', 'event', 'first commit', 1.0, NULL, [], map())",
+
+    let relation = format!("insight.test_{suffix}_metric_observations");
+    create_observation_relation(&ch, &relation).await?;
+
+    let shared_email = format!("shared-{suffix}@example.test");
+    let account_source = format!("source-{suffix}");
+    let account_id = format!("account-{suffix}");
+    let account = ObservedAccount {
+        source_type: "github",
+        source_id: &account_source,
+        account_id: &account_id,
+    };
+    ch.query(&format!(
+        "INSERT INTO {relation} VALUES \
+         ('{tenant}', 'test_{suffix}', 'person', '{shared_email}', '', '', '', \
+          toDate('2026-07-05'), 'value_count', now64(3), 1, NULL, []), \
+         ('{tenant}', 'test_{suffix}', 'person', 'unmapped-{suffix}@example.test', \
+          'github', '{account_source}', '{account_id}', \
+          toDate('2026-07-06'), 'value_count', now64(3), 10, NULL, [])",
         tenant = fixture.tenant_id,
     ))
     .execute()
@@ -1020,6 +1084,20 @@ async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure(
     seed_identity_watermark_relations(&ch).await?;
 
     let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
+
+
+    let other_tenant = Uuid::now_v7();
+    let other_tenants_person = Uuid::now_v7();
+    create_identity_relations(&ch).await?;
+    for (tenant, person) in [
+        (fixture.tenant_id, VISIBLE_PERSON),
+        (other_tenant, other_tenants_person),
+    ] {
+        map_email(&ch, tenant, &shared_email, person).await?;
+        bind_account(&ch, tenant, &account, person).await?;
+    }
+
+    let identity = spawn_identity(&[VISIBLE_PERSON, other_tenants_person]).await?;
     let result: anyhow::Result<()> = async {
         let app = app_with_identity_and_ch(db.clone(), fixture.tenant_id, identity, ch.clone());
         let resp = app
@@ -1027,6 +1105,16 @@ async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure(
                 "POST",
                 "/v1/metric-drilldown",
                 &drilldown_body(VISIBLE_PERSON),
+
+                "/v1/metric-results",
+                &json!({
+                    "entity": {
+                        "type": "person",
+                        "ids": [VISIBLE_PERSON.to_string(), other_tenants_person.to_string()]
+                    },
+                    "period": {"from": "2026-07-01", "to": "2026-07-28"},
+                    "metrics": [{"metric_key": "git.commits", "views": [{"view": "period"}]}]
+                }),
             )?)
             .await?;
         anyhow::ensure!(resp.status() == StatusCode::OK, "got {}", resp.status());
@@ -1041,12 +1129,32 @@ async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure(
             body["rows"].as_array().map(Vec::len) == Some(1),
             "the seeded record must come back, got {}",
             body["rows"]
+
+        let view = &body["metrics"][0]["views"][0];
+        anyhow::ensure!(view["view"] == "period", "got {view}");
+        let value_of = |person: Uuid| {
+            view["values"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["entity_id"] == person.to_string())
+                .map_or(Value::Null, |row| row["value"].clone())
+        };
+        anyhow::ensure!(
+            value_of(VISIBLE_PERSON) == json!(11.0),
+            "the reading tenant's person keeps both the e-mail and the account row, got {view}"
+        );
+        anyhow::ensure!(
+            value_of(other_tenants_person).is_null(),
+            "the other tenant's person must claim nothing here, got {view}"
         );
         Ok(())
     }
     .await;
     let _ = ch
         .query(&format!("DROP TABLE IF EXISTS {evidence}"))
+
+        .query(&format!("DROP TABLE IF EXISTS {relation}"))
         .execute()
         .await;
     fixture.delete(&db).await?;
@@ -1154,6 +1262,7 @@ async fn a_saved_query_that_reads_answers_with_its_rows_and_no_marker() -> TestR
 }
 
 #[tokio::test]
+
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn admins_see_the_underlying_error_when_clickhouse_is_down() -> TestResult {
     let Some(db) = connect_or_skip().await else {
