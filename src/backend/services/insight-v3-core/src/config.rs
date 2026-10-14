@@ -77,6 +77,11 @@ pub(crate) enum DestinationConfig {
         #[serde(deserialize_with = "text_or_number")]
         chat_id: String,
     },
+    /// A Slack channel, through a bot.
+    Slack {
+        bot_token: SecretString,
+        channel: String,
+    },
     /// A Zulip stream topic, through a bot.
     Zulip {
         site_url: String,
@@ -92,6 +97,7 @@ impl DestinationConfig {
         match self {
             Self::Discord { .. } => DestinationProvider::Discord,
             Self::Telegram { .. } => DestinationProvider::Telegram,
+            Self::Slack { .. } => DestinationProvider::Slack,
             Self::Zulip { .. } => DestinationProvider::Zulip,
         }
     }
@@ -114,6 +120,14 @@ impl DestinationConfig {
                 }
                 if chat_id.trim().is_empty() {
                     return Err(field("chat_id"));
+                }
+            }
+            Self::Slack { bot_token, channel } => {
+                if bot_token.expose_secret().trim().is_empty() {
+                    return Err(field("bot_token"));
+                }
+                if channel.trim().is_empty() {
+                    return Err(field("channel"));
                 }
             }
             Self::Zulip {
@@ -183,6 +197,7 @@ fn is_https_url(value: &str) -> bool {
 pub(crate) enum DestinationProvider {
     Discord,
     Telegram,
+    Slack,
     Zulip,
 }
 
@@ -191,6 +206,7 @@ impl DestinationProvider {
         match self {
             Self::Discord => "discord",
             Self::Telegram => "telegram",
+            Self::Slack => "slack",
             Self::Zulip => "zulip",
         }
     }

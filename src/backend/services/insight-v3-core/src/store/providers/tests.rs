@@ -319,6 +319,161 @@ async fn zulip_reads_success_and_the_message_id() {
     }
 }
 
+#[tokio::test]
+async fn slack_reads_ok_and_the_message_timestamp() {
+    let cases = [
+        (
+            "accepted",
+            StatusCode::OK,
+            json!({"ok": true, "channel": "C1", "ts": "1700000000.000100"}),
+            r#"Ok(Receipt("1700000000.000100"))"#,
+        ),
+        (
+            "channel not found",
+            StatusCode::OK,
+            json!({"ok": false, "error": "channel_not_found"}),
+            r#"Err(Rejected("channel_not_found"))"#,
+        ),
+        (
+            "not in channel",
+            StatusCode::OK,
+            json!({"ok": false, "error": "not_in_channel"}),
+            r#"Err(Rejected("not_in_channel"))"#,
+        ),
+        (
+            "not ok without an error",
+            StatusCode::OK,
+            json!({"ok": false}),
+            r#"Err(Rejected("not ok"))"#,
+        ),
+        (
+            "too many requests",
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"ok": false, "error": "ratelimited"}),
+            r#"Err(Unconfirmed("answered 429 Too Many Requests"))"#,
+        ),
+        (
+            "server error",
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({}),
+            r#"Err(Unconfirmed("answered 503 Service Unavailable"))"#,
+        ),
+        (
+            "accepted without a timestamp",
+            StatusCode::OK,
+            json!({"ok": true}),
+            r#"Err(Unconfirmed("answer not understood"))"#,
+        ),
+        (
+            "accepted without a body it understands",
+            StatusCode::OK,
+            json!({"nope": true}),
+            r#"Err(Unconfirmed("answer not understood"))"#,
+        ),
+    ];
+
+    for (case, status, body, expected) in cases {
+        let (url, hits) = provider_at("/chat.postMessage", status, body, Duration::ZERO).await;
+        let slack = Slack::new(http(), SecretString::from("xoxb-token"), "C1".to_owned()).at(&url);
+
+        let result = slack.send(&message()).await;
+
+        assert_eq!(format!("{result:?}"), expected, "case: {case}");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "one call: {case}");
+    }
+}
+
+#[tokio::test]
+async fn a_transient_slack_error_inside_a_successful_answer_is_unconfirmed() {
+    let transient = [
+        "ratelimited",
+        "rate_limited",
+        "message_limit_exceeded",
+        "internal_error",
+        "fatal_error",
+        "service_unavailable",
+        "request_timeout",
+        "team_added_to_org",
+        "org_login_required",
+    ];
+
+    for error in transient {
+        let (url, _) = provider_at(
+            "/chat.postMessage",
+            StatusCode::OK,
+            json!({"ok": false, "error": error}),
+            Duration::ZERO,
+        )
+        .await;
+        let slack = Slack::new(http(), SecretString::from("xoxb-token"), "C1".to_owned()).at(&url);
+
+        let result = slack.send(&message()).await;
+
+        assert!(
+            matches!(&result, Err(SendError::Unconfirmed(reason)) if reason == error),
+            "should be unconfirmed: {error}: {result:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn slack_is_sent_the_bot_token_and_the_message_as_escaped_plain_text() {
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let recorded = seen.clone();
+    let router = Router::new().route(
+        "/chat.postMessage",
+        post(move |headers: axum::http::HeaderMap, body: String| {
+            let authorization = headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned();
+            *recorded
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((authorization, body));
+            async { axum::Json(json!({"ok": true, "ts": "1.2"})) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap_or_else(|error| panic!("the provider must bind: {error}"));
+    let url = format!(
+        "http://{}",
+        listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("the provider must have an address: {error}"))
+    );
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    let slack = Slack::new(http(), SecretString::from("xoxb-token"), "C1".to_owned()).at(&url);
+    let message = Message {
+        text: "Insight alert: <!channel> & a > b".to_owned(),
+    };
+
+    let result = slack.send(&message).await;
+
+    assert_eq!(result.ok(), Some(Receipt("1.2".into())));
+    let (authorization, body) = seen
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+        .unwrap_or_else(|| panic!("the provider must be called"));
+    assert_eq!(authorization, "Bearer xoxb-token");
+    let sent: serde_json::Value = serde_json::from_str(&body)
+        .unwrap_or_else(|error| panic!("the request is JSON: {error}: {body}"));
+    assert_eq!(
+        sent,
+        json!({
+            "channel": "C1",
+            "text": "Insight alert: &lt;!channel&gt; &amp; a &gt; b",
+            "mrkdwn": false,
+            "unfurl_links": false,
+            "unfurl_media": false,
+        })
+    );
+}
+
 #[test]
 fn every_configured_destination_becomes_an_adapter_of_its_provider() {
     use std::collections::BTreeMap;
@@ -329,13 +484,15 @@ fn every_configured_destination_becomes_an_adapter_of_its_provider() {
         (
             "chat".to_owned(),
             DestinationConfig::Discord {
-                webhook_url: SecretString::from("https://discord.example.test/api/webhooks/1/x"),
+                webhook_url: SecretString::from(
+                    "https://discord.example.test/api/webhooks/1/discord-webhook-secret",
+                ),
             },
         ),
         (
             "phone".to_owned(),
             DestinationConfig::Telegram {
-                bot_token: SecretString::from("t"),
+                bot_token: SecretString::from("telegram-bot-token"),
                 chat_id: "1".to_owned(),
             },
         ),
@@ -344,9 +501,16 @@ fn every_configured_destination_becomes_an_adapter_of_its_provider() {
             DestinationConfig::Zulip {
                 site_url: "https://zulip.example.test".to_owned(),
                 bot_email: "b@example.test".to_owned(),
-                api_key: SecretString::from("k"),
+                api_key: SecretString::from("zulip-api-key"),
                 stream: "s".to_owned(),
                 topic: "t".to_owned(),
+            },
+        ),
+        (
+            "team".to_owned(),
+            DestinationConfig::Slack {
+                bot_token: SecretString::from("slack-bot-token"),
+                channel: "C1".to_owned(),
             },
         ),
     ]);
@@ -358,12 +522,20 @@ fn every_configured_destination_becomes_an_adapter_of_its_provider() {
         .map(|(name, provider)| format!("{name}={provider:?}"))
         .collect();
 
-    assert_eq!(shown.len(), 3);
+    assert_eq!(shown.len(), 4);
     assert!(shown[0].starts_with("chat=Discord"), "{shown:?}");
     assert!(shown[1].starts_with("phone=Telegram"), "{shown:?}");
     assert!(shown[2].starts_with("stream=Zulip"), "{shown:?}");
-    assert!(
-        !shown.join(" ").contains('k'),
-        "no credential is shown: {shown:?}"
-    );
+    assert!(shown[3].starts_with("team=Slack"), "{shown:?}");
+    for credential in [
+        "discord-webhook-secret",
+        "telegram-bot-token",
+        "zulip-api-key",
+        "slack-bot-token",
+    ] {
+        assert!(
+            !shown.join(" ").contains(credential),
+            "should not show {credential}: {shown:?}"
+        );
+    }
 }
