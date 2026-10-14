@@ -82,6 +82,7 @@ The jobs under this rule:
 - `e2e-stand.yml`: `stand-runner`
 - `functional-k3s.yml`: `cluster-smoke`
 - `jira-field-history.yml`: `transformations`
+- `youtrack-transform.yml`: `transformations`
 - `connectors-ddl.yml`: `connectors-ddl`
 - `warm-upgrade.yml`: `warm-upgrade`
 - `ci.yml`: `rust`, only the matrix legs that start a database: the entry sets
