@@ -560,6 +560,7 @@ SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 
 CREATE TABLE IF NOT EXISTS insight.task_status_spans
 (
+    `tenant_id` Nullable(String),
     `insight_source_id` String,
     `issue_id` String,
     `interval_start` DateTime64(3),
