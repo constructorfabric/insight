@@ -60,7 +60,8 @@ resolved_events AS (
         )
     FROM events AS e
     LEFT JOIN {{ ref('jira__issue_key_ids') }} AS ik FINAL
-        ON ik.insight_source_id = e.insight_source_id
+        ON ik.tenant_id = e.tenant_id
+       AND ik.insight_source_id = e.insight_source_id
        AND ik.issue_key = if(e.field_kind = 'link_array', e.element.1, '')
 ),
 
