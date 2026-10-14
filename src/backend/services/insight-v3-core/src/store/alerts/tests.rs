@@ -391,6 +391,7 @@ async fn one_logical_breach_owes_one_notification_until_a_valid_clear() -> R {
         panic!("the first breach owes a notification");
     };
     assert_eq!(owed.witness, Witness::one_value("total", seen(12), true));
+    assert_eq!(owed.context_columns, ["assignee"]);
     assert_eq!(owed.status, NotificationStatus::Pending);
     assert_eq!(first.rule.state.last_valid_breached, Some(true));
     assert!(first.rule.state.breached_since.is_some());
@@ -433,8 +434,36 @@ async fn one_logical_breach_owes_one_notification_until_a_valid_clear() -> R {
         listed[0].witness,
         Witness::one_value("total", seen(15), true)
     );
+    assert_eq!(listed[0].context_columns, ["assignee"]);
 
     store.delete(rule.id).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "needs INTEGRATION_TESTS_MARIADB_URL"]
+async fn a_rule_written_before_context_columns_reads_back_with_none() -> R {
+    let _turn = crate::live_mariadb::TURN.lock().await;
+    let Some(store) = store().await else {
+        return Ok(());
+    };
+    let created = store.create(write(10), UNBOUNDED).await?;
+    store
+        .db
+        .execute_raw(statement(
+            "UPDATE alert_rules SET context_columns = NULL WHERE id = ?".to_owned(),
+            [id_column(created.id)],
+        ))
+        .await?;
+
+    let read = store
+        .get(created.id)
+        .await?
+        .unwrap_or_else(|| panic!("the rule is stored"));
+    assert!(read.spec.context_columns.is_empty());
+
+    store.delete(created.id).await?;
 
     Ok(())
 }

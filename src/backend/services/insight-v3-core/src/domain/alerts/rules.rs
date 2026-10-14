@@ -134,7 +134,7 @@ impl<'a> AlertRules<'a> {
             draft,
             self.limits,
             self.destinations,
-            &columns.kinds,
+            &columns,
         )?)
     }
 
@@ -145,7 +145,7 @@ impl<'a> AlertRules<'a> {
         let columns = self.columns_of(&metric).await?;
         let condition =
             Condition::parse(&draft.condition, &columns.kinds).map_err(RuleError::from)?;
-        let context = parse_context_columns(&draft.context_columns, &columns.kinds)?;
+        let context = parse_context_columns(&draft.context_columns, &columns)?;
         let window =
             WindowRequest::parse(draft.range.as_deref(), Some(false)).map_err(RuleError::Range)?;
 

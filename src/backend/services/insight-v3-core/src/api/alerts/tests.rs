@@ -524,10 +524,14 @@ async fn enabling_a_rule_whose_destination_is_gone_is_refused() -> R {
         "retired".to_owned(),
         "discord".to_owned(),
     )]));
-    let columns = [(
-        "total".to_owned(),
-        crate::domain::query::metric_query::ColumnKind::Number,
-    )];
+    let columns = crate::domain::metric_run::Columns {
+        kinds: vec![(
+            "total".to_owned(),
+            crate::domain::query::metric_query::ColumnKind::Number,
+        )],
+        groups: Vec::new(),
+        imposed_limit: None,
+    };
     let spec = RuleSpec::parse(&draft, Limits::default(), &once_configured, &columns)?;
     let stored = harness
         .store
@@ -609,6 +613,14 @@ async fn a_rule_is_refused_for_what_it_gets_wrong() -> R {
         (
             "a context column the metric does not answer",
             rule(|body| body["context_columns"] = json!(["nobody"])),
+            "context_columns",
+        ),
+        (
+            "a group-by column as context",
+            rule(|body| {
+                body["metric"] = json!("prs-by-team");
+                body["context_columns"] = json!(["team"]);
+            }),
             "context_columns",
         ),
         (

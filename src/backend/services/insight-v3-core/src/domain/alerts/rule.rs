@@ -13,7 +13,7 @@ use uuid::Uuid;
 use super::condition::{Condition, ConditionError, ConditionShape, Witness};
 use super::scalar::{Outcome, UnknownReason};
 use crate::domain::definition::{DefinitionName, Page};
-use crate::domain::query::metric_query::ColumnKind;
+use crate::domain::metric_run::Columns;
 use crate::domain::query::time_window::{WindowError, WindowRequest};
 
 /// The bounds every installation gets unless it sets its own.
@@ -150,16 +150,16 @@ pub(crate) struct RuleSpec {
 impl RuleSpec {
     /// A draft as a rule, or the first thing wrong with it. `columns` are
     /// the metric's result columns and what each holds, which the condition
-    /// is typed against.
+    /// and the context columns are checked against.
     pub(crate) fn parse(
         draft: &RuleDraft,
         limits: Limits,
         destinations: &Destinations,
-        columns: &[(String, ColumnKind)],
+        columns: &Columns,
     ) -> Result<Self, RuleError> {
         let name = AlertName::parse(&draft.name)?;
         let metric = DefinitionName::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
-        let condition = Condition::parse(&draft.condition, columns)?;
+        let condition = Condition::parse(&draft.condition, &columns.kinds)?;
         let context_columns = parse_context_columns(&draft.context_columns, columns)?;
 
         if let Some(range) = draft.range.as_deref() {
@@ -199,10 +199,11 @@ impl RuleSpec {
 
 /// The columns a rule asks to carry, each one the metric answers and none
 /// twice. A column the condition reads too is fine: the witness keeps it
-/// once.
+/// once. A group-by column is refused: the witness always shows it, and the
+/// message writes it as the row's group.
 pub(crate) fn parse_context_columns(
     named: &[String],
-    columns: &[(String, ColumnKind)],
+    columns: &Columns,
 ) -> Result<Vec<String>, RuleError> {
     if named.len() > MAX_CONTEXT_COLUMNS {
         return Err(RuleError::ContextColumns(ContextColumnsProblem::TooMany));
@@ -218,10 +219,15 @@ pub(crate) fn parse_context_columns(
                 name.clone(),
             )));
         }
-        if !columns.iter().any(|(column, _)| column == name) {
+        if !columns.kinds.iter().any(|(column, _)| column == name) {
             return Err(RuleError::ContextColumns(
                 ContextColumnsProblem::NoSuchColumn(name.clone()),
             ));
+        }
+        if columns.groups.contains(name) {
+            return Err(RuleError::ContextColumns(ContextColumnsProblem::GroupBy(
+                name.clone(),
+            )));
         }
         kept.push(name.clone());
     }
@@ -247,6 +253,8 @@ pub(crate) enum ContextColumnsProblem {
     Duplicate(String),
     #[error("the metric answers no column `{0}`")]
     NoSuchColumn(String),
+    #[error("`{0}` is a group-by column, which every notification shows already")]
+    GroupBy(String),
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]

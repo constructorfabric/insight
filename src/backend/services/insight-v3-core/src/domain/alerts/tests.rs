@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use super::condition::{Condition, ConditionError, Problem, Witness, evaluate};
 use super::rule::RuleSpec;
 use super::*;
+use crate::domain::metric_run::Columns;
 use crate::domain::query::metric_query::{ColumnKind, RunResult};
 
 fn result(columns: &[&str], rows: &[&[serde_json::Value]]) -> RunResult {
@@ -21,6 +22,15 @@ fn result(columns: &[&str], rows: &[&[serde_json::Value]]) -> RunResult {
 
 fn columns() -> Vec<(String, ColumnKind)> {
     vec![("total".to_owned(), ColumnKind::Number)]
+}
+
+/// What the metric answers, as a rule is checked against it.
+fn metric_columns() -> Columns {
+    Columns {
+        kinds: columns(),
+        groups: Vec::new(),
+        imposed_limit: None,
+    }
 }
 
 fn one_total(op: &str, threshold: &serde_json::Value) -> Condition {
@@ -384,13 +394,13 @@ fn a_draft_is_checked_against_the_bounds_before_it_is_a_rule() {
 
     for (case, draft, expected) in cases {
         assert_eq!(
-            RuleSpec::parse(&draft, limits, &destinations(), &columns()).err(),
+            RuleSpec::parse(&draft, limits, &destinations(), &metric_columns()).err(),
             Some(expected),
             "should refuse: {case}"
         );
     }
 
-    let ok = RuleSpec::parse(&draft(|_| {}), limits, &destinations(), &columns());
+    let ok = RuleSpec::parse(&draft(|_| {}), limits, &destinations(), &metric_columns());
     assert!(ok.is_ok(), "a whole draft is a rule: {ok:?}");
 }
 
@@ -399,11 +409,16 @@ fn context_columns_name_up_to_five_columns_the_metric_answers() {
     use super::rule::ContextColumnsProblem;
 
     let limits = Limits::default();
-    let columns = vec![
-        ("total".to_owned(), ColumnKind::Number),
-        ("assignee".to_owned(), ColumnKind::Text),
-        ("task_id".to_owned(), ColumnKind::Number),
-    ];
+    let columns = Columns {
+        kinds: vec![
+            ("team".to_owned(), ColumnKind::Text),
+            ("total".to_owned(), ColumnKind::Number),
+            ("assignee".to_owned(), ColumnKind::Text),
+            ("task_id".to_owned(), ColumnKind::Number),
+        ],
+        groups: vec!["team".to_owned()],
+        imposed_limit: None,
+    };
     let refused = [
         (
             "six columns",
@@ -426,6 +441,11 @@ fn context_columns_name_up_to_five_columns_the_metric_answers() {
             "a column the metric does not answer",
             json!(["assignee", "nobody"]),
             ContextColumnsProblem::NoSuchColumn("nobody".to_owned()),
+        ),
+        (
+            "a group-by column, which the witness shows anyway",
+            json!(["assignee", "team"]),
+            ContextColumnsProblem::GroupBy("team".to_owned()),
         ),
     ];
 
@@ -458,12 +478,12 @@ fn a_range_is_read_as_a_run_would_read_it() {
 
     let bad = draft(|body| body["range"] = json!("yesterday"));
     assert!(matches!(
-        RuleSpec::parse(&bad, limits, &destinations(), &columns()),
+        RuleSpec::parse(&bad, limits, &destinations(), &metric_columns()),
         Err(RuleError::Range(_))
     ));
 
     let good = draft(|body| body["range"] = json!("P7D"));
-    let spec = RuleSpec::parse(&good, limits, &destinations(), &columns())
+    let spec = RuleSpec::parse(&good, limits, &destinations(), &metric_columns())
         .unwrap_or_else(|error| panic!("P7D is a range: {error}"));
     let window = spec
         .window()
@@ -513,7 +533,7 @@ mod deliveries {
             &super::draft(|body| body["condition"]["where"]["value"] = json!(10)),
             Limits::default(),
             &super::destinations(),
-            &super::columns(),
+            &super::metric_columns(),
         )
         .unwrap_or_else(|error| panic!("the draft is a rule: {error}"));
         let write = Write {
