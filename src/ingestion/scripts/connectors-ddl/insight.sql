@@ -652,6 +652,7 @@ AS WITH
     source_identities AS
     (
         SELECT
+            toString(tenant_id) AS tenant_id,
             source_key,
             entity_id AS email,
             account_source_type,
@@ -660,6 +661,7 @@ AS WITH
         FROM insight.git_metric_evidence
         UNION ALL
         SELECT
+            toString(tenant_id) AS tenant_id,
             source_key,
             entity_id AS email,
             account_source_type,
@@ -668,6 +670,7 @@ AS WITH
         FROM insight.ai_metric_evidence
         UNION ALL
         SELECT
+            toString(tenant_id) AS tenant_id,
             source_key,
             entity_id AS email,
             account_source_type,
@@ -676,6 +679,7 @@ AS WITH
         FROM insight.collab_metric_evidence
         UNION ALL
         SELECT
+            toString(tenant_id) AS tenant_id,
             source_key,
             entity_id AS email,
             account_source_type,
@@ -684,6 +688,7 @@ AS WITH
         FROM insight.task_metric_evidence
         UNION ALL
         SELECT
+            toString(tenant_id) AS tenant_id,
             source_key,
             entity_id AS email,
             account_source_type,
@@ -692,6 +697,7 @@ AS WITH
         FROM insight.wiki_metric_evidence
         UNION ALL
         SELECT
+            toString(tenant_id) AS tenant_id,
             source_key,
             entity_id AS email,
             account_source_type,
@@ -700,6 +706,7 @@ AS WITH
         FROM insight.ai_cost_metric_evidence
         UNION ALL
         SELECT DISTINCT
+            workspace_id AS tenant_id,
             'hr_cohorts' AS source_key,
             lower(trimBoth(assumeNotNull(email))) AS email,
             '' AS account_source_type,
@@ -717,8 +724,8 @@ AS WITH
             source_identities.account_id AS account_id,
             (coalesce(account_map.account_id, '') != '') OR (coalesce(person_map.email, '') != '') AS resolved
         FROM source_identities
-        LEFT JOIN identity.account_assignment AS account_map ON (account_map.source_type = source_identities.account_source_type) AND (account_map.source_id = toUUID(UUIDNumToString(sipHash128(coalesce(source_identities.account_source_id, ''))))) AND (account_map.account_id = lower(trimBoth(coalesce(source_identities.account_id, ''))))
-        LEFT JOIN identity.person_map AS person_map ON person_map.email = source_identities.email
+        LEFT JOIN identity.account_assignment AS account_map ON (account_map.tenant_id = source_identities.tenant_id) AND (account_map.source_type = source_identities.account_source_type) AND (account_map.source_id = toUUID(UUIDNumToString(sipHash128(coalesce(source_identities.account_source_id, ''))))) AND (account_map.account_id = lower(trimBoth(coalesce(source_identities.account_id, ''))))
+        LEFT JOIN identity.person_map AS person_map ON (person_map.tenant_id = source_identities.tenant_id) AND (person_map.email = source_identities.email)
     )
 SELECT
     source_key,
@@ -777,7 +784,7 @@ FROM
                 tenant_id,
                 email
         ) AS people
-        INNER JOIN identity.person_map AS person_map ON person_map.email = people.email
+        INNER JOIN identity.person_map AS person_map ON (person_map.tenant_id = people.tenant_id) AND (person_map.email = people.email)
         WHERE (people.tenant_id IS NOT NULL) AND (people.tenant_id != '') AND (people.email != '') AND (people.cohort_id IS NOT NULL)
     ) AS resolved
     GROUP BY
