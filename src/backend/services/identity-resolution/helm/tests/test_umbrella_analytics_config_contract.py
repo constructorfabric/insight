@@ -45,7 +45,9 @@ def test_tenant_metrics_are_opt_in_per_installation(umbrella_deps, extra: tuple[
 def test_metric_reads_are_scoped_to_the_session_tenant_unless_an_install_opts_out(
     umbrella_deps, extra: tuple[str, ...], expected: bool
 ) -> None:
-    code, out, err = render(umbrella_deps, *UMBRELLA_BASE, "--set", f"authenticator.oidc.defaultTenantId={TENANT}", *extra)
+    code, out, err = render(
+        umbrella_deps, *UMBRELLA_BASE, "--set", f"authenticator.oidc.defaultTenantId={TENANT}", *extra
+    )
     assert code == 0, err
 
     assert _analytics_config(out)["metric_catalog"]["enforce_tenant_scope"] is expected, f"with {extra!r}"
