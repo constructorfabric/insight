@@ -32,7 +32,9 @@ def _analytics_secret(manifests: str) -> dict:
     ("extra", "expected"), [((), False), (("--set", "analytics.metricCatalog.tenantMetricsEnabled=true"), True)]
 )
 def test_tenant_metrics_are_opt_in_per_installation(umbrella_deps, extra: tuple[str, ...], expected: bool) -> None:
-    code, out, err = render(umbrella_deps, *UMBRELLA_BASE, "--set", f"authenticator.oidc.defaultTenantId={TENANT}", *extra)
+    code, out, err = render(
+        umbrella_deps, *UMBRELLA_BASE, "--set", f"authenticator.oidc.defaultTenantId={TENANT}", *extra
+    )
     assert code == 0, err
 
     assert _analytics_config(out)["metric_catalog"]["tenant_metrics_enabled"] is expected
@@ -84,9 +86,5 @@ def test_external_source_registry_reaches_analytics_config(umbrella_deps) -> Non
     assert code == 0, err
 
     assert _analytics_config(out)["external_sources"] == [
-        {
-            "id": "github-main",
-            "provider": "github",
-            "web_base_url": "https://github.example.com/",
-        }
+        {"id": "github-main", "provider": "github", "web_base_url": "https://github.example.com/"}
     ]
