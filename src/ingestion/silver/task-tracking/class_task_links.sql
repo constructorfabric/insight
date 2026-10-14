@@ -1,6 +1,9 @@
 -- depends_on: {{ ref('github__task_links') }}
+-- depends_on: {{ ref('jira__task_links') }}
 {{ config(
     materialized='incremental',
+    on_schema_change='append_new_columns',
+    pre_hook="{{ reconcile_class_from_producer('jira') }}",
     incremental_strategy='delete+insert',
     unique_key='unique_key',
     schema='silver',
@@ -38,4 +41,6 @@
 SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_task_links') }}
 ) AS candidate
-{{ silver_incremental_watermark(['insight_source_id', 'data_source']) }}
+-- Jira is reconciled whole by the pre_hook, so its rows bypass the boundary: a
+-- Jira row can change without new evidence when a linked key first resolves to an id.
+{{ silver_incremental_watermark(['insight_source_id', 'data_source'], always_reread="candidate.data_source = 'jira'") }}

@@ -43,7 +43,8 @@ snapshot_element_wise AS (
 -- The state is derived PER ELEMENT, never by carrying a running list. An
 -- element belongs to the state after event k exactly when its own latest
 -- operation at or before k was an `add`; with no operation of its own by then,
--- it belongs there exactly when it belonged at creation. Each element's
+-- it belongs there exactly when it belonged at creation (a `link_array`
+-- element counts its links instead — see `element_wise_presence`). Each element's
 -- ordered operations therefore become the SPANS of events over which it is
 -- present, and the state after event k is every element whose span covers k.
 --
@@ -107,6 +108,7 @@ element_wise_element AS (
         i.issue_id                                        AS issue_id,
         i.field_id                                        AS field_id,
         i.element_id                                      AS element_id,
+        any(i.field_kind)                                 AS field_kind,
         argMin(i.pair, i.seq)                             AS first_pair,
         argMin(i.delta_action, i.seq)                     AS first_action,
         min(i.seq)                                        AS first_seq,
@@ -114,6 +116,50 @@ element_wise_element AS (
                   groupArray((i.seq, i.delta_action, i.pair)))  AS ops
     FROM element_wise_items AS i
     GROUP BY i.insight_source_id, i.issue_id, i.field_id, i.element_id
+),
+
+-- Whether the element is in the list after each of its operations, and whether
+-- it was there at creation.
+--
+-- Normally that is the operation itself: present after an `add`, absent after a
+-- `remove`, and present at creation exactly when the first operation removed it.
+-- A `link_array` element is the linked issue's key, so two links to one issue —
+-- related to it AND duplicating it — are one element with two `add`s, and
+-- removing one of them must leave the other (§3.7). Its presence is therefore a
+-- COUNT: links held at creation, plus adds, minus removes, so far. The links
+-- held at creation are the fewest that keep that count from going negative.
+element_wise_presence AS (
+    SELECT
+        e.*,
+        arrayCumSum(arrayMap(o -> toInt64(if(o.2 = 'add', 1, -1)), e.ops))   AS net_ops,
+        if(e.field_kind = 'link_array',
+           greatest(toInt64(0), -arrayMin(net_ops)),
+           toInt64(e.first_action = 'remove'))                                AS held_at_creation,
+        if(e.field_kind = 'link_array',
+           arrayMap(n -> held_at_creation + n > 0, net_ops),
+           arrayMap(o -> o.2 = 'add', e.ops))                                 AS present_after,
+        -- An operation opens a span when the element is present after it. A
+        -- `link_array` element already present keeps its span, so a second link
+        -- or the removal of one of two leaves its place in the list; any other
+        -- kind opens one at every `add`, which is how a rename takes effect.
+        arrayMap(k -> present_after[k]
+                      AND (e.field_kind != 'link_array'
+                           OR NOT if(k = 1, held_at_creation > 0, present_after[k - 1])),
+                 arrayEnumerate(e.ops))                                       AS opens_span,
+        -- For the span opened at creation (position 1) and at each operation
+        -- (position k + 1): the operation that ends it, or 0 when none does.
+        -- One backward pass: each position takes the nearest break at or after it.
+        arrayConcat(
+            arrayReverseFill(b -> b != 0,
+                             arrayMap(j -> if(opens_span[j] OR NOT present_after[j], j, 0),
+                                      arrayEnumerate(e.ops))),
+            [0])                                                              AS span_breaks,
+        -- The pair a span carries: its own for an `add`, the latest add's
+        -- before it for a `remove` the element outlives.
+        arrayMap(p -> if(p = '', e.first_pair, p),
+                 arrayFill(p -> p != '',
+                           arrayMap(o -> if(o.2 = 'add', o.3, ''), e.ops)))  AS carried_pairs
+    FROM element_wise_element AS e
 ),
 
 -- The snapshot's elements, deduplicated by id exactly as the pairs were.
@@ -150,24 +196,28 @@ element_wise_untouched AS (
        AND e.element_id = p.element_id
 ),
 
--- (first event of the span, last event of the span, the pair to carry). An
--- `add` opens a span that runs until this element's NEXT operation; presence at
--- creation opens one that runs until its FIRST. A `remove` opens nothing.
+-- (first event of the span, last event of the span, the pair to carry). A span
+-- opened at creation or by an operation (`opens_span`) runs until the element's
+-- next operation that opens another or leaves it absent (`span_breaks`), or to
+-- the end of the sequence when none does.
 element_wise_spans AS (
     SELECT
         e.insight_source_id                               AS insight_source_id,
         e.issue_id                                        AS issue_id,
         e.field_id                                        AS field_id,
         arrayJoin(arrayConcat(
-            if(e.first_action = 'remove' AND e.first_seq > 1,
-               [(toUInt64(0), toUInt64(e.first_seq - 1), e.first_pair)],
+            if(e.held_at_creation > 0,
+               [(toUInt64(0),
+                 if(e.span_breaks[1] = 0, x.last_seq, toUInt64(e.ops[e.span_breaks[1]].1 - 1)),
+                 e.first_pair)],
                CAST([] AS Array(Tuple(UInt64, UInt64, String)))),
             arrayMap(k -> (e.ops[k].1,
-                           if(k = length(e.ops), x.last_seq, toUInt64(e.ops[k + 1].1 - 1)),
-                           e.ops[k].3),
-                     arrayFilter(k -> e.ops[k].2 = 'add', arrayEnumerate(e.ops)))
+                           if(e.span_breaks[k + 1] = 0, x.last_seq,
+                              toUInt64(e.ops[e.span_breaks[k + 1]].1 - 1)),
+                           e.carried_pairs[k]),
+                     arrayFilter(k -> e.opens_span[k], arrayEnumerate(e.ops)))
         ))                                                AS span
-    FROM element_wise_element AS e
+    FROM element_wise_presence AS e
     INNER JOIN element_wise_extent AS x
         ON x.insight_source_id = e.insight_source_id
        AND x.issue_id = e.issue_id
@@ -239,8 +289,8 @@ element_wise_initial AS (
             insight_source_id, issue_id, field_id,
             toUInt8(1)                                    AS entered,
             first_pair                                    AS pair
-        FROM element_wise_element
-        WHERE first_action = 'remove'
+        FROM element_wise_presence
+        WHERE held_at_creation > 0
 
         UNION ALL
 

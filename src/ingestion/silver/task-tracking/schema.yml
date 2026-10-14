@@ -128,6 +128,10 @@ models:
       `valid_from` is part of the key rather than a version of one row. Both directions are stored: a
       parent-child pair yields a `sub_issue` row on the parent and a `parent` row on the child.
     columns:
+      - name: issue_id
+        description: "Immutable source-native ID of the item owning the link, scoped by insight_source_id. NULL from a producer that does not yet carry it."
+      - name: target_id
+        description: "Immutable source-native ID of the target, scoped by insight_source_id and target_type. Never substitute target_readable when missing."
       - name: unique_key
         description: "Source, item, link type, target and `valid_from` — the occurrence, not the link."
         tests:
@@ -136,7 +140,7 @@ models:
         tests:
           - not_null
       - name: data_source
-        description: "Vendor that recorded the link; `github` today."
+        description: "Vendor that recorded the link: `github` or `jira`."
         tests:
           - not_null
       - name: id_readable
