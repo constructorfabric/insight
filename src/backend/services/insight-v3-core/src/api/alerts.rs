@@ -133,6 +133,8 @@ pub(crate) struct RuleResponse {
     /// back as it is.
     #[schema(value_type = ConditionShape)]
     condition: serde_json::Value,
+    /// Result columns the witness keeps beside the condition's.
+    context_columns: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     range: Option<String>,
     interval_secs: u32,
@@ -172,6 +174,8 @@ pub(crate) struct NotificationResponse {
     /// The condition the notification was owed under.
     #[schema(value_type = ConditionShape)]
     condition: serde_json::Value,
+    /// The columns the rule asked the witness to keep beside the condition's.
+    context_columns: Vec<String>,
     /// The rows the check saw that owed it.
     witness: WitnessResponse,
     evaluated_at: String,
@@ -187,8 +191,8 @@ pub(crate) struct NotificationResponse {
 }
 
 /// The rows a check judged: how many passed of how many, and up to five of
-/// them, holding the metric's group-by columns and then the columns the
-/// condition reads.
+/// them, holding the metric's group-by columns, then the columns the
+/// condition reads, then the rule's context columns.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct WitnessResponse {
     matched: u64,
@@ -239,6 +243,7 @@ pub(crate) fn rule_response(rule: &AlertRule) -> RuleResponse {
         name: rule.spec.name.as_str().to_owned(),
         metric: rule.spec.metric.as_str().to_owned(),
         condition: rule.spec.condition.to_json(),
+        context_columns: rule.spec.context_columns.clone(),
         range: rule.spec.range.clone(),
         interval_secs: rule.spec.interval_secs,
         destination: rule.spec.destination.clone(),
@@ -282,6 +287,7 @@ pub(crate) fn notification_response(notification: &Notification) -> Notification
         rule_revision: notification.rule_revision,
         metric: notification.metric.as_str().to_owned(),
         condition: notification.condition.to_json(),
+        context_columns: notification.context_columns.clone(),
         witness: witness_response(&notification.witness),
         evaluated_at: notification.evaluated_at.to_rfc3339(),
         destination: notification.destination.clone(),

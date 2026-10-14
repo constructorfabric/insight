@@ -297,6 +297,13 @@
             "$ref": "#/components/schemas/ConditionShape",
             "description": "The condition the notification was owed under."
           },
+          "context_columns": {
+            "description": "The columns the rule asked the witness to keep beside the condition's.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "created_at": {
             "type": "string"
           },
@@ -343,6 +350,7 @@
           "rule_revision",
           "metric",
           "condition",
+          "context_columns",
           "witness",
           "evaluated_at",
           "destination",
@@ -407,6 +415,13 @@
           "condition": {
             "$ref": "#/components/schemas/ConditionShape",
             "description": "Which rows must pass, and the test each row takes."
+          },
+          "context_columns": {
+            "description": "Result columns to show beside the condition's, as a rule names them.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "metric": {
             "description": "The stored metric to check.",
@@ -554,6 +569,13 @@
             "$ref": "#/components/schemas/ConditionShape",
             "description": "Which rows must pass, and the test each row takes."
           },
+          "context_columns": {
+            "description": "Result columns, by `as_name`, shown beside the condition's in every\nnotification: up to 5.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "destination": {
             "description": "The configured destination the notification goes to.",
             "type": "string"
@@ -612,6 +634,13 @@
             "$ref": "#/components/schemas/ConditionShape",
             "description": "As a draft writes it. A number past ±(2^53 − 1) is a digit string,\nwhich a JavaScript reader would otherwise round; a draft takes it\nback as it is."
           },
+          "context_columns": {
+            "description": "Result columns the witness keeps beside the condition's.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "created_at": {
             "type": "string"
           },
@@ -659,6 +688,7 @@
           "name",
           "metric",
           "condition",
+          "context_columns",
           "interval_secs",
           "destination",
           "enabled",
@@ -790,7 +820,7 @@
       },
       "Value": {},
       "WitnessResponse": {
-        "description": "The rows a check judged: how many passed of how many, and up to five of\nthem, holding the metric's group-by columns and then the columns the\ncondition reads.",
+        "description": "The rows a check judged: how many passed of how many, and up to five of\nthem, holding the metric's group-by columns, then the columns the\ncondition reads, then the rule's context columns.",
         "properties": {
           "answered": {
             "format": "int64",

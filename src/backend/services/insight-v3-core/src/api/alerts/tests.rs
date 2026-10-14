@@ -107,6 +107,23 @@ impl TestHarness {
                 )
                 .await
                 .unwrap_or_else(|error| panic!("the grouped metric is stored: {error}"));
+            let rows = crate::domain::definition::DefinitionName::parse("prs-rows")
+                .unwrap_or_else(|error| panic!("{error}"));
+            definitions
+                .put(
+                    DefinitionKind::Metric,
+                    &rows,
+                    &json!({
+                        "table": "gold.prs",
+                        "fields": [
+                            {"column": "team", "type": "string", "as_name": "team"},
+                            {"column": "lead", "type": "string", "as_name": "lead"},
+                            {"column": "total", "type": "int", "as_name": "total"}
+                        ]
+                    }),
+                )
+                .await
+                .unwrap_or_else(|error| panic!("the row metric is stored: {error}"));
         });
         let schedule = Arc::new(schedule);
         let store = Arc::new(alerts);
@@ -288,6 +305,28 @@ async fn a_created_rule_reads_back_at_revision_one_and_is_scheduled() -> R {
     assert_eq!(listed.json()["total"], json!(1));
     let regardless_of_case = harness.send("GET", "/v1/alerts?q=OPEN", None).await;
     assert_eq!(regardless_of_case.json()["total"], json!(1));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn context_columns_round_trip_and_an_unnamed_list_reads_as_none() -> R {
+    let harness = TestHarness::new();
+
+    let unnamed = harness.send("POST", "/v1/alerts", Some(rule(|_| {}))).await;
+    assert_eq!(unnamed.json()["context_columns"], json!([]));
+
+    let named = harness
+        .send(
+            "POST",
+            "/v1/alerts",
+            Some(rule(|body| body["context_columns"] = json!(["total"]))),
+        )
+        .await;
+    assert_eq!(named.status, StatusCode::CREATED, "{:?}", named.body);
+    let id = named.json()["id"].as_str().unwrap_or_default().to_owned();
+    let read = harness.send("GET", &format!("/v1/alerts/{id}"), None).await;
+    assert_eq!(read.json()["context_columns"], json!(["total"]));
 
     Ok(())
 }
@@ -568,6 +607,11 @@ async fn a_rule_is_refused_for_what_it_gets_wrong() -> R {
             "condition.where.op",
         ),
         (
+            "a context column the metric does not answer",
+            rule(|body| body["context_columns"] = json!(["nobody"])),
+            "context_columns",
+        ),
+        (
             "expected_revision on create",
             rule(|body| body["expected_revision"] = json!(1)),
             "expected_revision",
@@ -817,7 +861,9 @@ async fn a_notification_shows_its_delivery_state() -> R {
 
     let store = MemoryAlerts::new();
     let harness = TestHarness::build_with(true, true, store, MemorySchedule::new());
-    let id = harness.create(rule(|_| {})).await;
+    let id = harness
+        .create(rule(|body| body["context_columns"] = json!(["total"])))
+        .await;
     let store = harness.store.clone();
     let stored = store
         .get(uuid::Uuid::parse_str(&id)?)
@@ -858,6 +904,7 @@ async fn a_notification_shows_its_delivery_state() -> R {
     assert_eq!(shown["status"], json!("sent"));
     assert_eq!(shown["attempts"], json!(2));
     assert_eq!(shown["provider_receipt"], json!("m-9"));
+    assert_eq!(shown["context_columns"], json!(["total"]));
     assert_eq!(
         shown["witness"],
         json!({ "matched": 1, "answered": 1, "columns": ["total"], "rows": [[12]] })
@@ -891,8 +938,15 @@ async fn two_teams() -> (String, tokio::task::JoinHandle<()>) {
             }
 
             Json(json!({
-                "meta": [{"name": "team", "type": "String"}, {"name": "total", "type": "UInt64"}],
-                "data": [{"team": "core", "total": "12"}, {"team": "infra", "total": "3"}]
+                "meta": [
+                    {"name": "team", "type": "String"},
+                    {"name": "lead", "type": "String"},
+                    {"name": "total", "type": "UInt64"}
+                ],
+                "data": [
+                    {"team": "core", "lead": "Jane Doe", "total": "12"},
+                    {"team": "infra", "lead": "Sam Roe", "total": "3"}
+                ]
             }))
             .into_response()
         }),
@@ -936,6 +990,55 @@ async fn a_preview_judges_the_condition_over_the_rows_a_check_would_read() -> R 
     let held = crate::domain::alerts::rule::AlertStore::enabled(harness.store.as_ref()).await?;
     assert!(held.is_empty(), "a preview records nothing");
     assert!(harness.schedule.entries().is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_preview_keeps_the_context_columns_a_draft_names() -> R {
+    let (url, server) = two_teams().await;
+    let harness = TestHarness::over_warehouse(&url, true);
+
+    let answered = harness
+        .send(
+            "POST",
+            "/v1/alerts/preview",
+            Some(json!({
+                "metric": "prs-rows",
+                "condition": { "rows": "any", "where": { "column": "total", "op": ">", "value": 10 } },
+                "context_columns": ["lead"]
+            })),
+        )
+        .await;
+    let refused = harness
+        .send(
+            "POST",
+            "/v1/alerts/preview",
+            Some(json!({
+                "metric": "prs-rows",
+                "condition": { "rows": "any", "where": { "column": "total", "op": ">", "value": 10 } },
+                "context_columns": ["nobody"]
+            })),
+        )
+        .await;
+    server.abort();
+
+    assert_eq!(answered.status, StatusCode::OK, "{:?}", answered.body);
+    assert_eq!(
+        answered.json()["witness"],
+        json!({ "matched": 1, "answered": 2, "columns": ["total", "lead"], "rows": [[12, "Jane Doe"]] })
+    );
+    assert_eq!(
+        refused.status,
+        StatusCode::BAD_REQUEST,
+        "{:?}",
+        refused.body
+    );
+    assert!(
+        refused.json().to_string().contains("context_columns"),
+        "{}",
+        refused.json()
+    );
 
     Ok(())
 }
