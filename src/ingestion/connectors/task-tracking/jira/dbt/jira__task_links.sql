@@ -28,13 +28,13 @@
 -- nothing keeps the occurrence apart by the key and leaves `target_id` NULL.
 
 WITH key_ids AS (
-    SELECT insight_source_id, issue_key, issue_id
+    SELECT tenant_id, insight_source_id, issue_key, issue_id
     FROM {{ ref('jira__issue_key_ids') }} FINAL
 ),
 
 held_now AS (
     SELECT
-        insight_source_id, issue_id, id_readable, kind, type_name, type_outward, type_inward,
+        tenant_id, insight_source_id, issue_id, id_readable, kind, type_name, type_outward, type_inward,
         relation, target_id, target_key, extracted_at
     FROM {{ ref('jira__issue_link_snapshot') }} FINAL
 ),
@@ -42,25 +42,27 @@ held_now AS (
 -- The issue's current key and its creation, from its newest bronze row.
 issues AS (
     SELECT
+        COALESCE(tenant_id, '')                                       AS tenant_id,
         COALESCE(source_id, '')                                       AS insight_source_id,
         COALESCE(toString(jira_id), '')                               AS issue_id,
         argMax(COALESCE(toString(id_readable), ''), _airbyte_extracted_at) AS current_key,
         argMax(parseDateTime64BestEffortOrNull(created, 3), _airbyte_extracted_at) AS created_at
     FROM {{ source('bronze_jira', 'jira_issue') }}
     WHERE jira_id IS NOT NULL
-    GROUP BY insight_source_id, issue_id
+    GROUP BY tenant_id, insight_source_id, issue_id
 ),
 
 -- The current key of an issue the connector does not sync, as the newest
 -- snapshot linking to it names it.
 linked_keys AS (
     SELECT
+        tenant_id,
         insight_source_id,
         target_id                                                     AS issue_id,
         argMax(target_key, extracted_at)                              AS current_key
     FROM held_now
     WHERE target_id != '' AND target_key != ''
-    GROUP BY insight_source_id, issue_id
+    GROUP BY tenant_id, insight_source_id, issue_id
 ),
 
 -- What each relation means, from the link types the snapshots carry. A link
@@ -68,24 +70,27 @@ linked_keys AS (
 -- any issue holds a link of its type, from either side.
 relation_types AS (
     SELECT
+        tenant_id,
         insight_source_id,
         relation,
         type_and_direction.1                                          AS type_name,
         type_and_direction.2                                          AS direction
     FROM (
         SELECT
+            tenant_id,
             insight_source_id,
             phrase.1                                                  AS relation,
             min((type_name, phrase.2))                                AS type_and_direction
         FROM held_now
         ARRAY JOIN [(type_outward, 'outward'), (type_inward, 'inward')] AS phrase
         WHERE kind = 'issuelink' AND phrase.1 != ''
-        GROUP BY insight_source_id, relation
+        GROUP BY tenant_id, insight_source_id, relation
     )
 ),
 
 link_items AS (
     SELECT
+        tenant_id,
         insight_source_id,
         assumeNotNull(jira_id)                                        AS issue_id,
         id_readable                                                   AS issue_key,
@@ -107,7 +112,7 @@ link_items AS (
 -- new one, each named by id with its key of the time.
 operations AS (
     SELECT
-        insight_source_id, issue_id, issue_key, changelog_id, event_at, author_id, extracted_at,
+        tenant_id, insight_source_id, issue_id, issue_key, changelog_id, event_at, author_id, extracted_at,
         action,
         'issuelink'                                                   AS kind,
         {{ jira_link_relation('sentence', 'target_key') }}            AS relation,
@@ -120,6 +125,7 @@ operations AS (
     UNION ALL
 
     SELECT
+        tenant_id,
         insight_source_id,
         assumeNotNull(jira_id)                                        AS issue_id,
         id_readable                                                   AS issue_key,
@@ -150,13 +156,15 @@ resolved_operations AS (
         if(resolved_id != '', resolved_id, o.target_key)              AS target_ident
     FROM operations AS o
     LEFT JOIN key_ids AS k
-        ON k.insight_source_id = o.insight_source_id
+        ON k.tenant_id = o.tenant_id
+       AND k.insight_source_id = o.insight_source_id
        AND k.issue_key = o.target_key
 ),
 
 -- An occurrence's identity, and its operations in the order they happened.
 occurrence_operations AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         kind,
@@ -169,11 +177,12 @@ occurrence_operations AS (
                   groupArray((event_at, toUInt64OrZero(changelog_id), action, author_id,
                               changelog_id, extracted_at)))           AS ops
     FROM resolved_operations
-    GROUP BY insight_source_id, issue_id, kind, relation, target_ident
+    GROUP BY tenant_id, insight_source_id, issue_id, kind, relation, target_ident
 ),
 
 held_occurrences AS (
     SELECT
+        h.tenant_id                                                   AS tenant_id,
         h.insight_source_id                                           AS insight_source_id,
         h.issue_id                                                    AS issue_id,
         h.kind                                                        AS kind,
@@ -185,7 +194,8 @@ held_occurrences AS (
         h.extracted_at                                                AS extracted_at
     FROM held_now AS h
     LEFT JOIN key_ids AS k
-        ON k.insight_source_id = h.insight_source_id
+        ON k.tenant_id = h.tenant_id
+       AND k.insight_source_id = h.insight_source_id
        AND k.issue_key = h.target_key
 ),
 
@@ -198,6 +208,7 @@ held_occurrences AS (
 -- An add while present and a remove while absent repeat what is already true.
 occurrences AS (
     SELECT
+        COALESCE(o.tenant_id, h.tenant_id)                            AS tenant_id,
         COALESCE(o.insight_source_id, h.insight_source_id)            AS insight_source_id,
         COALESCE(o.issue_id, h.issue_id)                              AS issue_id,
         COALESCE(o.kind, h.kind)                                      AS kind,
@@ -211,7 +222,8 @@ occurrences AS (
         empty(ops) OR ops[1].3 = 'remove'                             AS held_before
     FROM occurrence_operations AS o
     FULL OUTER JOIN held_occurrences AS h
-        ON h.insight_source_id = o.insight_source_id
+        ON h.tenant_id = o.tenant_id
+       AND h.insight_source_id = o.insight_source_id
        AND h.issue_id = o.issue_id
        AND h.kind = o.kind
        AND h.relation = o.relation
@@ -242,6 +254,7 @@ intervals AS (
 
 owned AS (
     SELECT
+        i.tenant_id                                                   AS tenant_id,
         i.insight_source_id                                           AS insight_source_id,
         i.issue_id                                                    AS issue_id,
         COALESCE(nullIf(COALESCE(owner.current_key, ''), ''), i.issue_key) AS id_readable,
@@ -269,16 +282,20 @@ owned AS (
         )                                                             AS collected_at
     FROM intervals AS i
     LEFT JOIN issues AS owner
-        ON owner.insight_source_id = i.insight_source_id
+        ON owner.tenant_id = i.tenant_id
+       AND owner.insight_source_id = i.insight_source_id
        AND owner.issue_id = i.issue_id
     LEFT JOIN issues AS target
-        ON target.insight_source_id = i.insight_source_id
+        ON target.tenant_id = i.tenant_id
+       AND target.insight_source_id = i.insight_source_id
        AND target.issue_id = i.target_id
     LEFT JOIN linked_keys AS linked
-        ON linked.insight_source_id = i.insight_source_id
+        ON linked.tenant_id = i.tenant_id
+       AND linked.insight_source_id = i.insight_source_id
        AND linked.issue_id = i.target_id
     LEFT JOIN relation_types AS rt
-        ON rt.insight_source_id = i.insight_source_id
+        ON rt.tenant_id = i.tenant_id
+       AND rt.insight_source_id = i.insight_source_id
        AND rt.relation = i.relation
 ),
 
@@ -292,6 +309,7 @@ lasting AS (
 -- no issue a row can belong to.
 mirrored AS (
     SELECT
+        l.tenant_id                                                   AS tenant_id,
         l.insight_source_id                                           AS insight_source_id,
         assumeNotNull(l.target_id)                                    AS issue_id,
         l.target_readable                                             AS id_readable,
@@ -314,23 +332,24 @@ mirrored AS (
 
 every_interval AS (
     SELECT
-        insight_source_id, issue_id, id_readable, link_type, relation, target_ident, target_id, target_readable,
+        tenant_id, insight_source_id, issue_id, id_readable, link_type, relation, target_ident, target_id, target_readable,
         valid_from, valid_from_known, valid_to, added_by, removed_by, origin_event_id, collected_at
     FROM lasting
 
     UNION ALL
 
     SELECT
-        insight_source_id, issue_id, id_readable, link_type, relation, target_ident, target_id, target_readable,
+        tenant_id, insight_source_id, issue_id, id_readable, link_type, relation, target_ident, target_id, target_readable,
         valid_from, valid_from_known, valid_to, added_by, removed_by, origin_event_id, collected_at
     FROM mirrored
 )
 
 SELECT
     CAST(concat(
-        insight_source_id, '-jira-', issue_id, '-', link_type, '-', relation, '-',
+        tenant_id, '-', insight_source_id, '-jira-', issue_id, '-', link_type, '-', relation, '-',
         target_ident, '-', toString(toUnixTimestamp64Milli(valid_from))
     ) AS String)                                                      AS unique_key,
+    CAST(tenant_id AS Nullable(String))                               AS tenant_id,
     CAST(insight_source_id AS String)                                 AS insight_source_id,
     CAST('jira' AS String)                                            AS data_source,
     CAST(id_readable AS String)                                       AS id_readable,

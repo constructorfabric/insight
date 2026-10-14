@@ -6,7 +6,7 @@
 ) }}
 
 -- Identity-resolution match rate, measured over ACTIVITY (source rows), not
--- over aliases: one row per source with how much of its recorded work resolves
+-- over aliases: one row per tenant and source with how much of its recorded work resolves
 -- to a canonical person. This is the measuring device for the "match rate is
 -- reported" outcome of the identity epic and the prioritization signal for
 -- resolution-quality work — a source with a low rate is where identity is
@@ -72,6 +72,7 @@ WITH source_identities AS (
 ),
 resolution AS (
     SELECT
+        source_identities.tenant_id AS tenant_id,
         source_identities.source_key AS source_key,
         source_identities.email AS email,
         source_identities.account_id AS account_id,
@@ -92,6 +93,7 @@ resolution AS (
         ON person_map.email = source_identities.email
 )
 SELECT
+    tenant_id,
     source_key,
     count() AS observation_rows,
     countIf(NOT resolved) AS unresolved_rows,
@@ -100,4 +102,4 @@ SELECT
     uniqExactIf(if(email != '', email, coalesce(account_id, '')), NOT resolved) AS unresolved_people,
     round(100 * countIf(resolved) / count(), 1) AS match_rate_pct
 FROM resolution
-GROUP BY source_key
+GROUP BY tenant_id, source_key

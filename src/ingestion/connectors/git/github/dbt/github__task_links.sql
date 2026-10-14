@@ -215,9 +215,11 @@ every_interval AS (
 
 SELECT
     CAST(concat(
+        coalesce(tenant_id, ''), '-',
         insight_source_id, '-github-', id_readable, '-', link_type, '-',
         target_readable, '-', toString(toUnixTimestamp64Milli(valid_from))
     ) AS String)                                                AS unique_key,
+    CAST(tenant_id AS Nullable(String))                         AS tenant_id,
     CAST(insight_source_id AS String)                           AS insight_source_id,
     CAST('github' AS String)                                    AS data_source,
     CAST(id_readable AS String)                                 AS id_readable,

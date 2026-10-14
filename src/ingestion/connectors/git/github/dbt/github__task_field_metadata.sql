@@ -96,6 +96,7 @@ every_field AS (
 
 SELECT
     CAST(concat(tenant_id, ':', source_id, ':github:field:', field_id) AS Nullable(String)) AS unique_key,
+    CAST(tenant_id AS Nullable(String))                     AS tenant_id,
     CAST(COALESCE(source_id, '') AS String)                 AS insight_source_id,
     CAST('github' AS String)                                AS data_source,
     CAST(project_key AS Nullable(String))                   AS project_key,
