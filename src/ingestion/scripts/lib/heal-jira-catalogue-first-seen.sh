@@ -13,7 +13,7 @@
 # one SELECT and a table left on the wrong family is rebuilt. Column order and
 # types are the model's: dbt appends to this table positionally.
 #
-# Sourced by apply-ch-migrations.sh after lib/ch-exec.sh.
+# Sourced by apply-ch-migrations.sh after lib/ch-topology.sh.
 
 _catalogue_source_count() {
   ch_scalar "SELECT uniqExact(insight_source_id) FROM staging.$1"
@@ -50,7 +50,7 @@ heal_jira_catalogue_first_seen() {
   local engine converged before tenants copied live
 
   ch_table_exists staging jira__catalogue_first_seen || return 0
-  engine="$(ch_engine ReplacingMergeTree)"
+  engine="$(ch_replicated_prefix)ReplacingMergeTree"
   converged="$(ch_scalar "SELECT count() FROM system.tables
     WHERE database = 'staging' AND name = 'jira__catalogue_first_seen' AND engine = '${engine}'")" || return 1
   [[ "${converged}" -eq 0 ]] || return 0

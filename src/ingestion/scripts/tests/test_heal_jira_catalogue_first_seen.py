@@ -22,7 +22,7 @@ FAIL = "<fail>"
 
 STUB = r"""
 set -euo pipefail
-source "$SCRIPTS/lib/ch-exec.sh"
+source "$SCRIPTS/lib/ch-topology.sh"
 source "$SCRIPTS/lib/heal-jira-catalogue-first-seen.sh"
 _ch_http_query() {
   local sql
