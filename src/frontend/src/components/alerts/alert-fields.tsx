@@ -226,9 +226,11 @@ export function AlertFields({
         </fieldset>
       ) : null}
 
-      {chosen && offered.length > 0 ? (
+      {chosen && (offered.length > 0 || errors.context_columns) ? (
         <fieldset
-          className="flex min-w-0 flex-col gap-2"
+          tabIndex={-1}
+          className="flex min-w-0 flex-col gap-2 outline-none"
+          aria-invalid={errors.context_columns ? true : undefined}
           aria-describedby={
             errors.context_columns ? "alert-context-columns-said" : undefined
           }

@@ -138,7 +138,7 @@ Only Insight v3 custom metrics are checked. Rules do not depend on a specific pr
 
 | Entity | Identity | Invariant |
 |--------|----------|-----------|
-| Rule | A generated id, the handle every operation takes; a name people read, not unique; a revision bumped by every configuration write | One metric, one condition, up to five context columns, one interval, one destination; every test in the condition fits the kind of the column it reads, and every context column is one the metric answers, as the metric defined it when the rule was written; the latest check's finding and witness live on the row |
+| Rule | A generated id, the handle every operation takes; a name people read, not unique; a revision bumped by every configuration write | One metric, one condition, up to five context columns, one interval, one destination; every test in the condition fits the kind of the column it reads, and every context column is one the metric answers and does not group by, as the metric defined it when the rule was written; the latest check's finding and witness live on the row |
 | Check | Rule id plus revision, carried by the job | Recorded only while the rule is enabled at that revision; date tests measure back from the check's own time |
 | Notification | Its own id; references the rule and the revision that owed it | Carries the condition, context columns, witness and time the check saw; a later edit to the rule rewrites nothing it says. Status is pending, cancelled, sent or failed; a send is recorded only while pending |
 | Destination | A name in configuration | Names a provider and holds its credentials; the domain sees the name and provider |
