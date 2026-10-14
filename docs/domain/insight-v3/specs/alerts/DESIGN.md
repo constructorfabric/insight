@@ -93,7 +93,7 @@ flowchart LR
     Worker --> Deliveries[(Redis: BullMQ delivery queue)]
     Deliveries --> Sender[Delivery worker]
     Sender --> Store
-    Sender --> Provider[Discord, Telegram or Zulip]
+    Sender --> Provider[Discord, Telegram, Slack or Zulip]
 ```
 
 | Layer | Responsibility | Technology |
@@ -245,7 +245,7 @@ One BullMQ queue, one job per notification keyed by its id, with the configured 
 
 ##### Responsibility boundaries
 
-Never reruns the metric. A destination removed from configuration rejects the send. Adapters: Discord posts to the webhook with `wait=true` and no mentions, and reads the created message id; Telegram calls `sendMessage` and reads `result.message_id`; Zulip posts to a stream topic with basic authentication and reads `id`. Each treats 429 and 5xx as unknown, other 4xx as rejection, and a body it does not understand as unknown.
+Never reruns the metric. A destination removed from configuration rejects the send. Adapters: Discord posts to the webhook with `wait=true` and no mentions, and reads the created message id; Telegram calls `sendMessage` and reads `result.message_id`; Slack calls `chat.postMessage` with the bot token, the text escaped and formatting off, and reads `ts`, treating an error in a successful answer that a later attempt may get past (rate limits, a failure on Slack's side, a truncated request, a workspace mid-migration) as unknown and any other error as rejection; Zulip posts to a stream topic with basic authentication and reads `id`. Each treats 429 and 5xx as unknown, other 4xx as rejection, and a body it does not understand as unknown.
 
 ##### Related components (by ID)
 
@@ -306,6 +306,7 @@ A metric edit takes effect at the next check without resetting the rule; only a 
 | ClickHouse | Existing custom-metric runner | Existing read-only restrictions and result limits |
 | Discord | Incoming webhook, `POST {webhook_url}?wait=true` | Rate limits answered as 429; the webhook's channel membership is Discord's |
 | Telegram | Bot API `sendMessage` | The bot must be a member of the chat; rate limits answered as 429 |
+| Slack | Web API `chat.postMessage` with a bot token (`chat:write`) | The bot must be a member of the channel, or hold `chat:write.public` for a public one; most errors are answered inside a 200 |
 | Zulip | `POST /api/v1/messages` with bot credentials | The bot must be subscribed to the stream |
 
 ### 3.6 Interactions & Sequences
@@ -373,7 +374,7 @@ BullMQ owns its keys in Redis under its own prefix. A finished check is kept the
 
 The worker runs inside every `insight-v3-core` replica, started after the state is built and stopped on the gear's cancellation token. Replicas coordinate through BullMQ's locks; a check runs on one of them. Alerts are off unless the configuration names a Redis; with them off, the routes answer that the installation has none.
 
-Configuration: `alerts.enabled`, `alerts.redis_url`, `alerts.redis_password` (joined into the URL by the service, percent-encoded, so a password may hold any character), `alerts.destinations.<name>` with `provider` and its fields (Discord `webhook_url`; Telegram `bot_token`, `chat_id`; Zulip `site_url`, `bot_email`, `api_key`, `stream`, `topic`), and the bounds `min_interval_secs`, `max_interval_secs`, `max_rules`, `evaluation_concurrency`, `evaluation_lock_secs`, `notifications_kept_per_rule`, `delivery_attempts`, `delivery_backoff_secs`, `delivery_timeout_secs`, `delivery_concurrency`.
+Configuration: `alerts.enabled`, `alerts.redis_url`, `alerts.redis_password` (joined into the URL by the service, percent-encoded, so a password may hold any character), `alerts.destinations.<name>` with `provider` and its fields (Discord `webhook_url`; Telegram `bot_token`, `chat_id`; Slack `bot_token`, `channel`; Zulip `site_url`, `bot_email`, `api_key`, `stream`, `topic`), and the bounds `min_interval_secs`, `max_interval_secs`, `max_rules`, `evaluation_concurrency`, `evaluation_lock_secs`, `notifications_kept_per_rule`, `delivery_attempts`, `delivery_backoff_secs`, `delivery_timeout_secs`, `delivery_concurrency`.
 
 In the Helm chart, `insightV3Core.alerts.enabled` and `insightV3Core.alerts.redis` turn alerts on and point them at Redis; the chart renders the URL from the host and port and hands the password as its own setting read from the password Secret, so the password stays in the one Secret it is sealed in and never has to be URL-safe. Destination names are lowercase: the environment lowercases every key before the service reads it, and the chart refuses a name that is not already lowercase. Destinations come either from `insightV3Core.alerts.destinations` in values, rendered into the config Secret when the chart generates credentials, or from a Secret the operator seals and names in `insightV3Core.alerts.existingSecret`, which is how a gitops environment supplies them.
 
@@ -399,7 +400,7 @@ Every check logs the rule, revision, outcome, reason, whether a notification was
 | Decision | Outcome |
 |----------|---------|
 | Job library | BullMQ on Redis ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)) |
-| D3 first providers | Discord, Telegram and Zulip, one adapter each behind one provider interface |
+| D3 first providers | Discord, Telegram, Slack and Zulip, one adapter each behind one provider interface |
 | D4 numbers | Exactly one row and one column; `>`, `>=`, `<`, `<=`; integers exact, floats as `f64`, mixed only where exact |
 | D5 unknown | Keeps the last valid finding; records time and reason; no freshness condition |
 | D6 edits | Revision per write, `expected_revision` on update; edit or enable resets the finding; disable withdraws pending notifications; delete removes everything |

@@ -678,7 +678,8 @@ insightV3Core:
   # joins it to the URL itself, so it may hold any character.
   # Destinations are named and referenced by rules. Each names its provider
   # and carries what that provider needs. Discord: webhook_url. Telegram:
-  # bot_token, chat_id. Zulip: site_url, bot_email, api_key, stream, topic.
+  # bot_token, chat_id. Slack: bot_token, channel. Zulip: site_url,
+  # bot_email, api_key, stream, topic.
   # Names are lowercase (a-z, 0-9, _ and -): the service lowercases every
   # environment key before it reads it, and the render refuses a name that
   # would come out different.
