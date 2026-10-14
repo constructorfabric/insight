@@ -24,11 +24,13 @@ const COLUMNS = [...KINDS.keys()];
 
 function Harness({
   initial,
+  columns = COLUMNS,
   manyRows = true,
   errors = {},
   onChange,
 }: {
   initial: unknown;
+  columns?: readonly string[];
   manyRows?: boolean;
   errors?: FieldErrors;
   onChange: (condition: unknown) => void;
@@ -38,7 +40,7 @@ function Harness({
   return (
     <ConditionBuilder
       condition={condition}
-      columns={COLUMNS}
+      columns={columns}
       kinds={KINDS}
       manyRows={manyRows}
       errors={errors}
@@ -554,5 +556,13 @@ describe("ConditionBuilder", () => {
     ]) {
       expect(control, control.outerHTML).toHaveAccessibleName();
     }
+  });
+
+  it("keeps the column closed until a metric offers columns", () => {
+    setUp({ rows: "one", where: blankLeaf() }, { columns: [] });
+
+    const column = leaf(1).getByRole("combobox", { name: "Column" });
+    expect(column, "a column needs a metric to pick from").toBeDisabled();
+    expect(column).toHaveTextContent("Pick a metric first");
   });
 });

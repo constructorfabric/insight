@@ -459,6 +459,7 @@ export function LeafEditor({
   ];
 
   const unpicked = leaf.column === "";
+  const noColumns = columns.length === 0;
   const columnOptions = columns.map((name) => ({ value: name, label: name }));
 
   return (
@@ -473,7 +474,8 @@ export function LeafEditor({
           label="Column"
           value={leaf.column}
           options={columnOptions}
-          placeholder="Pick a column"
+          placeholder={noColumns ? "Pick a metric first" : "Pick a column"}
+          disabled={noColumns}
           describedBy={[...saidOf("leaf"), ...saidOf("column")]}
           className="w-44 font-mono"
           onChange={(column) => onChange(withColumn(leaf, column, kinds))}
