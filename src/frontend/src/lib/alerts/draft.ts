@@ -215,7 +215,7 @@ export function checkForm(
   }
   if (destination === "") errors.destination = "Pick a destination.";
   if (typeof enabled !== "boolean") errors.enabled = "Enter true or false.";
-  Object.assign(errors, conditionErrors(condition, kinds));
+  if (metric !== "") Object.assign(errors, conditionErrors(condition, kinds));
 
   if (Object.keys(errors).length > 0) return { ok: false, errors };
 

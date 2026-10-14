@@ -5,7 +5,7 @@ import {
   COMPARISONS,
   MAX_GROUP_DEPTH,
   MAX_LEAVES,
-  blankLeaf,
+  freshLeaf,
   canNegate,
   childPath,
   conditionParts,
@@ -170,7 +170,7 @@ export function ConditionBuilder({
         root
         onChange={(next) => {
           if (next === undefined) drawing.focus(firstControl("where"));
-          set({ where: next ?? blankLeaf() });
+          set({ where: next ?? freshLeaf(kinds) });
         }}
       />
     </div>
@@ -310,6 +310,7 @@ function NodeEditor({
               path={path}
               depth={1}
               full={drawing.full}
+              kinds={drawing.kinds}
               onAdd={(added) => {
                 drawing.focus(addedFocus(childPath(path, "all", 1), added));
                 onChange({ all: [node, added] });
@@ -349,7 +350,7 @@ function NodeEditor({
                 }
                 onClick={() => {
                   drawing.focus(firstControl(path));
-                  onChange(blankLeaf());
+                  onChange(freshLeaf(drawing.kinds));
                 }}
               >
                 Reset
@@ -377,11 +378,13 @@ function Additions({
   path,
   depth,
   full,
+  kinds,
   onAdd,
 }: {
   path: string;
   depth: number;
   full: boolean;
+  kinds: ReadonlyMap<string, ColumnKind>;
   onAdd: (node: unknown) => void;
 }) {
   return (
@@ -392,7 +395,7 @@ function Additions({
         variant="outline"
         size="sm"
         disabled={full}
-        onClick={() => onAdd(blankLeaf())}
+        onClick={() => onAdd(freshLeaf(kinds))}
       >
         Add condition
       </Button>
@@ -402,7 +405,7 @@ function Additions({
           variant="outline"
           size="sm"
           disabled={full}
-          onClick={() => onAdd({ all: [blankLeaf()] })}
+          onClick={() => onAdd({ all: [freshLeaf(kinds)] })}
         >
           Add group
         </Button>
@@ -513,6 +516,7 @@ function GroupEditor({
           path={path}
           depth={depth}
           full={drawing.full}
+          kinds={drawing.kinds}
           onAdd={(added) => {
             drawing.focus(
               addedFocus(

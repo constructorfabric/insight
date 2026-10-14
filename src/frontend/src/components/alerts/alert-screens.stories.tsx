@@ -61,6 +61,7 @@ const BY_TEAM_METRIC = {
     ],
     group_by: ["team"],
   },
+  clock: { field: "opened_at", from: "dataset" },
 };
 
 const PULL_REQUESTS = {
@@ -250,6 +251,7 @@ export const TestBuilderFitsOnAPhone: Story = {
     expectHorizontallyContained(
       card,
       [
+        canvas.getByLabelText("Window"),
         ...tests,
         ...canvas.getAllByLabelText("Combine"),
         canvas.getByRole("button", { name: "Save changes" }),
@@ -320,10 +322,6 @@ export const TestFormFitsOnAPhone: Story = {
     const fields = [
       await canvas.findByLabelText("Name"),
       canvas.getByLabelText("Metric"),
-      canvas.getByLabelText("Window"),
-      canvas.getByLabelText("Column"),
-      canvas.getByLabelText("Operator"),
-      canvas.getByLabelText("Value"),
       canvas.getByLabelText("Check every"),
       canvas.getByLabelText("Destination"),
       canvas.getByRole("button", { name: "Create alert" }),

@@ -581,6 +581,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
           table: "gold.prs",
           fields: [
             { column: "id", type: "int", agg: "count", as_name: "stale" },
+            { column: "repo", type: "string", as_name: "repo" },
           ],
         },
       },
@@ -591,10 +592,25 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
       {
         definition: {
           table: "gold.prs",
-          fields: [{ column: "id", type: "string", as_name: "total" }],
+          fields: [
+            { column: "id", type: "string", as_name: "total" },
+            { column: "id", type: "int", agg: "count", as_name: "stale" },
+          ],
         },
       },
       { column: "", op: ">", value: "" },
+    ],
+    [
+      "one other column, which a new test starts on",
+      {
+        definition: {
+          table: "gold.prs",
+          fields: [
+            { column: "id", type: "int", agg: "count", as_name: "stale" },
+          ],
+        },
+      },
+      { column: "stale", op: ">", value: "" },
     ],
     [
       "a column the new metric holds as a number too",
@@ -635,6 +651,77 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     }
   );
 
+  it("shows no window and no condition before a metric is picked", async () => {
+    render(<NewAlertPage />, { wrapper });
+
+    expect(await screen.findByLabelText("Name")).toBeInTheDocument();
+    for (const label of ["Check every", "Destination"]) {
+      expect(screen.getByLabelText(label), label).toBeEnabled();
+    }
+    expect(screen.queryByLabelText("Window")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Condition" })).toBeNull();
+  });
+
+  it.each([
+    [
+      "one undated column",
+      PRS_OPEN,
+      { window: false, column: "total", operator: true },
+    ],
+    [
+      "a date to window by",
+      DATED_PRS_OPEN,
+      { window: true, column: "total", operator: true },
+    ],
+    [
+      "several columns",
+      {
+        definition: {
+          table: "gold.prs",
+          fields: [
+            { column: "id", type: "int", agg: "count", as_name: "total" },
+            { column: "id", type: "int", agg: "max", as_name: "largest" },
+          ],
+        },
+      },
+      { window: false, column: "Pick a column", operator: false },
+    ],
+  ])(
+    "draws what a metric with %s offers once it is picked",
+    async (_case, metric, drawn) => {
+      vi.mocked(customClient.fetchMetric).mockResolvedValue(
+        storedMetric(metric)
+      );
+
+      render(<NewAlertPage />, { wrapper });
+      await userEvent.type(await screen.findByLabelText("Metric"), "prs");
+      await userEvent.click(
+        await screen.findByRole("option", { name: "prs-open" })
+      );
+
+      expect(
+        await screen.findByRole("group", { name: "Condition" }),
+        _case
+      ).toBeInTheDocument();
+      expect(
+        Boolean(screen.queryByLabelText("Window")),
+        `${_case}: window`
+      ).toBe(drawn.window);
+      await waitFor(() =>
+        expect(
+          condition(1).getByRole("combobox", { name: "Column" }),
+          `${_case}: column`
+        ).toHaveTextContent(drawn.column)
+      );
+      for (const label of ["Operator", "Value"]) {
+        expect(
+          Boolean(condition(1).queryByLabelText(label)),
+          `${_case}: ${label}`
+        ).toBe(drawn.operator);
+      }
+    }
+  );
+
   it("says what is missing before it sends anything", async () => {
     render(<NewAlertPage />, { wrapper });
     await userEvent.click(
@@ -643,7 +730,6 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
 
     expect(await screen.findByText("Enter a name.")).toBeInTheDocument();
     expect(screen.getByText("Pick a metric.")).toBeInTheDocument();
-    expect(screen.getByText("Pick a column.")).toBeInTheDocument();
     expect(alertsClient.createAlert).not.toHaveBeenCalled();
   });
 
@@ -864,6 +950,27 @@ describe("the JSON view", { timeout: 20_000 }, () => {
 
 describe("EditAlertPage", () => {
   beforeEach(() => portalRouter.reset("/portal/custom/alerts/a1/edit"));
+
+  it("still shows the rule's condition when its metric cannot be read", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
+      ...ALERT,
+      range: "P7D",
+    });
+    vi.mocked(customClient.fetchMetric).mockRejectedValue(
+      new CustomApiError(404, { detail: "metric prs-open was not found" })
+    );
+
+    render(<EditAlertPage id="a1" />, { wrapper });
+
+    expect(
+      await screen.findByText("metric prs-open was not found")
+    ).toBeInTheDocument();
+    expect(condition(1).getByLabelText("Value")).toHaveValue("10");
+    expect(
+      condition(1).getByRole("combobox", { name: "Column" })
+    ).toHaveTextContent("total");
+    expect(screen.getByLabelText("Window")).toHaveTextContent("Last 7 days");
+  });
 
   it("replaces the alert at the revision it was opened at", async () => {
     vi.mocked(alertsClient.fetchAlert).mockResolvedValue(ALERT);

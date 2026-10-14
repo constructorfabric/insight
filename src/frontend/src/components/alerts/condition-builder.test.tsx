@@ -20,17 +20,17 @@ const KINDS = new Map<string, ColumnKind>([
   ["stale", "number"],
   ["opened_at", "date"],
 ]);
-const COLUMNS = [...KINDS.keys()];
+const ONLY_OPEN = new Map<string, ColumnKind>([["open", "number"]]);
 
 function Harness({
   initial,
-  columns = COLUMNS,
+  kinds = KINDS,
   manyRows = true,
   errors = {},
   onChange,
 }: {
   initial: unknown;
-  columns?: readonly string[];
+  kinds?: ReadonlyMap<string, ColumnKind>;
   manyRows?: boolean;
   errors?: FieldErrors;
   onChange: (condition: unknown) => void;
@@ -40,8 +40,8 @@ function Harness({
   return (
     <ConditionBuilder
       condition={condition}
-      columns={columns}
-      kinds={KINDS}
+      columns={[...kinds.keys()]}
+      kinds={kinds}
       manyRows={manyRows}
       errors={errors}
       onChange={(next) => {
@@ -468,15 +468,28 @@ describe("ConditionBuilder", () => {
     }
   );
 
-  it("asks for a column before the operator and value", () => {
+  it("shows the operator and value once a column is picked, and keeps focus on the column", async () => {
     setUp(BLANK);
 
-    const operator = leaf(1).getByLabelText("Operator");
-    expect(operator).toBeDisabled();
-    expect(operator, "should show no operator yet").not.toHaveTextContent(
-      /[<>=!]|above/
-    );
-    expect(leaf(1).getByLabelText("Value")).toBeDisabled();
+    const column = leaf(1).getByRole("combobox", { name: "Column" });
+    expect(column).toHaveTextContent("Pick a column");
+    expect(column).toBeEnabled();
+    for (const label of ["Operator", "Value"]) {
+      expect(
+        leaf(1).queryByLabelText(label),
+        `${label} before a column`
+      ).toBeNull();
+    }
+
+    await pick(leaf(1), "Column", "open");
+
+    for (const label of ["Operator", "Value"]) {
+      expect(
+        leaf(1).getByLabelText(label),
+        `${label} after a column`
+      ).toBeEnabled();
+    }
+    expect(leaf(1).getByRole("combobox", { name: "Column" })).toHaveFocus();
   });
 
   it.each([
@@ -558,11 +571,26 @@ describe("ConditionBuilder", () => {
     }
   });
 
-  it("keeps the column closed until a metric offers columns", () => {
-    setUp({ rows: "one", where: blankLeaf() }, { columns: [] });
+  it.each([
+    ["Add condition", "Condition 2"],
+    ["Add group", "Condition 2"],
+  ])(
+    "starts a test added with %s on the metric's only column",
+    async (button, added) => {
+      const latest = setUp(
+        { rows: "one", where: { column: "open", op: ">", value: 1 } },
+        { kinds: ONLY_OPEN }
+      );
 
-    const column = leaf(1).getByRole("combobox", { name: "Column" });
-    expect(column, "a column needs a metric to pick from").toBeDisabled();
-    expect(column).toHaveTextContent("Pick a metric first");
-  });
+      await userEvent.click(screen.getByRole("button", { name: button }));
+
+      expect(
+        leaf(2).getByRole("combobox", { name: "Column" }),
+        added
+      ).toHaveTextContent("open");
+      expect(JSON.stringify(latest()), button).toContain(
+        '{"column":"open","op":">","value":""}'
+      );
+    }
+  );
 });

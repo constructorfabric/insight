@@ -35,7 +35,6 @@ export function Choice({
   options,
   placeholder,
   describedBy = [],
-  disabled,
   className,
   onChange,
 }: {
@@ -45,7 +44,6 @@ export function Choice({
   options: readonly Option[];
   placeholder?: string;
   describedBy?: readonly string[];
-  disabled?: boolean;
   className?: string;
   onChange: (value: string) => void;
 }) {
@@ -59,7 +57,6 @@ export function Choice({
       value={value}
       options={offered ? options : [{ value, label: value }, ...options]}
       placeholder={placeholder}
-      disabled={disabled}
       describe={described(describedBy)}
       className={className}
       onChange={onChange}
@@ -84,14 +81,12 @@ export function NumberInput({
   label,
   value,
   describedBy = [],
-  disabled,
   onChange,
 }: {
   id: string;
   label: string;
   value: unknown;
   describedBy?: readonly string[];
-  disabled?: boolean;
   onChange: (value: unknown) => void;
 }) {
   const [typed, setTyped] = useState(() => shownNumber(value));
@@ -104,7 +99,6 @@ export function NumberInput({
       {...described(describedBy)}
       inputMode="decimal"
       value={shown}
-      disabled={disabled}
       className="h-9 w-32 tabular-nums"
       onChange={(event) => {
         setTyped(event.target.value);
@@ -130,13 +124,11 @@ function TextListInput({
   id,
   value,
   describedBy,
-  disabled,
   onChange,
 }: {
   id: string;
   value: unknown;
   describedBy: readonly string[];
-  disabled: boolean;
   onChange: (value: string[]) => void;
 }) {
   const listed = Array.isArray(value) ? value.map(String).join("\n") : "";
@@ -150,7 +142,6 @@ function TextListInput({
       {...described(describedBy)}
       value={shown}
       placeholder="One per line"
-      disabled={disabled}
       rows={2}
       className="min-h-9 w-48"
       onChange={(event) => {
@@ -209,14 +200,12 @@ function ValueInput({
   shape,
   value,
   saidOn,
-  disabled,
   onChange,
 }: {
   id: string;
   shape: ValueShape;
   value: unknown;
   saidOn: (end?: 0 | 1) => string[];
-  disabled: boolean;
   onChange: (value: unknown) => void;
 }) {
   switch (shape) {
@@ -227,7 +216,6 @@ function ValueInput({
           label="Value"
           value={value}
           describedBy={saidOn()}
-          disabled={disabled}
           onChange={onChange}
         />
       );
@@ -239,7 +227,6 @@ function ValueInput({
             label="From"
             value={at(value, 0)}
             describedBy={saidOn(0)}
-            disabled={disabled}
             onChange={(low) => onChange(withAt(value, 0, low))}
           />
           <span className={TEXT_LABEL}>and</span>
@@ -248,7 +235,6 @@ function ValueInput({
             label="To"
             value={at(value, 1)}
             describedBy={saidOn(1)}
-            disabled={disabled}
             onChange={(high) => onChange(withAt(value, 1, high))}
           />
         </span>
@@ -259,7 +245,6 @@ function ValueInput({
           id={id}
           aria-label="Value"
           {...described(saidOn())}
-          disabled={disabled}
           value={textOfValue(value)}
           className={TEXT}
           onChange={(event) => onChange(event.target.value)}
@@ -271,7 +256,6 @@ function ValueInput({
           id={id}
           value={value}
           describedBy={saidOn()}
-          disabled={disabled}
           onChange={onChange}
         />
       );
@@ -281,7 +265,6 @@ function ValueInput({
           id={id}
           aria-label="Value"
           {...described(saidOn())}
-          disabled={disabled}
           value={textOfValue(value)}
           placeholder={MOMENT_PLACEHOLDER}
           className={cn(TEXT, "font-mono")}
@@ -297,7 +280,6 @@ function ValueInput({
               id={`${id}-${end}`}
               aria-label={end === 0 ? "From" : "To"}
               {...described(saidOn(end))}
-              disabled={disabled}
               value={textOfValue(at(value, end))}
               placeholder={MOMENT_PLACEHOLDER}
               className={cn(TEXT, "font-mono")}
@@ -316,7 +298,6 @@ function ValueInput({
             id={id}
             aria-label="Amount"
             {...described(saidOn())}
-            disabled={disabled}
             inputMode="numeric"
             value={amount}
             className="h-9 w-20 tabular-nums"
@@ -327,7 +308,6 @@ function ValueInput({
             label="Unit"
             value={unit}
             options={AGE_UNITS}
-            disabled={disabled}
             onChange={(picked) => onChange(ageText(amount, picked))}
           />
         </span>
@@ -458,8 +438,7 @@ export function LeafEditor({
     ...(end === undefined ? [] : saidOf(end === 0 ? "value-0" : "value-1")),
   ];
 
-  const unpicked = leaf.column === "";
-  const noColumns = columns.length === 0;
+  const picked = leaf.column !== "";
   const columnOptions = columns.map((name) => ({ value: name, label: name }));
 
   return (
@@ -474,31 +453,32 @@ export function LeafEditor({
           label="Column"
           value={leaf.column}
           options={columnOptions}
-          placeholder={noColumns ? "Pick a metric first" : "Pick a column"}
-          disabled={noColumns}
+          placeholder="Pick a column"
           describedBy={[...saidOf("leaf"), ...saidOf("column")]}
           className="w-44 font-mono"
           onChange={(column) => onChange(withColumn(leaf, column, kinds))}
         />
-        <Choice
-          id={ids.op}
-          label="Operator"
-          value={unpicked ? "" : leaf.op}
-          options={OPERATORS[kind]}
-          describedBy={saidOf("op")}
-          disabled={unpicked}
-          className="w-36"
-          onChange={(op) => onChange(withOperator(leaf, op, kind))}
-        />
-        <ValueInput
-          key={shape}
-          id={ids.value}
-          shape={shape}
-          value={leaf.value}
-          saidOn={saidOnValue}
-          disabled={unpicked}
-          onChange={(value) => onChange({ ...leaf, value })}
-        />
+        {picked ? (
+          <>
+            <Choice
+              id={ids.op}
+              label="Operator"
+              value={leaf.op}
+              options={OPERATORS[kind]}
+              describedBy={saidOf("op")}
+              className="w-36"
+              onChange={(op) => onChange(withOperator(leaf, op, kind))}
+            />
+            <ValueInput
+              key={shape}
+              id={ids.value}
+              shape={shape}
+              value={leaf.value}
+              saidOn={saidOnValue}
+              onChange={(value) => onChange({ ...leaf, value })}
+            />
+          </>
+        ) : null}
         {removable ? (
           <Button
             type="button"

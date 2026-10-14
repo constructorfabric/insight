@@ -28,12 +28,19 @@ export function useAlertMetric(metric: string) {
     [typed, definition, declaration]
   );
 
+  const settled =
+    read.isError ||
+    (definition !== undefined &&
+      (dataset === "" || declared.isSuccess || declared.isError));
+
   return {
     read,
     stored: read.data,
     definition,
     kinds,
     typed,
+    /** Read as far as it will be: the parts that hang on it can be drawn. */
+    settled,
     manyRows: definition ? metricShape(definition).kind !== "one" : false,
   };
 }

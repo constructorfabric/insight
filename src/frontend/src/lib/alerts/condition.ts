@@ -91,6 +91,18 @@ export function blankLeaf(): ConditionNode {
   return { column: "", op: ">", value: "" };
 }
 
+/** A new test: on the metric's only column when it has one, else blank. */
+export function freshLeaf(
+  kinds: ReadonlyMap<string, ColumnKind>
+): ConditionNode {
+  const [only, ...others] = [...kinds];
+  if (only === undefined || others.length > 0) return blankLeaf();
+
+  const [column, kind] = only;
+  const op = OPERATORS[kind][0].value;
+  return { column, op, value: blankValue(valueShape(kind, op)) };
+}
+
 export interface WrittenLeaf {
   column: string;
   op: string;
@@ -284,7 +296,7 @@ function fitNode(
       const kind = kinds.get(read.leaf.column);
       return kind !== undefined && fits(kind, read.leaf.op)
         ? node
-        : blankLeaf();
+        : freshLeaf(kinds);
     }
     case "group":
       return {

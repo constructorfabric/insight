@@ -17,7 +17,7 @@ import {
 } from "@/lib/alerts/draft";
 import { INTERVAL_PRESETS_SECS, intervalLabel } from "@/lib/alerts/interval";
 import { isRatio } from "@/lib/alerts/shape";
-import { takesWindow, windowFor } from "@/lib/alerts/window";
+import { takesWindow } from "@/lib/alerts/window";
 import { describing } from "@/lib/custom/editor/aria";
 import { RANGE_PRESETS, rangeLabel } from "@/lib/custom/time-range";
 import { TEXT_LABEL } from "@/lib/type-scale";
@@ -37,27 +37,18 @@ const UTC_NOTE = "Days, months and quarters end at midnight UTC.";
 const CALENDAR_WINDOWS = new Set(["PDC", "PMC", "PQC"]);
 
 /** The windows a rule may name: the presets, and the one it already has. */
-function windowOptions(current: string, windowed: boolean) {
+function windowOptions(current: string) {
   // INVARIANT: "inf" reads every dated row, which "All time" already offers.
   const presets = RANGE_PRESETS.filter(({ token }) => token !== "inf").map(
-    ({ token, label }) => ({ value: token, label, disabled: !windowed })
+    ({ token, label }) => ({ value: token, label })
   );
   const known = current === "" || presets.some((one) => one.value === current);
 
   return [
     { value: ALL_TIME, label: "All time" },
     ...presets,
-    ...(known
-      ? []
-      : [{ value: current, label: rangeLabel(current), disabled: !windowed }]),
+    ...(known ? [] : [{ value: current, label: rangeLabel(current) }]),
   ];
-}
-
-function sameColumns(left: readonly string[], right: readonly string[]) {
-  return (
-    left.length === right.length &&
-    left.every((column, index) => column === right[index])
-  );
 }
 
 export function AlertFields({
@@ -87,7 +78,7 @@ export function AlertFields({
   const tested = conditionColumns(document.condition);
 
   // INVARIANT: a metric that lost its date refuses the window its alert still
-  // holds, and the disabled select cannot clear it.
+  // holds, and the hidden select cannot clear it.
   useEffect(() => {
     if (!windowed && range !== "") onChange({ range: null });
   }, [windowed, range, onChange]);
@@ -99,6 +90,11 @@ export function AlertFields({
       ? refusal(read.error, "Couldn't read the metric.")
       : undefined);
   const columns = definition?.fields.map((field) => field.as_name) ?? [];
+  const chosen = metric !== "" && picked.settled;
+  // INVARIANT: a metric that cannot be read never hides the window a rule holds.
+  const showWindow = stored
+    ? Boolean(stored.clock)
+    : read.isError && range !== "";
 
   const intervals =
     interval === undefined || INTERVAL_PRESETS_SECS.includes(interval)
@@ -141,59 +137,51 @@ export function AlertFields({
             ) : null}
           </div>
         </Row>
-        <Row
-          id="alert-range"
-          label="Window"
-          hint={windowHint}
-          said={errors.range}
-        >
-          <FieldSelect
+        {showWindow ? (
+          <Row
             id="alert-range"
-            value={range === "" ? ALL_TIME : range}
-            options={windowOptions(range, windowed)}
-            disabled={!windowed}
-            describe={describing("alert-range", {
-              hint: windowHint,
-              said: errors.range,
-            })}
-            onChange={(next) =>
-              onChange({ range: next === ALL_TIME ? null : next })
-            }
-          />
-        </Row>
+            label="Window"
+            hint={windowHint}
+            said={errors.range}
+          >
+            <FieldSelect
+              id="alert-range"
+              value={range === "" ? ALL_TIME : range}
+              options={windowOptions(range)}
+              describe={describing("alert-range", {
+                hint: windowHint,
+                said: errors.range,
+              })}
+              onChange={(next) =>
+                onChange({ range: next === ALL_TIME ? null : next })
+              }
+            />
+          </Row>
+        ) : null}
       </div>
 
-      <fieldset className="flex min-w-0 flex-col gap-3">
-        <legend className={cn(TEXT_LABEL, "mb-1 font-medium")}>
-          Condition
-        </legend>
-        <ConditionBuilder
-          condition={document.condition}
-          columns={columns}
-          kinds={kinds}
-          manyRows={manyRows}
-          errors={errors}
-          onChange={(condition) => {
-            const columnPicked = !sameColumns(
-              tested,
-              conditionColumns(condition)
-            );
-            const window = windowFor(stored, range);
-            onChange(
-              columnPicked
-                ? { condition, range: window === "" ? null : window }
-                : { condition }
-            );
-          }}
-        />
-        <CurrentValue
-          preview={preview}
-          ratioOnly={
-            tested.length > 0 &&
-            tested.every((column) => isRatio(definition, column))
-          }
-        />
-      </fieldset>
+      {chosen ? (
+        <fieldset className="flex min-w-0 flex-col gap-3">
+          <legend className={cn(TEXT_LABEL, "mb-1 font-medium")}>
+            Condition
+          </legend>
+          <ConditionBuilder
+            condition={document.condition}
+            columns={columns}
+            kinds={kinds}
+            manyRows={manyRows}
+            errors={errors}
+            onChange={(condition) => onChange({ condition })}
+          />
+          <CurrentValue
+            preview={preview}
+            ratioOnly={
+              tested.length > 0 &&
+              tested.every((column) => isRatio(definition, column))
+            }
+          />
+        </fieldset>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Row

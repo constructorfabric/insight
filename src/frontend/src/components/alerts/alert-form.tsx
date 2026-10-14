@@ -20,6 +20,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { isRevisionConflict } from "@/lib/alerts/conflict";
 import { fitCondition } from "@/lib/alerts/condition";
+import { windowFor } from "@/lib/alerts/window";
 import {
   blankForm,
   checkForm,
@@ -223,13 +224,15 @@ function AlertEditor({
 
   if (refitFor !== undefined && refitFor === metricName && metric.typed) {
     setRefitFor(undefined);
-    setHeld((was) =>
-      change(
+    setHeld((was) => {
+      const window = windowFor(metric.stored, textOf(was.document, "range"));
+      const fitted = change(
         was,
         ["condition"],
         fitCondition(was.document.condition, metric.kinds)
-      )
-    );
+      );
+      return change(fitted, ["range"], window === "" ? null : window);
+    });
   }
   if (seenCondition !== conditionText) {
     setSeenCondition(conditionText);
