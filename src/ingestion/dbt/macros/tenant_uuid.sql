@@ -1,7 +1,7 @@
 {#-
-  The canonical tenant UUID a Bronze row is stamped with, typed. Fails the
-  build on a value that is not a UUID: Bronze still carrying a legacy tenant
-  key means the tenant migration has not run (deploy/TENANT_IDENTITY_UPGRADE.md).
+  The canonical tenant UUID a Bronze row is stamped with, typed. A value that
+  is not a UUID fails the build: Bronze has not been moved to the canonical
+  tenant yet, and no row may resolve under a tenant nobody signs in to.
 -#}
 {% macro tenant_uuid(tenant_col) -%}
     toUUID(coalesce({{ tenant_col }}, ''))
