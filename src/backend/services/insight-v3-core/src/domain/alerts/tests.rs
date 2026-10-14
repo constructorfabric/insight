@@ -618,3 +618,25 @@ mod deliveries {
         );
     }
 }
+
+#[test]
+fn a_threshold_is_worded_exactly_as_javascript_writes_it() {
+    let cases = [
+        (Number::Float(123_456.5), "123456.5"),
+        (Number::Float(1e-20), "1e-20"),
+        (Number::Float(1e21), "1e+21"),
+        (Number::Float(1e20), "100000000000000000000"),
+        (Number::Float(0.000_001), "0.000001"),
+        (Number::Float(1e-7), "1e-7"),
+        (Number::Float(-2.5), "-2.5"),
+        (Number::Float(10.0), "10"),
+        (Number::Float(0.1 + 0.2), "0.30000000000000004"),
+        (Number::Float(1.234_5e300), "1.2345e+300"),
+        (Number::Float(-0.0), "0"),
+        (Number::Int(-9_007_199_254_740_993), "-9007199254740993"),
+    ];
+
+    for (number, expected) in cases {
+        assert_eq!(number.exact(), expected, "should write {number:?}");
+    }
+}

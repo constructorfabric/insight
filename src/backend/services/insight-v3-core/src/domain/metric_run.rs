@@ -110,26 +110,36 @@ impl<'a> MetricRuns<'a> {
     pub(crate) async fn columns(&self, name: &DefinitionName) -> Result<Columns, CustomError> {
         let body = self.body_of(name).await?;
         let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
-        let groups = metric.groups().to_vec();
-        let imposed_limit = metric
-            .imposed_limit()
-            .and_then(|limit| usize::try_from(limit).ok());
 
         let Some(named) = metric.dataset() else {
             metric.check_table().map_err(CustomError::Compile)?;
-            return Ok(Columns {
-                kinds: metric.column_kinds(None, false),
-                groups,
-                imposed_limit,
-            });
+            return Ok(columns_of(&metric, None));
         };
         let (declaration, _) = self.ready_dataset(named).await?;
 
-        Ok(Columns {
-            kinds: metric.column_kinds(Some(&declaration), false),
-            groups,
-            imposed_limit,
-        })
+        Ok(columns_of(&metric, Some(&declaration)))
+    }
+
+    /// Runs a stored metric as [`MetricRuns::run`] does, and answers the
+    /// columns of the same definition the rows came from.
+    pub(crate) async fn run_with_columns(
+        &self,
+        name: &DefinitionName,
+        request: &WindowRequest,
+    ) -> Result<(RunResult, Columns), CustomError> {
+        let body = self.body_of(name).await?;
+        let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
+
+        let Some(named) = metric.dataset() else {
+            let result = self.run_over_table(&metric, request).await?;
+            return Ok((result, columns_of(&metric, None)));
+        };
+        let (declaration, table) = self.ready_dataset(named).await?;
+        let result = self
+            .run_over_ready_dataset(&metric, &declaration, &table, request)
+            .await?;
+
+        Ok((result, columns_of(&metric, Some(&declaration))))
     }
 
     /// Runs a stored metric over the window the caller asked for, resolved
@@ -271,7 +281,19 @@ impl<'a> MetricRuns<'a> {
         request: &WindowRequest,
     ) -> Result<RunResult, CustomError> {
         let (declaration, table) = self.ready_dataset(named).await?;
-        let over = self.over_of(&declaration, &table);
+
+        self.run_over_ready_dataset(metric, &declaration, &table, request)
+            .await
+    }
+
+    async fn run_over_ready_dataset(
+        &self,
+        metric: &MetricQuery,
+        declaration: &Declaration,
+        table: &str,
+        request: &WindowRequest,
+    ) -> Result<RunResult, CustomError> {
+        let over = self.over_of(declaration, table);
 
         let window = Self::resolve(request)?;
         let compiled = metric
@@ -287,7 +309,7 @@ impl<'a> MetricRuns<'a> {
                 Some(over),
             )
             .await?;
-        result.clock = EffectiveClock::of(metric, &declaration);
+        result.clock = EffectiveClock::of(metric, declaration);
 
         Ok(result)
     }
@@ -355,5 +377,17 @@ impl<'a> MetricRuns<'a> {
         };
 
         self.metrics.undated(&query).await.map_err(CustomError::Run)
+    }
+}
+
+/// What a definition says its rows hold, given the declaration of the
+/// dataset it reads, when it reads one.
+fn columns_of(metric: &MetricQuery, declaration: Option<&Declaration>) -> Columns {
+    Columns {
+        kinds: metric.column_kinds(declaration, false),
+        groups: metric.groups().to_vec(),
+        imposed_limit: metric
+            .imposed_limit()
+            .and_then(|limit| usize::try_from(limit).ok()),
     }
 }

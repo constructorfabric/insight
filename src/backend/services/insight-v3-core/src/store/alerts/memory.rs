@@ -9,11 +9,12 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use super::attempt_columns;
+use crate::domain::alerts::condition::Condition;
 use crate::domain::alerts::delivery::Attempted;
 use crate::domain::alerts::rule::{
     Accepted, AlertPage, AlertRule, AlertStore, AlertStoreError, AlertSummary,
     DEFAULT_NOTIFICATIONS_KEPT_PER_RULE, EvaluationState, Notification, NotificationStatus,
-    Recorded, Recording, Write,
+    Recorded, Recording, RuleSpec, Write,
 };
 use crate::domain::alerts::{Transition, last_valid_breached, transition};
 use crate::domain::definition::Page;
@@ -110,6 +111,16 @@ impl MemoryAlerts {
     }
 }
 
+/// The spec as `MariaDB` would read it back, so a condition the SQL store
+/// could not read fails here too instead of passing through untouched.
+fn as_a_row_holds_it(spec: RuleSpec) -> Result<RuleSpec, AlertStoreError> {
+    let stored = spec.condition.to_stored();
+    let condition =
+        Condition::from_stored(&stored).ok_or(AlertStoreError::UnreadableRow(stored))?;
+
+    Ok(RuleSpec { condition, ..spec })
+}
+
 #[async_trait]
 impl AlertStore for MemoryAlerts {
     async fn create(&self, write: Write, max_rules: u64) -> Result<AlertRule, AlertStoreError> {
@@ -117,7 +128,7 @@ impl AlertStore for MemoryAlerts {
         let now = Utc::now();
         let rule = AlertRule {
             id: Uuid::now_v7(),
-            spec: write.spec,
+            spec: as_a_row_holds_it(write.spec)?,
             enabled: write.enabled,
             revision: 1,
             state: EvaluationState::default(),
@@ -152,7 +163,7 @@ impl AlertStore for MemoryAlerts {
             });
         }
 
-        current.spec = write.spec;
+        current.spec = as_a_row_holds_it(write.spec)?;
         current.enabled = write.enabled;
         current.revision += 1;
         current.state = EvaluationState::default();

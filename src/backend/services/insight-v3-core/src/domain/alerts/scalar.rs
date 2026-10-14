@@ -87,6 +87,16 @@ impl Number {
         }
     }
 
+    /// The number exactly as it was written: an integer in digits, a float
+    /// the way JavaScript prints it, so a threshold reads the same in a
+    /// message as in the portal.
+    pub(crate) fn exact(self) -> String {
+        match self {
+            Self::Int(int) => int.to_string(),
+            Self::Float(float) => javascript_float(float),
+        }
+    }
+
     /// The number as a person reads it: an integer exactly, a float to six
     /// significant digits with no trailing zeros.
     pub(crate) fn readable(self) -> String {
@@ -127,6 +137,50 @@ impl Number {
             .filter(|float| float.is_finite())
             .map(Self::Float)
     }
+}
+
+/// `Number.prototype.toString` for a finite float: the shortest digits that
+/// read back as the same float, in positional form while the decimal point
+/// sits within 21 places, in exponent form past that.
+fn javascript_float(float: f64) -> String {
+    if float == 0.0 {
+        return "0".to_owned();
+    }
+
+    let scientific = format!("{:e}", float.abs());
+    let Some((mantissa, exponent)) = scientific.split_once('e') else {
+        return scientific;
+    };
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let Ok(exponent) = exponent.parse::<i32>() else {
+        return scientific;
+    };
+    let count = i32::try_from(digits.len()).unwrap_or(i32::MAX);
+    let point = exponent + 1;
+    let sign = if float < 0.0 { "-" } else { "" };
+
+    let written = if count <= point && point <= 21 {
+        let zeros = usize::try_from(point - count).unwrap_or_default();
+        format!("{digits}{}", "0".repeat(zeros))
+    } else if 0 < point && point <= 21 {
+        let (whole, fraction) = digits.split_at(usize::try_from(point).unwrap_or_default());
+        format!("{whole}.{fraction}")
+    } else if -6 < point && point <= 0 {
+        let zeros = usize::try_from(-point).unwrap_or_default();
+        format!("0.{}{digits}", "0".repeat(zeros))
+    } else {
+        let shown = exponent;
+        let exponent_sign = if shown >= 0 { "+" } else { "-" };
+        let (first, rest) = digits.split_at(1);
+        let mantissa = if rest.is_empty() {
+            first.to_owned()
+        } else {
+            format!("{first}.{rest}")
+        };
+        format!("{mantissa}e{exponent_sign}{}", shown.unsigned_abs())
+    };
+
+    format!("{sign}{written}")
 }
 
 fn as_exact_float(int: i128) -> Option<f64> {

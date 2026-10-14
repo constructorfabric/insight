@@ -20,12 +20,12 @@ const MAX_LINE_CHARS: usize = 280;
 /// The most of one cell a message shows.
 const MAX_CELL_CHARS: usize = 40;
 
-/// What a notification says, the same for every provider: as plain text,
-/// and as markdown for a provider that renders it.
+/// What a notification says, the same for every provider: as markdown for
+/// Discord and Zulip, and as HTML for Telegram.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Message {
-    pub(crate) text: String,
     pub(crate) markdown: String,
+    pub(crate) html: String,
 }
 
 impl Message {
@@ -35,8 +35,8 @@ impl Message {
     ///
     /// INVARIANT: every part stays on its own line, because control
     /// characters in what the warehouse answered become spaces. The rows
-    /// line is the only text the warehouse writes, and markdown carries it
-    /// inside a code span, where no provider reads a mention or a link.
+    /// line is the only text the warehouse writes, and both rich forms carry
+    /// it as code, where no provider reads a mention or a link.
     pub(crate) fn of(notification: &Notification) -> Self {
         let condition = &notification.condition;
         let witness = &notification.witness;
@@ -55,39 +55,62 @@ impl Message {
         let rows =
             (!witness.rows.is_empty()).then(|| line(&rows_seen(witness, &condition.columns())));
         let checked = format!("Checked {}.", stamp(notification.evaluated_at));
-
-        let plain_rows = rows.clone();
-        let text = [
-            Some(heading.clone()),
-            Some(met.clone()),
-            counted.clone(),
-            plain_rows,
-            Some(checked.clone()),
-        ];
-        let markdown = [
-            Some(heading),
-            Some(met),
-            counted,
-            rows.map(|rows| format!("`{}`", rows.replace('`', "'"))),
-            Some(checked),
-        ];
+        let parts = Parts {
+            heading: &heading,
+            met: &met,
+            counted: counted.as_deref(),
+            rows: rows.as_deref(),
+            checked: &checked,
+        };
 
         Self {
-            text: joined(text),
-            markdown: joined(markdown),
+            markdown: capped(&parts.joined(str::to_owned, |rows| {
+                format!("`{}`", rows.replace('`', "'"))
+            })),
+            // INVARIANT: never cut after escaping, which could split an
+            // entity or a tag and have the whole message refused. Each line
+            // is already bounded, and Telegram counts the text it shows.
+            html: parts.joined(escaped, |rows| format!("<code>{}</code>", escaped(rows))),
         }
     }
 }
 
-fn joined(lines: [Option<String>; 5]) -> String {
-    lines
+/// The lines of one message, before any provider's form is applied.
+struct Parts<'a> {
+    heading: &'a str,
+    met: &'a str,
+    counted: Option<&'a str>,
+    rows: Option<&'a str>,
+    checked: &'a str,
+}
+
+impl Parts<'_> {
+    /// The lines joined, each written by `plain` except the warehouse's rows
+    /// line, written by `rows`.
+    fn joined(&self, plain: impl Fn(&str) -> String, rows: impl Fn(&str) -> String) -> String {
+        [
+            Some(plain(self.heading)),
+            Some(plain(self.met)),
+            self.counted.map(&plain),
+            self.rows.map(rows),
+            Some(plain(self.checked)),
+        ]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
         .join("\n")
-        .chars()
-        .take(MAX_MESSAGE_CHARS)
-        .collect()
+    }
+}
+
+fn capped(text: &str) -> String {
+    text.chars().take(MAX_MESSAGE_CHARS).collect()
+}
+
+/// Text as Telegram's HTML reads it literally.
+fn escaped(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// `3 of 12 rows match`, or `1 of 1 row matches`.
@@ -300,8 +323,8 @@ mod tests {
         ));
 
         assert_eq!(
-            message.text,
-            "Insight alert: Too many open PRs\nprs-open: total above 50\ntotal 63\nChecked 2026-09-29 08:15 UTC."
+            message.markdown,
+            "Insight alert: Too many open PRs\nprs-open: total above 50\n`total 63`\nChecked 2026-09-29 08:15 UTC."
         );
     }
 
@@ -324,8 +347,8 @@ mod tests {
         ));
 
         assert_eq!(
-            message.text,
-            "Insight alert: Too many open PRs\nprs-open: any row: open above 10 and team is not data\n2 of 12 rows match\napi: open 12, team core · web: open 15.25, team empty\nChecked 2026-09-29 08:15 UTC."
+            message.markdown,
+            "Insight alert: Too many open PRs\nprs-open: any row: open above 10 and team is not data\n2 of 12 rows match\n`api: open 12, team core · web: open 15.25, team empty`\nChecked 2026-09-29 08:15 UTC."
         );
     }
 
@@ -337,7 +360,7 @@ mod tests {
         ));
 
         assert_eq!(
-            message.text,
+            message.markdown,
             "Insight alert: Too many open PRs\nprs-open: no row: open above 10\n0 of 4 rows match\nChecked 2026-09-29 08:15 UTC."
         );
     }
@@ -350,9 +373,9 @@ mod tests {
         ));
 
         assert!(
-            message.text.contains("\n1 of 1 row matches\n"),
+            message.markdown.contains("\n1 of 1 row matches\n"),
             "{}",
-            message.text
+            message.markdown
         );
     }
 
@@ -368,18 +391,18 @@ mod tests {
         ));
 
         assert!(
-            message.text.ends_with("Checked 2026-09-29 08:15 UTC."),
+            message.markdown.ends_with("Checked 2026-09-29 08:15 UTC."),
             "{}",
-            message.text
+            message.markdown
         );
-        assert!(message.text.chars().count() <= MAX_MESSAGE_CHARS);
+        assert!(message.markdown.chars().count() <= MAX_MESSAGE_CHARS);
         assert!(
             message
-                .text
+                .markdown
                 .lines()
-                .all(|line| line.chars().count() <= MAX_LINE_CHARS),
+                .all(|line| line.trim_matches('`').chars().count() <= MAX_LINE_CHARS),
             "{}",
-            message.text
+            message.markdown
         );
     }
 
@@ -398,13 +421,24 @@ mod tests {
             ),
         ));
 
-        assert_eq!(message.text.lines().count(), 5, "{}", message.text);
+        assert_eq!(message.markdown.lines().count(), 5, "{}", message.markdown);
         let rows_line = message.markdown.lines().nth(3).unwrap_or_default();
         assert!(
             rows_line.starts_with('`') && rows_line.ends_with('`'),
             "the rows line is one code span: {rows_line}"
         );
         assert_eq!(rows_line.matches('`').count(), 2, "{rows_line}");
+
+        let html_rows = message.html.lines().nth(3).unwrap_or_default();
+        assert!(
+            html_rows.starts_with("<code>") && html_rows.ends_with("</code>"),
+            "the rows line is one code element: {html_rows}"
+        );
+        assert_eq!(
+            html_rows.matches('<').count(),
+            2,
+            "markup in the cell is escaped: {html_rows}"
+        );
     }
 
     #[test]

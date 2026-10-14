@@ -31,18 +31,29 @@ const ADD_COLUMNS: [&str; 4] = [
     "ALTER TABLE alert_notifications ADD COLUMN IF NOT EXISTS witness MEDIUMTEXT NULL AFTER rule_condition",
 ];
 
+/// A column made NOT NULL over a NULL fails here rather than filling it
+/// with an empty string no reader can parse, so a rerun converts the row.
+const STRICT_SESSION: &str =
+    "SET SESSION sql_mode = CONCAT_WS(',', @@SESSION.sql_mode, 'STRICT_TRANS_TABLES')";
+
 const REQUIRE_COLUMNS: [&str; 2] = [
     "ALTER TABLE alert_rules MODIFY COLUMN rule_condition MEDIUMTEXT NOT NULL",
     "ALTER TABLE alert_notifications MODIFY COLUMN rule_condition MEDIUMTEXT NOT NULL, MODIFY COLUMN witness MEDIUMTEXT NOT NULL",
 ];
+
+/// A valid check the previous build recorded after the guard and before
+/// the drop carries no witness; it is forgotten, as an edit forgets one,
+/// and the next check records it again.
+const FORGET_CHECKS_WITHOUT_A_WITNESS: &str = "UPDATE alert_rules SET last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_valid_breached = NULL, breached_since = NULL WHERE last_outcome IN ('breach', 'no_breach') AND last_witness IS NULL";
 
 const DROP_COLUMNS: [&str; 2] = [
     "ALTER TABLE alert_rules DROP COLUMN IF EXISTS column_name, DROP COLUMN IF EXISTS operator, DROP COLUMN IF EXISTS threshold, DROP COLUMN IF EXISTS last_value",
     "ALTER TABLE alert_notifications DROP COLUMN IF EXISTS column_name, DROP COLUMN IF EXISTS operator, DROP COLUMN IF EXISTS threshold, DROP COLUMN IF EXISTS value",
 ];
 
-const SELECT_RULES: &str =
-    "SELECT id, column_name, operator, threshold, last_outcome, last_value FROM alert_rules";
+/// Held until the rewrite commits, so a write of the previous build waits
+/// for it instead of landing between the read and the rewrite.
+const SELECT_RULES: &str = "SELECT id, column_name, operator, threshold, last_outcome, last_value FROM alert_rules FOR UPDATE";
 const UPDATE_RULE: &str =
     "UPDATE alert_rules SET rule_condition = ?, last_witness = ? WHERE id = ?";
 const SELECT_NOTIFICATIONS: &str = "SELECT id, column_name, operator, threshold, value FROM alert_notifications WHERE rule_condition IS NULL";
@@ -74,20 +85,34 @@ impl MigrationTrait for Migration {
             db.execute_unprepared(statement).await?;
         }
 
-        if manager.has_column("alert_rules", "threshold").await? {
+        let rules_unconverted = manager.has_column("alert_rules", "threshold").await?;
+        let notifications_unconverted = manager
+            .has_column("alert_notifications", "threshold")
+            .await?;
+        if rules_unconverted {
             rewrite_rules(manager).await?;
         }
-        if manager
-            .has_column("alert_notifications", "threshold")
-            .await?
-        {
+        if notifications_unconverted {
             rewrite_notifications(manager).await?;
         }
-        refuse_unconverted(manager).await?;
-
-        for statement in REQUIRE_COLUMNS.into_iter().chain(DROP_COLUMNS) {
-            db.execute_unprepared(statement).await?;
+        // INVARIANT: the guard only means anything while a drop is still
+        // ahead; once the old columns are gone, what it would refuse is
+        // what the heal below repairs.
+        if rules_unconverted || notifications_unconverted {
+            refuse_unconverted(manager).await?;
         }
+
+        // INVARIANT: the session setting holds only on the connection that
+        // made it, so the statements that rely on it share that connection.
+        let session = db.begin().await?;
+        session.execute_unprepared(STRICT_SESSION).await?;
+        for statement in REQUIRE_COLUMNS.into_iter().chain(DROP_COLUMNS) {
+            session.execute_unprepared(statement).await?;
+        }
+        session.commit().await?;
+
+        db.execute_unprepared(FORGET_CHECKS_WITHOUT_A_WITNESS)
+            .await?;
 
         Ok(())
     }
@@ -314,6 +339,8 @@ mod tests {
             );
         }
         assert!(!SELECT_RULES.contains("WHERE"), "every rule is rewritten");
+        assert!(SELECT_RULES.ends_with("FOR UPDATE"));
+        assert!(FORGET_CHECKS_WITHOUT_A_WITNESS.contains("last_witness IS NULL"));
         assert!(SELECT_NOTIFICATIONS.ends_with("WHERE rule_condition IS NULL"));
         assert!(UNCONVERTED[0].contains("last_witness IS NULL"));
         assert!(

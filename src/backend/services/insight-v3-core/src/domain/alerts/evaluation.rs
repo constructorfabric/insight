@@ -8,7 +8,7 @@ use super::condition::{Condition, evaluate};
 use super::rule::{AlertRule, AlertStore, AlertStoreError, Recorded, Recording};
 use super::scalar::{Outcome, UnknownReason};
 use crate::domain::definition::DefinitionName;
-use crate::domain::metric_run::{Columns, MetricRuns};
+use crate::domain::metric_run::MetricRuns;
 use crate::domain::query::metric_query::MetricRunError;
 use crate::domain::query::time_window::WindowRequest;
 use crate::domain::surfaces::CustomError;
@@ -96,10 +96,6 @@ impl<'a> Evaluator<'a> {
                 return Outcome::Unknown(UnknownReason::CompileFailed);
             }
         };
-        let columns = match self.runs.columns(&rule.spec.metric).await {
-            Ok(columns) => columns,
-            Err(error) => return Outcome::Unknown(unknown_because(label, &error)),
-        };
 
         observe(
             &self.runs,
@@ -107,7 +103,6 @@ impl<'a> Evaluator<'a> {
             &rule.spec.metric,
             &window,
             &rule.spec.condition,
-            &columns,
             evaluated_at,
         )
         .await
@@ -115,19 +110,19 @@ impl<'a> Evaluator<'a> {
 }
 
 /// What a check of `metric` over `window` finds now: the run judged by the
-/// condition, or the unknown a run that did not answer is. `label` names the
-/// rule, or what asked, in the log.
+/// condition, or the unknown a run that did not answer is. The groups and
+/// the row bound come from the same definition the rows did. `label` names
+/// the rule, or what asked, in the log.
 pub(crate) async fn observe(
     runs: &MetricRuns<'_>,
     label: &str,
     metric: &DefinitionName,
     window: &WindowRequest,
     condition: &Condition,
-    columns: &Columns,
     evaluated_at: DateTime<Utc>,
 ) -> Outcome {
-    match runs.run(metric, window).await {
-        Ok(result) => evaluate(
+    match runs.run_with_columns(metric, window).await {
+        Ok((result, columns)) => evaluate(
             &result,
             condition,
             &columns.groups,

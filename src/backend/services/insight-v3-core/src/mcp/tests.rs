@@ -288,6 +288,7 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
             "list_tables",
             "list_tags",
             "move_dashboard",
+            "preview_alert",
             "put_dashboard",
             "put_dataset",
             "put_metric",
@@ -308,26 +309,48 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
 }
 
 /// A client writes a condition from the tool's schema alone, so the schema
-/// names its parts and every operator.
+/// declares every group as a property of its own and names every operator.
 fn assert_create_alert_describes_the_condition(tools: &[Value]) {
-    let create_alert = tools
+    let schema = tools
         .iter()
         .find(|tool| tool["name"] == "create_alert")
-        .map(|tool| tool["inputSchema"].to_string())
+        .map(|tool| tool["inputSchema"].clone())
         .unwrap_or_default();
 
-    for described in [
-        "\"rows\"",
-        "\"where\"",
-        "\"all\"",
-        "\"not\"",
-        "\"not_in\"",
-        "\"older_than\"",
+    for property in [
+        "rows", "where", "all", "any", "not", "column", "op", "value",
     ] {
         assert!(
-            create_alert.contains(described),
-            "create_alert should describe {described} in its condition: {create_alert}"
+            declares_property(&schema, property),
+            "create_alert should declare `{property}`: {schema}"
         );
+    }
+    let written = schema.to_string();
+    for operator in [
+        "\"not_in\"",
+        "\"older_than\"",
+        "\"between\"",
+        "\"ends_with\"",
+    ] {
+        assert!(
+            written.contains(operator),
+            "create_alert should name the operator {operator}: {written}"
+        );
+    }
+}
+
+/// Whether any object in the schema lists `name` among its properties.
+fn declares_property(schema: &Value, name: &str) -> bool {
+    match schema {
+        Value::Object(object) => {
+            object
+                .get("properties")
+                .and_then(Value::as_object)
+                .is_some_and(|properties| properties.contains_key(name))
+                || object.values().any(|inner| declares_property(inner, name))
+        }
+        Value::Array(items) => items.iter().any(|inner| declares_property(inner, name)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
     }
 }
 

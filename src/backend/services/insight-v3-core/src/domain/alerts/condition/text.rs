@@ -66,13 +66,13 @@ impl fmt::Display for Leaf {
                 formatter,
                 "{column} {} {}",
                 comparison_words(*comparison),
-                threshold.readable()
+                threshold.exact()
             ),
             Test::Number(NumberTest::Between { low, high }) => write!(
                 formatter,
                 "{column} between {} and {}",
-                low.readable(),
-                high.readable()
+                low.exact(),
+                high.exact()
             ),
             Test::Text(test) => write!(formatter, "{column} {}", text_words(test)),
             Test::Date(test) => write!(formatter, "{column} {}", date_words(*test)),

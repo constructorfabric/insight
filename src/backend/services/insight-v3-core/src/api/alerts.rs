@@ -26,6 +26,7 @@ use crate::domain::definition::{MAX_PAGE_LIMIT, Page};
 /// for its turn before it is refused.
 pub(crate) const MAX_CONCURRENT_PREVIEWS: usize = 4;
 const PREVIEW_ACQUIRE_TIMEOUT_SECS: u64 = 2;
+pub(crate) const PREVIEWS_BUSY: &str = "every preview slot is taken; try again shortly";
 
 #[resource_error("gts.cf.insight.insight_v3_core.alerts.v1~")]
 struct AlertApiError;
@@ -719,9 +720,9 @@ async fn preview_alert(
     Ok(Json(preview_response(&outcome)).into_response())
 }
 
-async fn preview_slot(
-    state: &AppState,
-) -> Result<tokio::sync::OwnedSemaphorePermit, CanonicalError> {
+/// A turn to run a preview, waiting a bounded time for one; none when
+/// every slot stayed taken. API and MCP previews share the slots.
+pub(crate) async fn preview_turn(state: &AppState) -> Option<tokio::sync::OwnedSemaphorePermit> {
     let slots = state.preview_slots();
     let waited = tokio::time::timeout(
         Duration::from_secs(PREVIEW_ACQUIRE_TIMEOUT_SECS),
@@ -730,19 +731,25 @@ async fn preview_slot(
     .await;
 
     if let Ok(Ok(permit)) = waited {
-        return Ok(permit);
+        return Some(permit);
     }
 
     tracing::warn!(
         capacity = MAX_CONCURRENT_PREVIEWS,
         "alert preview capacity exhausted"
     );
-    Err(
-        AlertApiError::resource_exhausted("every preview slot is taken; try again shortly")
+    None
+}
+
+async fn preview_slot(
+    state: &AppState,
+) -> Result<tokio::sync::OwnedSemaphorePermit, CanonicalError> {
+    preview_turn(state).await.ok_or_else(|| {
+        AlertApiError::resource_exhausted(PREVIEWS_BUSY)
             .with_quota_violation("alert previews", "concurrency limit reached")
             .with_quota_violation_retry_after_seconds(PREVIEW_ACQUIRE_TIMEOUT_SECS)
-            .create(),
-    )
+            .create()
+    })
 }
 
 async fn get_alert(

@@ -683,6 +683,17 @@ impl CustomSurfaces {
     }
 
     #[tool(
+        name = "preview_alert",
+        description = "Checks a metric, window and condition as an alert would right now, without saving anything: answers `breach`, `no_breach` or `unknown` with the reason, and the rows that matched. Takes the same `condition` create_alert does; a refusal names the path of what is wrong."
+    )]
+    async fn preview_alert(
+        &self,
+        Parameters(request): Parameters<super::alerts::PreviewAlertRequest>,
+    ) -> CallToolResult {
+        self.alerts_preview(request).await
+    }
+
+    #[tool(
         name = "get_alert",
         description = "Reads one alert by id: its rule, its revision, and what its latest check found. The revision is what update_alert and set_alert_enabled expect."
     )]

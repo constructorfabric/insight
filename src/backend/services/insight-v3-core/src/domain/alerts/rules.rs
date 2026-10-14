@@ -151,7 +151,6 @@ impl<'a> AlertRules<'a> {
             &metric,
             &window,
             &condition,
-            &columns,
             Utc::now(),
         )
         .await)

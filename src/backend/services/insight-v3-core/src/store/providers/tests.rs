@@ -68,11 +68,11 @@ fn http() -> reqwest::Client {
 
 fn message() -> Message {
     Message {
-        text: "Insight alert: a\nprs-open: total above 0\ntotal 1\nChecked 2026-09-29 00:00 UTC."
-            .to_owned(),
         markdown:
             "Insight alert: a\nprs-open: total above 0\n`total 1`\nChecked 2026-09-29 00:00 UTC."
                 .to_owned(),
+        html: "Insight alert: a\nprs-open: total above 0\n<code>total 1</code>\nChecked 2026-09-29 00:00 UTC."
+            .to_owned(),
     }
 }
 

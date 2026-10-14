@@ -3,7 +3,7 @@
 
 mod path;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike as _, Utc};
 use serde_json::{Map, Value};
 use thiserror::Error;
 
@@ -351,10 +351,14 @@ fn texts(value: &Value, at: &At<'_>) -> Result<Vec<String>, ConditionError> {
         .collect()
 }
 
+/// The years an RFC 3339 timestamp can be written back in once in UTC.
+const WRITABLE_YEARS: std::ops::RangeInclusive<i32> = 0..=9999;
+
 fn moment(value: &Value, at: &At<'_>) -> Result<DateTime<Utc>, ConditionError> {
     value
         .as_str()
         .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+        .filter(|moment| WRITABLE_YEARS.contains(&moment.to_utc().year()))
         .map_or_else(
             || at.refuse(Problem::DateValue),
             |moment| Ok(moment.to_utc()),

@@ -193,9 +193,13 @@ impl MetricQuery {
             if !is_identifier(&field.as_name) {
                 return Err(MetricQueryError::Identifier(field.as_name.clone()));
             }
+            let result_type = match over {
+                Some(over) => field.result_type_over(over),
+                None => field.result_type(),
+            };
             selection
                 .column_types
-                .insert(field.as_name.clone(), field.result_type());
+                .insert(field.as_name.clone(), result_type);
 
             if let Some(ratio) = field.ratio(&selection.as_names)? {
                 selection.as_names.insert(field.as_name.as_str());

@@ -9,6 +9,7 @@ use super::MetricQueryError;
 use super::filter::{Filter, FilterBind};
 use super::over::Over;
 use super::people::PersonHandle;
+use crate::domain::kinds::dataset::declaration::FieldType as DeclaredType;
 
 pub(super) const MAX_IDENTIFIER_CHARS: usize = 128;
 
@@ -96,11 +97,34 @@ impl Field {
     /// rather than the field it read: a count is a whole number of anything,
     /// a sum or an average a number of whatever it summed.
     pub(super) fn result_type(&self) -> FieldType {
+        self.result_type_reading(self.r#type)
+    }
+
+    /// The same, over a dataset: what a plain read holds is what the
+    /// declaration says, which is also what a column's kind follows.
+    pub(super) fn result_type_over(&self, over: Over<'_>) -> FieldType {
+        let declared = self
+            .reads()
+            .and_then(|named| over.declaration.field(named))
+            .map(|declared| declared.r#type);
+        let read = match declared {
+            Some(DeclaredType::Int) => FieldType::Int,
+            Some(DeclaredType::Float) => FieldType::Float,
+            Some(DeclaredType::String | DeclaredType::Datetime | DeclaredType::Bool) => {
+                FieldType::String
+            }
+            None => self.r#type,
+        };
+
+        self.result_type_reading(read)
+    }
+
+    fn result_type_reading(&self, read: FieldType) -> FieldType {
         if self.divide.is_some() {
             return FieldType::Float;
         }
 
-        match (self.agg, self.r#type) {
+        match (self.agg, read) {
             (Some(Agg::Count), _) | (Some(Agg::Sum), FieldType::Int | FieldType::String) => {
                 FieldType::Int
             }

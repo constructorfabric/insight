@@ -206,6 +206,69 @@ fn a_refusal_names_the_path_of_what_is_wrong() {
 }
 
 #[test]
+fn a_timestamp_whose_utc_year_cannot_be_written_back_is_refused() {
+    let cases = [
+        ("9999-12-31T23:59:59-10:00", false),
+        ("0000-01-01T00:00:00+10:00", false),
+        ("9999-12-31T23:59:59Z", true),
+        ("0000-01-01T00:00:00Z", true),
+    ];
+
+    for (moment, accepted) in cases {
+        let written = one(leaf("opened_at", "before", json!(moment)));
+        match Condition::parse(&written, &columns()) {
+            Ok(_) => assert!(accepted, "should refuse {moment}"),
+            Err(error) => {
+                assert!(!accepted, "should accept {moment}: {error}");
+                assert_eq!(error.problem, Problem::DateValue, "for {moment}");
+            }
+        }
+    }
+}
+
+#[test]
+fn every_accepted_condition_reads_back_from_how_a_row_stores_it() {
+    let cases = [
+        leaf("open", ">", json!(10)),
+        leaf("open", "<=", json!("9007199254740993")),
+        leaf("open", "between", json!([-1.5, 1e300])),
+        leaf("team", "in", json!(["core", "infra"])),
+        leaf("team", "starts_with", json!("")),
+        leaf(
+            "opened_at",
+            "between",
+            json!(["0000-01-01T00:00:00Z", "9999-12-31T23:59:59.999Z"]),
+        ),
+        leaf(
+            "opened_at",
+            "after",
+            json!("2026-10-01T02:00:00.123456+02:00"),
+        ),
+        leaf("opened_at", "newer_than", json!("PT30M")),
+        json!({ "not": { "any": [ { "all": [leaf("open", ">", json!(1))] } ] } }),
+    ];
+    let quantifiers = [
+        json!("one"),
+        json!("any"),
+        json!("all"),
+        json!("none"),
+        json!({ "count": { "op": "!=", "value": 0 } }),
+    ];
+
+    for test in &cases {
+        for rows in &quantifiers {
+            let written = json!({ "rows": rows, "where": test });
+            let condition = parsed(&written);
+            assert_eq!(
+                Condition::from_stored(&condition.to_stored()),
+                Some(condition),
+                "should read back what it stores: {written}"
+            );
+        }
+    }
+}
+
+#[test]
 fn durations_are_whole_minutes_hours_days_or_weeks_up_to_a_century() {
     let accepted = ["PT1M", "PT6H", "P7D", "P2W", "P36500D", "P5214W"];
     let refused_ages = [
