@@ -382,6 +382,33 @@ describe("ConditionBuilder", () => {
       });
     });
 
+    it("keeps an unfinished time in the field and writes nothing until it is whole", () => {
+      const latest = at("2026-10-01T09:30:00Z");
+      const time = leaf(1).getByLabelText("Value time");
+
+      fireEvent.change(time, { target: { value: "" } });
+      expect(time, "the cleared field is not refilled").toHaveValue("");
+      expect(latest(), "no midnight is written").toBeUndefined();
+
+      fireEvent.blur(time);
+      expect(time, "leaving restores the stored time").toHaveValue("09:30");
+      expect(latest()).toBeUndefined();
+    });
+
+    it("starts a picked day at midnight when no time is set, and shows it", async () => {
+      const latest = at("");
+
+      await userEvent.click(leaf(1).getByLabelText("Value day"));
+      await userEvent.click(
+        await screen.findByRole("button", { name: /October 15th, 2026/ })
+      );
+
+      expect(latest()).toMatchObject({
+        where: { value: "2026-10-15T00:00:00Z" },
+      });
+      expect(leaf(1).getByLabelText("Value time")).toHaveValue("00:00");
+    });
+
     it("writes nothing for a time until a day is picked", () => {
       const latest = at("");
 

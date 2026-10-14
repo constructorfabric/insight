@@ -31,17 +31,35 @@ export function MomentInput({
   onChange: (value: string) => void;
 }) {
   const stored = momentParts(value);
+  const [seen, setSeen] = useState(value);
   const [day, setDay] = useState(stored?.day ?? "");
   const [time, setTime] = useState(stored?.time ?? "");
-  const shownDay = stored?.day ?? day;
-  const shownTime = stored?.time ?? time;
+  if (value !== seen) {
+    setSeen(value);
+    setDay(stored?.day ?? "");
+    setTime(stored?.time ?? "");
+  }
 
-  function write(nextDay: string, nextTime: string) {
+  // INVARIANT: an unfinished time stays in the field and writes nothing, so
+  // the rule never takes a time nobody typed.
+  function pickDay(nextDay: string) {
+    const nextTime = isTime(time) ? time : "00:00";
     setDay(nextDay);
     setTime(nextTime);
-    if (nextDay === "") return;
+    onChange(momentText(nextDay, nextTime));
+  }
 
-    onChange(momentText(nextDay, isTime(nextTime) ? nextTime : "00:00"));
+  function typeTime(nextTime: string) {
+    setTime(nextTime);
+    if (day === "" || !isTime(nextTime)) return;
+
+    onChange(momentText(day, nextTime));
+  }
+
+  function leaveTime() {
+    if (isTime(time)) return;
+
+    setTime(stored?.time ?? (day === "" ? "" : "00:00"));
   }
 
   return (
@@ -56,9 +74,9 @@ export function MomentInput({
       <DatePicker
         id={id}
         aria-label={`${label} day`}
-        selected={pickerDate(shownDay)}
+        selected={pickerDate(day)}
         onSelect={(date) => {
-          if (date) write(pickedDay(date), shownTime);
+          if (date) pickDay(pickedDay(date));
         }}
         className="h-9 w-40"
       />
@@ -66,10 +84,11 @@ export function MomentInput({
         id={`${id}-time`}
         aria-label={`${label} time`}
         type="time"
-        value={shownTime}
+        value={time}
         className="h-9 w-28 tabular-nums"
         {...described(describedBy)}
-        onChange={(event) => write(shownDay, event.target.value)}
+        onChange={(event) => typeTime(event.target.value)}
+        onBlur={leaveTime}
       />
       <span className={TEXT_LABEL}>UTC</span>
     </span>
