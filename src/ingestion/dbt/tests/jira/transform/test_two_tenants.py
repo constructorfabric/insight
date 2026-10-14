@@ -8,19 +8,26 @@ ranks by tenant first; these seed the collision and read each model per tenant.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from conftest import Scenario
-from helpers import SOURCE_ID, TENANT_ID, event, field, issue, item
+from helpers import OTHER_TENANT, SOURCE_ID, TENANT_ID, as_other_tenant, event, field, issue, item
 
-OTHER_TENANT = "22222222-2222-2222-2222-222222222222"
 POINTS = "customfield_10001"
 LABEL = "customfield_10002"
+CHOICE = "customfield_10005"
+NOTES = "customfield_10010"
+STATUS = "status"
 
-
-def _as_other_tenant(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The same ids under the other tenant, keyed the way its connector would key them."""
-    return [{**r, "tenant_id": OTHER_TENANT, "unique_key": f"{OTHER_TENANT}-{r['unique_key']}"} for r in records]
+SAME_INSTANT = "2026-01-06T10:00:00"
+STATUS_NAMES = {"1": "Open", "3": "In Progress", "6": "Closed"}
+TEXTAREA = "com.atlassian.jira.plugin.system.customfieldtypes:textarea"
+NOTES_BODY = {
+    "type": "doc",
+    "version": 1,
+    "content": [{"type": "paragraph", "content": [{"type": "text", "text": "mine now"}]}],
+}
 
 
 def _seed(scenario: Scenario) -> None:
@@ -47,12 +54,12 @@ def _seed(scenario: Scenario) -> None:
         ],
     }
     scenario.seed(**mine)
-    scenario.seed(**{name: _as_other_tenant(rows) for name, rows in theirs.items()})
+    scenario.seed(**{name: as_other_tenant(rows) for name, rows in theirs.items()})
     scenario.build()
 
 
-def _rows(scenario: Scenario, sql: str) -> list[dict[str, Any]]:
-    return scenario.warehouse.rows(sql, {"src": SOURCE_ID})
+def _rows(scenario: Scenario, sql: str, **parameters: str) -> list[dict[str, Any]]:
+    return scenario.warehouse.rows(sql, {"src": SOURCE_ID, **parameters})
 
 
 def test_each_tenant_keeps_its_own_changelog_items(scenario: Scenario) -> None:
@@ -100,7 +107,8 @@ def test_each_tenant_snapshots_its_own_issue(scenario: Scenario) -> None:
     rows = _rows(
         scenario,
         "SELECT tenant_id, value_ids FROM staging.jira_issue_field_snapshot"
-        f" WHERE insight_source_id = {{src:String}} AND field_id = '{POINTS}' ORDER BY tenant_id",
+        " WHERE insight_source_id = {src:String} AND field_id = {field:String} ORDER BY tenant_id",
+        field=POINTS,
     )
 
     assert [(r["tenant_id"], list(r["value_ids"])) for r in rows] == [(TENANT_ID, ["5"]), (OTHER_TENANT, ["9"])]
@@ -111,8 +119,7 @@ def test_each_tenant_resolves_an_issue_key_to_its_own_issue(scenario: Scenario) 
     catalogue = [field(POINTS, name="Story Points", schema_type="number")]
     scenario.seed(fields=catalogue, issues=[issue("TST-1", fields={POINTS: 5}, jira_id="1001")])
     scenario.seed(
-        fields=_as_other_tenant(catalogue),
-        issues=_as_other_tenant([issue("TST-1", fields={POINTS: 9}, jira_id="2002")]),
+        fields=as_other_tenant(catalogue), issues=as_other_tenant([issue("TST-1", fields={POINTS: 9}, jira_id="2002")])
     )
     scenario.build()
 
@@ -123,3 +130,130 @@ def test_each_tenant_resolves_an_issue_key_to_its_own_issue(scenario: Scenario) 
     )
 
     assert [(r["tenant_id"], r["issue_id"]) for r in rows] == [(TENANT_ID, "1001"), (OTHER_TENANT, "2002")]
+
+
+def test_each_tenant_converts_a_shared_field_id_by_its_own_kind(scenario: Scenario) -> None:
+    """One tenant catalogues the field as a number, the other as a single option."""
+    scenario.seed(
+        fields=[field(CHOICE, name="Example Choice", schema_type="number")], issues=[issue("TST-1", fields={CHOICE: 5})]
+    )
+    scenario.seed(
+        fields=as_other_tenant([field(CHOICE, name="Example Choice", schema_type="option")]),
+        issues=as_other_tenant([issue("TST-1", fields={CHOICE: {"id": "9002", "value": "High"}})]),
+    )
+    scenario.build()
+
+    kinds = _rows(
+        scenario,
+        "SELECT tenant_id, field_kind FROM staging.jira__task_field_kind"
+        " WHERE insight_source_id = {src:String} AND field_id = {field:String} ORDER BY tenant_id",
+        field=CHOICE,
+    )
+    values = _rows(
+        scenario,
+        "SELECT tenant_id, value_ids, value_displays FROM staging.jira_issue_field_snapshot"
+        " WHERE insight_source_id = {src:String} AND field_id = {field:String} ORDER BY tenant_id, value_ids",
+        field=CHOICE,
+    )
+
+    assert [(r["tenant_id"], r["field_kind"]) for r in kinds] == [(TENANT_ID, "scalar"), (OTHER_TENANT, "option")]
+    assert [(r["tenant_id"], list(r["value_ids"]), list(r["value_displays"])) for r in values] == [
+        (TENANT_ID, ["5"], ["5"]),
+        (OTHER_TENANT, ["9002"], ["High"]),
+    ]
+
+
+def _status_change(key: str, changelog_id: int, frm: str, to: str) -> dict[str, Any]:
+    return event(
+        key,
+        changelog_id,
+        SAME_INSTANT,
+        [item(STATUS, frm=frm, frm_str=STATUS_NAMES[frm], to=to, to_str=STATUS_NAMES[to])],
+    )
+
+
+def test_each_tenant_ranks_its_tied_entries_by_its_own_chain(scenario: Scenario) -> None:
+    """Both tenants tie entries 101 and 102 of TST-1 but chain them in opposite
+    orders. On TST-2 only the first tenant ties two entries; the other's 201 is
+    alone at that instant and so has no rank. The other tenant's tie on TST-3
+    changes a field only the first tenant catalogues, so it ranks nothing."""
+    catalogue = [field(STATUS, name="Status", schema_type="status")]
+    closed = {STATUS: {"id": "6", "name": "Closed"}}
+    scenario.seed(
+        fields=[*catalogue, field(LABEL, name="Label", schema_type="string")],
+        issues=[issue("TST-1", fields=closed), issue("TST-2", fields=closed)],
+        events=[
+            _status_change("TST-1", 101, "3", "6"),
+            _status_change("TST-1", 102, "1", "3"),
+            _status_change("TST-2", 201, "1", "3"),
+            _status_change("TST-2", 202, "3", "6"),
+        ],
+    )
+    scenario.seed(
+        fields=as_other_tenant(catalogue),
+        issues=as_other_tenant(
+            [
+                issue("TST-1", fields=closed),
+                issue("TST-2", fields={STATUS: {"id": "3", "name": "In Progress"}}),
+                issue("TST-3", fields={LABEL: "c"}),
+            ]
+        ),
+        events=as_other_tenant(
+            [
+                _status_change("TST-1", 101, "1", "3"),
+                _status_change("TST-1", 102, "3", "6"),
+                _status_change("TST-2", 201, "1", "3"),
+                event("TST-3", 301, SAME_INSTANT, [item(LABEL, frm_str="a", to_str="b")]),
+                event("TST-3", 302, SAME_INSTANT, [item(LABEL, frm_str="b", to_str="c")]),
+            ]
+        ),
+    )
+    scenario.build()
+
+    rows = _rows(
+        scenario,
+        "SELECT tenant_id, issue_id, changelog_id, entry_rank FROM staging.jira__changelog_entry_ranks"
+        " WHERE insight_source_id = {src:String} ORDER BY tenant_id, issue_id, changelog_id",
+    )
+
+    assert [(r["tenant_id"], r["issue_id"], r["changelog_id"], r["entry_rank"]) for r in rows] == [
+        (TENANT_ID, "TST-1", "101", 1),
+        (TENANT_ID, "TST-1", "102", 0),
+        (TENANT_ID, "TST-2", "201", 0),
+        (TENANT_ID, "TST-2", "202", 1),
+        (OTHER_TENANT, "TST-1", "101", 0),
+        (OTHER_TENANT, "TST-1", "102", 1),
+    ]
+
+
+def test_long_text_bodies_come_only_from_the_tenant_that_classifies_the_field_as_long_text(scenario: Scenario) -> None:
+    """The side table is content-addressed and carries no tenant, so what is
+    tenant-visible is which bodies enter it: the other tenant's plain string
+    field of the same id contributes none, from its issue or its changelog."""
+    scenario.seed(
+        fields=[field(NOTES, name="Example Notes", schema_type="string", schema_custom=TEXTAREA)],
+        issues=[issue("TST-1", fields={NOTES: NOTES_BODY})],
+        events=[event("TST-1", 101, SAME_INSTANT, [item(NOTES, frm_str="mine before", to_str="mine now")])],
+    )
+    scenario.seed(
+        fields=as_other_tenant([field(NOTES, name="Example Notes", schema_type="string")]),
+        issues=as_other_tenant([issue("TST-1", fields={NOTES: "theirs now"})]),
+        events=as_other_tenant(
+            [
+                event(
+                    "TST-1",
+                    101,
+                    SAME_INSTANT,
+                    [item(NOTES, frm="theirs before", frm_str="theirs before", to="theirs now", to_str="theirs now")],
+                )
+            ]
+        ),
+    )
+    scenario.build()
+
+    bodies = [
+        (r["content_form"], json.loads(r["content"]) if r["content_form"] == "adf_json" else r["content"])
+        for r in scenario.text_rows()
+    ]
+
+    assert bodies == [("adf_json", NOTES_BODY), ("rendered_text", "mine before"), ("rendered_text", "mine now")]

@@ -30,6 +30,11 @@ nothing. `test_invariants.py` pays for the full pipeline selector once — that
 is what would catch a field-history model which works alone but breaks the
 chain.
 
+`test_two_tenants_lifecycle.py` is the one module that seeds the comment and
+worklog streams — `scenario.seed(comments=..., worklogs=...)`, with rows from
+the `comment` and `worklog` builders — and it builds `LIFECYCLE_SELECTOR`, the
+two lifecycle producers and their ancestors, instead of the journal's.
+
 Bronze is created by the Airbyte destination from the Jira connector's own
 catalogue, through the same scripts `bootstrap-db.sh` uses — so the tables carry
 production's engines and types, including the ReplacingMergeTree shape, because
@@ -78,7 +83,7 @@ against dbt-clickhouse, never enters into it.
 
 ## Writing a test
 
-`helpers.py` supplies the four builders, named after what Jira calls things, and
+`helpers.py` supplies the builders, named after what Jira calls things, and
 `@case` declares the bronze the test reads:
 
 ```python
