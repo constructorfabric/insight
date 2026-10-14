@@ -8,9 +8,11 @@ spec:
   template:
     metadata: {labels: {app: clickhouse}}
     spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 101, runAsGroup: 101, fsGroup: 101}
       containers:
         - name: clickhouse
           image: clickhouse/clickhouse-server:25.3
+          securityContext: {allowPrivilegeEscalation: false}
           env:
             - {name: CLICKHOUSE_USER, value: insight}
             - {name: CLICKHOUSE_PASSWORD, value: insight-local}
