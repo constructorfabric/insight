@@ -65,7 +65,8 @@ FROM (
     -- be a peer of, and a peer pool is exactly where a guessed identity would
     -- do damage.
     INNER JOIN {{ ref('person_map') }} AS person_map
-        ON person_map.email = people.email
+        ON person_map.tenant_id = people.tenant_id
+       AND person_map.email = people.email
     WHERE people.tenant_id IS NOT NULL
       AND people.tenant_id != ''
       AND people.email != ''

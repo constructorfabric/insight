@@ -162,14 +162,16 @@ fn person_projection(
     PersonProjection {
         expression: resolved_person_expr().to_owned(),
         join: format!(
-            " LEFT JOIN (SELECT source_type, source_id, account_id, person_id \
+            " LEFT JOIN (SELECT tenant_id, source_type, source_id, account_id, person_id \
                   FROM {account_map} WHERE person_id IN ({roster})) AS account_map \
-                  ON account_map.source_type = evidence.account_source_type \
+                  ON account_map.tenant_id = toString(evidence.tenant_id) \
+                 AND account_map.source_type = evidence.account_source_type \
                  AND account_map.source_id = {account_source_uuid} \
                  AND account_map.account_id = {account_id} \
-              LEFT JOIN (SELECT email, person_id FROM {person_map} \
+              LEFT JOIN (SELECT tenant_id, email, person_id FROM {person_map} \
                   WHERE person_id IN ({roster})) AS person_map \
-                  ON person_map.email = evidence.entity_id",
+                  ON person_map.tenant_id = toString(evidence.tenant_id) \
+                 AND person_map.email = evidence.entity_id",
             account_map = crate::domain::metric_results::compiler::ACCOUNT_ASSIGNMENT_RELATION,
             person_map = crate::domain::metric_results::compiler::PERSON_MAP_RELATION,
             account_source_uuid =
@@ -295,11 +297,11 @@ fn compile_ratio_query(
                        {collapsed} AS contribution \
                 FROM {database}.{table} AS evidence \
                 LEFT JOIN {account_map_relation} AS account_map \
-                    ON account_map.source_type = evidence.account_source_type \
+                    ON account_map.tenant_id = toString(evidence.tenant_id) AND account_map.source_type = evidence.account_source_type \
                    AND account_map.source_id = {account_source_uuid} \
                    AND account_map.account_id = {account_id} \
                 LEFT JOIN {person_map_relation} AS person_map \
-                    ON person_map.email = evidence.entity_id \
+                    ON person_map.tenant_id = toString(evidence.tenant_id) AND person_map.email = evidence.entity_id \
                 WHERE {tenant} AND evidence.source_key = ? AND evidence.entity_type = ? AND {entity} \
                   AND evidence.metric_date >= toDate(?) AND evidence.metric_date <= toDate(?) \
                   AND evidence.measure_key IN (?, ?){filter_sql} \
@@ -361,7 +363,7 @@ fn collapsed_evidence_value(numerator: &EvidenceInput, denominator: &EvidenceInp
 /// shared with the observation reads so both surfaces resolve identically.
 fn account_binding_key(alias: &str) -> String {
     format!(
-        "({alias}.account_source_type, {source_uuid}, {account_id})",
+        "(toString({alias}.tenant_id), {alias}.account_source_type, {source_uuid}, {account_id})",
         source_uuid = crate::domain::metric_results::compiler::account_source_uuid_expr(alias),
         account_id = crate::domain::metric_results::compiler::account_id_expr(alias),
     )
@@ -383,11 +385,11 @@ fn entity_predicate(
             params.push(id.clone());
             params.push(id.clone());
             format!(
-                "({account_key} IN (SELECT source_type, source_id, account_id \
+                "({account_key} IN (SELECT tenant_id, source_type, source_id, account_id \
                  FROM {account_map} WHERE person_id = ?) \
-                 OR ({account_key} NOT IN (SELECT source_type, source_id, account_id \
+                 OR ({account_key} NOT IN (SELECT tenant_id, source_type, source_id, account_id \
                  FROM {account_map}) \
-                 AND evidence.entity_id IN (SELECT email FROM {person_map} WHERE person_id = ?)))",
+                 AND (toString(evidence.tenant_id), evidence.entity_id) IN (SELECT tenant_id, email FROM {person_map} WHERE person_id = ?)))",
                 account_map = crate::domain::metric_results::compiler::ACCOUNT_ASSIGNMENT_RELATION,
                 person_map = crate::domain::metric_results::compiler::PERSON_MAP_RELATION,
             )
@@ -397,11 +399,11 @@ fn entity_predicate(
             params.extend(ids.iter().cloned());
             let id_params = vec!["?"; ids.len()].join(", ");
             format!(
-                "({account_key} IN (SELECT source_type, source_id, account_id \
+                "({account_key} IN (SELECT tenant_id, source_type, source_id, account_id \
                  FROM {account_map} WHERE person_id IN ({id_params})) \
-                 OR ({account_key} NOT IN (SELECT source_type, source_id, account_id \
+                 OR ({account_key} NOT IN (SELECT tenant_id, source_type, source_id, account_id \
                  FROM {account_map}) \
-                 AND evidence.entity_id IN (SELECT email FROM {person_map} WHERE person_id IN ({id_params}))))",
+                 AND (toString(evidence.tenant_id), evidence.entity_id) IN (SELECT tenant_id, email FROM {person_map} WHERE person_id IN ({id_params}))))",
                 account_map = crate::domain::metric_results::compiler::ACCOUNT_ASSIGNMENT_RELATION,
                 person_map = crate::domain::metric_results::compiler::PERSON_MAP_RELATION,
             )
@@ -753,7 +755,7 @@ mod tests {
         assert!(sql.contains("WHERE person_id IN (?, ?)"), "account arm");
         assert!(
             sql.contains(
-                "AND evidence.entity_id IN (SELECT email FROM identity.person_map WHERE person_id IN (?, ?))"
+                "AND (toString(evidence.tenant_id), evidence.entity_id) IN (SELECT tenant_id, email FROM identity.person_map WHERE person_id IN (?, ?))"
             ),
             "email fallback arm"
         );
@@ -849,19 +851,19 @@ mod tests {
 
         assert!(
             sql.contains(
-                "AND evidence.entity_id IN (SELECT email FROM identity.person_map WHERE person_id = ?)"
+                "AND (toString(evidence.tenant_id), evidence.entity_id) IN (SELECT tenant_id, email FROM identity.person_map WHERE person_id = ?)"
             ),
             "scoped by the person's identity set, not one id"
         );
         assert!(
             sql.contains(
-                "IN (SELECT source_type, source_id, account_id FROM identity.account_assignment WHERE person_id = ?)"
+                "IN (SELECT tenant_id, source_type, source_id, account_id FROM identity.account_assignment WHERE person_id = ?)"
             ),
             "the account binding is consulted first"
         );
         assert!(
             sql.contains(
-                "NOT IN (SELECT source_type, source_id, account_id FROM identity.account_assignment)"
+                "NOT IN (SELECT tenant_id, source_type, source_id, account_id FROM identity.account_assignment)"
             ),
             "a bound account never falls back to the email map — an excluded binding terminates"
         );
