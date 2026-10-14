@@ -13,13 +13,13 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
+use crate::domain::alerts::condition::{Condition, Witness};
 use crate::domain::alerts::delivery::Attempted;
 use crate::domain::alerts::rule::{
     Accepted, AlertName, AlertPage, AlertRule, AlertStore, AlertStoreError, AlertSummary,
-    Condition, EvaluationState, Notification, NotificationStatus, Operator, Recorded, Recording,
-    RuleSpec, Write,
+    EvaluationState, Notification, NotificationStatus, Recorded, Recording, RuleSpec, Write,
 };
-use crate::domain::alerts::{Number, Outcome, UnknownReason, last_valid_breached, transition};
+use crate::domain::alerts::{Outcome, UnknownReason, last_valid_breached, transition};
 use crate::domain::definition::{DefinitionName, Page};
 use crate::store::like_escaped;
 
@@ -33,7 +33,7 @@ const CREATE_ATTEMPTS: usize = 3;
 /// rule, which an empty table makes certain, and both went to insert.
 const DEADLOCK_SQLSTATE: &str = "40001";
 
-const RULE_COLUMNS: &str = "id, name, metric, column_name, operator, threshold, range_code, interval_secs, destination, enabled, revision, last_evaluated_at, last_outcome, last_reason, last_value, last_valid_breached, breached_since, created_by, created_at, updated_at";
+const RULE_COLUMNS: &str = "id, name, metric, rule_condition, range_code, interval_secs, destination, enabled, revision, last_evaluated_at, last_outcome, last_reason, last_witness, last_valid_breached, breached_since, created_by, created_at, updated_at";
 
 const SELECT_BY_ID: &str = "SELECT {columns} FROM alert_rules WHERE id = ?";
 /// The same read, holding the row, so two writers of one rule take turns.
@@ -49,23 +49,23 @@ const COUNT_MATCHES: &str =
 const COUNT_ALL_HELD: &str = "SELECT COUNT(*) AS total FROM alert_rules FOR UPDATE";
 const NOW: &str = "SELECT UTC_TIMESTAMP(6) AS now";
 
-const INSERT_RULE: &str = "INSERT INTO alert_rules (id, name, metric, column_name, operator, threshold, range_code, interval_secs, destination, enabled, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)";
+const INSERT_RULE: &str = "INSERT INTO alert_rules (id, name, metric, rule_condition, range_code, interval_secs, destination, enabled, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)";
 /// A configuration write replaces the spec, bumps the revision and forgets
 /// every check made under the old one.
-const REPLACE_RULE: &str = "UPDATE alert_rules SET name = ?, metric = ?, column_name = ?, operator = ?, threshold = ?, range_code = ?, interval_secs = ?, destination = ?, enabled = ?, revision = revision + 1, last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_value = NULL, last_valid_breached = NULL, breached_since = NULL, updated_at = ? WHERE id = ? AND revision = ?";
-const SET_ENABLED: &str = "UPDATE alert_rules SET enabled = ?, revision = revision + 1, last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_value = NULL, last_valid_breached = NULL, breached_since = NULL, updated_at = ? WHERE id = ? AND revision = ?";
+const REPLACE_RULE: &str = "UPDATE alert_rules SET name = ?, metric = ?, rule_condition = ?, range_code = ?, interval_secs = ?, destination = ?, enabled = ?, revision = revision + 1, last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_witness = NULL, last_valid_breached = NULL, breached_since = NULL, updated_at = ? WHERE id = ? AND revision = ?";
+const SET_ENABLED: &str = "UPDATE alert_rules SET enabled = ?, revision = revision + 1, last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_witness = NULL, last_valid_breached = NULL, breached_since = NULL, updated_at = ? WHERE id = ? AND revision = ?";
 const DELETE_RULE: &str = "DELETE FROM alert_rules WHERE id = ?";
 const DELETE_NOTIFICATIONS: &str = "DELETE FROM alert_notifications WHERE rule_id = ?";
 const CANCEL_PENDING: &str =
     "UPDATE alert_notifications SET status = ?, updated_at = ? WHERE rule_id = ? AND status = ?";
 
 /// A check lands only on the revision it was scheduled for.
-const RECORD_CHECK: &str = "UPDATE alert_rules SET last_evaluated_at = ?, last_outcome = ?, last_reason = ?, last_value = ?, last_valid_breached = ?, breached_since = ? WHERE id = ? AND revision = ? AND enabled = 1";
-const INSERT_NOTIFICATION: &str = "INSERT INTO alert_notifications (id, rule_id, rule_revision, rule_name, metric, column_name, operator, threshold, value, evaluated_at, destination, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)";
+const RECORD_CHECK: &str = "UPDATE alert_rules SET last_evaluated_at = ?, last_outcome = ?, last_reason = ?, last_witness = ?, last_valid_breached = ?, breached_since = ? WHERE id = ? AND revision = ? AND enabled = 1";
+const INSERT_NOTIFICATION: &str = "INSERT INTO alert_notifications (id, rule_id, rule_revision, rule_name, metric, rule_condition, witness, evaluated_at, destination, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)";
 /// Notifications past the kept count go, oldest first; one still owed stays.
 const TRIM_NOTIFICATIONS: &str = "DELETE FROM alert_notifications WHERE rule_id = ? AND status <> ? AND id NOT IN (SELECT id FROM (SELECT id FROM alert_notifications WHERE rule_id = ? ORDER BY created_at DESC, id DESC LIMIT ?) AS kept)";
 
-const NOTIFICATION_COLUMNS: &str = "id, rule_id, rule_revision, rule_name, metric, column_name, operator, threshold, value, evaluated_at, destination, status, attempts, last_error, provider_receipt, created_at";
+const NOTIFICATION_COLUMNS: &str = "id, rule_id, rule_revision, rule_name, metric, rule_condition, witness, evaluated_at, destination, status, attempts, last_error, provider_receipt, created_at";
 const SELECT_NOTIFICATION: &str = "SELECT {columns} FROM alert_notifications WHERE id = ?";
 const SELECT_NOTIFICATION_HELD: &str =
     "SELECT {columns} FROM alert_notifications WHERE id = ? FOR UPDATE";
@@ -228,9 +228,7 @@ impl MariaAlerts {
                     id_column(id),
                     spec.name.as_str().into(),
                     spec.metric.as_str().into(),
-                    spec.column.as_str().into(),
-                    spec.condition.operator.as_str().into(),
-                    spec.condition.threshold.to_stored().into(),
+                    spec.condition.to_stored().into(),
                     spec.range.clone().into(),
                     spec.interval_secs.into(),
                     spec.destination.as_str().into(),
@@ -269,9 +267,7 @@ impl MariaAlerts {
                 [
                     spec.name.as_str().into(),
                     spec.metric.as_str().into(),
-                    spec.column.as_str().into(),
-                    spec.condition.operator.as_str().into(),
-                    spec.condition.threshold.to_stored().into(),
+                    spec.condition.to_stored().into(),
                     spec.range.clone().into(),
                     spec.interval_secs.into(),
                     spec.destination.as_str().into(),
@@ -297,7 +293,7 @@ impl MariaAlerts {
         &self,
         transaction: &sea_orm::DatabaseTransaction,
         current: &AlertRule,
-        value: Number,
+        witness: &Witness,
         evaluated_at: DateTime<Utc>,
         now: DateTime<Utc>,
     ) -> Result<Notification, AlertStoreError> {
@@ -307,9 +303,8 @@ impl MariaAlerts {
             rule_revision: current.revision,
             rule_name: current.spec.name.clone(),
             metric: current.spec.metric.clone(),
-            column: current.spec.column.clone(),
-            condition: current.spec.condition,
-            value,
+            condition: current.spec.condition.clone(),
+            witness: witness.clone(),
             evaluated_at,
             destination: current.spec.destination.clone(),
             status: NotificationStatus::Pending,
@@ -327,10 +322,8 @@ impl MariaAlerts {
                     notification.rule_revision.into(),
                     notification.rule_name.as_str().into(),
                     notification.metric.as_str().into(),
-                    notification.column.as_str().into(),
-                    notification.condition.operator.as_str().into(),
-                    notification.condition.threshold.to_stored().into(),
-                    notification.value.to_stored().into(),
+                    notification.condition.to_stored().into(),
+                    notification.witness.to_json().to_string().into(),
                     stamp(notification.evaluated_at),
                     notification.destination.as_str().into(),
                     notification.status.as_str().into(),
@@ -551,7 +544,7 @@ impl AlertStore for MariaAlerts {
             (None, since) => since,
         };
 
-        let outcome = recording.outcome;
+        let outcome = &recording.outcome;
         transaction
             .execute_raw(statement(
                 RECORD_CHECK.to_owned(),
@@ -559,7 +552,10 @@ impl AlertStore for MariaAlerts {
                     stamp(recording.evaluated_at),
                     outcome.as_str().into(),
                     outcome.reason().map(UnknownReason::as_str).into(),
-                    outcome.value().map(Number::to_stored).into(),
+                    outcome
+                        .witness()
+                        .map(|witness| witness.to_json().to_string())
+                        .into(),
                     next.into(),
                     breached_since.map(|since| since.naive_utc()).into(),
                     id_column(current.id),
@@ -568,9 +564,9 @@ impl AlertStore for MariaAlerts {
             ))
             .await?;
 
-        let notification = match (owed, outcome.value()) {
-            (true, Some(value)) => Some(
-                self.owe_notification(&transaction, &current, value, recording.evaluated_at, now)
+        let notification = match (owed, outcome.witness()) {
+            (true, Some(witness)) => Some(
+                self.owe_notification(&transaction, &current, witness, recording.evaluated_at, now)
                     .await?,
             ),
             _ => None,
@@ -697,9 +693,7 @@ struct RuleRow {
     id: String,
     name: String,
     metric: String,
-    column_name: String,
-    operator: String,
-    threshold: String,
+    rule_condition: String,
     range_code: Option<String>,
     interval_secs: u32,
     destination: String,
@@ -708,7 +702,7 @@ struct RuleRow {
     last_evaluated_at: Option<NaiveDateTime>,
     last_outcome: Option<String>,
     last_reason: Option<String>,
-    last_value: Option<String>,
+    last_witness: Option<String>,
     last_valid_breached: Option<bool>,
     breached_since: Option<NaiveDateTime>,
     created_by: Option<String>,
@@ -716,34 +710,45 @@ struct RuleRow {
     updated_at: NaiveDateTime,
 }
 
+/// The most of an unreadable value an error carries into the log.
+const UNREADABLE_SHOWN_CHARS: usize = 200;
+
 fn unreadable(value: &str) -> AlertStoreError {
-    AlertStoreError::UnreadableRow(value.to_owned())
+    AlertStoreError::UnreadableRow(value.chars().take(UNREADABLE_SHOWN_CHARS).collect())
 }
 
 fn parse_id(value: &str) -> Result<Uuid, AlertStoreError> {
     Uuid::parse_str(value).map_err(|_| unreadable(value))
 }
 
-fn parse_condition(operator: &str, threshold: &str) -> Result<Condition, AlertStoreError> {
-    Ok(Condition {
-        operator: Operator::parse(operator).ok_or_else(|| unreadable(operator))?,
-        threshold: Number::from_stored(threshold).ok_or_else(|| unreadable(threshold))?,
-    })
+fn parse_condition(stored: &str) -> Result<Condition, AlertStoreError> {
+    Condition::from_stored(stored).ok_or_else(|| unreadable(stored))
+}
+
+fn parse_witness(stored: &str) -> Result<Witness, AlertStoreError> {
+    serde_json::from_str(stored)
+        .ok()
+        .as_ref()
+        .and_then(Witness::from_json)
+        .ok_or_else(|| unreadable(stored))
 }
 
 impl RuleRow {
     fn into_rule(self) -> Result<AlertRule, AlertStoreError> {
-        let condition = parse_condition(&self.operator, &self.threshold)?;
+        let condition = parse_condition(&self.rule_condition)?;
         let last_outcome = match (self.last_outcome.as_deref(), self.last_reason.as_deref()) {
             (None, _) => None,
             (Some("unknown"), Some(reason)) => Some(Outcome::Unknown(
                 UnknownReason::parse(reason).ok_or_else(|| unreadable(reason))?,
             )),
             (Some(word @ ("breach" | "no_breach")), _) => {
-                let stored = self.last_value.as_deref().ok_or_else(|| unreadable(word))?;
+                let stored = self
+                    .last_witness
+                    .as_deref()
+                    .ok_or_else(|| unreadable(word))?;
                 Some(Outcome::Valid {
-                    value: Number::from_stored(stored).ok_or_else(|| unreadable(stored))?,
                     breached: word == "breach",
+                    witness: parse_witness(stored)?,
                 })
             }
             (Some(word), _) => return Err(unreadable(word)),
@@ -755,7 +760,6 @@ impl RuleRow {
                 name: AlertName::from_row(self.name),
                 metric: DefinitionName::parse(&self.metric)
                     .map_err(|_| unreadable(&self.metric))?,
-                column: self.column_name,
                 condition,
                 range: self.range_code,
                 interval_secs: self.interval_secs,
@@ -783,10 +787,8 @@ struct NotificationRow {
     rule_revision: u32,
     rule_name: String,
     metric: String,
-    column_name: String,
-    operator: String,
-    threshold: String,
-    value: String,
+    rule_condition: String,
+    witness: String,
     evaluated_at: NaiveDateTime,
     destination: String,
     status: String,
@@ -804,9 +806,8 @@ impl NotificationRow {
             rule_revision: self.rule_revision,
             rule_name: AlertName::from_row(self.rule_name),
             metric: DefinitionName::parse(&self.metric).map_err(|_| unreadable(&self.metric))?,
-            column: self.column_name,
-            condition: parse_condition(&self.operator, &self.threshold)?,
-            value: Number::from_stored(&self.value).ok_or_else(|| unreadable(&self.value))?,
+            condition: parse_condition(&self.rule_condition)?,
+            witness: parse_witness(&self.witness)?,
             evaluated_at: self.evaluated_at.and_utc(),
             destination: self.destination,
             status: NotificationStatus::parse(&self.status)

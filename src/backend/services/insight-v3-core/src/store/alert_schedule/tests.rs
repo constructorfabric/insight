@@ -76,12 +76,11 @@ mod worker {
     use super::super::{AlertWorker, Checks, RedisSchedule};
     use crate::api::{Alerts, AppState};
     use crate::chat::ChatClient;
+    use crate::domain::alerts::condition::{Condition, Witness};
     use crate::domain::alerts::evaluation::Evaluator;
-    use crate::domain::alerts::rule::{
-        AlertName, AlertStore, Condition, Operator, RuleSpec, Write,
-    };
+    use crate::domain::alerts::rule::{AlertName, AlertStore, RuleSpec, Write};
     use crate::domain::alerts::schedule::{AlertSchedule as _, Scheduled};
-    use crate::domain::alerts::{Destinations, Limits, Number};
+    use crate::domain::alerts::{Destinations, Limits};
     use crate::domain::definition::{DefinitionKind, DefinitionName, Definitions as _, Page};
     use crate::store::alerts::memory::MemoryAlerts;
     use crate::store::definitions::memory::MemoryDefinitions;
@@ -209,11 +208,7 @@ mod worker {
                     spec: RuleSpec {
                         name: AlertName::parse("Worker probe")?,
                         metric: DefinitionName::parse("prs-open")?,
-                        column: "total".to_owned(),
-                        condition: Condition {
-                            operator: Operator::Gt,
-                            threshold: Number::Int(10),
-                        },
+                        condition: Condition::one_above("total", 10),
                         range: None,
                         interval_secs: 3600,
                         destination: "ops".to_owned(),
@@ -248,7 +243,10 @@ mod worker {
         schedule.remove(rule.id).await?;
 
         assert_eq!(owed.len(), 1, "one check, one notification: {owed:?}");
-        assert_eq!(owed[0].value, Number::Int(42));
+        assert_eq!(
+            owed[0].witness,
+            Witness::one_value("total", serde_json::json!(42), true)
+        );
         let checked = store
             .get(rule.id)
             .await?
@@ -284,11 +282,10 @@ mod delivery {
     use uuid::Uuid;
 
     use super::super::{DeliveryWorker, RedisDeliveries, Sends};
-    use crate::domain::alerts::Number;
+    use crate::domain::alerts::condition::{Condition, Witness};
     use crate::domain::alerts::delivery::{Deliverer, Deliveries as _, Provider};
     use crate::domain::alerts::rule::{
-        AlertName, AlertStore as _, Condition, Notification, NotificationStatus, Operator,
-        RuleSpec, Write,
+        AlertName, AlertStore as _, Notification, NotificationStatus, RuleSpec, Write,
     };
     use crate::domain::definition::DefinitionName;
     use crate::store::alerts::memory::MemoryAlerts;
@@ -363,11 +360,7 @@ mod delivery {
                             .unwrap_or_else(|error| panic!("{error}")),
                         metric: DefinitionName::parse("prs-open")
                             .unwrap_or_else(|error| panic!("{error}")),
-                        column: "total".to_owned(),
-                        condition: Condition {
-                            operator: Operator::Gt,
-                            threshold: Number::Int(10),
-                        },
+                        condition: Condition::one_above("total", 10),
                         range: None,
                         interval_secs: 3600,
                         destination: "ops".to_owned(),
@@ -384,8 +377,8 @@ mod delivery {
                 rule_id: rule.id,
                 revision: rule.revision,
                 outcome: crate::domain::alerts::Outcome::Valid {
-                    value: Number::Int(42),
                     breached: true,
+                    witness: Witness::one_value("total", serde_json::json!(42), true),
                 },
                 evaluated_at: Utc::now(),
             })

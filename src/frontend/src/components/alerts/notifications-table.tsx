@@ -13,7 +13,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
-import { conditionText, numberText, statusText } from "@/lib/alerts/describe";
+import { WitnessLines } from "@/components/alerts/witness";
+import { conditionText, statusText } from "@/lib/alerts/describe";
 import { formatUtcInstant } from "@/lib/format";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -22,7 +23,7 @@ import { alertNotificationsQuery } from "@/queries/alerts";
 const DAY = "d MMM yyyy";
 const CLOCK = "HH:mm zzz";
 
-type Rule = Pick<Alert, "metric" | "column">;
+type Rule = Pick<Alert, "metric">;
 
 /**
  * Each notification once. Pages are read by offset, so one owed between two
@@ -64,7 +65,7 @@ export function NotificationsTable({ alert }: { alert: Alert }) {
         <TableHeader>
           <TableRow>
             <TableHead>Checked</TableHead>
-            <TableHead className="text-end">Value</TableHead>
+            <TableHead>Found</TableHead>
             <TableHead>Status</TableHead>
             <TableHead>Delivery</TableHead>
           </TableRow>
@@ -111,7 +112,7 @@ function NotificationRow({
           {formatUtcInstant(notification.evaluated_at, CLOCK)}
         </span>
       </TableCell>
-      <TableCell className="text-end tabular-nums">
+      <TableCell className="min-w-48">
         <Reading notification={notification} rule={rule} />
       </TableCell>
       <TableCell>
@@ -128,7 +129,7 @@ function NotificationRow({
   );
 }
 
-/** The value a check found, against the condition it was held to then. */
+/** What a check found, against the condition it was held to then. */
 function Reading({
   notification,
   rule,
@@ -136,18 +137,20 @@ function Reading({
   notification: AlertNotification;
   rule: Rule;
 }) {
-  const owedElsewhere =
-    notification.metric !== rule.metric || notification.column !== rule.column;
-
   return (
     <span className="flex flex-col gap-0.5">
-      <span className={TEXT_BODY}>{numberText(notification.value)}</span>
-      <span className={cn(TEXT_LABEL, "whitespace-nowrap")}>
-        {conditionText(notification.operator, notification.threshold)}
+      {notification.witness ? (
+        <WitnessLines
+          witness={notification.witness}
+          condition={notification.condition}
+        />
+      ) : null}
+      <span className={cn(TEXT_LABEL, "break-words")}>
+        {conditionText(notification.condition)}
       </span>
-      {owedElsewhere ? (
-        <span className={cn(TEXT_LABEL, "break-words font-mono")}>
-          {notification.metric} · {notification.column}
+      {notification.metric !== rule.metric ? (
+        <span className={cn(TEXT_LABEL, "font-mono break-words")}>
+          {notification.metric}
         </span>
       ) : null}
     </span>

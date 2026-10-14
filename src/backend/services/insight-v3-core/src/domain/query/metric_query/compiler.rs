@@ -21,6 +21,19 @@ use crate::domain::query::time_window::Window;
 const DEFAULT_LIMIT: u32 = 1000;
 const MAX_LIMIT: u32 = 10000;
 
+impl super::MetricQuery {
+    /// Where a whole run stops without the metric having asked it to: the
+    /// default bound when it names none, or the most it may ask for when it
+    /// names more. A bound the metric names itself is its own question.
+    pub(crate) fn imposed_limit(&self) -> Option<u32> {
+        match self.limit {
+            None => Some(DEFAULT_LIMIT),
+            Some(limit) if limit > MAX_LIMIT => Some(MAX_LIMIT),
+            Some(_) => None,
+        }
+    }
+}
+
 /// How much of the result a compiled query is asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Bound {

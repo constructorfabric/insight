@@ -278,19 +278,17 @@ impl AlertStore for MemoryAlerts {
         };
         current.state.last_valid_breached = next;
         current.state.last_evaluated_at = Some(recording.evaluated_at);
-        current.state.last_outcome = Some(recording.outcome);
 
         let owed = transition(previous, &recording.outcome) == Transition::Notify;
-        let notification = match (owed, recording.outcome.value()) {
-            (true, Some(value)) => Some(Notification {
+        let notification = match (owed, recording.outcome.witness()) {
+            (true, Some(witness)) => Some(Notification {
                 id: Uuid::now_v7(),
                 rule_id: current.id,
                 rule_revision: current.revision,
                 rule_name: current.spec.name.clone(),
                 metric: current.spec.metric.clone(),
-                column: current.spec.column.clone(),
-                condition: current.spec.condition,
-                value,
+                condition: current.spec.condition.clone(),
+                witness: witness.clone(),
                 evaluated_at: recording.evaluated_at,
                 destination: current.spec.destination.clone(),
                 status: NotificationStatus::Pending,
@@ -301,6 +299,8 @@ impl AlertStore for MemoryAlerts {
             }),
             _ => None,
         };
+        current.state.last_outcome = Some(recording.outcome);
+
         let rule = current.clone();
         drop(rules);
         if let Some(notification) = &notification {

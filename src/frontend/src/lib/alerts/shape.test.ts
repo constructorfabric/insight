@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { MetricDefinition } from "@/api/custom-types";
+import type { DatasetDeclaration, MetricDefinition } from "@/api/custom-types";
 
-import { alertColumns, isRatio, metricShape } from "./shape";
+import { columnKinds, isRatio, metricShape } from "./shape";
 
 const PASSED = { field: "passed", type: "int", agg: "sum", as_name: "passed" };
 const RUNS = { field: "runs", type: "int", agg: "sum", as_name: "runs" };
@@ -40,25 +40,58 @@ describe("metricShape", () => {
   });
 });
 
-describe("alertColumns", () => {
-  it("offers numbers, never what the rows are grouped by", () => {
+describe("columnKinds", () => {
+  it("types a table metric's columns by what they compute, then by their own type", () => {
+    const definition: MetricDefinition = {
+      table: "gold.prs",
+      fields: [
+        { column: "id", type: "string", agg: "count", as_name: "total" },
+        { column: "age", type: "int", agg: "avg", as_name: "mean_age" },
+        { column: "repo", type: "string", as_name: "repo" },
+        { column: "opened", type: "string", agg: "max", as_name: "latest" },
+        { column: "size", type: "float", agg: "min", as_name: "smallest" },
+        { type: "float", as_name: "share", divide: ["total", "smallest"] },
+      ],
+    };
+
+    expect(columnKinds(definition)).toEqual([
+      ["total", "number"],
+      ["mean_age", "number"],
+      ["repo", "text"],
+      ["latest", "text"],
+      ["smallest", "number"],
+      ["share", "number"],
+    ]);
+  });
+
+  it("types a dataset metric's plain columns by what the dataset declares", () => {
+    const declaration: DatasetDeclaration = {
+      title: "Runs",
+      fields: [
+        { name: "stand", path: "stand", type: "string" },
+        { name: "green", path: "green", type: "bool" },
+        { name: "started", path: "started", type: "datetime" },
+        { name: "ms", path: "ms", type: "int" },
+      ],
+    };
     const definition = metric({
       fields: [
         STAND,
+        { field: "green", type: "string", as_name: "green" },
+        { field: "started", type: "string", agg: "max", as_name: "last_run" },
+        { field: "ms", type: "string", agg: "max", as_name: "slowest_ms" },
+        { field: "unknown", type: "int", as_name: "fallback" },
         PASSED,
-        RATE,
-        { field: "when", type: "string", agg: "max", as_name: "last_at" },
-        { field: "ms", type: "int", agg: "max", as_name: "slowest_ms" },
-        { field: "id", type: "string", agg: "count", as_name: "cases" },
       ],
-      group_by: ["stand"],
     });
 
-    expect(alertColumns(definition).map((field) => field.as_name)).toEqual([
-      "passed",
-      "pass_rate",
-      "slowest_ms",
-      "cases",
+    expect(columnKinds(definition, declaration)).toEqual([
+      ["stand", "text"],
+      ["green", "text"],
+      ["last_run", "date"],
+      ["slowest_ms", "number"],
+      ["fallback", "number"],
+      ["passed", "number"],
     ]);
   });
 });

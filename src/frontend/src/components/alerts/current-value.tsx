@@ -1,109 +1,75 @@
-import { useQuery } from "@tanstack/react-query";
-
-import type { AlertNumber, AlertOperator } from "@/api/alerts-types";
+import type { AlertPreview } from "@/api/alerts-types";
 import { refusal } from "@/components/custom/refusal";
 import { Spinner } from "@/components/ui/spinner";
-import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { numberText, reasonText } from "@/lib/alerts/describe";
-import { previewCheck } from "@/lib/alerts/preview";
+import { reasonText } from "@/lib/alerts/describe";
 import { TEXT_LABEL } from "@/lib/type-scale";
-import { metricResultQuery } from "@/queries/custom";
+import { cn } from "@/lib/utils";
 
-/** Long enough that picking a metric and a window is one run, not three. */
-const RUN_DEBOUNCE_MS = 600;
+import { savingRefusal } from "./field-refusals";
+import type { AlertPreviewState } from "./use-alert-preview";
+import { WitnessTable } from "./witness";
 
-/**
- * What a check would read if it ran now: the value and whether it meets the
- * condition, or why the check could not tell.
- *
- * It runs the metric the way a check does, over the rule's window and as one
- * total, so a metric that answers many rows is caught before it is saved.
- */
+function outcomeText(preview: AlertPreview, ratioOnly: boolean): string {
+  switch (preview.outcome) {
+    case "breach":
+      return "Now: meets the condition";
+    case "no_breach":
+      return "Now: does not meet the condition";
+    case "unknown": {
+      const reason =
+        preview.reason === null
+          ? "Unknown"
+          : ratioOnly && preview.reason === "null"
+            ? "No data in this window"
+            : reasonText(preview.reason);
+      return `Now: unknown · ${reason}`;
+    }
+  }
+}
+
+function refusedText(error: unknown): string {
+  const { fields } = savingRefusal(error);
+  return Object.keys(fields).length > 0
+    ? "Fix the highlighted fields to check."
+    : refusal(error, "Couldn't check the condition.");
+}
+
 export function CurrentValue({
-  metric,
-  column,
-  range,
-  operator,
-  threshold,
-  ratio,
+  preview,
+  ratioOnly,
 }: {
-  metric: string;
-  column: string;
-  range: string;
-  operator: AlertOperator;
-  /** As the service holds it, so a wide stored number is read exactly. */
-  threshold: AlertNumber | undefined;
-  /** The column divides one total by another, so an empty value means nothing to divide by. */
-  ratio: boolean;
+  preview: AlertPreviewState;
+  ratioOnly: boolean;
 }) {
-  const askedMetric = useDebouncedValue(metric, RUN_DEBOUNCE_MS);
-  const askedRange = useDebouncedValue(range, RUN_DEBOUNCE_MS);
-  const run = useQuery({
-    ...metricResultQuery(askedMetric, {
-      bucket: false,
-      ...(askedRange ? { range: askedRange } : {}),
-    }),
-    // INVARIANT: a column is picked only once the metric resolved, so a half-typed name never runs.
-    enabled: askedMetric !== "" && column !== "",
-    // "Now" means now: the app keeps metric runs for an hour by default.
-    staleTime: 0,
-    retry: false,
-  });
+  const { ready, settled, query } = preview;
+  const found = ready && settled && query.isSuccess ? query.data : undefined;
 
   return (
-    <div aria-live="polite" aria-atomic="true" className={TEXT_LABEL}>
-      {reading()}
+    <div className={cn(TEXT_LABEL, "flex flex-col gap-2")}>
+      <p
+        aria-live="polite"
+        aria-atomic="true"
+        className={cn(
+          (query.isError || found?.outcome === "unknown") && "text-destructive"
+        )}
+      >
+        {line()}
+      </p>
+      {found?.witness ? <WitnessTable witness={found.witness} /> : null}
     </div>
   );
 
-  function reading() {
-    if (metric === "" || column === "") return null;
-    if (run.isPending || askedMetric !== metric || askedRange !== range) {
+  function line() {
+    if (!ready) return null;
+    if (!settled || query.isPending) {
       return (
-        <p className="flex items-center gap-2">
-          <Spinner className="size-3" /> Current value…
-        </p>
+        <span className="flex items-center gap-2">
+          <Spinner className="size-3" /> Checking…
+        </span>
       );
     }
-    if (run.isError) {
-      return (
-        <p className="text-destructive">
-          {refusal(run.error, "Couldn't run the metric.")}
-        </p>
-      );
-    }
+    if (query.isError) return refusedText(query.error);
 
-    const preview = previewCheck(run.data, column, operator, threshold);
-    if (preview.kind === "wide") {
-      return (
-        <p>
-          Current value: about{" "}
-          <span className="tabular-nums">{numberText(preview.value)}</span>
-          {" · too wide to compare here; the check compares it exactly"}
-        </p>
-      );
-    }
-    if (preview.kind === "unknown") {
-      return (
-        <p className="text-destructive">
-          Current value: unknown ·{" "}
-          {ratio && preview.reason === "null"
-            ? "No data in this window"
-            : reasonText(preview.reason)}
-        </p>
-      );
-    }
-
-    return (
-      <p>
-        Current value:{" "}
-        <span className="tabular-nums">{numberText(preview.value)}</span>
-        {preview.breached === undefined
-          ? ""
-          : preview.breached
-            ? " · meets the condition"
-            : " · does not meet the condition"}
-      </p>
-    );
+    return outcomeText(query.data, ratioOnly);
   }
 }

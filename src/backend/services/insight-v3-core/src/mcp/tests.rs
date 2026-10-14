@@ -301,8 +301,34 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
         "{listed}"
     );
 
+    assert_create_alert_describes_the_condition(tools);
+
     issuer.stop();
     Ok(())
+}
+
+/// A client writes a condition from the tool's schema alone, so the schema
+/// names its parts and every operator.
+fn assert_create_alert_describes_the_condition(tools: &[Value]) {
+    let create_alert = tools
+        .iter()
+        .find(|tool| tool["name"] == "create_alert")
+        .map(|tool| tool["inputSchema"].to_string())
+        .unwrap_or_default();
+
+    for described in [
+        "\"rows\"",
+        "\"where\"",
+        "\"all\"",
+        "\"not\"",
+        "\"not_in\"",
+        "\"older_than\"",
+    ] {
+        assert!(
+            create_alert.contains(described),
+            "create_alert should describe {described} in its condition: {create_alert}"
+        );
+    }
 }
 
 #[tokio::test]

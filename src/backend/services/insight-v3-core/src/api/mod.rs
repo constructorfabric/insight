@@ -234,7 +234,7 @@ impl AppState {
         Some(crate::domain::alerts::rules::AlertRules::new(
             alerts.store.as_ref(),
             alerts.schedule.as_ref(),
-            self.definitions.as_ref(),
+            self.metric_runs(),
             alerts.limits,
             &alerts.destinations,
         ))

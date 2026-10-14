@@ -1,5 +1,56 @@
-/** How an observed value is compared with an alert's threshold. */
-export type AlertOperator = ">" | ">=" | "<" | "<=";
+/** A comparison a number column, or the count of matching rows, takes. */
+export type ComparisonOperator = ">" | ">=" | "<" | "<=" | "==" | "!=";
+
+export type NumberOperator = ComparisonOperator | "between";
+
+export type TextOperator =
+  "==" | "!=" | "contains" | "starts_with" | "ends_with" | "in" | "not_in";
+
+export type DateOperator =
+  "before" | "after" | "between" | "older_than" | "newer_than";
+
+export type ConditionOperator = NumberOperator | TextOperator | DateOperator;
+
+/** Which rows must pass the test for the rule to be breached. */
+export type Quantifier =
+  | "one"
+  | "any"
+  | "all"
+  | "none"
+  | { count: { op: ComparisonOperator; value: number } };
+
+/**
+ * A test on one result column. `value` is a number or digit string, a text,
+ * an RFC 3339 timestamp, a duration such as `P7D`, or a list of those, by
+ * what the operator takes.
+ */
+export interface ConditionLeaf {
+  column: string;
+  op: ConditionOperator;
+  value: unknown;
+}
+
+export type ConditionNode =
+  | ConditionLeaf
+  | { all: ConditionNode[] }
+  | { any: ConditionNode[] }
+  | { not: ConditionNode };
+
+export interface Condition {
+  rows: Quantifier;
+  where: ConditionNode;
+}
+
+/**
+ * The rows a check found the test held on: `columns` names each cell of a
+ * row, the grouping first, then the columns the condition reads.
+ */
+export interface Witness {
+  matched: number;
+  answered: number;
+  columns: string[];
+  rows: unknown[][];
+}
 
 /** What one check found. Absent on an alert that has not been checked yet. */
 export type AlertOutcome = "breach" | "no_breach" | "unknown";
@@ -11,7 +62,10 @@ export type UnknownReason =
   | "column_missing"
   | "null"
   | "non_numeric"
+  | "non_text"
+  | "non_date"
   | "incomparable"
+  | "row_limit"
   | "metric_missing"
   | "compile_failed"
   | "run_failed"
@@ -26,16 +80,11 @@ export type NotificationStatus = "pending" | "cancelled" | "sent" | "failed";
  */
 export type AlertNumber = number | string;
 
-/**
- * A rule as an administrator writes it. A threshold the service sent goes
- * back in the form it came.
- */
+/** A rule as an administrator writes it. */
 export interface AlertDraft {
   name: string;
   metric: string;
-  column: string;
-  operator: AlertOperator;
-  threshold: AlertNumber;
+  condition: Condition;
   range?: string | null;
   interval_secs: number;
   destination: string;
@@ -49,7 +98,7 @@ export interface AlertState {
   last_evaluated_at?: string;
   last_outcome?: AlertOutcome;
   last_reason?: UnknownReason;
-  last_value?: AlertNumber;
+  last_witness?: Witness | null;
   last_valid_breached?: boolean;
   breached_since?: string;
 }
@@ -58,9 +107,7 @@ export interface Alert {
   id: string;
   name: string;
   metric: string;
-  column: string;
-  operator: AlertOperator;
-  threshold: AlertNumber;
+  condition: Condition;
   range?: string | null;
   interval_secs: number;
   destination: string;
@@ -89,10 +136,8 @@ export interface AlertNotification {
   id: string;
   rule_revision: number;
   metric: string;
-  column: string;
-  operator: AlertOperator;
-  threshold: AlertNumber;
-  value: AlertNumber;
+  condition: Condition;
+  witness?: Witness | null;
   evaluated_at: string;
   destination: string;
   status: NotificationStatus;
@@ -111,4 +156,17 @@ export interface NotificationPage {
 export interface AlertDestination {
   name: string;
   provider: string;
+}
+
+/** What a rule would find if it were checked now. */
+export interface AlertPreviewRequest {
+  metric: string;
+  range: string | null;
+  condition: Condition;
+}
+
+export interface AlertPreview {
+  outcome: AlertOutcome;
+  reason: UnknownReason | null;
+  witness: Witness | null;
 }

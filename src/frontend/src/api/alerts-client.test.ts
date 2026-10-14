@@ -11,6 +11,7 @@ import {
   fetchAlertDestinations,
   fetchAlertNotifications,
   fetchAlerts,
+  previewAlert,
   replaceAlert,
   setAlertEnabled,
 } from "./alerts-client";
@@ -29,9 +30,15 @@ function response(body: unknown, status = 200): Response {
 const DRAFT = {
   name: "Too many open PRs",
   metric: "prs-open",
-  column: "total",
-  operator: ">" as const,
-  threshold: 10,
+  condition: {
+    rows: "any" as const,
+    where: {
+      all: [
+        { column: "open", op: ">" as const, value: 10 },
+        { not: { column: "team", op: "in" as const, value: ["core"] } },
+      ],
+    },
+  },
   interval_secs: 300,
   destination: "ops",
   enabled: true,
@@ -85,6 +92,20 @@ describe("alerts client", () => {
     expect(called()[0]).toBe("/api/v3/v1/alerts");
     expect(called()[1]?.method).toBe("POST");
     expect(JSON.parse(called()[1]?.body as string)).toEqual(DRAFT);
+  });
+
+  it("asks for a preview with the metric, window and condition as its body", async () => {
+    const request = {
+      metric: DRAFT.metric,
+      range: "P30D",
+      condition: DRAFT.condition,
+    };
+
+    await previewAlert(request);
+
+    expect(called()[0]).toBe("/api/v3/v1/alerts/preview");
+    expect(called()[1]?.method).toBe("POST");
+    expect(JSON.parse(called()[1]?.body as string)).toEqual(request);
   });
 
   it.each([

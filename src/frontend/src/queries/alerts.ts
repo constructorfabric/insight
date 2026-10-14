@@ -11,6 +11,7 @@ import type {
   Alert,
   AlertDraft,
   AlertPage,
+  AlertPreviewRequest,
   NotificationPage,
 } from "@/api/alerts-client";
 import {
@@ -20,6 +21,7 @@ import {
   fetchAlertDestinations,
   fetchAlertNotifications,
   fetchAlerts,
+  previewAlert,
   replaceAlert,
   setAlertEnabled,
 } from "@/api/alerts-client";
@@ -104,6 +106,18 @@ export function alertDestinationsQuery() {
   return queryOptions({
     queryKey: [...ALERTS_PREFIX, "destinations"],
     queryFn: fetchAlertDestinations,
+  });
+}
+
+// INVARIANT: a preview answers for now, so it is never served from cache, and
+// a refusal is shown rather than retried.
+export function alertPreviewQuery(request: AlertPreviewRequest) {
+  return queryOptions({
+    queryKey: ["alert-preview", request],
+    queryFn: () => previewAlert(request),
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
   });
 }
 

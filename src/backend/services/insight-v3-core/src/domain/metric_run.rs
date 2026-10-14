@@ -26,6 +26,16 @@ pub(crate) struct Prepared {
     pub(crate) body: serde_json::Value,
 }
 
+/// What a stored metric's rows hold, read from its definition alone: each
+/// result column and its kind, and the columns the rows are grouped by.
+#[derive(Debug)]
+pub(crate) struct Columns {
+    pub(crate) kinds: Vec<(String, ColumnKind)>,
+    pub(crate) groups: Vec<String>,
+    /// Where a run of it stops without the metric having asked to.
+    pub(crate) imposed_limit: Option<usize>,
+}
+
 /// Where a metric's rows come from, as far as a reader paging through them
 /// needs to know.
 #[derive(Debug)]
@@ -93,6 +103,33 @@ impl<'a> MetricRuns<'a> {
                 kind: DefinitionKind::Metric,
                 name: name.as_str().to_owned(),
             })
+    }
+
+    /// The columns a stored metric answers, from its definition and its
+    /// dataset's declaration. Nothing is run.
+    pub(crate) async fn columns(&self, name: &DefinitionName) -> Result<Columns, CustomError> {
+        let body = self.body_of(name).await?;
+        let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
+        let groups = metric.groups().to_vec();
+        let imposed_limit = metric
+            .imposed_limit()
+            .and_then(|limit| usize::try_from(limit).ok());
+
+        let Some(named) = metric.dataset() else {
+            metric.check_table().map_err(CustomError::Compile)?;
+            return Ok(Columns {
+                kinds: metric.column_kinds(None, false),
+                groups,
+                imposed_limit,
+            });
+        };
+        let (declaration, _) = self.ready_dataset(named).await?;
+
+        Ok(Columns {
+            kinds: metric.column_kinds(Some(&declaration), false),
+            groups,
+            imposed_limit,
+        })
     }
 
     /// Runs a stored metric over the window the caller asked for, resolved
