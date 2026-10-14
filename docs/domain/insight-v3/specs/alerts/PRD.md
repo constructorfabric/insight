@@ -1,14 +1,14 @@
 ---
 status: draft
-version: "0.8"
-date: 2026-10-14
+version: "0.9"
+date: 2026-10-15
 ---
 
 # PRD — Insight v3 Metric Alerts
 
 **Status:** Alert behavior, scheduling, the condition model, edit semantics, limits, destination provisioning, delivery and the administrator screens in the portal are approved. The first providers are Discord, Telegram and Zulip.
 
-**Revision 0.8:** Conditions cover every row one metric run answers: a row quantifier, nested groups, and number, text and date tests (D4, D9). Notifications and checks show the rows that met the condition, and the portal's form previews a draft on the server. Revision 0.7 moved the administrator screens into scope; 0.6 approved delivery and resolved D3; 0.5 resolved D4–D8.
+**Revision 0.9:** A rule may name context columns, result columns the witness carries beside the ones the condition reads, so a notification can say who or what crossed the threshold (D8, D9). Revision 0.8: conditions cover every row one metric run answers: a row quantifier, nested groups, and number, text and date tests (D4, D9). Notifications and checks show the rows that met the condition, and the portal's form previews a draft on the server. Revision 0.7 moved the administrator screens into scope; 0.6 approved delivery and resolved D3; 0.5 resolved D4–D8.
 
 <!-- toc -->
 
@@ -72,6 +72,7 @@ Verify these goals with synthetic metrics before release. Capacity and timing ta
 | Evaluation | One metric check for a rule |
 | Breach | A valid result whose rows satisfy the condition's test as its row quantifier requires |
 | Witness | The rows a check shows for its finding, at most five, with how many rows matched out of how many the metric answered |
+| Context column | A result column a rule names so the witness carries it beside the columns the condition reads |
 | Episode | Consecutive valid breached results, ending when a valid result no longer breaches |
 | Notification | A saved request to send a message; delivery is tracked separately |
 | Unknown | A check could not determine whether the condition was met |
@@ -140,7 +141,7 @@ Every requirement below is approved for this release.
 
 The system **MUST** let administrators create, read, list, update, enable, disable and delete rules through API and MCP, using the same validation. The portal's screens perform these operations through the API and surface its refusals on the field they concern.
 
-Each rule has a name administrators read and a generated identity every operation takes; names need not be unique. A rule selects one existing custom metric, a condition over its result rows, an interval and one destination. Each test in the condition is checked against the kind of column it reads when the rule is written, and a refusal names the path of the part it concerns. An administrator can preview a draft: the system evaluates it as a check would and answers the outcome, reason and witness, recording nothing and owing no notification. Every write bumps the rule's revision; an update names the revision it replaces and is refused when the rule has moved on. Deleting a rule removes it and everything recorded for it.
+Each rule has a name administrators read and a generated identity every operation takes; names need not be unique. A rule selects one existing custom metric, a condition over its result rows, up to five context columns, an interval and one destination. Each test in the condition is checked against the kind of column it reads when the rule is written, and a refusal names the path of the part it concerns; each context column must be one the metric answers, named once. An administrator can preview a draft: the system evaluates it as a check would and answers the outcome, reason and witness, recording nothing and owing no notification. Every write bumps the rule's revision; an update names the revision it replaces and is refused when the rule has moved on. Deleting a rule removes it and everything recorded for it.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-admin`
 
@@ -195,7 +196,7 @@ Editing, enabling or re-enabling a rule resets what its checks found, so the fir
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-deliver` (approved)
 
-The system **MUST** record the rule, metric, condition, witness and check time a notification carries in the same step as the check that owes it, and send them to the configured destination. The message states the condition in words, and for a condition over many rows how many rows matched out of how many the metric answered.
+The system **MUST** record the rule, metric, condition, witness and check time a notification carries in the same step as the check that owes it, and send them to the configured destination. The message states the condition in words, and for a condition over many rows how many rows matched out of how many the metric answered; a witness row is written with the columns the condition reads and the rule's context columns, each as its name and value.
 
 Delivery retries an unconfirmed send without rerunning the metric or creating another episode, gives up after the configured attempts, shows rejections and exhausted retries, never reports an unconfirmed send as delivered, and may produce a duplicate message when a send landed but its confirmation did not.
 
@@ -205,7 +206,7 @@ Delivery retries an unconfirmed send without rerunning the metric or creating an
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-inspect` (approved)
 
-The system **MUST** show rule status, revision, latest check time, outcome and reason, the latest check's witness, and the notifications owed with their delivery status, attempts, last error and provider receipt. Each notification carries the revision and configuration it was owed under, and the condition and witness the check saw, without exposing secrets.
+The system **MUST** show rule status, revision, latest check time, outcome and reason, the latest check's witness, and the notifications owed with their delivery status, attempts, last error and provider receipt. Each notification carries the revision and configuration it was owed under, and the condition, context columns and witness the check saw, without exposing secrets.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-admin`
 
@@ -247,7 +248,7 @@ The system **MUST** report check duration per rule and enforce explicit capacity
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-nfr-confidentiality`
 
-The system **MUST** keep destination credentials out of normal API/MCP reads, notifications, queued payloads and diagnostics. Notifications must contain only the approved minimal metric summary, not complete query results.
+The system **MUST** keep destination credentials out of normal API/MCP reads, notifications, queued payloads and diagnostics. Notifications must contain only the approved minimal metric summary - the witness, cut to the columns the condition reads and the rule names - not complete query results.
 
 **Threshold**: zero credential disclosure in those surfaces. A destination read answers its name and provider only.
 
@@ -352,8 +353,8 @@ D3–D9 are resolved; the product owner approved each, with engineering and secu
 - **D5 — Unknown data.** Resolved: an unknown check keeps the last valid finding and records its time and reason. No freshness condition; the check time is shown without claiming the source data is fresh.
 - **D6 — Edits, disabling and deletion.** Resolved: every write bumps a revision and an update names the one it replaces; a check for any other revision is discarded. Editing, enabling and re-enabling reset the finding; disabling withdraws unsent notifications; deleting removes the rule and its notifications.
 - **D7 — Limits.** Resolved for this release: interval 60 seconds to 7 days, 200 rules, 4 concurrent checks, 60-second check lock, 200 notifications kept per rule, 5 delivery attempts with a doubling wait from 30 seconds, a 10-second provider call, 4 concurrent sends; each configurable. Latency targets await synthetic load.
-- **D8 — Destinations and content.** Resolved: the operator provisions destinations in configuration; each has a name, a provider and that provider's credentials; administrators reference the name and read only the name and provider. Per-administrator destinations follow behind the same interface. The message carries the rule, the metric, the condition in words, the witness and the check time in UTC, within a fixed length.
-- **D9 — Row quantifier and witness.** Resolved: `one` breaches when the metric answers exactly one row and it passes; `any` when at least one row passes; `all` when every row passes; `none` when no row passes; a count when the number of passing rows meets its comparison. Over zero rows `any` is not a breach, a count compares zero, and `one`, `all` and `none` are unknown (`no_rows`); `one` over several rows is unknown (`many_rows`). The witness is at most 5 rows in result order, each holding only the columns the condition names and the metric's group-by columns, with how many rows matched out of how many answered. Under `one` it holds the one row whatever the test found; under every other quantifier it holds rows that passed, so a breach under `none` shows no rows and the counts carry it. An unknown check has no witness. A run stops at the service's row bound when the metric names no bound of its own, or names more than the service allows; rows past that bound count as unknown, so a cut run decides only what those rows could not change, and is unknown (`row_limit`) otherwise. Episodes stay per rule: one spans consecutive breached checks whichever rows breach, and an unknown check never ends one.
+- **D8 — Destinations and content.** Resolved: the operator provisions destinations in configuration; each has a name, a provider and that provider's credentials; administrators reference the name and read only the name and provider. Per-administrator destinations follow behind the same interface. The message carries the rule, the metric, the condition in words, the witness and the check time in UTC, within a fixed length. A rule names up to five context columns; the witness carries them after the condition's columns, so an administrator decides which columns leave the product.
+- **D9 — Row quantifier and witness.** Resolved: `one` breaches when the metric answers exactly one row and it passes; `any` when at least one row passes; `all` when every row passes; `none` when no row passes; a count when the number of passing rows meets its comparison. Over zero rows `any` is not a breach, a count compares zero, and `one`, `all` and `none` are unknown (`no_rows`); `one` over several rows is unknown (`many_rows`). The witness is at most 5 rows in result order, each holding only the metric's group-by columns, the columns the condition names and the rule's context columns, each once, with how many rows matched out of how many answered. A context column the run no longer answers is left out; it never makes a check unknown. Under `one` it holds the one row whatever the test found; under every other quantifier it holds rows that passed, so a breach under `none` shows no rows and the counts carry it. An unknown check has no witness. A run stops at the service's row bound when the metric names no bound of its own, or names more than the service allows; rows past that bound count as unknown, so a cut run decides only what those rows could not change, and is unknown (`row_limit`) otherwise. Episodes stay per rule: one spans consecutive breached checks whichever rows breach, and an unknown check never ends one.
 
 ## 12. Risks
 
