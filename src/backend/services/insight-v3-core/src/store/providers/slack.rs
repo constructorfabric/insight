@@ -10,9 +10,9 @@ use crate::domain::alerts::delivery::{Message, Provider, Receipt, SendError};
 
 const API: &str = "https://slack.com/api";
 
-/// Errors Slack answers inside a successful response that a later attempt
-/// may get past: a pause it asked for, a failure on its side, a request that
-/// arrived cut short, or a workspace mid-migration.
+// Errors Slack answers inside a successful response that a later attempt
+// may get past: a pause it asked for, a failure on its side, a request that
+// arrived cut short, or a workspace mid-migration.
 const UNCONFIRMED_ERRORS: [&str; 9] = [
     "ratelimited",
     "rate_limited",
@@ -58,8 +58,8 @@ struct Answer {
     error: Option<String>,
 }
 
-/// Slack reads `&`, `<` and `>` as control characters in message text, with
-/// formatting off as well; anything else is written as is.
+// Slack reads `&`, `<` and `>` as control characters in message text, with
+// formatting off as well; anything else is written as is.
 fn escaped(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
