@@ -239,7 +239,6 @@ a key that used to carry a copy of it fails the render instead of being ignored.
 {{- $removed := dict
       "global.tenantDefaultId" (((.Values.global | default dict).tenantDefaultId) | default "")
       "ingestion.reconcile.tenantId" ((((.Values.ingestion | default dict).reconcile | default dict).tenantId) | default "")
-      "ingestion.reconcile.legacyTenantKeyOverride" ((((.Values.ingestion | default dict).reconcile | default dict).legacyTenantKeyOverride) | default "")
       "identityResolution.seed.tenantDefaultId" ((((.Values.identityResolution | default dict).seed | default dict).tenantDefaultId) | default "") -}}
 {{- range $key := keys $removed | sortAlpha -}}
 {{- if get $removed $key -}}

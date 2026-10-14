@@ -82,8 +82,7 @@ CORE_CONFIG_SECRET=$(yq -r '.insightV3Core.existingSecret // ""' "$VALUES")
 RD_HOST=$( yq -r '.redis.host'               "$VALUES")
 RD_PORT=$( yq -r '.redis.port       // 6379' "$VALUES")
 TENANT_ID=$(yq -r '.authenticator.oidc.defaultTenantId // ""' "$VALUES")
-for removed in .global.tenantDefaultId .ingestion.reconcile.tenantId \
-    .ingestion.reconcile.legacyTenantKeyOverride .identityResolution.seed.tenantDefaultId; do
+for removed in .global.tenantDefaultId .ingestion.reconcile.tenantId .identityResolution.seed.tenantDefaultId; do
   if [ -n "$(yq -r "${removed} // \"\"" "$VALUES")" ]; then
     echo "ERROR: ${removed#.} is removed in $VALUES — the tenant is set once, in authenticator.oidc.defaultTenantId, as a lowercase UUID" >&2
     exit 1

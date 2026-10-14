@@ -36,12 +36,7 @@ CONSUMERS = {
     ),
 }
 
-REMOVED_KEYS = [
-    "global.tenantDefaultId",
-    "ingestion.reconcile.tenantId",
-    "ingestion.reconcile.legacyTenantKeyOverride",
-    "identityResolution.seed.tenantDefaultId",
-]
+REMOVED_KEYS = ["global.tenantDefaultId", "ingestion.reconcile.tenantId", "identityResolution.seed.tenantDefaultId"]
 
 
 @pytest.fixture(scope="session")
