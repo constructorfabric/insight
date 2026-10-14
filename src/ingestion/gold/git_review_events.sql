@@ -78,8 +78,10 @@ LEFT JOIN {{ ref('class_git_pull_requests') }} AS prs FINAL
     AND prs.repo_slug = events.repo_slug
     AND prs.pr_id = events.pr_id
 LEFT JOIN review_person_map AS actor_map
-    ON actor_map.email = lower(trimBoth(events.actor_email))
+    ON actor_map.tenant_id = toString(events.tenant_id)
+   AND actor_map.email = lower(trimBoth(events.actor_email))
 LEFT JOIN review_person_map AS author_map
-    ON author_map.email = lower(trimBoth(coalesce(prs.author_email, '')))
+    ON author_map.tenant_id = toString(events.tenant_id)
+   AND author_map.email = lower(trimBoth(coalesce(prs.author_email, '')))
 WHERE trimBoth(events.actor_email) != ''
   AND events.created_at IS NOT NULL

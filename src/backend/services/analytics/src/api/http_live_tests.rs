@@ -733,6 +733,7 @@ async fn metric_results_answers_200_with_generic_error_views_when_clickhouse_is_
 /// them in a deployment, so a live test has to stand them up itself.
 async fn seed_identity_relations(
     ch: &insight_clickhouse::Client,
+    tenant_id: Uuid,
     email: &str,
     person_id: Uuid,
 ) -> anyhow::Result<()> {
@@ -740,21 +741,21 @@ async fn seed_identity_relations(
         .execute()
         .await?;
     ch.query(
-        "CREATE TABLE IF NOT EXISTS identity.person_map (email String, person_id UUID) \
-         ENGINE = MergeTree ORDER BY email",
+        "CREATE TABLE IF NOT EXISTS identity.person_map (tenant_id String, email String, person_id UUID) \
+         ENGINE = MergeTree ORDER BY (tenant_id, email)",
     )
     .execute()
     .await?;
     ch.query(
         "CREATE TABLE IF NOT EXISTS identity.account_assignment \
-         (source_type String, source_id UUID, account_id String, person_id UUID, \
-          created_at DateTime64(6)) \
-         ENGINE = MergeTree ORDER BY (source_type, source_id, account_id)",
+         (tenant_id String, source_type String, source_id UUID, account_id String, \
+          person_id UUID, created_at DateTime64(6)) \
+         ENGINE = MergeTree ORDER BY (tenant_id, source_type, source_id, account_id)",
     )
     .execute()
     .await?;
     ch.query(&format!(
-        "INSERT INTO identity.person_map VALUES ('{email}', '{person_id}')"
+        "INSERT INTO identity.person_map VALUES ('{tenant_id}', '{email}', '{person_id}')"
     ))
     .execute()
     .await?;
@@ -805,7 +806,7 @@ async fn metric_results_mixes_data_and_not_ready_views_in_one_response() -> Test
     ))
     .execute()
     .await?;
-    seed_identity_relations(&ch, &person_email, VISIBLE_PERSON).await?;
+    seed_identity_relations(&ch, fixture.tenant_id, &person_email, VISIBLE_PERSON).await?;
 
     let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
     let result: anyhow::Result<()> = async {
