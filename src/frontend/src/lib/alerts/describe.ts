@@ -1,5 +1,4 @@
 import type {
-  AlertNumber,
   NotificationStatus,
   UnknownReason,
   Witness,
@@ -14,47 +13,7 @@ import {
   type WrittenLeaf,
 } from "./condition";
 
-/** How precisely a fraction is written for a reader, as the service writes it. */
-const SIGNIFICANT_DIGITS = 6;
-const MAX_DECIMALS = 12;
 const WHOLE = /^-?\d+$/;
-
-// INVARIANT: a tie rounds to the even digit, as the service's formatting does.
-function fixed(value: number, decimals: number): string {
-  const scaled = Math.abs(value) * 10 ** decimals;
-  if (scaled % 1 !== 0.5) return value.toFixed(decimals);
-
-  const lower = Math.floor(scaled);
-  const even = lower % 2 === 0 ? lower : lower + 1;
-
-  return (Math.sign(value) * (even / 10 ** decimals)).toFixed(decimals);
-}
-
-/**
- * A number in a condition's words: an integer exactly, a fraction to six
- * significant digits with no trailing zeros.
- */
-function readableNumber(value: AlertNumber): string {
-  if (typeof value === "string") {
-    return WHOLE.test(value) ? BigInt(value).toString() : value;
-  }
-  if (Number.isInteger(value)) {
-    return Number.isSafeInteger(value)
-      ? String(value)
-      : BigInt(value).toString();
-  }
-
-  const magnitude = Math.floor(Math.log10(Math.abs(value)));
-  const decimals = Math.min(
-    Math.max(SIGNIFICANT_DIGITS - 1 - magnitude, 0),
-    MAX_DECIMALS
-  );
-  const written = fixed(value, decimals);
-
-  return written.includes(".")
-    ? written.replace(/0+$/, "").replace(/\.$/, "")
-    : written;
-}
 
 const AGE_UNITS: Record<string, string> = {
   M: "minute",
@@ -83,10 +42,10 @@ function stamp(value: unknown): string {
   return `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())} ${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())} UTC`;
 }
 
-function numberWords(value: unknown): string {
-  return typeof value === "number" || typeof value === "string"
-    ? readableNumber(value)
-    : String(value);
+// INVARIANT: a threshold reads exactly as its author wrote it, never rounded:
+// a JSON number as JavaScript prints it, a digit string as its digits.
+function thresholdWords(value: unknown): string {
+  return String(value);
 }
 
 function pair(value: unknown): [unknown, unknown] {
@@ -115,7 +74,7 @@ function leafWords({ column, op, value }: WrittenLeaf): string {
   if (op === "between") {
     const [low, high] = pair(value);
     const dated = typeof low === "string" && !WHOLE.test(low);
-    const words = dated ? stamp : numberWords;
+    const words = dated ? stamp : thresholdWords;
     return `${column} between ${words(low)} and ${words(high)}`;
   }
   if (DATE_OPERATORS.has(op)) return `${column} ${op} ${stamp(value)}`;
@@ -126,13 +85,8 @@ function leafWords({ column, op, value }: WrittenLeaf): string {
   }
 
   const label = COMPARISONS.find((option) => option.value === op)?.label ?? op;
-  // INVARIANT: an ordering compares numbers only, so its digit string is a
-  // wide integer; `==` and `!=` on a digit string may be comparing text.
-  const ordering = op !== "==" && op !== "!=";
-  const shown =
-    typeof value === "number" || ordering ? numberWords(value) : String(value);
 
-  return `${column} ${label} ${shown}`;
+  return `${column} ${label} ${thresholdWords(value)}`;
 }
 
 function nodeWords(value: unknown): string {

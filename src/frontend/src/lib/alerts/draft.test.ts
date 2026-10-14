@@ -237,6 +237,37 @@ describe("a number typed", () => {
   });
 });
 
+describe("an operator on a column of another kind", () => {
+  it.each([
+    ["open", ">", 10, true],
+    ["open", "contains", "1", false],
+    ["open", "before", "2026-10-01T00:00:00Z", false],
+    ["team", "==", "core", true],
+    ["team", ">", 10, false],
+    ["team", "older_than", "P7D", false],
+    ["opened_at", "after", "2026-10-01T00:00:00Z", true],
+    ["opened_at", ">", 10, false],
+    ["opened_at", "in", ["x"], false],
+  ])("checks %s %s against the column's kind", (column, op, value, fitting) => {
+    const form = {
+      ...FILLED,
+      condition: { rows: "one", where: { column, op, value } },
+    };
+    const checked = checkForm(form, KINDS);
+    const expected = fitting
+      ? { ok: true }
+      : { ok: false, errors: { "condition.where.op": "Not for this column." } };
+
+    expect(checked, `${column} ${op}`).toMatchObject(expected);
+    if (!checked.ok) {
+      expect(
+        Object.keys(checked.errors),
+        `${column} ${op}: only the operator`
+      ).toEqual(["condition.where.op"]);
+    }
+  });
+});
+
 describe("the draft as JSON text", () => {
   it.each([
     ['{"value": 12345678901234567890}', { value: "12345678901234567890" }],

@@ -90,29 +90,32 @@ describe("conditionText", () => {
   });
 });
 
-describe("a number in a condition's words", () => {
+describe("a threshold in a condition's words", () => {
   it.each([
     [10, "10"],
     [0.25, "0.25"],
-    [1234567.25, "1234567"],
-    [0.000123456789, "0.000123457"],
-    [123456.5, "123456"],
-    [0.125, "0.125"],
-    [1e21, "1000000000000000000000"],
-    ["98765432109876543210", "98765432109876543210"],
-    ["007", "7"],
+    [123456.5, "123456.5"],
+    [1234567.25, "1234567.25"],
+    [1e-20, "1e-20"],
+    [1e21, "1e+21"],
     [-2.5, "-2.5"],
-  ])("writes %s as %s, never grouped", (value, text) => {
+    ["98765432109876543210", "98765432109876543210"],
+    ["007", "007"],
+  ])("writes %s exactly as %s", (value, text) => {
     expect(
       conditionText(one({ column: "open", op: ">", value })),
       `value: ${value}`
     ).toBe(`open above ${text}`);
   });
 
-  it("keeps a digit string compared for equality as written, since it may be text", () => {
-    expect(conditionText(one({ column: "code", op: "==", value: "007" }))).toBe(
-      "code is 007"
-    );
+  it.each([
+    [[123456.5, 1e-20], "open between 123456.5 and 1e-20"],
+    [["9007199254740993", 2.5], "open between 9007199254740993 and 2.5"],
+  ])("writes between bounds %j exactly", (value, words) => {
+    expect(
+      conditionText(one({ column: "open", op: "between", value })),
+      JSON.stringify(value)
+    ).toBe(words);
   });
 });
 

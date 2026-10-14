@@ -9,6 +9,7 @@ import type { Held } from "@/lib/custom/editor/document";
 import {
   blankLeaf,
   conditionParts,
+  fits,
   leavesOf,
   rowsOf,
   valueShape,
@@ -140,6 +141,10 @@ function conditionErrors(
       continue;
     }
     if (kind === undefined) continue;
+    if (!fits(kind, leaf.op)) {
+      errors[`${at}.op`] = "Not for this column.";
+      continue;
+    }
 
     const found = valueErrors(valueShape(kind, leaf.op), leaf.value);
     for (const [part, said] of Object.entries(found)) {
