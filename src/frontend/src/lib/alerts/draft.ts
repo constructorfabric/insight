@@ -85,7 +85,7 @@ function isMoment(value: unknown): boolean {
 }
 
 const NUMBER = "Enter a number.";
-const MOMENT_TEXT = "Enter a time such as 2026-10-01T09:00:00Z.";
+const MOMENT_TEXT = "Pick a day.";
 
 function valueErrors(
   shape: ReturnType<typeof valueShape>,

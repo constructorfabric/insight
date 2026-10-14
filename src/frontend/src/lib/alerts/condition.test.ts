@@ -8,6 +8,7 @@ import {
   leafPaths,
   nodeAt,
   placeRefusals,
+  withListValues,
   type ColumnKind,
 } from "./condition";
 
@@ -158,5 +159,58 @@ describe("placeRefusals", () => {
       "rows.count.value": "must be a whole number",
     });
     expect(placed.whole).toEqual(["must be an object"]);
+  });
+});
+
+describe("withListValues", () => {
+  const full = Array.from({ length: 50 }, (_, at) => `v${at}`);
+
+  it.each([
+    [
+      "trims and adds",
+      [],
+      ["  core ", "infra"],
+      ["core", "infra"],
+      undefined,
+      [],
+    ],
+    [
+      "skips empty and repeated",
+      ["core"],
+      ["", " ", "core", "core "],
+      ["core"],
+      undefined,
+      [],
+    ],
+    [
+      "refuses past 50 values",
+      full,
+      ["extra", "more"],
+      full,
+      "At most 50 values.",
+      ["extra", "more"],
+    ],
+    [
+      "refuses past 256 characters and keeps what came before",
+      [],
+      ["core", "x".repeat(257), "infra"],
+      ["core"],
+      "At most 256 characters.",
+      ["x".repeat(257), "infra"],
+    ],
+    [
+      "accepts 256 characters",
+      [],
+      ["x".repeat(256)],
+      ["x".repeat(256)],
+      undefined,
+      [],
+    ],
+  ])("%s", (_case, current, entries, values, refused, unadded) => {
+    expect(withListValues(current, entries), _case).toEqual({
+      values,
+      unadded,
+      ...(refused ? { refused } : {}),
+    });
   });
 });

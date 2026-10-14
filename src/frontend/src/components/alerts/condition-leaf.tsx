@@ -2,7 +2,6 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   OPERATORS,
   blankValue,
@@ -18,6 +17,8 @@ import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 import { controlId, described } from "./condition-aria";
+import { MomentInput } from "./moment-input";
+import { ValueListInput } from "./value-list";
 import { FieldSelect } from "./field-select";
 
 interface Option {
@@ -108,52 +109,7 @@ export function NumberInput({
   );
 }
 
-function linesOf(typed: string): string[] {
-  return typed.split("\n").filter((line) => line !== "");
-}
-
-function sameList(left: readonly string[], right: unknown): boolean {
-  return (
-    Array.isArray(right) &&
-    left.length === right.length &&
-    left.every((item, index) => item === right[index])
-  );
-}
-
-function TextListInput({
-  id,
-  value,
-  describedBy,
-  onChange,
-}: {
-  id: string;
-  value: unknown;
-  describedBy: readonly string[];
-  onChange: (value: string[]) => void;
-}) {
-  const listed = Array.isArray(value) ? value.map(String).join("\n") : "";
-  const [typed, setTyped] = useState(listed);
-  const shown = sameList(linesOf(typed), value) ? typed : listed;
-
-  return (
-    <Textarea
-      id={id}
-      aria-label="Values, one per line"
-      {...described(describedBy)}
-      value={shown}
-      placeholder="One per line"
-      rows={2}
-      className="min-h-9 w-48"
-      onChange={(event) => {
-        setTyped(event.target.value);
-        onChange(linesOf(event.target.value));
-      }}
-    />
-  );
-}
-
 const TEXT = "h-9 w-48";
-const MOMENT_PLACEHOLDER = "2026-10-01T09:00:00Z";
 
 const AGE_UNITS: readonly (Option & { prefix: string; suffix: string })[] = [
   { value: "minutes", label: "minutes", prefix: "PT", suffix: "M" },
@@ -252,7 +208,7 @@ function ValueInput({
       );
     case "text-list":
       return (
-        <TextListInput
+        <ValueListInput
           id={id}
           value={value}
           describedBy={saidOn()}
@@ -261,31 +217,25 @@ function ValueInput({
       );
     case "moment":
       return (
-        <Input
+        <MomentInput
           id={id}
-          aria-label="Value"
-          {...described(saidOn())}
-          value={textOfValue(value)}
-          placeholder={MOMENT_PLACEHOLDER}
-          className={cn(TEXT, "font-mono")}
-          onChange={(event) => onChange(event.target.value)}
+          label="Value"
+          value={value}
+          describedBy={saidOn()}
+          onChange={onChange}
         />
       );
     case "moment-pair":
       return (
-        <span className="flex flex-wrap items-center gap-2">
+        <span className="flex flex-col gap-2">
           {([0, 1] as const).map((end) => (
-            <Input
+            <MomentInput
               key={end}
               id={`${id}-${end}`}
-              aria-label={end === 0 ? "From" : "To"}
-              {...described(saidOn(end))}
-              value={textOfValue(at(value, end))}
-              placeholder={MOMENT_PLACEHOLDER}
-              className={cn(TEXT, "font-mono")}
-              onChange={(event) =>
-                onChange(withAt(value, end, event.target.value))
-              }
+              label={end === 0 ? "From" : "To"}
+              value={at(value, end)}
+              describedBy={saidOn(end)}
+              onChange={(moment) => onChange(withAt(value, end, moment))}
             />
           ))}
         </span>

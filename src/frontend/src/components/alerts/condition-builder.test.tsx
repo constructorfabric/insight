@@ -1,4 +1,5 @@
 import {
+  fireEvent,
   render,
   screen,
   within,
@@ -200,9 +201,10 @@ describe("ConditionBuilder", () => {
 
   it.each([
     ["between", "open", ["From", "To"]],
-    ["is one of", "team", ["Values, one per line"]],
+    ["is one of", "team", ["Values"]],
     ["older than", "opened_at", ["Amount", "Unit"]],
-    ["after", "opened_at", ["Value"]],
+    ["after", "opened_at", ["Value day", "Value time"]],
+    ["between", "opened_at", ["From day", "From time", "To day", "To time"]],
   ])("asks for the value %s takes", async (op, column, labels) => {
     setUp({
       rows: "one",
@@ -238,21 +240,158 @@ describe("ConditionBuilder", () => {
     expect(latest(), label).toMatchObject({ where: { value: written } });
   });
 
-  it("writes an in list one value per line", async () => {
-    const latest = setUp({
-      rows: "one",
-      where: { column: "team", op: "in", value: [] },
+  describe("a list of values", () => {
+    function listOf(value: unknown) {
+      return setUp({ rows: "one", where: { column: "team", op: "in", value } });
+    }
+
+    function values() {
+      return leaf(1).getByRole("combobox", { name: "Values" });
+    }
+
+    it.each([
+      ["Enter", [], "core{Enter}infra{Enter}", ["core", "infra"]],
+      ["a comma", [], "core,infra,", ["core", "infra"]],
+      ["Enter, trimmed", [], "  core  {Enter}", ["core"]],
+      ["Enter, empty", ["core"], "   {Enter}", undefined],
+      ["Enter, a value already there", ["core"], "core{Enter}", undefined],
+    ])("adds a value by %s", async (_case, start, typed, written) => {
+      const latest = listOf(start);
+
+      await userEvent.type(values(), typed);
+
+      expect(
+        (latest() as { where?: { value?: unknown } } | undefined)?.where?.value,
+        _case
+      ).toEqual(written);
+      expect(screen.queryByRole("listbox"), "never opens a list").toBeNull();
     });
 
-    await userEvent.type(
-      leaf(1).getByLabelText("Values, one per line"),
-      "core{Enter}infra{Enter}"
+    it.each([
+      [
+        "past 50 values",
+        Array.from({ length: 50 }, (_, at) => `team-${at}`),
+        "extra",
+        "At most 50 values.",
+      ],
+      ["past 256 characters", [], "x".repeat(257), "At most 256 characters."],
+    ])(
+      "refuses a value %s and keeps what was typed",
+      async (_case, start, typed, said) => {
+        const latest = listOf(start);
+
+        await userEvent.click(values());
+        await userEvent.paste(typed);
+        await userEvent.keyboard("{Enter}");
+
+        expect(latest(), _case).toBeUndefined();
+        expect(values()).toHaveAccessibleDescription(said);
+        expect(values()).toHaveValue(typed);
+      }
     );
 
-    expect(latest()).toMatchObject({ where: { value: ["core", "infra"] } });
-    expect(leaf(1).getByLabelText("Values, one per line")).toHaveValue(
-      "core\ninfra\n"
-    );
+    it.each([
+      [
+        "its remove button",
+        async () => {
+          await userEvent.click(
+            screen.getByRole("button", { name: "Remove core" })
+          );
+        },
+        ["infra"],
+      ],
+      [
+        "Backspace in an empty field",
+        async () => {
+          await userEvent.click(values());
+          await userEvent.keyboard("{Backspace}");
+        },
+        ["core"],
+      ],
+    ])("removes a value by %s", async (_case, remove, kept) => {
+      const latest = listOf(["core", "infra"]);
+
+      await remove();
+
+      expect(latest(), _case).toMatchObject({ where: { value: kept } });
+    });
+
+    it("shows a list written as JSON as it stands", () => {
+      const latest = listOf(["", "core", "core", 7]);
+
+      const removals = leaf(1)
+        .getAllByRole("button")
+        .map((button) => button.getAttribute("aria-label"));
+      expect(removals).toEqual([
+        "Remove ",
+        "Remove core",
+        "Remove core",
+        "Remove 7",
+      ]);
+      expect(latest(), "nothing written").toBeUndefined();
+    });
+  });
+
+  describe("a timestamp", () => {
+    function at(value: unknown) {
+      return setUp({
+        rows: "one",
+        where: { column: "opened_at", op: "before", value },
+      });
+    }
+
+    it("shows a stored UTC day without shifting it to the local day", () => {
+      at("2026-10-01T22:30:00Z");
+
+      expect(leaf(1).getByLabelText("Value day")).toHaveTextContent(
+        "October 1st, 2026"
+      );
+      expect(leaf(1).getByLabelText("Value time")).toHaveValue("22:30");
+    });
+
+    it("writes a picked day and a typed time as an RFC 3339 UTC timestamp", async () => {
+      const latest = at("2026-10-01T22:30:00Z");
+
+      await userEvent.click(leaf(1).getByLabelText("Value day"));
+      await userEvent.click(
+        await screen.findByRole("button", { name: /October 15th, 2026/ })
+      );
+      expect(latest()).toMatchObject({
+        where: { value: "2026-10-15T22:30:00Z" },
+      });
+
+      fireEvent.change(leaf(1).getByLabelText("Value time"), {
+        target: { value: "07:05" },
+      });
+      expect(latest()).toMatchObject({
+        where: { value: "2026-10-15T07:05:00Z" },
+      });
+    });
+
+    it("keeps a stored timestamp's seconds until its day or time changes", () => {
+      const latest = at("2026-10-01T09:30:15.500Z");
+
+      expect(leaf(1).getByLabelText("Value time")).toHaveValue("09:30");
+      expect(latest(), "nothing written while untouched").toBeUndefined();
+
+      fireEvent.change(leaf(1).getByLabelText("Value time"), {
+        target: { value: "09:31" },
+      });
+      expect(latest()).toMatchObject({
+        where: { value: "2026-10-01T09:31:00Z" },
+      });
+    });
+
+    it("writes nothing for a time until a day is picked", () => {
+      const latest = at("");
+
+      fireEvent.change(leaf(1).getByLabelText("Value time"), {
+        target: { value: "09:30" },
+      });
+
+      expect(latest()).toBeUndefined();
+      expect(leaf(1).getByLabelText("Value time")).toHaveValue("09:30");
+    });
   });
 
   it("keeps a wide integer as its digits", async () => {

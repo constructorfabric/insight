@@ -359,3 +359,39 @@ export function placeRefusals(
 
   return { atNode, rows, whole };
 }
+
+export const MAX_LIST_VALUES = 50;
+export const MAX_TEXT_CHARS = 256;
+
+/**
+ * A list with entries added: trimmed, and neither empty nor already there.
+ * An entry past a bound is refused with why; it and the entries after it
+ * are left unadded.
+ */
+export function withListValues(
+  current: readonly unknown[],
+  entries: readonly string[]
+): { values: unknown[]; refused?: string; unadded: string[] } {
+  const values = [...current];
+
+  for (const [index, entry] of entries.entries()) {
+    const value = entry.trim();
+    if (value === "" || values.includes(value)) continue;
+
+    const unadded = entries.slice(index);
+    // INVARIANT: the service counts characters, and `length` counts UTF-16 units.
+    if ([...value].length > MAX_TEXT_CHARS) {
+      return {
+        values,
+        refused: `At most ${MAX_TEXT_CHARS} characters.`,
+        unadded,
+      };
+    }
+    if (values.length >= MAX_LIST_VALUES) {
+      return { values, refused: `At most ${MAX_LIST_VALUES} values.`, unadded };
+    }
+    values.push(value);
+  }
+
+  return { values, unadded: [] };
+}
