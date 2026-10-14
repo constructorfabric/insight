@@ -299,6 +299,7 @@ impl AlertStore for MemoryAlerts {
                 rule_name: current.spec.name.clone(),
                 metric: current.spec.metric.clone(),
                 condition: current.spec.condition.clone(),
+                context_columns: current.spec.context_columns.clone(),
                 witness: witness.clone(),
                 evaluated_at: recording.evaluated_at,
                 destination: current.spec.destination.clone(),

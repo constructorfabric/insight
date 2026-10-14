@@ -26,6 +26,9 @@ pub(crate) const DEFAULT_NOTIFICATIONS_KEPT_PER_RULE: u64 = 200;
 
 /// The longest an alert's name may be. It is shown, never used as a key.
 const MAX_NAME_CHARS: usize = 200;
+/// The most columns a rule may carry beside the ones its condition reads.
+pub(crate) const MAX_CONTEXT_COLUMNS: usize = 5;
+const MAX_COLUMN_CHARS: usize = 128;
 
 /// What an administrator calls an alert: free text, shown in every message
 /// and listing. The id is the handle, so two alerts may share a name.
@@ -107,6 +110,10 @@ pub(crate) struct RuleDraft {
     #[schemars(with = "ConditionShape")]
     #[schema(value_type = ConditionShape)]
     pub(crate) condition: serde_json::Value,
+    /// Result columns, by `as_name`, shown beside the condition's in every
+    /// notification: up to 5.
+    #[serde(default)]
+    pub(crate) context_columns: Vec<String>,
     /// The window the metric is run over, as `run_metric` takes it. Omit it
     /// to run the metric unbounded.
     #[serde(default)]
@@ -133,6 +140,8 @@ pub(crate) struct RuleSpec {
     pub(crate) name: AlertName,
     pub(crate) metric: DefinitionName,
     pub(crate) condition: Condition,
+    /// Columns the witness keeps beside the condition's, in this order.
+    pub(crate) context_columns: Vec<String>,
     pub(crate) range: Option<String>,
     pub(crate) interval_secs: u32,
     pub(crate) destination: String,
@@ -151,6 +160,7 @@ impl RuleSpec {
         let name = AlertName::parse(&draft.name)?;
         let metric = DefinitionName::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
         let condition = Condition::parse(&draft.condition, columns)?;
+        let context_columns = parse_context_columns(&draft.context_columns, columns)?;
 
         if let Some(range) = draft.range.as_deref() {
             WindowRequest::parse(Some(range), Some(false)).map_err(RuleError::Range)?;
@@ -173,6 +183,7 @@ impl RuleSpec {
             name,
             metric,
             condition,
+            context_columns,
             range: draft.range.clone(),
             interval_secs: draft.interval_secs,
             destination: draft.destination.clone(),
@@ -186,6 +197,58 @@ impl RuleSpec {
     }
 }
 
+/// The columns a rule asks to carry, each one the metric answers and none
+/// twice. A column the condition reads too is fine: the witness keeps it
+/// once.
+fn parse_context_columns(
+    named: &[String],
+    columns: &[(String, ColumnKind)],
+) -> Result<Vec<String>, RuleError> {
+    if named.len() > MAX_CONTEXT_COLUMNS {
+        return Err(RuleError::ContextColumns(ContextColumnsProblem::TooMany));
+    }
+
+    let mut kept: Vec<String> = Vec::with_capacity(named.len());
+    for name in named {
+        if !is_column_name(name) {
+            return Err(RuleError::ContextColumns(ContextColumnsProblem::Name));
+        }
+        if kept.iter().any(|seen| seen == name) {
+            return Err(RuleError::ContextColumns(ContextColumnsProblem::Duplicate(
+                name.clone(),
+            )));
+        }
+        if !columns.iter().any(|(column, _)| column == name) {
+            return Err(RuleError::ContextColumns(
+                ContextColumnsProblem::NoSuchColumn(name.clone()),
+            ));
+        }
+        kept.push(name.clone());
+    }
+
+    Ok(kept)
+}
+
+fn is_column_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().count() <= MAX_COLUMN_CHARS
+        && name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub(crate) enum ContextColumnsProblem {
+    #[error("holds at most {MAX_CONTEXT_COLUMNS} columns")]
+    TooMany,
+    #[error("must each be the name of a result column: letters, digits or underscore")]
+    Name,
+    #[error("names `{0}` twice")]
+    Duplicate(String),
+    #[error("the metric answers no column `{0}`")]
+    NoSuchColumn(String),
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub(crate) enum RuleError {
     #[error("name must be 1 to {MAX_NAME_CHARS} characters")]
@@ -194,6 +257,8 @@ pub(crate) enum RuleError {
     Metric,
     #[error("{}: {}", .0.field(), .0.problem)]
     Condition(#[from] ConditionError),
+    #[error("context_columns: {0}")]
+    ContextColumns(ContextColumnsProblem),
     #[error("range: {0}")]
     Range(WindowError),
     #[error("interval_secs must be {min} to {max}")]
@@ -278,6 +343,9 @@ pub(crate) struct Notification {
     pub(crate) rule_name: AlertName,
     pub(crate) metric: DefinitionName,
     pub(crate) condition: Condition,
+    /// The columns the rule asked to carry when this was owed, so the message
+    /// can tell them from the ones the condition read.
+    pub(crate) context_columns: Vec<String>,
     /// The rows the check saw that owed this.
     pub(crate) witness: Witness,
     pub(crate) evaluated_at: DateTime<Utc>,

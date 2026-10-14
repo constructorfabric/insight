@@ -292,6 +292,7 @@ mod tests {
             metric: DefinitionName::parse("prs-open").unwrap_or_else(|error| panic!("{error}")),
             condition: Condition::parse(condition, &columns)
                 .unwrap_or_else(|error| panic!("{error}")),
+            context_columns: Vec::new(),
             witness,
             evaluated_at: Utc
                 .with_ymd_and_hms(2026, 9, 29, 8, 15, 0)

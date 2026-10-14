@@ -33,7 +33,7 @@ const CREATE_ATTEMPTS: usize = 3;
 /// rule, which an empty table makes certain, and both went to insert.
 const DEADLOCK_SQLSTATE: &str = "40001";
 
-const RULE_COLUMNS: &str = "id, name, metric, rule_condition, range_code, interval_secs, destination, enabled, revision, last_evaluated_at, last_outcome, last_reason, last_witness, last_valid_breached, breached_since, created_by, created_at, updated_at";
+const RULE_COLUMNS: &str = "id, name, metric, rule_condition, context_columns, range_code, interval_secs, destination, enabled, revision, last_evaluated_at, last_outcome, last_reason, last_witness, last_valid_breached, breached_since, created_by, created_at, updated_at";
 
 const SELECT_BY_ID: &str = "SELECT {columns} FROM alert_rules WHERE id = ?";
 /// The same read, holding the row, so two writers of one rule take turns.
@@ -49,10 +49,10 @@ const COUNT_MATCHES: &str =
 const COUNT_ALL_HELD: &str = "SELECT COUNT(*) AS total FROM alert_rules FOR UPDATE";
 const NOW: &str = "SELECT UTC_TIMESTAMP(6) AS now";
 
-const INSERT_RULE: &str = "INSERT INTO alert_rules (id, name, metric, rule_condition, range_code, interval_secs, destination, enabled, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)";
+const INSERT_RULE: &str = "INSERT INTO alert_rules (id, name, metric, rule_condition, context_columns, range_code, interval_secs, destination, enabled, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)";
 /// A configuration write replaces the spec, bumps the revision and forgets
 /// every check made under the old one.
-const REPLACE_RULE: &str = "UPDATE alert_rules SET name = ?, metric = ?, rule_condition = ?, range_code = ?, interval_secs = ?, destination = ?, enabled = ?, revision = revision + 1, last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_witness = NULL, last_valid_breached = NULL, breached_since = NULL, updated_at = ? WHERE id = ? AND revision = ?";
+const REPLACE_RULE: &str = "UPDATE alert_rules SET name = ?, metric = ?, rule_condition = ?, context_columns = ?, range_code = ?, interval_secs = ?, destination = ?, enabled = ?, revision = revision + 1, last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_witness = NULL, last_valid_breached = NULL, breached_since = NULL, updated_at = ? WHERE id = ? AND revision = ?";
 const SET_ENABLED: &str = "UPDATE alert_rules SET enabled = ?, revision = revision + 1, last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_witness = NULL, last_valid_breached = NULL, breached_since = NULL, updated_at = ? WHERE id = ? AND revision = ?";
 const DELETE_RULE: &str = "DELETE FROM alert_rules WHERE id = ?";
 const DELETE_NOTIFICATIONS: &str = "DELETE FROM alert_notifications WHERE rule_id = ?";
@@ -61,11 +61,11 @@ const CANCEL_PENDING: &str =
 
 /// A check lands only on the revision it was scheduled for.
 const RECORD_CHECK: &str = "UPDATE alert_rules SET last_evaluated_at = ?, last_outcome = ?, last_reason = ?, last_witness = ?, last_valid_breached = ?, breached_since = ? WHERE id = ? AND revision = ? AND enabled = 1";
-const INSERT_NOTIFICATION: &str = "INSERT INTO alert_notifications (id, rule_id, rule_revision, rule_name, metric, rule_condition, witness, evaluated_at, destination, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)";
+const INSERT_NOTIFICATION: &str = "INSERT INTO alert_notifications (id, rule_id, rule_revision, rule_name, metric, rule_condition, context_columns, witness, evaluated_at, destination, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)";
 /// Notifications past the kept count go, oldest first; one still owed stays.
 const TRIM_NOTIFICATIONS: &str = "DELETE FROM alert_notifications WHERE rule_id = ? AND status <> ? AND id NOT IN (SELECT id FROM (SELECT id FROM alert_notifications WHERE rule_id = ? ORDER BY created_at DESC, id DESC LIMIT ?) AS kept)";
 
-const NOTIFICATION_COLUMNS: &str = "id, rule_id, rule_revision, rule_name, metric, rule_condition, witness, evaluated_at, destination, status, attempts, last_error, provider_receipt, created_at";
+const NOTIFICATION_COLUMNS: &str = "id, rule_id, rule_revision, rule_name, metric, rule_condition, context_columns, witness, evaluated_at, destination, status, attempts, last_error, provider_receipt, created_at";
 const SELECT_NOTIFICATION: &str = "SELECT {columns} FROM alert_notifications WHERE id = ?";
 const SELECT_NOTIFICATION_HELD: &str =
     "SELECT {columns} FROM alert_notifications WHERE id = ? FOR UPDATE";
@@ -229,6 +229,7 @@ impl MariaAlerts {
                     spec.name.as_str().into(),
                     spec.metric.as_str().into(),
                     spec.condition.to_stored().into(),
+                    context_columns_stored(&spec.context_columns).into(),
                     spec.range.clone().into(),
                     spec.interval_secs.into(),
                     spec.destination.as_str().into(),
@@ -268,6 +269,7 @@ impl MariaAlerts {
                     spec.name.as_str().into(),
                     spec.metric.as_str().into(),
                     spec.condition.to_stored().into(),
+                    context_columns_stored(&spec.context_columns).into(),
                     spec.range.clone().into(),
                     spec.interval_secs.into(),
                     spec.destination.as_str().into(),
@@ -304,6 +306,7 @@ impl MariaAlerts {
             rule_name: current.spec.name.clone(),
             metric: current.spec.metric.clone(),
             condition: current.spec.condition.clone(),
+            context_columns: current.spec.context_columns.clone(),
             witness: witness.clone(),
             evaluated_at,
             destination: current.spec.destination.clone(),
@@ -323,6 +326,7 @@ impl MariaAlerts {
                     notification.rule_name.as_str().into(),
                     notification.metric.as_str().into(),
                     notification.condition.to_stored().into(),
+                    context_columns_stored(&notification.context_columns).into(),
                     notification.witness.to_json().to_string().into(),
                     stamp(notification.evaluated_at),
                     notification.destination.as_str().into(),
@@ -694,6 +698,7 @@ struct RuleRow {
     name: String,
     metric: String,
     rule_condition: String,
+    context_columns: Option<String>,
     range_code: Option<String>,
     interval_secs: u32,
     destination: String,
@@ -723,6 +728,20 @@ fn parse_id(value: &str) -> Result<Uuid, AlertStoreError> {
 
 fn parse_condition(stored: &str) -> Result<Condition, AlertStoreError> {
     Condition::from_stored(stored).ok_or_else(|| unreadable(stored))
+}
+
+/// The columns as the row keeps them: a JSON list of names. A row written
+/// before rules carried any holds null, which is none.
+fn context_columns_stored(columns: &[String]) -> String {
+    serde_json::Value::from(columns.to_vec()).to_string()
+}
+
+fn parse_context_columns(stored: Option<&str>) -> Result<Vec<String>, AlertStoreError> {
+    let Some(stored) = stored else {
+        return Ok(Vec::new());
+    };
+
+    serde_json::from_str(stored).map_err(|_| unreadable(stored))
 }
 
 fn parse_witness(stored: &str) -> Result<Witness, AlertStoreError> {
@@ -761,6 +780,7 @@ impl RuleRow {
                 metric: DefinitionName::parse(&self.metric)
                     .map_err(|_| unreadable(&self.metric))?,
                 condition,
+                context_columns: parse_context_columns(self.context_columns.as_deref())?,
                 range: self.range_code,
                 interval_secs: self.interval_secs,
                 destination: self.destination,
@@ -788,6 +808,7 @@ struct NotificationRow {
     rule_name: String,
     metric: String,
     rule_condition: String,
+    context_columns: Option<String>,
     witness: String,
     evaluated_at: NaiveDateTime,
     destination: String,
@@ -807,6 +828,7 @@ impl NotificationRow {
             rule_name: AlertName::from_row(self.rule_name),
             metric: DefinitionName::parse(&self.metric).map_err(|_| unreadable(&self.metric))?,
             condition: parse_condition(&self.rule_condition)?,
+            context_columns: parse_context_columns(self.context_columns.as_deref())?,
             witness: parse_witness(&self.witness)?,
             evaluated_at: self.evaluated_at.and_utc(),
             destination: self.destination,

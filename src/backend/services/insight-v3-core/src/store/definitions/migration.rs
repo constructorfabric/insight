@@ -38,6 +38,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260928_000005_pins::Migration),
             Box::new(m20260928_000006_alerts::Migration),
             Box::new(m20261014_000007_alert_conditions::Migration),
+            Box::new(m20261015_000008_alert_context_columns::Migration),
         ]
     }
 }
@@ -334,6 +335,31 @@ mod m20260928_000006_alerts {
 
 mod m20261014_000007_alert_conditions;
 
+mod m20261015_000008_alert_context_columns {
+    use super::{DbErr, MigrationName, MigrationTrait, SchemaManager, apply_sql};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &'static str {
+            "m20261015_000008_alert_context_columns"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            apply_sql(manager, include_str!("sql/008_alert_context_columns.sql")).await
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Err(DbErr::Custom(
+                "dropping the context columns would lose what every rule asked to show".to_owned(),
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -380,6 +406,7 @@ mod tests {
                 "m20260928_000005_pins",
                 "m20260928_000006_alerts",
                 "m20261014_000007_alert_conditions",
+                "m20261015_000008_alert_context_columns",
             ],
             "a migration's name is the ledger's key, so it is written down here"
         );
@@ -401,6 +428,11 @@ mod tests {
             ("004_tags.sql", include_str!("sql/004_tags.sql"), 4),
             ("005_pins.sql", include_str!("sql/005_pins.sql"), 3),
             ("006_alerts.sql", include_str!("sql/006_alerts.sql"), 2),
+            (
+                "008_alert_context_columns.sql",
+                include_str!("sql/008_alert_context_columns.sql"),
+                2,
+            ),
         ];
 
         for (named, script, expected) in scripts {
@@ -414,6 +446,7 @@ mod tests {
             for statement in &statements {
                 let whole = if statement.starts_with("ALTER TABLE") {
                     statement.ends_with("ON DELETE SET NULL")
+                        || statement.ends_with("AFTER rule_condition")
                 } else if statement.starts_with("INSERT IGNORE INTO") {
                     statement.ends_with(')')
                 } else {

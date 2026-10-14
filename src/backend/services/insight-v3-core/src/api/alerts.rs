@@ -619,6 +619,7 @@ fn rule_error(error: &RuleError) -> CanonicalError {
         }
         RuleError::Name => "name",
         RuleError::Metric => "metric",
+        RuleError::ContextColumns(_) => "context_columns",
         RuleError::Range(_) => "range",
         RuleError::Interval { .. } => "interval_secs",
         RuleError::Destination(_) => "destination",

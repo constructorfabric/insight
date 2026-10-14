@@ -217,6 +217,7 @@ fn spec(threshold: i64) -> RuleSpec {
         name: AlertName::parse("Too many open PRs").unwrap_or_else(|error| panic!("{error}")),
         metric: DefinitionName::parse("prs-open").unwrap_or_else(|error| panic!("{error}")),
         condition: Condition::one_above("total", threshold),
+        context_columns: vec!["assignee".to_owned()],
         range: None,
         interval_secs: 300,
         destination: "ops".to_owned(),

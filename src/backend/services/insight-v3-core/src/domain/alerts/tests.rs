@@ -395,6 +395,64 @@ fn a_draft_is_checked_against_the_bounds_before_it_is_a_rule() {
 }
 
 #[test]
+fn context_columns_name_up_to_five_columns_the_metric_answers() {
+    use super::rule::ContextColumnsProblem;
+
+    let limits = Limits::default();
+    let columns = vec![
+        ("total".to_owned(), ColumnKind::Number),
+        ("assignee".to_owned(), ColumnKind::Text),
+        ("task_id".to_owned(), ColumnKind::Number),
+    ];
+    let refused = [
+        (
+            "six columns",
+            json!([
+                "total", "assignee", "task_id", "total", "assignee", "task_id"
+            ]),
+            ContextColumnsProblem::TooMany,
+        ),
+        (
+            "a name that is not a column name",
+            json!(["to-tal"]),
+            ContextColumnsProblem::Name,
+        ),
+        (
+            "a column named twice",
+            json!(["assignee", "task_id", "assignee"]),
+            ContextColumnsProblem::Duplicate("assignee".to_owned()),
+        ),
+        (
+            "a column the metric does not answer",
+            json!(["assignee", "nobody"]),
+            ContextColumnsProblem::NoSuchColumn("nobody".to_owned()),
+        ),
+    ];
+
+    for (case, context_columns, problem) in refused {
+        let draft = draft(|body| body["context_columns"] = context_columns);
+        assert_eq!(
+            RuleSpec::parse(&draft, limits, &destinations(), &columns).err(),
+            Some(RuleError::ContextColumns(problem)),
+            "should refuse: {case}"
+        );
+    }
+
+    let named = draft(|body| body["context_columns"] = json!(["task_id", "assignee", "total"]));
+    let spec = RuleSpec::parse(&named, limits, &destinations(), &columns)
+        .unwrap_or_else(|error| panic!("named columns are a rule: {error}"));
+    assert_eq!(
+        spec.context_columns,
+        ["task_id", "assignee", "total"],
+        "in the order written, a condition column among them"
+    );
+
+    let unnamed = RuleSpec::parse(&draft(|_| {}), limits, &destinations(), &columns)
+        .unwrap_or_else(|error| panic!("a draft without them is a rule: {error}"));
+    assert!(unnamed.context_columns.is_empty());
+}
+
+#[test]
 fn a_range_is_read_as_a_run_would_read_it() {
     let limits = Limits::default();
 

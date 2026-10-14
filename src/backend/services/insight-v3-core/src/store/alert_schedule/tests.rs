@@ -209,6 +209,7 @@ mod worker {
                         name: AlertName::parse("Worker probe")?,
                         metric: DefinitionName::parse("prs-open")?,
                         condition: Condition::one_above("total", 10),
+                        context_columns: Vec::new(),
                         range: None,
                         interval_secs: 3600,
                         destination: "ops".to_owned(),
@@ -361,6 +362,7 @@ mod delivery {
                         metric: DefinitionName::parse("prs-open")
                             .unwrap_or_else(|error| panic!("{error}")),
                         condition: Condition::one_above("total", 10),
+                        context_columns: Vec::new(),
                         range: None,
                         interval_secs: 3600,
                         destination: "ops".to_owned(),
