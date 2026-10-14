@@ -926,6 +926,42 @@ mod tests {
         request
     }
 
+    /// How many identity-map joins the SQL opens, and how many of those match
+    /// on the evidence row's own tenant first.
+    fn tenant_scoped_identity_joins(sql: &str, map: &str) -> (usize, usize) {
+        let sql = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+        let opened = sql.matches(&format!("AS {map} ON")).count();
+        let scoped = sql
+            .matches(&format!(
+                "AS {map} ON {map}.tenant_id = toString(evidence.tenant_id)"
+            ))
+            .count();
+        (opened, scoped)
+    }
+
+    #[test]
+    fn an_evidence_row_resolves_only_through_its_own_tenants_identity_maps() {
+        for (case, plan) in [
+            ("roster", roster_plan(&[TEST_PERSON])),
+            (
+                "ratio",
+                ratio_plan(AliasCollapse::Max, RatioDenominatorAggregation::Sum),
+            ),
+        ] {
+            let (sql, _) =
+                compile_query(&plan).unwrap_or_else(|error| panic!("{case} must compile: {error}"));
+
+            for map in ["account_map", "person_map"] {
+                let (opened, scoped) = tenant_scoped_identity_joins(&sql, map);
+                assert!(opened > 0, "should join {map}: {case}");
+                assert_eq!(
+                    opened, scoped,
+                    "every {map} join should match on the evidence tenant: {case}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_roster_resolves_who_through_identity_narrowed_to_that_roster() {
         let (sql, params) = compile_query(&roster_plan(&[TEST_PERSON]))

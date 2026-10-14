@@ -3814,6 +3814,30 @@ mod tests {
     }
 
     #[test]
+    fn an_observation_resolves_only_through_its_own_tenants_identity_maps() {
+        let query = compile_period_batch_query(&[&sum_metric()], &request(), &[]);
+        let sql = query.sql.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        for map in ["account_map", "person_map"] {
+            let opened = sql.matches(&format!("AS {map} ON")).count();
+            let scoped = sql
+                .matches(&format!(
+                    "AS {map} ON {map}.tenant_id = toString(obs.tenant_id)"
+                ))
+                .count();
+            assert!(opened > 0, "should join {map}");
+            assert_eq!(
+                opened, scoped,
+                "every {map} join should match on the observation tenant"
+            );
+        }
+        assert!(
+            sql.contains("(toString(obs.tenant_id), obs.entity_id) IN (SELECT tenant_id, email FROM identity.person_map"),
+            "the prune should keep only addresses the observation's own tenant maps"
+        );
+    }
+
+    #[test]
     fn a_person_read_resolves_through_the_live_map_and_groups_by_the_person() {
         let query = compile_period_batch_query(&[&sum_metric()], &request(), &[]);
 

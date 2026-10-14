@@ -390,12 +390,27 @@ mod tests {
     }
 
     #[test]
+    fn metric_reads_are_scoped_to_the_session_tenant_unless_an_install_opts_out()
+    -> anyhow::Result<()> {
+        let omitted: GearConfig = serde_json::from_value(serde_json::json!({}))?;
+        assert!(omitted.metric_catalog.enforce_tenant_scope);
+
+        let partial: GearConfig = serde_json::from_value(serde_json::json!({
+            "metric_catalog": { "tenant_metrics_enabled": true }
+        }))?;
+        assert!(partial.metric_catalog.enforce_tenant_scope);
+
+        let opted_out: GearConfig = serde_json::from_value(serde_json::json!({
+            "metric_catalog": { "enforce_tenant_scope": false }
+        }))?;
+        assert!(!opted_out.metric_catalog.enforce_tenant_scope);
+        Ok(())
+    }
+
+    #[test]
     fn metric_validation_repeats_unless_disabled() -> anyhow::Result<()> {
         let omitted: GearConfig = serde_json::from_value(serde_json::json!({
-            "metric_catalog": {
-                "tenant_metrics_enabled": false,
-                "enforce_tenant_scope": false
-            }
+            "metric_catalog": { "tenant_metrics_enabled": false }
         }))?;
         assert!(omitted.metric_catalog.periodic_validation_enabled);
 
