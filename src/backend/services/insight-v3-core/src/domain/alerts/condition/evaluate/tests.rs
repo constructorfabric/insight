@@ -146,7 +146,7 @@ fn each_quantifier_decides_over_zero_one_and_many_rows() {
     ];
 
     for (case, written, result, expected) in cases {
-        let outcome = evaluate(result, &condition(&written), &[], None, checked_at());
+        let outcome = evaluate(result, &condition(&written), &[], &[], None, checked_at());
         assert_eq!(decided(&outcome), expected, "should decide: {case}");
     }
 }
@@ -193,7 +193,14 @@ fn an_unknown_cell_decides_only_what_it_cannot_change() {
 
     for (case, test, expected) in cases {
         let written = json!({ "rows": "one", "where": test });
-        let outcome = evaluate(&null_open, &condition(&written), &[], None, checked_at());
+        let outcome = evaluate(
+            &null_open,
+            &condition(&written),
+            &[],
+            &[],
+            None,
+            checked_at(),
+        );
         assert_eq!(decided(&outcome), expected, "{case}");
     }
 }
@@ -234,7 +241,7 @@ fn an_unknown_row_never_reads_as_a_clear_across_rows() {
 
     for (case, quantifier, result, expected) in cases {
         let written = json!({ "rows": quantifier, "where": open_above_10 });
-        let outcome = evaluate(result, &condition(&written), &[], None, checked_at());
+        let outcome = evaluate(result, &condition(&written), &[], &[], None, checked_at());
         assert_eq!(decided(&outcome), expected, "{case}");
     }
 
@@ -260,6 +267,7 @@ fn an_unknown_row_never_reads_as_a_clear_across_rows() {
         let outcome = evaluate(
             &unknown_and_passing,
             &condition(&written),
+            &[],
             &[],
             None,
             checked_at(),
@@ -287,7 +295,7 @@ fn a_cell_of_the_wrong_kind_is_unknown_with_its_reason() {
     for (case, test, cell, reason) in cases {
         let result = rows(&[row("core", cell)]);
         let written = json!({ "rows": "one", "where": test });
-        let outcome = evaluate(&result, &condition(&written), &[], None, checked_at());
+        let outcome = evaluate(&result, &condition(&written), &[], &[], None, checked_at());
         assert_eq!(decided(&outcome), Err(reason), "{case}");
     }
 
@@ -297,6 +305,7 @@ fn a_cell_of_the_wrong_kind_is_unknown_with_its_reason() {
         decided(&evaluate(
             &text_on_number,
             &condition(&written),
+            &[],
             &[],
             None,
             checked_at()
@@ -310,6 +319,7 @@ fn a_cell_of_the_wrong_kind_is_unknown_with_its_reason() {
         decided(&evaluate(
             &not_a_date,
             &condition(&written),
+            &[],
             &[],
             None,
             checked_at()
@@ -371,7 +381,7 @@ fn text_compares_exactly_and_a_boolean_reads_as_its_word() {
 
     for (test, expected) in cases {
         let written = json!({ "rows": "one", "where": test });
-        let outcome = evaluate(&result, &condition(&written), &[], None, checked_at());
+        let outcome = evaluate(&result, &condition(&written), &[], &[], None, checked_at());
         assert_eq!(decided(&outcome), Ok(expected), "for {test}");
     }
 }
@@ -430,7 +440,7 @@ fn a_date_is_read_in_the_warehouse_forms_and_an_age_is_measured_from_the_check()
     ];
 
     for (case, result, written, expected) in cases {
-        let outcome = evaluate(&result, &condition(&written), &[], None, checked_at());
+        let outcome = evaluate(&result, &condition(&written), &[], &[], None, checked_at());
         assert_eq!(decided(&outcome), Ok(expected), "{case}");
     }
 }
@@ -441,7 +451,7 @@ fn a_number_between_includes_both_ends() {
         json!({ "rows": "one", "where": { "column": "open", "op": "between", "value": [5, 10] } });
     for (open, expected) in [(4, false), (5, true), (10, true), (11, false)] {
         let result = rows(&[row("core", json!(open))]);
-        let outcome = evaluate(&result, &condition(&written), &[], None, checked_at());
+        let outcome = evaluate(&result, &condition(&written), &[], &[], None, checked_at());
         assert_eq!(decided(&outcome), Ok(expected), "for {open}");
     }
 }
@@ -460,6 +470,7 @@ fn the_witness_shows_the_group_and_condition_columns_of_at_most_five_passing_row
         &result,
         &condition(&written),
         &["team".to_owned()],
+        &[],
         None,
         checked_at(),
     );
@@ -483,12 +494,38 @@ fn the_witness_shows_the_group_and_condition_columns_of_at_most_five_passing_row
 }
 
 #[test]
+fn the_witness_keeps_the_context_columns_after_the_condition_s_each_once() {
+    let result = rows(&[row("core", json!(12)), row("infra", json!(3))]);
+    let written = json!({ "rows": "any", "where": { "column": "open", "op": ">", "value": 10 } });
+    let context = ["done", "team", "open", "gone"].map(str::to_owned);
+
+    let outcome = evaluate(
+        &result,
+        &condition(&written),
+        &["team".to_owned()],
+        &context,
+        None,
+        checked_at(),
+    );
+
+    let Outcome::Valid { witness, .. } = outcome else {
+        panic!("should be judged: {outcome:?}");
+    };
+    assert_eq!(
+        witness.columns,
+        ["team", "open", "done"],
+        "group, then condition, then context, each once; a column the run lacks is left out"
+    );
+    assert_eq!(witness.rows, [vec![json!("core"), json!(12), json!(false)]]);
+}
+
+#[test]
 fn a_one_row_witness_keeps_its_row_whatever_the_test_found() {
     let result = rows(&[row("core", json!(3))]);
     let written = json!({ "rows": "one", "where": { "column": "open", "op": ">", "value": 10 } });
 
     assert_eq!(
-        evaluate(&result, &condition(&written), &[], None, checked_at()),
+        evaluate(&result, &condition(&written), &[], &[], None, checked_at()),
         Outcome::Valid {
             breached: false,
             witness: Witness::one_value("open", json!(3), false),
@@ -503,7 +540,7 @@ fn a_long_text_cell_is_cut_in_the_witness() {
     let written =
         json!({ "rows": "any", "where": { "column": "team", "op": "starts_with", "value": "x" } });
 
-    let outcome = evaluate(&result, &condition(&written), &[], None, checked_at());
+    let outcome = evaluate(&result, &condition(&written), &[], &[], None, checked_at());
 
     let Some(witness) = outcome.witness() else {
         panic!("should be valid: {outcome:?}");
@@ -523,7 +560,7 @@ fn a_column_the_result_lacks_is_unknown_even_over_no_rows() {
     let written = json!({ "rows": "any", "where": { "column": "open", "op": ">", "value": 10 } });
 
     assert_eq!(
-        evaluate(&result, &condition(&written), &[], None, checked_at()),
+        evaluate(&result, &condition(&written), &[], &[], None, checked_at()),
         Outcome::Unknown(UnknownReason::ColumnMissing)
     );
 }
@@ -573,13 +610,21 @@ fn a_run_cut_at_the_row_bound_decides_only_what_the_missing_rows_cannot_change()
     ];
 
     for (case, written, result, expected) in cases {
-        let outcome = evaluate(result, &condition(&written), &[], Some(2), checked_at());
+        let outcome = evaluate(
+            result,
+            &condition(&written),
+            &[],
+            &[],
+            Some(2),
+            checked_at(),
+        );
         assert_eq!(decided(&outcome), expected, "should decide: {case}");
     }
 
     let short_of_the_bound = evaluate(
         &failing,
         &condition(&with_rows("any")),
+        &[],
         &[],
         Some(3),
         checked_at(),
@@ -605,6 +650,7 @@ fn a_witness_keeps_wide_integers_as_digits_and_lists_as_cut_text() {
         &result,
         &condition(&written),
         &["team".to_owned()],
+        &[],
         None,
         checked_at(),
     );

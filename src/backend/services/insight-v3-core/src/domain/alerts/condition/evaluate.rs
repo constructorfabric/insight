@@ -46,14 +46,16 @@ impl Positions<'_> {
 
 /// The outcome of a condition over a run's rows, checked at `evaluated_at`.
 ///
-/// `groups` are the metric's `group_by` columns, shown in the witness beside
-/// the columns the condition reads. `imposed_limit` is where the run stops
-/// without the metric having asked to: a run that reached it may have left
-/// rows out, and each of those counts as unknown.
+/// `groups` are the metric's `group_by` columns and `context` the columns
+/// the rule asks to carry, both shown in the witness beside the columns the
+/// condition reads. `imposed_limit` is where the run stops without the
+/// metric having asked to: a run that reached it may have left rows out, and
+/// each of those counts as unknown.
 pub(crate) fn evaluate(
     result: &RunResult,
     condition: &Condition,
     groups: &[String],
+    context: &[String],
     imposed_limit: Option<usize>,
     evaluated_at: DateTime<Utc>,
 ) -> Outcome {
@@ -85,7 +87,7 @@ pub(crate) fn evaluate(
             verdicts[index] == Verdict::True
         }
     };
-    let witness = witness(result, condition, groups, &verdicts, shown);
+    let witness = witness(result, condition, groups, context, &verdicts, shown);
 
     Outcome::Valid { breached, witness }
 }
@@ -301,11 +303,16 @@ fn witness(
     result: &RunResult,
     condition: &Condition,
     groups: &[String],
+    context: &[String],
     verdicts: &[Verdict],
     shown: impl Fn(usize) -> bool,
 ) -> Witness {
     let mut columns: Vec<String> = Vec::new();
-    let wanted = groups.iter().map(String::as_str).chain(condition.columns());
+    let wanted = groups
+        .iter()
+        .map(String::as_str)
+        .chain(condition.columns())
+        .chain(context.iter().map(String::as_str));
     let mut positions = Vec::new();
     for name in wanted {
         if columns.iter().any(|kept| kept == name) {

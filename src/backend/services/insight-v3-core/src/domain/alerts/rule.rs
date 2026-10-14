@@ -200,7 +200,7 @@ impl RuleSpec {
 /// The columns a rule asks to carry, each one the metric answers and none
 /// twice. A column the condition reads too is fine: the witness keeps it
 /// once.
-fn parse_context_columns(
+pub(crate) fn parse_context_columns(
     named: &[String],
     columns: &[(String, ColumnKind)],
 ) -> Result<Vec<String>, RuleError> {

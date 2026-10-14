@@ -103,6 +103,7 @@ impl<'a> Evaluator<'a> {
             &rule.spec.metric,
             &window,
             &rule.spec.condition,
+            &rule.spec.context_columns,
             evaluated_at,
         )
         .await
@@ -112,13 +113,15 @@ impl<'a> Evaluator<'a> {
 /// What a check of `metric` over `window` finds now: the run judged by the
 /// condition, or the unknown a run that did not answer is. The groups and
 /// the row bound come from the same definition the rows did. `label` names
-/// the rule, or what asked, in the log.
+/// the rule, or what asked, in the log; `context` the columns the witness
+/// keeps beside the condition's.
 pub(crate) async fn observe(
     runs: &MetricRuns<'_>,
     label: &str,
     metric: &DefinitionName,
     window: &WindowRequest,
     condition: &Condition,
+    context: &[String],
     evaluated_at: DateTime<Utc>,
 ) -> Outcome {
     match runs.run_with_columns(metric, window).await {
@@ -126,6 +129,7 @@ pub(crate) async fn observe(
             &result,
             condition,
             &columns.groups,
+            context,
             columns.imposed_limit,
             evaluated_at,
         ),

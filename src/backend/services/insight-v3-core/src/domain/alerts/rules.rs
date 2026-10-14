@@ -12,7 +12,7 @@ use super::condition::{Condition, ConditionShape};
 use super::evaluation::observe;
 use super::rule::{
     AlertPage, AlertRule, AlertStore, AlertStoreError, Destinations, Limits, Notification,
-    RuleDraft, RuleError, RuleSpec, Write,
+    RuleDraft, RuleError, RuleSpec, Write, parse_context_columns,
 };
 use super::scalar::Outcome;
 use super::schedule::{AlertSchedule, Scheduled};
@@ -36,6 +36,9 @@ pub(crate) struct PreviewDraft {
     #[schemars(with = "ConditionShape")]
     #[schema(value_type = ConditionShape)]
     pub(crate) condition: serde_json::Value,
+    /// Result columns to show beside the condition's, as a rule names them.
+    #[serde(default)]
+    pub(crate) context_columns: Vec<String>,
 }
 
 impl toolkit::api::api_dto::RequestApiDto for PreviewDraft {}
@@ -142,6 +145,7 @@ impl<'a> AlertRules<'a> {
         let columns = self.columns_of(&metric).await?;
         let condition =
             Condition::parse(&draft.condition, &columns.kinds).map_err(RuleError::from)?;
+        let context = parse_context_columns(&draft.context_columns, &columns.kinds)?;
         let window =
             WindowRequest::parse(draft.range.as_deref(), Some(false)).map_err(RuleError::Range)?;
 
@@ -151,6 +155,7 @@ impl<'a> AlertRules<'a> {
             &metric,
             &window,
             &condition,
+            &context,
             Utc::now(),
         )
         .await)

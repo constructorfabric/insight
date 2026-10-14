@@ -98,7 +98,7 @@ fn exactly_one_row_and_the_named_column_make_a_valid_check() {
 
     for (case, rows, expected) in cases {
         assert_eq!(
-            evaluate(&rows, &above(&json!(10)), &[], None, now()),
+            evaluate(&rows, &above(&json!(10)), &[], &[], None, now()),
             expected,
             "should classify: {case}"
         );
@@ -110,17 +110,17 @@ fn an_integer_too_wide_for_a_float_is_not_compared_with_one() {
     let wide = result(&["total"], &[&[json!(9_007_199_254_740_993_u64)]]);
 
     assert_eq!(
-        evaluate(&wide, &above(&json!(1.5)), &[], None, now()),
+        evaluate(&wide, &above(&json!(1.5)), &[], &[], None, now()),
         Outcome::Unknown(UnknownReason::Incomparable)
     );
     assert_eq!(
-        evaluate(&wide, &above(&json!(1)), &[], None, now()),
+        evaluate(&wide, &above(&json!(1)), &[], &[], None, now()),
         seen(true, json!("9007199254740993"))
     );
 
     let at_the_bound = result(&["total"], &[&[json!(9_007_199_254_740_992_u64)]]);
     assert_eq!(
-        evaluate(&at_the_bound, &above(&json!(1.5)), &[], None, now()),
+        evaluate(&at_the_bound, &above(&json!(1.5)), &[], &[], None, now()),
         seen(true, json!("9007199254740992")),
         "2^53 itself converts exactly"
     );
@@ -238,7 +238,7 @@ fn every_number_comparison_reads_as_written() {
         let rows = result(&["total"], &[&[json!(value)]]);
 
         assert_eq!(
-            evaluate(&rows, &one_total(op, &json!(10)), &[], None, now()),
+            evaluate(&rows, &one_total(op, &json!(10)), &[], &[], None, now()),
             seen(expected, json!(value)),
             "should decide: {value} {op} 10"
         );
