@@ -560,7 +560,6 @@ SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 
 CREATE TABLE IF NOT EXISTS insight.task_status_spans
 (
-    `tenant_id` Nullable(String),
     `insight_source_id` String,
     `issue_id` String,
     `interval_start` DateTime64(3),
@@ -643,7 +642,6 @@ SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 
 CREATE OR REPLACE VIEW insight.identity_resolution_coverage
 (
-    `tenant_id` String,
     `source_key` String,
     `observation_rows` UInt64,
     `unresolved_rows` UInt64,
@@ -654,7 +652,7 @@ AS WITH
     source_identities AS
     (
         SELECT
-            tenant_id,
+            toString(tenant_id) AS tenant_id,
             source_key,
             entity_id AS email,
             account_source_type,
@@ -663,7 +661,7 @@ AS WITH
         FROM insight.git_metric_evidence
         UNION ALL
         SELECT
-            tenant_id,
+            toString(tenant_id) AS tenant_id,
             source_key,
             entity_id AS email,
             account_source_type,
@@ -672,7 +670,7 @@ AS WITH
         FROM insight.ai_metric_evidence
         UNION ALL
         SELECT
-            tenant_id,
+            toString(tenant_id) AS tenant_id,
             source_key,
             entity_id AS email,
             account_source_type,
@@ -681,7 +679,7 @@ AS WITH
         FROM insight.collab_metric_evidence
         UNION ALL
         SELECT
-            tenant_id,
+            toString(tenant_id) AS tenant_id,
             source_key,
             entity_id AS email,
             account_source_type,
@@ -690,7 +688,7 @@ AS WITH
         FROM insight.task_metric_evidence
         UNION ALL
         SELECT
-            tenant_id,
+            toString(tenant_id) AS tenant_id,
             source_key,
             entity_id AS email,
             account_source_type,
@@ -699,7 +697,7 @@ AS WITH
         FROM insight.wiki_metric_evidence
         UNION ALL
         SELECT
-            tenant_id,
+            toString(tenant_id) AS tenant_id,
             source_key,
             entity_id AS email,
             account_source_type,
@@ -708,7 +706,7 @@ AS WITH
         FROM insight.ai_cost_metric_evidence
         UNION ALL
         SELECT DISTINCT
-            coalesce(tenant_id, '') AS tenant_id,
+            workspace_id AS tenant_id,
             'hr_cohorts' AS source_key,
             lower(trimBoth(assumeNotNull(email))) AS email,
             '' AS account_source_type,
@@ -721,26 +719,22 @@ AS WITH
     resolution AS
     (
         SELECT
-            source_identities.tenant_id AS tenant_id,
             source_identities.source_key AS source_key,
             source_identities.email AS email,
             source_identities.account_id AS account_id,
             (coalesce(account_map.account_id, '') != '') OR (coalesce(person_map.email, '') != '') AS resolved
         FROM source_identities
-        LEFT JOIN identity.account_assignment AS account_map ON (account_map.source_type = source_identities.account_source_type) AND (account_map.source_id = toUUID(UUIDNumToString(sipHash128(coalesce(source_identities.account_source_id, ''))))) AND (account_map.account_id = lower(trimBoth(coalesce(source_identities.account_id, ''))))
-        LEFT JOIN identity.person_map AS person_map ON person_map.email = source_identities.email
+        LEFT JOIN identity.account_assignment AS account_map ON (account_map.tenant_id = source_identities.tenant_id) AND (account_map.source_type = source_identities.account_source_type) AND (account_map.source_id = toUUID(UUIDNumToString(sipHash128(coalesce(source_identities.account_source_id, ''))))) AND (account_map.account_id = lower(trimBoth(coalesce(source_identities.account_id, ''))))
+        LEFT JOIN identity.person_map AS person_map ON (person_map.tenant_id = source_identities.tenant_id) AND (person_map.email = source_identities.email)
     )
 SELECT
-    tenant_id,
     source_key,
     count() AS observation_rows,
     countIf(NOT resolved) AS unresolved_rows,
     uniqExactIf(if(email != '', email, coalesce(account_id, '')), NOT resolved) AS unresolved_people,
     round((100 * countIf(resolved)) / count(), 1) AS match_rate_pct
 FROM resolution
-GROUP BY
-    tenant_id,
-    source_key
+GROUP BY source_key
 ;
 
 CREATE OR REPLACE VIEW insight.metric_entity_cohorts_current
@@ -790,7 +784,7 @@ FROM
                 tenant_id,
                 email
         ) AS people
-        INNER JOIN identity.person_map AS person_map ON person_map.email = people.email
+        INNER JOIN identity.person_map AS person_map ON (person_map.tenant_id = people.tenant_id) AND (person_map.email = people.email)
         WHERE (people.tenant_id IS NOT NULL) AND (people.tenant_id != '') AND (people.email != '') AND (people.cohort_id IS NOT NULL)
     ) AS resolved
     GROUP BY
