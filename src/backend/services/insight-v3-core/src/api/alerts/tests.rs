@@ -23,6 +23,7 @@ type R = Result<(), Box<dyn std::error::Error>>;
 
 struct TestHarness {
     _clickhouse: Mock,
+    state: Arc<AppState>,
     router: Router,
     schedule: Arc<MemorySchedule>,
     store: Arc<MemoryAlerts>,
@@ -136,10 +137,12 @@ impl TestHarness {
                 )])),
             });
         }
-        let router = register_routes(Router::new(), &openapi, &Arc::new(state));
+        let state = Arc::new(state);
+        let router = register_routes(Router::new(), &openapi, &state);
 
         Self {
             _clickhouse: mock,
+            state,
             router,
             schedule,
             store,
@@ -1047,6 +1050,35 @@ async fn a_nested_condition_over_a_grouped_metric_is_stored_and_read_back() -> R
 
     assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
     assert_eq!(created.json()["condition"], condition);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_preview_waiting_past_its_turn_is_refused_as_busy() -> R {
+    let harness = TestHarness::new();
+    let slots = Arc::clone(harness.state.preview_slots());
+    let held = slots
+        .acquire_many_owned(u32::try_from(MAX_CONCURRENT_PREVIEWS)?)
+        .await?;
+
+    let refused = harness
+        .send(
+            "POST",
+            "/v1/alerts/preview",
+            Some(preview(
+                &json!({ "column": "total", "op": ">", "value": 10 }),
+            )),
+        )
+        .await;
+    drop(held);
+
+    assert_eq!(
+        refused.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{:?}",
+        refused.body
+    );
 
     Ok(())
 }

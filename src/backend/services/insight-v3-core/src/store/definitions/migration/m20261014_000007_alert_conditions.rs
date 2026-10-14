@@ -6,8 +6,11 @@
 //! the witness of that one value, before the old columns go.
 //!
 //! INVARIANT: every step is safe to run again. Columns are added and
-//! dropped with `IF [NOT] EXISTS`, only rows without a condition are
-//! rewritten, and the rewrite runs only while the old columns are there.
+//! dropped with `IF [NOT] EXISTS`, the rewrite runs only while the old
+//! columns are there, and it writes the same JSON from the same row. Every
+//! rule is rewritten, so a check or an edit the previous build wrote before
+//! a rerun is taken up; notifications are only ever added, so only those
+//! without a condition are.
 //!
 //! INVARIANT: the JSON written here is spelled out, not built by the
 //! domain types, so a later change to them never changes what this
@@ -38,16 +41,17 @@ const DROP_COLUMNS: [&str; 2] = [
     "ALTER TABLE alert_notifications DROP COLUMN IF EXISTS column_name, DROP COLUMN IF EXISTS operator, DROP COLUMN IF EXISTS threshold, DROP COLUMN IF EXISTS value",
 ];
 
-const SELECT_RULES: &str = "SELECT id, column_name, operator, threshold, last_outcome, last_value FROM alert_rules WHERE rule_condition IS NULL";
+const SELECT_RULES: &str =
+    "SELECT id, column_name, operator, threshold, last_outcome, last_value FROM alert_rules";
 const UPDATE_RULE: &str =
     "UPDATE alert_rules SET rule_condition = ?, last_witness = ? WHERE id = ?";
 const SELECT_NOTIFICATIONS: &str = "SELECT id, column_name, operator, threshold, value FROM alert_notifications WHERE rule_condition IS NULL";
 const UPDATE_NOTIFICATION: &str =
     "UPDATE alert_notifications SET rule_condition = ?, witness = ? WHERE id = ?";
-/// Rows still without a condition: a writer of the previous build may have
-/// added one after the rewrite.
+/// Rows the rewrite has not caught up with: a writer of the previous build
+/// may have added a rule, or recorded a valid check, after it.
 const UNCONVERTED: [&str; 2] = [
-    "SELECT COUNT(*) AS total FROM alert_rules WHERE rule_condition IS NULL",
+    "SELECT COUNT(*) AS total FROM alert_rules WHERE rule_condition IS NULL OR (last_outcome IN ('breach', 'no_breach') AND last_witness IS NULL)",
     "SELECT COUNT(*) AS total FROM alert_notifications WHERE rule_condition IS NULL OR witness IS NULL",
 ];
 
@@ -309,8 +313,9 @@ mod tests {
                 "{statement}"
             );
         }
-        assert!(SELECT_RULES.ends_with("WHERE rule_condition IS NULL"));
+        assert!(!SELECT_RULES.contains("WHERE"), "every rule is rewritten");
         assert!(SELECT_NOTIFICATIONS.ends_with("WHERE rule_condition IS NULL"));
+        assert!(UNCONVERTED[0].contains("last_witness IS NULL"));
         assert!(
             UNCONVERTED
                 .iter()

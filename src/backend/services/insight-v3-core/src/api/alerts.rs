@@ -2,6 +2,7 @@
 //! or off, and the notifications a rule's checks have owed.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query};
@@ -20,6 +21,11 @@ use crate::domain::alerts::rule::{AlertRule, AlertSummary, Notification};
 use crate::domain::alerts::rules::{AlertsError, PreviewDraft};
 use crate::domain::alerts::{Outcome, RuleDraft, RuleError, UnknownReason};
 use crate::domain::definition::{MAX_PAGE_LIMIT, Page};
+
+/// How many previews may run the warehouse at once, and how long one waits
+/// for its turn before it is refused.
+pub(crate) const MAX_CONCURRENT_PREVIEWS: usize = 4;
+const PREVIEW_ACQUIRE_TIMEOUT_SECS: u64 = 2;
 
 #[resource_error("gts.cf.insight.insight_v3_core.alerts.v1~")]
 struct AlertApiError;
@@ -530,6 +536,7 @@ fn preview_route(openapi: &dyn OpenApiRegistry) -> Router {
         )
         .error_400(openapi)
         .error_403(openapi)
+        .error_429(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(preview_alert)
@@ -703,9 +710,39 @@ async fn preview_alert(
 
     let draft: PreviewDraft = serde_json::from_value(body)
         .map_err(|error| AlertApiError::invalid_field("body", error.to_string()))?;
+
+    // INVARIANT: the permit lives until the preview answers; it is what caps
+    // concurrent previews at MAX_CONCURRENT_PREVIEWS.
+    let _permit = preview_slot(&state).await?;
     let outcome = alerts.preview(&draft).await.map_err(alerts_error)?;
 
     Ok(Json(preview_response(&outcome)).into_response())
+}
+
+async fn preview_slot(
+    state: &AppState,
+) -> Result<tokio::sync::OwnedSemaphorePermit, CanonicalError> {
+    let slots = state.preview_slots();
+    let waited = tokio::time::timeout(
+        Duration::from_secs(PREVIEW_ACQUIRE_TIMEOUT_SECS),
+        Arc::clone(slots).acquire_owned(),
+    )
+    .await;
+
+    if let Ok(Ok(permit)) = waited {
+        return Ok(permit);
+    }
+
+    tracing::warn!(
+        capacity = MAX_CONCURRENT_PREVIEWS,
+        "alert preview capacity exhausted"
+    );
+    Err(
+        AlertApiError::resource_exhausted("every preview slot is taken; try again shortly")
+            .with_quota_violation("alert previews", "concurrency limit reached")
+            .with_quota_violation_retry_after_seconds(PREVIEW_ACQUIRE_TIMEOUT_SECS)
+            .create(),
+    )
 }
 
 async fn get_alert(
