@@ -30,8 +30,9 @@ pub(crate) struct Message {
 
 impl Message {
     /// The approved summary: the rule, the condition on which metric, how
-    /// many rows met it, the rows that did, and when. Nothing else the
-    /// metric produced.
+    /// many rows met it, the rows that did with the columns the condition
+    /// reads and the rule asks to carry, and when. Nothing else the metric
+    /// produced.
     ///
     /// INVARIANT: every part stays on its own line, because control
     /// characters in what the warehouse answered become spaces. The rows
@@ -52,8 +53,12 @@ impl Message {
                 Some(line(&matched(witness)))
             }
         };
-        let rows =
-            (!witness.rows.is_empty()).then(|| line(&rows_seen(witness, &condition.columns())));
+        let read: Vec<&str> = condition
+            .columns()
+            .into_iter()
+            .chain(notification.context_columns.iter().map(String::as_str))
+            .collect();
+        let rows = (!witness.rows.is_empty()).then(|| line(&rows_seen(witness, &read)));
         let checked = format!("Checked {}.", stamp(notification.evaluated_at));
         let parts = Parts {
             heading: &heading,
@@ -153,7 +158,8 @@ fn cut(text: &str, chars: usize) -> String {
 }
 
 /// The witness rows on one line: a row's group values, then each column
-/// the condition reads with its value, as `core: open 12 · infra: open 15`.
+/// read - the condition's, then the rule's context columns - with its
+/// value, as `core: open 12 · infra: open 15`.
 fn rows_seen(witness: &Witness, read: &[&str]) -> String {
     let rows: Vec<String> = witness
         .rows
@@ -326,6 +332,32 @@ mod tests {
         assert_eq!(
             message.markdown,
             "Insight alert: Too many open PRs\nprs-open: total above 50\n`total 63`\nChecked 2026-09-29 08:15 UTC."
+        );
+    }
+
+    #[test]
+    fn a_context_column_is_written_as_a_read_column_after_the_condition_s() {
+        let mut owed = notification(
+            &json!({ "rows": "any", "where": { "column": "open", "op": ">", "value": 10 } }),
+            witness(
+                1,
+                3,
+                &["team", "open", "owner", "task_id"],
+                vec![vec![
+                    json!("api"),
+                    json!(12),
+                    json!("Jane Doe"),
+                    json!(4711),
+                ]],
+            ),
+        );
+        owed.context_columns = vec!["owner".to_owned(), "task_id".to_owned()];
+
+        let message = Message::of(&owed);
+
+        assert_eq!(
+            message.markdown.lines().nth(3).unwrap_or_default(),
+            "`api: open 12, owner Jane Doe, task_id 4711`"
         );
     }
 
