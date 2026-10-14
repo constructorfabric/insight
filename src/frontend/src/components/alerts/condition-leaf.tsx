@@ -18,9 +18,7 @@ import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 import { controlId, described } from "./condition-aria";
-
-const CONTROL =
-  "h-9 rounded-md border border-input bg-transparent px-3 text-sm";
+import { FieldSelect } from "./field-select";
 
 interface Option {
   value: string;
@@ -51,34 +49,21 @@ export function Choice({
   className?: string;
   onChange: (value: string) => void;
 }) {
-  const offered = options.some((option) => option.value === value);
+  const offered =
+    value === "" || options.some((option) => option.value === value);
 
   return (
-    <select
+    <FieldSelect
       id={id}
-      aria-label={label}
-      {...described(describedBy)}
+      label={label}
       value={value}
+      options={offered ? options : [{ value, label: value }, ...options]}
+      placeholder={placeholder}
       disabled={disabled}
-      className={cn(CONTROL, "disabled:opacity-50", className)}
-      onChange={(event) => onChange(event.target.value)}
-    >
-      {value === "" && placeholder ? (
-        <option value="" disabled>
-          {placeholder}
-        </option>
-      ) : null}
-      {offered || value === "" ? null : <option value={value}>{value}</option>}
-      {options.map((option) => (
-        <option
-          key={option.value}
-          value={option.value}
-          disabled={option.disabled}
-        >
-          {option.label}
-        </option>
-      ))}
-    </select>
+      describe={described(describedBy)}
+      className={className}
+      onChange={onChange}
+    />
   );
 }
 
@@ -496,7 +481,7 @@ export function LeafEditor({
         <Choice
           id={ids.op}
           label="Operator"
-          value={leaf.op}
+          value={unpicked ? "" : leaf.op}
           options={OPERATORS[kind]}
           describedBy={saidOf("op")}
           disabled={unpicked}

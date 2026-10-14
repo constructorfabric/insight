@@ -246,7 +246,7 @@ export const TestBuilderFitsOnAPhone: Story = {
     const tests = await canvas.findAllByRole("group", { name: /^Condition / });
 
     await expect(tests).toHaveLength(3);
-    await expect(canvas.getByLabelText("Rows")).toHaveValue("any");
+    await expect(canvas.getByLabelText("Rows")).toHaveTextContent("Any row");
     expectHorizontallyContained(
       card,
       [

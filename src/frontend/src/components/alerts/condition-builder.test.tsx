@@ -1,4 +1,10 @@
-import { render, screen, within } from "@testing-library/react";
+import {
+  render,
+  screen,
+  within,
+  type BoundFunctions,
+  type queries,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -57,10 +63,32 @@ function leaf(number: number) {
   return within(screen.getByRole("group", { name: `Condition ${number}` }));
 }
 
-function optionsOf(select: HTMLElement): string[] {
-  return within(select)
-    .getAllByRole("option")
-    .filter((option) => !(option as HTMLOptionElement).disabled)
+type Scope = BoundFunctions<typeof queries>;
+
+/** Opens a kit select by its name and picks one of its options by label. */
+async function pick(scope: Scope, control: string, option: string) {
+  await userEvent.click(scope.getByRole("combobox", { name: control }));
+  await userEvent.click(await screen.findByRole("option", { name: option }));
+}
+
+function isDisabled(option: HTMLElement): boolean {
+  return (
+    option.getAttribute("aria-disabled") === "true" ||
+    option.hasAttribute("data-disabled")
+  );
+}
+
+/** The options a kit select offers, read by opening it and closed again. */
+async function optionsOf(trigger: HTMLElement): Promise<HTMLElement[]> {
+  await userEvent.click(trigger);
+  const options = await screen.findAllByRole("option");
+  await userEvent.keyboard("{Escape}");
+  return options;
+}
+
+function names(options: readonly HTMLElement[]): string[] {
+  return options
+    .filter((option) => !isDisabled(option))
     .map((option) => option.textContent ?? "");
 }
 
@@ -70,16 +98,16 @@ describe("ConditionBuilder", () => {
   it("builds a nested condition with a quantifier through its controls", async () => {
     const latest = setUp(BLANK);
 
-    await userEvent.selectOptions(screen.getByLabelText("Rows"), "any");
-    await userEvent.selectOptions(leaf(1).getByLabelText("Column"), "open");
+    await pick(screen, "Rows", "Any row");
+    await pick(leaf(1), "Column", "open");
     await userEvent.type(leaf(1).getByLabelText("Value"), "10");
     await userEvent.click(screen.getByRole("button", { name: "Add group" }));
     const group = within(screen.getByRole("group", { name: "Group 1" }));
-    await userEvent.selectOptions(group.getByLabelText("Combine"), "any");
-    await userEvent.selectOptions(leaf(2).getByLabelText("Column"), "team");
+    await pick(group, "Combine", "Any of");
+    await pick(leaf(2), "Column", "team");
     await userEvent.type(leaf(2).getByLabelText("Value"), "core");
     await userEvent.click(group.getByRole("button", { name: "Add condition" }));
-    await userEvent.selectOptions(leaf(3).getByLabelText("Column"), "stale");
+    await pick(leaf(3), "Column", "stale");
     await userEvent.type(leaf(3).getByLabelText("Value"), "3");
 
     expect(latest()).toEqual({
@@ -127,11 +155,10 @@ describe("ConditionBuilder", () => {
   ])("offers the operators a %s column takes", async (column, operators) => {
     setUp(BLANK);
 
-    await userEvent.selectOptions(leaf(1).getByLabelText("Column"), column);
+    await pick(leaf(1), "Column", column);
 
-    expect(optionsOf(leaf(1).getByLabelText("Operator")), column).toEqual(
-      operators
-    );
+    const offered = await optionsOf(leaf(1).getByLabelText("Operator"));
+    expect(names(offered), column).toEqual(operators);
   });
 
   it.each([
@@ -160,16 +187,19 @@ describe("ConditionBuilder", () => {
     async (start, column, after) => {
       const latest = setUp({ rows: "one", where: start });
 
-      await userEvent.selectOptions(leaf(1).getByLabelText("Column"), column);
+      await pick(leaf(1), "Column", column);
 
-      expect(latest()).toEqual({ rows: "one", where: after });
+      expect(latest(), `${JSON.stringify(start)} to ${column}`).toEqual({
+        rows: "one",
+        where: after,
+      });
     }
   );
 
   it.each([
     ["between", "open", ["From", "To"]],
-    ["in", "team", ["Values, one per line"]],
-    ["older_than", "opened_at", ["Amount", "Unit"]],
+    ["is one of", "team", ["Values, one per line"]],
+    ["older than", "opened_at", ["Amount", "Unit"]],
     ["after", "opened_at", ["Value"]],
   ])("asks for the value %s takes", async (op, column, labels) => {
     setUp({
@@ -177,7 +207,7 @@ describe("ConditionBuilder", () => {
       where: { column, op: column === "team" ? "==" : "before", value: "" },
     });
 
-    await userEvent.selectOptions(leaf(1).getByLabelText("Operator"), op);
+    await pick(leaf(1), "Operator", op);
 
     for (const label of labels) {
       expect(
@@ -196,10 +226,9 @@ describe("ConditionBuilder", () => {
       where: { column: "opened_at", op: "older_than", value: "P1D" },
     });
 
-    const control = leaf(1).getByLabelText(label);
-    if (control.tagName === "SELECT")
-      await userEvent.selectOptions(control, entry);
+    if (label === "Unit") await pick(leaf(1), label, entry);
     else {
+      const control = leaf(1).getByLabelText(label);
       await userEvent.clear(control);
       await userEvent.type(control, entry);
     }
@@ -249,17 +278,14 @@ describe("ConditionBuilder", () => {
   it("shows a quantifier the rule already holds even for one row", () => {
     setUp({ ...BLANK, rows: "all" }, { manyRows: false });
 
-    expect(screen.getByLabelText("Rows")).toHaveValue("all");
+    expect(screen.getByLabelText("Rows")).toHaveTextContent("Every row");
   });
 
   it("counts matching rows when asked to", async () => {
     const latest = setUp(BLANK);
 
-    await userEvent.selectOptions(screen.getByLabelText("Rows"), "count");
-    await userEvent.selectOptions(
-      screen.getByLabelText("Count comparison"),
-      ">="
-    );
+    await pick(screen, "Rows", "Number of rows");
+    await pick(screen, "Count comparison", "at or above");
     await userEvent.clear(screen.getByLabelText("Count"));
     await userEvent.type(screen.getByLabelText("Count"), "3");
 
@@ -284,7 +310,7 @@ describe("ConditionBuilder", () => {
   it.each([
     [
       "all",
-      "not",
+      "Not",
       {
         all: [
           { column: "open", op: ">", value: 1 },
@@ -302,13 +328,13 @@ describe("ConditionBuilder", () => {
     ],
     [
       "any",
-      "not",
+      "Not",
       { any: [{ column: "open", op: ">", value: 1 }] },
       { not: { column: "open", op: ">", value: 1 } },
     ],
     [
       "not",
-      "any",
+      "Any of",
       { not: { column: "open", op: ">", value: 1 } },
       { any: [{ column: "open", op: ">", value: 1 }] },
     ],
@@ -317,9 +343,12 @@ describe("ConditionBuilder", () => {
     async (_from, to, where, after) => {
       const latest = setUp({ rows: "one", where });
 
-      await userEvent.selectOptions(screen.getByLabelText("Combine"), to);
+      await pick(screen, "Combine", to);
 
-      expect(latest()).toEqual({ rows: "one", where: after });
+      expect(latest(), `${_from} to ${to}`).toEqual({
+        rows: "one",
+        where: after,
+      });
     }
   );
 
@@ -426,22 +455,25 @@ describe("ConditionBuilder", () => {
       },
       true,
     ],
-  ])("offers Not only within the depth bound: %s", (_case, where, refused) => {
-    setUp({ rows: "one", where });
+  ])(
+    "offers Not only within the depth bound: %s",
+    async (_case, where, refused) => {
+      setUp({ rows: "one", where });
 
-    const not = within(screen.getAllByLabelText("Combine")[0]).getByRole(
-      "option",
-      { name: "Not" }
-    );
-    expect((not as HTMLOptionElement).disabled, JSON.stringify(where)).toBe(
-      refused
-    );
-  });
+      const offered = await optionsOf(screen.getAllByLabelText("Combine")[0]);
+      const not = offered.find((option) => option.textContent === "Not");
+      expect(not && isDisabled(not), JSON.stringify(where)).toBe(refused);
+    }
+  );
 
   it("asks for a column before the operator and value", () => {
     setUp(BLANK);
 
-    expect(leaf(1).getByLabelText("Operator")).toBeDisabled();
+    const operator = leaf(1).getByLabelText("Operator");
+    expect(operator).toBeDisabled();
+    expect(operator, "should show no operator yet").not.toHaveTextContent(
+      /[<>=!]|above/
+    );
     expect(leaf(1).getByLabelText("Value")).toBeDisabled();
   });
 
@@ -470,7 +502,7 @@ describe("ConditionBuilder", () => {
         screen.getByRole("group", { name: focused })
       ).getByLabelText("Column");
       expect(target, `${focused} should hold focus`).toHaveFocus();
-      expect(target).toHaveValue(column);
+      expect(target).toHaveTextContent(column);
     }
   );
 

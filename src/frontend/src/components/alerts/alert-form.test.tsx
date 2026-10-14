@@ -138,9 +138,10 @@ function condition(number: number) {
 
 /** Picks a test's column once the metric's columns are offered. */
 async function pickColumn(number: number, column: string) {
-  const select = condition(number).getByLabelText("Column");
-  await within(select).findByRole("option", { name: column });
-  await userEvent.selectOptions(select, column);
+  await userEvent.click(
+    condition(number).getByRole("combobox", { name: "Column" })
+  );
+  await userEvent.click(await screen.findByRole("option", { name: column }));
 }
 
 /** The JSON view's text, read as the document it shows. */
@@ -212,10 +213,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
 
       render(<NewAlertPage />, { wrapper });
       await fillNew();
-      await userEvent.selectOptions(
-        condition(1).getByLabelText("Operator"),
-        "<"
-      );
+      await pick("Operator", "below");
       for (const [label, option] of [
         ["Window", window],
         ["Destination", "dev (zulip)"],
@@ -383,11 +381,14 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     );
     await pickColumn(1, "stand");
 
-    expect(await screen.findByLabelText("Rows")).toHaveValue("one");
+    expect(await screen.findByLabelText("Rows")).toHaveTextContent(
+      "Exactly one row"
+    );
+    await userEvent.click(
+      condition(1).getByRole("combobox", { name: "Operator" })
+    );
     expect(
-      within(condition(1).getByLabelText("Operator")).getByRole("option", {
-        name: "is one of",
-      })
+      await screen.findByRole("option", { name: "is one of" })
     ).toBeInTheDocument();
   });
 
@@ -808,9 +809,11 @@ describe("the JSON view", { timeout: 20_000 }, () => {
     await userEvent.click(screen.getByRole("button", { name: "Editor" }));
 
     const [outer, inner] = screen.getAllByLabelText("Combine");
-    expect(outer).toHaveValue("any");
-    expect(inner).toHaveValue("not");
-    expect(condition(2).getByLabelText("Operator")).toHaveValue("between");
+    expect(outer).toHaveTextContent("Any of");
+    expect(inner).toHaveTextContent("Not");
+    expect(condition(2).getByLabelText("Operator")).toHaveTextContent(
+      "between"
+    );
     expect(condition(2).getByLabelText("From")).toHaveValue("1");
     expect(condition(2).getByLabelText("To")).toHaveValue("5");
   });
@@ -920,7 +923,7 @@ describe("EditAlertPage", () => {
 
     render(<EditAlertPage id="a1" />, { wrapper });
     await userEvent.type(await screen.findByLabelText("Name"), "!");
-    expect(screen.getByLabelText("Rows")).toHaveValue("count");
+    expect(screen.getByLabelText("Rows")).toHaveTextContent("Number of rows");
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() =>
