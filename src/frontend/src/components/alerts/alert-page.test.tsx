@@ -167,6 +167,43 @@ describe("AlertPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("writes a context column as a read column, after the condition's", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
+      ...ALERT,
+      context_columns: ["stale"],
+    });
+    vi.mocked(alertsClient.fetchAlertNotifications).mockResolvedValue(
+      page([
+        {
+          ...NOTIFICATION,
+          condition: {
+            rows: "any",
+            where: { column: "open", op: ">", value: 10 },
+          },
+          context_columns: ["stale"],
+          witness: {
+            matched: 2,
+            answered: 12,
+            columns: ["team", "open", "stale"],
+            rows: [
+              ["core", 12, 4],
+              ["infra", 15, null],
+            ],
+          },
+        },
+      ])
+    );
+
+    render(<AlertPage id="a1" />, { wrapper });
+    const table = within(await screen.findByRole("table"));
+
+    expect(
+      table.getByText("core: open 12, stale 4 · infra: open 15, stale —")
+    ).toBeInTheDocument();
+    expect(screen.getByText("Shown in notification")).toBeInTheDocument();
+    expect(screen.getByText("stale")).toBeInTheDocument();
+  });
+
   it("names the zone the check times are shown in", async () => {
     vi.mocked(alertsClient.fetchAlert).mockResolvedValue(ALERT);
     vi.mocked(alertsClient.fetchAlertNotifications).mockResolvedValue(

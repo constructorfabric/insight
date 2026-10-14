@@ -178,6 +178,13 @@ function Rule({ alert }: { alert: Alert }) {
           <Fact term="Condition" wide>
             {conditionText(alert.condition)}
           </Fact>
+          {alert.context_columns.length > 0 ? (
+            <Fact term="Shown in notification" wide>
+              <span className="font-mono">
+                {alert.context_columns.join(", ")}
+              </span>
+            </Fact>
+          ) : null}
           <Fact term="Window">
             {alert.range ? rangeLabel(alert.range) : "All time"}
           </Fact>

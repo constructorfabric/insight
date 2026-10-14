@@ -24,6 +24,7 @@ import { windowFor } from "@/lib/alerts/window";
 import {
   blankForm,
   checkForm,
+  contextColumnsOf,
   formOf,
   retypeDraft,
   textOf,
@@ -143,6 +144,7 @@ function Shell({
 const PLACED: ReadonlySet<string> = new Set([
   "name",
   "metric",
+  "context_columns",
   "range",
   "interval_secs",
   "destination",
@@ -211,6 +213,7 @@ function AlertEditor({
       metric: metricName,
       range: range === "" ? null : range,
       condition: held.document.condition as Condition,
+      context_columns: contextColumnsOf(held.document) ?? [],
     },
     ready
   );
@@ -231,7 +234,8 @@ function AlertEditor({
         ["condition"],
         fitCondition(was.document.condition, metric.kinds)
       );
-      return change(fitted, ["range"], window === "" ? null : window);
+      const cleared = change(fitted, ["context_columns"], []);
+      return change(cleared, ["range"], window === "" ? null : window);
     });
   }
   if (seenCondition !== conditionText) {

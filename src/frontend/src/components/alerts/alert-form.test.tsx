@@ -184,6 +184,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
         name: "Too many open PRs",
         metric: "prs-open",
         condition: ABOVE_TEN,
+        context_columns: [],
         range: null,
         interval_secs: 300,
         destination: "ops",
@@ -233,6 +234,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
             rows: "one",
             where: { column: "total", op: "<", value: 10 },
           },
+          context_columns: [],
           range,
           interval_secs: 300,
           destination: "dev",
@@ -450,7 +452,69 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
       metric: "prs-open",
       range: null,
       condition: ABOVE_TEN,
+      context_columns: [],
     });
+  });
+
+  it("sends the columns ticked to show in the notification, and previews with them", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(
+      storedMetric({
+        definition: {
+          table: "gold.prs",
+          fields: [
+            { column: "lead", type: "string", as_name: "lead" },
+            { column: "id", type: "int", agg: "count", as_name: "total" },
+          ],
+        },
+      })
+    );
+    vi.mocked(alertsClient.createAlert).mockResolvedValue(ALERT);
+
+    render(<NewAlertPage />, { wrapper });
+    await fillNew();
+    await userEvent.click(screen.getByRole("checkbox", { name: "lead" }));
+    expect(screen.getByRole("checkbox", { name: "lead" })).toBeChecked();
+    await waitFor(
+      () =>
+        expect(alertsClient.previewAlert).toHaveBeenLastCalledWith(
+          expect.objectContaining({ context_columns: ["lead"] })
+        ),
+      { timeout: 3_000 }
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Create alert" }));
+
+    await waitFor(() =>
+      expect(alertsClient.createAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ context_columns: ["lead"] })
+      )
+    );
+  });
+
+  it("offers no group-by column to show, since the witness always shows it", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(
+      storedMetric({
+        definition: {
+          table: "gold.prs",
+          fields: [
+            { column: "team", type: "string", as_name: "team" },
+            { column: "lead", type: "string", as_name: "lead" },
+            { column: "id", type: "int", agg: "count", as_name: "total" },
+          ],
+          group_by: ["team", "lead"],
+        },
+      })
+    );
+
+    render(<NewAlertPage />, { wrapper });
+    await userEvent.type(await screen.findByLabelText("Metric"), "prs");
+    await userEvent.click(
+      await screen.findByRole("option", { name: "prs-open" })
+    );
+    await pickColumn(1, "total");
+
+    expect(screen.getByRole("checkbox", { name: "total" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "team" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "lead" })).toBeNull();
   });
 
   it("shows how many rows of many match, and which", async () => {
@@ -867,6 +931,7 @@ describe("the JSON view", { timeout: 20_000 }, () => {
       name: "Too many open PRs",
       metric: "prs-open",
       condition: ABOVE_TEN,
+      context_columns: [],
       range: null,
       interval_secs: 300,
       destination: "ops",
@@ -994,6 +1059,7 @@ describe("EditAlertPage", () => {
           rows: "one",
           where: { column: "total", op: ">", value: 20 },
         },
+        context_columns: [],
         range: null,
         interval_secs: 300,
         destination: "ops",

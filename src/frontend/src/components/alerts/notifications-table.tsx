@@ -143,6 +143,7 @@ function Reading({
         <WitnessLines
           witness={notification.witness}
           condition={notification.condition}
+          contextColumns={notification.context_columns}
         />
       ) : null}
       <span className={cn(TEXT_LABEL, "break-words")}>

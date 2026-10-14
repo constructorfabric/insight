@@ -18,6 +18,8 @@ import {
 
 const NAME_MAX = 200;
 const DEFAULT_INTERVAL_SECS = 300;
+/** The most context columns the service takes on a rule. */
+export const CONTEXT_COLUMNS_MAX = 5;
 
 export type AlertDocument = Record<string, unknown>;
 
@@ -29,6 +31,7 @@ export function blankForm(destination = ""): AlertDocument {
     name: "",
     metric: "",
     condition: { rows: "one", where: blankLeaf() },
+    context_columns: [],
     range: null,
     interval_secs: DEFAULT_INTERVAL_SECS,
     destination,
@@ -41,6 +44,7 @@ export function formOf(alert: Alert): AlertDocument {
     name: alert.name,
     metric: alert.metric,
     condition: alert.condition,
+    context_columns: alert.context_columns,
     range: alert.range ?? null,
     interval_secs: alert.interval_secs,
     destination: alert.destination,
@@ -51,6 +55,18 @@ export function formOf(alert: Alert): AlertDocument {
 export function textOf(document: AlertDocument, key: string): string {
   const value = document[key];
   return typeof value === "string" ? value : "";
+}
+
+/** The context columns the document names, or nothing while it names them badly. */
+export function contextColumnsOf(
+  document: AlertDocument
+): string[] | undefined {
+  const value = document.context_columns;
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return undefined;
+  if (!value.every((column) => typeof column === "string")) return undefined;
+
+  return value as string[];
 }
 
 const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
@@ -205,6 +221,7 @@ export function checkForm(
   const nameLength = [...name].length;
   const metric = textOf(document, "metric");
   const destination = textOf(document, "destination");
+  const contextColumns = contextColumnsOf(document);
   const { range, interval_secs: interval, enabled, condition } = document;
 
   if (name === "") errors.name = "Enter a name.";
@@ -220,9 +237,16 @@ export function checkForm(
   }
   if (destination === "") errors.destination = "Pick a destination.";
   if (typeof enabled !== "boolean") errors.enabled = "Enter true or false.";
+  if (contextColumns === undefined) {
+    errors.context_columns = "Enter a list of column names.";
+  } else if (contextColumns.length > CONTEXT_COLUMNS_MAX) {
+    errors.context_columns = `Pick at most ${CONTEXT_COLUMNS_MAX} columns.`;
+  }
   if (metric !== "") Object.assign(errors, conditionErrors(condition, kinds));
 
-  if (Object.keys(errors).length > 0) return { ok: false, errors };
+  if (Object.keys(errors).length > 0 || contextColumns === undefined) {
+    return { ok: false, errors };
+  }
 
   return {
     ok: true,
@@ -230,6 +254,7 @@ export function checkForm(
       name,
       metric,
       condition: condition as Condition,
+      context_columns: contextColumns,
       range: typeof range === "string" && range !== "" ? range : null,
       interval_secs: interval as number,
       destination,

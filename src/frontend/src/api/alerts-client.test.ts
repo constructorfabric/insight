@@ -39,6 +39,7 @@ const DRAFT = {
       ],
     },
   },
+  context_columns: ["team"],
   interval_secs: 300,
   destination: "ops",
   enabled: true,
@@ -99,6 +100,7 @@ describe("alerts client", () => {
       metric: DRAFT.metric,
       range: "P30D",
       condition: DRAFT.condition,
+      context_columns: DRAFT.context_columns,
     };
 
     await previewAlert(request);

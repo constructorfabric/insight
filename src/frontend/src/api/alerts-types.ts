@@ -43,7 +43,8 @@ export interface Condition {
 
 /**
  * The rows a check found the test held on: `columns` names each cell of a
- * row, the grouping first, then the columns the condition reads.
+ * row, the grouping first, then the columns the condition reads, then the
+ * rule's context columns.
  */
 export interface Witness {
   matched: number;
@@ -85,6 +86,8 @@ export interface AlertDraft {
   name: string;
   metric: string;
   condition: Condition;
+  /** Result columns the witness keeps beside the condition's: up to 5. */
+  context_columns: string[];
   range?: string | null;
   interval_secs: number;
   destination: string;
@@ -108,6 +111,7 @@ export interface Alert {
   name: string;
   metric: string;
   condition: Condition;
+  context_columns: string[];
   range?: string | null;
   interval_secs: number;
   destination: string;
@@ -137,6 +141,8 @@ export interface AlertNotification {
   rule_revision: number;
   metric: string;
   condition: Condition;
+  /** The columns the rule asked the witness to keep beside the condition's. */
+  context_columns: string[];
   witness?: Witness | null;
   evaluated_at: string;
   destination: string;
@@ -163,6 +169,7 @@ export interface AlertPreviewRequest {
   metric: string;
   range: string | null;
   condition: Condition;
+  context_columns: string[];
 }
 
 export interface AlertPreview {

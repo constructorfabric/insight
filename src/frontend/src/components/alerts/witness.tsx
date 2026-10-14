@@ -69,11 +69,14 @@ function rowLine(
 export function WitnessLines({
   witness,
   condition,
+  contextColumns,
 }: {
   witness: Witness;
   condition: unknown;
+  /** Read as the condition's columns are, name then value. */
+  contextColumns: readonly string[];
 }) {
-  const tested = new Set(conditionColumns(condition));
+  const tested = new Set([...conditionColumns(condition), ...contextColumns]);
 
   return (
     <span className="flex flex-col gap-0.5">
