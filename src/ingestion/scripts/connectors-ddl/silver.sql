@@ -900,6 +900,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 CREATE TABLE IF NOT EXISTS silver.class_task_comments
 (
     `unique_key` String,
+    `tenant_id` Nullable(String),
     `insight_source_id` Nullable(String),
     `data_source` String,
     `comment_id` Nullable(String),
@@ -920,6 +921,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 CREATE TABLE IF NOT EXISTS silver.class_task_field_history
 (
     `unique_key` String,
+    `tenant_id` Nullable(String),
     `insight_source_id` String,
     `data_source` String,
     `issue_id` String,
@@ -948,6 +950,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 CREATE TABLE IF NOT EXISTS silver.class_task_field_metadata
 (
     `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
     `insight_source_id` String,
     `data_source` String,
     `project_key` Nullable(String),
@@ -967,6 +970,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 CREATE TABLE IF NOT EXISTS silver.class_task_issuetypes
 (
     `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
     `insight_source_id` Nullable(String),
     `data_source` String,
     `issue_type_id` Nullable(String),
@@ -983,6 +987,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 CREATE TABLE IF NOT EXISTS silver.class_task_links
 (
     `unique_key` String,
+    `tenant_id` Nullable(String),
     `insight_source_id` String,
     `data_source` String,
     `id_readable` String,
@@ -1010,6 +1015,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 CREATE TABLE IF NOT EXISTS silver.class_task_projects
 (
     `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
     `insight_source_id` Nullable(String),
     `data_source` String,
     `project_id` Nullable(String),
@@ -1030,6 +1036,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 CREATE TABLE IF NOT EXISTS silver.class_task_sprints
 (
     `unique_key` String,
+    `tenant_id` Nullable(String),
     `insight_source_id` Nullable(String),
     `data_source` String,
     `sprint_id` Nullable(String),
@@ -1052,6 +1059,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 CREATE TABLE IF NOT EXISTS silver.class_task_statuses
 (
     `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
     `insight_source_id` Nullable(String),
     `data_source` String,
     `status_id` Nullable(String),
@@ -1090,6 +1098,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 CREATE TABLE IF NOT EXISTS silver.class_task_worklogs
 (
     `unique_key` String,
+    `tenant_id` Nullable(String),
     `insight_source_id` Nullable(String),
     `data_source` String,
     `worklog_id` Nullable(String),
