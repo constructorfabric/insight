@@ -143,11 +143,24 @@ spec:
           # must keep judging the connector's own selector, and only when one
           # was given — an empty DBT_SELECT means "run everything".
           DBT_SELECT="${DBT_SELECT:+${DBT_SELECT} tag:sync:always}"
+          # A model whose bronze has not arrived yet cannot be built, and dbt
+          # fixes its node set before the first model runs — so the skip is
+          # decided here, not in the model. A graph walk (`tag:X+`) reaches gold
+          # models reading classes no connector on this install feeds; without
+          # this the whole run dies on them.
+          if [[ "$RC" -eq 0 ]]; then
+            UNBUILDABLE="$(dbt --quiet run-operation list_unbuildable_models --profiles-dir .)" || RC=$?
+          fi
+          read -r -a EXCLUDED <<< "${DBT_EXCLUDE:-} ${UNBUILDABLE:-}"
+          EXCLUDE_ARGS=()
+          if [[ ${#EXCLUDED[@]} -gt 0 ]]; then
+            EXCLUDE_ARGS=(--exclude "${EXCLUDED[@]}")
+          fi
           if [[ "$RC" -eq 0 ]]; then
             if [[ "${DBT_FULL_REFRESH:-false}" == "true" ]]; then
-              dbt run --profiles-dir . --log-format json --log-level "${INSIGHT_LOG_LEVEL:-info}" --full-refresh ${DBT_SELECT:+--select "$DBT_SELECT"} ${DBT_EXCLUDE:+--exclude "$DBT_EXCLUDE"} || RC=$?
+              dbt run --profiles-dir . --log-format json --log-level "${INSIGHT_LOG_LEVEL:-info}" --full-refresh ${DBT_SELECT:+--select "$DBT_SELECT"} ${EXCLUDE_ARGS[@]+"${EXCLUDE_ARGS[@]}"} || RC=$?
             else
-              dbt run --profiles-dir . --log-format json --log-level "${INSIGHT_LOG_LEVEL:-info}" ${DBT_SELECT:+--select "$DBT_SELECT"} ${DBT_EXCLUDE:+--exclude "$DBT_EXCLUDE"} || RC=$?
+              dbt run --profiles-dir . --log-format json --log-level "${INSIGHT_LOG_LEVEL:-info}" ${DBT_SELECT:+--select "$DBT_SELECT"} ${EXCLUDE_ARGS[@]+"${EXCLUDE_ARGS[@]}"} || RC=$?
             fi
           fi
           # Lifecycle event via the shared logger (agreed line shape, #3191);

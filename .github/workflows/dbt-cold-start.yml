@@ -1,0 +1,105 @@
+# What dbt can build on a warehouse whose connectors have never synced.
+#
+# Its own lane rather than a job in an existing one: the suite drops and
+# recreates every database in the warehouse it points at, which no lane that
+# seeds anything can share. It needs a ClickHouse and dbt, nothing else — no
+# connector, no docker beyond the server, no rows.
+#
+# Deliberately NOT a required check, for the reason jira-field-history.yml
+# states: a path-filtered required check never reports on a PR outside its
+# filter and hangs on "Expected" forever.
+name: dbt cold start
+
+on:
+  pull_request:
+    branches: [main]
+    # Duplicated rather than anchored: GitHub Actions does not support YAML
+    # anchors, and no workflow in this repository uses them.
+    paths:
+      - src/ingestion/dbt/**
+      - src/ingestion/silver/**
+      - src/ingestion/gold/**
+      - src/ingestion/connectors/**/dbt/**
+      - src/ingestion/scripts/dbt_profiles.py
+      - src/ingestion/scripts/create-databases.sh
+      - src/ingestion/scripts/bootstrap-db/run-dbt.sh
+      - src/ingestion/scripts/bootstrap-db/pins.env
+      - .github/workflows/dbt-cold-start.yml
+      - .github/workflows/scripts/start-clickhouse.sh
+  push:
+    branches: [main]
+    paths:
+      - src/ingestion/dbt/**
+      - src/ingestion/silver/**
+      - src/ingestion/gold/**
+      - src/ingestion/connectors/**/dbt/**
+      - src/ingestion/scripts/dbt_profiles.py
+      - src/ingestion/scripts/create-databases.sh
+      - src/ingestion/scripts/bootstrap-db/run-dbt.sh
+      - src/ingestion/scripts/bootstrap-db/pins.env
+      - .github/workflows/dbt-cold-start.yml
+      - .github/workflows/scripts/start-clickhouse.sh
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
+# takes a GitHub-hosted runner, everything else a whole `persistent` machine,
+# and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+jobs:
+  cold-start:
+    name: builds what it can, skips what it cannot
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    # Three dbt parses and two near-empty runs; the pip install dominates.
+    timeout-minutes: 20
+    env:
+      CLICKHOUSE_CONTAINER: dbt-cold-start-clickhouse
+      CLICKHOUSE_USER: insight
+      CLICKHOUSE_PASSWORD: insight
+      CLICKHOUSE_DATABASE: insight
+      CLICKHOUSE_HOST: 127.0.0.1
+      CLICKHOUSE_HTTP_PORT: "8123"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # Same major as the toolbox image; dbt-core 1.10+ does not run on newer.
+          python-version: "3.12"
+
+      - name: Start ClickHouse on the pinned version
+        run: |
+          set -euo pipefail
+          # pins.env is plain KEY=VALUE, so it doubles as a $GITHUB_ENV fragment:
+          # the server image and both dbt versions stay pinned in one committed
+          # place, shared with bootstrap-db and connectors-ddl.
+          cat src/ingestion/scripts/bootstrap-db/pins.env >> "$GITHUB_ENV"
+          . src/ingestion/scripts/bootstrap-db/pins.env
+          export CLICKHOUSE_SERVER_IMAGE
+          .github/workflows/scripts/start-clickhouse.sh "${CLICKHOUSE_CONTAINER}"
+
+      - name: Install pinned dbt and the suite's deps
+        # Into the venv `run-dbt.sh` builds for itself, so the entry point under
+        # test and the suite that drives it share one dbt rather than installing
+        # it twice. `run-dbt.sh` checks the pins and reuses what is here.
+        run: |
+          set -euo pipefail
+          python -m venv src/ingestion/scripts/bootstrap-db/.venv
+          src/ingestion/scripts/bootstrap-db/.venv/bin/pip install --quiet \
+            "dbt-core==${DBT_CORE_VERSION}" \
+            "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}" \
+            -r src/ingestion/dbt/tests/cold_start/requirements.txt
+
+      - name: Cold-start tests
+        run: src/ingestion/scripts/bootstrap-db/.venv/bin/pytest -q src/ingestion/dbt/tests/cold_start
+
+      - name: ClickHouse logs
+        if: failure()
+        run: docker logs --tail 200 "${CLICKHOUSE_CONTAINER}" || true
