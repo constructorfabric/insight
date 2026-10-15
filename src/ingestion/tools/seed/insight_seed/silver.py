@@ -22,9 +22,14 @@ at /ingestion (docker-compose.yml `seed-sample.volumes`):
    itself, having no Docker. A missing table surfaces here as "has no
    columns".
 
-2. Generate per-team activity rows via `generators/*.py` INTO those silver
-   tables. Volumes scale by team profile + persona; per-day caps live in
-   each generator module.
+2. Generate per-team activity rows via `generators/*.py`. Volumes scale by
+   team profile + persona; per-day caps live in each generator module.
+
+   A generator writes EITHER the silver rows directly or the bronze its
+   vendor would have delivered, and the second is where they are all headed:
+   a measure dbt derives is a measure the pipeline is tested on rather than
+   one the seed asserts. `generators/insert.py` names the silver relations
+   already converted, and the chains built from them are selected in step 4.
 
 3. `apply-ch-migrations.sh` — applies migrations/*.sql (class contract
    heals, the contract-version stamp) and the staging label repair.
@@ -32,7 +37,8 @@ at /ingestion (docker-compose.yml `seed-sample.volumes`):
    Re-running create-warehouse-placeholders.sh from inside this script is a
    no-op on the seeded tables (IF NOT EXISTS, no DROP/TRUNCATE).
 
-4. `build-gold.sh` — builds the dbt-owned gold models. A deploy builds no
+4. `build-gold.sh` — builds the dbt-owned gold models, plus the staging and
+   silver chains standing on bronze this seed wrote. A deploy builds no
    models (a connector sync does, #3561) and a seed has no sync to ride on,
    so the seed calls this itself. Run AFTER seeding so the materialized gold
    models are built over real seeded silver instead of empty placeholders.
@@ -194,10 +200,20 @@ IDENTITY_INPUTS_SELECT = "+identity_inputs"
 # staging models too, and the placeholder-drop hook then empties their class.
 AI_INVOICE_SELECT = "claude_team__ai_invoice+"
 
+# The bronze-derived support chain. The generators write Zendesk audits and
+# ratings; every support measure is a count dbt derives from them, so the whole
+# chain has to build. Named per model rather than `zendesk__support_agent+`
+# alone, so the selector guard below judges each one.
+SUPPORT_CHAIN_SELECT = (
+    "zendesk__support_agent+",
+    "zendesk__support_event+",
+    "zendesk__support_activity+",
+)
+
 # The bronze-derived CI chain. INVARIANT: no entry may feed a silver relation
 # the generators write directly — the on-run-start placeholder hook would drop
 # it and rebuild it from an empty staging union. `tests/test_dbt_selector_guard.py`
-# enforces this against RESET_TARGETS.
+# enforces this against RESET_TARGETS minus BRONZE_DERIVED_SILVER.
 CI_CHAIN_SELECT = (
     "github__ci_runs+",
     "github__deployments+",
@@ -328,7 +344,13 @@ def run() -> None:
         apply_ch_migrations()
         build_gold(
             dbt_select=" ".join(
-                ["tag:gold", IDENTITY_INPUTS_SELECT, AI_INVOICE_SELECT, *CI_CHAIN_SELECT]
+                [
+                    "tag:gold",
+                    IDENTITY_INPUTS_SELECT,
+                    AI_INVOICE_SELECT,
+                    *CI_CHAIN_SELECT,
+                    *SUPPORT_CHAIN_SELECT,
+                ]
             ),
             full_refresh=True,
         )

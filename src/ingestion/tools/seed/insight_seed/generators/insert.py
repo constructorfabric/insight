@@ -41,6 +41,9 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("bronze_github", "repositories"),
     ("bronze_github", "workflow_runs"),
     ("bronze_gitlab", "repositories"),
+    ("bronze_zendesk", "support_agents"),
+    ("bronze_zendesk", "support_ticket_events"),
+    ("bronze_zendesk", "zendesk_satisfaction_ratings"),
     ("silver", "class_ai_assistant_usage"),
     ("silver", "class_ai_dev_usage"),
     ("silver", "class_ai_invoice"),
@@ -77,6 +80,9 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("staging", "github__deployments"),
     ("staging", "github__repositories"),
     ("staging", "gitlab__repositories"),
+    ("staging", "zendesk__support_activity"),
+    ("staging", "zendesk__support_agent"),
+    ("staging", "zendesk__support_event"),
 )
 
 
@@ -93,6 +99,27 @@ def truncate(
             "— register it there (and in the same commit) instead."
         )
     client.command(f"TRUNCATE TABLE IF EXISTS `{schema}`.`{table}`")
+
+
+#: Silver relations dbt builds from bronze THIS SEED WROTE, rather than ones a
+#: generator inserts into. They are still in RESET_TARGETS — a re-seed at a new
+#: anchor must clear them, or rows from the old window stand forever behind an
+#: incremental watermark — but a dbt selector feeding them is correct, not a
+#: destroyer of seeded rows.
+#:
+#: INVARIANT: this set grows as each domain moves onto bronze. When it holds
+#: every silver relation in RESET_TARGETS, no generator writes silver any more
+#: and the placeholder hook has nothing left to protect.
+BRONZE_DERIVED_SILVER: frozenset[str] = frozenset(
+    {
+        "class_ai_invoice",
+        "class_git_ci_runs",
+        "class_git_deployment_events",
+        "class_git_deployments",
+        "class_git_repositories",
+        "class_support_activity",
+    }
+)
 
 
 @dataclass(frozen=True)
