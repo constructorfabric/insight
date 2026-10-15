@@ -116,6 +116,8 @@ Generate the tenant ID, then read the rest off the cluster. Each dependency may 
 
 A lowercase UUID, set once in `authenticator.oidc.defaultTenantId` and never changed after the first sync — it is the only place the chart reads the tenant from, and it refuses to render with any of the keys that used to copy it (`global.tenantDefaultId`, `ingestion.reconcile.tenantId`, `identityResolution.seed.tenantDefaultId`). (Local/dev against the compose wizard or the seed generators reuses their fixed `00000000-df51-5b42-9538-d2b56b7ee953`.) Sign-in reads the tenant from the id_token claim named by `authenticator.oidc.tenantClaim`, default `tenant_id`, and falls back to this value only when the claim is absent — so if your IdP asserts that claim, give it this same UUID.
 
+An install that already holds data from a release that read the tenant from those keys moves to this value once, in a maintenance window: see [TENANT_IDENTITY_UPGRADE.md](TENANT_IDENTITY_UPGRADE.md).
+
 ```sh
 uuidgen | tr '[:upper:]' '[:lower:]'    # no uuidgen? python3 -c 'import uuid; print(uuid.uuid4())'
 ```
