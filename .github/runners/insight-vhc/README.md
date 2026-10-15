@@ -10,18 +10,19 @@ it changes whether those lanes pass, which is why it is versioned beside them.
 
 ## Which runs land here
 
-Every x64 `runs-on` in `.github/workflows` carries one rule, except the heavy
-jobs under [The persistent class](#the-persistent-class) and the one waiting
-job under [The idling class](#the-idling-class):
+Every x64 `runs-on` in `.github/workflows` carries one rule, except the jobs
+under [The container class](#the-container-class), the heavy jobs under
+[The persistent class](#the-persistent-class) and the one waiting job under
+[The idling class](#the-idling-class):
 
 ```yaml
-runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (!contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
 ```
 
 | Event | Runner |
 |---|---|
-| pull request from a branch of this repository | `insight-vhc-arc` — the ARC scale set, one ephemeral pod per job |
-| pull request from a fork | `ubuntu-latest` |
+| pull request by an `OWNER`, `MEMBER` or `COLLABORATOR`, from a branch or a fork | `insight-vhc-arc` — the ARC scale set, one ephemeral pod per job |
+| pull request by anyone else | `ubuntu-latest` |
 | `push`, `merge_group`, `schedule`, `workflow_dispatch`, `workflow_run` | the shared `[self-hosted, linux, x64, insight-vhc]` pool — these five machines **and** the scale set, whichever takes the job |
 | any of the above with the kill switch on | `ubuntu-latest` |
 
@@ -37,11 +38,13 @@ also carries `[self-hosted, linux, x64, insight-vhc]`, so it takes a share of
 the non-PR work alongside these five; naming it directly is what pins a pull
 request to it.
 
-**A fork's pull request stays on a GitHub-hosted runner.** Approval for a fork
-workflow is an admission gate, not a sandbox — the code still executes once
-approved. The scale set runs docker-in-docker on a shared node, which is not a
-boundary to put arbitrary external code behind, so that work goes to a runner
-GitHub throws away.
+**The author decides, not the head repository.** Members and collaborators
+open pull requests from personal forks as well as from branches here, and both
+are the same trusted work. Anyone else's pull request stays on a GitHub-hosted
+runner: approval for an outside contributor's workflow is an admission gate, not
+a sandbox — the code still executes once approved. The scale set runs
+docker-in-docker on a shared node, which is not a boundary to put arbitrary
+external code behind, so that work goes to a runner GitHub throws away.
 
 **arm64 never routes here.** The pool is x86-only; the matrix legs stay on
 `ubuntu-24.04-arm` under every event and with the kill switch on.
@@ -55,6 +58,23 @@ Left on hosted runners deliberately:
   embeds the namespace helm resolved, and a runner pod supplies its own, so the
   lane renders `arc-runners` where the test expects `default`. Pinning the
   namespace in the test is the fix.
+
+### The container class
+
+A job that runs in a job container, starts containers of its own, or builds
+images keeps the earlier rule, which tests the head repository instead of the
+author, so a fork's pull request runs it on `ubuntu-latest`:
+
+```yaml
+runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+```
+
+The jobs under this rule:
+
+- `build-images.yml`: the x64 image builds and the jobs around them
+- `authenticator.yml`: `e2e` (Redis and Keycloak)
+- `keycloak-realm-contract.yml`: `tenant-contract` (Keycloak)
+- `ci.yml`: `js` (a Playwright job container)
 
 ### The persistent class
 
@@ -113,11 +133,12 @@ set, goes to `ubuntu-latest`; unset, empty or `false` leaves routing as
 described above. The polarity is deliberate — an absent variable must not change
 policy, and a variable nobody has created yet reads as empty.
 
-Actions withholds `vars` from a pull request opened from a fork, so in those
-runs the expression reads an empty string and the switch cannot speak. That is
-why the rule compares the head repository against this one rather than relying
-on the variable: a fork's pull request is hosted by the shape of the expression,
-under every value the variable could have held.
+Actions may withhold `vars` from a pull request opened from a fork, so in those
+runs the expression can read an empty string and the switch cannot speak. An
+outside contributor's pull request is hosted by the shape of the expression,
+under every value the variable could have held. A member's fork pull request is
+not: to return it to hosted runners, revert the routing on `main`. A pull
+request runs from its merge commit with `main`, so its next run picks that up.
 
 Routing is not a security boundary either. A pull request runs the workflow from
 its own merge commit, so a fork can rewrite any of these lines, and the runner is
