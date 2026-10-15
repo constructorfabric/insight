@@ -10,8 +10,8 @@ persons-seed resolves that stale set, and gold goes on serving the old org.
 
 Two halves are asserted here:
   * the silver step asks for a full refresh (the fix), and
-  * the deploy path does not (the Helm migrate Hook runs the same script with
-    no arguments, and its incremental models must keep their boundary).
+  * the `gold` subcommand does not — it rebuilds serving tables over an
+    unchanged silver, and its incremental models must keep their boundary.
 
 Run against the installed package (see the README's develop section):
 
@@ -31,6 +31,7 @@ from insight_seed import silver
 
 _SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 _MIGRATIONS = _SCRIPTS / "apply-ch-migrations.sh"
+_BUILD_GOLD = _SCRIPTS / "build-gold.sh"
 
 _STUB_SCRIPT_ENV = {"CLICKHOUSE_URL": "http://clickhouse.nonpresent:8123"}
 
@@ -63,13 +64,14 @@ def script_runs(monkeypatch: pytest.MonkeyPatch) -> list[ScriptRun]:
 
 @pytest.fixture
 def refresh_requests(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """What each seed step asks `apply_ch_migrations` for, without running it."""
+    """What each seed step asks `build_gold` for, without running it."""
     requests: list[dict[str, Any]] = []
 
     def record(**kwargs: Any) -> None:
         requests.append(kwargs)
 
-    monkeypatch.setattr(silver, "apply_ch_migrations", record)
+    monkeypatch.setattr(silver, "apply_ch_migrations", lambda: None)
+    monkeypatch.setattr(silver, "build_gold", record)
     return requests
 
 
@@ -92,11 +94,11 @@ def _profiles_dir(argv: list[str]) -> str:
     return argv[argv.index("--profiles-dir") + 1]
 
 
-def _run_migration_script(
-    *args: str, env: dict[str, str] | None = None
+def _run_script(
+    script: Path, *args: str, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["bash", str(_MIGRATIONS), *args],
+        ["bash", str(script), *args],
         capture_output=True,
         text=True,
         check=False,
@@ -105,8 +107,8 @@ def _run_migration_script(
 
 
 def test_default_passes_no_flag(script_runs: list[ScriptRun]) -> None:
-    """The deploy path: bash <script>, nothing else."""
-    silver.apply_ch_migrations()
+    """A plain gold build: bash <script>, nothing else."""
+    silver.build_gold()
 
     argv, _ = _only(script_runs, "script run")
     assert argv[0] == "bash"
@@ -114,7 +116,7 @@ def test_default_passes_no_flag(script_runs: list[ScriptRun]) -> None:
 
 
 def test_full_refresh_appends_the_flag(script_runs: list[ScriptRun]) -> None:
-    silver.apply_ch_migrations(full_refresh=True)
+    silver.build_gold(full_refresh=True)
 
     argv, _ = _only(script_runs, "script run")
     assert argv[-1] == "--full-refresh"
@@ -126,17 +128,29 @@ def test_flag_never_leaks_into_the_environment(script_runs: list[ScriptRun]) -> 
     It is exported per sync there ("true" on a major bump), and env is
     inherited by every child — reusing it would couple the two subsystems.
     """
-    silver.apply_ch_migrations(full_refresh=True)
+    silver.build_gold(full_refresh=True)
 
     _, env = _only(script_runs, "script run")
     assert "DBT_FULL_REFRESH" not in env
 
 
-def test_selector_still_travels_by_env(script_runs: list[ScriptRun]) -> None:
-    silver.apply_ch_migrations(dbt_select="tag:gold +identity_inputs")
+def test_the_selector_is_an_argument_not_an_environment_variable(
+    script_runs: list[ScriptRun],
+) -> None:
+    """An inherited name would silently redirect somebody else's build."""
+    silver.build_gold(dbt_select="tag:gold +identity_inputs")
 
-    _, env = _only(script_runs, "script run")
-    assert env["DBT_GOLD_SELECT"] == "tag:gold +identity_inputs"
+    argv, env = _only(script_runs, "script run")
+    assert argv[-2:] == ["--select", "tag:gold +identity_inputs"]
+    assert not [name for name in env if name.startswith("DBT_GOLD")]
+
+
+def test_the_migrations_run_builds_nothing(script_runs: list[ScriptRun]) -> None:
+    """The Helm migrate Hook runs this script, and a deploy builds no models."""
+    silver.apply_ch_migrations()
+
+    argv, _ = _only(script_runs, "script run")
+    assert argv == ["bash", str(_MIGRATIONS)]
 
 
 @pytest.mark.usefixtures("offline_silver_step")
@@ -198,28 +212,36 @@ def test_gold_step_does_not_full_refresh(refresh_requests: list[dict[str, Any]])
 
 
 def test_unknown_argument_is_refused() -> None:
-    done = _run_migration_script("--nope")
+    for script in (_MIGRATIONS, _BUILD_GOLD):
+        done = _run_script(script, "--nope")
 
-    assert done.returncode == 2
-    assert "unknown argument" in done.stderr
+        assert done.returncode == 2, f"should refuse: {script.name}"
+        assert "unknown argument" in done.stderr
 
 
 def test_help_prints_the_entire_header_block() -> None:
     """A fixed-line slice truncates silently as soon as the header grows."""
-    header = []
-    for line in _MIGRATIONS.read_text().splitlines()[1:]:
-        if not line.startswith("#"):
-            break
-        header.append(line.removeprefix("#").removeprefix(" "))
+    for script in (_MIGRATIONS, _BUILD_GOLD):
+        header = []
+        for line in script.read_text().splitlines()[1:]:
+            if not line.startswith("#"):
+                break
+            header.append(line.removeprefix("#").removeprefix(" "))
 
-    done = _run_migration_script("--help")
+        done = _run_script(script, "--help")
 
-    assert done.returncode == 0
+        assert done.returncode == 0, f"should print help: {script.name}"
+        assert done.stdout.splitlines() == header, (
+            f"{script.name}: help output is not the whole header — the slice "
+            "must end at the first non-comment line, not a hardcoded line number"
+        )
+
+
+def test_the_gold_build_documents_both_of_its_options() -> None:
+    done = _run_script(_BUILD_GOLD, "--help")
+
+    assert "--select" in done.stdout
     assert "--full-refresh" in done.stdout
-    assert done.stdout.splitlines() == header, (
-        "help output is not the whole header — the slice must end at the "
-        "first non-comment line, not a hardcoded line number"
-    )
 
 
 def test_accepted_flag_falls_through_to_the_env_asserts() -> None:
@@ -228,7 +250,7 @@ def test_accepted_flag_falls_through_to_the_env_asserts() -> None:
     The stripped env is the point: the script must still reach its own
     CLICKHOUSE_* asserts rather than exit happy on a parsed flag.
     """
-    done = _run_migration_script("--full-refresh", env={"PATH": "/usr/bin:/bin"})
+    done = _run_script(_BUILD_GOLD, "--full-refresh", env={"PATH": "/usr/bin:/bin"})
 
     assert done.returncode != 0
     assert "CLICKHOUSE_URL" in done.stderr
@@ -236,8 +258,16 @@ def test_accepted_flag_falls_through_to_the_env_asserts() -> None:
 
 def test_the_script_forwards_its_flags_to_the_dbt_run() -> None:
     """Parsing --full-refresh is useless if the run never receives it."""
-    body = _MIGRATIONS.read_text()
+    body = _BUILD_GOLD.read_text()
 
     assert "_dbt_flags+=(--full-refresh)" in body
     run_lines = [ln for ln in body.splitlines() if "_dbt_flags[@]" in ln]
     assert run_lines, "the dbt invocation does not reference _dbt_flags"
+
+
+def test_the_deploy_hook_runs_no_dbt() -> None:
+    """A deploy builds no models (#3561) — a connector sync does."""
+    body = _MIGRATIONS.read_text()
+    offenders = [ln for ln in body.splitlines() if "dbt " in ln and not ln.lstrip().startswith("#")]
+
+    assert not offenders, f"the deploy hook invokes dbt: {offenders}"

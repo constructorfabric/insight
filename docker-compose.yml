@@ -905,7 +905,7 @@ services:
       # provisioned. A chart install follows global.insightV3Core.deploy; here
       # it converges a warm volume, whose initdb scripts ran once and long ago.
       INSIGHT_V3_CORE_ENABLED: "true"
-      # apply-ch-migrations.sh runs `dbt run` from /ingestion/dbt. The
+      # build-gold.sh runs `dbt run` from /ingestion/dbt. The
       # ingestion tree is bind-mounted read-only (below), so redirect dbt's
       # writable outputs (target/, logs/) to a writable scratch dir.
       DBT_TARGET_PATH: "/tmp/dbt-target"

@@ -1,4 +1,4 @@
-//! The instruments DESIGN §4.3 specifies.
+//! The service's metric instruments.
 //!
 //! Registered against the global meter provider the host installs, so the
 //! `opentelemetry` major here must match the toolkit's — a different major is
@@ -235,7 +235,7 @@ impl DiskGauges {
     }
 }
 
-/// Attach the observable gauges of §4.3 to `gauges`. Called once at gear init.
+/// Attach the observable disk gauges to `gauges`. Called once at gear init.
 pub fn register_disk_gauges(gauges: &Arc<DiskGauges>) {
     let meter = opentelemetry::global::meter("git-cli-proxy");
 

@@ -1,4 +1,5 @@
 use base64::Engine;
+use insight_clickhouse::MissingRelation;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use toolkit_canonical_errors::CanonicalError;
@@ -6,6 +7,8 @@ use uuid::Uuid;
 
 use crate::api::error::MetricError;
 use crate::domain::metric_definitions::EvidenceRelation;
+use crate::domain::not_ready::NotReadyReason;
+use crate::infra::not_ready;
 
 use super::dto::{EvidenceQueryRow, MetricDrilldownColumn, MetricDrilldownSelection};
 use super::error::{config_error, evidence_unavailable, invalid, invalid_error};
@@ -74,17 +77,35 @@ pub async fn verify_evidence_snapshot(
     relation: &EvidenceRelation,
     expected: &str,
 ) -> Result<(), CanonicalError> {
-    let current = evidence_snapshot_id(ch, relation).await?;
+    // A relation that went absent mid-walk expires the cursor like any other
+    // rebuild. A fresh install never reaches here: validation reads the
+    // snapshot first and answers not-ready from there.
+    let EvidenceSnapshot::Pinned(current) = evidence_snapshot_id(ch, relation).await? else {
+        return Err(snapshot_expired());
+    };
     if current != expected {
-        return Err(MetricError::failed_precondition()
-            .with_precondition_violation(
-                "metric evidence snapshot",
-                "Metric evidence was rebuilt while the request was running.",
-                "EVIDENCE_SNAPSHOT_EXPIRED",
-            )
-            .create());
+        return Err(snapshot_expired());
     }
     Ok(())
+}
+
+fn snapshot_expired() -> CanonicalError {
+    MetricError::failed_precondition()
+        .with_precondition_violation(
+            "metric evidence snapshot",
+            "Metric evidence was rebuilt while the request was running.",
+            "EVIDENCE_SNAPSHOT_EXPIRED",
+        )
+        .create()
+}
+
+/// The marks a cursor is pinned to, or the reason there is nothing to pin.
+#[derive(Debug)]
+pub(super) enum EvidenceSnapshot {
+    Pinned(String),
+    /// A relation the pin reads has not been built yet — the evidence table
+    /// itself, or the identity relations the watermark comes from.
+    NotReady(NotReadyReason),
 }
 
 /// What answers a drilldown: the evidence relation AND the identity map, since
@@ -93,18 +114,17 @@ pub async fn verify_evidence_snapshot(
 pub(super) async fn evidence_snapshot_id(
     ch: &insight_clickhouse::Client,
     relation: &EvidenceRelation,
-) -> Result<String, CanonicalError> {
+) -> Result<EvidenceSnapshot, CanonicalError> {
     let (database, table) = relation.table_ref();
-    let evidence = ch
+    let found = ch
         .query(
             "SELECT toString(uuid) AS snapshot_id \
              FROM system.tables WHERE database = ? AND name = ?",
         )
         .bind(database)
         .bind(table)
-        .fetch_one::<EvidenceSnapshotRow>()
+        .fetch_optional::<EvidenceSnapshotRow>()
         .await
-        .map(|row| row.snapshot_id)
         .map_err(|error| {
             tracing::error!(
                 error = %error,
@@ -114,6 +134,15 @@ pub(super) async fn evidence_snapshot_id(
             );
             evidence_unavailable()
         })?;
+
+    // No row means the relation itself is absent — the fresh-install reading,
+    // and the one `system.tables` reports instead of an exception.
+    let Some(evidence) = found.map(|row| row.snapshot_id) else {
+        not_ready::warn_relation(&format!("{database}.{table}"), "metric-drilldown:snapshot");
+        return Ok(EvidenceSnapshot::NotReady(
+            NotReadyReason::SourceRelationMissing,
+        ));
+    };
 
     // SAFETY: content-derived marks, not the sync stamp — the sync stamp moves on
     // every republish and would expire every cursor on a clock. Both map inputs
@@ -136,13 +165,23 @@ pub(super) async fn evidence_snapshot_id(
         )
         .fetch_one::<EvidenceSnapshotRow>()
         .await
-        .map(|row| row.snapshot_id)
-        .map_err(|error| {
-            tracing::error!(error = %error, "identity watermark lookup failed");
-            evidence_unavailable()
-        })?;
+        .map(|row| row.snapshot_id);
 
-    Ok(format!("{evidence}:{identity}"))
+    let identity = match identity {
+        Ok(identity) => identity,
+        Err(error) if MissingRelation::from_error(&error).is_some() => {
+            not_ready::warn_throttled(&error.to_string(), "metric-drilldown:identity-watermark");
+            return Ok(EvidenceSnapshot::NotReady(
+                NotReadyReason::SourceRelationMissing,
+            ));
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "identity watermark lookup failed");
+            return Err(evidence_unavailable());
+        }
+    };
+
+    Ok(EvidenceSnapshot::Pinned(format!("{evidence}:{identity}")))
 }
 
 pub(super) fn encode_cursor(
@@ -182,4 +221,28 @@ pub(super) fn decode_cursor(value: &str) -> Result<CursorEnvelope, CanonicalErro
         return invalid("cursor", "cursor version is unsupported");
     }
     Ok(envelope)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A warehouse that cannot be reached is not an absent relation: the pin
+    /// fails rather than reporting the evidence as not built yet.
+    #[tokio::test]
+    async fn an_unreachable_warehouse_fails_the_pin_instead_of_answering_not_ready() {
+        let ch = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
+            "http://127.0.0.1:1",
+            "analytics",
+        ));
+        let relation = EvidenceRelation::parse("git_metric_evidence")
+            .unwrap_or_else(|| panic!("evidence relation must parse"));
+
+        let pinned = evidence_snapshot_id(&ch, &relation).await;
+
+        assert!(
+            pinned.is_err(),
+            "an unreachable warehouse must not read as a relation nobody has built"
+        );
+    }
 }

@@ -163,7 +163,7 @@ The same decision under a different name in each layer:
 Tests that must know the topology read `CLICKHOUSE_CLUSTER_MODE` /
 `CLICKHOUSE_CLUSTER_NAME` from their harness, defaulting to a single node.
 
-Every step that runs dbt — the Argo steps, the deploy hook, bootstrap, the
+Every step that runs dbt — the Argo steps, the gold build, bootstrap, the
 sample seeder, the jira transform rig, the data-path harness — takes its
 profile body from `src/ingestion/scripts/dbt_profiles.py`, so a step cannot
 reach a clustered warehouse with a standalone profile. The engine default is

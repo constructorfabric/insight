@@ -13,7 +13,9 @@ use super::executor::{ReportExecutionContext, execute_report};
 use super::executor_test_fixtures::{date, people_recipe, profile};
 use super::export::{ReportWriterLimits, start_report_writer};
 use super::planner::{ReportPlannerLimits, plan_report};
-use super::query::{ReportMetricQuery, ReportQueryError, ReportQueryRunner, ReportQuerySubject};
+use super::query::{
+    ReportMetricQuery, ReportMetricRead, ReportQueryError, ReportQueryRunner, ReportQuerySubject,
+};
 use super::row::{ReportMetricValue, ReportMetricValues};
 use super::telemetry::ReportTelemetry;
 
@@ -227,7 +229,7 @@ struct SyntheticRunner {
 
 #[async_trait]
 impl ReportQueryRunner for SyntheticRunner {
-    async fn run(&self, query: ReportMetricQuery) -> Result<ReportMetricValues, ReportQueryError> {
+    async fn run(&self, query: ReportMetricQuery) -> Result<ReportMetricRead, ReportQueryError> {
         let ids = match query.subject {
             ReportQuerySubject::People(ids) => ids,
             ReportQuerySubject::Tenant(id) => vec![id],
@@ -246,10 +248,10 @@ impl ReportQueryRunner for SyntheticRunner {
             })
             .collect();
 
-        Ok(ReportMetricValues {
+        Ok(ReportMetricRead::Values(ReportMetricValues {
             metric_index: query.metric_index,
             values,
-        })
+        }))
     }
 }
 

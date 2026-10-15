@@ -4,6 +4,7 @@ use serde::de::DeserializeOwned;
 use sha2::{Digest as _, Sha256};
 
 use super::metrics::{self, ErrorClass, QueryKind, QueryOutcome};
+use super::not_ready;
 
 const QUERY_FETCH_TIMEOUT: Duration = Duration::from_mins(1);
 
@@ -20,7 +21,7 @@ pub(crate) enum QueryFetchError {
 }
 
 impl QueryFetchError {
-    fn class(&self) -> ErrorClass {
+    pub(crate) fn class(&self) -> ErrorClass {
         match self {
             Self::Submit(message) | Self::Fetch(message) => ErrorClass::classify(message),
             Self::Timeout => ErrorClass::Timeout,
@@ -121,7 +122,16 @@ where
 /// ClickHouse query log via `log_comment`. The server echoes the query into
 /// exception text too (syntax and analyzer errors quote it), so the error is
 /// scrubbed of any echo before it is logged.
+///
+/// A relation the warehouse has not built yet is not a failure: it reports
+/// through the throttled not-ready line instead, which a cold dashboard cannot
+/// turn into a flood.
 pub(crate) fn log_query_failure(error: &str, log_comment: &str, sql: &str, message: &str) {
+    if matches!(ErrorClass::classify(error), ErrorClass::RelationMissing) {
+        not_ready::warn_throttled(error, log_comment);
+        return;
+    }
+
     let sql_hash = hex::encode(Sha256::digest(sql.as_bytes()));
     let error = scrub_query_echo(error, sql);
     tracing::error!(error = %error, comment = log_comment, sql_hash, "{message}");

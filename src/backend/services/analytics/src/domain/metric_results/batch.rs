@@ -13,7 +13,7 @@ use super::compiler::{
     compile_period_batch_query, compile_pooled_histogram_query, compile_rollup_query,
     compile_timeseries_query,
 };
-use super::failure::ViewFailure;
+use super::failure::ViewAbsence;
 use super::validation::{
     ValidatedDimensionFilter, ValidatedGroupLimit, ValidatedMetricRequest,
     ValidatedMetricResultsRequest, ValidatedMetricView,
@@ -89,12 +89,12 @@ pub struct PlannedRanking {
 }
 
 /// Ranking pre-pass outcomes: the groups for rankings that answered and the
-/// failure for those that did not. A view whose ranking failed plans as
-/// `PlannedQuery::Failed` instead of aborting the whole request.
+/// reason the others have none. A view whose ranking did not answer plans as
+/// `PlannedQuery::Unanswered` instead of aborting the whole request.
 #[derive(Debug, Default)]
 pub struct RankingResults {
     pub groups: BTreeMap<RankingPolicyKey, Vec<RankedGroup>>,
-    pub failures: BTreeMap<RankingPolicyKey, ViewFailure>,
+    pub absences: BTreeMap<RankingPolicyKey, ViewAbsence>,
 }
 
 #[derive(Debug)]
@@ -114,13 +114,13 @@ pub enum PlannedQuery {
         view: UnbatchedView,
         query: CompiledQuery,
     },
-    // A view that already failed before planning (its group ranking query
-    // failed); it flows through the same execution pipeline so the response
-    // keeps every requested view slot.
-    Failed {
+    // A view settled before planning (its group ranking query did not answer);
+    // it flows through the same execution pipeline so the response keeps every
+    // requested view slot.
+    Unanswered {
         metric_index: usize,
         view_index: usize,
-        failure: ViewFailure,
+        absence: ViewAbsence,
     },
 }
 
@@ -309,11 +309,11 @@ fn plan_rollup(
     let resolved =
         match resolve_group_limit(group_limit.as_ref(), dimensions, &metric.filters, rankings)? {
             GroupLimitResolution::Ready(resolved) => resolved,
-            GroupLimitResolution::Failed(failure) => {
-                return Ok(PlannedQuery::Failed {
+            GroupLimitResolution::Unanswered(absence) => {
+                return Ok(PlannedQuery::Unanswered {
                     metric_index: indexes.0,
                     view_index: indexes.1,
-                    failure,
+                    absence,
                 });
             }
         };
@@ -353,11 +353,11 @@ fn plan_timeseries(
     let resolved =
         match resolve_group_limit(group_limit.as_ref(), dimensions, &metric.filters, rankings)? {
             GroupLimitResolution::Ready(resolved) => resolved,
-            GroupLimitResolution::Failed(failure) => {
-                return Ok(PlannedQuery::Failed {
+            GroupLimitResolution::Unanswered(absence) => {
+                return Ok(PlannedQuery::Unanswered {
                     metric_index: indexes.0,
                     view_index: indexes.1,
-                    failure,
+                    absence,
                 });
             }
         };
@@ -382,7 +382,7 @@ fn plan_timeseries(
 
 enum GroupLimitResolution {
     Ready(Option<ResolvedGroupLimit>),
-    Failed(ViewFailure),
+    Unanswered(ViewAbsence),
 }
 
 fn resolve_group_limit(
@@ -396,8 +396,8 @@ fn resolve_group_limit(
     };
 
     let key = ranking_policy_key(limit, dimensions, filters);
-    if let Some(failure) = rankings.failures.get(&key) {
-        return Ok(GroupLimitResolution::Failed(failure.clone()));
+    if let Some(absence) = rankings.absences.get(&key) {
+        return Ok(GroupLimitResolution::Unanswered(absence.clone()));
     }
 
     let groups =
@@ -670,7 +670,9 @@ mod tests {
                     assert!(*metric_index < 3);
                 }
                 PlannedQuery::Single { .. } => panic!("unexpected single view kind"),
-                PlannedQuery::Failed { .. } => panic!("no view should pre-fail here"),
+                PlannedQuery::Unanswered { .. } => {
+                    panic!("no view should settle before planning here")
+                }
             }
         }
         assert_eq!((period_batches, peer_batches, singles), (1, 1, 3));
@@ -794,9 +796,9 @@ mod tests {
         )]);
         let planned_ranking = plan_rankings(&req);
         let mut rankings = RankingResults::default();
-        rankings.failures.insert(
+        rankings.absences.insert(
             planned_ranking[0].key.clone(),
-            ViewFailure::from_query_error("Code: 241. Memory limit exceeded"),
+            ViewAbsence::from_query_error("Code: 241. Memory limit exceeded"),
         );
 
         let planned = plan_queries(&req, &rankings, PeerPopulation::DeclaredCohort)?;
@@ -812,13 +814,13 @@ mod tests {
             assert!(
                 planned.iter().any(|query| matches!(
                     query,
-                    PlannedQuery::Failed {
+                    PlannedQuery::Unanswered {
                         metric_index: 0,
                         view_index: index,
                         ..
                     } if *index == view_index
                 )),
-                "the group-limited view {view_index} must pre-fail in its own slot"
+                "the group-limited view {view_index} must settle in its own slot"
             );
         }
         Ok(())

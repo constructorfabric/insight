@@ -1132,6 +1132,14 @@ def test_git_commit_drilldown_refuses_a_person_out_of_scope(
 def test_supported_metric_with_no_evidence_returns_an_empty_page(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:
+    """An answered read that matched nothing is NOT the not-ready marker.
+
+    The two are different claims and the reader renders them differently: this
+    relation exists and holds no records for the selection, where `not_ready`
+    says nothing has built the relation at all. A marker here would turn every
+    empty page into "no data yet" and hide the distinction the marker exists
+    for.
+    """
     request = _seeded_request(stand_manifest)
     request["metric_key"] = EMPTY_EVIDENCE_METRIC
     request["filters"] = []
@@ -1143,6 +1151,10 @@ def test_supported_metric_with_no_evidence_returns_an_empty_page(
     assert result.selection.metric_key == EMPTY_EVIDENCE_METRIC
     assert result.rows == []
     assert result.next_cursor is None
+    assert result.not_ready is None, (
+        f"an existing relation with no matching records must not be marked "
+        f"not-ready, got {result.not_ready}"
+    )
 
 
 def _request() -> dict[str, JsonValue]:

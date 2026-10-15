@@ -22,6 +22,11 @@ pub struct ReportPreviewResponse {
     pub columns: Vec<ReportColumnMetadata>,
     pub rows: Vec<ReportRow>,
     pub total_rows: u64,
+    /// Set when the rows stop short because a relation a metric reads has not
+    /// been built yet. Absent on every answered preview, including an empty
+    /// one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_ready: Option<crate::domain::not_ready::NotReadyReason>,
 }
 
 impl toolkit::api::api_dto::RequestApiDto for ReportRecipe {}

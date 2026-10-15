@@ -43,14 +43,26 @@ export function ReportPreviewDialog({
       <DialogContent className="flex max-h-[85vh] flex-col gap-3 sm:max-w-[min(96vw,1200px)]">
         <DialogHeader>
           <DialogTitle>
-            {response?.total_rows ?? 0} rows · showing the first{" "}
-            {Math.min(PREVIEW_ROWS, response?.rows.length ?? 0)}
+            {response?.not_ready
+              ? "No data yet"
+              : `${response?.total_rows ?? 0} rows · showing the first ${Math.min(
+                  PREVIEW_ROWS,
+                  response?.rows.length ?? 0
+                )}`}
           </DialogTitle>
           <p className="text-xs text-muted-foreground">
             {granularity} · {period.from} to {period.to}
           </p>
         </DialogHeader>
-        {response ? (
+        {/* A report whose metrics read a relation nothing has built yet has no
+            table to show and nothing worth exporting — "0 rows" over the
+            export buttons would read as a measured answer. */}
+        {response?.not_ready ? (
+          <p className="text-sm text-muted-foreground">
+            One of these metrics is not collected yet. The report fills in once
+            the connector behind it has synced.
+          </p>
+        ) : response ? (
           <>
             <Table className="text-xs" containerClassName="overflow-auto">
               <TableHeader>

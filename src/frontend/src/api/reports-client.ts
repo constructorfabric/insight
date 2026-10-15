@@ -1,6 +1,6 @@
 import { AnalyticsApiError } from "@/api/analytics-client";
 import { fetchWithAuth } from "@/api/fetch-with-auth";
-import type { MetricFormat } from "@/api/metric-results-client";
+import type { MetricFormat, NotReadyReason } from "@/api/metric-results-client";
 import { downloadBlob } from "@/lib/download";
 
 const BASE =
@@ -32,6 +32,11 @@ export interface ReportPreviewResponse {
   columns: ReportColumn[];
   rows: Array<Array<string | number | null>>;
   total_rows: number;
+  /**
+   * Set when the rows stop short because a relation a metric reads has not
+   * been built yet. Absent on every answered preview, including an empty one.
+   */
+  not_ready?: NotReadyReason;
 }
 
 function reportFilename(disposition: string | null, fallback: string): string {

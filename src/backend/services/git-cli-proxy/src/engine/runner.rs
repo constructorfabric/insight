@@ -76,10 +76,10 @@ pub enum GitError {
 
 /// How long each class of git invocation may take.
 ///
-/// One budget for all of them cannot work. A read holds the entry's READ
-/// lock, so a stalled one blocks fetch and eviction for its whole budget
-/// while every other stream 429-loops past the connector's own ceiling and
-/// fails the sync. A clone genuinely needs half an hour.
+/// A read holds the entry's READ lock, so a stalled one blocks fetch and
+/// eviction for its whole budget; its budget is wedge detection, not a work
+/// cap. The prefetch fetches one page and is bounded tighter; a clone
+/// genuinely needs half an hour.
 #[derive(Debug, Clone, Copy)]
 pub struct Timeouts {
     /// Local plumbing: `log`, `for-each-ref`, `rev-list`, `patch-id`. No
@@ -112,7 +112,7 @@ pub struct GitRunner {
     /// of walking a tree that is actively being written.
     cap_poll: Duration,
     /// PEM bundle for origins whose TLS chain is not in the system store
-    /// (a self-hosted vendor behind a private CA). Empty = system store only.
+    /// (a self-hosted vendor behind a private CA). `None` = system store only.
     ca_cert_path: Option<String>,
     git_binary: std::path::PathBuf,
 }
@@ -673,9 +673,8 @@ mod tests {
             ("remote: Repository not found.", |e| {
                 matches!(e, GitError::NotFound)
             }),
-            // An origin refusing an explicit promisor want. Both shapes are
-            // real: the first is what a pooled GitLab repository returns, the
-            // second what the git transport returns directly.
+            // An origin refusing an explicit promisor want, in the upload-pack
+            // shape and the transport shape.
             (
                 "fatal: remote error: upload-pack: not our ref f719efd4",
                 |e| matches!(e, GitError::PromisorRefused),
@@ -1015,7 +1014,7 @@ mod tests {
 
     #[test]
     fn credentials_never_print_their_token() {
-        // §3.7: nothing in this service logs a request header, so the tokens
+        // Nothing in this service logs a request header, so the tokens
         // it does hold must not leak through the one thing that does reach a
         // log line — a `Debug` render inside a `tracing` event.
         let creds = GitCredentials {

@@ -53,6 +53,7 @@ pub fn build_response(
         columns,
         rows,
         next_cursor,
+        not_ready: None,
     })
 }
 

@@ -77,6 +77,8 @@ def _values(response: ApiResponse, metric_key: str) -> list[tuple[str, float | N
             # `values`. Narrowing it IS an assertion rather than a workaround:
             # the request asked for `{"view": "period"}`, so a different variant
             # coming back means the service answered a question nobody asked.
+            # A `NotReadyView` here would mean the stand serves a metric whose
+            # gold relation nothing has built — a broken stand, not a result.
             assert isinstance(view.root, PeriodView), (
                 f"asked for the period view and got {type(view.root).__name__}"
             )

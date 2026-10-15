@@ -17,8 +17,8 @@ use crate::domain::metric_results::{
     BatchItem, BreakdownQueryRow, CompiledQuery, HistogramQueryRow, MetricResultDto,
     MetricResultViewDto, MetricResultsRequest, MetricResultsResponse, PeerPopulation, PeerWideRow,
     PeriodWideRow, PlannedQuery, PooledHistogramQueryRow, RankingQueryRow, RankingResults,
-    RollupQueryRow, TimeseriesQueryRow, UnbatchedView, ValidatedMetricResultsRequest, ViewFailure,
-    build_breakdown_view, build_histogram_view, build_metric_result, build_peer_view,
+    RollupQueryRow, TimeseriesQueryRow, UnbatchedView, ValidatedMetricResultsRequest, ViewAbsence,
+    ViewFailure, build_breakdown_view, build_histogram_view, build_metric_result, build_peer_view,
     build_period_view, build_pooled_histogram_view, build_ranked_groups, build_rollup_view,
     build_timeseries_view, demux_peer_rows, demux_period_rows, enforce_view_row_limit,
     plan_queries, plan_rankings, validate_request,
@@ -67,13 +67,13 @@ async fn compute_metrics(
     let peer_population = peer_population(state.config.visibility_policy);
     let planned = plan_queries(req, &ranking_results, peer_population)?;
 
-    let mut views_by_metric: Vec<Vec<Option<Result<MetricResultViewDto, ViewFailure>>>> = req
+    let mut views_by_metric: Vec<Vec<Option<Result<MetricResultViewDto, ViewAbsence>>>> = req
         .metrics
         .iter()
         .map(|metric| (0..metric.views.len()).map(|_| None).collect())
         .collect();
 
-    // A failed query settles only its own view slots as errors; the other
+    // A query that does not answer settles only its own view slots; the other
     // queries keep running so one broken metric cannot empty the response.
     let mut results = stream::iter(planned)
         .map(|query| execute_planned(state, req, query))
@@ -84,10 +84,12 @@ async fn compute_metrics(
         }
     }
 
+    // Not-ready views are left out: they are answered, not failed, and their
+    // one line is the throttled relation warning the read already emitted.
     let failed_views = views_by_metric
         .iter()
         .flatten()
-        .filter(|view| matches!(view, Some(Err(_))))
+        .filter(|view| matches!(view, Some(Err(ViewAbsence::Failed(_)))))
         .count();
     let admin = failed_views > 0 && admin_for_error_detail(state, headers).await;
     if failed_views > 0 {
@@ -116,7 +118,7 @@ async fn compute_metrics(
                     enforce_view_row_limit(&view, format!("metrics[{idx}].views[{view_index}]"))?;
                     view
                 }
-                Err(failure) => failure.into_view(admin),
+                Err(absence) => absence.into_view(admin),
             };
             views.push(view);
         }
@@ -193,11 +195,11 @@ async fn authorize_person_request(
 struct MetricViewResult {
     metric_index: usize,
     view_index: usize,
-    view: Result<MetricResultViewDto, ViewFailure>,
+    view: Result<MetricResultViewDto, ViewAbsence>,
 }
 
-// A ranking that fails settles as a failure keyed by its policy, so only the
-// views that asked for that ranking answer with an error.
+// A ranking that does not answer settles keyed by its policy, so only the
+// views that asked for that ranking carry its outcome.
 async fn collect_rankings(
     state: &Arc<AppState>,
     req: &ValidatedMetricResultsRequest,
@@ -218,7 +220,7 @@ async fn collect_rankings(
                 {
                     Ok(rows) => build_ranked_groups(&ranking.dimensions, rows)
                         .map_err(|e| assembly_failure(&e, &comment)),
-                    Err(failure) => Err(failure),
+                    Err(absence) => Err(absence),
                 };
                 (ranking.key, outcome)
             }
@@ -230,8 +232,8 @@ async fn collect_rankings(
             Ok(groups) => {
                 ranking_results.groups.insert(key, groups);
             }
-            Err(failure) => {
-                ranking_results.failures.insert(key, failure);
+            Err(absence) => {
+                ranking_results.absences.insert(key, absence);
             }
         }
     }
@@ -252,7 +254,7 @@ async fn execute_planned(
                 {
                     Ok(rows) => demux_period_rows(&items, rows, req.compare_to.is_some())
                         .map_err(|e| assembly_failure(&e, &comment)),
-                    Err(failure) => Err(failure),
+                    Err(absence) => Err(absence),
                 };
             match outcome {
                 Ok(rows_by_item) => items
@@ -262,7 +264,7 @@ async fn execute_planned(
                         view_result(item, Ok(build_period_view(&item.def, req, rows)))
                     })
                     .collect(),
-                Err(failure) => fail_batch(&items, &failure),
+                Err(absence) => settle_batch(&items, &absence),
             }
         }
         PlannedQuery::PeerBatch { items, query } => {
@@ -273,7 +275,7 @@ async fn execute_planned(
                     Ok(rows) => {
                         demux_peer_rows(&items, rows).map_err(|e| assembly_failure(&e, &comment))
                     }
-                    Err(failure) => Err(failure),
+                    Err(absence) => Err(absence),
                 };
             match outcome {
                 Ok(rows_by_item) => items
@@ -281,7 +283,7 @@ async fn execute_planned(
                     .zip(rows_by_item)
                     .map(|(item, rows)| view_result(item, Ok(build_peer_view(rows))))
                     .collect(),
-                Err(failure) => fail_batch(&items, &failure),
+                Err(absence) => settle_batch(&items, &absence),
             }
         }
         PlannedQuery::Single {
@@ -298,14 +300,14 @@ async fn execute_planned(
                 view,
             }]
         }
-        PlannedQuery::Failed {
+        PlannedQuery::Unanswered {
             metric_index,
             view_index,
-            failure,
+            absence,
         } => vec![MetricViewResult {
             metric_index,
             view_index,
-            view: Err(failure),
+            view: Err(absence),
         }],
     }
 }
@@ -316,7 +318,7 @@ async fn build_single_view(
     def: &MetricDefinition,
     view: UnbatchedView,
     query: CompiledQuery,
-) -> Result<MetricResultViewDto, ViewFailure> {
+) -> Result<MetricResultViewDto, ViewAbsence> {
     match view {
         UnbatchedView::Timeseries {
             bucket, dimensions, ..
@@ -364,16 +366,16 @@ async fn build_single_view(
     }
 }
 
-fn fail_batch(items: &[BatchItem], failure: &ViewFailure) -> Vec<MetricViewResult> {
+fn settle_batch(items: &[BatchItem], absence: &ViewAbsence) -> Vec<MetricViewResult> {
     items
         .iter()
-        .map(|item| view_result(item, Err(failure.clone())))
+        .map(|item| view_result(item, Err(absence.clone())))
         .collect()
 }
 
-fn assembly_failure(error: &CanonicalError, comment: &str) -> ViewFailure {
+fn assembly_failure(error: &CanonicalError, comment: &str) -> ViewAbsence {
     tracing::error!(error = ?error, comment, "metric view assembly failed");
-    ViewFailure::from_assembly_error(comment)
+    ViewFailure::from_assembly_error(comment).into()
 }
 
 // Detail routing only: identity being unreachable must not turn a partial
@@ -402,7 +404,7 @@ fn batch_log_comment(kind: &str, items: &[BatchItem]) -> String {
 
 fn view_result(
     item: &BatchItem,
-    view: Result<MetricResultViewDto, ViewFailure>,
+    view: Result<MetricResultViewDto, ViewAbsence>,
 ) -> MetricViewResult {
     MetricViewResult {
         metric_index: item.metric_index,
@@ -416,7 +418,7 @@ async fn fetch_rows<T>(
     query: CompiledQuery,
     kind: QueryKind,
     log_comment: &str,
-) -> Result<Vec<T>, ViewFailure>
+) -> Result<Vec<T>, ViewAbsence>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -424,10 +426,10 @@ where
         .await
         .map_err(|error| match error {
             QueryFetchError::Submit(message) | QueryFetchError::Fetch(message) => {
-                ViewFailure::from_query_error(&message)
+                ViewAbsence::from_query_error(&message)
             }
-            QueryFetchError::Timeout => ViewFailure::timeout(),
-            QueryFetchError::Parse(message) => ViewFailure::from_parse_error(&message),
+            QueryFetchError::Timeout => ViewFailure::timeout().into(),
+            QueryFetchError::Parse(message) => ViewFailure::from_parse_error(&message).into(),
         })
 }
 
