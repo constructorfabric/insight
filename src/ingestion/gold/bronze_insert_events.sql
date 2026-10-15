@@ -2,7 +2,7 @@
     materialized='view',
     schema='insight',
     alias='bronze_insert_events',
-    tags=['gold']
+    tags=['gold', 'sync:always']
 ) }}
 
 {#-
@@ -12,16 +12,17 @@
   list makes the CREATE succeed and moves the failure to every SELECT, which is
   worse, not better.
 
-  Nothing pre-creates bronze any more — the Airbyte destination creates it on a
-  connector's first sync — so a deploy onto a cluster that has never synced
+  Nothing pre-creates bronze — the Airbyte destination creates it on a
+  connector's first sync — so a build on a cluster that has never synced
   reaches this model with zero bronze tables. Emitting a correctly-typed empty
-  relation keeps that from taking the rest of the gold build with it.
-  `dbt run --select tag:gold` runs on every deploy, so the real view replaces
-  the stub on the next one — the same cadence the bronze SELECT grants in
-  provision-presentation-access.sh follow. For the same reason the view is kept
-  out of the committed DDL snapshot (bootstrap-db/dump-ddl.sh): that snapshot is
-  dumped from a warehouse that has bronze, so it could only ever carry the
-  unguarded form.
+  relation keeps that from taking the rest of the build with it. The model has
+  no `ref()`, so no connector's graph walk reaches it: `sync:always` is what
+  puts it in every sync's selection, and the sync that creates the first bronze
+  table is the one that replaces the stub — the same cadence the bronze SELECT
+  grants in provision-presentation-access.sh follow. For the same reason the
+  view is kept out of the committed DDL snapshot (bootstrap-db/dump-ddl.sh):
+  that snapshot is dumped from a warehouse that has bronze, so it could only
+  ever carry the unguarded form.
 
   Counted over TABLES, not databases: merge() needs a matching table, and an
   empty bronze database would satisfy a database-level probe while still

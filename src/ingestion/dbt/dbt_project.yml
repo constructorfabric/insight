@@ -25,7 +25,7 @@ vars:
 
   # Topology of the target ClickHouse (epic #2010) — what DDL the models must
   # emit. Read from the environment rather than `--vars` so every entry point
-  # (the deploy hook, the Argo dbt-run step, bootstrap, the datapath harness)
+  # (the Argo dbt-run step, the gold build, bootstrap, the datapath harness)
   # agrees without each one growing a flag. Jinja in dbt_project.yml renders to
   # text, so `cluster_mode` is the STRING "true"/"false", never a boolean.
   cluster_mode: "{{ env_var('CLICKHOUSE_CLUSTER_MODE', 'false') }}"

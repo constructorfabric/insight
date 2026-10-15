@@ -1,7 +1,7 @@
 {{ config(
     materialized='view',
     schema='identity',
-    tags=['identity', 'identity:map']
+    tags=['identity', 'identity:map', 'sync:always']
 ) }}
 
 -- INVARIANT: one row per email. A duplicate multiplies every joined fact, so

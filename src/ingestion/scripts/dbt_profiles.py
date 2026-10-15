@@ -1,7 +1,7 @@
 """The one writer of every throwaway dbt profiles.yml.
 
-Each step that runs dbt — the Argo dbt-run and data-quality steps, the deploy
-hook, bootstrap, the sample seeder, the two transform rigs, the data-path
+Each step that runs dbt — the Argo dbt-run and data-quality steps, the gold
+build, bootstrap, the sample seeder, the two transform rigs, the data-path
 harness — picks its own target name and warehouse and takes the body from here,
 so the connection shape and the ClickHouse topology (epic #2010) are stated
 once instead of once per step.

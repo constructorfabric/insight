@@ -99,8 +99,8 @@ def _stand_env_file() -> Path:
 def _rebuild_evidence_relation() -> None:
     """Rebuild ONLY the walked evidence relation, through the deployed path.
 
-    `insight_seed.silver.apply_ch_migrations` is what `insight-seed gold` (and
-    the k8s clickhouse-migrate Hook Job) runs; narrowing its dbt selection to
+    `insight_seed.silver.build_gold` is what `insight-seed gold` (and a
+    connector sync's own dbt run) builds with; narrowing its dbt selection to
     the one model is the only difference from `test-stand seed gold`. Never
     the silver step — that regenerates rows — and never direct DDL, which
     would prove a hand-rolled swap rather than the deployment's.
@@ -109,10 +109,7 @@ def _rebuild_evidence_relation() -> None:
     uid mapping, minus `--build` (the stand's own seed built the image, and
     the ingestion tree is bind-mounted so the dbt project is current anyway).
     """
-    code = (
-        "from insight_seed.silver import apply_ch_migrations; "
-        f"apply_ch_migrations(dbt_select={EVIDENCE_MODEL!r})"
-    )
+    code = f"from insight_seed.silver import build_gold; build_gold(dbt_select={EVIDENCE_MODEL!r})"
     project = os.environ.get(_COMPOSE_PROJECT_ENV, "").strip() or _DEFAULT_COMPOSE_PROJECT
     command = [
         "docker",

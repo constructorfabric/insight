@@ -7,11 +7,11 @@
 #   1. Databases + access (create-databases.sh, the one creation site).
 #   2. Connectors -> bronze (ReplacingMergeTree via append_dedup).
 #   3. dbt run (all): staging + silver + dbt-owned gold.
-#   4. Gold-view migrations (apply-ch-migrations.sh): CREATE OR REPLACE the
-#      migration-owned gold views on top of the silver dbt just built, then
-#      rebuild dbt tag:gold. The snapshot applicator (create-bronze-
-#      placeholders.sh) is SKIPPED here (BOOTSTRAP_SKIP_SNAPSHOT=1) — during
-#      generation the on-disk snapshot is stale and would pollute the dump.
+#   4. Migrations (apply-ch-migrations.sh): the schema migrations and the
+#      warm-cluster heals, on top of what dbt just built. The snapshot
+#      applicator (create-bronze-placeholders.sh) is SKIPPED here
+#      (BOOTSTRAP_SKIP_SNAPSHOT=1) — during generation the on-disk snapshot is
+#      stale and would pollute the dump.
 set -euo pipefail
 
 CONFIG_FILE="${1:?usage: bootstrap-db.sh <connectors-config.yaml>}"
@@ -47,19 +47,17 @@ echo "=== 2. Creating connector tables (bronze) ==="
 
 echo "=== 3. Running all dbt models ==="
 # Fail loud: a partial dbt run means missing staging/silver/gold relations, and
-# because step 4 sets SKIP_DBT_GOLD=1 (gold is already built here, not there),
-# a swallowed failure would silently ship an incomplete connectors-ddl snapshot
-# while bootstrap still "succeeds". A complete dbt run is a precondition for the
-# dump, so let its non-zero exit abort under `set -e`.
+# this is their only build — step 4 runs no dbt. A swallowed failure would
+# silently ship an incomplete connectors-ddl snapshot while bootstrap still
+# "succeeds". A complete dbt run is a precondition for the dump, so let its
+# non-zero exit abort under `set -e`.
 "${SCRIPT_DIR}/run-dbt.sh"
 
-echo "=== 4. Applying ClickHouse migrations (gold views) + dbt gold ==="
+echo "=== 4. Applying ClickHouse migrations ==="
 # Snapshot applicator is a no-op here (generation mode); the real relations
 # already exist from steps 1-3. apply-ch-migrations re-creates the databases
-# (no-op), applies the gold-view migrations, and heals warm-cluster schemas.
-# SKIP_DBT_GOLD: step 3 already built every tag:gold model with the pinned dbt
-# venv; skip apply-ch-migrations' own gold build, which would need a `dbt` on
-# PATH (absent / dbt-fusion outside the prod toolbox).
+# (no-op), applies the migrations, and heals warm-cluster schemas. It needs no
+# `dbt` on PATH — which outside the prod toolbox (local dev, the connectors-ddl
+# CI workflow) is absent or the wrong build (dbt-fusion 2.0).
 export BOOTSTRAP_SKIP_SNAPSHOT=1
-export SKIP_DBT_GOLD=1
 bash "${SCRIPT_DIR}/../apply-ch-migrations.sh"
