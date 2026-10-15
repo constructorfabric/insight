@@ -12,9 +12,10 @@
 #   3. `tenant_migration plan` and `apply`: nothing lost, tenant and keys moved.
 #   4. `rollback`, then `restore` from the dump: each gives back the warm state
 #      exactly.
-#   5. Apply again, rebuild with `--full-refresh --exclude tag:history`: the
-#      identity inputs carry only the canonical tenant, the history relation
-#      keeps every row, and `finalize` leaves no work table behind.
+#   5. Apply again and rebuild with `--full-refresh`, the history relation in
+#      the selection: the identity inputs carry only the canonical tenant, the
+#      history relation refuses the flag and keeps every row, and `finalize`
+#      leaves no work table behind.
 #
 # Required env (same contract as apply-ch-migrations.sh):
 #   CLICKHOUSE_URL, CLICKHOUSE_USER, CLICKHOUSE_PASSWORD, CLICKHOUSE_DATABASE
@@ -171,10 +172,10 @@ migration restore --dump-dir "$WORKDIR/dump-2"
 [[ "$(fingerprint)" == "$WARM" ]] || fail "restore did not load the dump back exactly: '$(fingerprint)' != '$WARM'"
 migration finalize
 
-echo "=== Step 5: apply, rebuild everything else, finalize ==="
+echo "=== Step 5: apply, rebuild, finalize ==="
 migration apply --tenant "$NEW_TENANT" --old-tenant "$OLD_TENANT" --dump-dir "$WORKDIR/dump-3"
 assert_migrated
-dbt_run --full-refresh --select zoom__users_fields_history+ --exclude tag:history
+dbt_run --full-refresh --select zoom__users_snapshot+
 
 got="$(query "SELECT concat(
     toString(count()), ':',
@@ -184,7 +185,7 @@ got="$(query "SELECT concat(
     toString((SELECT count() FROM staging.zoom__users_snapshot)))
   FROM identity.identity_inputs FINAL WHERE value_type = 'email'")"
 [[ "$got" =~ ^[1-9][0-9]*:0:[1-9][0-9]*:[1-9][0-9]*\|4$ ]] \
-  || fail "after the rebuild expected the email identity inputs all under $NEW_TENANT (the hashed-tenant row gone, every user present) and the history relation still holding its 4 rows — got '$got' (inputs:foreign:ada:cy|history)"
+  || fail "after the rebuild expected the email identity inputs all under $NEW_TENANT (the hashed-tenant row gone, every user present) and the history relation, which refuses a full refresh, still holding its 4 rows — got '$got' (inputs:foreign:ada:cy|history)"
 
 migration finalize
 leftovers="$(query "SELECT count() FROM system.tables WHERE position(name, '__tenant_') > 0")"
