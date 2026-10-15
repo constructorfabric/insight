@@ -70,7 +70,6 @@ from .generators import (
     git,
     git_history,
     git_repos,
-    hr,
     people,
     support,
     task,
@@ -236,6 +235,14 @@ COLLAB_CHAIN_SELECT = (
     "zoom__collab_meeting_activity+",
 )
 
+# The bronze-derived HR chain. `class_focus_metrics` has no connector of its
+# own — dbt derives it from working hours and meeting activity — so it rides in
+# on the `+` after the working-hours arm.
+HR_CHAIN_SELECT = (
+    "bamboohr__to_class_people+",
+    "bamboohr__working_hours+",
+)
+
 # The bronze-derived CRM chain.
 CRM_CHAIN_SELECT = (
     "hubspot__crm_users+",
@@ -343,7 +350,6 @@ def generate_rows(
     totals.update(ci.generate(client, roster, tenant_uuid, days, history))
     totals.update(crm.generate(client, roster, tenant_uuid, days))
     totals.update(collab.generate(client, roster, tenant_uuid, days))
-    totals.update(hr.generate(client, roster, tenant_uuid, days))
     totals.update(ai.generate(client, roster, tenant_uuid, days))
     totals.update(ai_cost.generate(client, roster, tenant_uuid, days))
     totals.update(task.generate(client, roster, tenant_uuid, days))
@@ -386,6 +392,7 @@ def run() -> None:
                     *WIKI_CHAIN_SELECT,
                     *CRM_CHAIN_SELECT,
                     *COLLAB_CHAIN_SELECT,
+                    *HR_CHAIN_SELECT,
                 ]
             ),
             full_refresh=True,
