@@ -218,6 +218,13 @@ WIKI_CHAIN_SELECT = (
     "outline__wiki_engagement+",
 )
 
+# The bronze-derived CRM chain.
+CRM_CHAIN_SELECT = (
+    "hubspot__crm_users+",
+    "hubspot__crm_deals+",
+    "hubspot__crm_activities+",
+)
+
 # The bronze-derived CI chain. INVARIANT: no entry may feed a silver relation
 # the generators write directly — the on-run-start placeholder hook would drop
 # it and rebuild it from an empty staging union. `tests/test_dbt_selector_guard.py`
@@ -359,6 +366,7 @@ def run() -> None:
                     *CI_CHAIN_SELECT,
                     *SUPPORT_CHAIN_SELECT,
                     *WIKI_CHAIN_SELECT,
+                    *CRM_CHAIN_SELECT,
                 ]
             ),
             full_refresh=True,
