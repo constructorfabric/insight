@@ -85,10 +85,8 @@ DROP TABLE IF EXISTS silver.to_ai_cost;
 DROP TABLE IF EXISTS silver.to_ai_tool_usage;
 
 DROP TABLE IF EXISTS identity.bootstrap_inputs;
-DROP TABLE IF EXISTS identity.aliases;
 DROP TABLE IF EXISTS identity.seed_aliases_from_claude_admin;
 DROP TABLE IF EXISTS identity.seed_aliases_from_cursor;
-DROP TABLE IF EXISTS person.persons;
 DROP TABLE IF EXISTS person.seed_persons_from_claude_admin;
 DROP TABLE IF EXISTS person.seed_persons_from_cursor;
 

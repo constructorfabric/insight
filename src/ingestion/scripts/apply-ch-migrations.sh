@@ -131,6 +131,7 @@ for database in bronze_claude_admin bronze_figma bronze_github_copilot bronze_op
   drop_retired_database_if_empty "${database}"
 done
 drop_retired_table_if_empty insight raw_data
+drop_retired_table_if_empty identity aliases
 drop_orphaned_inner_tables insight
 
 echo "=== Healing GitHub Projects V2 bronze keys ==="
