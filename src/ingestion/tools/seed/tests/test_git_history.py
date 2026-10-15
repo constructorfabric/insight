@@ -8,12 +8,16 @@ import pytest
 
 from insight_seed import profiles
 from insight_seed.generators import base, git
+from insight_seed.generators.git_history import build_history
 
 _TENANT = "00000000-df51-5b42-9538-d2b56b7ee953"
 _ANCHOR = _dt.date(2026, 8, 11)
 _DAYS = 60
 
 Rows = dict[str, list[tuple[Any, ...]]]
+
+COMMIT_DIGEST = "25bdaad252c3a4843beaa323553c4fba"
+PULL_REQUEST_DIGEST = "6b92cfbd3c93a79b5ac8a44db9d2950f"
 
 
 @pytest.fixture(autouse=True)
@@ -36,24 +40,27 @@ def emitted(monkeypatch: pytest.MonkeyPatch) -> Rows:
     return captured
 
 
-def test_the_commit_rows_are_unchanged_by_the_extraction(emitted: Rows) -> None:
-    """Locked signature of the current draws. The history builder owns the RNG
-    after this task; if its draw ORDER diverges, every seeded stand's data
-    changes silently and this digest moves."""
+def test_the_commit_draws_are_unchanged(emitted: Rows) -> None:
+    """Locked signature of the current draws. The history builder owns the RNG,
+    and if its draw ORDER diverges every seeded stand's data changes silently —
+    so the digest is taken over the history itself rather than over whatever
+    shape the generator happens to write it in."""
     roster = profiles.build_roster("dev@company.nonpresent")
-    git.seed_class_git_commits(None, roster, _TENANT, _DAYS)  # type: ignore[arg-type]
-    rows = emitted["silver.class_git_commits"]
 
-    digest = hashlib.blake2b(repr(rows).encode(), digest_size=16).hexdigest()
-    assert len(rows) == 2022, f"row count moved: {len(rows)}"
-    assert digest == "b0636eaf3ccd06719bb677df751b8668"
+    history = build_history(roster, _DAYS)
+
+    commits = [(day.person.email, day.date, commit) for day in history for commit in day.commits]
+    digest = hashlib.blake2b(repr(commits).encode(), digest_size=16).hexdigest()
+    assert len(commits) == 2022, f"commit count moved: {len(commits)}"
+    assert digest == COMMIT_DIGEST
 
 
-def test_the_pull_request_rows_are_unchanged_by_the_extraction(emitted: Rows) -> None:
+def test_the_pull_request_draws_are_unchanged(emitted: Rows) -> None:
     roster = profiles.build_roster("dev@company.nonpresent")
-    git.seed_class_git_pull_requests(None, roster, _TENANT, _DAYS)  # type: ignore[arg-type]
-    rows = emitted["silver.class_git_pull_requests"]
 
-    digest = hashlib.blake2b(repr(rows).encode(), digest_size=16).hexdigest()
-    assert len(rows) == 321, f"row count moved: {len(rows)}"
-    assert digest == "d5102560b99ef0b37e0e5bde59ce412b"
+    history = build_history(roster, _DAYS)
+
+    prs = [(day.person.email, day.date, pr) for day in history for pr in day.prs]
+    digest = hashlib.blake2b(repr(prs).encode(), digest_size=16).hexdigest()
+    assert len(prs) == 321, f"pull request count moved: {len(prs)}"
+    assert digest == PULL_REQUEST_DIGEST

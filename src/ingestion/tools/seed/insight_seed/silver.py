@@ -271,6 +271,17 @@ CRM_CHAIN_SELECT = (
 # the generators write directly — the on-run-start placeholder hook would drop
 # it and rebuild it from an empty staging union. `tests/test_dbt_selector_guard.py`
 # enforces this against RESET_TARGETS minus BRONZE_DERIVED_SILVER.
+GIT_CHAIN_SELECT = (
+    "github__account_emails+",
+    "github__commits+",
+    "github__file_changes+",
+    "github__pull_requests+",
+    "github__pull_requests_commits+",
+    # No row is emitted for it, but gold's default-branch commits read the
+    # class it feeds, and an unbuilt relation fails the model.
+    "github__repository_branches+",
+)
+
 CI_CHAIN_SELECT = (
     "github__ci_runs+",
     "github__deployments+",
@@ -411,6 +422,7 @@ def run() -> None:
                     *COLLAB_CHAIN_SELECT,
                     *HR_CHAIN_SELECT,
                     *AI_CHAIN_SELECT,
+                    *GIT_CHAIN_SELECT,
                 ]
             ),
             full_refresh=True,
