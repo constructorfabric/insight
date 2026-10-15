@@ -68,7 +68,7 @@ The service has no PRD of its own; the drivers below are the product behaviours 
 |-----|---------|--------------|-----------------|----------------------|
 | Query safety | No SQL injection through request values | Metric results compiler, drilldown compiler | Every request value is a bound parameter; keys rendered into SQL are escaped literals; failures log a SQL hash, not the SQL | Compiler unit tests; HTTP live tests |
 | Person-level authorization | No reading about a person the caller may not see | Visibility gate | Whole-request refusal on any invisible id; an identity that cannot answer is a server error, never a permit | Gate unit tests; stand API tests |
-| Failure isolation | One broken metric cannot take down a dashboard | Metric results handler | A failed ClickHouse query becomes a per-view `error` variant with a stable code, detail only for admins; planning errors and the per-view row limit still fail the whole request | Failure-mapping unit tests |
+| Failure isolation | One broken metric cannot take down a dashboard | Metric results handler | A failed ClickHouse query becomes a per-view `error` variant with a stable code, detail only for admins; a relation not built yet becomes a `not_ready` view; planning errors and the per-view row limit still fail the whole request | Failure-mapping unit tests |
 | Bounded work | No request can hold unbounded warehouse or memory resources | Metric results, drilldown, reports, SQL explorer, AI | Per-request caps on metrics, people, period, filters and rows; per-query ClickHouse limits; per-process semaphores on exports and explanations. Saved-query runs are bounded only by the ClickHouse execution and memory limits (see section 4) | Validation unit tests; configuration defaults |
 | Schema drift is visible | A definition whose relation changed reports itself unavailable instead of failing every read | Definition validator | Periodic probe of each source relation and definition; status stored on the definition | Validator unit and live tests |
 
@@ -146,7 +146,7 @@ The portal never names a ClickHouse relation. It asks for metric keys; the defin
 
 Requested person ids are checked against identity's answer to "which of these may this caller see" before any warehouse work. One id outside the answer refuses the whole request with 403; a partial response would be indistinguishable from absent data. Reaching identity is required: an unconfigured or failing identity service is a server error, never a permit. On readings and drilldown, callers authenticated as `service` subjects bypass the gate; reports have no bypass.
 
-Once authorized, a ClickHouse failure while computing one view answers 200 with a `view: "error"` variant in that slot, carrying a stable code. A request that cannot be planned, or a view over its row limit, is refused as a whole. The message carries the underlying description only when identity confirms the caller holds the admin role; an identity that cannot answer the role check degrades the message to generic text and never turns a partial answer into a server error.
+Once authorized, a ClickHouse failure while computing one view answers 200 with a `view: "error"` variant in that slot, carrying a stable code. A source relation the warehouse has not built yet is not a failure: the view answers `view: "not_ready"` with reason `SOURCE_RELATION_MISSING`, and drilldown, saved-query runs and report previews carry the same marker beside empty rows. A relation whose columns disagree with the code still fails. A request that cannot be planned, or a view over its row limit, is refused as a whole. The message carries the underlying description only when identity confirms the caller holds the admin role; an identity that cannot answer the role check degrades the message to generic text and never turns a partial answer into a server error.
 
 **Why**: Permission must never leak through a partial answer, and one broken metric must never blank a dashboard.
 
@@ -268,7 +268,7 @@ Turns a validated request into the ClickHouse queries that answer it.
 
 ##### Responsibility scope
 
-Validate request bounds. Plan queries, batching period and peer views per source and filter set. Compile each view into parameterized SQL over the source's observation relation or custom SQL, with person resolution, dimension filters, value transforms, peer cohorts and the five-member peer floor. Execute rankings first, then the remaining views four at a time; map each ClickHouse failure to a per-view error code; attach person absences from `silver.class_person_absences` on a best-effort basis.
+Validate request bounds. Plan queries, batching period and peer views per source and filter set. Compile each view into parameterized SQL over the source's observation relation or custom SQL, with person resolution, dimension filters, value transforms, peer cohorts and the five-member peer floor. Execute rankings first, then the remaining views four at a time; answer a missing source relation with a `not_ready` view and map every other ClickHouse failure to a per-view error code; attach person absences from `silver.class_person_absences` on a best-effort basis.
 
 ##### Responsibility boundaries
 
