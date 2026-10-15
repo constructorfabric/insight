@@ -20,7 +20,6 @@ from insight_datapath.dbt_parse import REPO_ROOT, Manifest, parse_project
 
 HISTORY_TABLES = REPO_ROOT / "src/ingestion/scripts/tenant-history-tables.txt"
 TAG = "history"
-SNAPSHOT_MACRO = "macro.ingestion.snapshot"
 
 #: Append-only models whose every row a rebuild derives again from Bronze or from a
 #: `history` relation above them.
@@ -97,12 +96,10 @@ def _appends(node: dict[str, Any]) -> bool:
 
 
 def _keeps_history(node: dict[str, Any]) -> bool:
-    """A snapshot, or an incremental model refusing a full refresh — a `table` model
-    is rebuilt on every run whatever its `full_refresh` says."""
+    """An incremental model refusing a full refresh — a `table` model is rebuilt on
+    every run whatever its `full_refresh` says."""
     config = node["config"]
-    is_snapshot = SNAPSHOT_MACRO in node["depends_on"]["macros"]
-    refuses = config.get("full_refresh") is False and config["materialized"] == "incremental"
-    return refuses or is_snapshot
+    return config.get("full_refresh") is False and config["materialized"] == "incremental"
 
 
 def _listed_relations(path: Path) -> set[str]:
@@ -143,7 +140,7 @@ def test_the_rebuildable_list_names_untagged_append_models(models: Models) -> No
 def test_a_tagged_model_is_a_snapshot_or_an_incremental_model_refusing_a_full_refresh(
     models: Models,
 ) -> None:
-    """Only a snapshot may be refreshed — the seed replaces an org that way."""
+    """Snapshots included: a major connector bump dispatches a full refresh."""
     exposed = sorted(name for name, n in models.items() if _tagged(n) and not _keeps_history(n))
 
     assert not exposed, f"make incremental with full_refresh=false: {exposed}"
