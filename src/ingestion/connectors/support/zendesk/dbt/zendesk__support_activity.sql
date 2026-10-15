@@ -97,7 +97,7 @@ SELECT
     source_id                       AS insight_source_id,
     MD5(concat(tenant_id, '-', source_id, '-zendesk-', person_key, '-', toString(date))) AS unique_key,
     'zendesk'                       AS data_source,
-    person_key,                                            -- FK → insight.people (= lower(email))
+    person_key,                                            -- lower(email)
     person_key                      AS email,
     date,
     sum(updates)                    AS updates,

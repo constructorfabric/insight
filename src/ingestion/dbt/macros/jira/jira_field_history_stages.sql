@@ -33,7 +33,7 @@
     contract's creation-marker sentinel (§10). Emitting both produces two rows
     with the SAME unique_key, and ReplacingMergeTree then keeps one and drops the
     other. The marker wins: its timestamp is the same value, and
-    `task_issue_current_state.created_at` reads it by `event_kind`. -#}
+    `task_issue_state.created_at` reads it by `event_kind`. -#}
 {% macro jira_journal_kinds_sql() %}
     SELECT
         insight_source_id,

@@ -67,6 +67,7 @@ export CLICKHOUSE_CLUSTER_MODE="${CLICKHOUSE_CLUSTER_MODE:-false}"
 export CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}"
 
 source "$SCRIPT_DIR/lib/ch-topology.sh"
+source "$SCRIPT_DIR/lib/retired-relations.sh"
 
 bash "$SCRIPT_DIR/create-databases.sh"
 
@@ -83,6 +84,14 @@ for migration in "$SCRIPT_DIR/migrations"/*.sql; do
   echo "  $(basename "$migration")"
   ch_render_topology < "$migration" | run_ch
 done
+
+echo "=== Dropping retired databases and relations ==="
+drop_retired_database_if_empty person
+for database in bronze_claude_admin bronze_figma bronze_github_copilot bronze_openai bronze_salesforce bronze_workday; do
+  drop_retired_database_if_empty "${database}"
+done
+drop_retired_table_if_empty insight raw_data
+drop_orphaned_inner_tables insight
 
 echo "=== Healing GitHub Projects V2 bronze keys ==="
 # Both relations were briefly keyed with the collection day inside `unique_key`.

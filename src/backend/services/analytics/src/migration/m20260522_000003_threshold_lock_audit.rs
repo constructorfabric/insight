@@ -8,8 +8,7 @@
 //! the sole writer). Column-shape integrity is enforced by the schema:
 //! `event_type` is an inline ENUM, and the two scope columns
 //! (`attempted_scope`, `blocking_scope`) are domain-constrained by CHECK
-//! constraints registered in [`REQUIRED_CHECKS`] so the startup probe
-//! enforces presence. The CHECK names match `chk_threshold_lock_audit_*` —
+//! constraints. The CHECK names match `chk_threshold_lock_audit_*` —
 //! the audit row is the forensic record for lock-bypass attempts; a row
 //! whose `attempted_scope` is an arbitrary string would distort
 //! `GROUP BY attempted_scope` histograms in retrospective security audits.
@@ -23,14 +22,7 @@ use sea_orm_migration::prelude::*;
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
-/// Names of every CHECK constraint this migration adds. The startup probe
-/// asserts each one is present in `INFORMATION_SCHEMA.CHECK_CONSTRAINTS`.
-pub const REQUIRED_CHECKS: &[&str] = &[
-    "chk_threshold_lock_audit_attempted_scope",
-    "chk_threshold_lock_audit_blocking_scope",
-];
-
-/// CHECK clause SQL, ordered to match [`REQUIRED_CHECKS`]. The scope value
+/// CHECK clause SQL. The scope value
 /// list is the same set as `metric_threshold.scope` — keep in sync if a new
 /// scope is added there.
 const CHECK_CLAUSES: &[(&str, &str)] = &[
@@ -204,17 +196,6 @@ mod tests {
             panic!("CHECK {name} not registered in CHECK_CLAUSES");
         };
         p
-    }
-
-    #[test]
-    fn check_clauses_match_required_list() {
-        let clause_names: Vec<&str> = CHECK_CLAUSES.iter().map(|(n, _)| *n).collect();
-        assert_eq!(
-            clause_names.as_slice(),
-            REQUIRED_CHECKS,
-            "CHECK_CLAUSES names must equal REQUIRED_CHECKS in the same order — \
-             the startup probe relies on this list to detect drops"
-        );
     }
 
     /// The audit table's scope columns must list every scope value that

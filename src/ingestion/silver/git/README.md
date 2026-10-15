@@ -129,6 +129,5 @@ computed at read time so taxonomy changes apply retroactively. `vendored`
 measure and surfaced distinctly under the `vendored` category in the total
 `lines_added` breakdown.
 
-`fct_git_*` and `mtr_git_*` serve the legacy `insight.*` views
-(`git_bullet_rows`, `ic_kpis`, `ic_chart_loc`) only and are scheduled for
-removal with them; new metric work targets the gold observation model.
+`fct_git_*` and `mtr_git_*` have no reader in the serving path; new metric
+work targets the gold observation model.

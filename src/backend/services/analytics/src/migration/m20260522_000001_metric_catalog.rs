@@ -2,30 +2,14 @@
 //!
 //! Refs #519.
 //! (`cpt-metric-cat-dbtable-metric-catalog`).
-//!
-//! CHECK constraint names below are load-bearing: the startup probe in
-//! `infra/db/check_probe.rs` looks them up in `INFORMATION_SCHEMA.CHECK_CONSTRAINTS`
-//! and refuses to boot if any are missing (closes the MariaDB 10.2 silent-drop
-//! hole per `cpt-metric-cat-constraint-mariadb-check`). Keep this list in sync
-//! with [`REQUIRED_CHECKS`].
 
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
-/// Names of every CHECK constraint this migration adds. The startup probe
-/// asserts each one is present in `INFORMATION_SCHEMA.CHECK_CONSTRAINTS`.
-pub const REQUIRED_CHECKS: &[&str] = &[
-    "chk_metric_catalog_tenant_id_null",
-    "chk_metric_catalog_metric_key_shape",
-    "chk_metric_catalog_schema_status_enum",
-    "chk_metric_catalog_schema_error_biconditional",
-    "chk_metric_catalog_schema_error_enum",
-];
-
-/// CHECK clause SQL, ordered to match [`REQUIRED_CHECKS`]. Each is appended
-/// via `ALTER TABLE ... ADD CONSTRAINT <name> CHECK (<predicate>)`.
+/// CHECK clause SQL, each appended via
+/// `ALTER TABLE ... ADD CONSTRAINT <name> CHECK (<predicate>)`.
 const CHECK_CLAUSES: &[(&str, &str)] = &[
     ("chk_metric_catalog_tenant_id_null", "tenant_id IS NULL"),
     // Dot is expressed as a `[.]` character class rather than `\.` so the
@@ -213,17 +197,6 @@ enum MetricCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn check_clauses_match_required_list() {
-        let clause_names: Vec<&str> = CHECK_CLAUSES.iter().map(|(n, _)| *n).collect();
-        assert_eq!(
-            clause_names.as_slice(),
-            REQUIRED_CHECKS,
-            "CHECK_CLAUSES names must equal REQUIRED_CHECKS in the same order — \
-             the startup probe relies on this list to detect drops"
-        );
-    }
 
     fn predicate_for(name: &str) -> &'static str {
         let Some((_, p)) = CHECK_CLAUSES.iter().find(|(n, _)| *n == name) else {

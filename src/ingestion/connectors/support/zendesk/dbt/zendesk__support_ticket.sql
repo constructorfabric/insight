@@ -29,7 +29,7 @@ SELECT
     t.assignee_id                                AS assignee_source_id,
     a.person_key                                 AS assignee_person_key,  -- snapshot only — NOT for attribution
     t.group_id                                   AS group_source_id,
-    t.requester_id                               AS requester_source_id,  -- external customer; NOT mapped to insight.people
+    t.requester_id                               AS requester_source_id,  -- external customer; NOT mapped to a person
     t.organization_id                            AS org_source_id,
     parseDateTimeBestEffortOrNull(t.created_at)  AS created_at,
     parseDateTimeBestEffortOrNull(t.updated_at)  AS updated_at,

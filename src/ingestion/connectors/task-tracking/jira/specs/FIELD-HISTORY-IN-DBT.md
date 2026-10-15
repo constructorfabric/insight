@@ -1123,7 +1123,7 @@ The output table is consumed by `silver.class_task_field_history` through
 
 - the per-issue creation marker: one row with `field_id = 'created'`,
   `event_kind = 'synthetic_initial'`, `_seq = 0`, carrying the reporter and the
-  creation timestamp, and no value. `task_issue_current_state.created_at` reads
+  creation timestamp, and no value. `task_issue_state.created_at` reads
   it as `minIf(event_at, event_kind = 'synthetic_initial')`
 - `event_id`: `initial:{issue_id}` for synthetic rows, the changelog id for
   changelog rows

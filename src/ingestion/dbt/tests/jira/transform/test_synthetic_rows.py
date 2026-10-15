@@ -109,7 +109,7 @@ def test_initial_rows_are_sequenced_by_field_id(scenario: Scenario) -> None:
 def test_creation_marker_carries_the_reporter_and_no_value(scenario: Scenario) -> None:
     """One row per issue that consumers read as "the issue exists from here".
 
-    `task_issue_current_state.created_at` finds it by `event_kind`, so its shape
+    `task_issue_state.created_at` finds it by `event_kind`, so its shape
     is a contract: the sentinel field id, seq 0, the reporter as author, no
     value, and an event id under the `initial:` convention.
     """

@@ -20,7 +20,7 @@ models:
       - name: unique_key
         tests: [unique, not_null]
       - name: person_key
-        description: lower(email) → FK insight.people.
+        description: lower(email).
         tests: [not_null]
       - name: data_source
         tests:

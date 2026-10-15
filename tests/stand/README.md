@@ -188,8 +188,7 @@ for — not an assertion that the UI "should" be covered too.
 As of this writing: no metric value is asserted (the golden set is empty by
 design, above); no accessibility or contrast checking; cross-tenant
 isolation and the service-principal route are left to the in-process
-`bronze-to-api` rig; `/v1/columns` is asserted only against an empty
-universe (the seed does not populate `table_columns`).
+`bronze-to-api` rig.
 
 Four gaps worth naming separately, because none of them is "nobody got to
 it":

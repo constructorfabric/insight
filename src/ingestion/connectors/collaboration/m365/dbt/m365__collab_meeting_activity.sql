@@ -43,8 +43,8 @@ WHERE userPrincipalName IS NOT NULL
   AND userPrincipalName != ''
   AND {{ m365_day_was_reported('teams_activity') }}
   -- Drop unlicensed users (guests, ex-employees, service accounts). Their Teams
-  -- activity inflates team-level collab counters and produces orphan gold rows
-  -- with no matching insight.people entry. `isLicensed` = "Selected if the user
+  -- activity inflates team-level collab counters and produces gold rows that
+  -- match no person. `isLicensed` = "Selected if the user
   -- is licensed to use Teams" (MS Graph getTeamsUserActivityUserDetail). Only the
   -- teams_activity report exposes this flag; the email/onedrive/sharepoint feeders
   -- fall back to `assignedProducts`. A NULL flag is treated as unlicensed and
