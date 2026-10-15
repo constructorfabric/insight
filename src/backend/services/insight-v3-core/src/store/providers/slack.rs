@@ -58,8 +58,8 @@ struct Answer {
     error: Option<String>,
 }
 
-// Slack reads `&`, `<` and `>` as control characters in message text, with
-// formatting off as well; anything else is written as is.
+// Slack reads `&`, `<` and `>` as control characters in message text, inside
+// code spans as well; anything else is written as is.
 fn escaped(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -75,8 +75,8 @@ impl Provider for Slack {
             .bearer_auth(self.bot_token.expose_secret())
             .json(&serde_json::json!({
                 "channel": self.channel,
-                "text": escaped(&message.text),
-                "mrkdwn": false,
+                "text": escaped(&message.markdown),
+                "mrkdwn": true,
                 "unfurl_links": false,
                 "unfurl_media": false,
             }))

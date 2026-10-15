@@ -9,15 +9,21 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     ...actual,
     fetchMetricNames: vi.fn(),
     fetchMetric: vi.fn(),
-    runMetric: vi.fn(),
+    fetchDataset: vi.fn(),
   };
 });
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as alertsClient from "@/api/alerts-client";
 import type { Alert } from "@/api/alerts-client";
@@ -36,11 +42,20 @@ import { EditAlertPage, NewAlertPage } from "./alert-form";
 const PRS_OPEN = {
   definition: {
     table: "gold.prs",
-    fields: [
-      { column: "id", type: "int", agg: "count", as_name: "total" },
-      { column: "repo", type: "string", as_name: "repo" },
-    ],
+    fields: [{ column: "id", type: "int", agg: "count", as_name: "total" }],
   },
+};
+
+const ABOVE_TEN = {
+  rows: "one",
+  where: { column: "total", op: ">", value: 10 },
+};
+
+/** What the service answers when the one row meets the condition. */
+const MET = {
+  outcome: "breach" as const,
+  reason: null,
+  witness: { matched: 1, answered: 1, columns: ["total"], rows: [[12]] },
 };
 
 /** The same metric with a date, so it can be read over a window. */
@@ -62,10 +77,6 @@ const MOVED_ON = new CustomApiError(409, {
   },
 });
 
-function answer(rows: unknown[][], columns = ["total"]) {
-  return { columns, rows, percents: [] };
-}
-
 function storedMetric(metric: unknown) {
   return metric as Awaited<ReturnType<typeof customClient.fetchMetric>>;
 }
@@ -84,6 +95,10 @@ function cachedWrapper(stale: Alert) {
   };
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
   vi.resetAllMocks();
   portalRouter.reset("/portal/custom/alerts/new");
@@ -95,11 +110,7 @@ beforeEach(() => {
     total: 1,
   });
   vi.mocked(customClient.fetchMetric).mockResolvedValue(storedMetric(PRS_OPEN));
-  vi.mocked(customClient.runMetric).mockResolvedValue(
-    answer([[12]]) as unknown as Awaited<
-      ReturnType<typeof customClient.runMetric>
-    >
-  );
+  vi.mocked(alertsClient.previewAlert).mockResolvedValue(MET);
 });
 
 /** Opens a kit select by its label and picks one of its options. */
@@ -117,8 +128,46 @@ async function fillNew() {
   await userEvent.click(
     await screen.findByRole("option", { name: "prs-open" })
   );
-  await pick("Column", "total");
-  await userEvent.type(screen.getByLabelText("Threshold"), "10");
+  await pickColumn(1, "total");
+  await userEvent.type(condition(1).getByLabelText("Value"), "10");
+}
+
+function condition(number: number) {
+  return within(screen.getByRole("group", { name: `Condition ${number}` }));
+}
+
+/** Picks a test's column once the metric's columns are offered. */
+async function pickColumn(number: number, column: string) {
+  await userEvent.click(
+    condition(number).getByRole("combobox", { name: "Column" })
+  );
+  await userEvent.click(await screen.findByRole("option", { name: column }));
+}
+
+/** The JSON view's text, read as the document it shows. */
+function shownJson(): Record<string, unknown> {
+  return JSON.parse(
+    (screen.getByLabelText("Alert as JSON") as HTMLTextAreaElement).value
+  ) as Record<string, unknown>;
+}
+
+/** Replaces the JSON view's text in one change, as a paste would. */
+function typeJson(text: string) {
+  fireEvent.change(screen.getByLabelText("Alert as JSON"), {
+    target: { value: text },
+  });
+}
+
+/** An alert whose condition reads `value` against its threshold. */
+function alertAt(value: unknown, change: Partial<Alert> = {}): Alert {
+  return {
+    ...ALERT,
+    condition: {
+      rows: "one",
+      where: { column: "total", op: ">", value },
+    } as Alert["condition"],
+    ...change,
+  };
 }
 
 // WORKAROUND: each case fills the whole form, which overruns the 5 s default on loaded CI runners.
@@ -134,9 +183,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
       expect(alertsClient.createAlert).toHaveBeenCalledWith({
         name: "Too many open PRs",
         metric: "prs-open",
-        column: "total",
-        operator: ">",
-        threshold: 10,
+        condition: ABOVE_TEN,
         range: null,
         interval_secs: 300,
         destination: "ops",
@@ -166,8 +213,8 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
 
       render(<NewAlertPage />, { wrapper });
       await fillNew();
+      await pick("Operator", "below");
       for (const [label, option] of [
-        ["Condition", "below"],
         ["Window", window],
         ["Destination", "dev (zulip)"],
       ]) {
@@ -182,9 +229,10 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
         expect(alertsClient.createAlert).toHaveBeenCalledWith({
           name: "Too many open PRs",
           metric: "prs-open",
-          column: "total",
-          operator: "<",
-          threshold: 10,
+          condition: {
+            rows: "one",
+            where: { column: "total", op: "<", value: 10 },
+          },
           range,
           interval_secs: 300,
           destination: "dev",
@@ -218,7 +266,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
 
-    await pick("Column", "total");
+    await pickColumn(1, "total");
     expect(
       screen.queryByText("Couldn't read the metric.")
     ).not.toBeInTheDocument();
@@ -276,7 +324,9 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     expect(
       await screen.findByText("Couldn't load more metrics.")
     ).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "metric-0" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "metric-0" })
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     expect(
@@ -298,10 +348,12 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     scrollEndIntoView();
 
     await screen.findByRole("option", { name: "metric-50" });
-    expect(screen.getAllByRole("option", { name: "metric-49" })).toHaveLength(1);
+    expect(screen.getAllByRole("option", { name: "metric-49" })).toHaveLength(
+      1
+    );
   });
 
-  it("says a grouped metric cannot be alerted on and offers only its numbers", async () => {
+  it("asks which rows must match on a grouped metric, and tests its group too", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(
       storedMetric({
         definition: {
@@ -314,49 +366,58 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
         },
       })
     );
+    vi.mocked(customClient.fetchDataset).mockResolvedValue({
+      name: "runs",
+      declaration: {
+        title: "Runs",
+        fields: [{ name: "stand", path: "stand", type: "string" }],
+      },
+    } as unknown as Awaited<ReturnType<typeof customClient.fetchDataset>>);
 
     render(<NewAlertPage />, { wrapper });
     await userEvent.type(await screen.findByLabelText("Metric"), "prs");
     await userEvent.click(
       await screen.findByRole("option", { name: "prs-open" })
     );
+    await pickColumn(1, "stand");
 
+    expect(await screen.findByLabelText("Rows")).toHaveTextContent(
+      "Exactly one row"
+    );
+    await userEvent.click(
+      condition(1).getByRole("combobox", { name: "Operator" })
+    );
     expect(
-      await screen.findByText(/Returns one row per stand/)
+      await screen.findByRole("option", { name: "is one of" })
     ).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("combobox", { name: "Column" }));
-    expect(
-      await screen.findByRole("option", { name: "runs" })
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "stand" })).toBeNull();
   });
 
   it("explains an empty ratio as nothing to divide by", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(
       storedMetric({
         definition: {
-          dataset: "runs",
+          table: "gold.runs",
           fields: [
-            { field: "passed", type: "int", agg: "sum", as_name: "passed" },
-            { field: "runs", type: "int", agg: "sum", as_name: "runs" },
+            { column: "passed", type: "int", agg: "sum", as_name: "passed" },
+            { column: "runs", type: "int", agg: "sum", as_name: "runs" },
             { type: "float", as_name: "pass_rate", divide: ["passed", "runs"] },
           ],
         },
       })
     );
-    vi.mocked(customClient.runMetric).mockResolvedValue(
-      answer(
-        [[0, 0, null]],
-        ["passed", "runs", "pass_rate"]
-      ) as unknown as Awaited<ReturnType<typeof customClient.runMetric>>
-    );
+    vi.mocked(alertsClient.previewAlert).mockResolvedValue({
+      outcome: "unknown",
+      reason: "null",
+      witness: null,
+    });
 
     render(<NewAlertPage />, { wrapper });
     await userEvent.type(await screen.findByLabelText("Metric"), "prs");
     await userEvent.click(
       await screen.findByRole("option", { name: "prs-open" })
     );
-    await pick("Column", "pass_rate");
+    await pickColumn(1, "pass_rate");
+    await userEvent.type(condition(1).getByLabelText("Value"), "0.5");
 
     expect(
       await screen.findByText(/No data in this window/, {}, { timeout: 3_000 })
@@ -369,26 +430,100 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
       await screen.findByRole("button", { name: "Create alert" })
     );
 
-    expect(screen.getByLabelText("Name")).toHaveFocus();
+    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveFocus());
   });
 
-  it("shows what a check would read now", async () => {
+  it("asks the service what a check would find now, and shows it", async () => {
     render(<NewAlertPage />, { wrapper });
     await fillNew();
 
     expect(
-      await screen.findByText(/meets the condition/, {}, { timeout: 3_000 })
+      await screen.findByText(
+        "Now: meets the condition",
+        {},
+        { timeout: 3_000 }
+      )
     ).toBeInTheDocument();
-    expect(customClient.runMetric).toHaveBeenCalledWith("prs-open", {
-      bucket: false,
+    expect(screen.getByText("1 of 1 row matches")).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "12" })).toBeInTheDocument();
+    expect(alertsClient.previewAlert).toHaveBeenLastCalledWith({
+      metric: "prs-open",
+      range: null,
+      condition: ABOVE_TEN,
     });
   });
 
-  it("warns before saving a metric no check could read", async () => {
-    vi.mocked(customClient.runMetric).mockResolvedValue(
-      answer([[1], [2]]) as unknown as Awaited<
-        ReturnType<typeof customClient.runMetric>
-      >
+  it("shows how many rows of many match, and which", async () => {
+    vi.mocked(alertsClient.previewAlert).mockResolvedValue({
+      outcome: "breach",
+      reason: null,
+      witness: {
+        matched: 2,
+        answered: 12,
+        columns: ["repo", "total"],
+        rows: [
+          ["api", 14],
+          ["web", 11],
+        ],
+      },
+    });
+
+    render(<NewAlertPage />, { wrapper });
+    await fillNew();
+
+    expect(
+      await screen.findByText("2 of 12 rows match", {}, { timeout: 3_000 })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "web" })).toBeInTheDocument();
+  });
+
+  it("says why a check could not decide before the rule is saved", async () => {
+    vi.mocked(alertsClient.previewAlert).mockResolvedValue({
+      outcome: "unknown",
+      reason: "many_rows",
+      witness: null,
+    });
+
+    render(<NewAlertPage />, { wrapper });
+    await fillNew();
+
+    expect(
+      await screen.findByText(
+        "Now: unknown · More than one row",
+        {},
+        { timeout: 3_000 }
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("does not ask for a preview of a condition still being written", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<NewAlertPage />, { wrapper });
+    await userEvent.type(await screen.findByLabelText("Metric"), "prs");
+    await userEvent.click(
+      await screen.findByRole("option", { name: "prs-open" })
+    );
+    await pickColumn(1, "total");
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(alertsClient.previewAlert).not.toHaveBeenCalled();
+  });
+
+  it("puts a refusal of the preview on the control it names", async () => {
+    const said = "`>` does not apply to a text column";
+    vi.mocked(alertsClient.previewAlert).mockRejectedValue(
+      new CustomApiError(400, {
+        detail: "Request validation failed",
+        context: {
+          field_violations: [
+            {
+              field: "condition.where.op",
+              description: said,
+              reason: "INVALID",
+            },
+          ],
+        },
+      })
     );
 
     render(<NewAlertPage />, { wrapper });
@@ -396,14 +531,196 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
 
     expect(
       await screen.findByText(
-        /Current value: unknown · More than one row/,
+        "Fix the highlighted fields to check.",
         {},
-        {
-          timeout: 3_000,
-        }
+        { timeout: 3_000 }
       )
     ).toBeInTheDocument();
+    expect(condition(1).getByLabelText("Operator")).toHaveAccessibleDescription(
+      said
+    );
   });
+
+  it("clears a refusal of the condition once the condition changes", async () => {
+    const said = "must be at most 1000";
+    vi.mocked(alertsClient.createAlert).mockRejectedValue(
+      new CustomApiError(400, {
+        detail: "Request validation failed",
+        context: {
+          field_violations: [
+            {
+              field: "condition.where.value",
+              description: said,
+              reason: "INVALID",
+            },
+            {
+              field: "interval_secs",
+              description: "too short",
+              reason: "INVALID",
+            },
+          ],
+        },
+      })
+    );
+
+    render(<NewAlertPage />, { wrapper });
+    await fillNew();
+    await userEvent.click(screen.getByRole("button", { name: "Create alert" }));
+    expect(await screen.findByText(said)).toBeInTheDocument();
+    await userEvent.type(condition(1).getByLabelText("Value"), "0");
+
+    expect(screen.queryByText(said)).toBeNull();
+    expect(screen.getByText("too short")).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "a column the new metric lacks",
+      {
+        definition: {
+          table: "gold.prs",
+          fields: [
+            { column: "id", type: "int", agg: "count", as_name: "stale" },
+            { column: "repo", type: "string", as_name: "repo" },
+          ],
+        },
+      },
+      { column: "", op: ">", value: "" },
+    ],
+    [
+      "a column that holds text in the new metric",
+      {
+        definition: {
+          table: "gold.prs",
+          fields: [
+            { column: "id", type: "string", as_name: "total" },
+            { column: "id", type: "int", agg: "count", as_name: "stale" },
+          ],
+        },
+      },
+      { column: "", op: ">", value: "" },
+    ],
+    [
+      "one other column, which a new test starts on",
+      {
+        definition: {
+          table: "gold.prs",
+          fields: [
+            { column: "id", type: "int", agg: "count", as_name: "stale" },
+          ],
+        },
+      },
+      { column: "stale", op: ">", value: "" },
+    ],
+    [
+      "a column the new metric holds as a number too",
+      {
+        definition: {
+          table: "gold.prs",
+          fields: [{ column: "id", type: "int", agg: "sum", as_name: "total" }],
+        },
+      },
+      { column: "total", op: ">", value: 10 },
+    ],
+  ])(
+    "starts a test over when another metric has %s",
+    async (_case, other, kept) => {
+      vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
+        names: ["prs-open", "prs-other"],
+        total: 2,
+      });
+      vi.mocked(customClient.fetchMetric).mockImplementation(async (name) =>
+        storedMetric(name === "prs-other" ? other : PRS_OPEN)
+      );
+      vi.mocked(alertsClient.fetchAlert).mockResolvedValue(ALERT);
+
+      render(<EditAlertPage id="a1" />, { wrapper });
+      await screen.findByLabelText("Value");
+      await userEvent.type(screen.getByLabelText("Metric"), "prs");
+      await userEvent.click(
+        await screen.findByRole("option", { name: "prs-other" })
+      );
+      await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+
+      await waitFor(() =>
+        expect(shownJson().condition, _case).toEqual({
+          rows: "one",
+          where: kept,
+        })
+      );
+    }
+  );
+
+  it("shows no window and no condition before a metric is picked", async () => {
+    render(<NewAlertPage />, { wrapper });
+
+    expect(await screen.findByLabelText("Name")).toBeInTheDocument();
+    for (const label of ["Check every", "Destination"]) {
+      expect(screen.getByLabelText(label), label).toBeEnabled();
+    }
+    expect(screen.queryByLabelText("Window")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Condition" })).toBeNull();
+  });
+
+  it.each([
+    [
+      "one undated column",
+      PRS_OPEN,
+      { window: false, column: "total", operator: true },
+    ],
+    [
+      "a date to window by",
+      DATED_PRS_OPEN,
+      { window: true, column: "total", operator: true },
+    ],
+    [
+      "several columns",
+      {
+        definition: {
+          table: "gold.prs",
+          fields: [
+            { column: "id", type: "int", agg: "count", as_name: "total" },
+            { column: "id", type: "int", agg: "max", as_name: "largest" },
+          ],
+        },
+      },
+      { window: false, column: "Pick a column", operator: false },
+    ],
+  ])(
+    "draws what a metric with %s offers once it is picked",
+    async (_case, metric, drawn) => {
+      vi.mocked(customClient.fetchMetric).mockResolvedValue(
+        storedMetric(metric)
+      );
+
+      render(<NewAlertPage />, { wrapper });
+      await userEvent.type(await screen.findByLabelText("Metric"), "prs");
+      await userEvent.click(
+        await screen.findByRole("option", { name: "prs-open" })
+      );
+
+      expect(
+        await screen.findByRole("group", { name: "Condition" }),
+        _case
+      ).toBeInTheDocument();
+      expect(
+        Boolean(screen.queryByLabelText("Window")),
+        `${_case}: window`
+      ).toBe(drawn.window);
+      await waitFor(() =>
+        expect(
+          condition(1).getByRole("combobox", { name: "Column" }),
+          `${_case}: column`
+        ).toHaveTextContent(drawn.column)
+      );
+      for (const label of ["Operator", "Value"]) {
+        expect(
+          Boolean(condition(1).queryByLabelText(label)),
+          `${_case}: ${label}`
+        ).toBe(drawn.operator);
+      }
+    }
+  );
 
   it("says what is missing before it sends anything", async () => {
     render(<NewAlertPage />, { wrapper });
@@ -413,7 +730,6 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
 
     expect(await screen.findByText("Enter a name.")).toBeInTheDocument();
     expect(screen.getByText("Pick a metric.")).toBeInTheDocument();
-    expect(screen.getByText("Enter a number.")).toBeInTheDocument();
     expect(alertsClient.createAlert).not.toHaveBeenCalled();
   });
 
@@ -444,6 +760,37 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
       "aria-invalid",
       "true"
     );
+  });
+
+  it("puts a refusal of the condition on the test it names, and lists it under the JSON", async () => {
+    const said = "the first bound must not be above the second";
+    vi.mocked(alertsClient.createAlert).mockRejectedValue(
+      new CustomApiError(400, {
+        detail: "Request validation failed",
+        context: {
+          field_violations: [
+            {
+              field: "condition.where.value",
+              description: said,
+              reason: "INVALID",
+            },
+          ],
+        },
+      })
+    );
+
+    render(<NewAlertPage />, { wrapper });
+    await fillNew();
+    await userEvent.click(screen.getByRole("button", { name: "Create alert" }));
+
+    const value = condition(1).getByLabelText("Value");
+    await waitFor(() => expect(value).toHaveAccessibleDescription(said));
+    expect(value).toHaveFocus();
+
+    await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+    expect(
+      screen.getByText("condition.where.value").parentElement
+    ).toHaveTextContent(`condition.where.value: ${said}`);
   });
 
   it("shows a refusal about the whole alert above the form, not as a conflict", async () => {
@@ -510,31 +857,143 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
   });
 });
 
+describe("the JSON view", { timeout: 20_000 }, () => {
+  it("shows the draft the editor holds, as the body the service takes", async () => {
+    render(<NewAlertPage />, { wrapper });
+    await fillNew();
+    await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+
+    expect(shownJson()).toEqual({
+      name: "Too many open PRs",
+      metric: "prs-open",
+      condition: ABOVE_TEN,
+      range: null,
+      interval_secs: 300,
+      destination: "ops",
+      enabled: true,
+    });
+  });
+
+  it("hands what is written in it back to the editor", async () => {
+    render(<NewAlertPage />, { wrapper });
+    await fillNew();
+    await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+    typeJson(
+      JSON.stringify({
+        ...shownJson(),
+        condition: {
+          rows: "one",
+          where: {
+            any: [
+              { column: "total", op: ">", value: 10 },
+              { not: { column: "total", op: "between", value: [1, 5] } },
+            ],
+          },
+        },
+      })
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Editor" }));
+
+    const [outer, inner] = screen.getAllByLabelText("Combine");
+    expect(outer).toHaveTextContent("Any of");
+    expect(inner).toHaveTextContent("Not");
+    expect(condition(2).getByLabelText("Operator")).toHaveTextContent(
+      "between"
+    );
+    expect(condition(2).getByLabelText("From")).toHaveValue("1");
+    expect(condition(2).getByLabelText("To")).toHaveValue("5");
+  });
+
+  it("keeps an unquoted integer past 2^53 as its digits", async () => {
+    vi.mocked(alertsClient.createAlert).mockResolvedValue(ALERT);
+
+    render(<NewAlertPage />, { wrapper });
+    await fillNew();
+    await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+    typeJson(
+      JSON.stringify({ ...shownJson(), condition: ABOVE_TEN }).replace(
+        '"value":10',
+        '"value":12345678901234567890'
+      )
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Editor" }));
+
+    expect(condition(1).getByLabelText("Value")).toHaveValue(
+      "12345678901234567890"
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Create alert" }));
+    await waitFor(() =>
+      expect(alertsClient.createAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          condition: {
+            rows: "one",
+            where: { column: "total", op: ">", value: "12345678901234567890" },
+          },
+        })
+      )
+    );
+  });
+
+  it("keeps the rule as it stood while the text does not parse, and will not save it", async () => {
+    render(<NewAlertPage />, { wrapper });
+    await fillNew();
+    await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+    typeJson('{ "name": ');
+
+    expect(screen.getByRole("button", { name: "Create alert" })).toBeDisabled();
+    expect(screen.getByText("Fix the JSON to save.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Editor" }));
+    expect(condition(1).getByLabelText("Value")).toHaveValue("10");
+    expect(screen.getByLabelText("Name")).toHaveValue("Too many open PRs");
+  });
+});
+
 describe("EditAlertPage", () => {
   beforeEach(() => portalRouter.reset("/portal/custom/alerts/a1/edit"));
+
+  it("still shows the rule's condition when its metric cannot be read", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
+      ...ALERT,
+      range: "P7D",
+    });
+    vi.mocked(customClient.fetchMetric).mockRejectedValue(
+      new CustomApiError(404, { detail: "metric prs-open was not found" })
+    );
+
+    render(<EditAlertPage id="a1" />, { wrapper });
+
+    expect(
+      await screen.findByText("metric prs-open was not found")
+    ).toBeInTheDocument();
+    expect(condition(1).getByLabelText("Value")).toHaveValue("10");
+    expect(
+      condition(1).getByRole("combobox", { name: "Column" })
+    ).toHaveTextContent("total");
+    expect(screen.getByLabelText("Window")).toHaveTextContent("Last 7 days");
+  });
 
   it("replaces the alert at the revision it was opened at", async () => {
     vi.mocked(alertsClient.fetchAlert).mockResolvedValue(ALERT);
     vi.mocked(alertsClient.replaceAlert).mockResolvedValue({
-      ...ALERT,
-      threshold: 20,
+      ...alertAt(20),
       revision: 4,
     });
 
     render(<EditAlertPage id="a1" />, { wrapper });
-    const threshold = await screen.findByLabelText("Threshold");
-    expect(threshold).toHaveValue("10");
-    await userEvent.clear(threshold);
-    await userEvent.type(threshold, "20");
+    const value = await screen.findByLabelText("Value");
+    expect(value).toHaveValue("10");
+    await userEvent.clear(value);
+    await userEvent.type(value, "20");
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() =>
       expect(alertsClient.replaceAlert).toHaveBeenCalledWith("a1", {
         name: "Too many open PRs",
         metric: "prs-open",
-        column: "total",
-        operator: ">",
-        threshold: 20,
+        condition: {
+          rows: "one",
+          where: { column: "total", op: ">", value: 20 },
+        },
         range: null,
         interval_secs: 300,
         destination: "ops",
@@ -550,27 +1009,61 @@ describe("EditAlertPage", () => {
     );
   });
 
-  it("seeds the form from a read made now, not from the copy the alert page cached", async () => {
+  it("opens a nested condition as it was saved and sends it back unchanged", async () => {
+    const nested = {
+      rows: { count: { op: ">=", value: 2 } },
+      where: {
+        all: [
+          { column: "total", op: "between", value: [1, 9] },
+          { not: { any: [{ column: "total", op: "==", value: 4 }] } },
+        ],
+      },
+    } as Alert["condition"];
     vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
       ...ALERT,
-      threshold: 15,
-      revision: 4,
+      condition: nested,
     });
     vi.mocked(alertsClient.replaceAlert).mockResolvedValue({
       ...ALERT,
-      threshold: 15,
-      revision: 5,
+      revision: 4,
     });
+
+    render(<EditAlertPage id="a1" />, { wrapper });
+    await userEvent.type(await screen.findByLabelText("Name"), "!");
+    expect(screen.getByLabelText("Rows")).toHaveTextContent("Number of rows");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() =>
+      expect(alertsClient.replaceAlert).toHaveBeenCalledWith(
+        "a1",
+        expect.objectContaining({ condition: nested })
+      )
+    );
+  });
+
+  it("seeds the form from a read made now, not from the copy the alert page cached", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue(
+      alertAt(15, { revision: 4 })
+    );
+    vi.mocked(alertsClient.replaceAlert).mockResolvedValue(
+      alertAt(15, { revision: 5 })
+    );
 
     render(<EditAlertPage id="a1" />, { wrapper: cachedWrapper(ALERT) });
 
-    expect(await screen.findByLabelText("Threshold")).toHaveValue("15");
+    expect(await screen.findByLabelText("Value")).toHaveValue("15");
     await userEvent.type(screen.getByLabelText("Name"), "!");
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() =>
       expect(alertsClient.replaceAlert).toHaveBeenCalledWith(
         "a1",
-        expect.objectContaining({ threshold: 15, expected_revision: 4 })
+        expect.objectContaining({
+          condition: {
+            rows: "one",
+            where: { column: "total", op: ">", value: 15 },
+          },
+          expected_revision: 4,
+        })
       )
     );
   });
@@ -597,18 +1090,17 @@ describe("EditAlertPage", () => {
     );
   });
 
-  it("sends back a threshold wider than it can hold, as it came, with a rename", async () => {
-    vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
-      ...ALERT,
-      threshold: "12345678901234567890",
-    });
+  it("sends back a number wider than a JavaScript number, as it came, with a rename", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue(
+      alertAt("12345678901234567890")
+    );
     vi.mocked(alertsClient.replaceAlert).mockResolvedValue({
       ...ALERT,
       revision: 4,
     });
 
     render(<EditAlertPage id="a1" />, { wrapper });
-    expect(await screen.findByLabelText("Threshold")).toHaveValue(
+    expect(await screen.findByLabelText("Value")).toHaveValue(
       "12345678901234567890"
     );
     await userEvent.type(screen.getByLabelText("Name"), "!");
@@ -619,14 +1111,13 @@ describe("EditAlertPage", () => {
         "a1",
         expect.objectContaining({
           name: "Too many open PRs!",
-          threshold: "12345678901234567890",
+          condition: {
+            rows: "one",
+            where: { column: "total", op: ">", value: "12345678901234567890" },
+          },
         })
       )
     );
-    expect(screen.queryByText("Number is too large.")).not.toBeInTheDocument();
-    expect(
-      await screen.findByText(/does not meet the condition/, {}, { timeout: 3_000 })
-    ).toBeInTheDocument();
   });
 
   it("drops a window its metric no longer has a date for", async () => {
@@ -654,19 +1145,19 @@ describe("EditAlertPage", () => {
   it("keeps the edits when the alert moved on, and offers its latest version", async () => {
     vi.mocked(alertsClient.fetchAlert)
       .mockResolvedValueOnce(ALERT)
-      .mockResolvedValue({ ...ALERT, threshold: 15, revision: 4 });
+      .mockResolvedValue(alertAt(15, { revision: 4 }));
     vi.mocked(alertsClient.replaceAlert).mockRejectedValue(MOVED_ON);
 
     render(<EditAlertPage id="a1" />, { wrapper });
-    const threshold = await screen.findByLabelText("Threshold");
-    await userEvent.clear(threshold);
-    await userEvent.type(threshold, "20");
+    const value = await screen.findByLabelText("Value");
+    await userEvent.clear(value);
+    await userEvent.type(value, "20");
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     expect(
       await screen.findByText(/changed by someone else/)
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Threshold")).toHaveValue("20");
+    expect(screen.getByLabelText("Value")).toHaveValue("20");
 
     await userEvent.click(
       screen.getByRole("button", {
@@ -674,7 +1165,7 @@ describe("EditAlertPage", () => {
       })
     );
     await waitFor(() =>
-      expect(screen.getByLabelText("Threshold")).toHaveValue("15")
+      expect(screen.getByLabelText("Value")).toHaveValue("15")
     );
     expect(
       screen.queryByText(/changed by someone else/)
@@ -690,9 +1181,9 @@ describe("EditAlertPage", () => {
     vi.mocked(alertsClient.replaceAlert).mockRejectedValue(MOVED_ON);
 
     render(<EditAlertPage id="a1" />, { wrapper });
-    const threshold = await screen.findByLabelText("Threshold");
-    await userEvent.clear(threshold);
-    await userEvent.type(threshold, "20");
+    const value = await screen.findByLabelText("Value");
+    await userEvent.clear(value);
+    await userEvent.type(value, "20");
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await userEvent.click(
       await screen.findByRole("button", {
@@ -704,6 +1195,6 @@ describe("EditAlertPage", () => {
       await screen.findByText("alert a1 is not there")
     ).toBeInTheDocument();
     expect(screen.getByText(/changed by someone else/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Threshold")).toHaveValue("20");
+    expect(screen.getByLabelText("Value")).toHaveValue("20");
   });
 });

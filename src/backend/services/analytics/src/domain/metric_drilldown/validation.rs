@@ -13,15 +13,16 @@ use crate::domain::metric_results::{normalize_key, normalize_metric_key};
 use super::capability::EvidenceInputRow;
 use super::capability::healthy_evidence;
 use super::cursor::{
-    decode_cursor, evidence_snapshot_id, selection_fingerprint, verify_evidence_snapshot,
+    EvidenceSnapshot, decode_cursor, evidence_snapshot_id, selection_fingerprint,
+    verify_evidence_snapshot,
 };
 use super::dto::{
     DEFAULT_PAGE_LIMIT, EvidenceInput, EvidencePlan, MAX_DISPLAY_DIMENSIONS, MAX_ENTITY_PERSONS,
     MAX_EXPORT_ROWS, MAX_FILTER_VALUE_BYTES, MAX_FILTER_VALUES, MAX_FILTERS, MAX_PAGE_LIMIT,
     MAX_PERIOD_DAYS, MAX_SEARCH_BYTES, MetricDrilldownColumn, MetricDrilldownColumnType,
     MetricDrilldownEntity, MetricDrilldownExportRequest, MetricDrilldownFilter,
-    MetricDrilldownPeriod, MetricDrilldownRequest, MetricDrilldownSelection,
-    ValidatedMetricDrilldown,
+    MetricDrilldownPeriod, MetricDrilldownRequest, MetricDrilldownSelection, NotReadyDrilldown,
+    ValidatedDrilldown, ValidatedMetricDrilldown,
 };
 use super::presentation::presentation_columns;
 use super::sort::{MetricDrilldownSort, column_sql};
@@ -48,7 +49,7 @@ pub async fn validate_request(
     ch: &insight_clickhouse::Client,
     tenant_id: Uuid,
     req: MetricDrilldownRequest,
-) -> Result<ValidatedMetricDrilldown, CanonicalError> {
+) -> Result<ValidatedDrilldown, CanonicalError> {
     validate_common(
         db,
         ch,
@@ -75,7 +76,7 @@ pub async fn validate_export_request(
     tenant_id: Uuid,
     req: &MetricDrilldownExportRequest,
     limit: usize,
-) -> Result<ValidatedMetricDrilldown, CanonicalError> {
+) -> Result<ValidatedDrilldown, CanonicalError> {
     validate_common(
         db,
         ch,
@@ -180,7 +181,7 @@ async fn validate_common(
     ch: &insight_clickhouse::Client,
     tenant_id: Uuid,
     request: CommonRequest,
-) -> Result<ValidatedMetricDrilldown, CanonicalError> {
+) -> Result<ValidatedDrilldown, CanonicalError> {
     let CommonRequest {
         metric_key,
         entity,
@@ -223,7 +224,6 @@ async fn validate_common(
     let filters = normalize_filters(&definition, filters)?;
     let display_dimensions = normalize_display_dimensions(&definition, display_dimensions)?;
     let plan = load_evidence_plan(db, definition_id, definition).await?;
-    let snapshot_id = evidence_snapshot_id(ch, &plan.relation).await?;
     // One column set answers three questions — what may be sorted, what the
     // cursor is bound to, and what the compiler reads — so they cannot drift
     // apart between here and the query.
@@ -243,6 +243,17 @@ async fn validate_common(
         sort,
         search,
     };
+    let snapshot_id = match evidence_snapshot_id(ch, &plan.relation).await? {
+        EvidenceSnapshot::Pinned(snapshot_id) => snapshot_id,
+        EvidenceSnapshot::NotReady(reason) => {
+            return Ok(ValidatedDrilldown::NotReady(Box::new(NotReadyDrilldown {
+                plan,
+                selection,
+                columns,
+                reason,
+            })));
+        }
+    };
     let fingerprint = selection_fingerprint(tenant_id, &selection, &columns)?;
     let cursor = resume_from(
         ch,
@@ -254,22 +265,24 @@ async fn validate_common(
         ratio,
     )
     .await?;
-    Ok(ValidatedMetricDrilldown {
-        selection,
-        tenant_id,
-        // The handler overwrites this from config; false is the runtime-wide
-        // default (#1967) so tests compile queries in the degraded form.
-        enforce_tenant_scope: false,
-        from,
-        to,
-        limit,
-        cursor,
-        // Filled by the handler, which is where the names are resolved.
-        search_person_ids: Vec::new(),
-        plan,
-        snapshot_id,
-        fingerprint,
-    })
+    Ok(ValidatedDrilldown::Ready(Box::new(
+        ValidatedMetricDrilldown {
+            selection,
+            tenant_id,
+            // The handler overwrites this from config; false is the runtime-wide
+            // default (#1967) so tests compile queries in the degraded form.
+            enforce_tenant_scope: false,
+            from,
+            to,
+            limit,
+            cursor,
+            // Filled by the handler, which is where the names are resolved.
+            search_person_ids: Vec::new(),
+            plan,
+            snapshot_id,
+            fingerprint,
+        },
+    )))
 }
 
 /// The page a cursor addresses, or nothing where the caller asked for the

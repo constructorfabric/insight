@@ -466,10 +466,9 @@ regeneration. To seed a connector whose bronze tables aren't in the snapshot yet
   same change. A spec that asserts only the keys it requests is immune to this coupling;
   only a spec that pins a positive count needs the lockstep bump.
 
-## Feature-scenario traceability
+## Feature traceability
 
-When a spec implements a scenario from a feature's Testing section, cite it
-inside the spec's `description`: the FEATURE path, its `cpt-…-feature-…` ID and
-the stable scenario number. The full traceability contract is section 5 of the
-`quality-vector-tests` skill. This suite has no vector marker mechanism, so the
-scenario's vector lives in the FEATURE only.
+When a spec proves a FEATURE's Definition of Done, name it inside the spec's
+`description`: `Verifies cpt-…-dod-…` (or the flow ID). The binding is section 4
+of the `quality-vector-tests` skill. This suite has no vector marker mechanism,
+and a FEATURE carries no vectors, so a spec carries none.

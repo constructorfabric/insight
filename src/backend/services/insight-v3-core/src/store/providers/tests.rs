@@ -68,7 +68,11 @@ fn http() -> reqwest::Client {
 
 fn message() -> Message {
     Message {
-        text: "Insight alert `a`: m.total = 1 (> 0) at 2026-09-29T00:00:00Z".to_owned(),
+        markdown:
+            "Insight alert: a\nprs-open: total above 0\n`total 1`\nChecked 2026-09-29 00:00 UTC."
+                .to_owned(),
+        html: "Insight alert: a\nprs-open: total above 0\n<code>total 1</code>\nChecked 2026-09-29 00:00 UTC."
+            .to_owned(),
     }
 }
 
@@ -417,7 +421,7 @@ async fn a_transient_slack_error_inside_a_successful_answer_is_unconfirmed() {
 }
 
 #[tokio::test]
-async fn slack_is_sent_the_bot_token_and_the_message_as_escaped_plain_text() {
+async fn slack_is_sent_the_bot_token_and_the_markdown_with_its_control_characters_escaped() {
     let seen = Arc::new(std::sync::Mutex::new(None));
     let recorded = seen.clone();
     let router = Router::new().route(
@@ -448,7 +452,8 @@ async fn slack_is_sent_the_bot_token_and_the_message_as_escaped_plain_text() {
     });
     let slack = Slack::new(http(), SecretString::from("xoxb-token"), "C1".to_owned()).at(&url);
     let message = Message {
-        text: "Insight alert: <!channel> & a > b".to_owned(),
+        markdown: "Insight alert: <!channel> & a > b\n`team <@U1> & x`".to_owned(),
+        html: String::new(),
     };
 
     let result = slack.send(&message).await;
@@ -466,8 +471,8 @@ async fn slack_is_sent_the_bot_token_and_the_message_as_escaped_plain_text() {
         sent,
         json!({
             "channel": "C1",
-            "text": "Insight alert: &lt;!channel&gt; &amp; a &gt; b",
-            "mrkdwn": false,
+            "text": "Insight alert: &lt;!channel&gt; &amp; a &gt; b\n`team &lt;@U1&gt; &amp; x`",
+            "mrkdwn": true,
             "unfurl_links": false,
             "unfurl_media": false,
         })

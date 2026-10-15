@@ -37,6 +37,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260928_000004_tags::Migration),
             Box::new(m20260928_000005_pins::Migration),
             Box::new(m20260928_000006_alerts::Migration),
+            Box::new(m20261014_000007_alert_conditions::Migration),
         ]
     }
 }
@@ -331,6 +332,8 @@ mod m20260928_000006_alerts {
     }
 }
 
+mod m20261014_000007_alert_conditions;
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -376,6 +379,7 @@ mod tests {
                 "m20260928_000004_tags",
                 "m20260928_000005_pins",
                 "m20260928_000006_alerts",
+                "m20261014_000007_alert_conditions",
             ],
             "a migration's name is the ledger's key, so it is written down here"
         );

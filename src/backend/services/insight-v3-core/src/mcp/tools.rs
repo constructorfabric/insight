@@ -683,6 +683,17 @@ impl CustomSurfaces {
     }
 
     #[tool(
+        name = "preview_alert",
+        description = "Checks a metric, window and condition as an alert would right now, without saving anything: answers `breach`, `no_breach` or `unknown` with the reason, and the rows that matched. Takes the same `condition` create_alert does; a refusal names the path of what is wrong."
+    )]
+    async fn preview_alert(
+        &self,
+        Parameters(request): Parameters<super::alerts::PreviewAlertRequest>,
+    ) -> CallToolResult {
+        self.alerts_preview(request).await
+    }
+
+    #[tool(
         name = "get_alert",
         description = "Reads one alert by id: its rule, its revision, and what its latest check found. The revision is what update_alert and set_alert_enabled expect."
     )]
@@ -695,7 +706,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "create_alert",
-        description = "Creates an alert and answers its id. A rule has a name people read, a stored metric, the result column holding the number (its `as_name`), an operator (`>`, `>=`, `<`, `<=`), a numeric threshold, how often to check in seconds, and a configured destination from list_alert_destinations; `range` runs the metric over a window as run_metric does. Every check reads exactly one row and one column: a metric answering more rows, or none, is recorded as unknown. A notification is owed on the first check that meets the condition and again only after a check has seen it clear."
+        description = "Creates an alert and answers its id. A rule has a name people read, a stored metric, a condition, how often to check in seconds, and a configured destination from list_alert_destinations; `range` runs the metric over a window as run_metric does. The condition names which rows must pass (`rows`: `one`, `any`, `all`, `none`, or `{\"count\": {\"op\": \">\", \"value\": 3}}`) and the test each row takes (`where`): a test `{\"column\", \"op\", \"value\"}` on a result column by its `as_name`, or a group `{\"all\": [...]}`, `{\"any\": [...]}`, `{\"not\": ...}`. Example: `{\"rows\": \"any\", \"where\": {\"all\": [{\"column\": \"open\", \"op\": \">\", \"value\": 10}, {\"column\": \"team\", \"op\": \"in\", \"value\": [\"core\", \"infra\"]}]}}`. Operators depend on what the column holds, and a refusal names the path of what is wrong. A test on a cell it cannot read makes the check unknown, never a breach. A notification is owed on the first check that meets the condition and again only after a check has seen it clear."
     )]
     async fn create_alert(
         &self,
@@ -707,7 +718,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "update_alert",
-        description = "Replaces an alert's whole rule at the revision get_alert answered; a rule that has moved on is refused. Replacing resets what its checks found, so the next breach is notified again. Leave `enabled` out to keep it as it is."
+        description = "Replaces an alert's whole rule, its condition included, at the revision get_alert answered; a rule that has moved on is refused. Replacing resets what its checks found, so the next breach is notified again. Leave `enabled` out to keep it as it is."
     )]
     async fn update_alert(
         &self,
@@ -743,7 +754,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "list_alert_notifications",
-        description = "The notifications an alert's checks have owed, newest first, each with the value and condition the check saw and whether it is still pending."
+        description = "The notifications an alert's checks have owed, newest first, each with the condition it was owed under, the rows the check saw that met it, and whether it is still pending."
     )]
     async fn list_alert_notifications(
         &self,
@@ -785,8 +796,8 @@ impl ServerHandler for CustomSurfaces {
                  metrics to read. Dashboards are filed in folders: list_folders shows \
                  them, create_folder makes one, and move_dashboard files a dashboard in one or \
                  takes it out. Dashboards also carry tags: list_tags shows them, and \
-                 set_dashboard_tags replaces a dashboard's set. create_alert watches one number a metric \
-                 produces and owes a notification when it crosses a threshold; \
+                 set_dashboard_tags replaces a dashboard's set. create_alert watches the rows a metric \
+                 produces and owes a notification when they meet a condition; \
                  list_alert_destinations names where one may go.",
             )
     }

@@ -7,11 +7,14 @@ import type {
   Alert as AlertRule,
   AlertNotification,
   AlertPage as ListPage,
+  AlertPreview,
   AlertSummary,
+  Condition,
   NotificationPage,
+  Witness,
 } from "@/api/alerts-types";
 import { AlertPage } from "@/components/alerts/alert-page";
-import { NewAlertPage } from "@/components/alerts/alert-form";
+import { EditAlertPage, NewAlertPage } from "@/components/alerts/alert-form";
 import { AlertsList } from "@/components/alerts/alerts-list";
 import { ALERT, NOTIFICATION, SUMMARY } from "@/test/alerts";
 import {
@@ -21,14 +24,73 @@ import {
   expectNothingOverlaps,
 } from "@/test/storybook/layout";
 
+/** A grouped rule: any team with many open pull requests, or stale ones. */
+const BY_TEAM: Condition = {
+  rows: "any",
+  where: {
+    all: [
+      { column: "open", op: ">", value: 10 },
+      {
+        any: [
+          { column: "team", op: "in", value: ["core", "infra"] },
+          { column: "oldest", op: "older_than", value: "P7D" },
+        ],
+      },
+    ],
+  },
+};
+
+const FOUND: Witness = {
+  matched: 3,
+  answered: 12,
+  columns: ["team", "open", "oldest"],
+  rows: [
+    ["core", 12, "2026-09-20 08:00:00"],
+    ["infra", 15, "2026-09-18 14:30:00"],
+    ["data", 11, "2026-09-22 10:15:00"],
+  ],
+};
+
+const BY_TEAM_METRIC = {
+  body: {
+    dataset: "pull-requests",
+    fields: [
+      { field: "team", type: "string", as_name: "team" },
+      { field: "id", type: "string", agg: "count", as_name: "open" },
+      { field: "opened_at", type: "string", agg: "min", as_name: "oldest" },
+    ],
+    group_by: ["team"],
+  },
+  clock: { field: "opened_at", from: "dataset" },
+};
+
+const PULL_REQUESTS = {
+  name: "pull-requests",
+  declaration: {
+    title: "Pull requests",
+    fields: [
+      { name: "team", path: "team", type: "string" },
+      { name: "id", path: "id", type: "string" },
+      { name: "opened_at", path: "opened_at", type: "datetime" },
+    ],
+  },
+};
+
+const PREVIEW: AlertPreview = {
+  outcome: "breach",
+  reason: null,
+  witness: FOUND,
+};
+
 const BREACHED: AlertRule = {
   ...ALERT,
   name: "Open pull requests waiting on review across every repository",
+  condition: BY_TEAM,
   range: "P7D",
   state: {
     last_evaluated_at: "2026-10-01T09:00:00+00:00",
     last_outcome: "breach",
-    last_value: 12,
+    last_witness: FOUND,
     last_valid_breached: true,
     breached_since: "2026-10-01T09:00:00+00:00",
   },
@@ -36,7 +98,12 @@ const BREACHED: AlertRule = {
 
 const SUMMARIES: AlertSummary[] = [
   { ...SUMMARY, name: BREACHED.name },
-  { id: "a2", name: "Failed deploys", metric: "deploys-failed", enabled: false },
+  {
+    id: "a2",
+    name: "Failed deploys",
+    metric: "deploys-failed",
+    enabled: false,
+  },
 ];
 
 const LIST: ListPage = {
@@ -48,14 +115,19 @@ const LIST: ListPage = {
 
 /** Newest first; the older one was owed under the rule's previous revision. */
 const NOTIFICATIONS: AlertNotification[] = [
-  { ...NOTIFICATION, id: "n2", provider_receipt: "12176902" },
+  {
+    ...NOTIFICATION,
+    id: "n2",
+    condition: BY_TEAM,
+    witness: FOUND,
+    provider_receipt: "12176902",
+  },
   {
     ...NOTIFICATION,
     id: "n1",
     rule_revision: 2,
-    column: "count",
-    threshold: 8,
-    value: 14,
+    condition: { rows: "one", where: { column: "count", op: ">", value: 8 } },
+    witness: { matched: 1, answered: 1, columns: ["count"], rows: [[14]] },
     evaluated_at: "2026-09-30T15:30:00+00:00",
     status: "failed",
     attempts: 5,
@@ -83,11 +155,19 @@ const handlers = [
   http.get("*/api/v3/v1/metrics", () =>
     HttpResponse.json({ names: ["prs-open"], total: 1 })
   ),
+  http.get("*/api/v3/v1/metrics/:name", () =>
+    HttpResponse.json(BY_TEAM_METRIC)
+  ),
+  http.get("*/api/v3/v1/datasets/:name", () =>
+    HttpResponse.json(PULL_REQUESTS)
+  ),
+  http.post("*/api/v3/v1/alerts/preview", () => HttpResponse.json(PREVIEW)),
 ];
 
-function Screen({ which }: { which: "list" | "alert" | "new" }) {
+function Screen({ which }: { which: "list" | "alert" | "new" | "edit" }) {
   if (which === "list") return <AlertsList />;
   if (which === "alert") return <AlertPage id="a1" />;
+  if (which === "edit") return <EditAlertPage id="a1" />;
   return <NewAlertPage />;
 }
 
@@ -152,6 +232,35 @@ export const NewAlert: Story = {
   decorators: at(CARD_PX_WIDE),
 };
 
+/** A grouped rule with a nested condition, as the builder draws it. */
+export const EditAlert: Story = {
+  args: { which: "edit" },
+  decorators: at(CARD_PX_WIDE),
+};
+
+export const TestBuilderFitsOnAPhone: Story = {
+  args: { which: "edit" },
+  decorators: at(CARD_PX_AT_390),
+  tags: ["test"],
+  play: async ({ canvas }) => {
+    const card = canvas.getByTestId("card");
+    const tests = await canvas.findAllByRole("group", { name: /^Condition / });
+
+    await expect(tests).toHaveLength(3);
+    await expect(canvas.getByLabelText("Rows")).toHaveTextContent("Any row");
+    expectHorizontallyContained(
+      card,
+      [
+        canvas.getByLabelText("Window"),
+        ...tests,
+        ...canvas.getAllByLabelText("Combine"),
+        canvas.getByRole("button", { name: "Save changes" }),
+      ],
+      describeElement
+    );
+  },
+};
+
 export const TestAlertHeaderWrapsOnAPhone: Story = {
   args: { which: "alert" },
   decorators: at(CARD_PX_AT_390),
@@ -213,10 +322,6 @@ export const TestFormFitsOnAPhone: Story = {
     const fields = [
       await canvas.findByLabelText("Name"),
       canvas.getByLabelText("Metric"),
-      canvas.getByLabelText("Column"),
-      canvas.getByLabelText("Window"),
-      canvas.getByLabelText("Condition"),
-      canvas.getByLabelText("Threshold"),
       canvas.getByLabelText("Check every"),
       canvas.getByLabelText("Destination"),
       canvas.getByRole("button", { name: "Create alert" }),

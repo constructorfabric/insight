@@ -3,20 +3,48 @@
 //! store is the answer; a schedule write that fails is logged and repaired by
 //! reconciling.
 
+use chrono::Utc;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use uuid::Uuid;
 
+use super::condition::{Condition, ConditionShape};
+use super::evaluation::observe;
 use super::rule::{
     AlertPage, AlertRule, AlertStore, AlertStoreError, Destinations, Limits, Notification,
     RuleDraft, RuleError, RuleSpec, Write,
 };
+use super::scalar::Outcome;
 use super::schedule::{AlertSchedule, Scheduled};
-use crate::domain::definition::{DefinitionKind, Lookup, Page};
+use crate::domain::definition::{DefinitionName, Page};
+use crate::domain::metric_run::{Columns, MetricRuns};
+use crate::domain::query::time_window::WindowRequest;
+use crate::domain::surfaces::CustomError;
+
+/// What the form asks before a rule is saved: what a check of this metric,
+/// window and condition would find now.
+#[derive(Debug, Deserialize, JsonSchema, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PreviewDraft {
+    /// The stored metric to check.
+    pub(crate) metric: String,
+    /// The window the metric is run over, as a rule names it. Omit it to
+    /// run the metric unbounded.
+    #[serde(default)]
+    pub(crate) range: Option<String>,
+    /// Which rows must pass, and the test each row takes.
+    #[schemars(with = "ConditionShape")]
+    #[schema(value_type = ConditionShape)]
+    pub(crate) condition: serde_json::Value,
+}
+
+impl toolkit::api::api_dto::RequestApiDto for PreviewDraft {}
 
 #[derive(Debug)]
 pub(crate) struct AlertRules<'a> {
     store: &'a dyn AlertStore,
     schedule: &'a dyn AlertSchedule,
-    definitions: &'a dyn Lookup,
+    runs: MetricRuns<'a>,
     limits: Limits,
     destinations: &'a Destinations,
 }
@@ -25,14 +53,14 @@ impl<'a> AlertRules<'a> {
     pub(crate) fn new(
         store: &'a dyn AlertStore,
         schedule: &'a dyn AlertSchedule,
-        definitions: &'a dyn Lookup,
+        runs: MetricRuns<'a>,
         limits: Limits,
         destinations: &'a Destinations,
     ) -> Self {
         Self {
             store,
             schedule,
-            definitions,
+            runs,
             limits,
             destinations,
         }
@@ -93,20 +121,63 @@ impl<'a> AlertRules<'a> {
         Ok(rule)
     }
 
-    /// The draft as a rule, once its metric is known to exist.
+    /// The draft as a rule, its condition typed against the columns its
+    /// metric answers.
     async fn checked(&self, draft: &RuleDraft) -> Result<RuleSpec, AlertsError> {
-        let spec = RuleSpec::parse(draft, self.limits, self.destinations)?;
-        if self
-            .definitions
-            .get(DefinitionKind::Metric, &spec.metric)
-            .await
-            .map_err(AlertsError::Definitions)?
-            .is_none()
-        {
-            return Err(AlertsError::MetricMissing(spec.metric.as_str().to_owned()));
-        }
+        let metric = DefinitionName::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
+        let columns = self.columns_of(&metric).await?;
 
-        Ok(spec)
+        Ok(RuleSpec::parse(
+            draft,
+            self.limits,
+            self.destinations,
+            &columns.kinds,
+        )?)
+    }
+
+    /// What a check of the draft would find if it ran now: the metric run as
+    /// a check runs it and the condition judged as a check judges it.
+    pub(crate) async fn preview(&self, draft: &PreviewDraft) -> Result<Outcome, AlertsError> {
+        let metric = DefinitionName::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
+        let columns = self.columns_of(&metric).await?;
+        let condition =
+            Condition::parse(&draft.condition, &columns.kinds).map_err(RuleError::from)?;
+        let window =
+            WindowRequest::parse(draft.range.as_deref(), Some(false)).map_err(RuleError::Range)?;
+
+        Ok(observe(
+            &self.runs,
+            "a preview",
+            &metric,
+            &window,
+            &condition,
+            Utc::now(),
+        )
+        .await)
+    }
+
+    async fn columns_of(&self, metric: &DefinitionName) -> Result<Columns, AlertsError> {
+        self.runs
+            .columns(metric)
+            .await
+            .map_err(|error| match error {
+                CustomError::NotFound { .. } => {
+                    AlertsError::MetricMissing(metric.as_str().to_owned())
+                }
+                CustomError::Body(_)
+                | CustomError::Compile(_)
+                | CustomError::DatasetNotReady(_) => AlertsError::MetricUnreadable {
+                    metric: metric.as_str().to_owned(),
+                    reason: error.to_string(),
+                },
+                CustomError::Run(_)
+                | CustomError::Store(_)
+                | CustomError::Datasets(_)
+                | CustomError::InUse { .. }
+                | CustomError::Widget(_)
+                | CustomError::Range(_)
+                | CustomError::Unanswerable(_) => AlertsError::Metric(error),
+            })
     }
 
     pub(crate) async fn get(&self, id: Uuid) -> Result<AlertRule, AlertsError> {
@@ -191,6 +262,8 @@ pub(crate) enum AlertsError {
     Invalid(#[from] RuleError),
     #[error("metric `{0}` was not found")]
     MetricMissing(String),
+    #[error("metric `{metric}` cannot be checked: {reason}")]
+    MetricUnreadable { metric: String, reason: String },
     #[error("alert {0} was not found")]
     NotFound(Uuid),
     #[error("expected_revision is required to replace an alert")]
@@ -208,7 +281,7 @@ pub(crate) enum AlertsError {
     #[error(transparent)]
     Store(AlertStoreError),
     #[error(transparent)]
-    Definitions(crate::domain::definition::DefinitionStoreError),
+    Metric(CustomError),
 }
 
 impl From<AlertStoreError> for AlertsError {
@@ -237,12 +310,14 @@ impl AlertsError {
         match self {
             Self::Invalid(_)
             | Self::MetricMissing(_)
+            | Self::MetricUnreadable { .. }
             | Self::NotFound(_)
             | Self::RevisionRequired
             | Self::RevisionOnCreate
             | Self::Conflict { .. }
             | Self::TooMany(_) => true,
-            Self::Store(_) | Self::Definitions(_) => false,
+            Self::Store(_) => false,
+            Self::Metric(source) => source.is_about_the_caller(),
         }
     }
 }

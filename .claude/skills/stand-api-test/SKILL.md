@@ -285,8 +285,7 @@ python3 tests/lib/insight_stand/coverage.py \
 
 8. Hand a claim marked `EXPECTED TO FAIL` to `file-bug-insight` rather than
    softening the assertion.
-9. When the test implements a scenario from a feature's Testing section, cite
-   it in the test docstring — the FEATURE path, its `cpt-…-feature-…` ID and the
-   stable scenario number — and keep the pytest marker equal to the scenario's
-   vector; the full traceability contract is section 5 of the
-   `quality-vector-tests` skill.
+9. When the test proves a FEATURE's Definition of Done, name it in the test
+   docstring — `Verifies cpt-…-dod-…` (or the flow ID) — and pick the pytest
+   marker for the vector of what the test asserts; the binding is section 4 of
+   the `quality-vector-tests` skill.

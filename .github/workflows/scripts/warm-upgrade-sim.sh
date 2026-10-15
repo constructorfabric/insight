@@ -2,21 +2,26 @@
 # Simulate deploying this branch onto a WARM installation.
 #
 # A warm installation's ClickHouse relations were created by an earlier
-# release: `CREATE TABLE IF NOT EXISTS` never widens them, and the deploy
-# hook builds only `tag:gold`, so a gold model that references a new
-# silver/staging column deploys fine on a fresh install (the snapshot
-# already carries the new shape) and fails with UNKNOWN_IDENTIFIER on every
-# installation that already holds data — unless the change ships a numbered
-# migration or a guarded heal. This script reproduces that warm deploy:
+# release: `CREATE TABLE IF NOT EXISTS` never widens them, so a gold model
+# that references a new silver/staging column builds fine on a fresh install
+# (the snapshot already carries the new shape) and fails with
+# UNKNOWN_IDENTIFIER on every installation that already holds data — unless
+# the change ships a numbered migration or a guarded heal. Since #3561 that
+# failure lands on the first connector sync after the upgrade rather than on
+# the deploy, so this script reproduces both halves:
 #
 #   1. Install BASE_SHA: run the base tree's own deploy hook
-#      (create-warehouse-placeholders + migrations + heals + base gold build,
-#      with dbt pinned from the base tree's pins.env) — what an existing
-#      installation's last deploy left behind, plus the bronze a connector
-#      would have synced into it (seed_warm_bronze below).
-#   2. Deploy the working tree: run this branch's apply-ch-migrations.sh
-#      end to end with dbt pinned from this tree's pins.env — exactly what
-#      the Helm clickhouse-migrate hook runs.
+#      (create-warehouse-placeholders + migrations + heals, with dbt pinned
+#      from the base tree's pins.env) — what an existing installation's last
+#      deploy left behind, plus the bronze a connector would have synced into
+#      it (seed_warm_bronze below).
+#   2. Deploy the working tree: run this branch's apply-ch-migrations.sh end
+#      to end — exactly what the Helm clickhouse-migrate hook runs — and then
+#      its build-gold.sh over the warm silver, with dbt pinned from this tree's
+#      pins.env. That is the gold half of the first sync, not a whole one: a
+#      real sync rebuilds staging and silver in the same dbt run, so a silver
+#      model that widens itself through `on_schema_change` widens there and not
+#      here. The lane is therefore stricter than the field, never laxer.
 #
 # Both phases run against the branch's CLICKHOUSE_SERVER_IMAGE: real
 # installations upgrade the server before or after the app on their own
@@ -67,6 +72,15 @@ dbt_venv_for "$WORKDIR/src/ingestion/scripts/bootstrap-db/pins.env" "$WORKDIR/ba
 if ! PATH="$WORKDIR/base-venv/bin:$PATH" \
     bash "$WORKDIR/src/ingestion/scripts/apply-ch-migrations.sh"; then
   echo "::error title=warm-upgrade base install failed::The BASE deploy (${BASE_SHA}) did not converge — not this PR's fault. Check whether the base tree's apply-ch-migrations.sh is broken on a fresh ClickHouse."
+  exit 1
+fi
+
+# A base tree from before #3561 built gold inside the hook above; a later one
+# leaves it to the sync. Either way the warm state needs the base's gold.
+if [[ -f "$WORKDIR/src/ingestion/scripts/build-gold.sh" ]] &&
+    ! PATH="$WORKDIR/base-venv/bin:$PATH" \
+      bash "$WORKDIR/src/ingestion/scripts/build-gold.sh"; then
+  echo "::error title=warm-upgrade base install failed::The BASE gold build (${BASE_SHA}) did not converge — not this PR's fault. Check whether the base tree's build-gold.sh is broken on a fresh ClickHouse."
   exit 1
 fi
 
@@ -310,11 +324,18 @@ echo "=== Step 2: deploy the working tree onto the warm state ==="
 dbt_venv_for "$REPO_ROOT/src/ingestion/scripts/bootstrap-db/pins.env" "$WORKDIR/branch-venv"
 if ! PATH="$WORKDIR/branch-venv/bin:$PATH" \
     bash "$REPO_ROOT/src/ingestion/scripts/apply-ch-migrations.sh"; then
-  echo "::error title=warm upgrade fails — forgotten migration or heal::This tree's deploy hook fails against relations an earlier release created. A gold model reads a silver/staging column that only exists in the new snapshot: ship the companion ALTER — a numbered migration in src/ingestion/scripts/migrations/ for silver.class_*, a guarded heal in src/ingestion/scripts/apply-ch-migrations.sh for staging.* — per the Warehouse contract changes rules in AGENTS.md."
+  echo "::error title=warm upgrade fails — the deploy hook does not converge::This tree's migrations or heals fail against relations an earlier release created. Every statement in that hook must be idempotent and guarded — per the Warehouse contract changes rules in AGENTS.md."
   exit 1
 fi
 
 assert_git_close_time_recovered
 assert_jira_issue_identity_recovered
+
+echo "=== Step 3: build gold over the warm silver, as the first sync would ==="
+if ! PATH="$WORKDIR/branch-venv/bin:$PATH" \
+    bash "$REPO_ROOT/src/ingestion/scripts/build-gold.sh"; then
+  echo "::error title=first sync after the upgrade fails — forgotten migration or heal::A gold model reads a silver/staging column that only exists in the new snapshot, so the first connector sync after this release fails on every installation that already holds data. Ship the companion ALTER — a numbered migration in src/ingestion/scripts/migrations/ for silver.class_*, a guarded heal in src/ingestion/scripts/apply-ch-migrations.sh for staging.* — per the Warehouse contract changes rules in AGENTS.md."
+  exit 1
+fi
 
 echo "=== Warm upgrade OK: every relation the gold build reads is covered by a migration or heal ==="

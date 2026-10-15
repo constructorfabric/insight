@@ -10,9 +10,12 @@ use serde_json::json;
 
 use super::auth::McpCaller;
 use super::tools::{CustomSurfaces, refuse};
-use crate::api::alerts::{notification_response, rule_response, shown, summary_response};
+use crate::api::alerts::{
+    PREVIEWS_BUSY, notification_response, preview_response, preview_turn, rule_response, shown,
+    summary_response,
+};
 use crate::domain::alerts::RuleDraft;
-use crate::domain::alerts::rules::{AlertRules, AlertsError};
+use crate::domain::alerts::rules::{AlertRules, AlertsError, PreviewDraft};
 use crate::domain::definition::Page;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -46,6 +49,12 @@ pub(crate) struct UpdateAlertRequest {
     /// The whole rule as it should be, with `expected_revision` set to the
     /// revision `get_alert` answered.
     pub(crate) rule: RuleDraft,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct PreviewAlertRequest {
+    /// The metric, window and condition to check, as a rule names them.
+    pub(crate) draft: PreviewDraft,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -104,6 +113,23 @@ impl CustomSurfaces {
                     "offset": page.offset(),
                 }))
             }
+            Err(error) => alerts_error(&error),
+        }
+    }
+
+    pub(crate) async fn alerts_preview(&self, request: PreviewAlertRequest) -> CallToolResult {
+        let alerts = match self.alerts() {
+            Ok(alerts) => alerts,
+            Err(refusal) => return refusal,
+        };
+
+        // INVARIANT: the turn is held until the preview answers; it is what
+        // caps concurrent previews, shared with the API.
+        let Some(_turn) = preview_turn(self.state()).await else {
+            return refuse(PREVIEWS_BUSY);
+        };
+        match alerts.preview(&request.draft).await {
+            Ok(outcome) => structured(&preview_response(&outcome)),
             Err(error) => alerts_error(&error),
         }
     }

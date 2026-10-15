@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { buildMetricErrorView } from "@/mocks/metric-results-factory";
+import {
+  buildMetricErrorView,
+  buildMetricNotReadyView,
+} from "@/mocks/metric-results-factory";
 import {
   MEDIAN_METRIC_FIXTURE,
   RATIO_METRIC_FIXTURE,
@@ -342,14 +345,24 @@ describe("normalizeMetricResult error views", () => {
     const normalized = normalizeMetricResult({
       ...SUM_METRIC_FIXTURE,
       views: [
-        buildMetricErrorView({ code: "SOURCE_RELATION_MISSING", message: "first" }),
+        buildMetricErrorView({ code: "RESOURCE_EXHAUSTED", message: "first" }),
         buildMetricErrorView({ code: "QUERY_FAILED", message: "second" }),
       ],
     });
     expect(normalized.error).toEqual({
-      code: "SOURCE_RELATION_MISSING",
+      code: "RESOURCE_EXHAUSTED",
       message: "first",
     });
+  });
+
+  it("reads a not-ready view as no data yet rather than as a failure", () => {
+    const normalized = normalizeMetricResult({
+      ...SUM_METRIC_FIXTURE,
+      views: [buildMetricNotReadyView()],
+    });
+
+    expect(normalized.notReady).toBe("SOURCE_RELATION_MISSING");
+    expect(normalized.error).toBeUndefined();
   });
 });
 

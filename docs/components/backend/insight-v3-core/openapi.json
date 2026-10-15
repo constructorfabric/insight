@@ -52,6 +52,42 @@
         ],
         "type": "object"
       },
+      "ConditionShape": {
+        "description": "Which rows must pass, and the test each row takes.",
+        "properties": {
+          "rows": {
+            "$ref": "#/components/schemas/RowsShape",
+            "description": "`one`: the metric must answer exactly one row, and it must pass.\n`any`, `all`, `none`: of the rows answered. `{\"count\": {\"op\": \">\",\n\"value\": 3}}`: the number of passing rows, compared. `any` over no\nrows is not met; `all` and `none` over no rows are unknown."
+          },
+          "where": {
+            "$ref": "#/components/schemas/NodeShape",
+            "description": "A test on one column, or a group of tests. Groups nest at most 3\ndeep and hold at most 20 tests in all."
+          }
+        },
+        "required": [
+          "rows",
+          "where"
+        ],
+        "type": "object"
+      },
+      "CountShape": {
+        "properties": {
+          "op": {
+            "description": "One of `>`, `>=`, `<`, `<=`, `==`, `!=`.",
+            "type": "string"
+          },
+          "value": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "op",
+          "value"
+        ],
+        "type": "object"
+      },
       "DestinationResponse": {
         "properties": {
           "name": {
@@ -156,6 +192,27 @@
         ],
         "type": "object"
       },
+      "LeafShape": {
+        "description": "One test on one result column. Which operators apply depends on what\nthe column holds: a number takes `>`, `>=`, `<`, `<=`, `==`, `!=`,\n`between`; text takes `==`, `!=`, `contains`, `starts_with`,\n`ends_with`, `in`, `not_in`, comparing exactly; a date takes `before`,\n`after`, `between`, `older_than`, `newer_than`.",
+        "properties": {
+          "column": {
+            "description": "The result column, by the `as_name` the metric gives it.",
+            "type": "string"
+          },
+          "op": {
+            "$ref": "#/components/schemas/OperatorShape"
+          },
+          "value": {
+            "description": "A number, or an integer written as digits; text up to 256\ncharacters; an RFC 3339 timestamp; a list of two for `between`; a\nlist of 1 to 50 texts for `in` and `not_in`; a duration such as\n`P7D`, `P2W`, `PT6H` or `PT30M` for `older_than` and `newer_than`,\nmeasured back from the check."
+          }
+        },
+        "required": [
+          "column",
+          "op",
+          "value"
+        ],
+        "type": "object"
+      },
       "MoveRequest": {
         "properties": {
           "folder": {
@@ -180,6 +237,55 @@
         ],
         "type": "object"
       },
+      "NodeShape": {
+        "oneOf": [
+          {
+            "description": "Met when every test in it is.",
+            "properties": {
+              "all": {
+                "items": {
+                  "$ref": "#/components/schemas/NodeShape"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "all"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Met when one test in it is.",
+            "properties": {
+              "any": {
+                "items": {
+                  "$ref": "#/components/schemas/NodeShape"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "any"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Met when the test in it is not.",
+            "properties": {
+              "not": {
+                "$ref": "#/components/schemas/NodeShape"
+              }
+            },
+            "required": [
+              "not"
+            ],
+            "type": "object"
+          },
+          {
+            "$ref": "#/components/schemas/LeafShape"
+          }
+        ]
+      },
       "NotificationResponse": {
         "properties": {
           "attempts": {
@@ -187,8 +293,9 @@
             "minimum": 0,
             "type": "integer"
           },
-          "column": {
-            "type": "string"
+          "condition": {
+            "$ref": "#/components/schemas/ConditionShape",
+            "description": "The condition the notification was owed under."
           },
           "created_at": {
             "type": "string"
@@ -211,9 +318,6 @@
           "metric": {
             "type": "string"
           },
-          "operator": {
-            "type": "string"
-          },
           "provider_receipt": {
             "type": [
               "string",
@@ -229,21 +333,17 @@
             "description": "`pending`, `cancelled`, `sent` or `failed`.",
             "type": "string"
           },
-          "threshold": {
-            "description": "A JSON number, or a digit string for an integer past ±(2^53 − 1)."
-          },
-          "value": {
-            "description": "A JSON number, or a digit string for an integer past ±(2^53 − 1)."
+          "witness": {
+            "$ref": "#/components/schemas/WitnessResponse",
+            "description": "The rows the check saw that owed it."
           }
         },
         "required": [
           "id",
           "rule_revision",
           "metric",
-          "column",
-          "operator",
-          "threshold",
-          "value",
+          "condition",
+          "witness",
           "evaluated_at",
           "destination",
           "status",
@@ -279,15 +379,83 @@
         ],
         "type": "object"
       },
-      "Operator": {
-        "description": "How the observed value is compared with the threshold.",
+      "OperatorShape": {
         "enum": [
           ">",
           ">=",
           "<",
-          "<="
+          "<=",
+          "==",
+          "!=",
+          "between",
+          "contains",
+          "starts_with",
+          "ends_with",
+          "in",
+          "not_in",
+          "before",
+          "after",
+          "older_than",
+          "newer_than"
         ],
         "type": "string"
+      },
+      "PreviewDraft": {
+        "additionalProperties": false,
+        "description": "What the form asks before a rule is saved: what a check of this metric,\nwindow and condition would find now.",
+        "properties": {
+          "condition": {
+            "$ref": "#/components/schemas/ConditionShape",
+            "description": "Which rows must pass, and the test each row takes."
+          },
+          "metric": {
+            "description": "The stored metric to check.",
+            "type": "string"
+          },
+          "range": {
+            "description": "The window the metric is run over, as a rule names it. Omit it to\nrun the metric unbounded.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "metric",
+          "condition"
+        ],
+        "type": "object"
+      },
+      "PreviewResponse": {
+        "description": "What a check of the draft would find now. Nothing is recorded.",
+        "properties": {
+          "outcome": {
+            "description": "`breach`, `no_breach` or `unknown`.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why the check could not tell; null unless the outcome is `unknown`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "witness": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WitnessResponse",
+                "description": "The rows judged; null when the outcome is `unknown`."
+              }
+            ]
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "type": "object"
       },
       "Problem": {
         "description": "RFC 9457 problem+json. `context` varies by error category.",
@@ -351,13 +519,40 @@
         ],
         "type": "object"
       },
+      "RowsShape": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/RowsWord"
+          },
+          {
+            "properties": {
+              "count": {
+                "$ref": "#/components/schemas/CountShape"
+              }
+            },
+            "required": [
+              "count"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "RowsWord": {
+        "enum": [
+          "one",
+          "any",
+          "all",
+          "none"
+        ],
+        "type": "string"
+      },
       "RuleDraft": {
         "additionalProperties": false,
         "description": "A rule as an administrator writes it.",
         "properties": {
-          "column": {
-            "description": "The result column holding the number, by the `as_name` the metric\ngives it.",
-            "type": "string"
+          "condition": {
+            "$ref": "#/components/schemas/ConditionShape",
+            "description": "Which rows must pass, and the test each row takes."
           },
           "destination": {
             "description": "The configured destination the notification goes to.",
@@ -393,27 +588,18 @@
             "description": "What the alert is called, as people read it: up to 200 characters.",
             "type": "string"
           },
-          "operator": {
-            "$ref": "#/components/schemas/Operator",
-            "description": "One of `>`, `>=`, `<`, `<=`."
-          },
           "range": {
             "description": "The window the metric is run over, as `run_metric` takes it. Omit it\nto run the metric unbounded.",
             "type": [
               "string",
               "null"
             ]
-          },
-          "threshold": {
-            "description": "The number the value is compared with: a JSON number, or the digit\nstring a read shows an integer past ±(2^53 − 1) as."
           }
         },
         "required": [
           "name",
           "metric",
-          "column",
-          "operator",
-          "threshold",
+          "condition",
           "interval_secs",
           "destination"
         ],
@@ -422,8 +608,9 @@
       "RuleResponse": {
         "description": "A rule as a reader is shown it.",
         "properties": {
-          "column": {
-            "type": "string"
+          "condition": {
+            "$ref": "#/components/schemas/ConditionShape",
+            "description": "As a draft writes it. A number past ±(2^53 − 1) is a digit string,\nwhich a JavaScript reader would otherwise round; a draft takes it\nback as it is."
           },
           "created_at": {
             "type": "string"
@@ -449,9 +636,6 @@
           "name": {
             "type": "string"
           },
-          "operator": {
-            "type": "string"
-          },
           "range": {
             "type": [
               "string",
@@ -466,9 +650,6 @@
           "state": {
             "$ref": "#/components/schemas/StateResponse"
           },
-          "threshold": {
-            "description": "A JSON number, or a digit string for an integer past ±(2^53 − 1),\nwhich a JavaScript reader would otherwise round. A draft takes the\nstring back as it is."
-          },
           "updated_at": {
             "type": "string"
           }
@@ -477,9 +658,7 @@
           "id",
           "name",
           "metric",
-          "column",
-          "operator",
-          "threshold",
+          "condition",
           "interval_secs",
           "destination",
           "enabled",
@@ -539,8 +718,16 @@
               "null"
             ]
           },
-          "last_value": {
-            "description": "A JSON number, or a digit string for an integer past ±(2^53 − 1)."
+          "last_witness": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WitnessResponse",
+                "description": "The rows the last valid check judged; absent while it was unknown."
+              }
+            ]
           }
         },
         "type": "object"
@@ -601,7 +788,43 @@
         ],
         "type": "object"
       },
-      "Value": {}
+      "Value": {},
+      "WitnessResponse": {
+        "description": "The rows a check judged: how many passed of how many, and up to five of\nthem, holding the metric's group-by columns and then the columns the\ncondition reads.",
+        "properties": {
+          "answered": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "matched": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "description": "One list of cells per row, in `columns` order, as the run answered\nthem; text is cut to 256 characters.",
+            "items": {
+              "items": {},
+              "type": "array"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "matched",
+          "answered",
+          "columns",
+          "rows"
+        ],
+        "type": "object"
+      }
     },
     "securitySchemes": {
       "bearerAuth": {
@@ -820,6 +1043,86 @@
           }
         },
         "summary": "Create an alert",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/alerts/preview": {
+      "post": {
+        "operationId": "insight_v3_core.alerts.preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewDraft"
+              }
+            }
+          },
+          "description": "The metric, window and condition",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewResponse"
+                }
+              }
+            },
+            "description": "The outcome and the rows judged; nothing is recorded"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "What a check of a metric, window and condition would find now",
         "x-toolkit-visibility": "exposed"
       }
     },

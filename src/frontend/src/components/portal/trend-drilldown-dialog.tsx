@@ -207,6 +207,18 @@ function Records({
     );
   }
 
+  // Same rule one step further: the data was read, and the warehouse answered
+  // that it has not been built yet. "No records in this window" would be a
+  // claim about the window from a read that never reached it.
+  if (query.data?.pages[0]?.not_ready) {
+    return (
+      <p className="text-muted-foreground p-5 text-sm">
+        No data yet — these records appear once the connector behind them has
+        synced.
+      </p>
+    );
+  }
+
   if (!rows.length) {
     return (
       <p className="text-muted-foreground p-5 text-sm">

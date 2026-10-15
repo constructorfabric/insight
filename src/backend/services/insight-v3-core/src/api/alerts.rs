@@ -2,6 +2,7 @@
 //! or off, and the notifications a rule's checks have owed.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query};
@@ -15,10 +16,17 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
+use crate::domain::alerts::condition::{ConditionShape, Witness};
 use crate::domain::alerts::rule::{AlertRule, AlertSummary, Notification};
-use crate::domain::alerts::rules::AlertsError;
-use crate::domain::alerts::{Number, Outcome, RuleDraft, RuleError, UnknownReason};
+use crate::domain::alerts::rules::{AlertsError, PreviewDraft};
+use crate::domain::alerts::{Outcome, RuleDraft, RuleError, UnknownReason};
 use crate::domain::definition::{MAX_PAGE_LIMIT, Page};
+
+/// How many previews may run the warehouse at once, and how long one waits
+/// for its turn before it is refused.
+pub(crate) const MAX_CONCURRENT_PREVIEWS: usize = 4;
+const PREVIEW_ACQUIRE_TIMEOUT_SECS: u64 = 2;
+pub(crate) const PREVIEWS_BUSY: &str = "every preview slot is taken; try again shortly";
 
 #[resource_error("gts.cf.insight.insight_v3_core.alerts.v1~")]
 struct AlertApiError;
@@ -80,6 +88,7 @@ impl toolkit::api::api_dto::ResponseApiDto for RuleResponse {}
 impl toolkit::api::api_dto::ResponseApiDto for AlertsPage {}
 impl toolkit::api::api_dto::ResponseApiDto for NotificationsPage {}
 impl toolkit::api::api_dto::ResponseApiDto for DestinationsResponse {}
+impl toolkit::api::api_dto::ResponseApiDto for PreviewResponse {}
 
 /// One page of alerts, by name, and how many match in all.
 #[derive(Debug, Serialize, ToSchema)]
@@ -119,12 +128,11 @@ pub(crate) struct RuleResponse {
     id: String,
     name: String,
     metric: String,
-    column: String,
-    operator: String,
-    /// A JSON number, or a digit string for an integer past ±(2^53 − 1),
-    /// which a JavaScript reader would otherwise round. A draft takes the
-    /// string back as it is.
-    threshold: serde_json::Value,
+    /// As a draft writes it. A number past ±(2^53 − 1) is a digit string,
+    /// which a JavaScript reader would otherwise round; a draft takes it
+    /// back as it is.
+    #[schema(value_type = ConditionShape)]
+    condition: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     range: Option<String>,
     interval_secs: u32,
@@ -147,9 +155,9 @@ pub(crate) struct StateResponse {
     last_outcome: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_reason: Option<&'static str>,
-    /// A JSON number, or a digit string for an integer past ±(2^53 − 1).
+    /// The rows the last valid check judged; absent while it was unknown.
     #[serde(skip_serializing_if = "Option::is_none")]
-    last_value: Option<serde_json::Value>,
+    last_witness: Option<WitnessResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_valid_breached: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -161,12 +169,11 @@ pub(crate) struct NotificationResponse {
     id: String,
     rule_revision: u32,
     metric: String,
-    column: String,
-    operator: String,
-    /// A JSON number, or a digit string for an integer past ±(2^53 − 1).
-    threshold: serde_json::Value,
-    /// A JSON number, or a digit string for an integer past ±(2^53 − 1).
-    value: serde_json::Value,
+    /// The condition the notification was owed under.
+    #[schema(value_type = ConditionShape)]
+    condition: serde_json::Value,
+    /// The rows the check saw that owed it.
+    witness: WitnessResponse,
     evaluated_at: String,
     destination: String,
     /// `pending`, `cancelled`, `sent` or `failed`.
@@ -177,6 +184,47 @@ pub(crate) struct NotificationResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     provider_receipt: Option<String>,
     created_at: String,
+}
+
+/// The rows a check judged: how many passed of how many, and up to five of
+/// them, holding the metric's group-by columns and then the columns the
+/// condition reads.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct WitnessResponse {
+    matched: u64,
+    answered: u64,
+    columns: Vec<String>,
+    /// One list of cells per row, in `columns` order, as the run answered
+    /// them; text is cut to 256 characters.
+    rows: Vec<Vec<serde_json::Value>>,
+}
+
+/// What a check of the draft would find now. Nothing is recorded.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct PreviewResponse {
+    /// `breach`, `no_breach` or `unknown`.
+    outcome: &'static str,
+    /// Why the check could not tell; null unless the outcome is `unknown`.
+    reason: Option<&'static str>,
+    /// The rows judged; null when the outcome is `unknown`.
+    witness: Option<WitnessResponse>,
+}
+
+pub(crate) fn witness_response(witness: &Witness) -> WitnessResponse {
+    WitnessResponse {
+        matched: witness.matched,
+        answered: witness.answered,
+        columns: witness.columns.clone(),
+        rows: witness.rows.clone(),
+    }
+}
+
+pub(crate) fn preview_response(outcome: &Outcome) -> PreviewResponse {
+    PreviewResponse {
+        outcome: outcome.as_str(),
+        reason: outcome.reason().map(UnknownReason::as_str),
+        witness: outcome.witness().map(witness_response),
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -190,9 +238,7 @@ pub(crate) fn rule_response(rule: &AlertRule) -> RuleResponse {
         id: shown(rule.id),
         name: rule.spec.name.as_str().to_owned(),
         metric: rule.spec.metric.as_str().to_owned(),
-        column: rule.spec.column.clone(),
-        operator: rule.spec.condition.operator.as_str().to_owned(),
-        threshold: rule.spec.condition.threshold.to_json(),
+        condition: rule.spec.condition.to_json(),
         range: rule.spec.range.clone(),
         interval_secs: rule.spec.interval_secs,
         destination: rule.spec.destination.clone(),
@@ -202,12 +248,12 @@ pub(crate) fn rule_response(rule: &AlertRule) -> RuleResponse {
             last_evaluated_at: rule.state.last_evaluated_at.map(|at| at.to_rfc3339()),
             last_outcome: rule.state.last_outcome.as_ref().map(Outcome::as_str),
             last_reason: rule.state.last_reason().map(UnknownReason::as_str),
-            last_value: rule
+            last_witness: rule
                 .state
                 .last_outcome
                 .as_ref()
-                .and_then(Outcome::value)
-                .map(Number::to_json),
+                .and_then(Outcome::witness)
+                .map(witness_response),
             last_valid_breached: rule.state.last_valid_breached,
             breached_since: rule.state.breached_since.map(|at| at.to_rfc3339()),
         },
@@ -235,10 +281,8 @@ pub(crate) fn notification_response(notification: &Notification) -> Notification
         id: shown(notification.id),
         rule_revision: notification.rule_revision,
         metric: notification.metric.as_str().to_owned(),
-        column: notification.column.clone(),
-        operator: notification.condition.operator.as_str().to_owned(),
-        threshold: notification.condition.threshold.to_json(),
-        value: notification.value.to_json(),
+        condition: notification.condition.to_json(),
+        witness: witness_response(&notification.witness),
         evaluated_at: notification.evaluated_at.to_rfc3339(),
         destination: notification.destination.clone(),
         status: notification.status.as_str(),
@@ -274,6 +318,7 @@ pub(crate) fn register_routes(
         disable_route(openapi),
         notifications_route(openapi),
         destinations_route(openapi),
+        preview_route(openapi),
     ];
 
     registered.into_iter().fold(router, |router, route| {
@@ -478,6 +523,27 @@ fn destinations_route(openapi: &dyn OpenApiRegistry) -> Router {
         .register(Router::new(), openapi)
 }
 
+fn preview_route(openapi: &dyn OpenApiRegistry) -> Router {
+    OperationBuilder::post("/v1/alerts/preview")
+        .operation_id("insight_v3_core.alerts.preview")
+        .summary("What a check of a metric, window and condition would find now")
+        .anonymous()
+        .exposed()
+        .json_request::<PreviewDraft>(openapi, "The metric, window and condition")
+        .json_response_with_schema::<PreviewResponse>(
+            openapi,
+            StatusCode::OK,
+            "The outcome and the rows judged; nothing is recorded",
+        )
+        .error_400(openapi)
+        .error_403(openapi)
+        .error_429(openapi)
+        .error_500(openapi)
+        .error_504(openapi)
+        .handler(preview_alert)
+        .register(Router::new(), openapi)
+}
+
 fn denied() -> CanonicalError {
     AlertApiError::permission_denied()
         .with_reason(crate::api::ADMIN_ONLY)
@@ -504,6 +570,9 @@ pub(crate) fn alerts_error(error: AlertsError) -> CanonicalError {
         AlertsError::Invalid(source) => rule_error(&source),
         AlertsError::MetricMissing(name) => {
             AlertApiError::invalid_field("metric", format!("metric `{name}` was not found"))
+        }
+        AlertsError::MetricUnreadable { .. } => {
+            AlertApiError::invalid_field("metric", error.to_string())
         }
         AlertsError::NotFound(id) => {
             let id = shown(id);
@@ -539,16 +608,17 @@ pub(crate) fn alerts_error(error: AlertsError) -> CanonicalError {
             tracing::error!(error = ?source, "alert store operation failed");
             CanonicalError::internal("alert store operation failed").create()
         }
-        AlertsError::Definitions(source) => AlertApiError::definition_store_error(source),
+        AlertsError::Metric(source) => AlertApiError::custom_error(source),
     }
 }
 
 fn rule_error(error: &RuleError) -> CanonicalError {
     let field = match error {
+        RuleError::Condition(source) => {
+            return AlertApiError::invalid_field(&source.field(), source.problem.to_string());
+        }
         RuleError::Name => "name",
         RuleError::Metric => "metric",
-        RuleError::Column => "column",
-        RuleError::Threshold => "threshold",
         RuleError::Range(_) => "range",
         RuleError::Interval { .. } => "interval_secs",
         RuleError::Destination(_) => "destination",
@@ -628,6 +698,58 @@ async fn put_alert(
         .map_err(alerts_error)?;
 
     Ok(Json(rule_response(&rule)).into_response())
+}
+
+async fn preview_alert(
+    Extension(state): Extension<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    body: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Response, CanonicalError> {
+    crate::api::require_admin(&state, &headers, denied).await?;
+    let alerts = alerts(&state)?;
+    let Json(body) = body.map_err(|error| AlertApiError::unreadable_body(&error))?;
+
+    let draft: PreviewDraft = serde_json::from_value(body)
+        .map_err(|error| AlertApiError::invalid_field("body", error.to_string()))?;
+
+    // INVARIANT: the permit lives until the preview answers; it is what caps
+    // concurrent previews at MAX_CONCURRENT_PREVIEWS.
+    let _permit = preview_slot(&state).await?;
+    let outcome = alerts.preview(&draft).await.map_err(alerts_error)?;
+
+    Ok(Json(preview_response(&outcome)).into_response())
+}
+
+/// A turn to run a preview, waiting a bounded time for one; none when
+/// every slot stayed taken. API and MCP previews share the slots.
+pub(crate) async fn preview_turn(state: &AppState) -> Option<tokio::sync::OwnedSemaphorePermit> {
+    let slots = state.preview_slots();
+    let waited = tokio::time::timeout(
+        Duration::from_secs(PREVIEW_ACQUIRE_TIMEOUT_SECS),
+        Arc::clone(slots).acquire_owned(),
+    )
+    .await;
+
+    if let Ok(Ok(permit)) = waited {
+        return Some(permit);
+    }
+
+    tracing::warn!(
+        capacity = MAX_CONCURRENT_PREVIEWS,
+        "alert preview capacity exhausted"
+    );
+    None
+}
+
+async fn preview_slot(
+    state: &AppState,
+) -> Result<tokio::sync::OwnedSemaphorePermit, CanonicalError> {
+    preview_turn(state).await.ok_or_else(|| {
+        AlertApiError::resource_exhausted(PREVIEWS_BUSY)
+            .with_quota_violation("alert previews", "concurrency limit reached")
+            .with_quota_violation_retry_after_seconds(PREVIEW_ACQUIRE_TIMEOUT_SECS)
+            .create()
+    })
 }
 
 async fn get_alert(

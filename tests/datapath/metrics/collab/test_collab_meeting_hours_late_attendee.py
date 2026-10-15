@@ -4,7 +4,7 @@ A session's Zoom time counts only while someone else was in the meeting, so an
 incremental build re-aggregates every date of each meeting touched by a recent
 extract. alice is alone on Dec 20 until bob's row, joined on Dec 21, arrives in a
 later sync; the incremental build then gives her Dec 20 the 20 minutes they shared,
-and her focus on that day follows although newer days exist.
+and that day becomes a working day whose focus loses them, although newer days exist.
 """
 
 from __future__ import annotations
@@ -24,8 +24,6 @@ SPEC = "collab_meeting_hours_late_attendee"
 ALICE = "alice@example.com"
 REBUILT_MODELS = "zoom__collab_meeting_activity+"
 WORKDAY_HOURS = 8
-# INVARIANT: focus hours are stored rounded to four decimals.
-FOCUS_HOURS_AFTER = round(WORKDAY_HOURS - 20 / 60, 4)
 
 BOB_LATE_FIELDS = {
     "_airbyte_raw_id": "00000000-0000-0000-0000-000000000009",
@@ -66,11 +64,7 @@ def test_late_attendee_reopens_the_earlier_day(
     )
     _alice_dec_20(spec, "collab.focus_time_pct").row(
         "collab.focus_time_pct", "period", entity_id=ALICE
-    ).check(
-        "value",
-        lambda v: v is not None and float(v) == approx(100.0),
-        "alice's Dec 20 is all focus before bob's row",
-    )
+    ).equals(value=None)
 
     with client(instance_cfg) as connection:
         rows = connection.query(
@@ -90,6 +84,6 @@ def test_late_attendee_reopens_the_earlier_day(
         "collab.focus_time_pct", "period", entity_id=ALICE
     ).check(
         "value",
-        lambda v: v is not None and float(v) == approx(100 * FOCUS_HOURS_AFTER / WORKDAY_HOURS),
+        lambda v: v is not None and float(v) == approx(100 * (1 - 20 / 60 / WORKDAY_HOURS)),
         "alice's Dec 20 focus loses the same 20 minutes",
     )

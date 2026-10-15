@@ -1,16 +1,16 @@
 ---
 status: draft
-version: "0.6"
-date: 2026-10-06
+version: "0.7"
+date: 2026-10-14
 ---
 
 # Technical Design — Insight v3 Metric Alerts
 
-**Approved:** Insight v3 custom metrics, administrator API and MCP, one numeric result per alert, per-rule interval checks, one current check after downtime, first-breach notifications without reminders or recovery messages, provider-neutral delivery, and BullMQ on the deployment's Redis as the job library ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)).
+**Approved:** Insight v3 custom metrics, administrator API and MCP, a condition over the rows of one metric run, per-rule interval checks, one current check after downtime, first-breach notifications without reminders or recovery messages, provider-neutral delivery, and BullMQ on the deployment's Redis as the job library ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)).
 
-**Flow:** an enabled rule is one repeating job; each run loads the rule, runs the stored metric as an on-demand run would, reads one number, records the outcome on the rule and, on the first breach, writes the notification it owes and queues it. A second queue hands each owed notification to its provider and records what the provider said.
+**Flow:** an enabled rule is one repeating job; each run loads the rule, runs the stored metric as an on-demand run would, evaluates the rule's condition over the rows, records the outcome and its witness on the rule and, on the first breach, writes the notification it owes and queues it. A second queue hands each owed notification to its provider and records what the provider said.
 
-**Version 0.6:** Add the portal screens: four routes in the Custom zone over the administrator API, with no behaviour of their own. Version 0.5 added delivery: a second queue, one adapter per provider, and the send outcome on the notification. Version 0.4 replaced the Apalis proposal with BullMQ and collapsed the state model to rules and notifications.
+**Version 0.7:** Conditions over every row a metric run answers: a row quantifier, nested groups, and number, text and date tests typed against the metric's columns when a rule is written; the witness on checks and notifications; a preview route the form reads. Version 0.6 added the portal screens: four routes in the Custom zone over the administrator API, with no behaviour of their own. Version 0.5 added delivery: a second queue, one adapter per provider, and the send outcome on the notification.
 
 <!-- toc -->
 
@@ -56,13 +56,13 @@ The parent [separate-service ADR](../ADR/0001-separate-service.md) still applies
 
 | Requirement | Design Response |
 |-------------|-----------------|
-| `cpt-insightspec-v3-alerts-fr-manage` | One set of rule operations behind the existing API and MCP authorization; every write bumps a revision, and an update names the revision it replaces |
+| `cpt-insightspec-v3-alerts-fr-manage` | One set of rule operations behind the existing API and MCP authorization; the condition parsed against the metric's column kinds at write time; every write bumps a revision, and an update names the revision it replaces; a preview route evaluates a draft as a check would and records nothing |
 | `cpt-insightspec-v3-alerts-fr-authorize` | Existing administrator guards; workers hold no user session and read only the rule |
-| `cpt-insightspec-v3-alerts-fr-evaluate` | The existing metric run, unbucketed, read through a typed scalar boundary that accepts exactly one row and one column |
+| `cpt-insightspec-v3-alerts-fr-evaluate` | The existing metric run, unbucketed, read through a typed condition: three-valued tests per row, folded by the row quantifier |
 | `cpt-insightspec-v3-alerts-fr-schedule` | One BullMQ job scheduler per enabled rule, repeating every rule interval; a missed iteration is skipped, not queued |
-| `cpt-insightspec-v3-alerts-fr-episodes` | The last valid finding on the rule row; a breach owes a notification only when the last valid finding was not a breach |
+| `cpt-insightspec-v3-alerts-fr-episodes` | The last valid finding on the rule row, one per rule whichever rows breach; a breach owes a notification only when the last valid finding was not a breach |
 | `cpt-insightspec-v3-alerts-fr-deliver` | A notification row written in the same transaction as the check that owes it, then one delivery job keyed by the notification; unconfirmed sends fail the job so BullMQ retries with backoff, rejections and exhausted attempts are final |
-| `cpt-insightspec-v3-alerts-fr-inspect` | The latest check on the rule; notifications listed per rule with status, attempts, last error and provider receipt |
+| `cpt-insightspec-v3-alerts-fr-inspect` | The latest check and its witness on the rule; notifications listed per rule with their condition, witness, status, attempts, last error and provider receipt |
 
 #### NFR Allocation
 
@@ -99,7 +99,7 @@ flowchart LR
 | Layer | Responsibility | Technology |
 |-------|----------------|------------|
 | Interface | Administrator operations and safe result presentation | Existing Rust REST and MCP integration; the portal's Custom zone screens over the REST routes |
-| Application/domain | Rule lifecycle, scalar comparison, breach transition | Typed Rust operations in Insight v3 |
+| Application/domain | Rule lifecycle, condition parsing and evaluation, breach transition | Typed Rust operations in Insight v3 |
 | Infrastructure | Durable state, schedule, metric execution, outbound messages | MariaDB, BullMQ on Redis, existing ClickHouse client, HTTP client per provider |
 
 ## 2. Principles & Constraints
@@ -110,7 +110,7 @@ flowchart LR
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-principle-metric-parity`
 
-Alerts use the same stored-definition compiler and runner as on-demand metrics, over the window the rule names and never bucketed. Check frequency does not change the metric's filters or its data window.
+Alerts use the same stored-definition compiler and runner as on-demand metrics, over the window the rule names and never bucketed. Check frequency does not change the metric's filters or its data window. A condition is evaluated only on the server: a preview runs the metric and the evaluation a check runs, so the portal's form shows a finding without computing one of its own.
 
 #### Facts Before Transport
 
@@ -138,14 +138,18 @@ Only Insight v3 custom metrics are checked. Rules do not depend on a specific pr
 
 | Entity | Identity | Invariant |
 |--------|----------|-----------|
-| Rule | A generated id, the handle every operation takes; a name people read, not unique; a revision bumped by every configuration write | One metric, one result column, one condition, one interval, one destination; the latest check's finding lives on the row |
-| Check | Rule id plus revision, carried by the job | Recorded only while the rule is enabled at that revision |
-| Notification | Its own id; references the rule and the revision that owed it | Carries the value, condition and time the check saw; a later edit to the rule rewrites nothing it says. Status is pending, cancelled, sent or failed; a send is recorded only while pending |
+| Rule | A generated id, the handle every operation takes; a name people read, not unique; a revision bumped by every configuration write | One metric, one condition, one interval, one destination; every test in the condition fits the kind of the column it reads, as the metric defined it when the rule was written; the latest check's finding and witness live on the row |
+| Check | Rule id plus revision, carried by the job | Recorded only while the rule is enabled at that revision; date tests measure back from the check's own time |
+| Notification | Its own id; references the rule and the revision that owed it | Carries the condition, witness and time the check saw; a later edit to the rule rewrites nothing it says. Status is pending, cancelled, sent or failed; a send is recorded only while pending |
 | Destination | A name in configuration | Names a provider and holds its credentials; the domain sees the name and provider |
 
-A valid check is exactly one row and one named column holding a finite number comparable with the threshold. Anything else is unknown, with a reason: no rows, many rows, column missing, null, non-numeric, incomparable, metric missing, compile failed, run failed, timeout. An unknown check records itself on the rule and leaves the last valid finding as it was.
+A condition is a row quantifier and a tree of tests, parsed at the boundary into typed leaves: a number, text or date test on one named column. Each test on each row is true, false or unknown. `all` is false when a child is false, unknown when a child is unknown and none is false, otherwise true; `any` is the dual; `not` swaps true and false and keeps unknown. The quantifier folds the rows the same way: `one` takes the only row, `any`, `all` and `none` combine every row, and `count` counts true rows and is unknown when an unknown row could change its comparison. Over zero rows `any` is a valid non-breach, `count` compares zero, and `one`, `all` and `none` are unknown `no_rows`; `one` over several rows is unknown `many_rows`.
 
-A notification is owed when a valid check finds the condition met and the last valid finding was not a breach. It is owed again only after a valid check has seen the condition clear.
+A date bound in a condition is an RFC 3339 timestamp whose year in UTC lies between 0 and 9999. A date cell reads as RFC 3339, as `YYYY-MM-DD HH:MM:SS[.fff]` in UTC, or as a bare date at midnight UTC; a boolean cell compares as the text `true` or `false`. A check the condition cannot decide is unknown, with a reason: `no_rows`, `many_rows`, `column_missing`, `null`, `non_numeric`, `non_text`, `non_date`, `incomparable`, `row_limit`, `metric_missing`, `compile_failed`, `run_failed`, `timeout`. `non_text` is a text test reading a cell that is neither text nor a boolean; `non_date` is a date test reading a cell that is not a timestamp. A run that reached the row bound the service imposes - the default when the metric names none, or the maximum when it names more - may have left rows out; each counts as unknown, so the check is `row_limit` unless the rows it has already decide it. A bound the metric names itself is its own question and is not treated so. An unknown check records itself on the rule and leaves the last valid finding as it was.
+
+A valid check answers a witness: `matched`, the rows the test passed on; `answered`, the rows the metric answered; `columns`, the metric's group-by columns and then the condition's, each once; and `rows`, at most 5 in result order, each a list of cells in `columns` order as the run answered them: an integer past what JavaScript holds exactly as its digits, text cut to 256 characters, and a list or an object as its JSON text, cut the same way. Under `one` the witness holds the one row whatever the test found; under every other quantifier it holds rows the test passed on.
+
+A notification is owed when a valid check finds the condition met and the last valid finding was not a breach. It is owed again only after a valid check has seen the condition clear. The finding belongs to the rule, so which rows breach does not start or end an episode.
 
 A send ends one of three ways: the provider confirmed it and gave it an identity, the receipt; the provider rejected it and will keep rejecting it; or the outcome is unknown — a timeout, a rate limit, a server error, an answer not understood. Unknown is retried until the attempts run out; the message may therefore land twice. Rejection is final at once.
 
@@ -161,11 +165,11 @@ API and MCP need identical rule behaviour.
 
 ##### Responsibility scope
 
-Typed validation against the installation's bounds and destinations; create, replace at an expected revision, enable, disable, delete; list rules and their notifications. Every write lands in the store first and on the schedule second; the store's answer is the write's answer, and a schedule write that fails is logged and left to reconciling.
+Typed validation against the installation's bounds and destinations, and of the condition against the column kinds the metric answers over the rule's window; create, replace at an expected revision, enable, disable, delete; list rules and their notifications; preview a draft. Every write lands in the store first and on the schedule second; the store's answer is the write's answer, and a schedule write that fails is logged and left to reconciling.
 
 ##### Responsibility boundaries
 
-No metric query inside a write. The store decides revisions; the schedule is told the result.
+A write reads the metric's definition, and its dataset's declaration, for the kind of each result column, and never runs it; a metric whose definition cannot be read, or whose dataset is not ready, is refused. Only a preview runs the metric, and it records nothing. The store decides revisions; the schedule is told the result.
 
 ##### Related components (by ID)
 
@@ -221,7 +225,7 @@ Metric execution must not occupy administration requests.
 
 ##### Responsibility scope
 
-Takes a check off the queue; loads the rule; stops if it is gone, disabled or at another revision; runs the metric; classifies the number; records the outcome through the store.
+Takes a check off the queue; loads the rule; stops if it is gone, disabled or at another revision; runs the metric; evaluates the condition at the check's time; records the outcome and witness through the store.
 
 ##### Responsibility boundaries
 
@@ -241,11 +245,11 @@ Provider failures must not touch the check or the rule.
 
 ##### Responsibility scope
 
-One BullMQ queue, one job per notification keyed by its id, with the configured attempts and a doubling backoff. The delivery worker loads the notification, stops if it is not pending, builds the one-line message, sends it through the destination's adapter, and records the outcome: sent with the receipt, pending with the error when a retry follows, failed when the provider rejected it or the attempts are spent. The attempts are counted on the notification, not on the job, so a job recreated after a failed write cannot start the count over. A send the provider confirmed but the row could not record is sent again by the next job; that duplicate is the one the PRD accepts. At startup, and every five minutes after, every pending notification is queued again; the job id makes that idempotent.
+One BullMQ queue, one job per notification keyed by its id, with the configured attempts and a doubling backoff. The delivery worker loads the notification, stops if it is not pending, builds the message from the condition and witness it carries - the rule, the metric and the condition in words with its quantifier and every threshold exactly as written, for many rows how many matched of how many, the witness rows, and the check time, one line each, each line bounded so the check time always remains - sends it through the destination's adapter, and records the outcome: sent with the receipt, pending with the error when a retry follows, failed when the provider rejected it or the attempts are spent. The attempts are counted on the notification, not on the job, so a job recreated after a failed write cannot start the count over. A send the provider confirmed but the row could not record is sent again by the next job; that duplicate is the one the PRD accepts. At startup, and every five minutes after, every pending notification is queued again; the job id makes that idempotent.
 
 ##### Responsibility boundaries
 
-Never reruns the metric. A destination removed from configuration rejects the send. Adapters: Discord posts to the webhook with `wait=true` and no mentions, and reads the created message id; Telegram calls `sendMessage` and reads `result.message_id`; Slack calls `chat.postMessage` with the bot token, the text escaped and formatting off, and reads `ts`, treating an error in a successful answer that a later attempt may get past (rate limits, a failure on Slack's side, a truncated request, a workspace mid-migration) as unknown and any other error as rejection; Zulip posts to a stream topic with basic authentication and reads `id`. Each treats 429 and 5xx as unknown, other 4xx as rejection, and a body it does not understand as unknown.
+Never reruns the metric. A destination removed from configuration rejects the send. The message has a markdown form, which Discord, Slack and Zulip send, and an HTML form, which Telegram sends: in both the witness rows, the only text the warehouse writes, are code, where no provider reads a mention or a link; control characters in that text become spaces. Adapters: Discord posts to the webhook with `wait=true` and no mentions, and reads the created message id; Telegram calls `sendMessage` with HTML parsing and reads `result.message_id`; Slack calls `chat.postMessage` with the bot token and the markdown with `&`, `<` and `>` escaped, and reads `ts`, treating an error in a successful answer that a later attempt may get past (rate limits, a failure on Slack's side, a truncated request, a workspace mid-migration) as unknown and any other error as rejection; Zulip posts to a stream topic with basic authentication and reads `id`. Each treats 429 and 5xx as unknown, other 4xx as rejection, and a body it does not understand as unknown.
 
 ##### Related components (by ID)
 
@@ -259,31 +263,34 @@ Administration follows `cpt-insightspec-v3-alerts-interface-administration`. The
 
 | Operation | Request | Response | Permission |
 |-----------|---------|----------|------------|
-| `POST /v1/alerts` | Name, metric, column, operator, threshold, optional range, interval, destination, enabled | The rule with its id, revision and state | Administrator |
+| `POST /v1/alerts` | Name, metric, `condition`, optional range, interval, destination, enabled | The rule with its id, revision and state | Administrator |
 | `PUT /v1/alerts/{id}` | The whole rule again, with `expected_revision` | The rule at its next revision | Administrator |
-| `GET /v1/alerts/{id}` | — | The rule with its revision and latest check | Administrator |
+| `POST /v1/alerts/preview` | Metric, optional range, `condition` | `outcome` (`breach`, `no_breach` or `unknown`), `reason` when unknown, and `witness` when not; nothing is recorded; at most four run at once, and one that waits past two seconds is refused as busy | Administrator |
+| `GET /v1/alerts/{id}` | — | The rule with its revision and latest check, `last_witness` included | Administrator |
 | `GET /v1/alerts` | Optional search over name and metric, and page | One page of id, name, metric and enabled, and a total | Administrator |
 | `DELETE /v1/alerts/{id}` | — | No content | Administrator |
 | `POST /v1/alerts/{id}/enable`, `/disable` | `expected_revision` | The rule | Administrator |
-| `GET /v1/alerts/{id}/notifications` | Page | Notifications, newest first, with status, attempts, last error and provider receipt | Administrator |
+| `GET /v1/alerts/{id}/notifications` | Page | Notifications, newest first, with condition, witness, status, attempts, last error and provider receipt | Administrator |
 | `GET /v1/alert-destinations` | — | Names and providers | Administrator |
 
-Refusals distinguish an invalid rule, a missing metric or alert, a revision conflict, the rule limit, and an installation with alerts off. An id that is malformed names no alert and answers the same as one that is absent. No login, SSO or MFA mechanism is added.
+A condition travels as `{"rows": ..., "where": ...}`: `rows` is `one`, `any`, `all`, `none` or `{"count": {"op": ">", "value": 3}}`; `where` is a test `{"column", "op", "value"}` or a group `{"all": [...]}`, `{"any": [...]}`, `{"not": ...}`. Wide integers travel as digit strings, and timestamps read back in UTC with a `Z` suffix. A witness is `{"matched", "answered", "columns", "rows"}`, and `null` when the check is unknown.
+
+Refusals distinguish an invalid rule, a missing metric or alert, a revision conflict, the rule limit, and an installation with alerts off. A condition refusal names `condition` followed by the path of the part concerned, as `condition.where.all[1].value` or `condition.rows.count.op`; a metric whose definition cannot be read is refused on `metric`. A preview is refused field by field as a write is. An id that is malformed names no alert and answers the same as one that is absent. No login, SSO or MFA mechanism is added.
 
 #### Portal Screens
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-interface-portal`
 
-The portal reaches the same routes from four pages under the Custom zone's catalogue, behind its administrator gate. The pages hold no rule logic: validation mirrors the API's bounds so a refusal is rare, and when one arrives it lands on the field it names.
+The portal reaches the same routes from four pages under the Custom zone's catalogue, behind its administrator gate. The pages hold no rule logic: a condition is evaluated only by the preview route, and validation mirrors the API's bounds so a refusal is rare. When one arrives it lands on the field, test or group its path names.
 
 | Page | Route | Reads | Writes |
 |------|-------|-------|--------|
 | List | `/portal/custom/alerts` | `GET /v1/alerts`, searched and paged | enable and disable, after reading the rule for its revision |
-| New | `/portal/custom/alerts/new` | metrics catalogue, the picked metric's definition for its columns, `GET /v1/alert-destinations`, one metric run for the current value | `POST /v1/alerts` |
+| New | `/portal/custom/alerts/new` | metrics catalogue, the picked metric's definition for its columns and their kinds, `GET /v1/alert-destinations`, `POST /v1/alerts/preview` for the current draft | `POST /v1/alerts` |
 | Alert | `/portal/custom/alerts/{id}` | `GET /v1/alerts/{id}`, `GET /v1/alerts/{id}/notifications` | enable, disable, delete |
 | Edit | `/portal/custom/alerts/{id}/edit` | the rule, read after the page mounts, then what New reads | `PUT /v1/alerts/{id}` with `expected_revision` |
 
-A save or toggle that lost a race keeps the input and offers the latest version instead of overwriting it. The list carries no check status because the list route carries none; the latest check is on the alert's page.
+New and Edit draw the condition as a tree: a quantifier, shown only when the metric answers many rows, and groups with their own `all`, `any` or `not` switch, nested by indentation to the depth the API allows. An Editor / JSON switch shows the whole rule draft as text, the body the API and MCP take; both views edit one document, and a draft that does not parse leaves the rule as it stood. A save or toggle that lost a race keeps the input and offers the latest version instead of overwriting it. The list carries no check status because the list route carries none; the latest check is on the alert's page.
 
 ### 3.4 Internal Dependencies
 
@@ -356,15 +363,15 @@ Recovery rules:
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-db-state`
 
-Both tables live in the service's existing MariaDB database and migration ledger. Column lists are in the migration script.
+Both tables live in the service's existing MariaDB database and migration ledger. Column lists are in the migration scripts. The condition and the witness are stored as JSON text, so a wide integer stays exact as digits. The stored condition is the shape the API carries beside the kind of each column it reads, so a row is read back without the metric at hand.
 
 #### Table: alert rules
 
-Rule id, name, metric, column, operator, threshold as text so an integer stays exact, optional range, interval, destination, enabled, revision, and the latest check: when, outcome, reason, value, the last valid finding, when the current breach began.
+Rule id, name, metric, condition, optional range, interval, destination, enabled, revision, and the latest check: when, outcome, reason, witness, the last valid finding, when the current breach began.
 
 #### Table: alert notifications
 
-Notification id, rule id and revision, the rule name, metric, column, condition and value the check saw, when it was evaluated, the destination, status (`pending`, `cancelled`, `sent`, `failed`), attempts, the last error in the provider's words, and the provider receipt. Indexed by rule and time; the newest N per rule are kept, and a pending notification is never dropped.
+Notification id, rule id and revision, the rule name, metric, condition and witness the check saw, when it was evaluated, the destination, status (`pending`, `cancelled`, `sent`, `failed`), attempts, the last error in the provider's words, and the provider receipt. Indexed by rule and time; the newest N per rule are kept, and a pending notification is never dropped.
 
 BullMQ owns its keys in Redis under its own prefix. A finished check is kept there for inspection only up to a fixed count per outcome; a finished delivery job is removed at once, so that queuing a notification again after reconciling is never swallowed by the job it had before.
 
@@ -386,12 +393,12 @@ The alternatives were run, not read, against a local MariaDB and Redis before Bu
 
 ### Verification and Observability
 
-- Pure tests for number comparison, scalar classification, the breach transition and draft validation.
+- Pure tests for number comparison, condition parsing and its refusal paths, three-valued evaluation under every quantifier over zero, one and many rows, date tests against a fixed check time, the witness and its cap, the message, the breach transition and draft validation.
 - Live MariaDB tests for revisions, conflicts, one notification per breach, stale checks, withdrawal on disable and the kept count.
 - Live Redis tests for one scheduler per rule, for a worker taking a scheduled check through the metric runner to a recorded and queued notification, and for delivery: sent once with a receipt, retried after an unconfirmed answer, failed after the last attempt.
 - Adapter tests against a local server playing each provider: acceptance, rate limit, rejection, server error, an answer not understood, and no answer in time.
-- Handler tests for every route's authorization, validation and revision handling; an MCP tool-list test.
-- Component and story tests for the portal screens: draft validation and the current-value preview, the conflict flow, list and notification paging, the switch's optimistic state, and phone-width layout.
+- Handler tests for every route's authorization, validation and revision handling, the preview's outcome shape and refusal paths included; an MCP tool-list test.
+- Component and story tests for the portal screens: draft validation, the condition builder with nested groups, the Editor / JSON switch, the preview readout and the witness, the conflict flow, list and notification paging, the switch's optimistic state, and phone-width layout.
 
 Every check logs the rule, revision, outcome, reason, whether a notification was owed, and its duration. Every send logs the notification, attempt, and receipt or reason. Redis persistence, worker health and failed notifications are operator signals.
 
@@ -401,11 +408,12 @@ Every check logs the rule, revision, outcome, reason, whether a notification was
 |----------|---------|
 | Job library | BullMQ on Redis ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)) |
 | D3 first providers | Discord, Telegram, Slack and Zulip, one adapter each behind one provider interface |
-| D4 numbers | Exactly one row and one column; `>`, `>=`, `<`, `<=`; integers exact, floats as `f64`, mixed only where exact |
+| D4 conditions | A row quantifier and a tree of tests: `all`, `any`, `not` nested at most 3 deep, at most 20 tests; number, text and date operators by column kind, typed at write time; lists of at most 50, text of at most 256 characters, durations up to 100 years; three-valued; integers exact, floats as `f64`, mixed only where exact |
 | D5 unknown | Keeps the last valid finding; records time and reason; no freshness condition |
 | D6 edits | Revision per write, `expected_revision` on update; edit or enable resets the finding; disable withdraws pending notifications; delete removes everything |
 | D7 limits | Interval 60 s to 7 d, 200 rules, concurrency 4, check lock 60 s, 200 notifications kept per rule, 5 delivery attempts from 30 s doubling, 10 s provider call, 4 concurrent sends; all configurable |
-| D8 destinations | Operator-provisioned names with a provider and its credentials in configuration; one-line message; per-administrator destinations later behind the same interface |
+| D8 destinations | Operator-provisioned names with a provider and its credentials in configuration; a message of rule, metric, condition in words, witness and check time, within a fixed length; per-administrator destinations later behind the same interface |
+| D9 quantifier and witness | `one`, `any`, `all`, `none` or a count; over zero rows `any` is no breach, a count compares zero, the rest are unknown `no_rows`; rows past an imposed row bound count as unknown (`row_limit`); a witness of at most 5 rows holding the condition's and group-by columns, with matched and answered counts; episodes per rule |
 | Evaluation history | Latest check on the rule only; history is the notifications |
 | Metric snapshot | None; a metric edit applies at the next check |
 

@@ -23,6 +23,7 @@ type R = Result<(), Box<dyn std::error::Error>>;
 
 struct TestHarness {
     _clickhouse: Mock,
+    state: Arc<AppState>,
     router: Router,
     schedule: Arc<MemorySchedule>,
     store: Arc<MemoryAlerts>,
@@ -48,11 +49,35 @@ impl TestHarness {
         alerts: MemoryAlerts,
         schedule: MemorySchedule,
     ) -> Self {
+        Self::build_over(is_admin, alerts_on, alerts, schedule, None)
+    }
+
+    /// A harness whose metric runs are answered by the warehouse at `url`.
+    fn over_warehouse(url: &str, is_admin: bool) -> Self {
+        Self::build_over(
+            is_admin,
+            true,
+            MemoryAlerts::new(),
+            MemorySchedule::new(),
+            Some(url),
+        )
+    }
+
+    fn build_over(
+        is_admin: bool,
+        alerts_on: bool,
+        alerts: MemoryAlerts,
+        schedule: MemorySchedule,
+        warehouse: Option<&str>,
+    ) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
         let openapi = OpenApiRegistryImpl::new();
-        let client =
-            insight_clickhouse::Client::new(insight_clickhouse::Config::new(mock.url(), "insight"));
+        let warehouse_url = warehouse.map_or_else(|| mock.url().to_owned(), str::to_owned);
+        let client = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
+            &warehouse_url,
+            "insight",
+        ));
         let definitions: Arc<dyn DefinitionStore> = Arc::new(MemoryDefinitions::new());
         futures::executor::block_on(async {
             let name = crate::domain::definition::DefinitionName::parse("prs-open")
@@ -65,6 +90,23 @@ impl TestHarness {
                 )
                 .await
                 .unwrap_or_else(|error| panic!("the metric is stored: {error}"));
+            let grouped = crate::domain::definition::DefinitionName::parse("prs-by-team")
+                .unwrap_or_else(|error| panic!("{error}"));
+            definitions
+                .put(
+                    DefinitionKind::Metric,
+                    &grouped,
+                    &json!({
+                        "table": "gold.prs",
+                        "fields": [
+                            {"column": "team", "type": "string", "as_name": "team"},
+                            {"agg": "count", "type": "int", "as_name": "total"}
+                        ],
+                        "group_by": ["team"]
+                    }),
+                )
+                .await
+                .unwrap_or_else(|error| panic!("the grouped metric is stored: {error}"));
         });
         let schedule = Arc::new(schedule);
         let store = Arc::new(alerts);
@@ -95,10 +137,12 @@ impl TestHarness {
                 )])),
             });
         }
-        let router = register_routes(Router::new(), &openapi, &Arc::new(state));
+        let state = Arc::new(state);
+        let router = register_routes(Router::new(), &openapi, &state);
 
         Self {
             _clickhouse: mock,
+            state,
             router,
             schedule,
             store,
@@ -161,9 +205,7 @@ fn rule(edit: impl FnOnce(&mut Value)) -> Value {
     let mut body = json!({
         "name": "Too many open PRs",
         "metric": "prs-open",
-        "column": "total",
-        "operator": ">",
-        "threshold": 10,
+        "condition": { "rows": "one", "where": { "column": "total", "op": ">", "value": 10 } },
         "interval_secs": 300,
         "destination": "ops"
     });
@@ -223,7 +265,10 @@ async fn a_created_rule_reads_back_at_revision_one_and_is_scheduled() -> R {
     assert_eq!(shown["name"], json!("Too many open PRs"));
     assert_eq!(shown["revision"], json!(1));
     assert_eq!(shown["enabled"], json!(true));
-    assert_eq!(shown["threshold"], json!(10));
+    assert_eq!(
+        shown["condition"],
+        json!({ "rows": "one", "where": { "column": "total", "op": ">", "value": 10 } })
+    );
     assert_eq!(shown["state"], json!({}));
 
     let read = harness.send("GET", &format!("/v1/alerts/{id}"), None).await;
@@ -256,13 +301,16 @@ async fn a_threshold_past_what_javascript_holds_round_trips_as_a_digit_string() 
             "POST",
             "/v1/alerts",
             Some(rule(|body| {
-                body["threshold"] = json!(9_007_199_254_740_993_u64);
+                body["condition"]["where"]["value"] = json!(9_007_199_254_740_993_u64);
             })),
         )
         .await;
     assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
     let shown = created.json();
-    assert_eq!(shown["threshold"], json!("9007199254740993"));
+    assert_eq!(
+        shown["condition"]["where"]["value"],
+        json!("9007199254740993")
+    );
     let id = shown["id"].as_str().unwrap_or_default().to_owned();
 
     let written_back = harness
@@ -270,7 +318,7 @@ async fn a_threshold_past_what_javascript_holds_round_trips_as_a_digit_string() 
             "PUT",
             &format!("/v1/alerts/{id}"),
             Some(rule(|body| {
-                body["threshold"] = json!("9007199254740993");
+                body["condition"]["where"]["value"] = json!("9007199254740993");
                 body["expected_revision"] = json!(1);
             })),
         )
@@ -281,7 +329,10 @@ async fn a_threshold_past_what_javascript_holds_round_trips_as_a_digit_string() 
         "{:?}",
         written_back.body
     );
-    assert_eq!(written_back.json()["threshold"], json!("9007199254740993"));
+    assert_eq!(
+        written_back.json()["condition"]["where"]["value"],
+        json!("9007199254740993")
+    );
 
     Ok(())
 }
@@ -310,7 +361,7 @@ async fn replacing_needs_the_revision_it_replaces() -> R {
         .send(
             "PUT",
             &path,
-            Some(rule(|body| body["threshold"] = json!(20))),
+            Some(rule(|body| body["condition"]["where"]["value"] = json!(20))),
         )
         .await;
     assert_eq!(
@@ -325,7 +376,7 @@ async fn replacing_needs_the_revision_it_replaces() -> R {
             "PUT",
             &path,
             Some(rule(|body| {
-                body["threshold"] = json!(20);
+                body["condition"]["where"]["value"] = json!(20);
                 body["expected_revision"] = json!(7);
             })),
         )
@@ -338,7 +389,7 @@ async fn replacing_needs_the_revision_it_replaces() -> R {
             &path,
             Some(rule(|body| {
                 body["name"] = json!("Far too many open PRs");
-                body["threshold"] = json!(20);
+                body["condition"]["where"]["value"] = json!(20);
                 body["interval_secs"] = json!(600);
                 body["expected_revision"] = json!(1);
             })),
@@ -393,7 +444,7 @@ async fn a_replace_silent_on_enabled_leaves_a_disabled_rule_off() -> R {
             "PUT",
             &path,
             Some(rule(|body| {
-                body["threshold"] = json!(20);
+                body["condition"]["where"]["value"] = json!(20);
                 body["expected_revision"] = json!(2);
             })),
         )
@@ -434,7 +485,11 @@ async fn enabling_a_rule_whose_destination_is_gone_is_refused() -> R {
         "retired".to_owned(),
         "discord".to_owned(),
     )]));
-    let spec = RuleSpec::parse(&draft, Limits::default(), &once_configured)?;
+    let columns = [(
+        "total".to_owned(),
+        crate::domain::query::metric_query::ColumnKind::Number,
+    )];
+    let spec = RuleSpec::parse(&draft, Limits::default(), &once_configured, &columns)?;
     let stored = harness
         .store
         .create(
@@ -499,8 +554,18 @@ async fn a_rule_is_refused_for_what_it_gets_wrong() -> R {
         ),
         (
             "text threshold that is not an integer",
-            rule(|body| body["threshold"] = json!("1,5")),
-            "threshold",
+            rule(|body| body["condition"]["where"]["value"] = json!("1,5")),
+            "condition.where.value",
+        ),
+        (
+            "a column the metric does not answer",
+            rule(|body| body["condition"]["where"]["column"] = json!("closed")),
+            "condition.where.column",
+        ),
+        (
+            "a text operator on a number column",
+            rule(|body| body["condition"]["where"]["op"] = json!("contains")),
+            "condition.where.op",
         ),
         (
             "expected_revision on create",
@@ -763,8 +828,12 @@ async fn a_notification_shows_its_delivery_state() -> R {
             rule_id: stored.id,
             revision: stored.revision,
             outcome: crate::domain::alerts::Outcome::Valid {
-                value: crate::domain::alerts::Number::Int(12),
                 breached: true,
+                witness: crate::domain::alerts::condition::Witness::one_value(
+                    "total",
+                    json!(12),
+                    true,
+                ),
             },
             evaluated_at: chrono::Utc::now(),
         })
@@ -789,7 +858,227 @@ async fn a_notification_shows_its_delivery_state() -> R {
     assert_eq!(shown["status"], json!("sent"));
     assert_eq!(shown["attempts"], json!(2));
     assert_eq!(shown["provider_receipt"], json!("m-9"));
-    assert_eq!(shown["value"], json!(12));
+    assert_eq!(
+        shown["witness"],
+        json!({ "matched": 1, "answered": 1, "columns": ["total"], "rows": [[12]] })
+    );
+
+    Ok(())
+}
+
+/// No rows of `engine String`, as `RowBinaryWithNamesAndTypes` writes them:
+/// one column, its name, its type.
+const NO_ENGINE: &[u8] = b"\x01\x06engine\x06String";
+
+/// A warehouse that knows no table engine and answers every metric read
+/// with two teams' counts.
+async fn two_teams() -> (String, tokio::task::JoinHandle<()>) {
+    use axum::Json;
+    use axum::response::IntoResponse as _;
+    use axum::routing::post;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap_or_else(|error| panic!("the warehouse must bind: {error}"));
+    let address = listener
+        .local_addr()
+        .unwrap_or_else(|error| panic!("the warehouse must have an address: {error}"));
+    let warehouse = Router::new().route(
+        "/",
+        post(|sql: String| async move {
+            if sql.contains("system.tables") {
+                return NO_ENGINE.to_vec().into_response();
+            }
+
+            Json(json!({
+                "meta": [{"name": "team", "type": "String"}, {"name": "total", "type": "UInt64"}],
+                "data": [{"team": "core", "total": "12"}, {"team": "infra", "total": "3"}]
+            }))
+            .into_response()
+        }),
+    );
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, warehouse).await;
+    });
+
+    (format!("http://{address}"), server)
+}
+
+fn preview(test: &Value) -> Value {
+    json!({ "metric": "prs-by-team", "condition": { "rows": "any", "where": test } })
+}
+
+#[tokio::test]
+async fn a_preview_judges_the_condition_over_the_rows_a_check_would_read() -> R {
+    let (url, server) = two_teams().await;
+    let harness = TestHarness::over_warehouse(&url, true);
+
+    let answered = harness
+        .send(
+            "POST",
+            "/v1/alerts/preview",
+            Some(preview(
+                &json!({ "column": "total", "op": ">", "value": 10 }),
+            )),
+        )
+        .await;
+    server.abort();
+
+    assert_eq!(answered.status, StatusCode::OK, "{:?}", answered.body);
+    assert_eq!(
+        answered.json(),
+        json!({
+            "outcome": "breach",
+            "reason": null,
+            "witness": { "matched": 1, "answered": 2, "columns": ["team", "total"], "rows": [["core", 12]] }
+        })
+    );
+    let held = crate::domain::alerts::rule::AlertStore::enabled(harness.store.as_ref()).await?;
+    assert!(held.is_empty(), "a preview records nothing");
+    assert!(harness.schedule.entries().is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_preview_over_a_metric_with_many_rows_asking_for_one_is_unknown() -> R {
+    let (url, server) = two_teams().await;
+    let harness = TestHarness::over_warehouse(&url, true);
+
+    let answered = harness
+        .send(
+            "POST",
+            "/v1/alerts/preview",
+            Some(json!({
+                "metric": "prs-by-team",
+                "condition": { "rows": "one", "where": { "column": "total", "op": ">", "value": 10 } }
+            })),
+        )
+        .await;
+    server.abort();
+
+    assert_eq!(
+        answered.json(),
+        json!({ "outcome": "unknown", "reason": "many_rows", "witness": null })
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_preview_is_refused_on_the_part_of_the_condition_that_is_wrong() -> R {
+    let harness = TestHarness::new();
+    let cases = [
+        (
+            preview(&json!({ "column": "total", "op": "contains", "value": "1" })),
+            "condition.where.op",
+        ),
+        (
+            preview(&json!({ "all": [{ "column": "team", "op": "in", "value": [] }] })),
+            "condition.where.all[0].value",
+        ),
+        (
+            json!({ "metric": "nothing-here", "condition": { "rows": "any", "where": {} } }),
+            "metric",
+        ),
+        (
+            json!({ "metric": "prs-by-team", "condition": null }),
+            "condition",
+        ),
+    ];
+
+    for (body, field) in cases {
+        let refused = harness
+            .send("POST", "/v1/alerts/preview", Some(body.clone()))
+            .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::BAD_REQUEST,
+            "should refuse {body}"
+        );
+        let shown = refused.json();
+        assert_eq!(
+            shown["context"]["field_violations"][0]["field"],
+            json!(field),
+            "should name `{field}`: {shown}"
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn only_an_administrator_may_preview() -> R {
+    let harness = TestHarness::build(false, true);
+
+    let refused = harness
+        .send(
+            "POST",
+            "/v1/alerts/preview",
+            Some(preview(
+                &json!({ "column": "total", "op": ">", "value": 10 }),
+            )),
+        )
+        .await;
+
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_nested_condition_over_a_grouped_metric_is_stored_and_read_back() -> R {
+    let harness = TestHarness::new();
+    let condition = json!({
+        "rows": { "count": { "op": ">=", "value": 2 } },
+        "where": { "all": [
+            { "column": "total", "op": "between", "value": [5, 50] },
+            { "not": { "column": "team", "op": "in", "value": ["core", "infra"] } },
+        ] }
+    });
+
+    let created = harness
+        .send(
+            "POST",
+            "/v1/alerts",
+            Some(rule(|body| {
+                body["metric"] = json!("prs-by-team");
+                body["condition"] = condition.clone();
+            })),
+        )
+        .await;
+
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    assert_eq!(created.json()["condition"], condition);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_preview_waiting_past_its_turn_is_refused_as_busy() -> R {
+    let harness = TestHarness::new();
+    let slots = Arc::clone(harness.state.preview_slots());
+    let held = slots
+        .acquire_many_owned(u32::try_from(MAX_CONCURRENT_PREVIEWS)?)
+        .await?;
+
+    let refused = harness
+        .send(
+            "POST",
+            "/v1/alerts/preview",
+            Some(preview(
+                &json!({ "column": "total", "op": ">", "value": 10 }),
+            )),
+        )
+        .await;
+    drop(held);
+
+    assert_eq!(
+        refused.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{:?}",
+        refused.body
+    );
 
     Ok(())
 }

@@ -33,6 +33,17 @@ function resultsEntity(
 }
 
 /**
+ * A metric's daily readings, and whether the warehouse could answer at all.
+ *
+ * The two are different claims: no readings over a built relation means the
+ * period was quiet, where `notReady` means nothing has been collected yet.
+ */
+export interface MetricDaySeries {
+  readings: DayReading[];
+  notReady: boolean;
+}
+
+/**
  * One reading per day the metric has one, over the whole period.
  *
  * Read from the timeseries view rather than from evidence rows: evidence is
@@ -50,10 +61,10 @@ function resultsEntity(
  * would need the metric's own computation to combine them — a ratio cannot be
  * added up — so widen this before widening the caller.
  */
-function readings(
+function daySeries(
   response: MetricResultsResponse,
   metricKey: string
-): DayReading[] {
+): MetricDaySeries {
   const metric = response.metrics.find((m) => m.metric_key === metricKey);
   // A view whose computation failed arrives inside a 200, in the slot the
   // working view would have taken. Reading past it would draw an empty strip
@@ -63,8 +74,13 @@ function readings(
   if (failed?.view === "error") {
     throw new MetricViewFailed(failed.code);
   }
+  // Same slot, and the same reason not to read past it — but nothing failed,
+  // so it is answered rather than retried.
+  if (metric?.views.some((v) => v.view === "not_ready")) {
+    return { readings: [], notReady: true };
+  }
   const view = metric?.views.find((v) => v.view === "timeseries");
-  if (view?.view !== "timeseries") return [];
+  if (view?.view !== "timeseries") return { readings: [], notReady: false };
 
   const byDate = new Map<string, DayReading>();
   for (const series of view.series) {
@@ -99,7 +115,10 @@ function readings(
     }
   }
 
-  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  return {
+    readings: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    notReady: false,
+  };
 }
 
 export function useMetricDaySeries(
@@ -130,7 +149,7 @@ export function useMetricDaySeries(
         },
         signal
       );
-      return readings(response, selection.metric_key);
+      return daySeries(response, selection.metric_key);
     },
     enabled:
       enabled && sessionScope != null && selection != null && entity != null,

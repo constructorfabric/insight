@@ -1,0 +1,81 @@
+spec_version: 1
+description: >
+  Metrics: collab.active_days, collab.breadth, collab.meeting_free_days and
+  collab.focus_time_pct — the metrics derived from a person's active days.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily Microsoft 365 email, Teams and OneDrive reports, and Zoom
+      participant sessions.
+    • silver: per-person/day counts and meeting durations; a Zoom session counts
+      only while someone else is in it.
+    • gold:   an active day has a deliberate action (email sent, chat message, file
+      engaged, meeting or call attended), whatever the address it came from.
+      Breadth counts the modalities behind those days. A meeting-free day is an
+      active day with no meeting time under any address. Focus is 100 minus the
+      meeting hours as a share of working hours over the active days; meeting
+      time counts up to the working hours of the day and address it came from, and
+      two addresses share one working day. Both leave out addresses no meeting
+      source ever reported.
+
+  Cast (Engineering, 8 working hours a day):
+    alice — Mon Dec 14 email · Tue Teams meeting 2 h · Wed Teams chat, and a 4 h
+            Zoom meeting under her second address · Thu Teams meeting 10 h · Sat a
+            file in OneDrive → 5 active days, 4 modalities, 2 meeting-free days,
+            focus 100 − 100·(2+4+8)/40 = 65.
+    bob   — Mon Zoom meeting 3 h · Tue email → 2 days, 2 modalities, 1 free day,
+            focus 100 − 100·3/16 = 81.25.
+    carol — Wed email, and a Zoom session nobody else joined → 1 day, 1 modality,
+            1 free day, focus 100.
+    dave  — Tue email, and no meeting source has ever reported him → 1 active day,
+            1 modality, no meeting-free days and no focus: his meeting time is
+            unknown.
+  Cases: one active day across two addresses and tools · a meeting under either
+  address ends a meeting-free day · days without any meeting count toward focus ·
+  a day's meetings count up to its working hours · a solo Zoom session is no
+  meeting · a person no meeting source knows has no focus and no meeting-free days · a weekend day with activity counts · an empty window is null.
+
+identity_aliases:
+  alice@example.com: [alice.zoom@example.org]
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+
+  bronze_ms_entra.users:
+    # alice's second address is its own directory account, so only the operator's
+    # binding joins it to her.
+    - _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+      _airbyte_extracted_at: "2026-01-05T00:00:00"
+      _airbyte_meta: "{}"
+      _airbyte_generation_id: 0
+      tenant_id: "{{ tenant }}"
+      source_id: entra-test
+      unique_key: entra-alice-zoom
+      id: entra-alice-zoom
+      mail: alice.zoom@example.org
+      displayName: Alice Zoom
+      accountEnabled: true
+      userType: Member
+
+  bronze_m365.email_activity:
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-14", lastActivityDate: "2026-12-14", unique_key: dd-email-alice-20261214, sendCount: 2 }
+    - { $ref: ../templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-12-15", lastActivityDate: "2026-12-15", unique_key: dd-email-bob-20261215,   sendCount: 1 }
+    - { $ref: ../templates/m365_email.yaml#/templates/carol_email, reportRefreshDate: "2026-12-16", lastActivityDate: "2026-12-16", unique_key: dd-email-carol-20261216, sendCount: 1 }
+    - { $ref: ../templates/m365_email.yaml#/templates/dave_email,  reportRefreshDate: "2026-12-15", lastActivityDate: "2026-12-15", unique_key: dd-email-dave-20261215,  sendCount: 1 }
+
+  bronze_m365.teams_activity:
+    - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-15", lastActivityDate: "2026-12-15", unique_key: dd-teams-alice-20261215, meetingsAttendedCount: 1, audioDuration: "PT2H" }
+    - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-16", lastActivityDate: "2026-12-16", unique_key: dd-teams-alice-20261216, teamChatMessageCount: 3, meetingsAttendedCount: 0, audioDuration: PT0S, videoDuration: PT0S, screenShareDuration: PT0S }
+    - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-17", lastActivityDate: "2026-12-17", unique_key: dd-teams-alice-20261217, meetingsAttendedCount: 1, audioDuration: "PT10H" }
+
+  bronze_m365.onedrive_activity:
+    - { $ref: ../templates/m365_onedrive.yaml#/templates/alice_onedrive, reportRefreshDate: "2026-12-19", lastActivityDate: "2026-12-19", unique_key: dd-onedrive-alice-20261219, viewedOrEditedFileCount: 1 }
+
+  bronze_zoom.participants:
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: alice.zoom@example.org, user_name: Alice, unique_key: dd-zoom-alice-w1, meeting_uuid: w1, participant_uuid: dw1a, join_time: "2026-12-16T09:00:00Z", leave_time: "2026-12-16T13:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Guest, unique_key: dd-zoom-guest-w1, meeting_uuid: w1, participant_uuid: dw1g, join_time: "2026-12-16T09:00:00Z", leave_time: "2026-12-16T13:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/bob_participant, unique_key: dd-zoom-bob-w2, meeting_uuid: w2, participant_uuid: dw2b, join_time: "2026-12-14T10:00:00Z", leave_time: "2026-12-14T13:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Guest, unique_key: dd-zoom-guest-w2, meeting_uuid: w2, participant_uuid: dw2g, join_time: "2026-12-14T10:00:00Z", leave_time: "2026-12-14T13:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/carol_participant, unique_key: dd-zoom-carol-w3, meeting_uuid: w3, participant_uuid: dw3c, join_time: "2026-12-16T10:00:00Z", leave_time: "2026-12-16T11:00:00Z" }

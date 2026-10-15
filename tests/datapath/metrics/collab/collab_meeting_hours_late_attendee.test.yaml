@@ -2,23 +2,21 @@ spec_version: 1
 description: >
   Metrics: collab.meeting_hours and collab.focus_time_pct — an attendee who
   arrives in a later sync re-opens every day of that meeting, and focus follows.
-  How it's computed (bronze → silver → gold):
+  How it's computed (bronze → staging → gold):
     • bronze: Zoom participant sessions, synced in batches.
     • staging: a session's time counts only while someone else was in the meeting,
       so an incremental build re-aggregates every date of each meeting touched by a
       recent extract, not only the dates of the newly extracted rows.
-    • silver: focus re-derives every person-day whose meeting rows changed, however
-      old the day.
-    • gold:   per-person sum of meeting hours; focus = meeting-free share of an
-      eight-hour day.
+    • gold:   per-person sum of meeting hours; focus = 100 minus the meeting share
+      of an eight-hour day, over the days with a meeting or other activity.
 
   Cast (Engineering): alice joins Zoom meeting z9 at 23:50 UTC on Dec 20 and stays
   until 00:30. The first sync carries only her row, so she is alone. A later sync
   brings bob, who joined at 00:10 on Dec 21; after the incremental build alice's
   Dec 20 gains the 20 minutes they shared. alice also sits alone in a meeting on
   Dec 31, so the earlier day is well behind the newest one.
-  Cases: alone before the late row · the late row re-opens the earlier day ·
-  focus on that day drops from 100% to 95.83%.
+  Cases: alone before the late row, so no meeting and no working day · the late
+  row re-opens the earlier day · that day's focus is then 95.83%.
 
 bronze:
   bronze_bamboohr.employees:

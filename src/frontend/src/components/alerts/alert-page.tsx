@@ -11,7 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
-import { conditionText, numberText, reasonText } from "@/lib/alerts/describe";
+import { WitnessTable } from "@/components/alerts/witness";
+import { conditionText, reasonText } from "@/lib/alerts/describe";
 import { intervalLabel } from "@/lib/alerts/interval";
 import { rangeLabel } from "@/lib/custom/time-range";
 import { formatUtcAge, formatUtcInstant } from "@/lib/format";
@@ -137,9 +138,20 @@ function Header({ alert }: { alert: Alert }) {
   );
 }
 
-function Fact({ term, children }: { term: string; children: ReactNode }) {
+function Fact({
+  term,
+  wide = false,
+  children,
+}: {
+  term: string;
+  /** Spans the whole card rather than one column of it. */
+  wide?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div
+      className={cn("flex min-w-0 flex-col gap-0.5", wide && "sm:col-span-2")}
+    >
       <dt className={TEXT_LABEL}>{term}</dt>
       <dd className={cn(TEXT_BODY, "min-w-0 break-words")}>{children}</dd>
     </div>
@@ -163,11 +175,8 @@ function Rule({ alert }: { alert: Alert }) {
               {alert.metric}
             </Link>
           </Fact>
-          <Fact term="Column">
-            <code className="font-mono">{alert.column}</code>
-          </Fact>
-          <Fact term="Condition">
-            {conditionText(alert.operator, alert.threshold)}
+          <Fact term="Condition" wide>
+            {conditionText(alert.condition)}
           </Fact>
           <Fact term="Window">
             {alert.range ? rangeLabel(alert.range) : "All time"}
@@ -208,11 +217,9 @@ function LatestCheck({
                 {formatUtcAge(state.last_evaluated_at)}
               </span>
             </Fact>
-            {state.last_value !== undefined ? (
-              <Fact term="Value">
-                <span className="tabular-nums">
-                  {numberText(state.last_value)}
-                </span>
+            {state.last_witness ? (
+              <Fact term="Found" wide>
+                <WitnessTable witness={state.last_witness} />
               </Fact>
             ) : null}
             {state.breached_since ? (

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Provision the custom assistant's query path: the grant-less
-# `insight_v3_reader` user carrying `insight_v3_ro` (granted in
-# presentation-role.sql). Called by apply-ch-migrations.sh. Idempotent.
+# Provision the custom assistant's query path: the `insight_v3_ro` role
+# (v3-role.sql) + the grant-less `insight_v3_reader` user that carries it.
+# Called by create-databases.sh, and only where insight-v3-core is deployed —
+# the role reads every table, so an installation without the assistant gets
+# neither (#3558). Idempotent.
 # Guarded: skips (non-fatal) without access_management or without a password.
 # Env: CLICKHOUSE_{URL,USER,PASSWORD} (admin), CLICKHOUSE_V3_READER_{USER,PASSWORD}.
 set -euo pipefail
@@ -11,10 +13,14 @@ source "$SCRIPT_DIR/../lib/ch-exec.sh"
 
 reader_user="${CLICKHOUSE_V3_READER_USER:-insight_v3_reader}"
 
+# CREATE ROLE fails without access_management.
 if ! printf 'CREATE ROLE IF NOT EXISTS insight_v3_ro' | _ch_http_query >/dev/null 2>&1; then
   echo "  WARN: admin lacks access_management; skipping v3 reader (see bootstrap-db/README.md)"
   exit 0
 fi
+
+run_ch < "$SCRIPT_DIR/v3-role.sql"
+echo "  insight_v3_ro role ready"
 
 if [[ -z "${CLICKHOUSE_V3_READER_PASSWORD:-}" ]]; then
   echo "  NOTE: CLICKHOUSE_V3_READER_PASSWORD unset; role only (v3 queries as its own user)"

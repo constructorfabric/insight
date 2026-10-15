@@ -1,9 +1,6 @@
-/**
- * What a stored metric's definition says about whether an alert can read it,
- * before it is run: a check reads exactly one row and one number.
- */
+import type { DatasetDeclaration, MetricDefinition } from "@/api/custom-types";
 
-import type { MetricDefinition } from "@/api/custom-types";
+import type { ColumnKind } from "./condition";
 
 type MetricField = MetricDefinition["fields"][number];
 
@@ -28,29 +25,36 @@ export function metricShape(definition: MetricDefinition): MetricShape {
   return { kind: "one" };
 }
 
-const ALWAYS_NUMERIC = new Set(["count", "sum", "avg"]);
-const NUMERIC_TYPES = new Set(["int", "float"]);
+const COUNTED = new Set(["count", "sum", "avg"]);
 
-/**
- * Whether a column holds a number: the same rule the service applies when it
- * types a metric's columns. A count, sum, average or ratio always does; a
- * minimum or maximum does when what it reads is a number.
- */
-export function isNumericColumn(field: MetricField): boolean {
-  if (field.divide !== undefined) return true;
-  if (field.agg === undefined) return NUMERIC_TYPES.has(field.type);
-  if (ALWAYS_NUMERIC.has(field.agg)) return true;
-
-  return NUMERIC_TYPES.has(field.type);
+function kindOfType(type: string): ColumnKind {
+  switch (type) {
+    case "int":
+    case "float":
+      return "number";
+    case "datetime":
+      return "date";
+    default:
+      return "text";
+  }
 }
 
-/** The columns an alert can compare: numbers, and not what the rows are grouped by. */
-export function alertColumns(definition: MetricDefinition): MetricField[] {
-  const groupBy = new Set(definition.group_by ?? []);
+// INVARIANT: the same rule the service's `column_kinds` applies when it
+// types a condition, so a test the form offers is one the service accepts.
+export function columnKinds(
+  definition: MetricDefinition,
+  declaration?: DatasetDeclaration
+): [string, ColumnKind][] {
+  return definition.fields.map((field) => {
+    if (field.divide !== undefined || COUNTED.has(field.agg ?? "")) {
+      return [field.as_name, "number"];
+    }
 
-  return definition.fields.filter(
-    (field) => !groupBy.has(field.as_name) && isNumericColumn(field)
-  );
+    const declared = declaration?.fields.find(
+      (each) => each.name === field.field
+    );
+    return [field.as_name, kindOfType(declared?.type ?? field.type)];
+  });
 }
 
 /** Whether the column is a ratio, which is empty when there is nothing to divide by. */

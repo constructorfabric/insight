@@ -1,156 +1,251 @@
-/** An alert as the form holds it, and the rule it sends. */
-
 import type {
   Alert,
   AlertDraft,
   AlertNumber,
-  AlertOperator,
+  Condition,
 } from "@/api/alerts-types";
+import type { Held } from "@/lib/custom/editor/document";
 
-/** The longest name the service accepts. */
+import {
+  blankLeaf,
+  conditionParts,
+  fits,
+  leavesOf,
+  rowsOf,
+  valueShape,
+  type ColumnKind,
+} from "./condition";
+
 const NAME_MAX = 200;
+const DEFAULT_INTERVAL_SECS = 300;
 
-export interface AlertForm {
-  name: string;
-  metric: string;
-  column: string;
-  operator: AlertOperator;
-  /** As typed, so a half-written number is not lost while the reader types. */
-  threshold: string;
-  /**
-   * The threshold as the service sent it, which goes back as it came while
-   * the field still reads so: a number wider than the form can hold exactly
-   * survives a rename that way.
-   */
-  storedThreshold?: AlertNumber;
-  /** A window token, or "" to run the metric over all time. */
-  range: string;
-  /** How often to check, in seconds. */
-  intervalSecs: number;
-  destination: string;
-  enabled: boolean;
-}
+export type AlertDocument = Record<string, unknown>;
 
-/** A field the form can say something about, named as the service names it. */
-export type AlertField =
-  | "name"
-  | "metric"
-  | "column"
-  | "threshold"
-  | "range"
-  | "interval_secs"
-  | "destination";
+/** Keyed by the path the service names a refusal by, as `condition.where.all[1].value`. */
+export type FieldErrors = Readonly<Record<string, string>>;
 
-export type FieldErrors = Partial<Record<AlertField, string>>;
-
-export function blankForm(destination = ""): AlertForm {
+export function blankForm(destination = ""): AlertDocument {
   return {
     name: "",
     metric: "",
-    column: "",
-    operator: ">",
-    threshold: "",
-    range: "",
-    intervalSecs: 300,
+    condition: { rows: "one", where: blankLeaf() },
+    range: null,
+    interval_secs: DEFAULT_INTERVAL_SECS,
     destination,
     enabled: true,
   };
 }
 
-export function formOf(alert: Alert): AlertForm {
+export function formOf(alert: Alert): AlertDocument {
   return {
     name: alert.name,
     metric: alert.metric,
-    column: alert.column,
-    operator: alert.operator,
-    threshold: String(alert.threshold),
-    storedThreshold: alert.threshold,
-    range: alert.range ?? "",
-    intervalSecs: alert.interval_secs,
+    condition: alert.condition,
+    range: alert.range ?? null,
+    interval_secs: alert.interval_secs,
     destination: alert.destination,
     enabled: alert.enabled,
   };
 }
 
-/** A plain decimal number, optionally signed and in exponent form. */
-const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+export function textOf(document: AlertDocument, key: string): string {
+  const value = document[key];
+  return typeof value === "string" ? value : "";
+}
 
-/**
- * The threshold as a number, or nothing while it is not one that can be sent
- * exactly: past 2^53 a JavaScript number no longer holds every integer.
- */
-export function thresholdOf(typed: string): number | undefined {
+const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+const DIGITS = /^-?\d+$/;
+const MOMENT =
+  /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
+const AGE = /^P(T[1-9]\d*[HM]|[1-9]\d*[DW])$/;
+
+// INVARIANT: past 2^53 a JavaScript number no longer holds every integer, so
+// a wider one travels as its digits, as the service writes it.
+export function numberOf(typed: string): AlertNumber | undefined {
   const trimmed = typed.trim();
   if (!DECIMAL.test(trimmed)) return undefined;
 
   const value = Number(trimmed);
   if (!Number.isFinite(value)) return undefined;
-  if (Number.isInteger(value) && !Number.isSafeInteger(value)) return undefined;
+  if (Number.isSafeInteger(value) || !Number.isInteger(value)) return value;
 
-  return value;
+  return DIGITS.test(trimmed) ? trimmed : undefined;
 }
 
-/** What the service sent, while the field still reads so; otherwise what was typed. */
-export function thresholdSent(form: AlertForm): AlertNumber | undefined {
-  const stored = form.storedThreshold;
-  if (stored !== undefined && form.threshold.trim() === String(stored)) {
-    return stored;
+function isNumber(value: unknown): boolean {
+  if (typeof value === "number") return Number.isFinite(value);
+  return typeof value === "string" && DIGITS.test(value);
+}
+
+function isMoment(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    MOMENT.test(value) &&
+    !Number.isNaN(Date.parse(value))
+  );
+}
+
+const NUMBER = "Enter a number.";
+const MOMENT_TEXT = "Pick a day.";
+
+function valueErrors(
+  shape: ReturnType<typeof valueShape>,
+  value: unknown
+): Record<string, string> {
+  const [low, high] = Array.isArray(value) ? value : [];
+  const pair = (valid: (end: unknown) => boolean, said: string) => ({
+    ...(valid(low) ? {} : { "value[0]": said }),
+    ...(valid(high) ? {} : { "value[1]": said }),
+  });
+
+  switch (shape) {
+    case "number":
+      return isNumber(value) ? {} : { value: NUMBER };
+    case "number-pair":
+      return pair(isNumber, NUMBER);
+    case "moment":
+      return isMoment(value) ? {} : { value: MOMENT_TEXT };
+    case "moment-pair":
+      return pair(isMoment, MOMENT_TEXT);
+    case "text-list":
+      return Array.isArray(value) && value.length > 0
+        ? {}
+        : { value: "Enter at least one value." };
+    case "age":
+      return typeof value === "string" && AGE.test(value)
+        ? {}
+        : { value: "Enter a whole number above 0." };
+    case "text":
+      return typeof value === "string" ? {} : { value: "Enter text." };
+  }
+}
+
+function conditionErrors(
+  condition: unknown,
+  kinds: ReadonlyMap<string, ColumnKind>
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const rows = rowsOf(conditionParts(condition).rows);
+  if (
+    rows.choice === "count" &&
+    !(Number.isSafeInteger(rows.value) && (rows.value as number) >= 0)
+  ) {
+    errors["condition.rows.count.value"] = "Enter a whole number of rows.";
   }
 
-  return thresholdOf(form.threshold);
+  for (const { path, leaf } of leavesOf(condition)) {
+    const at = `condition.${path}`;
+    const kind = kinds.get(leaf.column);
+    if (leaf.column === "") {
+      errors[`${at}.column`] = "Pick a column.";
+      continue;
+    }
+    if (kind === undefined) continue;
+    if (!fits(kind, leaf.op)) {
+      errors[`${at}.op`] = "Not for this column.";
+      continue;
+    }
+
+    const found = valueErrors(valueShape(kind, leaf.op), leaf.value);
+    for (const [part, said] of Object.entries(found)) {
+      errors[`${at}.${part}`] = said;
+    }
+  }
+
+  return errors;
 }
 
-function thresholdError(typed: string): string {
-  const value = Number(typed.trim());
+type Reviver = (
+  key: string,
+  value: unknown,
+  context?: { source?: string }
+) => unknown;
 
-  return Number.isInteger(value) && !Number.isSafeInteger(value)
-    ? "Number is too large."
-    : "Enter a number.";
+type Parse = (text: string, reviver: Reviver) => unknown;
+
+/**
+ * SAFETY: an integer literal past 2^53 keeps its digits rather than being
+ * rounded; where the parser cannot show a literal's source, it is refused.
+ */
+export function parseDraftText(
+  text: string,
+  parse: Parse = JSON.parse as Parse
+): { ok: true; value: unknown } | { ok: false; problem: string } {
+  let blind = false;
+  const exact: Reviver = (_key, value, context) => {
+    if (typeof value !== "number" || Number.isSafeInteger(value)) return value;
+    if (!Number.isInteger(value)) return value;
+    if (context?.source === undefined) {
+      blind = true;
+      return value;
+    }
+    return DIGITS.test(context.source) ? context.source : value;
+  };
+
+  try {
+    const value = parse(text, exact);
+    return blind
+      ? { ok: false, problem: "Put integers this large in quotes." }
+      : { ok: true, value };
+  } catch (error) {
+    return { ok: false, problem: (error as Error).message };
+  }
 }
 
 export type Checked =
   { ok: true; draft: AlertDraft } | { ok: false; errors: FieldErrors };
 
-/**
- * The rule the form says, or what is wrong with it.
- *
- * Only what the form alone can know is checked here. The installation's
- * bounds (the shortest interval, a window the metric allows) belong to the
- * service, and its refusal is shown on the field it names.
- */
-export function checkForm(form: AlertForm): Checked {
-  const errors: FieldErrors = {};
-  const name = form.name.trim();
+export function checkForm(
+  document: AlertDocument,
+  kinds: ReadonlyMap<string, ColumnKind> = new Map()
+): Checked {
+  const errors: Record<string, string> = {};
+  const name = textOf(document, "name").trim();
   // INVARIANT: the service counts characters, and `length` counts UTF-16 units.
   const nameLength = [...name].length;
-  const threshold = thresholdSent(form);
+  const metric = textOf(document, "metric");
+  const destination = textOf(document, "destination");
+  const { range, interval_secs: interval, enabled, condition } = document;
 
   if (name === "") errors.name = "Enter a name.";
   else if (nameLength > NAME_MAX) {
     errors.name = `Keep the name to ${NAME_MAX} characters.`;
   }
-  if (form.metric === "") errors.metric = "Pick a metric.";
-  if (form.column === "") errors.column = "Pick a column.";
-  if (threshold === undefined)
-    errors.threshold = thresholdError(form.threshold);
-  if (form.destination === "") errors.destination = "Pick a destination.";
-
-  if (Object.keys(errors).length > 0 || threshold === undefined) {
-    return { ok: false, errors };
+  if (metric === "") errors.metric = "Pick a metric.";
+  if (range !== null && range !== undefined && typeof range !== "string") {
+    errors.range = "Pick a window.";
   }
+  if (!Number.isSafeInteger(interval) || (interval as number) <= 0) {
+    errors.interval_secs = "Enter a whole number of seconds.";
+  }
+  if (destination === "") errors.destination = "Pick a destination.";
+  if (typeof enabled !== "boolean") errors.enabled = "Enter true or false.";
+  if (metric !== "") Object.assign(errors, conditionErrors(condition, kinds));
+
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
 
   return {
     ok: true,
     draft: {
       name,
-      metric: form.metric,
-      column: form.column,
-      operator: form.operator,
-      threshold,
-      range: form.range === "" ? null : form.range,
-      interval_secs: form.intervalSecs,
-      destination: form.destination,
-      enabled: form.enabled,
+      metric,
+      condition: condition as Condition,
+      range: typeof range === "string" && range !== "" ? range : null,
+      interval_secs: interval as number,
+      destination,
+      enabled: enabled as boolean,
     },
   };
+}
+
+export function retypeDraft(held: Held, text: string): Held {
+  const read = parseDraftText(text);
+  if (!read.ok) return { ...held, text, unparsed: read.problem };
+
+  const { value } = read;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return { ...held, text, unparsed: "An alert is an object." };
+  }
+
+  return { document: value as AlertDocument, text };
 }

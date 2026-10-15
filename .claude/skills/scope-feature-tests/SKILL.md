@@ -5,7 +5,7 @@ description: >-
   and an acceptance gate. Use when deciding QA coverage, test dimensions or a test subtask.
   Review agreed requirements and inspect implementation, data flow and existing tests to expose
   risks and specification disagreements. Keep output at test-group level; quality-vector-tests
-  turns that scope into tracked scenarios in an issue or FEATURE artifact.
+  binds the tests that implement it to the FEATURE's Definitions of Done.
 ---
 
 # Scope feature tests (Insight)
@@ -236,9 +236,9 @@ correct but unread has failed.
 ### 8. Offer to file it
 Offer to file the scope as a **linked test subtask** under the parent feature via the
 `github-task` skill (Type `Task`, added to the Insights board, attached as a sub-issue). Draft
-for review first; don't auto-create. When the coverage belongs in the feature body instead,
-hand the groups to `quality-vector-tests` — it lays them out as the tracked scenario checkboxes. Do **not** reimplement issue mechanics here — compose with
-`github-task`.
+for review first; don't auto-create. The FEATURE itself carries no test list: once the tests
+exist, `quality-vector-tests` binds each to the DoD item it proves. Do **not** reimplement issue
+mechanics here — compose with `github-task`.
 
 ## Common axes worth probing (prompts, not a fixed checklist)
 

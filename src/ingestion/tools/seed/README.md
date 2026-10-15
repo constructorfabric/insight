@@ -51,7 +51,7 @@ flowchart TB
   classDef map stroke:#4a4e9e,stroke-width:2px
 
   GEN(["seeder generators — every seed run"]):::actor
-  DBT1(["seed dbt run — apply-ch-migrations.sh, tag:gold +identity_inputs +ai_invoice +CI chain"]):::actor
+  DBT1(["seed dbt run — build-gold.sh, tag:gold +identity_inputs +ai_invoice +CI chain"]):::actor
   PSEED(["compose exec identity-resolution seed"]):::actor
   PSYNC(["compose exec identity-resolution sync"]):::actor
   DBT2(["insight-seed gold — final rebuild"]):::actor
@@ -149,8 +149,8 @@ it — it never falls back to a guess.
    user in the realm first, or point `--email` at one that exists.
 2. **The stand's ClickHouse schema must exist** before `--step silver`, i.e. the
    chart's `clickhouse-migrate` hook has run at least once. The step re-applies
-   the placeholder DDL and rebuilds gold, but it does not stand in for the
-   release's own migration path.
+   the placeholder DDL, runs the migrations and builds gold, but it does not
+   stand in for the release's own migration path.
 
 ### It refuses rather than making a mess
 

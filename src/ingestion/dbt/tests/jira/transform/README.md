@@ -112,7 +112,9 @@ analysing this one takes about seven seconds on zero rows — its CTEs are
 inlined at each of their uses, and 1070 lines of SQL become 150 query-tree
 nodes. The suite's runtime is therefore the NUMBER of builds, not their content.
 
-So a module's `@case` scenarios are seeded together and built once. They do not
+So a module's `@case` scenarios are seeded together and built once, with the
+module's `SELECTOR` when it declares one — `test_task_links.py` adds
+`jira__task_links` to the journal's. They do not
 see each other: every model in the chain carries `insight_source_id` through its
 joins and windows, and each scenario is seeded under one of its own.
 

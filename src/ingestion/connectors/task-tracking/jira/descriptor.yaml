@@ -115,7 +115,20 @@ name: jira
 # MAJOR because the saved state belongs to the retired substream, and because
 # the false `remove` lifecycle events already written stay until the full
 # refresh a major dispatches (ADR-0015) rebuilds the journal.
-version: "12.0.0"
+# 13.0.0 (major): the journal reads the link and parent changes Jira writes by
+# label with no field id ("Link", "IssueParentAssociation"), drops remote links
+# from `issuelinks`, counts the links an issue holds to one linked issue, and
+# keeps multi-select values whose changelog id side is an empty `[]`. MAJOR
+# because rows already written change, and only the full refresh a major
+# dispatches (ADR-0015) re-derives them.
+# 14.0.0 (major): the journal identifies an `issuelinks` and `subtasks` element
+# by the linked issue's immutable id instead of its key, resolving the key the
+# changelog names through `jira__issue_key_ids`, so a link no longer splits in
+# two when the linked issue moves; `value_id_type` of those fields becomes
+# `opaque_id`. `jira__task_links` adds Jira rows to `class_task_links`. MAJOR
+# because rows already written change, and only the full refresh a major
+# dispatches (ADR-0015) re-derives them.
+version: "14.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer

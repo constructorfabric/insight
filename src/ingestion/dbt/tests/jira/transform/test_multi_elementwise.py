@@ -191,7 +191,7 @@ def _link(key: str, sentence: str, *, removed: bool = False) -> dict[str, Any]:
                     {
                         "id": "157916",
                         "type": {"name": "Duplicate"},
-                        "outwardIssue": {"key": "TST-9", "fields": {"summary": "other"}},
+                        "outwardIssue": {"id": "20009", "key": "TST-9", "fields": {"summary": "other"}},
                     }
                 ]
             },
@@ -199,22 +199,22 @@ def _link(key: str, sentence: str, *, removed: bool = False) -> dict[str, Any]:
     ],
     events=[event("TST-1", 101, "2026-01-06T10:00:00", [_link("TST-9", "This issue duplicates TST-9")])],
 )
-def test_a_link_is_identified_by_the_linked_issue_key(scenario: Scenario) -> None:
+def test_a_link_is_identified_by_the_linked_issue_id(scenario: Scenario) -> None:
     """The issue resource names the LINK OBJECT by its own id, with the linked
-    issue's key nested inside; the changelog names the LINKED ISSUE by key and
-    never mentions the link's id at all.
+    issue's id and key nested inside; the changelog names the LINKED ISSUE by
+    the key it had then and never mentions the link's id at all.
 
-    Identifying by the link id — which is what a component-shaped normalizer
-    does — leaves the two sides with no id in common, so every issue holding a
-    link disagrees with its own history. The key is the only identifier both
-    sides carry.
+    Identifying by the link id leaves the two sides with no id in common, and
+    identifying by the key splits one link in two once the linked issue moves.
+    The changelog's key resolves to the linked issue's id instead, here from
+    the very link object the snapshot holds.
     """
     rows = scenario.journal(field=LINKS)
-    assert [r["value_ids"] for r in rows] == [[], ["TST-9"]]
+    assert [r["value_ids"] for r in rows] == [[], ["20009"]]
     # The rendered sentence is the display where the changelog supplies one; the
     # resource has no equivalent text, so its row carries the key.
     assert rows[-1]["value_displays"] == ["This issue duplicates TST-9"]
-    assert rows[-1]["value_id_type"] == "string_literal"
+    assert rows[-1]["value_id_type"] == "opaque_id"
     assert scenario.round_trip_holds()
 
 
@@ -250,6 +250,71 @@ def test_links_added_and_removed_accumulate(scenario: Scenario) -> None:
     assert scenario.round_trip_holds()
 
 
+@case(
+    fields=[LINKS_FIELD],
+    issues=[
+        issue("TST-1", fields={LINKS: [{"id": "4", "type": {"name": "Duplicate"}, "outwardIssue": {"key": "TST-9"}}]})
+    ],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_link("TST-9", "This issue relates to TST-9")]),
+        event("TST-1", 102, "2026-01-07T10:00:00", [_link("TST-9", "This issue duplicates TST-9")]),
+        event("TST-1", 103, "2026-01-08T10:00:00", [_link("TST-9", "This issue relates to TST-9", removed=True)]),
+    ],
+)
+def test_removing_one_of_two_links_to_an_issue_keeps_the_other(scenario: Scenario) -> None:
+    """Two links to one issue are one element, because both sides name the
+    element by the linked issue's key. Removing one of them leaves the issue
+    linked, so the element stays until its last link goes."""
+    assert scenario.states(LINKS) == [[], ["TST-9"], ["TST-9"], ["TST-9"]]
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[LINKS_FIELD],
+    issues=[
+        issue(
+            "TST-1",
+            fields={
+                LINKS: [
+                    {"id": "7", "type": {"name": "Relates"}, "outwardIssue": {"key": "TST-9"}},
+                    {"id": "8", "type": {"name": "Relates"}, "outwardIssue": {"key": "TST-8"}},
+                ]
+            },
+        )
+    ],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_link("TST-9", "This issue relates to TST-9")]),
+        event("TST-1", 102, "2026-01-07T10:00:00", [_link("TST-8", "This issue relates to TST-8")]),
+        event("TST-1", 103, "2026-01-08T10:00:00", [_link("TST-9", "This issue duplicates TST-9")]),
+        event("TST-1", 104, "2026-01-09T10:00:00", [_link("TST-9", "This issue duplicates TST-9", removed=True)]),
+    ],
+)
+def test_a_second_link_keeps_the_linked_issue_in_place(scenario: Scenario) -> None:
+    """The element never left the list, so neither the second link to it nor
+    the removal of one of the two moves it behind elements added later."""
+    assert scenario.states(LINKS) == [[], ["TST-9"], ["TST-9", "TST-8"], ["TST-9", "TST-8"], ["TST-9", "TST-8"]]
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[LINKS_FIELD],
+    issues=[
+        issue("TST-1", fields={LINKS: [{"id": "5", "type": {"name": "Relates"}, "outwardIssue": {"key": "TST-9"}}]})
+    ],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_link("TST-9", "This issue relates to TST-9")]),
+        event("TST-1", 102, "2026-01-07T10:00:00", [_link("70001", 'This issue links to "Page (Confluence)"')]),
+    ],
+)
+def test_a_remote_link_is_not_an_element_of_the_field(scenario: Scenario) -> None:
+    """Jira logs a remote link (a Confluence page, a web link) in `issuelinks`
+    under the remote link's numeric id, but the field itself never holds it, so
+    the journal keeps it out rather than carrying an element no snapshot can
+    confirm."""
+    assert scenario.states(LINKS) == [[], ["TST-9"]]
+    assert scenario.round_trip_holds()
+
+
 SUBTASKS = "subtasks"
 SUBTASKS_FIELD = field(SUBTASKS, name="Sub-tasks", schema_type="array", schema_items="issuelinks")
 
@@ -268,17 +333,17 @@ SUBTASKS_FIELD = field(SUBTASKS, name="Sub-tasks", schema_type="array", schema_i
         )
     ],
 )
-def test_subtasks_are_identified_by_the_child_key(scenario: Scenario) -> None:
+def test_subtasks_are_identified_by_the_child_id(scenario: Scenario) -> None:
     """Jira reports `subtasks` with the same `schema_items` as `issuelinks`, so
     it lands in the same kind — but its element is the referenced issue itself,
-    with the key at the top level and no link object around it.
+    with its id and key at the top level and no link object around it.
 
     Probing only the link-object paths normalizes the whole field to empty
     strings: parallel arrays of nothing, which every array-shape test accepts
     and only the round trip catches.
     """
     rows = scenario.journal(field=SUBTASKS)
-    assert [r["value_ids"] for r in rows] == [["TST-2", "TST-3"]]
+    assert [r["value_ids"] for r in rows] == [["1", "2"]]
     assert rows[0]["value_displays"] == ["TST-2", "TST-3"]
     assert scenario.round_trip_holds()
 

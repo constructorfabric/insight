@@ -4,6 +4,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::metric_definitions::definition::{AliasCollapse, MetricInputRole};
+use crate::domain::not_ready::NotReadyReason;
 
 use super::cursor::CursorKey;
 use super::sort::MetricDrilldownSort;
@@ -179,6 +180,30 @@ pub struct MetricDrilldownResponse {
     pub columns: Vec<MetricDrilldownColumn>,
     pub rows: Vec<MetricDrilldownRow>,
     pub next_cursor: Option<String>,
+    /// Set when `rows` is empty because the relation behind this evidence has
+    /// not been built yet. Absent on every answered read, including one that
+    /// legitimately matched nothing — which is the distinction a reader needs
+    /// to tell "no records" from "not collected yet".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_ready: Option<NotReadyReason>,
+}
+
+impl MetricDrilldownResponse {
+    /// The page a not-ready relation answers: the selection and the columns it
+    /// would present, no rows, and the marker saying why.
+    pub(crate) fn not_ready(
+        selection: MetricDrilldownSelection,
+        columns: Vec<MetricDrilldownColumn>,
+        reason: NotReadyReason,
+    ) -> Self {
+        Self {
+            selection,
+            columns,
+            rows: Vec::new(),
+            next_cursor: None,
+            not_ready: Some(reason),
+        }
+    }
 }
 
 impl toolkit::api::api_dto::RequestApiDto for MetricDrilldownRequest {}
@@ -226,6 +251,27 @@ mod tests {
 
         assert!(request.is_ok());
     }
+}
+
+/// A drilldown request that passed validation, or the reason the warehouse
+/// cannot answer it from data yet.
+///
+/// INVARIANT: readiness is read AFTER the request's own shape, so a malformed
+/// request is still refused on a fresh install rather than answered empty.
+#[derive(Debug)]
+pub enum ValidatedDrilldown {
+    Ready(Box<ValidatedMetricDrilldown>),
+    NotReady(Box<NotReadyDrilldown>),
+}
+
+/// What a not-ready answer still presents: what was asked, the columns it
+/// would have carried, and why it carries no records.
+#[derive(Debug)]
+pub struct NotReadyDrilldown {
+    pub plan: EvidencePlan,
+    pub selection: MetricDrilldownSelection,
+    pub columns: Vec<MetricDrilldownColumn>,
+    pub reason: NotReadyReason,
 }
 
 #[derive(Debug)]

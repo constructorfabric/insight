@@ -8,8 +8,9 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use super::*;
-use crate::domain::alerts::rule::{AlertName, Condition, Operator, RuleSpec, Write};
-use crate::domain::alerts::{Number, Outcome, UnknownReason};
+use crate::domain::alerts::condition::{Condition, Witness};
+use crate::domain::alerts::rule::{AlertName, RuleSpec, Write};
+use crate::domain::alerts::{Outcome, UnknownReason};
 
 type R = Result<(), Box<dyn Error>>;
 
@@ -110,7 +111,7 @@ mod memory {
         let store = MemoryAlerts::keeping(3);
         let mut rule = store.create(super::write(10), super::UNBOUNDED).await?;
 
-        for round in 0..5_i128 {
+        for round in 0..5_i64 {
             store
                 .record(super::recording(&rule, super::breach(11 + round)))
                 .await?;
@@ -211,22 +212,18 @@ async fn store() -> Option<MariaAlerts> {
     Some(MariaAlerts::new(db, 3))
 }
 
-fn spec(threshold: i128) -> RuleSpec {
+fn spec(threshold: i64) -> RuleSpec {
     RuleSpec {
         name: AlertName::parse("Too many open PRs").unwrap_or_else(|error| panic!("{error}")),
         metric: DefinitionName::parse("prs-open").unwrap_or_else(|error| panic!("{error}")),
-        column: "total".to_owned(),
-        condition: Condition {
-            operator: Operator::Gt,
-            threshold: Number::Int(threshold),
-        },
+        condition: Condition::one_above("total", threshold),
         range: None,
         interval_secs: 300,
         destination: "ops".to_owned(),
     }
 }
 
-fn write(threshold: i128) -> Write {
+fn write(threshold: i64) -> Write {
     Write {
         spec: spec(threshold),
         enabled: true,
@@ -234,17 +231,21 @@ fn write(threshold: i128) -> Write {
     }
 }
 
-fn breach(value: i128) -> Outcome {
+fn seen(value: i64) -> serde_json::Value {
+    serde_json::Value::from(value)
+}
+
+fn breach(value: i64) -> Outcome {
     Outcome::Valid {
-        value: Number::Int(value),
         breached: true,
+        witness: Witness::one_value("total", seen(value), true),
     }
 }
 
-fn clear(value: i128) -> Outcome {
+fn clear(value: i64) -> Outcome {
     Outcome::Valid {
-        value: Number::Int(value),
         breached: false,
+        witness: Witness::one_value("total", seen(value), false),
     }
 }
 
@@ -388,7 +389,7 @@ async fn one_logical_breach_owes_one_notification_until_a_valid_clear() -> R {
     let Some(owed) = first.notification else {
         panic!("the first breach owes a notification");
     };
-    assert_eq!(owed.value, Number::Int(12));
+    assert_eq!(owed.witness, Witness::one_value("total", seen(12), true));
     assert_eq!(owed.status, NotificationStatus::Pending);
     assert_eq!(first.rule.state.last_valid_breached, Some(true));
     assert!(first.rule.state.breached_since.is_some());
@@ -398,7 +399,7 @@ async fn one_logical_breach_owes_one_notification_until_a_valid_clear() -> R {
         Outcome::Unknown(UnknownReason::Timeout),
         breach(14),
     ] {
-        let again = store.record(recording(&rule, outcome)).await?;
+        let again = store.record(recording(&rule, outcome.clone())).await?;
         let Recorded::Accepted(again) = again else {
             panic!("a check at the live revision is recorded: {again:?}");
         };
@@ -427,7 +428,10 @@ async fn one_logical_breach_owes_one_notification_until_a_valid_clear() -> R {
         .notifications(rule.id, Page::parse(None, None)?)
         .await?;
     assert_eq!(listed.len(), 2);
-    assert_eq!(listed[0].value, Number::Int(15));
+    assert_eq!(
+        listed[0].witness,
+        Witness::one_value("total", seen(15), true)
+    );
 
     store.delete(rule.id).await?;
 
@@ -481,7 +485,7 @@ async fn disabling_withdraws_what_is_pending_and_the_kept_count_bounds_only_sett
     };
     let mut rule = store.create(write(10), UNBOUNDED).await?;
 
-    for round in 0..5_i128 {
+    for round in 0..5_i64 {
         store.record(recording(&rule, breach(11 + round))).await?;
         store.record(recording(&rule, clear(1))).await?;
     }
@@ -489,7 +493,7 @@ async fn disabling_withdraws_what_is_pending_and_the_kept_count_bounds_only_sett
         .notifications(rule.id, Page::parse(None, None)?)
         .await?;
     assert_eq!(owed.len(), 5, "a notification still owed is never trimmed");
-    assert_eq!(owed[0].value, Number::Int(15));
+    assert_eq!(owed[0].witness, Witness::one_value("total", seen(15), true));
 
     rule = store.set_enabled(rule.id, rule.revision, false).await?;
     let withdrawn = store
@@ -508,7 +512,7 @@ async fn disabling_withdraws_what_is_pending_and_the_kept_count_bounds_only_sett
         .notifications(rule.id, Page::parse(None, None)?)
         .await?;
     assert_eq!(kept.len(), 3, "the store keeps the newest three: {kept:?}");
-    assert_eq!(kept[0].value, Number::Int(20));
+    assert_eq!(kept[0].witness, Witness::one_value("total", seen(20), true));
     assert_eq!(kept[0].status, NotificationStatus::Pending);
 
     store.delete(rule.id).await?;

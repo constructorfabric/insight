@@ -9,8 +9,11 @@ use uuid::Uuid;
 use super::executor::{ReportRowSink, ReportSinkError, execute_report};
 use super::executor_test_fixtures::*;
 use super::planner::{ReportPlannerLimits, plan_report};
-use super::query::{ReportMetricQuery, ReportQueryError, ReportQueryRunner, ReportQuerySubject};
+use super::query::{
+    ReportMetricQuery, ReportMetricRead, ReportQueryError, ReportQueryRunner, ReportQuerySubject,
+};
 use super::row::{ReportMetricValue, ReportMetricValues, ReportRow};
+use crate::domain::not_ready::NotReadyReason;
 
 #[tokio::test]
 async fn executes_people_batches_sequentially_and_emits_person_major_rows() {
@@ -49,7 +52,8 @@ async fn executes_people_batches_sequentially_and_emits_person_major_rows() {
         RecordingSink::default(),
     )
     .await
-    .unwrap_or_else(|error| panic!("report should execute: {error}"));
+    .unwrap_or_else(|error| panic!("report should execute: {error}"))
+    .output;
 
     assert_eq!(rows.len(), 6);
     assert_eq!(rows[0][0], text("Second"));
@@ -98,7 +102,8 @@ async fn tenant_execution_has_no_profile_columns_and_orders_periods_chronologica
         RecordingSink::default(),
     )
     .await
-    .unwrap_or_else(|error| panic!("report should execute: {error}"));
+    .unwrap_or_else(|error| panic!("report should execute: {error}"))
+    .output;
 
     assert_eq!(plan.columns.len(), 4);
     assert_eq!(rows.len(), 2);
@@ -161,7 +166,8 @@ async fn keeps_more_than_fifty_metrics_in_recipe_order_with_four_queries_in_flig
         RecordingSink::default(),
     )
     .await
-    .unwrap_or_else(|error| panic!("report should execute: {error}"));
+    .unwrap_or_else(|error| panic!("report should execute: {error}"))
+    .output;
 
     assert_eq!(runner.max_active.load(Ordering::SeqCst), 4);
     assert_eq!(rows.len(), 2);
@@ -171,6 +177,49 @@ async fn keeps_more_than_fifty_metrics_in_recipe_order_with_four_queries_in_flig
             number(metric_number(metric_index))
         );
     }
+}
+
+/// One metric reading a relation nothing has built makes the whole report
+/// not-ready: the file finishes, carries no records, and says why — rather
+/// than presenting that metric's column blank beside real numbers.
+#[tokio::test]
+async fn a_metric_over_an_unbuilt_relation_finishes_the_report_as_not_ready() {
+    let tenant_id = Uuid::from_u128(9);
+    let recipe = tenant_recipe(tenant_id, 5);
+    let plan = plan_report(
+        &recipe,
+        &[],
+        ReportPlannerLimits {
+            max_batch_cells: 100,
+            max_total_cells: u64::MAX,
+        },
+    )
+    .unwrap_or_else(|error| panic!("report should plan: {error}"));
+    let runner = FakeRunner::new(HashMap::new()).not_ready(2);
+    let sink = RecordingSink::default();
+    let writes = Arc::clone(&sink.writes);
+    let finishes = Arc::clone(&sink.finishes);
+
+    let execution = execute_report(&recipe, &plan, &[], context(), &runner, sink)
+        .await
+        .unwrap_or_else(|error| panic!("a not-ready relation is not a failure: {error}"));
+
+    assert_eq!(
+        execution.not_ready,
+        Some(NotReadyReason::SourceRelationMissing)
+    );
+    assert!(execution.output.is_empty());
+    assert!(
+        writes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    );
+    assert_eq!(
+        finishes.load(Ordering::SeqCst),
+        1,
+        "the sink still finishes, so an export downloads its headers"
+    );
 }
 
 #[tokio::test]
@@ -205,6 +254,7 @@ async fn query_failure_writes_no_batch_and_never_finishes_sink() {
 struct FakeRunner {
     responses: HashMap<usize, Vec<ReportMetricValue>>,
     fail_metric: Option<usize>,
+    not_ready_metric: Option<usize>,
     active: AtomicUsize,
     max_active: AtomicUsize,
     subjects: Mutex<Vec<ReportQuerySubject>>,
@@ -215,6 +265,7 @@ impl FakeRunner {
         Self {
             responses,
             fail_metric: None,
+            not_ready_metric: None,
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
             subjects: Mutex::new(Vec::new()),
@@ -222,6 +273,10 @@ impl FakeRunner {
     }
     fn failing(mut self, metric_index: usize) -> Self {
         self.fail_metric = Some(metric_index);
+        self
+    }
+    fn not_ready(mut self, metric_index: usize) -> Self {
+        self.not_ready_metric = Some(metric_index);
         self
     }
     fn person_batches(&self) -> Vec<u128> {
@@ -247,7 +302,7 @@ impl FakeRunner {
 
 #[async_trait]
 impl ReportQueryRunner for FakeRunner {
-    async fn run(&self, query: ReportMetricQuery) -> Result<ReportMetricValues, ReportQueryError> {
+    async fn run(&self, query: ReportMetricQuery) -> Result<ReportMetricRead, ReportQueryError> {
         self.subjects
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -258,6 +313,11 @@ impl ReportQueryRunner for FakeRunner {
         self.active.fetch_sub(1, Ordering::SeqCst);
         if self.fail_metric == Some(query.metric_index) {
             return Err(ReportQueryError::InvalidResultShape);
+        }
+        if self.not_ready_metric == Some(query.metric_index) {
+            return Ok(ReportMetricRead::NotReady(
+                NotReadyReason::SourceRelationMissing,
+            ));
         }
         let selected_ids = match &query.subject {
             ReportQuerySubject::People(ids) => ids.clone(),
@@ -275,10 +335,10 @@ impl ReportQueryRunner for FakeRunner {
             })
             .cloned()
             .collect();
-        Ok(ReportMetricValues {
+        Ok(ReportMetricRead::Values(ReportMetricValues {
             metric_index: query.metric_index,
             values,
-        })
+        }))
     }
 }
 

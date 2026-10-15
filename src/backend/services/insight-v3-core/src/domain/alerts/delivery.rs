@@ -8,82 +8,191 @@ use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use super::Number;
-use super::rule::{Condition, Notification, Operator};
+use super::condition::{Quantifier, Witness};
+use super::rule::Notification;
 
 /// The most a provider is asked to carry. Every provider here allows more;
 /// the bound is on what an alert has any business saying.
 const MAX_MESSAGE_CHARS: usize = 1500;
-/// How precisely a float is written for a reader.
-const SIGNIFICANT_DIGITS: i32 = 6;
-const MAX_DECIMALS: i32 = 12;
+/// The most one line of a message carries, so a long condition or wide rows
+/// never push the check time out.
+const MAX_LINE_CHARS: usize = 280;
+/// The most of one cell a message shows.
+const MAX_CELL_CHARS: usize = 40;
 
-/// What a notification says, the same for every provider.
+/// What a notification says, the same for every provider: as markdown for
+/// Discord and Zulip, and as HTML for Telegram.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Message {
-    pub(crate) text: String,
+    pub(crate) markdown: String,
+    pub(crate) html: String,
 }
 
 impl Message {
-    /// The approved summary: rule, metric and column, the value seen, the
-    /// condition it met, and when. Nothing else the metric produced.
+    /// The approved summary: the rule, the condition on which metric, how
+    /// many rows met it, the rows that did, and when. Nothing else the
+    /// metric produced.
     ///
-    /// INVARIANT: plain text only. Providers differ in what markup they
-    /// read, and a name shaped like `a.b` becomes a link on some of them;
-    /// definition and column names carry no dot, so none is written here.
+    /// INVARIANT: every part stays on its own line, because control
+    /// characters in what the warehouse answered become spaces. The rows
+    /// line is the only text the warehouse writes, and both rich forms carry
+    /// it as code, where no provider reads a mention or a link.
     pub(crate) fn of(notification: &Notification) -> Self {
-        let text = format!(
-            "Insight alert: {rule}\n{metric} {column} is {value}, {condition}.\nChecked {at}.",
-            rule = notification.rule_name.as_str(),
-            metric = notification.metric.as_str(),
-            column = notification.column,
-            value = readable(notification.value),
-            condition = crossed(notification.condition),
-            at = stamp(notification.evaluated_at),
-        );
+        let condition = &notification.condition;
+        let witness = &notification.witness;
+
+        let heading = line(&format!(
+            "Insight alert: {}",
+            notification.rule_name.as_str()
+        ));
+        let met = line(&format!("{}: {condition}", notification.metric.as_str()));
+        let counted = match condition.rows {
+            Quantifier::One => None,
+            Quantifier::Any | Quantifier::All | Quantifier::None | Quantifier::Count { .. } => {
+                Some(line(&matched(witness)))
+            }
+        };
+        let rows =
+            (!witness.rows.is_empty()).then(|| line(&rows_seen(witness, &condition.columns())));
+        let checked = format!("Checked {}.", stamp(notification.evaluated_at));
+        let parts = Parts {
+            heading: &heading,
+            met: &met,
+            counted: counted.as_deref(),
+            rows: rows.as_deref(),
+            checked: &checked,
+        };
 
         Self {
-            text: text.chars().take(MAX_MESSAGE_CHARS).collect(),
+            markdown: capped(&parts.joined(str::to_owned, |rows| {
+                format!("`{}`", rows.replace('`', "'"))
+            })),
+            // INVARIANT: never cut after escaping, which could split an
+            // entity or a tag and have the whole message refused. Each line
+            // is already bounded, and Telegram counts the text it shows.
+            html: parts.joined(escaped, |rows| format!("<code>{}</code>", escaped(rows))),
         }
     }
 }
 
-/// The condition as a reader says it: which side of the threshold.
-fn crossed(condition: Condition) -> String {
-    let side = match condition.operator {
-        Operator::Gt => "above",
-        Operator::Ge => "at or above",
-        Operator::Lt => "below",
-        Operator::Le => "at or below",
-    };
-
-    format!("{side} the threshold of {}", readable(condition.threshold))
+/// The lines of one message, before any provider's form is applied.
+struct Parts<'a> {
+    heading: &'a str,
+    met: &'a str,
+    counted: Option<&'a str>,
+    rows: Option<&'a str>,
+    checked: &'a str,
 }
 
-/// A number as a person reads it: an integer exactly, a float to six
-/// significant digits with no trailing zeros.
-fn readable(number: Number) -> String {
-    let Number::Float(float) = number else {
-        return number.to_string();
+impl Parts<'_> {
+    /// The lines joined, each written by `plain` except the warehouse's rows
+    /// line, written by `rows`.
+    fn joined(&self, plain: impl Fn(&str) -> String, rows: impl Fn(&str) -> String) -> String {
+        [
+            Some(plain(self.heading)),
+            Some(plain(self.met)),
+            self.counted.map(&plain),
+            self.rows.map(rows),
+            Some(plain(self.checked)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n")
+    }
+}
+
+fn capped(text: &str) -> String {
+    text.chars().take(MAX_MESSAGE_CHARS).collect()
+}
+
+/// Text as Telegram's HTML reads it literally.
+fn escaped(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// `3 of 12 rows match`, or `1 of 1 row matches`.
+fn matched(witness: &Witness) -> String {
+    let rows = if witness.answered == 1 {
+        "row matches"
+    } else {
+        "rows match"
     };
-    if float == 0.0 {
-        return "0".to_owned();
+
+    format!("{} of {} {rows}", witness.matched, witness.answered)
+}
+
+/// One line of a message: control characters as spaces, cut to the line
+/// bound.
+fn line(text: &str) -> String {
+    cut(&single_line(text), MAX_LINE_CHARS)
+}
+
+fn single_line(text: &str) -> String {
+    text.chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
+fn cut(text: &str, chars: usize) -> String {
+    if text.chars().count() <= chars {
+        return text.to_owned();
     }
 
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "log10 of a finite f64 fits in i32"
-    )]
-    let magnitude = float.abs().log10().floor() as i32;
-    let decimals = usize::try_from((SIGNIFICANT_DIGITS - 1 - magnitude).clamp(0, MAX_DECIMALS))
-        .unwrap_or_default();
-    let written = format!("{float:.decimals$}");
-    let trimmed = if written.contains('.') {
-        written.trim_end_matches('0').trim_end_matches('.')
-    } else {
-        written.as_str()
+    let mut kept: String = text.chars().take(chars.saturating_sub(1)).collect();
+    kept.push('…');
+    kept
+}
+
+/// The witness rows on one line: a row's group values, then each column
+/// the condition reads with its value, as `core: open 12 · infra: open 15`.
+fn rows_seen(witness: &Witness, read: &[&str]) -> String {
+    let rows: Vec<String> = witness
+        .rows
+        .iter()
+        .map(|row| {
+            let mut groups = Vec::new();
+            let mut values = Vec::new();
+            for (column, cell) in witness.columns.iter().zip(row) {
+                if read.contains(&column.as_str()) {
+                    values.push(format!("{column} {}", cell_text(cell)));
+                } else {
+                    groups.push(cell_text(cell));
+                }
+            }
+
+            if groups.is_empty() {
+                values.join(", ")
+            } else {
+                format!("{}: {}", groups.join(" "), values.join(", "))
+            }
+        })
+        .collect();
+
+    rows.join(" · ")
+}
+
+fn cell_text(cell: &serde_json::Value) -> String {
+    let text = match cell {
+        serde_json::Value::Null => "empty".to_owned(),
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Number(_) => {
+            Number::parse(cell).map_or_else(|| cell.to_string(), Number::readable)
+        }
+        serde_json::Value::Bool(_) | serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            cell.to_string()
+        }
     };
 
-    trimmed.to_owned()
+    cut(&single_line(&text), MAX_CELL_CHARS)
 }
 
 fn stamp(at: DateTime<Utc>) -> String {
@@ -159,12 +268,21 @@ mod tests {
     use chrono::TimeZone as _;
     use uuid::Uuid;
 
-    use super::*;
-    use crate::domain::alerts::Number;
-    use crate::domain::alerts::rule::{AlertName, Condition, NotificationStatus, Operator};
-    use crate::domain::definition::DefinitionName;
+    use serde_json::{Value, json};
 
-    fn notification() -> Notification {
+    use super::*;
+    use crate::domain::alerts::condition::Condition;
+    use crate::domain::alerts::rule::{AlertName, NotificationStatus};
+    use crate::domain::definition::DefinitionName;
+    use crate::domain::query::metric_query::ColumnKind;
+
+    fn notification(condition: &Value, witness: Witness) -> Notification {
+        let columns = [
+            ("total".to_owned(), ColumnKind::Number),
+            ("open".to_owned(), ColumnKind::Number),
+            ("team".to_owned(), ColumnKind::Text),
+        ];
+
         Notification {
             id: Uuid::nil(),
             rule_id: Uuid::nil(),
@@ -172,12 +290,9 @@ mod tests {
             rule_name: AlertName::parse("Too many open PRs")
                 .unwrap_or_else(|error| panic!("{error}")),
             metric: DefinitionName::parse("prs-open").unwrap_or_else(|error| panic!("{error}")),
-            column: "total".to_owned(),
-            condition: Condition {
-                operator: Operator::Gt,
-                threshold: Number::Int(50),
-            },
-            value: Number::Int(63),
+            condition: Condition::parse(condition, &columns)
+                .unwrap_or_else(|error| panic!("{error}")),
+            witness,
             evaluated_at: Utc
                 .with_ymd_and_hms(2026, 9, 29, 8, 15, 0)
                 .single()
@@ -191,38 +306,139 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_message_carries_the_rule_the_value_the_condition_and_the_time_and_nothing_else() {
-        let message = Message::of(&notification());
-
-        assert_eq!(
-            message.text,
-            "Insight alert: Too many open PRs\nprs-open total is 63, above the threshold of 50.\nChecked 2026-09-29 08:15 UTC."
-        );
-        assert!(!message.text.contains('`'), "no markup: {}", message.text);
+    fn witness(matched: u64, answered: u64, columns: &[&str], rows: Vec<Vec<Value>>) -> Witness {
+        Witness {
+            matched,
+            answered,
+            columns: columns.iter().map(|&column| column.to_owned()).collect(),
+            rows,
+        }
     }
 
     #[test]
-    fn every_operator_is_said_as_the_side_of_the_threshold() {
-        let cases = [
-            (Operator::Gt, "above the threshold of 50"),
-            (Operator::Ge, "at or above the threshold of 50"),
-            (Operator::Lt, "below the threshold of 50"),
-            (Operator::Le, "at or below the threshold of 50"),
-        ];
+    fn a_one_row_message_carries_the_rule_the_condition_the_value_and_the_time() {
+        let message = Message::of(&notification(
+            &json!({ "rows": "one", "where": { "column": "total", "op": ">", "value": 50 } }),
+            witness(1, 1, &["total"], vec![vec![json!(63)]]),
+        ));
 
-        for (operator, expected) in cases {
-            let condition = Condition {
-                operator,
-                threshold: Number::Int(50),
-            };
-            assert_eq!(
-                crossed(condition),
-                expected,
-                "should say: {}",
-                operator.as_str()
-            );
-        }
+        assert_eq!(
+            message.markdown,
+            "Insight alert: Too many open PRs\nprs-open: total above 50\n`total 63`\nChecked 2026-09-29 08:15 UTC."
+        );
+    }
+
+    #[test]
+    fn a_many_row_message_counts_the_matches_and_shows_each_by_its_group() {
+        let message = Message::of(&notification(
+            &json!({ "rows": "any", "where": { "all": [
+                { "column": "open", "op": ">", "value": 10 },
+                { "column": "team", "op": "!=", "value": "data" },
+            ] } }),
+            witness(
+                2,
+                12,
+                &["repo", "open", "team"],
+                vec![
+                    vec![json!("api"), json!(12), json!("core")],
+                    vec![json!("web"), json!(15.25), Value::Null],
+                ],
+            ),
+        ));
+
+        assert_eq!(
+            message.markdown,
+            "Insight alert: Too many open PRs\nprs-open: any row: open above 10 and team is not data\n2 of 12 rows match\n`api: open 12, team core · web: open 15.25, team empty`\nChecked 2026-09-29 08:15 UTC."
+        );
+    }
+
+    #[test]
+    fn a_breach_with_no_matching_rows_shows_the_count_and_no_row_line() {
+        let message = Message::of(&notification(
+            &json!({ "rows": "none", "where": { "column": "open", "op": ">", "value": 10 } }),
+            witness(0, 4, &["open"], Vec::new()),
+        ));
+
+        assert_eq!(
+            message.markdown,
+            "Insight alert: Too many open PRs\nprs-open: no row: open above 10\n0 of 4 rows match\nChecked 2026-09-29 08:15 UTC."
+        );
+    }
+
+    #[test]
+    fn one_answered_row_is_counted_in_the_singular() {
+        let message = Message::of(&notification(
+            &json!({ "rows": "any", "where": { "column": "open", "op": ">", "value": 10 } }),
+            witness(1, 1, &["open"], vec![vec![json!(12)]]),
+        ));
+
+        assert!(
+            message.markdown.contains("\n1 of 1 row matches\n"),
+            "{}",
+            message.markdown
+        );
+    }
+
+    #[test]
+    fn a_long_message_keeps_its_check_time_and_cuts_each_line() {
+        let long = "x".repeat(400);
+        let rows = (0..5)
+            .map(|_| vec![json!(long.clone()), json!(11)])
+            .collect();
+        let message = Message::of(&notification(
+            &json!({ "rows": "any", "where": { "column": "open", "op": ">", "value": 10 } }),
+            witness(5, 5, &["team", "open"], rows),
+        ));
+
+        assert!(
+            message.markdown.ends_with("Checked 2026-09-29 08:15 UTC."),
+            "{}",
+            message.markdown
+        );
+        assert!(message.markdown.chars().count() <= MAX_MESSAGE_CHARS);
+        assert!(
+            message
+                .markdown
+                .lines()
+                .all(|line| line.trim_matches('`').chars().count() <= MAX_LINE_CHARS),
+            "{}",
+            message.markdown
+        );
+    }
+
+    #[test]
+    fn warehouse_text_stays_on_its_line_and_reaches_markdown_inside_a_code_span() {
+        let message = Message::of(&notification(
+            &json!({ "rows": "any", "where": { "column": "open", "op": ">", "value": 10 } }),
+            witness(
+                1,
+                1,
+                &["team", "open"],
+                vec![vec![
+                    json!("@**all**\nInsight alert: [x](http://example.com) `y`"),
+                    json!(12),
+                ]],
+            ),
+        ));
+
+        assert_eq!(message.markdown.lines().count(), 5, "{}", message.markdown);
+        let rows_line = message.markdown.lines().nth(3).unwrap_or_default();
+        assert!(
+            rows_line.starts_with('`') && rows_line.ends_with('`'),
+            "the rows line is one code span: {rows_line}"
+        );
+        assert_eq!(rows_line.matches('`').count(), 2, "{rows_line}");
+
+        let html_rows = message.html.lines().nth(3).unwrap_or_default();
+        assert!(
+            html_rows.starts_with("<code>") && html_rows.ends_with("</code>"),
+            "the rows line is one code element: {html_rows}"
+        );
+        assert_eq!(
+            html_rows.matches('<').count(),
+            2,
+            "markup in the cell is escaped: {html_rows}"
+        );
     }
 
     #[test]
@@ -240,7 +456,7 @@ mod tests {
         ];
 
         for (number, expected) in cases {
-            assert_eq!(readable(number), expected, "should write: {number:?}");
+            assert_eq!(number.readable(), expected, "should write: {number:?}");
         }
     }
 

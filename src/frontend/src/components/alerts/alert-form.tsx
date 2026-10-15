@@ -1,23 +1,41 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
-import type { Alert } from "@/api/alerts-client";
+import type { Alert, Condition } from "@/api/alerts-client";
 import { AlertFields } from "@/components/alerts/alert-fields";
 import { savingRefusal } from "@/components/alerts/field-refusals";
+import { useAlertMetric } from "@/components/alerts/use-alert-metric";
+import { useAlertPreview } from "@/components/alerts/use-alert-preview";
+import { TextView } from "@/components/custom/editor/text-view";
 import { refusal } from "@/components/custom/refusal";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { isRevisionConflict } from "@/lib/alerts/conflict";
+import { fitCondition } from "@/lib/alerts/condition";
+import { windowFor } from "@/lib/alerts/window";
 import {
   blankForm,
   checkForm,
   formOf,
-  type AlertField,
-  type AlertForm as Form,
+  retypeDraft,
+  textOf,
+  type AlertDocument,
   type FieldErrors,
 } from "@/lib/alerts/draft";
+import {
+  change,
+  hold,
+  sendable,
+  type Held,
+} from "@/lib/custom/editor/document";
 import { TEXT_BODY, TEXT_LABEL, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import {
@@ -122,46 +140,56 @@ function Shell({
   );
 }
 
-/** The control each field's message is shown beside, in the order a reader meets them. */
-const FIELD_CONTROLS: readonly [AlertField, string][] = [
-  ["name", "alert-name"],
-  ["metric", "alert-metric"],
-  ["column", "alert-column"],
-  ["range", "alert-range"],
-  ["threshold", "alert-threshold"],
-  ["interval_secs", "alert-interval"],
-  ["destination", "alert-destination"],
-];
+const PLACED: ReadonlySet<string> = new Set([
+  "name",
+  "metric",
+  "range",
+  "interval_secs",
+  "destination",
+]);
 
-/** Takes the reader to the first field that needs them. */
-function focusFirst(errors: FieldErrors) {
-  const first = FIELD_CONTROLS.find(([field]) => errors[field]);
-  if (first) document.getElementById(first[1])?.focus();
+function placedInEditor(field: string): boolean {
+  return (
+    PLACED.has(field) || field === "condition" || field.startsWith("condition.")
+  );
 }
 
-/**
- * The form, and what saving it does.
- *
- * A new alert is created; an existing one is replaced at the revision the form
- * was opened at, so a change made elsewhere in the meantime is refused rather
- * than overwritten.
- */
+function aboutCondition(field: string): boolean {
+  return field === "condition" || field.startsWith("condition.");
+}
+
+function withoutCondition(errors: FieldErrors): FieldErrors {
+  return Object.fromEntries(
+    Object.entries(errors).filter(([field]) => !aboutCondition(field))
+  );
+}
+
+// INVARIANT: the draft is one document shown two ways, and whichever view was
+// edited last is believed.
 function AlertEditor({
   initial,
   existing,
 }: {
-  initial?: Form;
+  initial?: AlertDocument;
   existing?: Alert;
 }) {
-  const [form, setForm] = useState<Form>(() =>
-    existing ? formOf(existing) : (initial ?? blankForm())
+  const [held, setHeld] = useState<Held>(() =>
+    hold(existing ? formOf(existing) : (initial ?? blankForm()))
   );
+  const [view, setView] = useState<"fields" | "text">("fields");
   // INVARIANT: a save expects the revision the form was filled from; keying
   // the form on the cache's revision remounts it mid-save and the navigation
   // is lost.
   const [base, setBase] = useState<Alert | undefined>(existing);
   const [errors, setErrors] = useState<FieldErrors>({});
+  const [focusAsked, setFocusAsked] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
   const destinations = useQuery(alertDestinationsQuery());
+  const metricName = textOf(held.document, "metric");
+  const metric = useAlertMetric(metricName);
+  const [refitFor, setRefitFor] = useState<string | undefined>();
+  const conditionText = JSON.stringify(held.document.condition) ?? "";
+  const [seenCondition, setSeenCondition] = useState(conditionText);
   const create = useCreateAlert();
   const replace = useReplaceAlert();
   const reload = useReadAlert();
@@ -172,12 +200,73 @@ function AlertEditor({
   const conflict = isRevisionConflict(failure);
   const general =
     failure && !conflict ? savingRefusal(failure).general : undefined;
+  const checked = checkForm(held.document, metric.kinds);
+  const ready =
+    metricName !== "" &&
+    metric.typed &&
+    (checked.ok || !Object.keys(checked.errors).some(aboutCondition));
+  const range = textOf(held.document, "range");
+  const preview = useAlertPreview(
+    {
+      metric: metricName,
+      range: range === "" ? null : range,
+      condition: held.document.condition as Condition,
+    },
+    ready
+  );
+  const previewRefusal = preview.query.isError
+    ? savingRefusal(preview.query.error).fields
+    : {};
+  const shown: FieldErrors = { ...previewRefusal, ...errors };
+  const loose = Object.entries(shown).filter(
+    ([field]) => !placedInEditor(field)
+  );
+
+  if (refitFor !== undefined && refitFor === metricName && metric.typed) {
+    setRefitFor(undefined);
+    setHeld((was) => {
+      const window = windowFor(metric.stored, textOf(was.document, "range"));
+      const fitted = change(
+        was,
+        ["condition"],
+        fitCondition(was.document.condition, metric.kinds)
+      );
+      return change(fitted, ["range"], window === "" ? null : window);
+    });
+  }
+  if (seenCondition !== conditionText) {
+    setSeenCondition(conditionText);
+    setErrors(withoutCondition(errors));
+  }
+
+  useEffect(() => {
+    if (focusAsked === 0) return;
+    formRef.current
+      ?.querySelector<HTMLElement>('[aria-invalid="true"]')
+      ?.focus();
+  }, [focusAsked]);
+
+  const edit = useCallback((patch: AlertDocument) => {
+    if (typeof patch.metric === "string" && patch.metric !== "") {
+      setRefitFor(patch.metric);
+    }
+    setHeld((was) =>
+      Object.entries(patch).reduce(
+        (held, [key, value]) => change(held, [key], value),
+        was
+      )
+    );
+  }, []);
+
+  function refuse(found: FieldErrors) {
+    setErrors(found);
+    setFocusAsked((count) => count + 1);
+  }
 
   function save() {
-    const checked = checkForm(form);
+    if (!sendable(held)) return;
     if (!checked.ok) {
-      setErrors(checked.errors);
-      focusFirst(checked.errors);
+      refuse(checked.errors);
       return;
     }
     setErrors({});
@@ -188,11 +277,7 @@ function AlertEditor({
         to: "/portal/custom/alerts/$id",
         params: { id: alert.id },
       });
-    const refused = (error: unknown) => {
-      const { fields } = savingRefusal(error);
-      setErrors(fields);
-      focusFirst(fields);
-    };
+    const refused = (error: unknown) => refuse(savingRefusal(error).fields);
 
     if (base) {
       replace.mutate(
@@ -209,6 +294,7 @@ function AlertEditor({
 
   return (
     <form
+      ref={formRef}
       noValidate
       className="flex flex-col gap-6"
       onSubmit={(event) => {
@@ -222,12 +308,66 @@ function AlertEditor({
         </p>
       ) : null}
 
-      <AlertFields
-        form={form}
-        errors={errors}
-        destinations={destinations.data ?? []}
-        onChange={setForm}
-      />
+      <div className="flex items-center gap-2">
+        {(["fields", "text"] as const).map((each) => (
+          <Button
+            key={each}
+            type="button"
+            variant={view === each ? "secondary" : "ghost"}
+            size="sm"
+            aria-pressed={view === each}
+            onClick={() => setView(each)}
+          >
+            {each === "fields" ? "Editor" : "JSON"}
+          </Button>
+        ))}
+      </div>
+
+      {view === "fields" ? (
+        <>
+          {loose.map(([field, said]) => (
+            <p
+              key={field}
+              role="alert"
+              className={cn(TEXT_BODY, "text-destructive")}
+            >
+              <span className="font-mono">{field}</span>: {said}
+            </p>
+          ))}
+          <AlertFields
+            document={held.document}
+            errors={shown}
+            destinations={destinations.data ?? []}
+            metric={metric}
+            preview={preview}
+            onChange={edit}
+          />
+        </>
+      ) : (
+        <div className="flex flex-col gap-1">
+          <TextView
+            id="alert-text"
+            label="Alert as JSON"
+            text={held.text}
+            unparsed={held.unparsed}
+            onChange={(text) => setHeld((was) => retypeDraft(was, text))}
+          />
+          {Object.keys(shown).length === 0 ? null : (
+            <ul
+              className={cn(
+                TEXT_LABEL,
+                "flex flex-col gap-0.5 text-destructive"
+              )}
+            >
+              {Object.entries(shown).map(([field, said]) => (
+                <li key={field} role="alert">
+                  <span className="font-mono">{field}</span>: {said}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {conflict && base ? (
         <div role="alert" className="flex flex-wrap items-center gap-3">
@@ -243,7 +383,7 @@ function AlertEditor({
               reload.mutate(base.id, {
                 onSuccess: (data) => {
                   setBase(data);
-                  setForm(formOf(data));
+                  setHeld(hold(formOf(data)));
                   setErrors({});
                   replace.reset();
                 },
@@ -265,11 +405,15 @@ function AlertEditor({
       ) : null}
 
       <div className="flex items-center gap-3">
-        <Button type="submit" size="sm" disabled={saving}>
+        <Button type="submit" size="sm" disabled={saving || !sendable(held)}>
           {saving ? <Spinner className="size-3" /> : null}
           {base ? "Save changes" : "Create alert"}
         </Button>
-        {Object.keys(errors).length > 0 ? (
+        {held.unparsed ? (
+          <span className={cn(TEXT_LABEL, "text-destructive")}>
+            Fix the JSON to save.
+          </span>
+        ) : Object.keys(errors).length > 0 ? (
           <span className={cn(TEXT_LABEL, "text-destructive")}>
             Fix the highlighted fields.
           </span>

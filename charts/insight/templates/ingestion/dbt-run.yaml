@@ -135,6 +135,14 @@ spec:
               RC=1
             fi
           fi
+          # Three views carry `sync:always` because no connector's graph walk
+          # reaches them: the two identity map views sit UPSTREAM of the walk,
+          # and `bronze_insert_events` has no `ref()` at all — it enumerates the
+          # bronze tables at query time. Nothing builds them at deploy time any
+          # more (#3561), so every sync does. Appended AFTER the guard, which
+          # must keep judging the connector's own selector, and only when one
+          # was given — an empty DBT_SELECT means "run everything".
+          DBT_SELECT="${DBT_SELECT:+${DBT_SELECT} tag:sync:always}"
           if [[ "$RC" -eq 0 ]]; then
             if [[ "${DBT_FULL_REFRESH:-false}" == "true" ]]; then
               dbt run --profiles-dir . --log-format json --log-level "${INSIGHT_LOG_LEVEL:-info}" --full-refresh ${DBT_SELECT:+--select "$DBT_SELECT"} ${DBT_EXCLUDE:+--exclude "$DBT_EXCLUDE"} || RC=$?

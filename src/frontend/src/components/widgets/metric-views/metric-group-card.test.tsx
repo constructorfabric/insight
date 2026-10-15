@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import { MetricGroupCard } from "@/components/widgets/metric-views/metric-group-card";
 import type { MetricGroup } from "@/lib/insight/groups";
 import { normalizeMetricResults } from "@/lib/metrics/collection";
-import { buildMetricErrorView } from "@/mocks/metric-results-factory";
+import {
+  buildMetricErrorView,
+  buildMetricNotReadyView,
+} from "@/mocks/metric-results-factory";
 import type { MetricCollectionResult } from "@/queries/metric-results";
 import type { MetricResult } from "@/api/metric-results-client";
 
@@ -245,6 +248,68 @@ describe("MetricGroupCard", () => {
     ).not.toBeInTheDocument();
     // Nothing to drill into — the card stays non-interactive.
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("says the data is not built yet, not that the period was empty", () => {
+    render(
+      <MetricGroupCard
+        def={DEF}
+        data={result([
+          {
+            ...aiMetric("ai.active_days", null),
+            views: [buildMetricNotReadyView()],
+          },
+          {
+            ...aiMetric("ai.cost", null),
+            views: [buildMetricNotReadyView()],
+          },
+        ])}
+        entityId="me@x.com"
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("No data yet")).toBeInTheDocument();
+    expect(
+      screen.queryByText("No metrics with data for this period."),
+    ).not.toBeInTheDocument();
+    // Not an error: nothing failed, so no message and no retry.
+    expect(screen.queryByText(/could not be computed/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the plain empty state when the data is built and the period is quiet", () => {
+    render(
+      <MetricGroupCard
+        def={DEF}
+        data={result([
+          aiMetric("ai.active_days", null),
+          aiMetric("ai.cost", null),
+        ])}
+        entityId="me@x.com"
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("No metrics with data for this period."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No data yet")).not.toBeInTheDocument();
+  });
+
+  it("renders a measured zero as the number, never as the not-ready state", () => {
+    // The whole point of the marker: a real 0 is a reading and must look like
+    // one, however empty the card around it feels.
+    render(
+      <MetricGroupCard
+        def={DEF}
+        data={result([aiMetric("ai.active_days", 0), aiMetric("ai.cost", 0)])}
+        entityId="me@x.com"
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByText("0 days").length).toBeGreaterThan(0);
+    expect(screen.queryByText("No data yet")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("No metrics with data for this period."),
+    ).not.toBeInTheDocument();
   });
 
   it("owns its error state with retry", () => {

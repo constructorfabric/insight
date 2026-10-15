@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-use super::scalar::{Number, Outcome, UnknownReason};
+use super::condition::{Condition, ConditionError, ConditionShape, Witness};
+use super::scalar::{Outcome, UnknownReason};
 use crate::domain::definition::{DefinitionName, Page};
+use crate::domain::query::metric_query::ColumnKind;
 use crate::domain::query::time_window::{WindowError, WindowRequest};
 
 /// The bounds every installation gets unless it sets its own.
@@ -22,7 +24,6 @@ pub(crate) const DEFAULT_EVALUATION_CONCURRENCY: usize = 4;
 pub(crate) const DEFAULT_EVALUATION_LOCK_SECS: u64 = 60;
 pub(crate) const DEFAULT_NOTIFICATIONS_KEPT_PER_RULE: u64 = 200;
 
-const MAX_COLUMN_CHARS: usize = 128;
 /// The longest an alert's name may be. It is shown, never used as a key.
 const MAX_NAME_CHARS: usize = 200;
 
@@ -48,68 +49,6 @@ impl AlertName {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-/// How the observed value is compared with the threshold.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, utoipa::ToSchema,
-)]
-pub(crate) enum Operator {
-    #[serde(rename = ">")]
-    Gt,
-    #[serde(rename = ">=")]
-    Ge,
-    #[serde(rename = "<")]
-    Lt,
-    #[serde(rename = "<=")]
-    Le,
-}
-
-impl Operator {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Gt => ">",
-            Self::Ge => ">=",
-            Self::Lt => "<",
-            Self::Le => "<=",
-        }
-    }
-
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        [Self::Gt, Self::Ge, Self::Lt, Self::Le]
-            .into_iter()
-            .find(|operator| operator.as_str() == value)
-    }
-}
-
-/// The comparison a rule makes.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Condition {
-    pub(crate) operator: Operator,
-    pub(crate) threshold: Number,
-}
-
-impl Condition {
-    /// Whether `value` meets the condition, or nothing where the two cannot
-    /// be compared exactly.
-    pub(crate) fn holds(&self, value: Number) -> Option<bool> {
-        use std::cmp::Ordering::{Greater, Less};
-
-        let ordering = value.compare(self.threshold)?;
-
-        Some(match self.operator {
-            Operator::Gt => ordering == Greater,
-            Operator::Ge => ordering != Less,
-            Operator::Lt => ordering == Less,
-            Operator::Le => ordering != Greater,
-        })
-    }
-}
-
-impl fmt::Display for Condition {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{} {}", self.operator.as_str(), self.threshold)
     }
 }
 
@@ -164,14 +103,10 @@ pub(crate) struct RuleDraft {
     pub(crate) name: String,
     /// The stored metric to check.
     pub(crate) metric: String,
-    /// The result column holding the number, by the `as_name` the metric
-    /// gives it.
-    pub(crate) column: String,
-    /// One of `>`, `>=`, `<`, `<=`.
-    pub(crate) operator: Operator,
-    /// The number the value is compared with: a JSON number, or the digit
-    /// string a read shows an integer past ±(2^53 − 1) as.
-    pub(crate) threshold: serde_json::Value,
+    /// Which rows must pass, and the test each row takes.
+    #[schemars(with = "ConditionShape")]
+    #[schema(value_type = ConditionShape)]
+    pub(crate) condition: serde_json::Value,
     /// The window the metric is run over, as `run_metric` takes it. Omit it
     /// to run the metric unbounded.
     #[serde(default)]
@@ -197,7 +132,6 @@ impl toolkit::api::api_dto::RequestApiDto for RuleDraft {}
 pub(crate) struct RuleSpec {
     pub(crate) name: AlertName,
     pub(crate) metric: DefinitionName,
-    pub(crate) column: String,
     pub(crate) condition: Condition,
     pub(crate) range: Option<String>,
     pub(crate) interval_secs: u32,
@@ -205,26 +139,18 @@ pub(crate) struct RuleSpec {
 }
 
 impl RuleSpec {
-    /// A draft as a rule, or the first thing wrong with it.
+    /// A draft as a rule, or the first thing wrong with it. `columns` are
+    /// the metric's result columns and what each holds, which the condition
+    /// is typed against.
     pub(crate) fn parse(
         draft: &RuleDraft,
         limits: Limits,
         destinations: &Destinations,
+        columns: &[(String, ColumnKind)],
     ) -> Result<Self, RuleError> {
         let name = AlertName::parse(&draft.name)?;
         let metric = DefinitionName::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
-
-        let column = draft.column.trim();
-        if column.is_empty()
-            || column.chars().count() > MAX_COLUMN_CHARS
-            || !column
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
-            return Err(RuleError::Column);
-        }
-
-        let threshold = Number::parse_written(&draft.threshold).ok_or(RuleError::Threshold)?;
+        let condition = Condition::parse(&draft.condition, columns)?;
 
         if let Some(range) = draft.range.as_deref() {
             WindowRequest::parse(Some(range), Some(false)).map_err(RuleError::Range)?;
@@ -246,11 +172,7 @@ impl RuleSpec {
         Ok(Self {
             name,
             metric,
-            column: column.to_owned(),
-            condition: Condition {
-                operator: draft.operator,
-                threshold,
-            },
+            condition,
             range: draft.range.clone(),
             interval_secs: draft.interval_secs,
             destination: draft.destination.clone(),
@@ -270,10 +192,8 @@ pub(crate) enum RuleError {
     Name,
     #[error("metric must be a definition name")]
     Metric,
-    #[error("column must be a result column name: letters, digits or underscore")]
-    Column,
-    #[error("threshold must be a finite JSON number, or an integer written as digits")]
-    Threshold,
+    #[error("{}: {}", .0.field(), .0.problem)]
+    Condition(#[from] ConditionError),
     #[error("range: {0}")]
     Range(WindowError),
     #[error("interval_secs must be {min} to {max}")]
@@ -357,9 +277,9 @@ pub(crate) struct Notification {
     pub(crate) rule_revision: u32,
     pub(crate) rule_name: AlertName,
     pub(crate) metric: DefinitionName,
-    pub(crate) column: String,
     pub(crate) condition: Condition,
-    pub(crate) value: Number,
+    /// The rows the check saw that owed this.
+    pub(crate) witness: Witness,
     pub(crate) evaluated_at: DateTime<Utc>,
     pub(crate) destination: String,
     pub(crate) status: NotificationStatus,
@@ -374,7 +294,7 @@ pub(crate) struct Notification {
 }
 
 /// One check as it is handed to a store to record.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct Recording {
     pub(crate) rule_id: Uuid,
     pub(crate) revision: u32,

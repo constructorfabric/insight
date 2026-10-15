@@ -20,8 +20,7 @@ use super::compiler::{
     compile_period_batch_query, compile_timeseries_query,
 };
 use super::dto::MetricResultViewDto;
-use super::dto::MetricViewErrorCode;
-use super::failure::ViewFailure;
+use super::failure::ViewAbsence;
 use super::validation::{DateWindow, ValidatedEntitySelection, ValidatedMetricResultsRequest};
 use super::view::Bucket;
 use crate::domain::external_links::ExternalSourceRegistry;
@@ -31,6 +30,7 @@ use crate::domain::metric_definitions::definition::{
     MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationSource,
     RatioDenominatorAggregation,
 };
+use crate::domain::not_ready::NotReadyReason;
 
 const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 
@@ -478,8 +478,7 @@ async fn capped_timeseries_over_nullable_metric_date_builds() -> anyhow::Result<
 
 #[tokio::test]
 #[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
-async fn a_real_missing_relation_error_classifies_as_source_relation_missing() -> anyhow::Result<()>
-{
+async fn a_real_missing_relation_error_reads_as_not_ready() -> anyhow::Result<()> {
     let Some(ch) = client_or_skip() else {
         return Ok(());
     };
@@ -495,10 +494,13 @@ async fn a_real_missing_relation_error_classifies_as_source_relation_missing() -
         },
     };
 
-    let failure = ViewFailure::from_query_error(&error);
+    let absence = ViewAbsence::from_query_error(&error);
     anyhow::ensure!(
-        failure.code == MetricViewErrorCode::SourceRelationMissing,
-        "the live UNKNOWN_TABLE wording must classify as a missing relation, got {failure:?}"
+        matches!(
+            absence,
+            ViewAbsence::NotReady(NotReadyReason::SourceRelationMissing)
+        ),
+        "the live UNKNOWN_TABLE wording must read as not-ready, got {absence:?}"
     );
     Ok(())
 }

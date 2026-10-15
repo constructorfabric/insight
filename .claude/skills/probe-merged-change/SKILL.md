@@ -7,8 +7,8 @@ description: >-
   Security, Versatility) and hand each surviving finding to file-bug-insight. Use for "test what
   just merged", "exploratory pass on #N", "check this change across the quality vectors",
   "we shipped X, go break it", or a QA sweep of a release candidate's new feature. NOT for
-  planning tests before implementation (scope-feature-tests), NOT for writing the Testing section
-  into an issue body (quality-vector-tests), NOT for validating a whole stand
+  planning tests before implementation (scope-feature-tests), NOT for binding tests to a
+  FEATURE's Definitions of Done (quality-vector-tests), NOT for validating a whole stand
   (insight-stand-validate), and NOT for confirming a known defect is fixed (verify-fix).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Skill
 ---
@@ -26,7 +26,7 @@ The other four testing skills each stop short of this:
 | Skill | Owns | Not this because |
 |---|---|---|
 | `scope-feature-tests` | reasoning out coverage before implementation | the code does not exist yet |
-| `quality-vector-tests` | authoring the Testing section into the issue | it formats scenarios, it does not run them |
+| `quality-vector-tests` | binding tests to a FEATURE's Definitions of Done | it links tests, it does not run them |
 | `insight-stand-validate` | validating a whole stand | scoped to an instance, not to a diff |
 | `verify-fix` | confirming a known defect is fixed | the defect is already named |
 

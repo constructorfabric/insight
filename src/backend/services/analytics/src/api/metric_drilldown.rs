@@ -15,16 +15,19 @@ use super::AppState;
 use crate::api::error::MetricError;
 use crate::domain::metric_access::authorize_tenant_metrics;
 use crate::domain::metric_drilldown::{
-    EVIDENCE_QUERY_TIMEOUT_SECS, EvidenceQueryRow, MAX_EXPORT_BYTES, MAX_EXPORT_ROWS,
+    EVIDENCE_QUERY_TIMEOUT_SECS, EvidencePlan, EvidenceQueryRow, MAX_EXPORT_BYTES, MAX_EXPORT_ROWS,
     MetricDrilldownColumn, MetricDrilldownEntity, MetricDrilldownExportFormat,
     MetricDrilldownExportRequest, MetricDrilldownRequest, MetricDrilldownResponse,
-    MetricDrilldownRow, ValidatedMetricDrilldown, build_export, build_response, compile_query,
-    decode_evidence_rows, evidence_unavailable, export_filename, export_internal, export_limit,
-    parse_person_entity, parse_person_ids, presentation, presents_person, validate_export_request,
-    validate_request, verify_evidence_snapshot, with_evidence_query_limits,
+    MetricDrilldownRow, MetricDrilldownSelection, ValidatedDrilldown, ValidatedMetricDrilldown,
+    build_export, build_response, compile_query, decode_evidence_rows, export_filename,
+    export_internal, export_limit, parse_person_entity, parse_person_ids, presentation,
+    presents_person, validate_export_request, validate_request, verify_evidence_snapshot,
+    with_evidence_query_limits,
 };
+use crate::domain::not_ready::NotReadyReason;
 use crate::domain::person_visibility::authorize_person_ids;
 use crate::infra::metrics::{self, ErrorClass, QueryKind, QueryOutcome};
+use crate::infra::not_ready;
 
 use super::person_names;
 
@@ -48,7 +51,17 @@ pub async fn query_metric_drilldown(
     let started = Instant::now();
     authorize_metric_entity(&state, &ctx, &headers, &req.entity).await?;
 
-    let mut req = validate_request(&state.db, &state.ch, ctx.subject_tenant_id(), req).await?;
+    let mut req = match validate_request(&state.db, &state.ch, ctx.subject_tenant_id(), req).await?
+    {
+        ValidatedDrilldown::Ready(req) => *req,
+        ValidatedDrilldown::NotReady(page) => {
+            return Ok(Json(MetricDrilldownResponse::not_ready(
+                page.selection,
+                page.columns,
+                page.reason,
+            )));
+        }
+    };
     req.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
 
     // Ahead of the read: the reader searches `Who` by name, and the names are
@@ -57,7 +70,12 @@ pub async fn query_metric_drilldown(
     req.search_person_ids = people_named_like(&names, req.selection.search.as_deref());
 
     let log_comment = format!("metric-drilldown:page:{}", req.plan.definition.key());
-    let rows = fetch_rows(&state, &req, QueryKind::DrilldownPage, &log_comment).await?;
+    let rows = match fetch_rows(&state, &req, QueryKind::DrilldownPage, &log_comment).await? {
+        EvidenceRead::Rows(rows) => rows,
+        EvidenceRead::NotReady(reason) => {
+            return Ok(Json(not_ready_page(&req, &names, reason)?));
+        }
+    };
     verify_evidence_snapshot(&state.ch, &req.plan.relation, &req.snapshot_id).await?;
     let fetched_rows = rows.len();
     let response = build_response(&req, rows, &names, &state.external_links)?;
@@ -86,7 +104,7 @@ pub async fn export_metric_drilldown(
     let permit = acquire_export_permit().await?;
     let deadline = tokio::time::Instant::now() + EXPORT_TIMEOUT;
 
-    let mut validated = validate_export_request(
+    let validated = validate_export_request(
         &state.db,
         &state.ch,
         ctx.subject_tenant_id(),
@@ -94,11 +112,40 @@ pub async fn export_metric_drilldown(
         MAX_EXPORT_ROWS + 1,
     )
     .await?;
+    // A relation nothing has built yet exports as the file it will be: the
+    // columns the plan declares, and no records.
+    let mut validated = match validated {
+        ValidatedDrilldown::Ready(validated) => *validated,
+        ValidatedDrilldown::NotReady(page) => {
+            return empty_export(
+                permit,
+                req.format,
+                page.columns,
+                &page.plan,
+                &page.selection,
+                deadline,
+            )
+            .await;
+        }
+    };
     validated.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
     let names = roster_names(&state, &validated).await?;
     validated.search_person_ids = people_named_like(&names, validated.selection.search.as_deref());
 
-    let evidence = collect_export_rows(&state, &validated, deadline).await?;
+    let evidence = match collect_export_rows(&state, &validated, deadline).await? {
+        EvidenceRead::Rows(evidence) => evidence,
+        EvidenceRead::NotReady(_) => {
+            return empty_export(
+                permit,
+                req.format,
+                presented_columns(&validated, &names)?,
+                &validated.plan,
+                &validated.selection,
+                deadline,
+            )
+            .await;
+        }
+    };
     let exported_rows = evidence.len();
 
     let (columns, rows) = presentation(
@@ -126,7 +173,11 @@ pub async fn export_metric_drilldown(
         "metric drilldown export completed"
     );
 
-    attachment_response(body, content_type, &export_name(&validated, extension))
+    attachment_response(
+        body,
+        content_type,
+        &export_name(&validated.plan, &validated.selection, extension),
+    )
 }
 
 /// Who each row belongs to, in the words the reader knows them by.
@@ -275,7 +326,7 @@ async fn collect_export_rows(
     state: &Arc<AppState>,
     validated: &ValidatedMetricDrilldown,
     deadline: tokio::time::Instant,
-) -> Result<Vec<EvidenceQueryRow>, CanonicalError> {
+) -> Result<EvidenceRead, CanonicalError> {
     let log_comment = format!(
         "metric-drilldown:export:{}",
         validated.plan.definition.key()
@@ -296,11 +347,14 @@ async fn collect_export_rows(
         );
         return Err(export_limit("Export exceeded the execution time limit."));
     };
-    let rows = fetched?;
+    let rows = match fetched? {
+        EvidenceRead::Rows(rows) => rows,
+        not_ready @ EvidenceRead::NotReady(_) => return Ok(not_ready),
+    };
     verify_evidence_snapshot(&state.ch, &validated.plan.relation, &validated.snapshot_id).await?;
 
     enforce_export_row_limit(rows.len())?;
-    Ok(rows)
+    Ok(EvidenceRead::Rows(rows))
 }
 
 fn enforce_export_row_limit(rows: usize) -> Result<(), CanonicalError> {
@@ -330,20 +384,70 @@ async fn serialize_export(
         .map_err(|_| export_internal())?
 }
 
-fn export_name(validated: &ValidatedMetricDrilldown, extension: &str) -> String {
+fn export_name(
+    plan: &EvidencePlan,
+    selection: &MetricDrilldownSelection,
+    extension: &str,
+) -> String {
     export_filename(
-        &validated.plan.definition.base.label,
-        &validated.selection.metric_key,
-        &validated.selection.period.from,
-        &validated.selection.period.to,
-        validated
-            .selection
+        &plan.definition.base.label,
+        &selection.metric_key,
+        &selection.period.from,
+        &selection.period.to,
+        selection
             .filters
             .iter()
             .any(|filter| !filter.values.is_empty())
-            || validated.selection.search.is_some(),
+            || selection.search.is_some(),
         extension,
     )
+}
+
+/// The file a not-ready relation downloads as: its columns, and no records.
+async fn empty_export(
+    permit: tokio::sync::SemaphorePermit<'static>,
+    format: MetricDrilldownExportFormat,
+    columns: Vec<MetricDrilldownColumn>,
+    plan: &EvidencePlan,
+    selection: &MetricDrilldownSelection,
+    deadline: tokio::time::Instant,
+) -> Result<Response<Body>, CanonicalError> {
+    let (body, content_type, extension) =
+        serialize_export(permit, format, columns, Vec::new(), deadline).await?;
+
+    attachment_response(body, content_type, &export_name(plan, selection, extension))
+}
+
+/// The page a relation answers before anything has built it: what the reader
+/// asked for, the columns it would present, and no rows.
+fn not_ready_page(
+    req: &ValidatedMetricDrilldown,
+    names: &BTreeMap<String, String>,
+    reason: NotReadyReason,
+) -> Result<MetricDrilldownResponse, CanonicalError> {
+    Ok(MetricDrilldownResponse::not_ready(
+        req.selection.clone(),
+        presented_columns(req, names)?,
+        reason,
+    ))
+}
+
+/// The columns a selection presents, read off the plan rather than off rows —
+/// what a not-ready answer still has to carry.
+fn presented_columns(
+    req: &ValidatedMetricDrilldown,
+    names: &BTreeMap<String, String>,
+) -> Result<Vec<MetricDrilldownColumn>, CanonicalError> {
+    let (columns, _) = presentation(
+        &[],
+        &req.plan,
+        &req.selection.filters,
+        &req.selection.display_dimensions,
+        &req.selection.entity,
+        names,
+    )?;
+
+    Ok(columns)
 }
 
 fn attachment_response(
@@ -362,12 +466,19 @@ fn attachment_response(
         .map_err(|_| export_internal())
 }
 
+/// What an evidence read answered: the records, or that the relation behind
+/// them has not been built yet.
+enum EvidenceRead {
+    Rows(Vec<EvidenceQueryRow>),
+    NotReady(NotReadyReason),
+}
+
 async fn fetch_rows(
     state: &Arc<AppState>,
     req: &crate::domain::metric_drilldown::ValidatedMetricDrilldown,
     kind: QueryKind,
     log_comment: &str,
-) -> Result<Vec<EvidenceQueryRow>, CanonicalError> {
+) -> Result<EvidenceRead, CanonicalError> {
     let started = Instant::now();
     let result = fetch_rows_inner(state, req, kind, log_comment).await;
 
@@ -384,7 +495,7 @@ async fn fetch_rows_inner(
     req: &crate::domain::metric_drilldown::ValidatedMetricDrilldown,
     kind: QueryKind,
     log_comment: &str,
-) -> Result<Vec<EvidenceQueryRow>, CanonicalError> {
+) -> Result<EvidenceRead, CanonicalError> {
     // INVARIANT: the permit is held across the awaited ClickHouse execution and
     // byte collection below — the hold is the MAX_CONCURRENT_QUERIES cap.
     let _permit = acquire_query_permit().await?;
@@ -397,41 +508,56 @@ async fn fetch_rows_inner(
     for param in params {
         query = query.bind(param);
     }
-    let mut cursor = query.fetch_bytes("JSONEachRow").map_err(|error| {
-        tracing::error!(error = %error, "ClickHouse metric drilldown query failed");
-        let message = error.to_string();
-        metrics::record_clickhouse_error(kind, ErrorClass::classify(&message));
-        query_error(&message)
-    })?;
-    let bytes = tokio::time::timeout(QUERY_TIMEOUT, cursor.collect())
+    let mut cursor = match query.fetch_bytes("JSONEachRow") {
+        Ok(cursor) => cursor,
+        Err(error) => return read_outcome(&error.to_string(), kind, log_comment),
+    };
+    let collected = tokio::time::timeout(QUERY_TIMEOUT, cursor.collect())
         .await
         .map_err(|_| {
             tracing::error!("metric evidence query exceeded the execution time limit");
             metrics::record_clickhouse_error(kind, ErrorClass::Timeout);
             query_limit_error()
-        })?
-        .map_err(|error| {
-            tracing::error!(error = %error, "ClickHouse metric drilldown fetch failed");
-            let message = error.to_string();
-            metrics::record_clickhouse_error(kind, ErrorClass::classify(&message));
-            query_error(&message)
         })?;
+    let bytes = match collected {
+        Ok(bytes) => bytes,
+        Err(error) => return read_outcome(&error.to_string(), kind, log_comment),
+    };
 
-    decode_evidence_rows(&bytes).map_err(|error| {
-        tracing::error!(error = %error, "metric drilldown row decoding failed");
-        metrics::record_clickhouse_error(kind, ErrorClass::ParseFailed);
-        CanonicalError::internal("failed to decode metric evidence").create()
-    })
+    decode_evidence_rows(&bytes)
+        .map(EvidenceRead::Rows)
+        .map_err(|error| {
+            tracing::error!(error = %error, "metric drilldown row decoding failed");
+            metrics::record_clickhouse_error(kind, ErrorClass::ParseFailed);
+            CanonicalError::internal("failed to decode metric evidence").create()
+        })
 }
 
-// INVARIANT: the response classification shares the one classifier the metric
-// label records through, so a message can never map to two different classes.
-fn query_error(message: &str) -> CanonicalError {
-    match ErrorClass::classify(message) {
-        ErrorClass::RelationMissing => evidence_unavailable(),
-        ErrorClass::ResourceExhausted => query_limit_error(),
+/// What a read that produced no rows answers.
+///
+/// INVARIANT: the classification shares the one classifier the metric label
+/// records through, so a message can never map to two different classes. Only
+/// an absent relation is an answer; everything else, `UNKNOWN_IDENTIFIER`
+/// included, is the failure it is.
+fn read_outcome(
+    message: &str,
+    kind: QueryKind,
+    log_comment: &str,
+) -> Result<EvidenceRead, CanonicalError> {
+    let class = ErrorClass::classify(message);
+    metrics::record_clickhouse_error(kind, class);
+
+    match class {
+        ErrorClass::RelationMissing => {
+            not_ready::warn_throttled(message, log_comment);
+            Ok(EvidenceRead::NotReady(
+                NotReadyReason::SourceRelationMissing,
+            ))
+        }
+        ErrorClass::ResourceExhausted => Err(query_limit_error()),
         ErrorClass::Timeout | ErrorClass::ParseFailed | ErrorClass::QueryFailed => {
-            CanonicalError::internal("metric evidence query failed").create()
+            tracing::error!(error = %message, comment = log_comment, "ClickHouse metric drilldown read failed");
+            Err(CanonicalError::internal("metric evidence query failed").create())
         }
     }
 }
@@ -486,16 +612,46 @@ mod tests {
         assert_eq!(person_name(&person_names::PersonName::named("", "")), None);
     }
 
+    fn outcome_status(message: &str) -> Option<u16> {
+        match read_outcome(message, QueryKind::DrilldownPage, "test") {
+            Ok(EvidenceRead::NotReady(_)) => None,
+            Ok(EvidenceRead::Rows(_)) => panic!("a failed read cannot produce rows"),
+            Err(error) => Some(error.status_code()),
+        }
+    }
+
+    /// An absent table (60) or database (81) is the answer "nothing here yet",
+    /// so the read carries no status at all.
     #[test]
-    fn query_errors_are_classified() {
+    fn an_absent_relation_reads_as_not_ready() {
+        for message in [
+            "Code: 60. DB::Exception: Table x does not exist. (UNKNOWN_TABLE)",
+            "Code: 60. Table x does not exist",
+            "Code: 81. DB::Exception: Database insight does not exist. (UNKNOWN_DATABASE)",
+        ] {
+            assert_eq!(outcome_status(message), None, "should answer: {message}");
+        }
+    }
+
+    /// Code 47 means the relation is there and its columns disagree with the
+    /// deployed code — the one thing an empty answer would hide.
+    #[test]
+    fn a_column_the_relation_does_not_have_still_fails() {
+        use axum::http::StatusCode;
+
+        assert_eq!(
+            outcome_status(
+                "Code: 47. DB::Exception: Unknown expression identifier (UNKNOWN_IDENTIFIER)"
+            ),
+            Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16())
+        );
+    }
+
+    #[test]
+    fn every_other_failure_keeps_its_status() {
         use axum::http::StatusCode;
 
         let cases = [
-            (
-                "Code: 60. DB::Exception: Table x does not exist. (UNKNOWN_TABLE)",
-                StatusCode::BAD_REQUEST,
-            ),
-            ("Code: 60. Table x does not exist", StatusCode::BAD_REQUEST),
             // A failure that merely quotes an absent relation is still a
             // failure: the code it reports is its own, not the nested one.
             (
@@ -514,8 +670,8 @@ mod tests {
         ];
         for (message, expected) in cases {
             assert_eq!(
-                query_error(message).status_code(),
-                expected,
+                outcome_status(message),
+                Some(expected.as_u16()),
                 "wrong classification: {message}"
             );
         }
@@ -569,5 +725,39 @@ mod tests {
         );
         drop(held);
         assert!(acquire_query_permit().await.is_ok());
+    }
+
+    /// The page a read answers when the relation went missing under it: the
+    /// columns come off the plan, since there are no rows to read them from.
+    #[test]
+    fn a_not_ready_page_carries_the_columns_the_plan_declares_and_no_rows() {
+        use crate::domain::metric_definitions::ComputationSpec;
+        use crate::domain::metric_definitions::definition::MetricInputRole;
+        use crate::domain::metric_drilldown::test_support::{commit_input, input, plan, validated};
+
+        let req = validated(plan(
+            ComputationSpec::Sum {
+                value: input(MetricInputRole::Value, "commit_count"),
+            },
+            vec![commit_input(MetricInputRole::Value, "commit_count")],
+        ));
+        let names = BTreeMap::new();
+
+        let page = not_ready_page(&req, &names, NotReadyReason::SourceRelationMissing)
+            .unwrap_or_else(|error| panic!("a not-ready page must build: {error}"));
+
+        assert_eq!(page.not_ready, Some(NotReadyReason::SourceRelationMissing));
+        assert!(page.rows.is_empty(), "a not-ready page carries no rows");
+        assert_eq!(page.next_cursor, None, "there is no next page of nothing");
+        assert_eq!(page.selection.metric_key, req.selection.metric_key);
+        let keys: Vec<&str> = page
+            .columns
+            .iter()
+            .map(|column| column.key.as_str())
+            .collect();
+        assert!(
+            keys.contains(&"ref") && keys.contains(&"date"),
+            "the columns are the ones the plan declares, got {keys:?}"
+        );
     }
 }
