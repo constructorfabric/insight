@@ -111,13 +111,18 @@ INSERT INTO bronze_zoom.users VALUES
      'bo@example.com', 'Ops', 'active', '1', 'UTC', 'en', '', 'E-2', '1', 'raw-2', '2026-01-01 00:00:00', '{}', 0),
     ('-$SOURCE-u3', NULL, '$SOURCE', 'u3', 'Cy', 'Example', 'Cy Example',
      'cy@example.com', 'Ops', 'active', '1', 'UTC', 'en', '', 'E-3', '1', 'raw-3', '2026-01-01 00:00:00', '{}', 0);
-INSERT INTO config.task_value_map (tenant_id, insight_source_id, data_source, field_id, value_id, valid_from, recorded_at, canonical_value)
-VALUES ('$OLD_TENANT', 'jira-main', 'insight_jira', 'status', '10001', '2026-01-01 00:00:00', '2026-01-01 00:00:00', 'done');
 INSERT INTO ingestion_history.sync_events (tick_id, job_id, connector, tenant_id, source_id, event, status)
 VALUES ('tick-1', 'job-1', 'zoom', '$OLD_TENANT', '$SOURCE', 'sync', 'succeeded');
 SQL
 
 dbt_run --select zoom__users_snapshot zoom__users_fields_history
+
+# The config tables come from dbt's on-run-start, which the deploy no longer runs.
+run_ch <<SQL
+INSERT INTO config.task_value_map (tenant_id, insight_source_id, data_source, field_id, value_id, valid_from, recorded_at, canonical_value)
+VALUES ('$OLD_TENANT', 'jira-main', 'insight_jira', 'status', '10001', '2026-01-01 00:00:00', '2026-01-01 00:00:00', 'done');
+SQL
+
 # A second observation of u1, so the history relation holds two versions.
 run_ch <<SQL
 INSERT INTO bronze_zoom.users VALUES
