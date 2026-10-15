@@ -1,9 +1,9 @@
 """
 HR / focus metrics generator.
 
-Produces one row per person per day in `silver.class_focus_metrics` —
-the table that drives the `collab.focus_time_pct` and `collab.dev_time_h`
-metrics via the `focus_hours` / `working_hours` measures.
+Produces one row per person per day in `silver.class_focus_metrics`; no metric
+reads that table, since gold derives focus from meeting activity and
+`class_hr_working_hours`.
 
 `working_hours_per_day` is the headline number HR consumers see;
 `meeting_hours` matches what the collab.meeting generator produces;

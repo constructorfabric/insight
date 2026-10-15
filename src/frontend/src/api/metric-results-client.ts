@@ -153,7 +153,8 @@ export type MetricResultView =
   | BreakdownView
   | RollupView
   | HistogramView
-  | MetricErrorView;
+  | MetricErrorView
+  | MetricNotReadyView;
 
 export interface PeriodView {
   view: "period";
@@ -255,11 +256,13 @@ export interface HistogramView {
 }
 
 export type MetricErrorCode =
-  | "SOURCE_RELATION_MISSING"
   | "RESOURCE_EXHAUSTED"
   | "QUERY_TIMEOUT"
   | "RESULT_PARSE_FAILED"
   | "QUERY_FAILED";
+
+/** Why an answer carries no values although nothing failed. */
+export type NotReadyReason = "SOURCE_RELATION_MISSING";
 
 /**
  * A view whose computation failed. The request itself still answers 200:
@@ -271,6 +274,17 @@ export interface MetricErrorView {
   view: "error";
   code: MetricErrorCode;
   message: string;
+}
+
+/**
+ * A view whose data has not been built yet — no connector has synced, or the
+ * build has not reached the relation it reads. It carries no values at all,
+ * which is what separates it from a view whose every reading is `0`: nothing
+ * failed, and nothing was measured either.
+ */
+export interface MetricNotReadyView {
+  view: "not_ready";
+  reason: NotReadyReason;
 }
 
 export interface MetricResultsResponse {

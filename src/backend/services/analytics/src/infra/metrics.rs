@@ -200,6 +200,26 @@ mod tests {
         }
 
         for message in [
+            "Code: 81. DB::Exception: Database insight does not exist. (UNKNOWN_DATABASE)",
+            "Code: 81",
+        ] {
+            assert_eq!(
+                ErrorClass::classify(message),
+                ErrorClass::RelationMissing,
+                "an absent database is the same reading as an absent table: {message}"
+            );
+        }
+
+        // Code 47 is the relation disagreeing with the deployed code, not an
+        // absence — the one failure an empty answer would hide.
+        assert_eq!(
+            ErrorClass::classify(
+                "Code: 47. DB::Exception: Unknown expression identifier `commits` (UNKNOWN_IDENTIFIER)"
+            ),
+            ErrorClass::QueryFailed,
+        );
+
+        for message in [
             "Code: 241. Memory limit exceeded",
             "DB::Exception: (TIMEOUT_EXCEEDED)",
             "Code: 158. Too many rows",

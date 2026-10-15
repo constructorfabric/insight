@@ -1,7 +1,8 @@
 # Jira field macros
 
 The SQL that turns Jira's field catalogue, issue JSON and changelog into the
-`class_task_field_history` contract. Five files, one job each:
+`class_task_field_history` contract, and the link vocabulary of
+`class_task_links`. One job per file:
 
 | file | what it decides |
 |---|---|
@@ -10,6 +11,7 @@ The SQL that turns Jira's field catalogue, issue JSON and changelog into the
 | `jira_field_delta.sql` | how one changelog item becomes the state before and after that event, and several items of one field in one entry become one event |
 | `jira_field_id_type.sql` | the contract's `value_id_type` and `field_cardinality` for a kind |
 | `jira_field_history_key.sql` | the journal's `unique_key`: the issue by its immutable id, the readable key only where no id exists |
+| `jira_link_type.sql` | the relation a link holds from one side, and the `class_task_links` `link_type` it maps to |
 
 Design and rationale: [`FIELD-HISTORY-IN-DBT.md`](../../../connectors/task-tracking/jira/specs/FIELD-HISTORY-IN-DBT.md).
 
@@ -49,8 +51,8 @@ rather than left to be rediscovered:
 
 Only the Jira connector's models, in
 `src/ingestion/connectors/task-tracking/jira/dbt/` — chiefly
-`jira__task_field_kind`, `jira__issue_field_snapshot` and
-`jira__field_history_derived`. Nothing in `silver/`, `gold/` or another
+`jira__task_field_kind`, `jira__issue_field_snapshot`,
+`jira__field_history_derived` and `jira__task_links`. Nothing in `silver/`, `gold/` or another
 connector reads them; that is why they live in their own folder rather than
 alongside the cross-source macros.
 

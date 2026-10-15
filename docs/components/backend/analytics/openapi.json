@@ -1392,6 +1392,17 @@
               "null"
             ]
           },
+          "not_ready": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NotReadyReason",
+                "description": "Set when `rows` is empty because the relation behind this evidence has\nnot been built yet. Absent on every answered read, including one that\nlegitimately matched nothing — which is the distinction a reader needs\nto tell \"no records\" from \"not collected yet\"."
+              }
+            ]
+          },
           "rows": {
             "items": {
               "$ref": "#/components/schemas/MetricDrilldownRow"
@@ -1846,6 +1857,25 @@
               "view"
             ],
             "type": "object"
+          },
+          {
+            "description": "The data this view reads has not been built yet. It carries no values\nat all, which is what separates it from a view whose every reading is\n`0`: nothing failed, and nothing was measured either.\n\nINVARIANT: a variant rather than a flag on the value-carrying shapes —\n\"not ready\" and \"here are the values\" cannot both be true, so a reader\ncannot render a zero it was never told.",
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/NotReadyReason"
+              },
+              "view": {
+                "enum": [
+                  "not_ready"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "view"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -2102,7 +2132,6 @@
       },
       "MetricViewErrorCode": {
         "enum": [
-          "SOURCE_RELATION_MISSING",
           "RESOURCE_EXHAUSTED",
           "QUERY_TIMEOUT",
           "RESULT_PARSE_FAILED",
@@ -2259,6 +2288,13 @@
             "type": "object"
           }
         ]
+      },
+      "NotReadyReason": {
+        "description": "The marker an empty answer carries when its emptiness is not a reading.\n\nA relation the warehouse has not built yet is neither a failure nor a zero:\nno connector has synced, or the build has not reached it. A reader that\nsees this renders \"no data yet\"; one that renders `0` reports a measurement\nnobody took.\n\nINVARIANT: only absence sets it. A relation that exists and disagrees with\nthe deployed code (`UNKNOWN_IDENTIFIER`) still fails — that is the defect\nthe schema channel exists to catch, and an empty answer would hide it.",
+        "enum": [
+          "SOURCE_RELATION_MISSING"
+        ],
+        "type": "string"
       },
       "PeerValueDto": {
         "properties": {
@@ -2550,6 +2586,17 @@
             },
             "type": "array"
           },
+          "not_ready": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NotReadyReason",
+                "description": "Set when the rows stop short because a relation a metric reads has not\nbeen built yet. Absent on every answered preview, including an empty\none."
+              }
+            ]
+          },
           "rows": {
             "items": {
               "$ref": "#/components/schemas/ReportRow"
@@ -2701,6 +2748,17 @@
       "RunResponse": {
         "description": "Result of `POST /v1/queries/{id}/run`.\n\n`rows` carry a per-query dynamic schema (the `SELECT` columns vary), so each\nrow is an untyped JSON object — the same shape as the metric query path.",
         "properties": {
+          "not_ready": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NotReadyReason",
+                "description": "Set when `rows` is empty because a relation the query names has not been\nbuilt yet. Absent on every answered run, including one that matched\nnothing."
+              }
+            ]
+          },
           "rows": {
             "items": {},
             "type": "array"

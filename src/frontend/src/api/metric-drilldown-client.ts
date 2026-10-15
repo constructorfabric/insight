@@ -3,6 +3,7 @@ import { fetchWithAuth } from "@/api/fetch-with-auth";
 import type {
   MetricCanonicalSelection,
   MetricDimensionFilter,
+  NotReadyReason,
 } from "@/api/metric-results-client";
 import { downloadBlob } from "@/lib/download";
 
@@ -62,6 +63,12 @@ export interface MetricDrilldownResponse {
   columns: MetricEvidenceColumn[];
   rows: MetricEvidenceRow[];
   next_cursor: string | null;
+  /**
+   * Set when `rows` is empty because the relation behind this evidence has not
+   * been built yet. Absent on every answered read, including one that matched
+   * nothing — which is what tells "no records" from "not collected yet".
+   */
+  not_ready?: NotReadyReason;
 }
 
 export interface MetricDrilldownRequest

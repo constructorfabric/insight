@@ -257,6 +257,30 @@ describe("TrendDrilldownDialog", () => {
     );
   });
 
+  // The same claim one step further: the read reached the warehouse and was
+  // told nothing has been built, which says nothing about the window.
+  it("says no data yet when the warehouse has not built the records", () => {
+    mocks.query = readyQuery({
+      data: {
+        pages: [
+          {
+            selection: {},
+            columns: [],
+            rows: [],
+            next_cursor: null,
+            not_ready: "SOURCE_RELATION_MISSING",
+          },
+        ],
+      },
+    });
+    renderDialog();
+
+    expect(screen.getByText(/No data yet/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("No records in this window.")
+    ).not.toBeInTheDocument();
+  });
+
   it("says the window is empty when the read came back empty", () => {
     mocks.query = readyQuery({
       data: { pages: [{ selection: {}, columns: [], rows: [], next_cursor: null }] },

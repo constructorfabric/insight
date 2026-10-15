@@ -1189,8 +1189,8 @@ usage: dev-compose.sh seed [--instance NAME] [--env-file PATH] [identity|silver|
 Populate the demo dataset. Stack must be up first.
 
   identity   25 persons + org_chart + person_roles in MariaDB.
-  silver     CREATE silver tables, apply gold-view migrations, generate
-             ~24k rows of 60-day per-team activity in ClickHouse.
+  silver     CREATE silver tables, apply the migrations, generate
+             ~24k rows of 60-day per-team activity in ClickHouse, build gold.
   all        Both (default if no arg).
 
 After `silver` or `all` runs, three follow-up steps run automatically:

@@ -41,7 +41,7 @@ pub enum ApiError {
 /// only the status is overridden.
 const REPO_TOO_LARGE: StatusCode = StatusCode::PAYLOAD_TOO_LARGE;
 
-/// §3.6: admission is refused when the cache is full and nothing can be
+/// Admission is refused when the cache is full and nothing can be
 /// reclaimed. That clears as soon as a reader releases an entry, so the
 /// caller is asked back rather than failed.
 const ADMISSION_RETRY_AFTER_SECONDS: u64 = 30;
@@ -54,14 +54,14 @@ const THROTTLED_RETRY_AFTER_SECONDS: u64 = 60;
 const SERVE_RETRY_AFTER_SECONDS: u64 = 30;
 
 /// A prefetch refused for space schedules a pressure purge as it rejects, so
-/// "later" is one repack away — much sooner than a full admission cycle.
+/// "later" is one purge away — much sooner than a full admission cycle.
 const PRESSURE_RETRY_AFTER_SECONDS: u64 = 5;
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        // The admission reasons are counted where the store decides them;
-        // these two 429 causes reach the wire without touching admission and
-        // would otherwise be invisible in the rejection counter.
+        // The admission reasons are counted where the store decides them; the
+        // causes below reach the wire without touching admission and would
+        // otherwise be invisible in the rejection and origin counters.
         match &self {
             Self::Store(StoreError::Busy { .. }) => {
                 metrics::record_rejection(metrics::RejectReason::PreparationWait);
@@ -216,7 +216,7 @@ impl ApiError {
             .with_quota_violation("cache_disk_budget", "no reclaimable entry")
             .with_quota_violation_retry_after_seconds(ADMISSION_RETRY_AFTER_SECONDS)
             .create(),
-            // Retryable, unlike the 413 above: on the page-serve path the
+            // Retryable, unlike the permanent 413: on the page-serve path the
             // measurement includes blob weight the scheduled purge reclaims.
             Self::Git(GitError::TransientlyOverCap) => RepositoryError::resource_exhausted(
                 "the entry is over its cap until purged blobs are reclaimed",
@@ -416,7 +416,6 @@ mod tests {
                 GitError::PromisorRefused.into(),
                 StatusCode::INTERNAL_SERVER_ERROR,
             ),
-            // §3.6: the cache is full and nothing could be reclaimed.
             (
                 GitError::AdmissionRejected.into(),
                 StatusCode::TOO_MANY_REQUESTS,

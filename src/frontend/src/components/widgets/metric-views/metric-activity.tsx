@@ -192,11 +192,13 @@ function Body({
     );
   }
   if (grain === "event") {
+    if (detail.data?.not_ready) return <NoDataYet />;
     const rows = detail.data?.rows ?? [];
     if (rows.length === 0) return <NothingRecorded />;
     return <EventList metric={metric} selection={selection} rows={rows} />;
   }
-  const readings = series.data ?? [];
+  if (series.data?.notReady) return <NoDataYet />;
+  const readings = series.data?.readings ?? [];
   if (readings.length === 0) return <NothingRecorded />;
   return <DayStrip metric={metric} readings={readings} />;
 }
@@ -205,6 +207,18 @@ function NothingRecorded() {
   return (
     <p className="text-xs text-muted-foreground">
       Nothing recorded in this period.
+    </p>
+  );
+}
+
+/**
+ * Distinct from `NothingRecorded`: that one states something about the period,
+ * which a read that never reached the data cannot.
+ */
+function NoDataYet() {
+  return (
+    <p className="text-xs text-muted-foreground">
+      No data yet — this appears once the connector behind it has synced.
     </p>
   );
 }

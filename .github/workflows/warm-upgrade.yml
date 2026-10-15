@@ -5,18 +5,20 @@ name: Warm upgrade
 #
 # On a fresh install the committed connectors-ddl snapshot carries the new
 # relation shapes, so a gold model that references a new silver/staging
-# column always builds. On a warm installation the relations already exist,
-# `CREATE TABLE IF NOT EXISTS` never widens them, and the deploy hook builds
-# only `tag:gold` — so the same gold model fails the deploy with
-# UNKNOWN_IDENTIFIER unless the change also ships a numbered migration
-# (silver.class_*) or a guarded heal (staging.*): the "Warehouse contract
-# changes" rule in AGENTS.md, enforced here instead of at deploy time.
+# column always builds. On a warm installation the relations already exist and
+# `CREATE TABLE IF NOT EXISTS` never widens them — so the same gold model
+# fails with UNKNOWN_IDENTIFIER unless the change also ships a numbered
+# migration (silver.class_*) or a guarded heal (staging.*): the "Warehouse
+# contract changes" rule in AGENTS.md, enforced here instead of in the field.
+# Since #3561 nothing builds gold at deploy time, so the failure lands on the
+# first connector sync after the upgrade — later, and on the pipeline rather
+# than on helm, which is why this lane matters more, not less.
 #
-# The simulation runs the base commit's own deploy hook first (placeholders,
-# migrations, heals, base gold build — what an existing installation's last
-# deploy left behind), adds the bronze a connector would have synced into it,
-# then this branch's apply-ch-migrations.sh end to end, exactly like the Helm
-# clickhouse-migrate hook.
+# The simulation runs the base commit's own deploy and gold build first (what
+# an existing installation's last deploy and last sync left behind), adds the
+# bronze a connector would have synced into it, then this branch's
+# apply-ch-migrations.sh end to end — exactly like the Helm clickhouse-migrate
+# hook — and finally its build-gold.sh, standing in for that first sync.
 #
 # Not a required check: on pull requests an `on: paths` filter scopes it to
 # the warehouse path, so an unrelated change gets no run at all.

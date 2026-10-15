@@ -1,0 +1,33 @@
+# Reusable Slack member-analytics records (bronze_slack.users_details). The base
+# lists EVERY schema field; a test sets the member, the day and the counters.
+templates:
+  slack_user_day:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2030-01-01T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    unique_key: null
+    tenant_id: "{{ tenant }}"
+    source_id: "slack-test"
+    date: null
+    team_id: T0000000001
+    user_id: null
+    email_address: null
+    is_guest: false
+    is_billable_seat: true
+    is_active: true
+    is_active_ios: false
+    is_active_android: false
+    is_active_desktop: true
+    is_active_apps: false
+    is_active_workflows: false
+    is_active_slack_connect: false
+    reactions_added_count: 0
+    messages_posted_count: null
+    channel_messages_posted_count: null
+    files_added_count: 0
+    total_calls_count: 0
+    slack_calls_count: 0
+    slack_huddles_count: 0
+    search_count: 0
+    date_claimed: null

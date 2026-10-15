@@ -61,8 +61,8 @@ pub struct AuthorsQuery {
 }
 
 /// Concrete page wrappers, one per endpoint: `Page<T>` cannot be a schema
-/// because the registry keys components on the type's own name, so all three
-/// instantiations would collide on one component.
+/// because the registry keys components on the type's own name, so every
+/// instantiation would collide on one component.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CommitsPage {
     pub items: Vec<commits::CommitRow>,
@@ -477,8 +477,8 @@ pub async fn list_authors(
 /// page's default-branch membership.
 ///
 /// The index is a per-generation cache of the two whole-history walks; the
-/// walks stay as the fallback so an entry cloned before indexes existed, or
-/// one whose build failed, serves correctly at the old cost. Both paths MUST
+/// walks stay as the fallback, so an entry with no index for its generation,
+/// or an unreadable one, still serves correctly. Both paths MUST
 /// apply the same filters in the same order — the parity test in
 /// `engine::read` is what holds them together.
 async fn page_of_keys(
@@ -629,8 +629,8 @@ async fn acquire_within(
 /// Hand the entry to the store's post-serve purge, detached.
 ///
 /// INVARIANT: the reader's guard is already dropped when this is called. The
-/// purge probes the write side without waiting, so calling it any earlier
-/// would simply find the entry busy and do nothing.
+/// purge probes the write side and usually gives up when it loses, so an
+/// earlier call would mostly find the entry busy and skip the purge.
 fn check_for_drift(state: &Arc<AppState>, context: &RequestContext) {
     let store = Arc::clone(&state.store);
     let key = context.key.clone();
@@ -682,7 +682,7 @@ async fn open(
     Ok(guard)
 }
 
-/// Serialize off the reactor: a page carries up to ten thousand commit
+/// Serialize off the reactor: a page carries up to a thousand commit
 /// messages, or the patch text of every file they touched.
 async fn json_page<T>(page: T) -> Result<Response, ApiError>
 where

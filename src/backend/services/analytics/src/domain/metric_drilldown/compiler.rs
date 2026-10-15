@@ -208,7 +208,7 @@ fn ratio_halves(
             "sumIf(collapsed.contribution, collapsed.measure_key = ?)"
         }
         RatioDenominatorAggregation::DistinctCount => {
-            "toFloat64(uniqExactIf(collapsed.subject_key, collapsed.measure_key = ? AND collapsed.subject_key IS NOT NULL))"
+            "toFloat64(uniqExactIf((collapsed.person_key, collapsed.subject_key), collapsed.measure_key = ? AND collapsed.subject_key IS NOT NULL))"
         }
     };
     Ok((numerator, denominator, denominator_expr))
@@ -290,7 +290,7 @@ fn compile_ratio_query(
                 SELECT evidence.metric_date AS metric_date, \
                        any(evidence.source_key) AS source_key, \
                        evidence.measure_key AS measure_key, \
-                       evidence.subject_key AS subject_key, \
+                       evidence.subject_key AS subject_key, {resolved_person} AS person_key, \
                        toJSONString(evidence.dimensions) AS dimensions_json, \
                        {collapsed} AS contribution \
                 FROM {database}.{table} AS evidence \
@@ -1175,7 +1175,7 @@ mod tests {
         ))
         .unwrap_or_else(|error| panic!("query must compile: {error}"));
 
-        assert!(sql.contains("uniqExactIf(collapsed.subject_key"));
+        assert!(sql.contains("uniqExactIf((collapsed.person_key, collapsed.subject_key)"));
         assert_eq!(sql.matches('?').count(), params.len());
     }
 }

@@ -99,6 +99,11 @@ export function TeamMetricGroupCard({
   const preview: TeamMetricStanding[] = def.card.preview
     .map((key) => standings.find((s) => s.metric.metric_key === key))
     .filter((s): s is TeamMetricStanding => s != null);
+  // "No peer data for this period" is a claim about the period, which a card
+  // whose source has never been built cannot make.
+  const notReady = def.collection.metrics.some(
+    (metricConfig) => data.byKey.get(metricConfig.key)?.notReady != null
+  );
 
   return (
     <Card
@@ -132,7 +137,9 @@ export function TeamMetricGroupCard({
       <CardContent className="flex flex-col gap-3 pt-0">
         {scored.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No metrics with peer data for this period.
+            {notReady
+              ? "No data yet — this fills in after the connector behind it syncs."
+              : "No metrics with peer data for this period."}
           </p>
         ) : (
           <ul className="flex flex-col gap-2 text-sm">

@@ -5,7 +5,6 @@ from test_history import state_value
 
 
 def test_an_issue_closed_without_being_picked_up_has_no_pickup_time(case: Warehouse) -> None:
-    case.build()
     case.client.command(f"""INSERT INTO config.task_field_roles
         (tenant_id, insight_source_id, data_source, field_id, valid_from, recorded_at, role)
         VALUES ('{TENANT}', '{SOURCE}', 'youtrack', 'field-1', toDateTime64(0, 3), now64(3), 'assignee'),

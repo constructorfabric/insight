@@ -8,10 +8,12 @@
 # They all route here now, and every one of them may assume its database
 # already stands.
 #
-# Epic #2010 puts the whole cluster fork on this one statement: inside a
-# `Replicated` database every later DDL is logged in Keeper and replayed on
-# every replica, so no `ON CLUSTER` clause is needed anywhere else. That holds
-# only while this stays the only site.
+# Epic #2010 puts the cluster fork on this one statement: inside a `Replicated`
+# database every later DDL is logged in Keeper and replayed on every replica,
+# so no `ON CLUSTER` clause is needed anywhere else. That holds only while this
+# stays the only site. Replaying the DDL is not replicating the rows, though —
+# a table still states its own `Replicated*` engine, which is why the dbt
+# models and the numbered migrations render a prefix from the same flag.
 #
 # Bronze is not here and will not be. `bronze_*` is created by
 # destination-clickhouse at sync time from the connector's own catalogue, and
@@ -33,13 +35,14 @@
 #   CLICKHOUSE_CLUSTER_MODE  true -> the DDL emitted here replicates
 #   CLICKHOUSE_CLUSTER_NAME  the cluster the ON CLUSTER clause names
 #   MCP_ENABLED / SQL_API_ENABLED  provision the MCP SQL-explorer reader
+#   INSIGHT_V3_CORE_ENABLED  provision the custom assistant's reader
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 : "${CLICKHOUSE_DATABASE:?CLICKHOUSE_DATABASE must be set (the Insight app database)}"
 
-source "$SCRIPT_DIR/lib/ch-exec.sh"
+source "$SCRIPT_DIR/lib/ch-topology.sh"
 
 # The app database holds gold and is named by the operator; the rest are fixed.
 # `staging` and `silver` are the dbt layers, `identity` the resolver's inputs
@@ -60,38 +63,35 @@ DATABASES=(
   insight_datasets
 )
 
-# `ON CLUSTER` where the install declared a clustered warehouse AND named it.
-# The spellings accepted are the ones every other reader of
-# CLICKHOUSE_CLUSTER_MODE accepts (charts/insight/README.md, "ClickHouse
-# topology"). A name without the flag names no cluster: the flag is what turns
-# on the replicated engines a clause would qualify.
-cluster_clause() {
-  local mode name
-  mode="$(printf '%s' "${CLICKHOUSE_CLUSTER_MODE:-false}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
-  name="$(printf '%s' "${CLICKHOUSE_CLUSTER_NAME:-}" | tr -d '[:space:]')"
+# Nothing is created or granted until the server can serve the topology the
+# install declared: Keeper for the database engine below, a replicated access
+# backend for the roles further down, and no database already standing with the
+# wrong engine. A standalone install is checked too, in the one direction that
+# loses data (see lib/ch-topology.sh).
+ch_assert_topology "${DATABASES[@]}"
 
-  case "${mode}" in
-    1 | true | yes | on) ;;
-    *) return 0 ;;
-  esac
-  [[ -n "${name}" ]] || return 0
-
-  printf 'ON CLUSTER %s' "${name}"
-}
-
-ON_CLUSTER="$(cluster_clause)"
+ON_CLUSTER="$(ch_on_cluster)"
 
 echo "=== Creating databases${ON_CLUSTER:+ (${ON_CLUSTER})} ==="
 for database in "${DATABASES[@]}"; do
   echo "  ${database}"
-  printf 'CREATE DATABASE IF NOT EXISTS `%s` %s' "${database}" "${ON_CLUSTER}" | run_ch
+  printf 'CREATE DATABASE IF NOT EXISTS `%s` %s %s' \
+    "${database}" "${ON_CLUSTER}" "$(ch_database_engine "${database}")" | run_ch
 done
 
 echo "=== Provisioning presentation access (role + grant-less user) (#1963/#1964) ==="
 bash "$SCRIPT_DIR/bootstrap-db/provision-presentation-access.sh"
 
-echo "=== Provisioning insight-v3-core query access (grant-less reader) ==="
-bash "$SCRIPT_DIR/bootstrap-db/provision-v3-access.sh"
+# Gated like the MCP reader below (#3558): `insight_v3_ro` reads every table,
+# and an installation that never runs the custom assistant has no use for a
+# role that can.
+if [[ "${INSIGHT_V3_CORE_ENABLED:-false}" == "true" ]]; then
+  echo "=== Provisioning insight-v3-core query access (grant-less reader) ==="
+  bash "$SCRIPT_DIR/bootstrap-db/provision-v3-access.sh"
+else
+  echo "=== insight-v3-core disabled; stripping the assistant's read ==="
+  bash "$SCRIPT_DIR/bootstrap-db/revoke-v3-access.sh"
+fi
 
 if [[ "${MCP_ENABLED:-false}" == "true" || "${SQL_API_ENABLED:-false}" == "true" ]]; then
   echo "=== Provisioning MCP SQL explorer access ==="

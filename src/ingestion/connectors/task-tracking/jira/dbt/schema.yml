@@ -110,3 +110,63 @@ models:
     description: "Per-field transitions derived from the worklog snapshot; raw input for the lifecycle events."
   - name: jira__worklog_lifecycle_events
     description: "Worklog add/set/remove as field-history events (field_id='worklog', event_kind='lifecycle'); value carries the worklog id — the lookup key into class_task_worklogs; remove is dated by the /worklog/deleted tombstone when available. Unioned into silver.class_task_field_history."
+  - name: jira__issue_link_snapshot
+    description: "The issue links and the parent each issue holds now, one row per link object, with the linked issue's immutable id and key and the link type's phrase for this side. Read by jira__task_links and jira__issue_key_ids."
+    columns:
+      - name: unique_key
+        description: "Source, issue, kind, the link's own id and the linked issue."
+        tests:
+          - unique
+          - not_null
+      - name: kind
+        description: "issuelink | parent."
+        tests:
+          - accepted_values:
+              values: ['issuelink', 'parent']
+      - name: link_id
+        description: "The link object's own id; empty for a parent."
+      - name: type_name
+        description: "The link type's name (Blocks, Duplicate, ...); empty for a parent."
+      - name: type_outward
+        description: "The type's outward phrase (\"blocks\")."
+      - name: type_inward
+        description: "The type's inward phrase (\"is blocked by\")."
+      - name: direction
+        description: "outward when this issue holds the outward phrase, inward otherwise; empty for a parent."
+      - name: relation
+        description: "The phrase this issue holds, as the changelog renders it; `parent` for a parent."
+      - name: target_id
+        description: "The linked issue's immutable id."
+      - name: target_key
+        description: "The linked issue's current key."
+      - name: extracted_at
+        description: "When bronze received the issue row this was read from."
+  - name: jira__issue_key_ids
+    description: "Every key an issue is known to have had, with its immutable id: the issue's own bronze rows, Key events of moved issues, the links snapshots hold, and parent changes. Resolves the keys the changelog names linked issues by."
+    columns:
+      - name: unique_key
+        description: "Source and key."
+        tests:
+          - unique
+          - not_null
+      - name: issue_key
+        description: "A key the issue has or had."
+      - name: issue_id
+        description: "The issue's immutable id."
+        tests:
+          - not_null
+  - name: jira__task_links
+    description: "Per-source staging projection of Jira issue links and parent changes as intervals, folded from the changelog's add and remove events, with links held before the first event seeded from the snapshot. Unioned into silver.class_task_links."
+    columns:
+      - name: unique_key
+        description: "Source, issue, link type, relation, linked issue (its id, or its key when the key resolves to none) and valid_from."
+        tests:
+          - unique
+          - not_null
+      - name: link_type
+        description: "parent | sub_issue | blocked_by | blocking | duplicate_of | connected. Jira's Blocks and Duplicate types map by name and direction, then Jira's default wording; every other type is connected."
+        tests:
+          - accepted_values:
+              values: ['parent', 'sub_issue', 'blocked_by', 'blocking', 'duplicate_of', 'connected']
+      - name: target_id
+        description: "The linked issue's immutable id; NULL when its key resolves to no id (a project the connector cannot read, an issue deleted before it was read)."

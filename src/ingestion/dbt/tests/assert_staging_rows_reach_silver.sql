@@ -21,7 +21,9 @@
 {%- if execute -%}
   {%- set models = graph.nodes.values() | selectattr('resource_type', 'equalto', 'model') | list -%}
   {%- for node in models if node.config.materialized == 'incremental' -%}
-    {%- set found = modules.re.search("union_by_tag\\(\\s*'([^']+)'", node.raw_code) -%}
+    {#- INVARIANT: only a live Jinja call makes a class; a SQL or Jinja comment naming a union_by_tag must not. -#}
+    {%- set live_code = modules.re.sub("(?s)\\{#.*?#\\}", "", node.raw_code) -%}
+    {%- set found = modules.re.search("\\{\\{-?\\s*union_by_tag\\(\\s*'([^']+)'", live_code) -%}
     {%- set served = adapter.get_relation(database=none, schema=node.schema, identifier=node.alias or node.name) if found else none -%}
     {%- if served -%}
       {%- set staged = [] -%}

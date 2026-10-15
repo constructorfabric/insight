@@ -331,6 +331,33 @@ describe("MetricEvidenceDialog", () => {
       screen.getByText("No supporting data for this selection")
     ).toBeInTheDocument();
 
+    // Same empty page, but the warehouse said it has nothing built yet: "no
+    // supporting data for this selection" would be a claim about a selection
+    // that was never read against data.
+    mocks.query = readyQuery({
+      data: {
+        pages: [
+          {
+            columns: [],
+            rows: [],
+            next_cursor: null,
+            not_ready: "SOURCE_RELATION_MISSING",
+          },
+        ],
+      },
+    });
+    view.rerender(
+      <MetricEvidenceDialog
+        state={state}
+        onMetricChange={onMetricChange}
+        onClose={vi.fn()}
+      />
+    );
+    expect(screen.getByText(/No data yet/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("No supporting data for this selection")
+    ).not.toBeInTheDocument();
+
     mocks.query = readyQuery({
       data: {
         pages: Array.from({ length: 50 }, () => ({

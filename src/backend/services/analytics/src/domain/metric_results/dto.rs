@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::view::{Bucket, MetricResultViewKind};
 use crate::domain::metric_definitions::{MetricDirection, MetricFormat};
 use crate::domain::metric_drilldown::MetricDrilldownCapability;
+use crate::domain::not_ready::NotReadyReason;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MetricResultsRequest {
@@ -208,12 +209,21 @@ pub enum MetricResultViewDto {
         code: MetricViewErrorCode,
         message: String,
     },
+    /// The data this view reads has not been built yet. It carries no values
+    /// at all, which is what separates it from a view whose every reading is
+    /// `0`: nothing failed, and nothing was measured either.
+    ///
+    /// INVARIANT: a variant rather than a flag on the value-carrying shapes —
+    /// "not ready" and "here are the values" cannot both be true, so a reader
+    /// cannot render a zero it was never told.
+    NotReady {
+        reason: NotReadyReason,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum MetricViewErrorCode {
-    SourceRelationMissing,
     ResourceExhausted,
     QueryTimeout,
     ResultParseFailed,

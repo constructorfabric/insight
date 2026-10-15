@@ -2,7 +2,7 @@
 
 Each step picks a target name and a warehouse; everything else — the timeouts,
 the session settings, the adapter's `cluster` key — comes from here, so a
-topology decision reaches the deploy hook, bootstrap, the seeder and both test
+topology decision reaches the gold build, bootstrap, the seeder and both test
 rigs without being restated in any of them.
 
 Run: pytest src/ingestion/scripts/tests
@@ -156,7 +156,7 @@ def test_a_step_that_speaks_https_connects_securely(monkeypatch) -> None:
 def test_a_step_that_knows_only_a_url_reads_the_connection_out_of_it(
     monkeypatch, url: str, expected_port: int, expected_secure: bool
 ) -> None:
-    """The deploy hook and the seeder carry `CLICKHOUSE_URL`, not a host/port pair."""
+    """The gold build and the seeder carry `CLICKHOUSE_URL`, not a host/port pair."""
     monkeypatch.setenv("CLICKHOUSE_URL", url)
 
     connection = connection_from_env()

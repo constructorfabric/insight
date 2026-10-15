@@ -412,6 +412,7 @@ def _check_clickhouse(target: ClickHouse, scripts: Path, tenant: str, *, force: 
             "create-databases.sh",
             "create-warehouse-placeholders.sh",
             "apply-ch-migrations.sh",
+            "build-gold.sh",
         )
         if not (scripts / name).is_file()
     ]
