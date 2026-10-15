@@ -149,7 +149,8 @@ stated AS (
         p.issue_id                                                    AS issue_id,
         p.relation                                                    AS relation,
         p.target_ident                                                AS target_ident,
-        min(h.occurrence_key)                                         AS occurrence_key
+        min(h.occurrence_key)                                         AS occurrence_key,
+        any(p.phrase_ops[1].3 = 'remove')                             AS held_before_phrase
     FROM phrase_occurrences AS p
     INNER JOIN held_occurrences AS h
         ON h.insight_source_id = p.insight_source_id
@@ -162,8 +163,9 @@ stated AS (
 ),
 
 -- Between two issues, the phrases still added at their last event that no held
--- link states, and the held links no phrase states. One of each is that link
--- under a phrase its type has since dropped.
+-- link states, and the held links no phrase opened: unstated, or stated by a
+-- phrase whose first event removed it. One of each is that link under a phrase
+-- its type has since dropped.
 open_unstated AS (
     SELECT
         p.insight_source_id                                           AS insight_source_id,
@@ -188,7 +190,7 @@ unclaimed_held AS (
         h.target_ident                                                AS target_ident,
         groupArray(h.occurrence_key)                                  AS occurrence_keys
     FROM held_occurrences AS h
-    LEFT ANTI JOIN stated AS s
+    LEFT ANTI JOIN (SELECT * FROM stated WHERE NOT held_before_phrase) AS s
         ON s.insight_source_id = h.insight_source_id
        AND s.issue_id = h.issue_id
        AND s.target_ident = h.target_ident

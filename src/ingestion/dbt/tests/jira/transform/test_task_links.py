@@ -320,3 +320,25 @@ def test_a_retired_phrase_means_the_type_it_was_seen_on_for_a_link_no_longer_hel
         ("1005", "blocking", "1006", "TST-6", DAY_6, 1, DAY_7, "501"),
     ]
     assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[LINKS_FIELD],
+    issues=[
+        issue("TST-1", jira_id="1001", fields={LINKS: [_outward("1", BLOCKS, "1002", "TST-2")]}),
+        issue("TST-2", jira_id="1002"),
+    ],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_added("TST-2", "must finish before")], jira_id="1001"),
+        event("TST-1", 102, "2026-01-07T10:00:00", [_removed("TST-2", "blocks")], jira_id="1001"),
+        event("TST-1", 103, "2026-01-08T10:00:00", [_added("TST-2", "blocks")], jira_id="1001"),
+    ],
+)
+def test_a_link_re_added_after_its_type_was_reworded_is_one_occurrence(scenario: Scenario) -> None:
+    """The new phrase states the held link but first removes it, so the link
+    was there before under another phrase: the old phrase still added is it."""
+    assert _intervals(scenario.links()) == [
+        ("1001", "blocking", "1002", "TST-2", DAY_6, 1, DAY_7, "101"),
+        ("1001", "blocking", "1002", "TST-2", DAY_8, 1, None, "103"),
+    ]
+    assert scenario.round_trip_holds()
