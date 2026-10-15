@@ -173,10 +173,11 @@ is present. Leave `analytics.metricCatalog.enforceTenantScope` at its default
 `true`.
 
 Deploy the release (`helm upgrade`, or sync the GitOps application). Its
-`clickhouse-migrate` hook heals the warehouse and builds gold over the
-unmigrated data; metrics read empty until step 7. Then confirm the
-CronWorkflows and the seed CronJob are still suspended, and run `plan` again:
-it must print no `REFUSED` line now.
+`clickhouse-migrate` hook applies the migrations and heals, and replaces the
+identity map and coverage views with this release's bodies; it builds no dbt
+model, so gold keeps the rows the last sync wrote under `<OLD_TENANT>`. Metrics
+read empty until step 7. Then confirm the CronWorkflows and the seed CronJob
+are still suspended, and run `plan` again: it must print no `REFUSED` line now.
 
 Operator-authored field-value-map bundles
 (`clickhouse.fieldValueMap`) carry a `tenant_id` column. Leave them as they are
@@ -207,9 +208,13 @@ finalize` to drop the set-aside copies, and `apply` again with a new `--dump-dir
 
 Every other relation is rebuilt by a dbt full refresh of the installed
 connectors, in the order a sync uses: staging and the identity inputs, the
-identity seed, then everything downstream. History relations (`tag:history`)
-refuse a full refresh: they keep their rows and run incrementally, and one that
-does not exist yet is created.
+identity seed, then everything downstream, gold included — the deploy builds no
+model, so this rebuild is what moves gold to `<TENANT_UUID>`. History relations
+(`tag:history`) refuse a full refresh: they keep their rows and run
+incrementally, and one that does not exist yet is created. Like a sync, each
+`dbt-run` below also builds the `tag:sync:always` views (the identity map and
+`bronze_insert_events`) and leaves out the models whose Bronze the install does
+not hold.
 
 List the installed connectors and compose the selections:
 
@@ -282,11 +287,13 @@ EOF
    rows for tenant <TENANT_UUID>` means the inputs still carry another tenant —
    step 6 or step 7.1 did not take.
 
-3. Everything downstream, then gold the way the deploy hook builds it:
+3. Everything downstream — each connector's silver and the gold it feeds —
+   then every gold model once more, for a gold relation no installed
+   connector's selection reaches:
 
    ```sh
    dbt_run "$DOWNSTREAM" "$STAGING identity_inputs" true
-   dbt_run "tag:gold tag:identity:map" "" false
+   dbt_run "tag:gold" "" false
    ```
 
 A `dbt-run` workflow is capped at two hours; on an install where a step needs
