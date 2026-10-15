@@ -268,8 +268,9 @@ with a dedicated spec (see `collab/collab_emails_read.test.yaml`):
    view compares the person against a cohort from `insight.metric_entity_cohorts_current`:
    their department under `org_chart` visibility, the whole tenant under `flat`. The
    cohort's median, quartiles and min/max are NULL until at least 5 cohort members have
-   data (`MIN_PEER_N` in `domain/metric_results/compiler.rs`), so a peer case needs five
-   or more seeded people in one department.
+   data (`MIN_PEER_N` in `domain/metric_results/compiler.rs`), so a peer case seeds at
+   least five people WITH DATA FOR THE METRIC in the effective cohort: one department
+   under `org_chart`, anywhere in the tenant under `flat`.
 2. **Ensure a schema file per table.** If `schemas/<db>.<table>.yaml` is missing, write it
    from the table's `CREATE TABLE` in `src/ingestion/scripts/connectors-ddl/<connector>.sql`
    — the snapshot the suite applies to the instance, so the two cannot disagree. Do not

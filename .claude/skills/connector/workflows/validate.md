@@ -241,7 +241,7 @@ expected on a lens or overview, verify the chain; if it is bronze-only or no gol
 evidence model reads its class, confirm the README says so and skip this section.
 
 - [ ] Silver class `class_<X>.sql` carries `-- depends_on: {{ ref('<snake>__<class>') }}` for the connector.
-- [ ] The family's gold evidence model reads `silver.class_<X>`, and the source's dimension value has a display label in the family's label macro (`collab_tool_label`, `ai_tool_label`, `git_source_label`).
+- [ ] The family's gold evidence model reads `silver.class_<X>`, the branch of every measure the connector should feed accepts its rows (filters, joins, `data_source` mappings), and the source's dimension value has a display label in the family's label macro (`collab_tool_label`, `ai_tool_label`, `git_source_label`).
 - [ ] A source that contributes account ids to identity maps its `data_source` to an identity source type where the evidence model sets `account_source_type`.
 - [ ] Any new measure is emitted by the evidence model and listed under its source in `registry.yaml`; any new metric is under `metrics:` there, and `passports.md` was regenerated.
 - [ ] No analytics SeaORM migration, `metric_catalog` row, threshold row or `insight.*_bullet_rows` view was added.

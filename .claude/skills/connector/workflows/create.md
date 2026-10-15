@@ -472,9 +472,10 @@ bronze_<snake>.<stream>
 ```
 
 `<family>` is the relation prefix of one registry source (`ai`, `ai_cost`, `ci`,
-`collab`, `git`, `task`, `wiki`). Gold evidence models read the whole class, not one source, so a
-connector feeding a class a family already reads lands in that family's existing
-measures with no gold change beyond its labels.
+`collab`, `git`, `task`, `wiki`). Gold evidence models read the whole class rather
+than one source, but each measure's branch can still filter or join its rows away —
+an e-mail shape filter, a `data_source` mapping, a join to another class. A connector
+counts in a measure only when that branch accepts its rows.
 
 - **Layer 0 — silver class build edge.** Add
   `-- depends_on: {{ ref('<snake>__<class>') }}` to
@@ -495,8 +496,10 @@ measures with no gold change beyond its labels.
      `connectors-config.yaml` entry from §3.8 step 1. Adding this edge without
      that entry is precisely the #2048 failure.
 - **Layer A — gold evidence.** In `src/ingestion/gold/<family>_metric_evidence.sql`:
-  - **Existing measure:** nothing to add for the rows themselves. Give the source's
-    dimension value a display label in the family's label macro
+  - **Existing measure:** read the branch that emits each measure the connector
+    should feed and confirm its filters and joins accept the connector's rows
+    (keys, `data_source` values, the classes it joins); extend the branch where they
+    do not. Give the source's dimension value a display label in the family's label macro
     (`collab_tool_label`, `ai_tool_label`, `git_source_label` under
     `src/ingestion/dbt/macros/`); an unmapped value shows as its raw code. If the
     source contributes account ids to identity, map its `data_source` to the
