@@ -8,6 +8,13 @@ import { Row } from "@/components/custom/editor/controls";
 import { refusal } from "@/components/custom/refusal";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Field,
+  FieldError,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { conditionColumns } from "@/lib/alerts/condition";
@@ -68,12 +75,10 @@ function ContextColumnChoice({
   const id = `alert-context-${column}`;
 
   return (
-    <label
-      htmlFor={id}
-      className={cn(
-        "flex cursor-pointer items-center gap-2 rounded-sm px-1 py-1.5 font-mono text-sm",
-        disabled ? "text-muted-foreground" : "hover:bg-muted"
-      )}
+    <Field
+      orientation="horizontal"
+      data-disabled={disabled}
+      className="w-auto gap-2"
     >
       <Checkbox
         id={id}
@@ -81,8 +86,10 @@ function ContextColumnChoice({
         disabled={disabled}
         onCheckedChange={onToggle}
       />
-      <span className="min-w-0 truncate">{column}</span>
-    </label>
+      <FieldLabel htmlFor={id} className="font-mono font-normal">
+        {column}
+      </FieldLabel>
+    </Field>
   );
 }
 
@@ -227,18 +234,21 @@ export function AlertFields({
       ) : null}
 
       {chosen && (offered.length > 0 || errors.context_columns) ? (
-        <fieldset
+        <FieldSet
           tabIndex={-1}
-          className="flex min-w-0 flex-col gap-2 outline-none"
+          className="gap-2 outline-none"
           aria-invalid={errors.context_columns ? true : undefined}
           aria-describedby={
             errors.context_columns ? "alert-context-columns-said" : undefined
           }
         >
-          <legend className={cn(TEXT_LABEL, "mb-1 font-medium")}>
+          <FieldLegend
+            variant="label"
+            className={cn(TEXT_LABEL, "mb-1 font-medium")}
+          >
             Show in notification
-          </legend>
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
+          </FieldLegend>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
             {offered.map((column) => (
               <ContextColumnChoice
                 key={column}
@@ -258,16 +268,10 @@ export function AlertFields({
               />
             ))}
           </div>
-          {errors.context_columns ? (
-            <p
-              id="alert-context-columns-said"
-              role="alert"
-              className={cn(TEXT_LABEL, "text-destructive")}
-            >
-              {errors.context_columns}
-            </p>
-          ) : null}
-        </fieldset>
+          <FieldError id="alert-context-columns-said">
+            {errors.context_columns}
+          </FieldError>
+        </FieldSet>
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
