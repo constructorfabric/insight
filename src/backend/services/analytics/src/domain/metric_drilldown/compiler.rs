@@ -4,6 +4,7 @@ use toolkit_canonical_errors::CanonicalError;
 
 use crate::domain::metric_definitions::ComputationSpec;
 use crate::domain::metric_definitions::definition::{MetricInputRole, RatioDenominatorAggregation};
+use crate::domain::metric_results::compiler::tenant_predicate_on;
 
 use super::cursor::CursorKey;
 use super::dto::{
@@ -82,8 +83,7 @@ fn compile_value_query(
     );
     let narrowing_sql = conjunction("AND", &[search, cursor]);
     let limit = req.limit + 1;
-    let tenant =
-        crate::domain::metric_results::compiler::tenant_predicate(req.enforce_tenant_scope);
+    let tenant = tenant_predicate_on("evidence", req.enforce_tenant_scope);
     let order_by = order.order_by(&[
         "role",
         "metric_date",
@@ -260,8 +260,7 @@ fn compile_ratio_query(
     );
     let outer_sql = where_clause(&[search, cursor]);
     let limit = req.limit + 1;
-    let tenant =
-        crate::domain::metric_results::compiler::tenant_predicate(req.enforce_tenant_scope);
+    let tenant = tenant_predicate_on("evidence", req.enforce_tenant_scope);
     let order_by = order.order_by(&[
         "role",
         "metric_date",
@@ -957,6 +956,51 @@ mod tests {
                 assert_eq!(
                     opened, scoped,
                     "every {map} join should match on the evidence tenant: {case}"
+                );
+            }
+        }
+    }
+
+    fn ratio_roster_plan(ids: &[Uuid]) -> ValidatedMetricDrilldown {
+        let mut request = ratio_plan(AliasCollapse::Max, RatioDenominatorAggregation::Sum);
+        request.selection.entity = MetricDrilldownEntity::Persons {
+            ids: ids.iter().map(Uuid::to_string).collect(),
+        };
+        request
+    }
+
+    // INVARIANT: the identity maps a drilldown joins carry their own tenant_id,
+    // so a bare `tenant_id` in the scope is ambiguous and ClickHouse refuses it.
+    #[test]
+    fn every_drilldown_query_scopes_the_tenant_on_the_evidence_relation() {
+        for enforce in [true, false] {
+            let scope = if enforce {
+                "evidence.tenant_id = ?"
+            } else {
+                "(evidence.tenant_id = ? OR 1 = 1)"
+            };
+            for (case, mut plan) in [
+                ("one person", commit_plan()),
+                ("roster", roster_plan(&[TEST_PERSON])),
+                (
+                    "ratio",
+                    ratio_plan(AliasCollapse::Max, RatioDenominatorAggregation::Sum),
+                ),
+                ("ratio roster", ratio_roster_plan(&[TEST_PERSON])),
+            ] {
+                plan.enforce_tenant_scope = enforce;
+                let (sql, _) = compile_query(&plan)
+                    .unwrap_or_else(|error| panic!("{case} must compile: {error}"));
+
+                assert_eq!(
+                    sql.matches(scope).count(),
+                    1,
+                    "should scope once on the evidence tenant: {case}, enforce={enforce}"
+                );
+                assert_eq!(
+                    sql.matches("tenant_id = ?").count(),
+                    sql.matches("evidence.tenant_id = ?").count(),
+                    "should leave no tenant predicate unqualified: {case}, enforce={enforce}"
                 );
             }
         }

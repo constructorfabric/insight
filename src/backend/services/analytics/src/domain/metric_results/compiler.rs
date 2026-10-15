@@ -1748,6 +1748,16 @@ pub(crate) fn tenant_predicate(enforce: bool) -> &'static str {
     }
 }
 
+/// The same predicate on one relation's tenant, for queries that join another
+/// relation carrying its own `tenant_id`.
+pub(crate) fn tenant_predicate_on(alias: &str, enforce: bool) -> String {
+    if enforce {
+        format!("{alias}.tenant_id = ?")
+    } else {
+        format!("({alias}.tenant_id = ? OR 1 = 1)")
+    }
+}
+
 fn metric_where(def: &MetricDefinition, enforce_tenant_scope: bool) -> String {
     let tenant = tenant_predicate(enforce_tenant_scope);
     match &def.spec {
