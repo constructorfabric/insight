@@ -2,7 +2,9 @@
 # Cut a warm installation over to the canonical tenant UUID, the way
 # deploy/TENANT_IDENTITY_UPGRADE.md tells an operator to, and check every step.
 #
-#   1. Deploy this tree onto an empty ClickHouse (apply-ch-migrations.sh).
+#   1. Deploy this tree onto an empty ClickHouse (apply-ch-migrations.sh). It
+#      builds no model; the identity map views it stands up already key on the
+#      tenant.
 #   2. Hold the state a warm installation holds at that point: Bronze, a
 #      history relation, operator config and the sync ledger written under a
 #      legacy tenant that is not a UUID, and identity inputs the previous
@@ -12,8 +14,9 @@
 #   3. `tenant_migration plan` and `apply`: nothing lost, tenant and keys moved.
 #   4. `rollback`, then `restore` from the dump: each gives back the warm state
 #      exactly.
-#   5. Apply again and rebuild with `--full-refresh`, the history relation in
-#      the selection: the identity inputs carry only the canonical tenant, the
+#   5. Apply again and rebuild with `--full-refresh` the way a sync selects,
+#      the history relation in the selection and the `sync:always` views
+#      beside it: the identity inputs carry only the canonical tenant, the
 #      history relation refuses the flag and keeps every row, and `finalize`
 #      leaves no work table behind.
 #
@@ -77,6 +80,13 @@ fingerprint() {
 
 echo "=== Step 1: deploy this tree onto an empty ClickHouse ==="
 bash "$SCRIPTS/apply-ch-migrations.sh"
+
+map_columns="$(query "SELECT arrayStringConcat(groupArray(concat(table, '.', name)), ',') FROM
+    (SELECT table, name FROM system.columns
+     WHERE database = 'identity' AND table IN ('account_assignment', 'person_map') AND name = 'tenant_id'
+     ORDER BY table)")"
+[[ "$map_columns" == "account_assignment.tenant_id,person_map.tenant_id" ]] \
+  || fail "the deploy must stand up the identity map views keyed by tenant, since no dbt runs until the first sync — got '$map_columns'"
 
 echo "=== Step 2: the warm state, under the legacy tenant '$OLD_TENANT' ==="
 # Bronze as destination-clickhouse leaves it for the zoom users stream, with
@@ -175,7 +185,7 @@ migration finalize
 echo "=== Step 5: apply, rebuild, finalize ==="
 migration apply --tenant "$NEW_TENANT" --old-tenant "$OLD_TENANT" --dump-dir "$WORKDIR/dump-3"
 assert_migrated
-dbt_run --full-refresh --select zoom__users_snapshot+
+dbt_run --full-refresh --select zoom__users_snapshot+ tag:sync:always
 
 got="$(query "SELECT concat(
     toString(count()), ':',
