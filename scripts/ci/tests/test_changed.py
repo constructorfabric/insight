@@ -109,6 +109,14 @@ class ChangedCliTests(unittest.TestCase):
         flagged = {job["name"] for job in matrix["rust"] if job["include_ignored"]}
         self.assertEqual(flagged, {"insight-v3-core"})
 
+    def test_only_ingestion_scripts_gets_a_clickhouse_among_python_jobs(self) -> None:
+        """The tenant migration's integration suite skips without a ClickHouse,
+        so losing the flag would turn it green without running it."""
+        matrix = changed.all_components(COMPONENTS)
+
+        flagged = {job["name"] for job in matrix["python"] if job["live_ch"]}
+        self.assertEqual(flagged, {"ingestion-scripts"})
+
     def test_insight_clickhouse_change_runs_insight_v3_core_tests(self) -> None:
         completed = subprocess.CompletedProcess(
             args=["git", "diff"], returncode=0, stdout="src/backend/libs/insight-clickhouse/src/lib.rs\n"
