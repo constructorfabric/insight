@@ -29,7 +29,13 @@ def _directly_seeded_silver() -> set[str]:
 
 
 @pytest.mark.parametrize(
-    "selector", [*silver.CI_CHAIN_SELECT, *silver.SUPPORT_CHAIN_SELECT, silver.AI_INVOICE_SELECT]
+    "selector",
+    [
+        *silver.CI_CHAIN_SELECT,
+        *silver.SUPPORT_CHAIN_SELECT,
+        *silver.WIKI_CHAIN_SELECT,
+        silver.AI_INVOICE_SELECT,
+    ],
 )
 def test_no_selected_model_feeds_a_directly_seeded_silver_relation(selector: str) -> None:
     """The on-run-start placeholder hook drops a silver placeholder once any
@@ -51,6 +57,11 @@ def test_no_selected_model_feeds_a_directly_seeded_silver_relation(selector: str
 
 def test_the_selector_names_only_models_that_exist() -> None:
     known = _model_tags()
-    selectors = [*silver.CI_CHAIN_SELECT, *silver.SUPPORT_CHAIN_SELECT, silver.AI_INVOICE_SELECT]
+    selectors = [
+        *silver.CI_CHAIN_SELECT,
+        *silver.SUPPORT_CHAIN_SELECT,
+        *silver.WIKI_CHAIN_SELECT,
+        silver.AI_INVOICE_SELECT,
+    ]
     missing = [s.rstrip("+") for s in selectors if s.rstrip("+") not in known]
     assert not missing, f"selector names models that do not exist: {missing}"

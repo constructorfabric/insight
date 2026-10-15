@@ -210,6 +210,14 @@ SUPPORT_CHAIN_SELECT = (
     "zendesk__support_activity+",
 )
 
+# The bronze-derived wiki chain. Outline's three staging models are views over
+# bronze, so each is named rather than relying on one to pull the others.
+WIKI_CHAIN_SELECT = (
+    "outline__wiki_pages+",
+    "outline__wiki_activity+",
+    "outline__wiki_engagement+",
+)
+
 # The bronze-derived CI chain. INVARIANT: no entry may feed a silver relation
 # the generators write directly — the on-run-start placeholder hook would drop
 # it and rebuild it from an empty staging union. `tests/test_dbt_selector_guard.py`
@@ -350,6 +358,7 @@ def run() -> None:
                     AI_INVOICE_SELECT,
                     *CI_CHAIN_SELECT,
                     *SUPPORT_CHAIN_SELECT,
+                    *WIKI_CHAIN_SELECT,
                 ]
             ),
             full_refresh=True,

@@ -41,6 +41,11 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("bronze_github", "repositories"),
     ("bronze_github", "workflow_runs"),
     ("bronze_gitlab", "repositories"),
+    ("bronze_outline", "wiki_comments"),
+    ("bronze_outline", "wiki_page_versions"),
+    ("bronze_outline", "wiki_pages"),
+    ("bronze_outline", "wiki_spaces"),
+    ("bronze_outline", "wiki_users"),
     ("bronze_zendesk", "support_agents"),
     ("bronze_zendesk", "support_ticket_events"),
     ("bronze_zendesk", "zendesk_satisfaction_ratings"),
@@ -118,6 +123,9 @@ BRONZE_DERIVED_SILVER: frozenset[str] = frozenset(
         "class_git_deployments",
         "class_git_repositories",
         "class_support_activity",
+        "class_wiki_activity",
+        "class_wiki_engagement",
+        "class_wiki_pages",
     }
 )
 
