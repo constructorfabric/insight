@@ -218,6 +218,24 @@ WIKI_CHAIN_SELECT = (
     "outline__wiki_engagement+",
 )
 
+# The bronze-derived collaboration chain: three connectors union into the
+# three class relations.
+COLLAB_CHAIN_SELECT = (
+    "m365__collab_chat_activity+",
+    "m365__collab_email_activity+",
+    "m365__collab_meeting_activity+",
+    # No row is emitted for these two, but the class they feed has to exist:
+    # gold's collab evidence reads it, and an unbuilt relation fails the model
+    # rather than contributing nothing.
+    "m365__collab_document_activity_onedrive+",
+    "m365__collab_document_activity_sharepoint+",
+    "slack__collab_chat_activity+",
+    # Named before the activity model, which reads it by raw name rather than
+    # ref() — so dbt cannot infer the dependency and would build neither.
+    "zoom__meeting_sessions+",
+    "zoom__collab_meeting_activity+",
+)
+
 # The bronze-derived CRM chain.
 CRM_CHAIN_SELECT = (
     "hubspot__crm_users+",
@@ -367,6 +385,7 @@ def run() -> None:
                     *SUPPORT_CHAIN_SELECT,
                     *WIKI_CHAIN_SELECT,
                     *CRM_CHAIN_SELECT,
+                    *COLLAB_CHAIN_SELECT,
                 ]
             ),
             full_refresh=True,
