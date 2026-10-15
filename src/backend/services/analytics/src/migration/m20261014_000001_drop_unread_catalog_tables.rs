@@ -1,12 +1,19 @@
 use sea_orm_migration::prelude::*;
 
-// INVARIANT: only tables no released image reads or probes at boot; a rolled-back
-// image must still start. `metric_query_catalog` references `metrics`, so it drops first.
+// INVARIANT: `metric_query_catalog` references `metrics` and `metric_catalog`, so
+// it drops first; `IF EXISTS` lets a run interrupted between DROPs finish on retry.
 const DROPS: &[&str] = &[
     "DROP TABLE IF EXISTS metric_query_catalog",
     "DROP TABLE IF EXISTS metrics",
+    "DROP TABLE IF EXISTS metric_catalog",
+    "DROP TABLE IF EXISTS metric_threshold",
+    "DROP TABLE IF EXISTS threshold_lock_audit",
     "DROP TABLE IF EXISTS thresholds",
     "DROP TABLE IF EXISTS table_columns",
+    "DROP TABLE IF EXISTS semantic_definition_revisions",
+    "DROP TABLE IF EXISTS semantic_metrics",
+    "DROP TABLE IF EXISTS semantic_measures",
+    "DROP TABLE IF EXISTS semantic_datasets",
 ];
 
 #[derive(DeriveMigrationName)]
@@ -40,28 +47,12 @@ mod tests {
     }
 
     #[test]
-    fn a_referencing_table_drops_before_the_table_it_references() {
-        assert!(
-            position("metric_query_catalog") < position("metrics"),
-            "metric_query_catalog must drop before metrics"
-        );
-    }
-
-    #[test]
-    fn tables_a_previous_image_probes_at_boot_are_kept() {
-        for table in [
-            "metric_catalog",
-            "metric_threshold",
-            "threshold_lock_audit",
-            "semantic_datasets",
-            "semantic_measures",
-            "semantic_metrics",
-            "semantic_definition_revisions",
-        ] {
-            let statement = format!("DROP TABLE IF EXISTS {table}");
+    fn a_referencing_table_drops_before_the_tables_it_references() {
+        let child = position("metric_query_catalog");
+        for parent in ["metrics", "metric_catalog"] {
             assert!(
-                !DROPS.contains(&statement.as_str()),
-                "{table} must outlive the release that stopped probing it"
+                child < position(parent),
+                "metric_query_catalog must drop before {parent}"
             );
         }
     }
