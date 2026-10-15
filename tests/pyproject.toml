@@ -44,7 +44,7 @@ dependencies = [
     # Pinned so every runner installs the same browser build via
     # `playwright install chromium`.
     "playwright==1.63.0",
-    "pytest-playwright==0.9.0",
+    "pytest-playwright==0.10.0",
     # Response-schema validation. Already a proven version in this repo — the
     # integration rig resolves the same 2.13 line transitively.
     "pydantic>=2.13",
