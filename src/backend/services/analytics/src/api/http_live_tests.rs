@@ -916,122 +916,6 @@ fn entity_field(rows: &Value, person: Uuid, field: &str) -> Value {
 
 #[tokio::test]
 #[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
-async fn a_drilldown_over_an_unbuilt_relation_answers_an_empty_page_and_a_file() -> TestResult {
-    // The page a fresh install serves: 200 with the columns the plan declares,
-    // no rows, and the marker saying why — and the same selection downloads as
-    // the file it will be once a connector has synced. The evidence relation is
-    // never created here, which is what a warehouse looks like before its first
-    // sync.
-    let Some(db) = connect_or_skip().await else {
-        return Ok(());
-    };
-    let Some(ch) = live_ch_or_skip() else {
-        return Ok(());
-    };
-    let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
-    let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
-    let result: anyhow::Result<()> = async {
-        let app = app_with_identity_and_ch(db.clone(), fixture.tenant_id, identity, ch.clone());
-
-        let resp = app
-            .clone()
-            .oneshot(json_req(
-                "POST",
-                "/v1/metric-drilldown",
-                &drilldown_body(VISIBLE_PERSON),
-            )?)
-            .await?;
-        anyhow::ensure!(resp.status() == StatusCode::OK, "got {}", resp.status());
-
-        let body = body_json(resp).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        anyhow::ensure!(
-            body["not_ready"] == "SOURCE_RELATION_MISSING",
-            "the page must say why it is empty, got {body}"
-        );
-        anyhow::ensure!(
-            body["rows"].as_array().is_some_and(Vec::is_empty),
-            "a not-ready page carries no rows, got {}",
-            body["rows"]
-        );
-        anyhow::ensure!(
-            body["next_cursor"].is_null(),
-            "there is no next page of nothing, got {}",
-            body["next_cursor"]
-        );
-        anyhow::ensure!(
-            body["columns"]
-                .as_array()
-                .is_some_and(|columns| !columns.is_empty()),
-            "the columns come off the plan, not off rows, got {}",
-            body["columns"]
-        );
-
-        let resp = app
-            .oneshot(json_req(
-                "POST",
-                "/v1/metric-drilldown/export",
-                &drilldown_export_body(VISIBLE_PERSON),
-            )?)
-            .await?;
-        anyhow::ensure!(
-            resp.status() == StatusCode::OK,
-            "the export must download, got {}",
-            resp.status()
-        );
-        let disposition = resp
-            .headers()
-            .get("content-disposition")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_owned();
-        anyhow::ensure!(
-            disposition.contains(".csv"),
-            "the file keeps the name it would have had, got {disposition}"
-        );
-        let csv = String::from_utf8(to_bytes(resp.into_body(), 1 << 20).await?.to_vec())?;
-        let lines: Vec<&str> = csv.lines().filter(|line| !line.is_empty()).collect();
-        anyhow::ensure!(
-            lines.len() == 1,
-            "a header and no records is the whole file, got {lines:?}"
-        );
-        Ok(())
-    }
-    .await;
-    fixture.delete(&db).await?;
-    result.map_err(Into::into)
-}
-
-/// The relations a drilldown pins its cursor to, beside the evidence itself:
-/// the persons journal and the claims the identity watermark is read from.
-async fn seed_identity_watermark_relations(
-    ch: &insight_clickhouse::Client,
-) -> Result<(), Box<dyn std::error::Error>> {
-    ch.query("CREATE DATABASE IF NOT EXISTS identity")
-        .execute()
-        .await?;
-    ch.query(
-        "CREATE TABLE IF NOT EXISTS identity.identity_persons \
-         (id UInt64, person_id UUID) ENGINE = MergeTree ORDER BY id",
-    )
-    .execute()
-    .await?;
-    ch.query(
-        "CREATE TABLE IF NOT EXISTS identity.identity_inputs \
-         (person_id UUID, _version Int64) ENGINE = MergeTree ORDER BY person_id",
-    )
-    .execute()
-    .await?;
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
-async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure() -> TestResult {
-    // The other side of the same contract: once the evidence relation and the
-    // relations its cursor pins exist, the read answers with records and no
-    // marker. Without this the not-ready path above would pass against a
-    // handler that never answers anything else.
-
 async fn another_tenants_identity_never_claims_this_tenants_observations() -> TestResult {
     // Both tenants know the same address and the same account, each as its own
     // person. Only the reading tenant's person may receive the observations.
@@ -1043,30 +927,6 @@ async fn another_tenants_identity_never_claims_this_tenants_observations() -> Te
     };
     let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
     let suffix = fixture.tenant_id.simple().to_string();
-    let evidence = format!("insight.test_{suffix}_metric_evidence");
-    let person_email = format!("person-{suffix}@example.test");
-    ch.query("CREATE DATABASE IF NOT EXISTS insight")
-        .execute()
-        .await?;
-    // The serving contract, column for column — a shape a test invents would
-    // pass here and fail on the relation a deployment actually reads.
-    ch.query(&format!(
-        "CREATE TABLE {evidence} (tenant_id String, source_key String, entity_type String, \
-         entity_id String, account_source_type String, account_source_id String, \
-         account_id String, metric_date Date, observed_at Nullable(DateTime64(3)), \
-         measure_key String, record_id String, record_kind String, granularity String, \
-         record_label String, contribution Nullable(Float64), subject_key Nullable(String), \
-         dimensions Array(Tuple(key String, value String, label Nullable(String))), \
-         details Map(String, String)) \
-         ENGINE = MergeTree ORDER BY (tenant_id, source_key, entity_id, metric_date)"
-    ))
-    .execute()
-    .await?;
-    ch.query(&format!(
-        "INSERT INTO {evidence} VALUES ('{tenant}', 'test_{suffix}', 'person', \
-         '{person_email}', '', '', '', toDate('2026-07-05'), now64(3), 'value_count', \
-         'rec-1', 'commit', 'event', 'first commit', 1.0, NULL, [], map())",
-
     let relation = format!("insight.test_{suffix}_metric_observations");
     create_observation_relation(&ch, &relation).await?;
 
@@ -1089,11 +949,6 @@ async fn another_tenants_identity_never_claims_this_tenants_observations() -> Te
     ))
     .execute()
     .await?;
-    seed_identity_relations(&ch, &person_email, VISIBLE_PERSON).await?;
-    seed_identity_watermark_relations(&ch).await?;
-
-    let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
-
 
     let other_tenant = Uuid::now_v7();
     let other_tenants_person = Uuid::now_v7();
@@ -1112,9 +967,6 @@ async fn another_tenants_identity_never_claims_this_tenants_observations() -> Te
         let resp = app
             .oneshot(json_req(
                 "POST",
-                "/v1/metric-drilldown",
-                &drilldown_body(VISIBLE_PERSON),
-
                 "/v1/metric-results",
                 &json!({
                     "entity": {
@@ -1132,16 +984,6 @@ async fn another_tenants_identity_never_claims_this_tenants_observations() -> Te
         anyhow::ensure!(resp.status() == StatusCode::OK, "got {}", resp.status());
 
         let body = body_json(resp).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        anyhow::ensure!(
-            body["not_ready"].is_null(),
-            "a relation that is there carries no marker, got {}",
-            body["not_ready"]
-        );
-        anyhow::ensure!(
-            body["rows"].as_array().map(Vec::len) == Some(1),
-            "the seeded record must come back, got {}",
-            body["rows"]
-
         let view = &body["metrics"][0]["views"][0];
         anyhow::ensure!(view["view"] == "period", "got {view}");
         let value_of = |person: Uuid| entity_field(&view["values"], person, "value");
@@ -1438,9 +1280,175 @@ async fn another_tenants_identity_never_claims_this_tenants_drilldown_evidence()
     }
     .await;
     let _ = ch
-        .query(&format!("DROP TABLE IF EXISTS {evidence}"))
-
         .query(&format!("DROP TABLE IF EXISTS {relation}"))
+        .execute()
+        .await;
+    fixture.delete(&db).await?;
+    result.map_err(Into::into)
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
+async fn a_drilldown_over_an_unbuilt_relation_answers_an_empty_page_and_a_file() -> TestResult {
+    // The page a fresh install serves: 200 with the columns the plan declares,
+    // no rows, and the marker saying why — and the same selection downloads as
+    // the file it will be once a connector has synced. The evidence relation is
+    // never created here, which is what a warehouse looks like before its first
+    // sync.
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let Some(ch) = live_ch_or_skip() else {
+        return Ok(());
+    };
+    let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
+    let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
+    let result: anyhow::Result<()> = async {
+        let app = app_with_identity_and_ch(db.clone(), fixture.tenant_id, identity, ch.clone());
+
+        let resp = app
+            .clone()
+            .oneshot(json_req(
+                "POST",
+                "/v1/metric-drilldown",
+                &drilldown_body(VISIBLE_PERSON),
+            )?)
+            .await?;
+        anyhow::ensure!(resp.status() == StatusCode::OK, "got {}", resp.status());
+
+        let body = body_json(resp).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        anyhow::ensure!(
+            body["not_ready"] == "SOURCE_RELATION_MISSING",
+            "the page must say why it is empty, got {body}"
+        );
+        anyhow::ensure!(
+            body["rows"].as_array().is_some_and(Vec::is_empty),
+            "a not-ready page carries no rows, got {}",
+            body["rows"]
+        );
+        anyhow::ensure!(
+            body["next_cursor"].is_null(),
+            "there is no next page of nothing, got {}",
+            body["next_cursor"]
+        );
+        anyhow::ensure!(
+            body["columns"]
+                .as_array()
+                .is_some_and(|columns| !columns.is_empty()),
+            "the columns come off the plan, not off rows, got {}",
+            body["columns"]
+        );
+
+        let resp = app
+            .oneshot(json_req(
+                "POST",
+                "/v1/metric-drilldown/export",
+                &drilldown_export_body(VISIBLE_PERSON),
+            )?)
+            .await?;
+        anyhow::ensure!(
+            resp.status() == StatusCode::OK,
+            "the export must download, got {}",
+            resp.status()
+        );
+        let disposition = resp
+            .headers()
+            .get("content-disposition")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        anyhow::ensure!(
+            disposition.contains(".csv"),
+            "the file keeps the name it would have had, got {disposition}"
+        );
+        let csv = String::from_utf8(to_bytes(resp.into_body(), 1 << 20).await?.to_vec())?;
+        let lines: Vec<&str> = csv.lines().filter(|line| !line.is_empty()).collect();
+        anyhow::ensure!(
+            lines.len() == 1,
+            "a header and no records is the whole file, got {lines:?}"
+        );
+        Ok(())
+    }
+    .await;
+    fixture.delete(&db).await?;
+    result.map_err(Into::into)
+}
+
+
+#[tokio::test]
+#[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
+async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure() -> TestResult {
+    // The other side of the same contract: once the evidence relation and the
+    // relations its cursor pins exist, the read answers with records and no
+    // marker. Without this the not-ready path above would pass against a
+    // handler that never answers anything else.
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let Some(ch) = live_ch_or_skip() else {
+        return Ok(());
+    };
+    let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
+    let suffix = fixture.tenant_id.simple().to_string();
+    let evidence = format!("insight.test_{suffix}_metric_evidence");
+    let person_email = format!("person-{suffix}@example.test");
+    ch.query("CREATE DATABASE IF NOT EXISTS insight")
+        .execute()
+        .await?;
+    // The serving contract, column for column — a shape a test invents would
+    // pass here and fail on the relation a deployment actually reads.
+    ch.query(&format!(
+        "CREATE TABLE {evidence} (tenant_id String, source_key String, entity_type String, \
+         entity_id String, account_source_type String, account_source_id String, \
+         account_id String, metric_date Date, observed_at Nullable(DateTime64(3)), \
+         measure_key String, record_id String, record_kind String, granularity String, \
+         record_label String, contribution Nullable(Float64), subject_key Nullable(String), \
+         dimensions Array(Tuple(key String, value String, label Nullable(String))), \
+         details Map(String, String)) \
+         ENGINE = MergeTree ORDER BY (tenant_id, source_key, entity_id, metric_date)"
+    ))
+    .execute()
+    .await?;
+    ch.query(&format!(
+        "INSERT INTO {evidence} VALUES ('{tenant}', 'test_{suffix}', 'person', \
+         '{person_email}', '', '', '', toDate('2026-07-05'), now64(3), 'value_count', \
+         'rec-1', 'commit', 'event', 'first commit', 1.0, NULL, [], map())",
+        tenant = fixture.tenant_id,
+    ))
+    .execute()
+    .await?;
+    create_identity_relations(&ch).await?;
+    map_email(&ch, fixture.tenant_id, &person_email, VISIBLE_PERSON).await?;
+    create_identity_journal(&ch).await?;
+
+    let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
+    let result: anyhow::Result<()> = async {
+        let app = app_with_identity_and_ch(db.clone(), fixture.tenant_id, identity, ch.clone());
+        let resp = app
+            .oneshot(json_req(
+                "POST",
+                "/v1/metric-drilldown",
+                &drilldown_body(VISIBLE_PERSON),
+            )?)
+            .await?;
+        anyhow::ensure!(resp.status() == StatusCode::OK, "got {}", resp.status());
+
+        let body = body_json(resp).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        anyhow::ensure!(
+            body["not_ready"].is_null(),
+            "a relation that is there carries no marker, got {}",
+            body["not_ready"]
+        );
+        anyhow::ensure!(
+            body["rows"].as_array().map(Vec::len) == Some(1),
+            "the seeded record must come back, got {}",
+            body["rows"]
+        );
+        Ok(())
+    }
+    .await;
+    let _ = ch
+        .query(&format!("DROP TABLE IF EXISTS {evidence}"))
         .execute()
         .await;
     fixture.delete(&db).await?;
@@ -1548,7 +1556,6 @@ async fn a_saved_query_that_reads_answers_with_its_rows_and_no_marker() -> TestR
 }
 
 #[tokio::test]
-
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn admins_see_the_underlying_error_when_clickhouse_is_down() -> TestResult {
     let Some(db) = connect_or_skip().await else {
