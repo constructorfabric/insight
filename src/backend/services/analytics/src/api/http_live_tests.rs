@@ -1374,7 +1374,6 @@ async fn a_drilldown_over_an_unbuilt_relation_answers_an_empty_page_and_a_file()
     result.map_err(Into::into)
 }
 
-
 #[tokio::test]
 #[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
 async fn a_drilldown_over_a_built_relation_pages_the_records_behind_the_measure() -> TestResult {
