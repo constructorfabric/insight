@@ -37,6 +37,7 @@ def _directly_seeded_silver() -> set[str]:
         *silver.CRM_CHAIN_SELECT,
         *silver.COLLAB_CHAIN_SELECT,
         *silver.HR_CHAIN_SELECT,
+        *silver.AI_CHAIN_SELECT,
         silver.AI_INVOICE_SELECT,
     ],
 )
@@ -67,6 +68,7 @@ def test_the_selector_names_only_models_that_exist() -> None:
         *silver.CRM_CHAIN_SELECT,
         *silver.COLLAB_CHAIN_SELECT,
         *silver.HR_CHAIN_SELECT,
+        *silver.AI_CHAIN_SELECT,
         silver.AI_INVOICE_SELECT,
     ]
     missing = [s.rstrip("+") for s in selectors if s.rstrip("+") not in known]

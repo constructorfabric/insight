@@ -243,6 +243,23 @@ HR_CHAIN_SELECT = (
     "bamboohr__working_hours+",
 )
 
+# The bronze-derived AI chain: four connectors union into the two usage
+# relations.
+AI_CHAIN_SELECT = (
+    # Named first: the dev-usage model reads it by raw name, not ref().
+    "cursor__usage_events+",
+    "cursor__ai_dev_usage+",
+    "claude_team__ai_dev_usage+",
+    "chatgpt_team__ai_assistant_usage+",
+    "claude_enterprise__ai_assistant_usage+",
+    "claude_team__ai_overage+",
+    "claude_team__ai_overage_daily+",
+    # No row is emitted for it, but gold's AI cost evidence reads the class it
+    # feeds, and an unbuilt relation fails the model rather than contributing
+    # nothing.
+    "chatgpt_team__ai_credit_usage+",
+)
+
 # The bronze-derived CRM chain.
 CRM_CHAIN_SELECT = (
     "hubspot__crm_users+",
@@ -393,6 +410,7 @@ def run() -> None:
                     *CRM_CHAIN_SELECT,
                     *COLLAB_CHAIN_SELECT,
                     *HR_CHAIN_SELECT,
+                    *AI_CHAIN_SELECT,
                 ]
             ),
             full_refresh=True,
