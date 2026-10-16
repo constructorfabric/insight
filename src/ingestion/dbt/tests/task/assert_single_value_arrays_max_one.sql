@@ -1,6 +1,7 @@
 -- Single-value field rows must have at most one element in value_ids / value_displays.
 
 SELECT
+    tenant_id,
     insight_source_id,
     data_source,
     issue_id,

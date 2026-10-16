@@ -1,0 +1,28 @@
+# The stand's single-node ClickHouse, applied by stand.sh into its infra namespace.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: clickhouse}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: clickhouse}}
+  template:
+    metadata: {labels: {app: clickhouse}}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 101, runAsGroup: 101, fsGroup: 101}
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:25.3
+          securityContext: {allowPrivilegeEscalation: false}
+          env:
+            - {name: CLICKHOUSE_USER, value: insight}
+            - {name: CLICKHOUSE_PASSWORD, value: insight-local}
+            - {name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: "1"}
+          ports: [{containerPort: 8123}, {containerPort: 9000}]
+          readinessProbe: {httpGet: {path: /ping, port: 8123}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: clickhouse}
+spec:
+  selector: {app: clickhouse}
+  ports: [{name: http, port: 8123}, {name: native, port: 9000}]

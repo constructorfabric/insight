@@ -29,7 +29,6 @@
             "destinationId": { "type": "string" },
             "destinationName": { "type": "string" },
             "argoInstanceId": { "type": "string" },
-            "tenantId": { "type": "string" },
             "resources": {
               "type": "object",
               "properties": {

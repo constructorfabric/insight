@@ -430,7 +430,9 @@ jobs:
     name: Python coverage — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.python != '[]' }}
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (!contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    # A live_ch entry needs a Docker daemon, so it takes the runners the rust
+    # job's live entries take.
+    runs-on: ${{ matrix.entry.live_ch && ((vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]')) || vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (!contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -452,8 +454,24 @@ jobs:
           cache-suffix: ${{ matrix.entry.name }}
           save-cache: ${{ github.event_name == 'push' }}
 
+      - name: Start ClickHouse (${{ matrix.entry.name }})
+        if: ${{ matrix.entry.live_ch }}
+        env:
+          CLICKHOUSE_USER: insight
+          CLICKHOUSE_PASSWORD: insight
+          CLICKHOUSE_DATABASE: insight
+        run: |
+          set -euo pipefail
+          . src/ingestion/scripts/bootstrap-db/pins.env
+          export CLICKHOUSE_SERVER_IMAGE
+          .github/workflows/scripts/start-clickhouse.sh insight-clickhouse
+
       - name: Coverage (${{ matrix.entry.name }} -> Cobertura)
         working-directory: ${{ matrix.entry.root }}
+        env:
+          TENANT_MIGRATION_TEST_CH_URL: ${{ matrix.entry.live_ch && 'http://127.0.0.1:8123' || '' }}
+          TENANT_MIGRATION_TEST_CH_USER: ${{ matrix.entry.live_ch && 'insight' || '' }}
+          TENANT_MIGRATION_TEST_CH_PASSWORD: ${{ matrix.entry.live_ch && 'insight' || '' }}
         run: |
           set -uo pipefail
           mkdir -p "$GITHUB_WORKSPACE/coverage"
@@ -490,6 +508,10 @@ jobs:
           path: coverage/*.xml
           # A connector with no tests legitimately produces no report (exit 5).
           if-no-files-found: ignore
+
+      - name: Remove the ClickHouse container
+        if: ${{ always() && matrix.entry.live_ch }}
+        run: docker rm -f insight-clickhouse >/dev/null 2>&1 || true
 
   # One producer job per changed JS/TS component. Lint, typecheck and the two
   # vitest projects run as steps of a single job rather than as siblings (as the

@@ -1,0 +1,18 @@
+spec_version: 1
+description: >
+  Metric: git.commits_per_active_day with a second tenant in the same warehouse.
+
+  This tenant: erin authors one commit, cpad-a1 in acme/api on 2026-10-01. The
+  neighbour (git/git_commits_per_active_day under another tenant) carries the
+  same address, the same source, the same repositories and the same sha, plus
+  five more commits of erin across two days and two repositories.
+
+  Erin's address resolves to this tenant's own person, whose commits are this
+  tenant's alone: one commit over one active day, in acme/api only.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_github.commits:
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: cpad-a1, repository: "https://github.com/acme/api.git", sha: cpad-a1, authored_date: "2026-10-01T09:00:00Z", committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}

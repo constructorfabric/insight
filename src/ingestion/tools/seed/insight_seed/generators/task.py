@@ -67,7 +67,7 @@ def seed_task_worklogs(
 ) -> int:
     truncate(client, "silver", "class_task_worklogs")
     cols = [
-        "insight_tenant_id",
+        "tenant_id",
         "insight_source_id",
         "worklog_id",
         "issue_id",
@@ -254,6 +254,7 @@ def _fh_row(
     event_id = deterministic_uuid("task.fh", issue_id, field_id, str(seq))
     return (
         deterministic_uuid("task.fh.uk", issue_id, field_id, str(seq)),
+        tenant_uuid,
         src_id,
         data_source,
         issue_id,
@@ -374,6 +375,7 @@ def seed_task_field_history(
     truncate(client, "silver", "class_task_field_history")
     cols = [
         "unique_key",
+        "tenant_id",
         "insight_source_id",
         "data_source",
         "issue_id",
@@ -461,6 +463,7 @@ def seed_task_field_history(
 def seed_class_task_statuses(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
+    tenant_uuid: str,
 ) -> int:
     """Status dimension: one row per (source, status) mapping a status_id to
     its lifecycle status_category. task_issue_state joins this on
@@ -469,6 +472,7 @@ def seed_class_task_statuses(
     empty."""
     truncate(client, "silver", "class_task_statuses")
     cols = [
+        "tenant_id",
         "insight_source_id",
         "data_source",
         "status_id",
@@ -488,6 +492,7 @@ def seed_class_task_statuses(
         for name, (status_id, category) in _STATUS_DIM.items():
             rows.append(
                 (
+                    tenant_uuid,
                     src_id,
                     data_source,
                     status_id,
@@ -506,6 +511,7 @@ def seed_class_task_statuses(
 def seed_class_task_issuetypes(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
+    tenant_uuid: str,
 ) -> int:
     """Issue-type dimension: one raw catalogue row per (source, issue type).
     Gold joins this on (insight_source_id, issue_type_id) for the type names;
@@ -513,6 +519,7 @@ def seed_class_task_issuetypes(
     truncate(client, "silver", "class_task_issuetypes")
     cols = [
         "unique_key",
+        "tenant_id",
         "insight_source_id",
         "data_source",
         "issue_type_id",
@@ -530,6 +537,7 @@ def seed_class_task_issuetypes(
             rows.append(
                 (
                     deterministic_uuid("task.issuetype", src_id, issue_type_id),
+                    tenant_uuid,
                     src_id,
                     data_source,
                     issue_type_id,
@@ -663,8 +671,8 @@ def generate(
         "silver.class_task_field_history": seed_task_field_history(
             client, roster, tenant_uuid, days
         ),
-        "silver.class_task_statuses": seed_class_task_statuses(client, roster),
-        "silver.class_task_issuetypes": seed_class_task_issuetypes(client, roster),
+        "silver.class_task_statuses": seed_class_task_statuses(client, roster, tenant_uuid),
+        "silver.class_task_issuetypes": seed_class_task_issuetypes(client, roster, tenant_uuid),
         "config.field_value_map": seed_field_value_map(client, roster, tenant_uuid),
         "config.field_value_defaults": seed_field_value_defaults(client, roster, tenant_uuid),
     }

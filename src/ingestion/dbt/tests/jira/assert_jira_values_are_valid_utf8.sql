@@ -15,6 +15,7 @@
 -- slices a string is covered by construction.
 
 SELECT
+    tenant_id,
     insight_source_id,
     id_readable,
     field_id,

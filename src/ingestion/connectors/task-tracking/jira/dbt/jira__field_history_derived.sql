@@ -6,7 +6,7 @@
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',
-    unique_key=['insight_source_id', 'issue_id'],
+    unique_key=['tenant_id', 'insight_source_id', 'issue_id'],
     alias='jira__field_history_derived',
     schema='staging',
     engine=insight_engine('ReplacingMergeTree', '_version'),
@@ -76,13 +76,13 @@ WITH kinds AS (
 -- the snapshot model — the aggregation carries only a raw id, never the JSON.
 issue_winner AS (
     -- Read-time dedup of the ReplacingMergeTree by the issue's stable key
-    -- within a source, (source_id, jira_id): unmerged parts hold several rows
-    -- per issue, and `unique_key` exists for the merge alone.
-    SELECT source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
+    -- within a tenant's source, (tenant_id, source_id, jira_id): unmerged parts
+    -- hold several rows per issue, and `unique_key` exists for the merge alone.
+    SELECT tenant_id, source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
     WHERE jira_id IS NOT NULL
-      AND {{ jira_journal_in_batch("COALESCE(source_id, '')", "COALESCE(toString(jira_id), '')") }}
-    GROUP BY source_id, jira_id
+      AND {{ jira_journal_in_batch("COALESCE(tenant_id, '')", "COALESCE(source_id, '')", "COALESCE(toString(jira_id), '')") }}
+    GROUP BY tenant_id, source_id, jira_id
 ),
 
 -- The scope predicate is repeated on every read of the issue table rather than
@@ -90,6 +90,7 @@ issue_winner AS (
 -- issues this run does not recompute.
 issues AS (
     SELECT
+        COALESCE(i.tenant_id, '')                         AS tenant_id,
         COALESCE(i.source_id, '')                         AS insight_source_id,
         COALESCE(toString(i.jira_id), '')                 AS issue_id,
         COALESCE(toString(i.id_readable), '')             AS id_readable,
@@ -99,7 +100,7 @@ issues AS (
         toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
-    WHERE {{ jira_journal_in_batch("COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
+    WHERE {{ jira_journal_in_batch("COALESCE(i.tenant_id, '')", "COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
 ),
 
 -- The same winning bronze row, carrying the payload and the moment it was
@@ -107,6 +108,7 @@ issues AS (
 -- that needs it.
 issue_json AS (
     SELECT
+        COALESCE(i.tenant_id, '')                         AS tenant_id,
         COALESCE(i.source_id, '')                         AS insight_source_id,
         COALESCE(toString(i.jira_id), '')                 AS issue_id,
         COALESCE(i.custom_fields_json, '{}')              AS custom_fields_json,
@@ -116,7 +118,7 @@ issue_json AS (
                                                           AS resolved_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
-    WHERE {{ jira_journal_in_batch("COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
+    WHERE {{ jira_journal_in_batch("COALESCE(i.tenant_id, '')", "COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
 ),
 
 changelog_items AS (
@@ -135,16 +137,17 @@ changelog_items AS (
 -- can date an entry before the creation.
 issue_freshness AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         max(observed_at)                                  AS fresh_at,
         min(origin_at)                                    AS origin_at
     FROM (
-        SELECT insight_source_id, issue_id, observed_at, created_at AS origin_at FROM issues
+        SELECT tenant_id, insight_source_id, issue_id, observed_at, created_at AS origin_at FROM issues
         UNION ALL
-        SELECT insight_source_id, issue_id, extracted_at AS observed_at, created_at AS origin_at FROM changelog_items
+        SELECT tenant_id, insight_source_id, issue_id, extracted_at AS observed_at, created_at AS origin_at FROM changelog_items
     )
-    GROUP BY insight_source_id, issue_id
+    GROUP BY tenant_id, insight_source_id, issue_id
 ),
 
 -- `jira_journal_ranked_events_sql`: the modelled, live items, ranked.
@@ -176,6 +179,7 @@ ordered_events AS (
 -- value.
 unclassified_events AS (
     SELECT
+        ci.tenant_id                                      AS tenant_id,
         ci.insight_source_id                              AS insight_source_id,
         ci.issue_id                                       AS issue_id,
         ci.field_id                                       AS field_id,
@@ -190,20 +194,22 @@ unclassified_events AS (
     -- Against the WHOLE catalogue, not the modelled subset: a field that is
     -- `ignored` or `UNKNOWN` has been classified and must not land here.
     LEFT ANTI JOIN {{ ref('jira__task_field_kind') }} AS k
-        ON k.insight_source_id = ci.insight_source_id
+        ON k.tenant_id = ci.tenant_id
+       AND k.insight_source_id = ci.insight_source_id
        AND k.field_id = ci.field_id
-    GROUP BY ci.insight_source_id, ci.issue_id, ci.field_id
+    GROUP BY ci.tenant_id, ci.insight_source_id, ci.issue_id, ci.field_id
 ),
 
 snapshot AS (
     SELECT
+        s.tenant_id                                       AS tenant_id,
         s.insight_source_id                               AS insight_source_id,
         s.issue_id                                        AS issue_id,
         s.field_id                                        AS field_id,
         s.value_ids                                       AS value_ids,
         s.value_displays                                  AS value_displays
     FROM {{ ref('jira__issue_field_snapshot') }} AS s FINAL
-    WHERE {{ jira_journal_in_batch('s.insight_source_id', 's.issue_id') }}
+    WHERE {{ jira_journal_in_batch('s.tenant_id', 's.insight_source_id', 's.issue_id') }}
 ),
 
 -- ── fields the issue stopped carrying ───────────────────────────────────────
@@ -226,18 +232,20 @@ snapshot AS (
 -- missing and must surface as a failure instead of being overwritten here.
 retired_candidates AS (
     SELECT
+        p.tenant_id                                       AS tenant_id,
         p.insight_source_id                               AS insight_source_id,
         p.issue_id                                        AS issue_id,
         groupArray(p.field_id)                            AS field_ids
     FROM (
-        SELECT DISTINCT insight_source_id, issue_id, field_id
+        SELECT DISTINCT tenant_id, insight_source_id, issue_id, field_id
         FROM live_events
     ) AS p
     LEFT ANTI JOIN snapshot AS s
-        ON s.insight_source_id = p.insight_source_id
+        ON s.tenant_id = p.tenant_id
+       AND s.insight_source_id = p.insight_source_id
        AND s.issue_id = p.issue_id
        AND s.field_id = p.field_id
-    GROUP BY p.insight_source_id, p.issue_id
+    GROUP BY p.tenant_id, p.insight_source_id, p.issue_id
 ),
 
 -- MEMORY (§13): the candidate list is the build side and the issue JSON
@@ -246,6 +254,7 @@ retired_candidates AS (
 -- against the JSON instead would carry the payload once per field.
 retired_pairs AS (
     SELECT
+        j.tenant_id                                       AS tenant_id,
         j.insight_source_id                               AS insight_source_id,
         j.issue_id                                        AS issue_id,
         arrayJoin(arrayFilter(f -> NOT JSONHas(j.custom_fields_json, f),
@@ -253,7 +262,8 @@ retired_pairs AS (
         j.observed_at                                     AS event_at
     FROM issue_json AS j
     INNER JOIN retired_candidates AS c
-        ON c.insight_source_id = j.insight_source_id
+        ON c.tenant_id = j.tenant_id
+       AND c.insight_source_id = j.insight_source_id
        AND c.issue_id = j.issue_id
 ),
 
@@ -274,6 +284,7 @@ element_wise_state AS (
 -- aggregation state below holds three scalars per (issue, field), never arrays.
 newest_from_events AS (
     SELECT
+        tnt                                                AS tenant_id,
         src                                                AS insight_source_id,
         iss                                                AS issue_id,
         fid                                                AS field_id,
@@ -283,6 +294,7 @@ newest_from_events AS (
         max(ord).1                                         AS last_event_at
     FROM (
         SELECT
+            e.tenant_id                                    AS tnt,
             e.insight_source_id                            AS src,
             e.issue_id                                     AS iss,
             e.field_id                                     AS fid,
@@ -295,6 +307,7 @@ newest_from_events AS (
         UNION ALL
 
         SELECT
+            a.tenant_id,
             a.insight_source_id,
             a.issue_id,
             a.field_id,
@@ -304,7 +317,7 @@ newest_from_events AS (
             {{ jira_value_multiset_digest("arrayMap(x -> splitByChar('\\x1f', x)[2], a.state_pairs)") }}
         FROM element_wise_state AS a
     )
-    GROUP BY src, iss, fid
+    GROUP BY tnt, src, iss, fid
 ),
 
 -- ── values the issue holds that its events never reach ──────────────────────
@@ -327,6 +340,7 @@ newest_from_events AS (
 -- only the per-pair digests are hashed.
 snapshot_disagreements AS (
     SELECT
+        n.tenant_id                                       AS tenant_id,
         n.insight_source_id                               AS insight_source_id,
         n.issue_id                                        AS issue_id,
         n.field_id                                        AS field_id,
@@ -337,6 +351,7 @@ snapshot_disagreements AS (
         s.value_displays                                  AS snapshot_displays
     FROM (
         SELECT
+            tenant_id,
             insight_source_id,
             issue_id,
             field_id,
@@ -346,7 +361,8 @@ snapshot_disagreements AS (
         FROM snapshot
     ) AS s
     RIGHT JOIN newest_from_events AS n
-        ON s.insight_source_id = n.insight_source_id
+        ON s.tenant_id = n.tenant_id
+       AND s.insight_source_id = n.insight_source_id
        AND s.issue_id = n.issue_id
        AND s.field_id = n.field_id
     WHERE ((ifNull(s.in_snapshot, 0) = 0 OR length(s.value_ids) = 0) AND n.holds_value)
@@ -364,6 +380,7 @@ snapshot_disagreements AS (
 -- hashing the small pair set instead keeps the join to the pair set's size.
 present_keys AS (
     SELECT
+        j.tenant_id                                       AS tenant_id,
         j.insight_source_id                               AS insight_source_id,
         j.issue_id                                        AS issue_id,
         k                                                 AS field_id,
@@ -386,6 +403,7 @@ present_keys AS (
 -- row keeps the observation stamp.
 snapshot_diff_pairs AS (
     SELECT
+        m.tenant_id                                       AS tenant_id,
         m.insight_source_id                               AS insight_source_id,
         m.issue_id                                        AS issue_id,
         m.field_id                                        AS field_id,
@@ -395,8 +413,8 @@ snapshot_diff_pairs AS (
             m.disagreement = 'cleared',
                 p.observed_at,
             m.field_id = 'status'
-                AND (m.insight_source_id, m.snapshot_ids[1]) IN (
-                        SELECT insight_source_id, status_id
+                AND (m.tenant_id, m.insight_source_id, m.snapshot_ids[1]) IN (
+                        SELECT COALESCE(tenant_id, ''), insight_source_id, status_id
                         FROM {{ ref('jira__task_statuses') }}
                         WHERE status_category = 'done'
                     )
@@ -406,7 +424,8 @@ snapshot_diff_pairs AS (
         )                                                 AS event_at
     FROM present_keys AS p
     INNER JOIN snapshot_disagreements AS m
-        ON m.insight_source_id = p.insight_source_id
+        ON m.tenant_id = p.tenant_id
+       AND m.insight_source_id = p.insight_source_id
        AND m.issue_id = p.issue_id
        AND m.field_id = p.field_id
     WHERE m.last_event_at <= p.observed_at
@@ -417,6 +436,7 @@ snapshot_diff_pairs AS (
     -- the `synthetic_initial` the snapshot seeds, so the issue would read as
     -- closed the moment it was created; the resolution dates the close instead.
     SELECT
+        j.tenant_id,
         j.insight_source_id,
         j.issue_id,
         d.field_id,
@@ -426,6 +446,7 @@ snapshot_diff_pairs AS (
     FROM issue_json AS j
     INNER JOIN (
         SELECT
+            s.tenant_id,
             s.insight_source_id,
             s.issue_id,
             s.field_id,
@@ -433,23 +454,26 @@ snapshot_diff_pairs AS (
             s.value_displays
         FROM snapshot AS s
         LEFT ANTI JOIN (
-            SELECT DISTINCT insight_source_id, issue_id
+            SELECT DISTINCT tenant_id, insight_source_id, issue_id
             FROM live_events
             WHERE field_id = 'status'
         ) AS ev
-            ON ev.insight_source_id = s.insight_source_id
+            ON ev.tenant_id = s.tenant_id
+           AND ev.insight_source_id = s.insight_source_id
            AND ev.issue_id = s.issue_id
         WHERE s.field_id = 'status'
-          AND (s.insight_source_id, s.value_ids[1]) IN (
-                  SELECT insight_source_id, status_id
+          AND (s.tenant_id, s.insight_source_id, s.value_ids[1]) IN (
+                  SELECT COALESCE(tenant_id, ''), insight_source_id, status_id
                   FROM {{ ref('jira__task_statuses') }}
                   WHERE status_category = 'done'
               )
     ) AS d
-        ON d.insight_source_id = j.insight_source_id
+        ON d.tenant_id = j.tenant_id
+       AND d.insight_source_id = j.insight_source_id
        AND d.issue_id = j.issue_id
     INNER JOIN issues AS i
-        ON i.insight_source_id = j.insight_source_id
+        ON i.tenant_id = j.tenant_id
+       AND i.insight_source_id = j.insight_source_id
        AND i.issue_id = j.issue_id
     WHERE ifNull(j.resolved_at > i.created_at, 0)
 ),
@@ -461,11 +485,12 @@ snapshot_diff_pairs AS (
 -- is why a field set at creation and never touched has no history at all.
 initial_state AS (
     SELECT
-        insight_source_id, issue_id, field_id, field_name, field_kind,
+        tenant_id, insight_source_id, issue_id, field_id, field_name, field_kind,
         value_ids, value_displays
     FROM (
         -- fields with at least one event: the earliest event's `before` side
         SELECT
+            e.tenant_id                                    AS tenant_id,
             e.insight_source_id                            AS insight_source_id,
             e.issue_id                                     AS issue_id,
             e.field_id                                     AS field_id,
@@ -474,12 +499,13 @@ initial_state AS (
             argMin(e.sides.1, (e.event_at, e.entry_rank, e.event_ord))     AS value_ids,
             argMin(e.sides.2, (e.event_at, e.entry_rank, e.event_ord))     AS value_displays
         FROM ordered_events AS e
-        GROUP BY e.insight_source_id, e.issue_id, e.field_id
+        GROUP BY e.tenant_id, e.insight_source_id, e.issue_id, e.field_id
 
         UNION ALL
 
         -- element-wise with events: the reconstructed initial set
         SELECT
+            a.tenant_id,
             a.insight_source_id,
             a.issue_id,
             a.field_id,
@@ -490,12 +516,13 @@ initial_state AS (
             arrayMap(x -> splitByChar('\x1f', x)[2],
                      any(a.initial_pairs))                 AS value_displays
         FROM element_wise_state AS a
-        GROUP BY a.insight_source_id, a.issue_id, a.field_id
+        GROUP BY a.tenant_id, a.insight_source_id, a.issue_id, a.field_id
 
         UNION ALL
 
         -- fields with NO event at all: the snapshot value is the initial value
         SELECT
+            s.tenant_id,
             s.insight_source_id,
             s.issue_id,
             s.field_id,
@@ -505,12 +532,14 @@ initial_state AS (
             s.value_displays
         FROM snapshot AS s
         INNER JOIN kinds AS k
-            ON k.insight_source_id = s.insight_source_id
+            ON k.tenant_id = s.tenant_id
+           AND k.insight_source_id = s.insight_source_id
            AND k.field_id = s.field_id
         LEFT ANTI JOIN (
-            SELECT DISTINCT insight_source_id, issue_id, field_id FROM live_events
+            SELECT DISTINCT tenant_id, insight_source_id, issue_id, field_id FROM live_events
         ) AS ev
-            ON ev.insight_source_id = s.insight_source_id
+            ON ev.tenant_id = s.tenant_id
+           AND ev.insight_source_id = s.insight_source_id
            AND ev.issue_id = s.issue_id
            AND ev.field_id = s.field_id
     )
@@ -521,7 +550,7 @@ initial_state AS (
 initial_seq AS (
     SELECT
         *,
-        toUInt32(row_number() OVER (PARTITION BY insight_source_id, issue_id
+        toUInt32(row_number() OVER (PARTITION BY tenant_id, insight_source_id, issue_id
                                     ORDER BY field_id)) AS seq
     FROM initial_state
 ),
@@ -532,7 +561,8 @@ journal AS (
 
 -- ── row 1: the creation marker ──────────────────────────────────────────────
 SELECT
-    CAST({{ jira_history_key('insight_source_id', 'issue_id', "'created'", "concat('initial:', issue_id)") }} AS String) AS unique_key,
+    CAST({{ jira_history_key('tenant_id', 'insight_source_id', 'issue_id', "'created'", "concat('initial:', issue_id)") }} AS String) AS unique_key,
+    tenant_id,
     insight_source_id,
     CAST('jira' AS String)                                AS data_source,
     issue_id,
@@ -558,7 +588,8 @@ UNION ALL
 -- ── row 2: changelog rows for the self-describing kinds ─────────────────────
 -- The state after the event is the entry's `to` side; nothing accumulates.
 SELECT
-    CAST({{ jira_history_key('e.insight_source_id', 'e.issue_id', 'e.field_id', 'e.changelog_id') }} AS String) AS unique_key,
+    CAST({{ jira_history_key('e.tenant_id', 'e.insight_source_id', 'e.issue_id', 'e.field_id', 'e.changelog_id') }} AS String) AS unique_key,
+    e.tenant_id,
     e.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
     e.issue_id                                            AS issue_id,
@@ -581,7 +612,8 @@ SELECT
     now64(3)                                              AS collected_at
 FROM ordered_events AS e
 LEFT JOIN issues AS i
-    ON i.insight_source_id = e.insight_source_id
+    ON i.tenant_id = e.tenant_id
+   AND i.insight_source_id = e.insight_source_id
    AND i.issue_id = e.issue_id
 
 UNION ALL
@@ -595,7 +627,8 @@ UNION ALL
 -- the state after the entry is the fold that has consumed every item, in
 -- whichever order the window visited them.
 SELECT
-    CAST({{ jira_history_key('a.insight_source_id', 'a.issue_id', 'a.field_id', 'a.changelog_id') }} AS String) AS unique_key,
+    CAST({{ jira_history_key('a.tenant_id', 'a.insight_source_id', 'a.issue_id', 'a.field_id', 'a.changelog_id') }} AS String) AS unique_key,
+    a.tenant_id,
     a.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
     COALESCE(any(i.issue_id), '')                         AS issue_id,
@@ -621,17 +654,19 @@ SELECT
     now64(3)                                              AS collected_at
 FROM element_wise_state AS a
 LEFT JOIN issues AS i
-    ON i.insight_source_id = a.insight_source_id
+    ON i.tenant_id = a.tenant_id
+   AND i.insight_source_id = a.insight_source_id
    AND i.issue_id = a.issue_id
-GROUP BY a.insight_source_id, a.issue_id, a.field_id, a.changelog_id
+GROUP BY a.tenant_id, a.insight_source_id, a.issue_id, a.field_id, a.changelog_id
 
 
 UNION ALL
 
 -- ── row 4: one synthetic_initial per (issue, field) ─────────────────────────
 SELECT
-    CAST({{ jira_history_key('s.insight_source_id', 's.issue_id', 's.field_id',
+    CAST({{ jira_history_key('s.tenant_id', 's.insight_source_id', 's.issue_id', 's.field_id',
                              "concat('initial:', s.issue_id)") }} AS String)  AS unique_key,
+    s.tenant_id,
     s.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
     s.issue_id                                             AS issue_id,
@@ -652,7 +687,8 @@ SELECT
     now64(3)                                              AS collected_at
 FROM initial_seq AS s
 INNER JOIN issues AS i
-    ON i.insight_source_id = s.insight_source_id
+    ON i.tenant_id = s.tenant_id
+   AND i.insight_source_id = s.insight_source_id
    AND i.issue_id = s.issue_id
 
 UNION ALL
@@ -662,8 +698,9 @@ UNION ALL
 -- round-trip invariant uses as the issue's own freshness — so the event is
 -- never newer than the state it is compared against.
 SELECT
-    CAST({{ jira_history_key('r.insight_source_id', 'r.issue_id', 'r.field_id',
+    CAST({{ jira_history_key('r.tenant_id', 'r.insight_source_id', 'r.issue_id', 'r.field_id',
                              "concat('retired:', r.issue_id)") }} AS String)  AS unique_key,
+    r.tenant_id,
     r.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
     r.issue_id                                             AS issue_id,
@@ -692,10 +729,12 @@ SELECT
     now64(3)                                              AS collected_at
 FROM retired_pairs AS r
 INNER JOIN kinds AS k
-    ON k.insight_source_id = r.insight_source_id
+    ON k.tenant_id = r.tenant_id
+   AND k.insight_source_id = r.insight_source_id
    AND k.field_id = r.field_id
 LEFT JOIN issues AS i
-    ON i.insight_source_id = r.insight_source_id
+    ON i.tenant_id = r.tenant_id
+   AND i.insight_source_id = r.insight_source_id
    AND i.issue_id = r.issue_id
 
 UNION ALL
@@ -709,8 +748,9 @@ UNION ALL
 -- can exclude it, and the share of state recovered by observation rather than
 -- by event stays measurable.
 SELECT
-    CAST({{ jira_history_key('c.insight_source_id', 'c.issue_id', 'c.field_id',
+    CAST({{ jira_history_key('c.tenant_id', 'c.insight_source_id', 'c.issue_id', 'c.field_id',
                              "concat('snapshot_diff:', c.issue_id)") }} AS String)  AS unique_key,
+    c.tenant_id,
     c.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
     c.issue_id                                             AS issue_id,
@@ -736,10 +776,12 @@ SELECT
     now64(3)                                              AS collected_at
 FROM snapshot_diff_pairs AS c
 INNER JOIN kinds AS k
-    ON k.insight_source_id = c.insight_source_id
+    ON k.tenant_id = c.tenant_id
+   AND k.insight_source_id = c.insight_source_id
    AND k.field_id = c.field_id
 LEFT JOIN issues AS i
-    ON i.insight_source_id = c.insight_source_id
+    ON i.tenant_id = c.tenant_id
+   AND i.insight_source_id = c.insight_source_id
    AND i.issue_id = c.issue_id
 -- The issue JSON holds an ADF document and the changelog Jira's rendering of it,
 -- so the two content addresses of a `long_text` value never agree (§8).
@@ -753,8 +795,9 @@ UNION ALL
 -- unknowable, so any parsing rule here would be a guess of exactly the kind
 -- this design replaces.
 SELECT
-    CAST({{ jira_history_key('u.insight_source_id', 'u.issue_id', 'u.field_id',
+    CAST({{ jira_history_key('u.tenant_id', 'u.insight_source_id', 'u.issue_id', 'u.field_id',
                              "concat('unclassified:', u.issue_id)") }} AS String)  AS unique_key,
+    u.tenant_id,
     u.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
     u.issue_id                                             AS issue_id,
@@ -778,7 +821,8 @@ SELECT
     now64(3)                                              AS collected_at
 FROM unclassified_events AS u
 LEFT JOIN issues AS i
-    ON i.insight_source_id = u.insight_source_id
+    ON i.tenant_id = u.tenant_id
+   AND i.insight_source_id = u.insight_source_id
    AND i.issue_id = u.issue_id
 )
 
@@ -799,6 +843,7 @@ LEFT JOIN issues AS i
 -- full refresh, which a major descriptor bump dispatches.
 SELECT
     j.unique_key,
+    j.tenant_id,
     j.insight_source_id,
     j.data_source,
     j.issue_id,
@@ -822,5 +867,6 @@ SELECT
                       toInt64({{ catalogue.epoch_ms }})))  AS _version
 FROM journal AS j
 INNER JOIN issue_freshness AS f
-    ON f.insight_source_id = j.insight_source_id
+    ON f.tenant_id = j.tenant_id
+   AND f.insight_source_id = j.insight_source_id
    AND f.issue_id = j.issue_id

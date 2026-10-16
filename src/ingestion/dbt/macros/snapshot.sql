@@ -1,7 +1,9 @@
 {% macro snapshot(source_ref, unique_key_col, check_cols, check_raw_data_cols=[], check_raw_data_all=false, raw_data_exclude_keys=[]) %}
+{{ config(tags=['history'], full_refresh=false) }}
 {#
   Incremental append-only SCD2 snapshot.
-  Appends a new row only when tracked columns change.
+  Appends a new row only when tracked columns change. Refuses a full refresh:
+  earlier versions exist nowhere else, so a rebuild from the source loses them.
 
   Args:
     source_ref:           source() or ref() to the raw table

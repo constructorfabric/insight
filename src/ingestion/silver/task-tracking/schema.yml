@@ -28,6 +28,10 @@ models:
   - name: class_task_field_history
     description: "Unified per-(issue × field × event) history from all task-tracker sources. Event-sourced: one row per changelog entry, synthetic_initial bootstrap row or synthetic observation. Every producer is a dbt model contributing an arm through the `silver:class_task_field_history` tag."
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
+        tests:
+          - not_null
       - name: insight_source_id
         description: "Source instance identifier"
         tests:
@@ -67,6 +71,10 @@ models:
   - name: class_task_field_metadata
     description: "Unified task-tracker field catalog. Declares cardinality (`is_multi`) and whether the field has an opaque ID vs a string literal (`has_id`)."
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
+        tests:
+          - not_null
       - name: insight_source_id
         tests:
           - not_null
@@ -79,6 +87,10 @@ models:
     columns:
       - name: issue_id
         description: "Immutable source-native parent issue ID. Join with insight_source_id; id_readable is for display and search only."
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
+        tests:
+          - not_null
       - name: insight_source_id
         tests:
           - not_null
@@ -91,6 +103,10 @@ models:
     columns:
       - name: issue_id
         description: "Immutable source-native parent issue ID. Join with insight_source_id; id_readable is for display and search only."
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
+        tests:
+          - not_null
       - name: insight_source_id
         tests:
           - not_null
@@ -103,6 +119,10 @@ models:
   - name: class_task_users
     description: "Unified task-tracker user directory (anchor for identity resolution)."
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
+        tests:
+          - not_null
       - name: insight_source_id
         tests:
           - not_null
@@ -113,6 +133,10 @@ models:
   - name: class_task_projects
     description: "Unified task-tracker project catalog."
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
+        tests:
+          - not_null
       - name: insight_source_id
         tests:
           - not_null
@@ -123,6 +147,10 @@ models:
   - name: class_task_sprints
     description: "Unified task-tracker sprints."
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
+        tests:
+          - not_null
       - name: insight_source_id
         tests:
           - not_null
@@ -145,6 +173,10 @@ models:
         description: "Immutable source-native ID of the target, scoped by insight_source_id and target_type. Never substitute target_readable when missing."
       - name: unique_key
         description: "Source, item, link type, target and `valid_from` — the occurrence, not the link."
+        tests:
+          - not_null
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
         tests:
           - not_null
       - name: insight_source_id
@@ -201,6 +233,10 @@ models:
   - name: class_task_statuses
     description: "Unified, source-neutral status dimension. Maps each source status id to the reconciled lifecycle `status_category` (new/in_progress/done/undefined). Jira derives it from statusCategory; YouTrack from the State bundle `isResolved` flag. Gold detects a closed task via `status_category='done'` — never a localized status name (issue #1541)."
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
+        tests:
+          - not_null
       - name: insight_source_id
         tests:
           - not_null
@@ -217,6 +253,10 @@ models:
   - name: class_task_issuetypes
     description: "Unified, source-neutral issue-type dimension: the raw vendor type catalogue, one row per source issue type (id, display name, untranslated name). Carries no classification — gold resolves the issue kind from `config.field_value_map` at its own build, keyed by the type id, so an operator decision applies without a silver rebuild."
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
+        tests:
+          - not_null
       - name: insight_source_id
         tests:
           - not_null

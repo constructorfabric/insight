@@ -13,7 +13,7 @@ job appears.
 
 Covered: the schedule and exact args against the mounted gears config
 (tolerance flags present, never `--force`); the SAME Secret/ConfigMap pair
-the deployment uses; `seed.tenantDefaultId` env-overriding the Secret; `enabled=false`
+the deployment uses, that Secret being the only tenant source; `enabled=false`
 removing that CronJob and nothing else; pod labels never matching the
 Service selector (a pod that listens on nothing must not enter the
 endpoints); and that no persons-sync CronJob is rendered.
@@ -87,8 +87,6 @@ UMBRELLA_BASE = [
     "redis.password=rp",
     "--set",
     "redpanda.brokers=rp:9092",
-    "--set",
-    "ingestion.reconcile.tenantId=default",
     "--set",
     "authenticator.oidc.issuerUrl=https://idp",
     "--set",
@@ -248,15 +246,20 @@ def test_cronjob_loads_the_observability_contract_like_the_deployment(default_do
 
 
 @pytest.mark.parametrize("job", JOBS)
-def test_tenant_value_overrides_the_secret_via_env(default_docs, job: str) -> None:
-    # Default: no explicit env — the Secret is the tenant source.
+def test_the_secret_is_the_jobs_only_tenant_source(default_docs, job: str) -> None:
     container = _job_container(_cronjob(default_docs, job))
     assert "env" not in container, container.get("env")
 
-    docs = _subchart_docs("--set", f"{job}.tenantDefaultId={TENANT}")
-    container = _job_container(_cronjob(docs, job))
-    env = {e["name"]: e["value"] for e in container["env"]}
-    assert env == {"APP__gears__identity_resolution__config__tenant_default_id": TENANT}
+
+@pytest.mark.parametrize("enabled", ["true", "false"])
+def test_a_standalone_install_still_setting_the_seed_tenant_is_refused(enabled: str) -> None:
+    """Ignoring it would run the seed under whatever tenant the Secret holds, or none."""
+    rc, _, err = _render(
+        SUBCHART, *SUBCHART_BASE, "--set", f"seed.enabled={enabled}", "--set", f"seed.tenantDefaultId={TENANT}"
+    )
+
+    assert rc != 0, f"seed.enabled={enabled}: the removed key rendered"
+    assert "seed.tenantDefaultId is removed" in err, err
 
 
 @pytest.mark.parametrize("job", JOBS)
@@ -289,30 +292,42 @@ def test_job_pod_labels_never_match_the_service_selector(default_docs, job: str)
 # `umbrella_deps` is session-scoped in conftest.py — one vendor per run.
 
 
-def test_umbrella_refuses_enabled_seed_without_a_tenant(umbrella_deps) -> None:
+def test_umbrella_refuses_to_render_without_a_tenant(umbrella_deps) -> None:
     rc, _, err = _render(umbrella_deps, *UMBRELLA_BASE)
     assert rc != 0
-    assert "requires a tenant" in err, err
+    assert "authenticator.oidc.defaultTenantId is required" in err, err
 
 
 def test_umbrella_renders_the_cronjobs_with_a_tenant(umbrella_deps) -> None:
-    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}")
+    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", f"authenticator.oidc.defaultTenantId={TENANT}")
     assert rc == 0, err
     docs = _docs(out)
     for job in JOBS:
         _cronjob(docs, job)
 
 
-def test_umbrella_accepts_the_explicit_seed_tenant_alone(umbrella_deps) -> None:
-    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", f"identityResolution.seed.tenantDefaultId={TENANT}")
-    assert rc == 0, err
-    container = _job_container(_cronjob(_docs(out), "seed"))
-    env = {e["name"]: e["value"] for e in container.get("env", [])}
-    assert env.get("APP__gears__identity_resolution__config__tenant_default_id") == TENANT
+def test_umbrella_refuses_a_seed_tenant_of_its_own(umbrella_deps) -> None:
+    rc, _, err = _render(
+        umbrella_deps,
+        *UMBRELLA_BASE,
+        "--set",
+        f"authenticator.oidc.defaultTenantId={TENANT}",
+        "--set",
+        f"identityResolution.seed.tenantDefaultId={TENANT}",
+    )
+    assert rc != 0
+    assert "identityResolution.seed.tenantDefaultId is removed" in err, err
 
 
-def test_umbrella_disabled_seed_needs_no_tenant(umbrella_deps) -> None:
-    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", "identityResolution.seed.enabled=false")
+def test_umbrella_disabled_seed_renders_no_seed_cronjob(umbrella_deps) -> None:
+    rc, out, err = _render(
+        umbrella_deps,
+        *UMBRELLA_BASE,
+        "--set",
+        f"authenticator.oidc.defaultTenantId={TENANT}",
+        "--set",
+        "identityResolution.seed.enabled=false",
+    )
     assert rc == 0, err
     jobs = _cronjobs(_docs(out))
     assert not any("identity-resolution" in n and n.endswith("-seed") for n in jobs), sorted(jobs)
@@ -329,7 +344,7 @@ def test_umbrella_carries_the_roster_source_to_the_gear_that_reads_it(umbrella_d
         umbrella_deps,
         *UMBRELLA_BASE,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"authenticator.oidc.defaultTenantId={TENANT}",
         "--set",
         "identityResolution.rosterSourceType=bamboohr",
     )
@@ -339,7 +354,7 @@ def test_umbrella_carries_the_roster_source_to_the_gear_that_reads_it(umbrella_d
 
 
 def test_umbrella_names_no_roster_by_default(umbrella_deps) -> None:
-    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}")
+    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", f"authenticator.oidc.defaultTenantId={TENANT}")
     assert rc == 0, err
 
     assert _umbrella_gear_config(out)["roster_source_type"] == "", "an upgrade must not start minting persons by itself"
