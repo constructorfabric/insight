@@ -25,11 +25,10 @@ at /ingestion (docker-compose.yml `seed-sample.volumes`):
 2. Generate per-team activity rows via `generators/*.py`. Volumes scale by
    team profile + persona; per-day caps live in each generator module.
 
-   A generator writes EITHER the silver rows directly or the bronze its
-   vendor would have delivered, and the second is where they are all headed:
-   a measure dbt derives is a measure the pipeline is tested on rather than
-   one the seed asserts. `generators/insert.py` names the silver relations
-   already converted, and the chains built from them are selected in step 4.
+   Every generator writes the bronze its vendor would have delivered — no
+   generator writes a silver relation. A measure dbt derives is a measure the
+   pipeline is tested on rather than one the seed asserts. The staging and
+   silver chains built from that bronze are selected in step 4.
 
 3. `apply-ch-migrations.sh` — applies migrations/*.sql (class contract
    heals, the contract-version stamp) and the staging label repair.
@@ -117,7 +116,7 @@ def _ch_client() -> clickhouse_connect.driver.client.Client:
     # Views (gold) are created by build-gold.sh, not this client;
     # the compose CH ships join_use_nulls=1 as a profile default
     # (deploy/compose/clickhouse-user-defaults.xml) so those CREATE VIEWs
-    # type-check server-side. This client only INSERTs silver rows.
+    # type-check server-side. This client only INSERTs bronze rows.
     return clickhouse_connect.get_client(
         host=target.host,
         port=target.http_port,
@@ -363,7 +362,11 @@ def build_gold(dbt_select: str | None = None, *, full_refresh: bool = False) -> 
 def generate_rows(
     client: clickhouse_connect.driver.client.Client,
 ) -> None:
-    """Populate silver tables with per-team activity for the demo roster."""
+    """Write the bronze each vendor would have delivered for the demo roster.
+
+    dbt builds staging, silver and gold from it in step 4 — no generator writes
+    a silver relation.
+    """
     tenant_uuid = config.parse_tenant_id(os.environ)
     dev_email = get_dev_user_email()
     roster = build_seeded_roster(dev_email, config.parse_org_headcount(os.environ))
@@ -373,7 +376,7 @@ def generate_rows(
     # "unset", which a rendered Job manifest passes for a window nobody pinned.
     days = seed_days()
     LOG.info(
-        "generating silver rows: tenant=%s days=%d persons=%d",
+        "generating bronze rows: tenant=%s days=%d persons=%d",
         tenant_uuid,
         days,
         len(roster),
@@ -395,7 +398,7 @@ def generate_rows(
 
     for table, n in sorted(totals.items()):
         LOG.info("  %-46s %6d rows", table, n)
-    LOG.info("silver rows: %d total across %d tables", sum(totals.values()), len(totals))
+    LOG.info("bronze rows: %d total across %d relations", sum(totals.values()), len(totals))
 
 
 def run() -> None:
@@ -412,7 +415,7 @@ def run() -> None:
     client = _ch_client()
     try:
         LOG.info("ClickHouse version: %s", client.server_version)
-        # 2. Seed silver rows into the created tables.
+        # 2. Write the bronze a sync would have landed.
         generate_rows(client)
         # 3. Real deploy mechanism: the migrations, then gold + identity
         #    inputs. Gold builds unresolved here — the orchestrator runs the
@@ -439,7 +442,7 @@ def run() -> None:
         )
     finally:
         client.close()
-    LOG.info("DONE: silver rows seeded + gold layer built via deploy scripts.")
+    LOG.info("DONE: bronze seeded, silver and gold built from it via deploy scripts.")
 
 
 def run_gold() -> None:

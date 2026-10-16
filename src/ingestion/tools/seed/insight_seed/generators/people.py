@@ -192,8 +192,8 @@ def generate(
     truncate(client, "silver", "class_people")
     truncate(client, "silver", "class_hr_working_hours")
     truncate(client, "silver", "class_focus_metrics")
-    truncate(client, "staging", "bamboohr__to_class_people")
-    truncate(client, "staging", "bamboohr__working_hours")
+    # Both bamboohr staging models are views: nothing to clear, and they are
+    # recomputed from the employees below on every read.
 
     return {
         "bronze_bamboohr.employees": seed_bamboohr_employees(client, roster, tenant_uuid),

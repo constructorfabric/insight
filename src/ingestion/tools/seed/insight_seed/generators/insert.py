@@ -125,8 +125,6 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("staging", "github__pull_requests_commits"),
     ("staging", "github__repositories"),
     ("staging", "gitlab__repositories"),
-    ("staging", "bamboohr__to_class_people"),
-    ("staging", "bamboohr__working_hours"),
     ("staging", "chatgpt_team__ai_assistant_usage"),
     ("staging", "claude_enterprise__ai_assistant_usage"),
     ("staging", "claude_team__ai_dev_usage"),
@@ -155,14 +153,37 @@ def truncate(
     schema: str,
     table: str,
 ) -> None:
-    """Idempotent reset: TRUNCATE before INSERT."""
+    """Idempotent reset: TRUNCATE before INSERT.
+
+    A VIEW is skipped rather than refused. ClickHouse answers `TRUNCATE` on one
+    with NOT_IMPLEMENTED, and a view holds nothing to clear — it is recomputed
+    from its sources on every read. Checked at run time, not from a list: a dbt
+    model's materialization is free to change from one release to the next, and
+    the seed should keep working either way.
+    """
     if (schema, table) not in RESET_TARGETS:
         raise ValueError(
             f"{schema}.{table} is not in RESET_TARGETS. Clearing a relation preflight "
             "does not know about would let a seed run destroy data it never warned about "
             "— register it there (and in the same commit) instead."
         )
+    if _is_view(client, schema, table):
+        LOG.debug("%s.%s is a view; nothing to truncate", schema, table)
+        return
     client.command(f"TRUNCATE TABLE IF EXISTS `{schema}`.`{table}`")
+
+
+def _is_view(
+    client: clickhouse_connect.driver.client.Client,
+    schema: str,
+    table: str,
+) -> bool:
+    """Whether the relation is a view. False for one that does not exist yet."""
+    rows = client.query(
+        "SELECT engine FROM system.tables WHERE database = {db:String} AND name = {tbl:String}",
+        parameters={"db": schema, "tbl": table},
+    ).result_rows
+    return bool(rows) and str(rows[0][0]).endswith("View")
 
 
 @dataclass(frozen=True)
