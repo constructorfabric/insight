@@ -12,30 +12,21 @@
 -- One row per link OCCURRENCE, folded from the changelog's own add and remove
 -- events (`evidence = event`). See `class_task_links` for the contract.
 --
--- An occurrence is one relation from one issue to one linked issue: "blocks
--- PROJ-2" and "relates to PROJ-2" are two, and each opens and closes on its own.
--- Jira logs a link on both issues, each in its own words, so each side is read
--- from its own changelog and nothing is mirrored. A parent change is logged on
--- the child alone, so its `sub_issue` side is mirrored onto the parent.
+-- An occurrence is one link of one type from one issue to one linked issue, as
+-- `jira__link_occurrences` identifies it. Jira logs a link on both issues, each
+-- in its own words, so each side is read from its own changelog and nothing is
+-- mirrored. A parent change is logged on the child alone, so its `sub_issue`
+-- side is mirrored onto the parent.
 --
 -- A link the issue held before its first event on that occurrence has no add:
 -- it is the first event's removal, or the snapshot's link when no event touched
 -- it. Its interval opens at the issue's creation, the earliest it can have
 -- existed, with `valid_from_known = 0`.
 --
--- `target_id` is the linked issue's immutable id: the snapshot states it, and a
--- changelog key resolves through `jira__issue_key_ids`. A key that resolves to
--- nothing keeps the occurrence apart by the key and leaves `target_id` NULL.
+-- A linked issue whose key resolved to no id leaves `target_id` NULL.
 
-WITH key_ids AS (
-    SELECT insight_source_id, issue_key, issue_id
-    FROM {{ ref('jira__issue_key_ids') }} FINAL
-),
-
-held_now AS (
-    SELECT
-        insight_source_id, issue_id, id_readable, kind, type_name, type_outward, type_inward,
-        relation, target_id, target_key, extracted_at
+WITH held_now AS (
+    SELECT insight_source_id, kind, type_id, type_name, target_id, target_key, extracted_at
     FROM {{ ref('jira__issue_link_snapshot') }} FINAL
 ),
 
@@ -63,159 +54,22 @@ linked_keys AS (
     GROUP BY insight_source_id, issue_id
 ),
 
--- What each relation means, from the link types the snapshots carry. A link
--- object states both of its type's phrases, so a relation is known here while
--- any issue holds a link of its type, from either side.
-relation_types AS (
+-- A link type's current name, by its immutable id.
+link_types AS (
     SELECT
         insight_source_id,
-        relation,
-        type_and_direction.1                                          AS type_name,
-        type_and_direction.2                                          AS direction
-    FROM (
-        SELECT
-            insight_source_id,
-            phrase.1                                                  AS relation,
-            min((type_name, phrase.2))                                AS type_and_direction
-        FROM held_now
-        ARRAY JOIN [(type_outward, 'outward'), (type_inward, 'inward')] AS phrase
-        WHERE kind = 'issuelink' AND phrase.1 != ''
-        GROUP BY insight_source_id, relation
-    )
+        type_id,
+        argMax(type_name, extracted_at)                               AS type_name
+    FROM held_now
+    WHERE kind = 'issuelink' AND type_id != ''
+    GROUP BY insight_source_id, type_id
 ),
 
-link_items AS (
-    SELECT
-        insight_source_id,
-        assumeNotNull(jira_id)                                        AS issue_id,
-        id_readable                                                   AS issue_key,
-        changelog_id,
-        created_at                                                    AS event_at,
-        author_account_id                                             AS author_id,
-        extracted_at,
-        if(COALESCE(value_to, value_to_string, '') != '', 'add', 'remove') AS action,
-        if(action = 'add', COALESCE(value_to, ''), COALESCE(value_from, ''))               AS target_key,
-        if(action = 'add', COALESCE(value_to_string, ''), COALESCE(value_from_string, '')) AS sentence
-    FROM {{ ref('jira__changelog_items') }}
-    WHERE field_id = 'issuelinks'
-      AND jira_id IS NOT NULL
-),
-
--- One operation per element an event added or removed. A remote link is logged
--- in `issuelinks` under its own all-digit id and is no issue link (FIELD-
--- HISTORY-IN-DBT.md §3.7). A parent change removes the old parent and adds the
--- new one, each named by id with its key of the time.
-operations AS (
-    SELECT
-        insight_source_id, issue_id, issue_key, changelog_id, event_at, author_id, extracted_at,
-        action,
-        'issuelink'                                                   AS kind,
-        {{ jira_link_relation('sentence', 'target_key') }}            AS relation,
-        ''                                                            AS target_id,
-        target_key
-    FROM link_items
-    WHERE target_key != ''
-      AND NOT match(target_key, '^[0-9]+$')
-
-    UNION ALL
-
-    SELECT
-        insight_source_id,
-        assumeNotNull(jira_id)                                        AS issue_id,
-        id_readable                                                   AS issue_key,
-        changelog_id,
-        created_at                                                    AS event_at,
-        author_account_id                                             AS author_id,
-        extracted_at,
-        side.1                                                        AS action,
-        'parent'                                                      AS kind,
-        'parent'                                                      AS relation,
-        side.2                                                        AS target_id,
-        side.3                                                        AS target_key
-    FROM {{ ref('jira__changelog_items') }}
-    ARRAY JOIN [
-        ('remove', COALESCE(value_from, ''), COALESCE(value_from_string, '')),
-        ('add', COALESCE(value_to, ''), COALESCE(value_to_string, ''))
-    ] AS side
-    WHERE field_id = 'parent'
-      AND jira_id IS NOT NULL
-      AND (side.2 != '' OR side.3 != '')
-),
-
-resolved_operations AS (
-    SELECT
-        o.* EXCEPT (target_id),
-        COALESCE(nullIf(o.target_id, ''), nullIf(COALESCE(k.issue_id, ''), ''), '') AS resolved_id,
-        resolved_id                                                   AS target_id,
-        if(resolved_id != '', resolved_id, o.target_key)              AS target_ident
-    FROM operations AS o
-    LEFT JOIN key_ids AS k
-        ON k.insight_source_id = o.insight_source_id
-       AND k.issue_key = o.target_key
-),
-
--- An occurrence's identity, and its operations in the order they happened.
-occurrence_operations AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        kind,
-        relation,
-        target_ident,
-        argMax(issue_key, (event_at, toUInt64OrZero(changelog_id)))   AS issue_key,
-        any(target_id)                                                AS target_id,
-        argMax(target_key, (event_at, toUInt64OrZero(changelog_id)))  AS target_key,
-        arraySort(o -> (o.1, o.2),
-                  groupArray((event_at, toUInt64OrZero(changelog_id), action, author_id,
-                              changelog_id, extracted_at)))           AS ops
-    FROM resolved_operations
-    GROUP BY insight_source_id, issue_id, kind, relation, target_ident
-),
-
-held_occurrences AS (
-    SELECT
-        h.insight_source_id                                           AS insight_source_id,
-        h.issue_id                                                    AS issue_id,
-        h.kind                                                        AS kind,
-        h.relation                                                    AS relation,
-        if(resolved_id != '', resolved_id, h.target_key)              AS target_ident,
-        h.id_readable                                                 AS issue_key,
-        COALESCE(nullIf(h.target_id, ''), nullIf(COALESCE(k.issue_id, ''), ''), '') AS resolved_id,
-        h.target_key                                                  AS target_key,
-        h.extracted_at                                                AS extracted_at
-    FROM held_now AS h
-    LEFT JOIN key_ids AS k
-        ON k.insight_source_id = h.insight_source_id
-       AND k.issue_key = h.target_key
-),
-
--- Every occurrence, with its operations (none when only the snapshot holds it)
--- and whether it was held before them.
---
--- The state after an operation is the operation itself: present after an add,
--- absent after a remove. An occurrence was held before its first operation
--- when that operation removed it, and before every operation when it has none.
--- An add while present and a remove while absent repeat what is already true.
 occurrences AS (
     SELECT
-        COALESCE(o.insight_source_id, h.insight_source_id)            AS insight_source_id,
-        COALESCE(o.issue_id, h.issue_id)                              AS issue_id,
-        COALESCE(o.kind, h.kind)                                      AS kind,
-        COALESCE(o.relation, h.relation)                              AS relation,
-        COALESCE(o.target_ident, h.target_ident)                      AS target_ident,
-        COALESCE(nullIf(h.issue_key, ''), o.issue_key, '')            AS issue_key,
-        COALESCE(nullIf(o.target_id, ''), nullIf(h.resolved_id, ''), '') AS target_id,
-        COALESCE(nullIf(h.target_key, ''), o.target_key, '')          AS target_key,
-        COALESCE(o.ops, [])                                           AS ops,
-        h.extracted_at                                                AS held_extracted_at,
-        empty(ops) OR ops[1].3 = 'remove'                             AS held_before
-    FROM occurrence_operations AS o
-    FULL OUTER JOIN held_occurrences AS h
-        ON h.insight_source_id = o.insight_source_id
-       AND h.issue_id = o.issue_id
-       AND h.kind = o.kind
-       AND h.relation = o.relation
-       AND h.target_ident = o.target_ident
+        insight_source_id, issue_id, kind, occurrence_key, type_id, direction, phrase,
+        target_ident, issue_key, target_id, target_key, ops, held_extracted_at, held_before
+    FROM {{ ref('jira__link_occurrences') }} FINAL
 ),
 
 -- Positions in `ops` where the occurrence appears and disappears; 0 is "held
@@ -246,8 +100,8 @@ owned AS (
         i.issue_id                                                    AS issue_id,
         COALESCE(nullIf(COALESCE(owner.current_key, ''), ''), i.issue_key) AS id_readable,
         if(i.kind = 'parent', 'parent',
-           {{ jira_link_type("COALESCE(rt.type_name, '')", "COALESCE(rt.direction, '')", 'i.relation') }}) AS link_type,
-        i.relation                                                    AS relation,
+           {{ jira_link_type("COALESCE(lt.type_name, '')", 'i.direction', 'i.phrase') }}) AS link_type,
+        i.occurrence_key                                              AS occurrence_key,
         i.target_ident                                                AS target_ident,
         nullIf(i.target_id, '')                                       AS target_id,
         COALESCE(nullIf(COALESCE(target.current_key, ''), ''),
@@ -277,9 +131,9 @@ owned AS (
     LEFT JOIN linked_keys AS linked
         ON linked.insight_source_id = i.insight_source_id
        AND linked.issue_id = i.target_id
-    LEFT JOIN relation_types AS rt
-        ON rt.insight_source_id = i.insight_source_id
-       AND rt.relation = i.relation
+    LEFT JOIN link_types AS lt
+        ON lt.insight_source_id = i.insight_source_id
+       AND lt.type_id = i.type_id
 ),
 
 -- A link that appeared and went in one instant never held.
@@ -296,7 +150,7 @@ mirrored AS (
         assumeNotNull(l.target_id)                                    AS issue_id,
         l.target_readable                                             AS id_readable,
         'sub_issue'                                                   AS link_type,
-        'sub_issue'                                                   AS relation,
+        'sub_issue'                                                   AS occurrence_key,
         l.issue_id                                                    AS target_ident,
         toNullable(l.issue_id)                                        AS target_id,
         l.id_readable                                                 AS target_readable,
@@ -314,21 +168,21 @@ mirrored AS (
 
 every_interval AS (
     SELECT
-        insight_source_id, issue_id, id_readable, link_type, relation, target_ident, target_id, target_readable,
+        insight_source_id, issue_id, id_readable, link_type, occurrence_key, target_ident, target_id, target_readable,
         valid_from, valid_from_known, valid_to, added_by, removed_by, origin_event_id, collected_at
     FROM lasting
 
     UNION ALL
 
     SELECT
-        insight_source_id, issue_id, id_readable, link_type, relation, target_ident, target_id, target_readable,
+        insight_source_id, issue_id, id_readable, link_type, occurrence_key, target_ident, target_id, target_readable,
         valid_from, valid_from_known, valid_to, added_by, removed_by, origin_event_id, collected_at
     FROM mirrored
 )
 
 SELECT
     CAST(concat(
-        insight_source_id, '-jira-', issue_id, '-', link_type, '-', relation, '-',
+        insight_source_id, '-jira-', issue_id, '-', link_type, '-', occurrence_key, '-',
         target_ident, '-', toString(toUnixTimestamp64Milli(valid_from))
     ) AS String)                                                      AS unique_key,
     CAST(insight_source_id AS String)                                 AS insight_source_id,
