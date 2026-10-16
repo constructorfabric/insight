@@ -59,6 +59,17 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("bronze_hubspot", "engagements_emails"),
     ("bronze_hubspot", "engagements_meetings"),
     ("bronze_hubspot", "owners"),
+    ("bronze_jira", "jira_fields"),
+    ("bronze_jira", "jira_issue"),
+    ("bronze_jira", "jira_issue_census"),
+    ("bronze_jira", "jira_issue_history"),
+    ("bronze_jira", "jira_issue_keys"),
+    ("bronze_jira", "jira_issuetypes"),
+    ("bronze_jira", "jira_project_visibility"),
+    ("bronze_jira", "jira_projects"),
+    ("bronze_jira", "jira_statuses"),
+    ("bronze_jira", "jira_user"),
+    ("bronze_jira", "jira_worklogs"),
     ("bronze_m365", "email_activity"),
     ("bronze_m365", "teams_activity"),
     ("bronze_outline", "wiki_comments"),
@@ -125,6 +136,8 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("staging", "hubspot__crm_activities"),
     ("staging", "hubspot__crm_deals"),
     ("staging", "hubspot__crm_users"),
+    ("staging", "jira__field_history_derived"),
+    ("staging", "jira__task_worklogs"),
     ("staging", "m365__collab_chat_activity"),
     ("staging", "m365__collab_email_activity"),
     ("staging", "m365__collab_meeting_activity"),
@@ -150,48 +163,6 @@ def truncate(
             "— register it there (and in the same commit) instead."
         )
     client.command(f"TRUNCATE TABLE IF EXISTS `{schema}`.`{table}`")
-
-
-#: Silver relations dbt builds from bronze THIS SEED WROTE, rather than ones a
-#: generator inserts into. They are still in RESET_TARGETS — a re-seed at a new
-#: anchor must clear them, or rows from the old window stand forever behind an
-#: incremental watermark — but a dbt selector feeding them is correct, not a
-#: destroyer of seeded rows.
-#:
-#: INVARIANT: this set grows as each domain moves onto bronze. When it holds
-#: every silver relation in RESET_TARGETS, no generator writes silver any more
-#: and the placeholder hook has nothing left to protect.
-BRONZE_DERIVED_SILVER: frozenset[str] = frozenset(
-    {
-        "class_ai_assistant_usage",
-        "class_ai_dev_usage",
-        "class_ai_invoice",
-        "class_ai_overage",
-        "class_ai_overage_daily",
-        "class_git_ci_runs",
-        "class_git_commits",
-        "class_git_deployment_events",
-        "class_git_deployments",
-        "class_git_file_changes",
-        "class_git_pull_requests",
-        "class_git_pull_requests_commits",
-        "class_git_repositories",
-        "class_git_repository_branches",
-        "class_collab_chat_activity",
-        "class_collab_email_activity",
-        "class_collab_meeting_activity",
-        "class_crm_activities",
-        "class_crm_deals",
-        "class_crm_users",
-        "class_focus_metrics",
-        "class_hr_working_hours",
-        "class_people",
-        "class_support_activity",
-        "class_wiki_activity",
-        "class_wiki_engagement",
-        "class_wiki_pages",
-    }
-)
 
 
 @dataclass(frozen=True)

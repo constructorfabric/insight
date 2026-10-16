@@ -260,6 +260,15 @@ AI_CHAIN_SELECT = (
     "chatgpt_team__ai_credit_usage+",
 )
 
+# The bronze-derived task chain, selected by TAG rather than by model.
+#
+# The Jira journal is derived from the issue JSON and the changelog across
+# roughly thirty staging models, several of which read their upstream by raw
+# relation name rather than `ref()` — so dbt cannot order them from the graph
+# and naming them individually means naming all of them, in the right order,
+# forever. `tag:jira+` is what a connector sync itself selects.
+TASK_CHAIN_SELECT = ("tag:jira+",)
+
 # The bronze-derived CRM chain.
 CRM_CHAIN_SELECT = (
     "hubspot__crm_users+",
@@ -423,6 +432,7 @@ def run() -> None:
                     *HR_CHAIN_SELECT,
                     *AI_CHAIN_SELECT,
                     *GIT_CHAIN_SELECT,
+                    *TASK_CHAIN_SELECT,
                 ]
             ),
             full_refresh=True,

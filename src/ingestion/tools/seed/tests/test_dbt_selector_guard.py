@@ -3,13 +3,21 @@ from __future__ import annotations
 import pathlib
 import re
 
-import pytest
-
 from insight_seed import silver
-from insight_seed.generators.insert import BRONZE_DERIVED_SILVER, RESET_TARGETS
+from insight_seed.generators.insert import RESET_TARGETS
 
 _CONNECTORS = pathlib.Path(silver.__file__).resolve().parents[3] / "connectors"
+GENERATORS = pathlib.Path(silver.__file__).resolve().parent / "generators"
 _TAGS = re.compile(r"tags=\[([^\]]*)\]", re.S)
+
+
+def _models_for(selector: str) -> list[str]:
+    """The connector models a selector names: one, or every model with a tag."""
+    body = selector.strip("+")
+    if not body.startswith("tag:"):
+        return [body]
+    tag = body.removeprefix("tag:")
+    return sorted(name for name, tags in _model_tags().items() if tag in tags)
 
 
 def _model_tags() -> dict[str, set[str]]:
@@ -21,43 +29,31 @@ def _model_tags() -> dict[str, set[str]]:
     return found
 
 
-def _directly_seeded_silver() -> set[str]:
-    """Silver relations a generator writes rows into, as opposed to ones it only
-    clears so dbt can rebuild them."""
-    cleared = {table for schema, table in RESET_TARGETS if schema == "silver"}
-    return cleared - BRONZE_DERIVED_SILVER
+def test_no_generator_writes_a_silver_relation() -> None:
+    """Every silver relation is dbt's to build, so a selector can never
+    destroy seeded rows — which is what this guard used to check one model at
+    a time. A generator writing silver again brings that hazard back: dbt
+    would rebuild the relation from staging and replace what it wrote.
 
+    """
+    writers = {
+        path.name: path.read_text(encoding="utf-8").count('bulk_insert(client, "silver"')
+        for path in sorted(GENERATORS.glob("*.py"))
+    }
 
-@pytest.mark.parametrize(
-    "selector",
-    [
-        *silver.CI_CHAIN_SELECT,
-        *silver.SUPPORT_CHAIN_SELECT,
-        *silver.WIKI_CHAIN_SELECT,
-        *silver.CRM_CHAIN_SELECT,
-        *silver.COLLAB_CHAIN_SELECT,
-        *silver.HR_CHAIN_SELECT,
-        *silver.AI_CHAIN_SELECT,
-        *silver.GIT_CHAIN_SELECT,
-        silver.AI_INVOICE_SELECT,
-    ],
-)
-def test_no_selected_model_feeds_a_directly_seeded_silver_relation(selector: str) -> None:
-    """The on-run-start placeholder hook drops a silver placeholder once any
-    staging model for its tag is materialised. Selecting a model that feeds a
-    relation the generators write directly therefore destroys seeded rows on the
-    next run — silently, and only on the second seed."""
-    model = selector.rstrip("+")
-    tags = _model_tags().get(model)
-    assert tags is not None, f"{model} is not a connector dbt model"
-
-    fed = {t.removeprefix("silver:") for t in tags if t.startswith("silver:")}
-
-    collisions = fed & _directly_seeded_silver()
-    assert not collisions, (
-        f"{model} feeds {sorted(collisions)}, which the generators write directly; "
-        "building it from staging would replace the seeded rows with an empty union"
+    offenders = {name: count for name, count in writers.items() if count}
+    assert not offenders, (
+        f"these generators write silver directly: {offenders}. Every silver relation is "
+        f"built by dbt from bronze; a direct write is replaced by the next build."
     )
+
+
+def test_the_reset_registry_still_covers_silver() -> None:
+    """The relations are cleared, not written: a re-seed at another anchor
+    would otherwise leave the previous window behind an incremental watermark."""
+    cleared = {table for schema, table in RESET_TARGETS if schema == "silver"}
+
+    assert len(cleared) >= 30, f"only {len(cleared)} silver relations are cleared"
 
 
 def test_the_selector_names_only_models_that_exist() -> None:
@@ -71,7 +67,8 @@ def test_the_selector_names_only_models_that_exist() -> None:
         *silver.HR_CHAIN_SELECT,
         *silver.AI_CHAIN_SELECT,
         *silver.GIT_CHAIN_SELECT,
+        *silver.TASK_CHAIN_SELECT,
         silver.AI_INVOICE_SELECT,
     ]
-    missing = [s.rstrip("+") for s in selectors if s.rstrip("+") not in known]
+    missing = [name for s in selectors for name in _models_for(s) if name not in known]
     assert not missing, f"selector names models that do not exist: {missing}"
