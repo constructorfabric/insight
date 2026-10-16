@@ -16,10 +16,12 @@ the shell instead: the shape query, and the plan reaching the driver.
 from __future__ import annotations
 
 import datetime as _dt
+from types import SimpleNamespace
 
 import pytest
 
 from insight_seed.generators import insert
+from insight_seed.generators.insert import RESET_TARGETS
 
 _ROWS: list[tuple[object, ...]] = [("p1", 3), ("p2", 5)]
 
@@ -264,3 +266,53 @@ def test_the_shape_holds_only_what_a_generator_can_write_and_what_the_key_reads(
     assert shape.key_columns == ("person_id",)
     assert "default_kind NOT IN ('MATERIALIZED', 'ALIAS')" in client.columns_query()
     assert "is_in_sorting_key" in client.columns_query()
+
+
+class TestTruncatingAView:
+    """ClickHouse answers TRUNCATE on a view with NOT_IMPLEMENTED, and a dbt
+    model's materialization is free to change between releases — so the reset
+    asks what the relation is rather than trusting a committed list."""
+
+    class _Client:
+        def __init__(self, engine: str | None) -> None:
+            self.engine = engine
+            self.commands: list[str] = []
+
+        def query(self, sql: str, parameters: dict[str, str] | None = None) -> object:
+            del sql, parameters
+            rows = [] if self.engine is None else [(self.engine,)]
+            return SimpleNamespace(result_rows=rows)
+
+        def command(self, sql: str) -> None:
+            self.commands.append(sql)
+
+    def test_a_view_is_skipped_rather_than_truncated(self) -> None:
+        client = self._Client("View")
+
+        insert.truncate(client, *RESET_TARGETS[0])  # type: ignore[arg-type]
+
+        assert client.commands == [], "a view was handed a TRUNCATE"
+
+    def test_a_materialized_view_is_skipped_too(self) -> None:
+        client = self._Client("MaterializedView")
+
+        insert.truncate(client, *RESET_TARGETS[0])  # type: ignore[arg-type]
+
+        assert client.commands == [], "a materialized view was handed a TRUNCATE"
+
+    def test_a_table_is_still_truncated(self) -> None:
+        client = self._Client("ReplacingMergeTree")
+
+        insert.truncate(client, *RESET_TARGETS[0])  # type: ignore[arg-type]
+
+        assert len(client.commands) == 1, client.commands
+        assert client.commands[0].startswith("TRUNCATE TABLE IF EXISTS")
+
+    def test_a_relation_that_does_not_exist_yet_is_still_truncated(self) -> None:
+        """`IF EXISTS` already covers it, and treating absence as a view would
+        skip the reset on the run that creates the table."""
+        client = self._Client(None)
+
+        insert.truncate(client, *RESET_TARGETS[0])  # type: ignore[arg-type]
+
+        assert len(client.commands) == 1, client.commands
