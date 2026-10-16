@@ -16,13 +16,13 @@ under [The container class](#the-container-class), the heavy jobs under
 [The idling class](#the-idling-class):
 
 ```yaml
-runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (!contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
 ```
 
 | Event | Runner |
 |---|---|
-| pull request by an `OWNER`, `MEMBER` or `COLLABORATOR`, from a branch or a fork | `insight-vhc-arc` — the ARC scale set, one ephemeral pod per job |
-| pull request by anyone else | `ubuntu-latest` |
+| pull request by a project member, from a branch or a fork | `insight-vhc-arc` — the ARC scale set, one ephemeral pod per job |
+| pull request by anyone else, Dependabot included | `ubuntu-latest` |
 | `push`, `merge_group`, `schedule`, `workflow_dispatch`, `workflow_run` | the shared `[self-hosted, linux, x64, insight-vhc]` pool — these five machines **and** the scale set, whichever takes the job |
 | any of the above with the kill switch on | `ubuntu-latest` |
 
@@ -38,11 +38,16 @@ also carries `[self-hosted, linux, x64, insight-vhc]`, so it takes a share of
 the non-PR work alongside these five; naming it directly is what pins a pull
 request to it.
 
-**The author decides, not the head repository.** Members and collaborators
-open pull requests from personal forks as well as from branches here, and both
-are the same trusted work. Anyone else's pull request stays on a GitHub-hosted
-runner: approval for an outside contributor's workflow is an admission gate, not
-a sandbox — the code still executes once approved. The scale set runs
+**Only project members reach the scale set.** A project member is an author
+the event payload reports as `OWNER`, `MEMBER` or `COLLABORATOR`, or whose
+login is in the `INSIGHT_ARC_PR_AUTHORS` repository variable, a JSON array such
+as `["octocat"]`. The payload reports org membership only when it is public, so
+a member whose membership is private shows as `CONTRIBUTOR` and needs either
+the variable entry or public membership. Where the pull request comes from does
+not count: a branch here takes write access, not membership, and Dependabot has
+write access too. Anyone else's pull request stays on a GitHub-hosted runner:
+approval for an outside contributor's workflow is an admission gate, not a
+sandbox — the code still executes once approved. The scale set runs
 docker-in-docker on a shared node, which is not a boundary to put arbitrary
 external code behind, so that work goes to a runner GitHub throws away.
 
@@ -62,11 +67,12 @@ Left on hosted runners deliberately:
 ### The container class
 
 A job that runs in a job container, starts containers of its own, or builds
-images keeps the earlier rule, which tests the head repository instead of the
-author, so a fork's pull request runs it on `ubuntu-latest`:
+images reaches the scale set only for a project member's pull request from a
+branch here; a fork's pull request runs it on `ubuntu-latest` whoever opened
+it:
 
 ```yaml
-runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
 ```
 
 The jobs under this rule:
