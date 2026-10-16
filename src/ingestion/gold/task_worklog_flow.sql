@@ -36,7 +36,9 @@ in_progress_per_day AS (
                      least(i.interval_end, toDateTime(day) + toIntervalDay(1)))))) AS in_progress_seconds
     FROM {{ ref('task_status_spans') }} AS i
     INNER JOIN {{ ref('task_issue_state') }} AS s
-        ON s.insight_source_id = i.insight_source_id AND s.issue_id = i.issue_id
+        ON s.tenant_id = i.tenant_id
+        AND s.insight_source_id = i.insight_source_id
+        AND s.issue_id = i.issue_id
     ARRAY JOIN
         arrayMap(d -> toDate(i.interval_start) + toIntervalDay(d),
                  range(toUInt32(greatest(
@@ -58,7 +60,9 @@ worklog_per_day AS (
         sum(ifNull(w.duration_seconds, 0))                                   AS worklog_seconds
     FROM {{ ref('class_task_worklogs') }} AS w FINAL
     INNER JOIN task_users AS u
-        ON u.insight_source_id = w.insight_source_id AND u.user_id = w.author_id
+        ON u.tenant_id = w.tenant_id
+        AND u.insight_source_id = w.insight_source_id
+        AND u.user_id = w.author_id
     WHERE w.work_date IS NOT NULL
       AND ifNull(w.is_deleted, 0) = 0
     GROUP BY u.tenant_id, u.email, toDate(w.work_date)

@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 from ..profiles import Person
 from .base import deterministic_uuid
 from .insert import bulk_insert, truncate
+from .snapshots import prune_to_bronze
 
 # Identity keys bindings on (source_type, source_id, account_id): one stable value must span claims and bindings.
 _BAMBOOHR_SOURCE_ID = "seed-bamboohr"
@@ -205,7 +206,9 @@ def seed_bamboohr_employees(
                 json.dumps(record),
             )
         )
-    return bulk_insert(client, "bronze_bamboohr", "employees", cols, rows)
+    inserted = bulk_insert(client, "bronze_bamboohr", "employees", cols, rows)
+    prune_to_bronze(client, ("staging", "bamboohr__employees_snapshot"), tenant_uuid)
+    return inserted
 
 
 def generate(

@@ -20,4 +20,5 @@ pytest src/ingestion/dbt/tests/youtrack/transform
 
 The scenarios cover cardinality changes, opaque event IDs, same-instant chains,
 partial history, nulls and empty sets, late events, replacement in Silver,
-removed/re-added links, retired fields, identity observations and time units.
+removed/re-added links, retired fields, identity observations, time units,
+and two tenants sharing one source's ids and field types.

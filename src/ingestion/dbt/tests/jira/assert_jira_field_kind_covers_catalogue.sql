@@ -10,6 +10,7 @@
 -- is a classifier branch or an override row, not a widened default.
 
 SELECT
+    tenant_id,
     insight_source_id,
     field_id,
     field_name,

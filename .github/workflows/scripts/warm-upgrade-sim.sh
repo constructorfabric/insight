@@ -316,9 +316,158 @@ assert_jira_issue_identity_recovered() {
   echo "=== Jira issue id recovered and the moved issue collapsed onto it ==="
 }
 
+# Before the catalogue first-sync record kept its history, it was a plain
+# MergeTree keyed by source. Bronze has already forgotten the first extraction —
+# what it holds now is younger — so the upgrade must carry the recorded instant
+# over rather than re-derive it. One source still has bronze rows to name its
+# tenant; the other does not, and keeps an empty one.
+seed_jira_catalogue_first_seen_warm_state() {
+  echo "=== Seeding the pre-history Jira catalogue first-sync record ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  run_ch <<'SQL'
+CREATE DATABASE IF NOT EXISTS bronze_jira;
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields
+(
+    unique_key String, tenant_id Nullable(String), source_id Nullable(String),
+    _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+INSERT INTO bronze_jira.jira_fields (unique_key, tenant_id, source_id, _airbyte_raw_id, _airbyte_extracted_at)
+VALUES ('warm-jira-1-summary', 'warm', 'jira-1', 'raw-f1', '2026-03-01 00:00:00');
+
+CREATE TABLE IF NOT EXISTS staging.jira__catalogue_first_seen
+(
+    insight_source_id String, catalogue_first_sync DateTime64(3), recorded_at DateTime64(3)
+)
+ENGINE = MergeTree ORDER BY insight_source_id;
+INSERT INTO staging.jira__catalogue_first_seen (insight_source_id, catalogue_first_sync, recorded_at)
+VALUES
+    ('jira-1', '2026-01-01 00:00:00', '2026-01-01 00:05:00'),
+    ('jira-gone', '2026-01-02 00:00:00', '2026-01-02 00:05:00');
+SQL
+}
+
+assert_jira_catalogue_first_seen_kept() {
+  echo "=== Asserting the catalogue first sync survived the upgrade ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  local got
+  local expected="ReplacingMergeTree|-jira-gone,,jira-gone,2026-01-02 00:00:00.000;warm-jira-1,warm,jira-1,2026-01-01 00:00:00.000"
+  got="$(printf "SELECT concat(
+      (SELECT engine FROM system.tables WHERE database = 'staging' AND name = 'jira__catalogue_first_seen'), '|',
+      arrayStringConcat(groupArray(row), ';'))
+    FROM
+    (
+        SELECT concat(unique_key, ',', tenant_id, ',', insight_source_id, ',', toString(catalogue_first_sync)) AS row
+        FROM staging.jira__catalogue_first_seen FINAL
+        ORDER BY unique_key
+    )" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=warm upgrade lost the Jira catalogue first sync::Expected '${expected}' — the record rebuilt as a ReplacingMergeTree keyed by tenant and source, each source keeping the instant it was first recorded with, and the tenant taken from bronze where bronze still names one — but got '${got}'."
+    exit 1
+  fi
+  echo "=== Jira catalogue first sync kept through the upgrade ==="
+}
+
+# The YouTrack field observations predate their tenant column. The upgrade adds
+# it beside the key and reads each old row's tenant back from its key, against
+# the tenants bronze holds; a row whose key names none keeps NULL for the tenant
+# migration. Same fixture rules as above: only the columns the heal reads.
+seed_youtrack_field_observation_warm_state() {
+  echo "=== Seeding the pre-tenant YouTrack field observations ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  run_ch <<'SQL'
+CREATE DATABASE IF NOT EXISTS bronze_youtrack;
+CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_custom_fields
+(
+    unique_key String, tenant_id Nullable(String), source_id Nullable(String),
+    _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+INSERT INTO bronze_youtrack.youtrack_custom_fields (unique_key, tenant_id, source_id, _airbyte_raw_id, _airbyte_extracted_at)
+VALUES ('warm-yt-1-field-1', 'warm', 'yt-1', 'raw-y1', '2026-01-01 00:00:00');
+
+CREATE TABLE IF NOT EXISTS staging.youtrack__field_observations
+(
+    unique_key String, insight_source_id String, field_id String, field_name String,
+    field_type String, observed_at DateTime64(3), _version UInt64
+)
+ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key;
+INSERT INTO staging.youtrack__field_observations
+VALUES
+    ('warm-yt-1-field-1-2026-01-01 00:00:00', 'yt-1', 'field-1', 'Priority', 'enum', '2026-01-01 00:00:00', 1),
+    ('stray-yt-1-field-2-2026-01-01 00:00:00', 'yt-1', 'field-2', 'State', 'state', '2026-01-01 00:00:00', 1);
+SQL
+}
+
+assert_youtrack_field_observation_tenants() {
+  echo "=== Asserting the field observations carry their tenant ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  local got
+  local expected="2|field-1:warm;field-2:NULL"
+  got="$(printf "SELECT concat(
+      toString((SELECT position FROM system.columns WHERE database = 'staging' AND table = 'youtrack__field_observations' AND name = 'tenant_id')), '|',
+      arrayStringConcat(groupArray(concat(field_id, ':', ifNull(tenant_id, 'NULL'))), ';'))
+    FROM (SELECT field_id, tenant_id FROM staging.youtrack__field_observations FINAL ORDER BY field_id)" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=warm upgrade left YouTrack field observations without a tenant::Expected '${expected}' — the tenant column right after unique_key, the row keyed by a bronze tenant carrying it, the row keyed by none left NULL — but got '${got}'."
+    exit 1
+  fi
+  echo "=== YouTrack field observations carry their tenant ==="
+}
+
+# The task class producers predate their tenant column. A producer table gains
+# it right after unique_key with the type its model emits; a producer view cannot
+# be altered, so one without the column is dropped for its own connector's run to
+# recreate, and one that already has it is left alone.
+seed_task_producer_tenant_warm_state() {
+  echo "=== Seeding the pre-tenant task class producers ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS staging.jira__task_comments
+(
+    unique_key String, insight_source_id Nullable(String), comment_id Nullable(String), _version UInt64
+)
+ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key;
+INSERT INTO staging.jira__task_comments VALUES ('jira-1-comment-1', 'jira-1', '1', 1);
+CREATE TABLE IF NOT EXISTS staging.youtrack__task_issuetypes
+(
+    unique_key Nullable(String), insight_source_id Nullable(String), issue_type_id Nullable(String), _version UInt64
+)
+ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
+INSERT INTO staging.youtrack__task_issuetypes VALUES ('yt-1-youtrack-type-1', 'yt-1', '1', 1);
+CREATE VIEW IF NOT EXISTS staging.github__task_projects AS
+    SELECT 'gh-1-project-1' AS unique_key, 'gh-1' AS insight_source_id;
+CREATE VIEW IF NOT EXISTS staging.jira__task_projects AS
+    SELECT 'warm-jira-1-project-1' AS unique_key, 'warm' AS tenant_id, 'jira-1' AS insight_source_id;
+SQL
+}
+
+assert_task_producer_tenants() {
+  echo "=== Asserting the task class producers carry their tenant ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  local got
+  local expected="jira__task_comments:2:Nullable(String);youtrack__task_issuetypes:2:String|jira__task_projects"
+  got="$(printf "SELECT concat(
+      (SELECT arrayStringConcat(groupArray(concat(table, ':', toString(position), ':', type)), ';')
+       FROM (SELECT table, position, type FROM system.columns
+             WHERE database = 'staging' AND name = 'tenant_id'
+               AND table IN ('jira__task_comments', 'youtrack__task_issuetypes') ORDER BY table)), '|',
+      (SELECT arrayStringConcat(groupArray(name), ';')
+       FROM (SELECT name FROM system.tables
+             WHERE database = 'staging' AND name IN ('github__task_projects', 'jira__task_projects') ORDER BY name)))" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=warm upgrade left a task class producer without a tenant::Expected '${expected}' — tenant_id right after unique_key with each producer model's type, the producer view without the column dropped and the one with it kept — but got '${got}'."
+    exit 1
+  fi
+  echo "=== Task class producers carry their tenant ==="
+}
+
 seed_warm_bronze
 seed_git_close_time_warm_state
 seed_jira_issue_identity_warm_state
+seed_jira_catalogue_first_seen_warm_state
+seed_youtrack_field_observation_warm_state
+seed_task_producer_tenant_warm_state
 
 echo "=== Step 2: deploy the working tree onto the warm state ==="
 dbt_venv_for "$REPO_ROOT/src/ingestion/scripts/bootstrap-db/pins.env" "$WORKDIR/branch-venv"
@@ -330,6 +479,9 @@ fi
 
 assert_git_close_time_recovered
 assert_jira_issue_identity_recovered
+assert_jira_catalogue_first_seen_kept
+assert_youtrack_field_observation_tenants
+assert_task_producer_tenants
 
 echo "=== Step 3: build gold over the warm silver, as the first sync would ==="
 if ! PATH="$WORKDIR/branch-venv/bin:$PATH" \
