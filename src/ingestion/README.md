@@ -317,9 +317,6 @@ src/ingestion/
 │   │                                #   (clickhouse-databases Hook Job)
 │   ├── apply-ch-migrations.sh       #   migration runner (clickhouse-migrate Hook Job)
 │   ├── build-gold.sh                #   dbt gold build, for the paths with no sync
-│   ├── create-warehouse-placeholders.sh # applies connectors-ddl/ DDL snapshot
-│   ├── connectors-ddl/              #   CI-generated SHOW CREATE snapshot, no
-│   │                                #   bronze: the destination creates that
 │   ├── lib/ch-exec.sh               #   ClickHouse HTTP exec helpers
 │   └── wait-for-services.sh         #   kubectl wait for pods
 │

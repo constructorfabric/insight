@@ -19,10 +19,7 @@
   no `ref()`, so no connector's graph walk reaches it: `sync:always` is what
   puts it in every sync's selection, and the sync that creates the first bronze
   table is the one that replaces the stub — the same cadence the bronze SELECT
-  grants in provision-presentation-access.sh follow. For the same reason the
-  view is kept out of the committed DDL snapshot (bootstrap-db/dump-ddl.sh):
-  that snapshot is dumped from a warehouse that has bronze, so it could only
-  ever carry the unguarded form.
+  grants in provision-presentation-access.sh follow.
 
   Counted over TABLES, not databases: merge() needs a matching table, and an
   empty bronze database would satisfy a database-level probe while still
