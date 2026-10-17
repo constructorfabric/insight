@@ -3,120 +3,21 @@
 //! A widget names columns by the `as_name` its metric gives them, so a name
 //! the metric never produces is a broken definition, not missing data.
 
-use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
 
 use super::{KindError, Reference};
 use crate::domain::datasets::Datasets;
 use crate::domain::definition::{DefinitionKind, DefinitionName, Lookup};
-use crate::domain::kinds::dataset::declaration::BUCKET_COLUMN;
 use crate::domain::kinds::metric::answerable::effective_clock;
 use crate::domain::query::metric_query::MetricQuery;
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-enum Widget {
-    Table {
-        metric: String,
-        #[serde(default)]
-        columns: Vec<String>,
-        #[serde(default)]
-        detail: Option<String>,
-    },
-    Line {
-        metric: String,
-        x: String,
-        y: String,
-        #[serde(default)]
-        detail: Option<String>,
-    },
-    Bar {
-        metric: String,
-        x: String,
-        y: String,
-        #[serde(default)]
-        detail: Option<String>,
-    },
-    Area {
-        metric: String,
-        x: String,
-        y: String,
-        #[serde(default)]
-        detail: Option<String>,
-    },
-    /// One number, which is what most questions actually answer with.
-    Stat {
-        metric: String,
-        value: String,
-        #[serde(default)]
-        detail: Option<String>,
-    },
-    Pie {
-        metric: String,
-        label: String,
-        value: String,
-        #[serde(default)]
-        detail: Option<String>,
-    },
-}
+mod shape;
+
+pub(crate) use shape::KINDS;
+use shape::Widget;
 
 impl Widget {
-    /// The metric this widget draws.
-    fn metric(&self) -> &str {
-        match self {
-            Self::Table { metric, .. }
-            | Self::Line { metric, .. }
-            | Self::Bar { metric, .. }
-            | Self::Area { metric, .. }
-            | Self::Stat { metric, .. }
-            | Self::Pie { metric, .. } => metric,
-        }
-    }
-
-    /// The metric a reader drills into, when the author named one: the facts
-    /// that went into the figure rather than the figure itself.
-    fn detail(&self) -> Option<&str> {
-        match self {
-            Self::Table { detail, .. }
-            | Self::Line { detail, .. }
-            | Self::Bar { detail, .. }
-            | Self::Area { detail, .. }
-            | Self::Stat { detail, .. }
-            | Self::Pie { detail, .. } => detail.as_deref(),
-        }
-    }
-
-    /// The columns a reader narrows the detail by: the group a bar, a slice
-    /// or a row stands for. A table row stands for the groups its metric
-    /// makes, where the table draws them; a stat stands for no group.
-    fn narrowing_columns<'w>(&'w self, drawn: &'w MetricQuery) -> Vec<&'w str> {
-        match self {
-            Self::Line { x, .. } | Self::Bar { x, .. } | Self::Area { x, .. } => vec![x.as_str()],
-            Self::Pie { label, .. } => vec![label.as_str()],
-            Self::Table { columns, .. } => columns
-                .iter()
-                .map(String::as_str)
-                .filter(|column| {
-                    *column == BUCKET_COLUMN || drawn.groups().contains(&(*column).to_owned())
-                })
-                .collect(),
-            Self::Stat { .. } => Vec::new(),
-        }
-    }
-
-    /// The columns it reads out of that metric's result.
-    fn columns(&self) -> Vec<&str> {
-        match self {
-            Self::Table { columns, .. } => columns.iter().map(String::as_str).collect(),
-            Self::Line { x, y, .. } | Self::Bar { x, y, .. } | Self::Area { x, y, .. } => {
-                vec![x.as_str(), y.as_str()]
-            }
-            Self::Stat { value, .. } => vec![value.as_str()],
-            Self::Pie { label, value, .. } => vec![label.as_str(), value.as_str()],
-        }
-    }
-
     /// Refuses a widget whose metric cannot supply what it draws.
     fn check_against(&self, metric: &MetricQuery, clocked: bool) -> Result<(), WidgetError> {
         let available = metric.column_names(clocked);
@@ -168,9 +69,11 @@ pub(crate) enum WidgetError {
     #[error("a table names the columns it draws; this one names none")]
     NoColumns,
     #[error(
-        "a widget needs a metric, a type of `table`, `line`, `bar`, `area`, `stat` or `pie`, \
-         and the columns that type draws: columns for a table, x and y for a line, bar or \
-         area, value for a stat, label and value for a pie"
+        "a widget needs a metric, a type, and the columns that type draws: columns for a \
+         table; x and y for a line, bar, area, scatter or pulse; x, y and y2 for a composed; \
+         x, y and size for a bubble; label and value for a pie, donut, ranked, treemap, funnel, \
+         waterfall or radar; label, value and series for a stacked; value for a stat or radial; \
+         x and value for a heatmap"
     )]
     Shape(#[from] serde_json::Error),
     #[error("`{column}` is not a column of metric `{metric}`; its columns are: {available}")]

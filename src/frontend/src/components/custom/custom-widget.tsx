@@ -1,14 +1,12 @@
 import type { MetricResult, Widget } from "@/api/custom-client";
+import { ChartKind } from "@/components/charts/kinds";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { refusal } from "@/components/custom/refusal";
-import { CustomAreaChart } from "@/components/custom/custom-area-chart";
-import { CustomBarChart } from "@/components/custom/custom-bar-chart";
-import { CustomLineChart } from "@/components/custom/custom-line-chart";
-import { CustomPieChart } from "@/components/custom/custom-pie-chart";
 import { CustomStat } from "@/components/custom/custom-stat";
 import { CustomTable } from "@/components/custom/custom-table";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
+import { isWidgetKind, widgetColumns } from "@/lib/custom/widget-columns";
 
 export interface CustomWidgetProps {
   widget: Widget;
@@ -56,53 +54,20 @@ export function CustomWidget({
     );
   }
 
+  if (!isWidgetKind(widget.type)) return <p>Unknown widget type.</p>;
+
+  const missing = drawable(widget.metric, widgetColumns(widget), result);
+  if (missing) return missing;
+
   switch (widget.type) {
     case "table":
-      return (
-        drawable(widget.metric, widget.columns, result) ?? (
-          <CustomTable result={result} />
-        )
-      );
-    case "line":
-      return (
-        drawable(widget.metric, [widget.x, widget.y], result) ?? (
-          <CustomLineChart result={result} x={widget.x} y={widget.y} />
-        )
-      );
-    case "bar":
-      return (
-        drawable(widget.metric, [widget.x, widget.y], result) ?? (
-          <CustomBarChart result={result} x={widget.x} y={widget.y} />
-        )
-      );
-    case "area":
-      return (
-        drawable(widget.metric, [widget.x, widget.y], result) ?? (
-          <CustomAreaChart result={result} x={widget.x} y={widget.y} />
-        )
-      );
+      return <CustomTable result={result} />;
     case "stat":
       return (
-        drawable(widget.metric, [widget.value], result) ?? (
-          <CustomStat
-            result={result}
-            value={widget.value}
-            label={widget.label}
-          />
-        )
-      );
-    case "pie":
-      return (
-        drawable(widget.metric, [widget.label, widget.value], result) ?? (
-          <CustomPieChart
-            result={result}
-            label={widget.label}
-            value={widget.value}
-          />
-        )
+        <CustomStat result={result} value={widget.value} label={widget.label} />
       );
     default:
-      return <p>Unknown widget type.</p>;
+      return <ChartKind widget={widget} result={result} />;
   }
 }
 

@@ -274,7 +274,130 @@ describe("a widget", () => {
     );
     expect(
       type?.shape.of === "variants" ? Object.keys(type.shape.variants) : []
-    ).toEqual(["table", "line", "bar", "area", "stat", "pie"]);
+    ).toEqual([
+      "table",
+      "line",
+      "bar",
+      "area",
+      "stat",
+      "pie",
+      "donut",
+      "ranked",
+      "treemap",
+      "funnel",
+      "waterfall",
+      "stacked",
+      "composed",
+      "scatter",
+      "bubble",
+      "radar",
+      "radial",
+      "heatmap",
+      "pulse",
+    ]);
+  });
+
+  it.each([
+    [
+      "line",
+      [
+        ["x", true],
+        ["y", true],
+        ["series", false],
+        ["target", false],
+      ],
+    ],
+    [
+      "bar",
+      [
+        ["x", true],
+        ["y", true],
+        ["series", false],
+      ],
+    ],
+    [
+      "donut",
+      [
+        ["label", true],
+        ["value", true],
+      ],
+    ],
+    [
+      "waterfall",
+      [
+        ["label", true],
+        ["value", true],
+      ],
+    ],
+    [
+      "stacked",
+      [
+        ["label", true],
+        ["value", true],
+        ["series", true],
+      ],
+    ],
+    [
+      "composed",
+      [
+        ["x", true],
+        ["y", true],
+        ["y2", true],
+      ],
+    ],
+    [
+      "scatter",
+      [
+        ["x", true],
+        ["y", true],
+        ["series", false],
+      ],
+    ],
+    [
+      "bubble",
+      [
+        ["x", true],
+        ["y", true],
+        ["size", true],
+        ["series", false],
+      ],
+    ],
+    [
+      "radar",
+      [
+        ["label", true],
+        ["value", true],
+        ["target", false],
+      ],
+    ],
+    [
+      "radial",
+      [
+        ["value", true],
+        ["max", false],
+      ],
+    ],
+    [
+      "heatmap",
+      [
+        ["x", true],
+        ["value", true],
+      ],
+    ],
+    [
+      "pulse",
+      [
+        ["x", true],
+        ["y", true],
+      ],
+    ],
+  ] as const)("asks a %s for the columns it draws", (kind, expected) => {
+    const variants = type?.shape.of === "variants" ? type.shape.variants : {};
+    const fields = (variants[kind] ?? [])
+      .filter((field) => field.name !== "metric")
+      .map((field) => [field.name, Boolean(field.required)]);
+
+    expect(fields).toEqual(expected);
   });
 
   it("asks every type for the metric behind it", () => {

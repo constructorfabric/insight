@@ -27,6 +27,15 @@ describe("drawsBucket", () => {
     ).toBe(true);
   });
 
+  it.each([
+    { type: "composed", metric: "m", x: "bucket", y: "n", y2: "r" },
+    { type: "heatmap", metric: "m", x: "bucket", value: "n" },
+    { type: "pulse", metric: "m", x: "bucket", y: "n" },
+    { type: "bar", metric: "m", x: "author", y: "n", series: "bucket" },
+  ] as const)("is true for a $type that names it", (widget) => {
+    expect(drawsBucket(widget)).toBe(true);
+  });
+
   it("is false for a categorical widget that never reads it", () => {
     // A bucketed run would hand a pie one slice per time bucket, so the same
     // category appears many times and the total is wrong.
@@ -40,5 +49,8 @@ describe("drawsBucket", () => {
       drawsBucket({ type: "table", metric: "m", columns: ["author", "n"] }),
     ).toBe(false);
     expect(drawsBucket({ type: "stat", metric: "m", value: "n" })).toBe(false);
+  });
+  it("is false for a stored kind this build does not know", () => {
+    expect(drawsBucket({ type: "sankey", metric: "m" } as never)).toBe(false);
   });
 });

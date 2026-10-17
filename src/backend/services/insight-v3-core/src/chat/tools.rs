@@ -3,6 +3,7 @@
 use serde_json::{Value, json};
 
 use crate::domain::definition::DefinitionName;
+use crate::domain::kinds::widget::KINDS;
 
 pub(super) const ANSWER_TOOL: &str = "answer";
 pub(super) const CREATE_TOOL: &str = "create";
@@ -130,13 +131,18 @@ pub(super) fn proposal_tools() -> Vec<Value> {
         "additionalProperties": false,
         "required": ["type", "metric"],
         "properties": {
-            "type": { "enum": ["table", "line", "bar", "area", "stat", "pie"] },
+            "type": { "enum": KINDS },
             "metric": name,
             "columns": { "type": "array", "items": plain },
             "x": plain,
             "y": plain,
+            "y2": plain,
             "value": plain,
             "label": plain,
+            "series": plain,
+            "target": plain,
+            "size": plain,
+            "max": plain,
         },
     });
     let item = json!({

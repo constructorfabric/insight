@@ -8,6 +8,7 @@ import type {
   Widget,
 } from "@/api/custom-client";
 import { Badge } from "@/components/ui/badge";
+import { widgetFields } from "@/lib/custom/widget-columns";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -142,32 +143,17 @@ export function MetricSummary({
   );
 }
 
-/** What the row beside the metric is called, per kind. */
 function drawnLabel(widget: Widget): string {
-  switch (widget.type) {
-    case "table":
-      return "Columns";
-    case "stat":
-      return "Value";
-    case "pie":
-      return "Slices";
-    default:
-      return "Axes";
-  }
+  return widget.type === "table" ? "Columns" : "Draws";
 }
 
 /** The columns this widget reads, as it reads them. */
 function drawn(widget: Widget): string {
-  switch (widget.type) {
-    case "table":
-      return widget.columns.join(", ");
-    case "stat":
-      return widget.label ? `${widget.value} as ${widget.label}` : widget.value;
-    case "pie":
-      return `${widget.label} by ${widget.value}`;
-    default:
-      return `x ${widget.x} · y ${widget.y}`;
-  }
+  if (widget.type === "table") return widget.columns.join(", ");
+
+  return widgetFields(widget)
+    .map(({ field, column }) => `${field} ${column}`)
+    .join(" · ");
 }
 
 export function WidgetSummary({
