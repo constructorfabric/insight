@@ -19,16 +19,18 @@
 
 WITH winner AS (
     SELECT
+        tenant_id,
         source_id,
         jira_id,
         argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
     WHERE jira_id IS NOT NULL
-    GROUP BY source_id, jira_id
+    GROUP BY tenant_id, source_id, jira_id
 ),
 
 issues AS (
     SELECT
+        COALESCE(i.tenant_id, '')                                     AS tenant_id,
         COALESCE(i.source_id, '')                                     AS insight_source_id,
         COALESCE(toString(i.jira_id), '')                             AS issue_id,
         COALESCE(toString(i.id_readable), '')                         AS id_readable,
@@ -43,6 +45,7 @@ issues AS (
 -- outward relation ("blocks"); `inwardIssue`, its inward one ("is blocked by").
 issue_links AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         id_readable,
@@ -63,6 +66,7 @@ issue_links AS (
 
 parents AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         id_readable,
@@ -89,7 +93,8 @@ held AS (
 )
 
 SELECT
-    CAST(concat(insight_source_id, '-', issue_id, '-', kind, '-', link_id, '-', target_id, '-', target_key) AS String) AS unique_key,
+    CAST(concat(tenant_id, '-', insight_source_id, '-', issue_id, '-', kind, '-', link_id, '-', target_id, '-', target_key) AS String) AS unique_key,
+    tenant_id,
     insight_source_id,
     issue_id,
     id_readable,
