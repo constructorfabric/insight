@@ -158,7 +158,7 @@ figment = { version = "0.10", features = ["yaml", "env"] }
 
 # INVARIANT: must match the toolkit's opentelemetry major — a different major
 # is a different global meter provider and instruments silently no-op.
-opentelemetry = "0.32"
+opentelemetry = "0.33"
 # Local meter provider for the CLI job paths (seed/sync), which run outside the
 # toolkit server bootstrap and must build + flush their own provider.
 opentelemetry_sdk = { version = "0.32", features = ["metrics", "rt-tokio"] }
