@@ -31,27 +31,9 @@ use crate::domain::seed_service::IdentityInputsReader;
 /// rejects against the non-null `String` field); a NULL becomes `''` and fails
 /// the UUID reparse, failing the seed.
 ///
-/// HOTFIX(#1550) — TEMPORARY. This is
-/// the ANCHOR of the hotfix: every piece of code whose behavior exists only
-/// because of it carries the literal tag `HOTFIX(#1550)` — grep for it to
-/// find the full blast radius when unwinding the hotfix. The dbt
-/// producer writes `insight_tenant_id` *hashed* — sipHash128 of whatever raw
-/// string the connector was configured with (`identity_inputs_from_history.sql`,
-/// documented there as a TEMPORARY cross-source join key) — so the stored tenant
-/// never equals the caller's tenant and persons-seed silently read 0 rows. There
-/// is no reliable representation to match against (connector configs are
-/// free-form strings), so the tenant filter is DROPPED for now: Insight
-/// deployments are single-tenant, all `identity_inputs` rows belong to the
-/// deployment, and the seed writes its output under the caller's tenant
-/// regardless of what the rows carry (`run_seed` binds the request tenant,
-/// never the row's).
-///
-/// MULTI-TENANT PREREQUISITE: the tenant filter MUST come back before any
-/// multi-tenant deployment — without it every tenant's seed would read (and
-/// re-file under itself) all other tenants' rows. Restoring it requires the
-/// producer side to be fixed first (dbt resolves real tenant UUIDs instead of
-/// hashing free-form connector strings), then reinstate
-/// `WHERE insight_tenant_id = ?` here.
+/// Only the requested tenant's rows: dbt stamps `insight_tenant_id` with the
+/// canonical tenant UUID, and a seed run files every row it reads under the
+/// tenant it was asked for.
 ///
 /// The text columns have mixed nullability in `identity_inputs` (e.g.
 /// `insight_source_type` is `String`, `source_account_id` is `Nullable(String)`),
@@ -76,8 +58,9 @@ const STREAM_SQL: &str = r"
         toString(_synced_at)             AS synced_at,
         ifNull(operation_type, '')       AS op_type
     FROM identity.identity_inputs
-    WHERE (operation_type = 'UPSERT' AND value IS NOT NULL AND value != '')
-       OR operation_type = 'DELETE'
+    WHERE insight_tenant_id = toUUID(?)
+      AND ((operation_type = 'UPSERT' AND value IS NOT NULL AND value != '')
+           OR operation_type = 'DELETE')
     ORDER BY
         insight_source_type,
         insight_source_id,
@@ -123,11 +106,12 @@ impl ClickHouseIdentityInputsReader {
 #[async_trait]
 impl IdentityInputsReader for ClickHouseIdentityInputsReader {
     async fn stream(&self, tenant_id: Uuid) -> anyhow::Result<Vec<IdentityInputRow>> {
-        // tenant_id is intentionally unused while the HOTFIX(#1550) drops the
-        // tenant filter — kept so the `IdentityInputsReader` trait stays
-        // stable for when the filter comes back.
-        let _ = tenant_id;
-        let rows: Vec<InputRow> = self.client.query(STREAM_SQL).fetch_all().await?;
+        let rows: Vec<InputRow> = self
+            .client
+            .query(STREAM_SQL)
+            .bind(tenant_id.to_string())
+            .fetch_all()
+            .await?;
         rows.into_iter().map(map_row).collect()
     }
 }
@@ -164,6 +148,14 @@ fn parse_ch_datetime(s: &str) -> anyhow::Result<DateTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_sql_reads_one_tenant() {
+        assert!(
+            STREAM_SQL.contains("WHERE insight_tenant_id = toUUID(?)"),
+            "a seed files every row it reads under its own tenant, so it must read only that tenant's rows"
+        );
+    }
 
     #[test]
     fn stream_sql_keeps_empty_value_delete_rows() {

@@ -41,6 +41,7 @@ SETTINGS index_granularity = 8192
 
 CREATE OR REPLACE VIEW identity.account_assignment
 (
+    `tenant_id` String,
     `source_type` String,
     `source_id` UUID,
     `account_id` String,
@@ -48,6 +49,7 @@ CREATE OR REPLACE VIEW identity.account_assignment
     `created_at` DateTime64(6, 'UTC')
 )
 AS SELECT
+    toString(insight_tenant_id) AS tenant_id,
     insight_source_type AS source_type,
     insight_source_id AS source_id,
     lower(trimBoth(assumeNotNull(value_effective))) AS account_id,
@@ -56,12 +58,14 @@ AS SELECT
 FROM identity.identity_persons
 WHERE (value_type = 'id') AND (value_effective IS NOT NULL) AND (trimBoth(value_effective) != '')
 ORDER BY
+    tenant_id ASC,
     source_type ASC,
     source_id ASC,
     account_id ASC,
     created_at DESC,
     id DESC
 LIMIT 1 BY
+    tenant_id,
     source_type,
     source_id,
     account_id
@@ -69,12 +73,14 @@ LIMIT 1 BY
 
 CREATE OR REPLACE VIEW identity.person_map
 (
+    `tenant_id` String,
     `email` Nullable(String),
     `person_id` UUID
 )
 AS WITH account_emails AS
     (
         SELECT DISTINCT
+            toString(insight_tenant_id) AS tenant_id,
             insight_source_type AS source_type,
             insight_source_id AS source_id,
             lower(trimBoth(source_account_id)) AS account_id,
@@ -83,12 +89,15 @@ AS WITH account_emails AS
         WHERE (value_type = 'email') AND (operation_type = 'UPSERT') AND (coalesce(value, '') != '') AND (coalesce(source_account_id, '') != '')
     )
 SELECT
+    account_emails.tenant_id AS tenant_id,
     account_emails.email AS email,
     any(assignment.person_id) AS person_id
 FROM account_emails
-INNER JOIN identity.account_assignment AS assignment ON (assignment.source_type = account_emails.source_type) AND (assignment.source_id = account_emails.source_id) AND (assignment.account_id = account_emails.account_id)
+INNER JOIN identity.account_assignment AS assignment ON (assignment.tenant_id = account_emails.tenant_id) AND (assignment.source_type = account_emails.source_type) AND (assignment.source_id = account_emails.source_id) AND (assignment.account_id = account_emails.account_id)
 WHERE (account_emails.email != '') AND (assignment.person_id != toUUID('ffffffff-ffff-ffff-ffff-ffffffffffff'))
-GROUP BY account_emails.email
+GROUP BY
+    account_emails.tenant_id,
+    account_emails.email
 HAVING uniqExact(assignment.person_id) = 1
 ;
 

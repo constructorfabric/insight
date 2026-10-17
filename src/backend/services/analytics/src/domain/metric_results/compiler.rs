@@ -1748,6 +1748,16 @@ pub(crate) fn tenant_predicate(enforce: bool) -> &'static str {
     }
 }
 
+/// The same predicate on one relation's tenant, for queries that join another
+/// relation carrying its own `tenant_id`.
+pub(crate) fn tenant_predicate_on(alias: &str, enforce: bool) -> String {
+    if enforce {
+        format!("{alias}.tenant_id = ?")
+    } else {
+        format!("({alias}.tenant_id = ? OR 1 = 1)")
+    }
+}
+
 fn metric_where(def: &MetricDefinition, enforce_tenant_scope: bool) -> String {
     let tenant = tenant_predicate(enforce_tenant_scope);
     match &def.spec {
@@ -2047,7 +2057,7 @@ fn resolved_observation_from(
             let person_params = placeholders(req.entity.len());
             (
                 format!(
-                    "(obs.entity_id IN (SELECT email FROM {PERSON_MAP_RELATION} WHERE person_id IN ({person_params})) \
+                    "((toString(obs.tenant_id), obs.entity_id) IN (SELECT tenant_id, email FROM {PERSON_MAP_RELATION} WHERE person_id IN ({person_params})) \
                       OR coalesce(obs.account_id, '') != ''){date_scope}"
                 ),
                 format!("resolved_person_id IN ({person_params})"),
@@ -2057,7 +2067,7 @@ fn resolved_observation_from(
             let date_scope = scan_of(req, params);
             (
                 format!(
-                    "(obs.entity_id IN (SELECT email FROM {PERSON_MAP_RELATION} \
+                    "((toString(obs.tenant_id), obs.entity_id) IN (SELECT tenant_id, email FROM {PERSON_MAP_RELATION} \
                       WHERE toString(person_id) IN (SELECT entity_id FROM cohort)) \
                       OR coalesce(obs.account_id, '') != ''){date_scope}"
                 ),
@@ -2095,11 +2105,13 @@ fn resolved_observation_from(
                 ) AS resolved_person_id
             FROM {table} AS obs
             LEFT JOIN {ACCOUNT_ASSIGNMENT_RELATION} AS account_map
-                ON account_map.source_type = obs.account_source_type
+                ON account_map.tenant_id = toString(obs.tenant_id)
+               AND account_map.source_type = obs.account_source_type
                AND account_map.source_id = {account_source_uuid}
                AND account_map.account_id = {account_id}
             LEFT JOIN {PERSON_MAP_RELATION} AS person_map
-                ON person_map.email = obs.entity_id
+                ON person_map.tenant_id = toString(obs.tenant_id)
+               AND person_map.email = obs.entity_id
             WHERE {inner_where}
         ) AS resolved
         WHERE {resolved_filter}
@@ -2116,10 +2128,16 @@ fn resolved_observation_from(
     }
 }
 
+/// `tenant_id` is aliased back to its bare name: the identity maps joined beside
+/// the relation carry it too, and an unaliased `obs.tenant_id` would surface
+/// under its qualified name, which the outer SELECT cannot see.
 fn qualified_resolved_columns(alias: &str) -> String {
     RESOLVED_OBSERVATION_COLUMNS
         .split(", ")
-        .map(|column| format!("{alias}.{column}"))
+        .map(|column| match column {
+            "tenant_id" => format!("{alias}.tenant_id AS tenant_id"),
+            _ => format!("{alias}.{column}"),
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -3806,6 +3824,30 @@ mod tests {
     }
 
     #[test]
+    fn an_observation_resolves_only_through_its_own_tenants_identity_maps() {
+        let query = compile_period_batch_query(&[&sum_metric()], &request(), &[]);
+        let sql = query.sql.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        for map in ["account_map", "person_map"] {
+            let opened = sql.matches(&format!("AS {map} ON")).count();
+            let scoped = sql
+                .matches(&format!(
+                    "AS {map} ON {map}.tenant_id = toString(obs.tenant_id)"
+                ))
+                .count();
+            assert!(opened > 0, "should join {map}");
+            assert_eq!(
+                opened, scoped,
+                "every {map} join should match on the observation tenant"
+            );
+        }
+        assert!(
+            sql.contains("(toString(obs.tenant_id), obs.entity_id) IN (SELECT tenant_id, email FROM identity.person_map"),
+            "the prune should keep only addresses the observation's own tenant maps"
+        );
+    }
+
+    #[test]
     fn a_person_read_resolves_through_the_live_map_and_groups_by_the_person() {
         let query = compile_period_batch_query(&[&sum_metric()], &request(), &[]);
 
@@ -3819,10 +3861,21 @@ mod tests {
                 .sql
                 .contains("LEFT JOIN identity.person_map AS person_map")
         );
-        assert!(query.sql.contains("ON person_map.email = obs.entity_id"));
+        assert!(
+            query
+                .sql
+                .contains("ON person_map.tenant_id = toString(obs.tenant_id)")
+        );
+        assert!(query.sql.contains("AND person_map.email = obs.entity_id"));
+        assert!(query.sql.contains("obs.tenant_id AS tenant_id"));
+        assert!(
+            query
+                .sql
+                .contains("ON account_map.tenant_id = toString(obs.tenant_id)")
+        );
         assert!(
             query.sql.contains(
-                "(obs.entity_id IN (SELECT email FROM identity.person_map WHERE person_id IN (?, ?)) OR coalesce(obs.account_id, '') != '')"
+                "((toString(obs.tenant_id), obs.entity_id) IN (SELECT tenant_id, email FROM identity.person_map WHERE person_id IN (?, ?)) OR coalesce(obs.account_id, '') != '')"
             ),
             "the prune keeps the requested people's email parts plus every account-carrying row"
         );

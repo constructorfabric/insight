@@ -261,9 +261,9 @@ or from other existing Secrets via `keycloakConfig.extraEnv`. Never put
 placeholder syntax in realm YAML comments — config-cli substitution
 scans comments and fails the import.
 
-The tenant is pinned per environment: `global.tenantDefaultId` reaches
-the import as `INSIGHT_TENANT_ID` (e.g.
-`033dcbad-2374-4548-a9fa-04e2d5e0889a`), stamped by each IdP's
+The tenant is pinned per environment: `authenticator.oidc.defaultTenantId`
+reaches the import as `INSIGHT_TENANT_ID` (e.g.
+`0f6b3c2e-5d4a-4e7b-9c1d-2a3b4c5d6e7f`), stamped by each IdP's
 `hardcoded-attribute-idp-mapper` — never derived from upstream claims,
 so an IdP swap or upstream drift cannot change the tenant. Canonical
 realm shape to copy:
