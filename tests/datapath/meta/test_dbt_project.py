@@ -130,9 +130,9 @@ def test_every_jira_model_is_built_by_some_sync_pass(manifest: dict[str, Any]) -
 def test_the_identity_map_models_carry_the_tag_the_datapath_rig_selects(
     manifest: dict[str, Any],
 ) -> None:
-    """An untagged map model ships as an empty placeholder from the DDL snapshot, and
-    every person read resolves against it without erroring. What rebuilds them on a
-    real install is `sync:always`; this tag is how the data-path rig names them."""
+    """Untagged, the rig never builds the model, and a person read meets a missing
+    relation. What builds them on a real install is `sync:always`; this tag is how
+    the data-path rig names them."""
     tagged = {node["name"] for node in _models(manifest).values() if MAP_TAG in _tags(node)}
     assert tagged == MAP_MODELS
 

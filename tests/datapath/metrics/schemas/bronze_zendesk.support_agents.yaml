@@ -1,4 +1,4 @@
-# Mirrors the bronze_zendesk.support_agents DDL in scripts/connectors-ddl/zendesk.sql.
+# Mirrors the bronze_zendesk.support_agents shape the Airbyte destination creates from the stream.
 schemas:
   bronze_zendesk.support_agents:
     $schema: http://json-schema.org/draft-07/schema#

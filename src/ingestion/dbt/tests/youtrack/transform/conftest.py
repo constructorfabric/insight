@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
@@ -160,25 +159,14 @@ def warehouse(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Warehouse]:
     )
     # Every database this rig touches. A throwaway warehouse makes its own:
     # on a deployment create-databases.sh is the one creation site, and
-    # neither the snapshot nor an on-run-start hook carries a CREATE DATABASE.
+    # no on-run-start hook carries a CREATE DATABASE.
     client.command("CREATE DATABASE IF NOT EXISTS staging")
     client.command("CREATE DATABASE IF NOT EXISTS silver")
     client.command("CREATE DATABASE IF NOT EXISTS identity")
     client.command("CREATE DATABASE IF NOT EXISTS config")
-    silver_ddl = (INGESTION / "scripts/connectors-ddl/silver.sql").read_text()
-    for stmt in silver_ddl.split(";"):
-        match = re.search(r"CREATE TABLE IF NOT EXISTS silver\.(class_task_\w+)", stmt)
-        if not match:
-            continue
-        name = match[1]
-        producer = (
-            "jira__field_history_derived"
-            if name == "class_task_field_history"
-            else "github__task_links"
-            if name == "class_task_links"
-            else "jira__" + name[6:]
-        )
-        client.command(stmt.replace("silver." + name, "staging." + producer))
+    # No staging target is pre-created: the shapes used to be derived by
+    # rewriting the silver snapshot's CREATE statements. A model this connector
+    # feeds is built by the run that asserts over it.
     warehouse = Warehouse(client, profile)
     warehouse.dbt("run-operation", "create_task_config_tables")
     yield warehouse
