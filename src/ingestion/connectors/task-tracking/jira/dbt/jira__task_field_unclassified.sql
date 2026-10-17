@@ -42,12 +42,13 @@ SELECT
     uniqExact(ci.id_readable)                             AS issues_affected,
     min(ci.created_at)                                    AS oldest_event,
     max(ci.created_at)                                    AS newest_event,
-    any(c.catalogue_first_sync)                           AS catalogue_first_sync,
-    max(ci.created_at) > any(c.catalogue_first_sync)      AS metadata_is_missing
+    -- A source recorded under more than one tenant keeps the boundary seen first.
+    min(c.catalogue_first_sync)                           AS catalogue_first_sync,
+    max(ci.created_at) > min(c.catalogue_first_sync)      AS metadata_is_missing
 FROM {{ ref('jira__changelog_items') }} AS ci
 LEFT ANTI JOIN {{ ref('jira__task_field_kind') }} AS k
     ON k.insight_source_id = ci.insight_source_id
    AND k.field_id = ci.field_id
-LEFT JOIN {{ ref('jira__catalogue_first_seen') }} AS c
+LEFT JOIN {{ ref('jira__catalogue_first_seen') }} AS c FINAL
     ON c.insight_source_id = ci.insight_source_id
 GROUP BY ci.insight_source_id, ci.field_id

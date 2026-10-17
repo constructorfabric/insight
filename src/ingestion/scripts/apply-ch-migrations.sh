@@ -483,6 +483,10 @@ heal_jira_substream_issue_id
 heal_jira_issue_key jira_issue
 heal_jira_issue_key jira_issue_keys
 
+echo "=== Healing the Jira catalogue first-sync record ==="
+source "$SCRIPT_DIR/lib/heal-jira-catalogue-first-seen.sh"
+heal_jira_catalogue_first_seen
+
 echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional
 # incremental inserts, positional union). Labels left the contract (they
