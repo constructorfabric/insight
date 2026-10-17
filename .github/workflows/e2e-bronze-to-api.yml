@@ -93,7 +93,7 @@ jobs:
   # untested data-path changes. It covers everything a stand raises or the
   # suite reads at run time:
   #
-  #   src/ingestion/    dbt models, the migration and connectors-ddl scripts,
+  #   src/ingestion/    dbt models, the migration and bootstrap scripts,
   #                     and every connector's enrich source
   #   src/backend/      analytics, identity-resolution, the gateway and the
   #                     authenticator — the stand runs them, and the analytics

@@ -12,10 +12,9 @@ WHY
   declaring `Int64` where another declares `Nullable(Int64)` quietly changes the
   published silver type depending on which connectors happen to be enabled.
 
-  Neither drift is visible in the dbt DAG or in the connectors-ddl snapshot
-  (which carries a single staging table by design). It is visible in
-  `system.columns` of a warehouse where every model has been materialised —
-  exactly what `bootstrap-db.sh` produces.
+  Neither drift is visible in the dbt DAG. It is visible in `system.columns` of
+  a warehouse where every model has been materialised — exactly what
+  `bootstrap-db.sh` produces.
 
 WHAT IT CHECKS
   1. coverage  — every non-ephemeral model in the manifest has a relation in the
@@ -104,7 +103,7 @@ def load_env_file(path: Path) -> bool:
 
 
 def env(name: str) -> str:
-    """Required environment variable — no silent default (see dump-ddl.sh)."""
+    """Required environment variable — no silent default."""
     value = os.environ.get(name)
     if not value:
         sys.exit(f"{name} must be set (in the .env next to this script, or exported)")

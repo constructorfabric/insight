@@ -7,7 +7,8 @@
 # #1428), so there is no in-cluster pod to `kubectl exec` into. HTTP is the
 # only path.
 #
-# Sourced by apply-ch-migrations.sh and create-warehouse-placeholders.sh.
+# Sourced by apply-ch-migrations.sh, lib/ch-topology.sh and the bootstrap-db
+# access-provisioning scripts.
 # Exposes:
 #   run_ch           — execute a (multi-statement) SQL block read from stdin.
 #   ch_table_exists  — `ch_table_exists <db> <table>`; exit 0 if present.
