@@ -64,6 +64,7 @@ export CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}"
 
 source "$SCRIPT_DIR/lib/ch-topology.sh"
 source "$SCRIPT_DIR/lib/retired-relations.sh"
+source "$SCRIPT_DIR/lib/heal-youtrack-field-observation-tenant.sh"
 
 bash "$SCRIPT_DIR/create-databases.sh"
 
@@ -482,6 +483,9 @@ heal_jira_issue_key() {
 heal_jira_substream_issue_id
 heal_jira_issue_key jira_issue
 heal_jira_issue_key jira_issue_keys
+
+echo "=== Healing YouTrack field observation tenants ==="
+heal_youtrack_field_observation_tenant
 
 echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional

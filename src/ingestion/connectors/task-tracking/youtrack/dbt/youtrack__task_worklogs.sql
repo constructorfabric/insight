@@ -10,4 +10,5 @@ SELECT w.unique_key AS unique_key, w.source_id AS insight_source_id, 'youtrack' 
     toUnixTimestamp64Milli(now64(3)) AS _version,
     CAST(w.issue_id AS Nullable(String)) AS issue_id
 FROM {{ source('bronze_youtrack', 'youtrack_work_items') }} AS w FINAL
-LEFT JOIN {{ ref('youtrack__issues') }} AS i ON i.insight_source_id = w.source_id AND i.issue_id = w.issue_id
+LEFT JOIN {{ ref('youtrack__issues') }} AS i
+    ON i.tenant_id = w.tenant_id AND i.insight_source_id = w.source_id AND i.issue_id = w.issue_id
