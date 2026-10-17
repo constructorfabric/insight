@@ -49,6 +49,23 @@ definitions:
       request_parameters:
         $format: application/json
 
+  calendar:
+    authenticator:
+      type: SessionTokenAuthenticator
+      login_requester:
+        type: HttpRequester
+        url: >-
+          https://login.microsoftonline.com/{{ config['azure_tenant_id']
+          }}/oauth2/v2.0/token
+        http_method: POST
+        request_body:
+          $ref: "#/definitions/linked/HttpRequester/request_body"
+      session_token_path:
+        - access_token
+      expiration_duration: PT1H
+      request_authentication:
+        type: Bearer
+
 streams:
   - type: DeclarativeStream
     name: email_activity
@@ -651,6 +668,252 @@ streams:
       lookback_window: P0D
       cursor_granularity: P1D
 
+  # INVARIANT: no request unless m365_calendar is "true"; only the calendar needs
+  # Calendars.ReadBasic.All. A stream with no partitions fails a CheckStream, so it stays out of check.
+  - type: DeclarativeStream
+    name: calendar_events
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: user_id
+            extra_fields:
+              - - userPrincipalName
+              - - mail
+            stream:
+              type: DeclarativeStream
+              name: _calendar_users
+              primary_key:
+                - id
+              retriever:
+                type: SimpleRetriever
+                partition_router:
+                  type: ListPartitionRouter
+                  # INVARIANT: absent means the spec default; a Secret carries no defaults.
+                  values: "{{ ['enabled'] if (config.get('m365_calendar') or 'false') == 'true' else [] }}"
+                  cursor_field: calendar_switch
+                paginator:
+                  $ref: "#/definitions/linked/SimpleRetriever/paginator"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path:
+                      - value
+                requester:
+                  type: HttpRequester
+                  http_method: GET
+                  url: https://graph.microsoft.com/v1.0/users
+                  authenticator:
+                    $ref: "#/definitions/calendar/authenticator"
+                  request_parameters:
+                    $select: "{{ 'id,userPrincipalName,mail' if not next_page_token else '' }}"
+                    $filter: "{{ 'accountEnabled eq true' if not next_page_token else '' }}"
+                    $top: "{{ '999' if not next_page_token else '' }}"
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id:
+                      type: string
+                    userPrincipalName:
+                      type:
+                        - string
+                        - "null"
+                    mail:
+                      type:
+                        - string
+                        - "null"
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - value
+      requester:
+        type: HttpRequester
+        http_method: GET
+        url: https://graph.microsoft.com/v1.0/users/{{ stream_partition.user_id }}/calendarView
+        authenticator:
+          $ref: "#/definitions/calendar/authenticator"
+        request_headers:
+          Prefer: outlook.timezone="UTC", odata.maxpagesize=100
+        # INVARIANT: only finished UTC days are read, and the whole window is read again
+        # on every sync, so late responses and cancellations replace the earlier rows.
+        request_parameters:
+          startDateTime: "{{ (today_utc() - duration('P27D')).strftime('%Y-%m-%dT00:00:00Z') if not next_page_token else '' }}"
+          endDateTime: "{{ today_utc().strftime('%Y-%m-%dT00:00:00Z') if not next_page_token else '' }}"
+          $select: "{{ 'id,iCalUId,type,start,end,isAllDay,isCancelled,isOrganizer,showAs,responseStatus,attendees' if not next_page_token else '' }}"
+        error_handler:
+          type: DefaultErrorHandler
+          max_retries: 5
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+          response_filters:
+            - type: HttpResponseFilter
+              action: RATE_LIMITED
+              http_codes:
+                - 429
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes:
+                - 500
+                - 502
+                - 503
+                - 504
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes:
+                - 404
+              error_message: This user has no mailbox; other users continue.
+            # INVARIANT: no http_codes here — a filter matches on ANY of its conditions.
+            - type: HttpResponseFilter
+              action: IGNORE
+              predicate: "{{ 'AccessPolicy' in ((response.get('error') or {}).get('message') or '') }}"
+              error_message: An application access policy excludes this mailbox; other users continue.
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes:
+                - 401
+                - 403
+              failure_type: config_error
+              error_message: >-
+                The calendar is switched on (m365_calendar), but Microsoft Graph denies
+                calendar access. Grant the app the Calendars.ReadBasic.All application
+                permission with admin consent, or set m365_calendar to "false".
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type: string
+          iCalUId:
+            type:
+              - string
+              - "null"
+          type:
+            type:
+              - string
+              - "null"
+          isAllDay:
+            type:
+              - boolean
+              - "null"
+          isCancelled:
+            type:
+              - boolean
+              - "null"
+          isOrganizer:
+            type:
+              - boolean
+              - "null"
+          showAs:
+            type:
+              - string
+              - "null"
+          response:
+            type:
+              - string
+              - "null"
+          start_time:
+            type:
+              - string
+              - "null"
+          end_time:
+            type:
+              - string
+              - "null"
+          other_invitees:
+            type:
+              - integer
+              - "null"
+          user_id:
+            type: string
+          userPrincipalName:
+            type:
+              - string
+              - "null"
+          tenant_id:
+            type: string
+          source_id:
+            type: string
+          unique_key:
+            type: string
+        required:
+          - unique_key
+          - id
+        additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - user_id
+            value: "{{ stream_partition.user_id }}"
+          - type: AddedFieldDefinition
+            path:
+              - userPrincipalName
+            value: "{{ stream_slice.extra_fields['userPrincipalName'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - start_time
+            value: "{{ record['start']['dateTime'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - end_time
+            value: "{{ record['end']['dateTime'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - response
+            value: "{{ record['responseStatus']['response'] }}"
+          # SAFETY: only the number of other people invited is kept, never their addresses.
+          - type: AddedFieldDefinition
+            path:
+              - other_invitees
+            value_type: integer
+            value: >-
+              {{ record.get('attendees', [])
+                 | rejectattr('type', 'equalto', 'resource')
+                 | map(attribute='emailAddress.address', default='')
+                 | map('lower')
+                 | reject('in', [
+                     (stream_slice.extra_fields['userPrincipalName'] or '') | lower,
+                     (stream_slice.extra_fields['mail'] or '') | lower
+                   ])
+                 | list | length }}
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.user_id }}-{{ record['id'] }}
+      - type: RemoveFields
+        field_pointers:
+          - - attendees
+          - - start
+          - - end
+          - - responseStatus
+          - - "@odata.etag"
+
 spec:
   type: Spec
   connection_specification:
@@ -686,6 +949,16 @@ spec:
         order: 4
         title: Azure Client Secret
         airbyte_secret: true
+      m365_calendar:
+        type: string
+        pattern: "^(true|false)$"
+        default: "false"
+        description: >-
+          Read calendar events for the calendar meeting-time metric. Needs the
+          Calendars.ReadBasic.All application permission with admin consent; with
+          "true" and no permission the sync fails instead of reporting no meetings.
+        order: 5
+        title: Read calendars
     additionalProperties: true
 
 metadata:

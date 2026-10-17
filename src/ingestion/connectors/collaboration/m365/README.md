@@ -5,7 +5,9 @@ Microsoft 365 activity reports (email, Teams, OneDrive, SharePoint).
 ## Prerequisites
 
 1. Create an App Registration in Azure AD
-2. Grant application permissions: `Reports.Read.All`, `User.Read.All`
+2. Grant application permissions: `Reports.Read.All`, `User.Read.All`.
+   For the calendar meeting-time metric also grant `Calendars.ReadBasic.All`
+   and set `m365_calendar: "true"` (see below).
 3. Create a client secret
 
 ## K8s Secret
@@ -36,6 +38,28 @@ stringData:
 | `azure_tenant_id` | Yes | Azure AD tenant ID |
 | `azure_client_id` | Yes | App registration client ID |
 | `azure_client_secret` | Yes | App registration client secret (sensitive) |
+| `m365_calendar` | No | `"true"` reads calendar events for Calendar Meeting Hours. Default `"false"`: no calendar request is made. |
+
+### Calendar (opt-in)
+
+With `m365_calendar: "true"` the connector lists enabled users and reads each
+mailbox's calendar for the 27 finished UTC days before today, on every sync.
+It needs the `Calendars.ReadBasic.All` application permission with admin
+consent; without it the sync fails with a configuration error rather than
+report no meetings.
+
+What is stored per event: its times, the person's response, busy status,
+cancelled and all-day flags, and the number of other people invited. Subjects,
+bodies, locations and invitee addresses are never read or stored.
+
+A user without a mailbox, or a mailbox that an application access policy keeps
+out of the app's reach, is skipped and the sync continues. Exchange "RBAC for
+Applications" scoping is not supported: it offers no role for
+`Calendars.ReadBasic.All`, and the mailboxes it leaves out are denied with the
+same error as a missing permission, which fails the sync.
+
+The connection check does not cover the calendar; a missing permission shows
+up on the first sync.
 
 ### Automatically injected
 
