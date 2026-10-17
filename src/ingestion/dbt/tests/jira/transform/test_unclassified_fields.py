@@ -16,12 +16,15 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from conftest import Scenario, case
 from helpers import LATER_SYNC, SOURCE_ID, event, field, issue, item
 
 GHOST = "customfield_19001"
 POINTS = "customfield_10001"
 POINTS_FIELD = field(POINTS, name="Story Points", schema_type="number")
+FIRST_SYNC = "2026-01-01T00:00:00"
+FIRST_SYNC_TEXT = "2026-01-01 00:00:00"
 
 
 def _ghost_history(key: str = "TST-1") -> list[dict[str, Any]]:
@@ -133,14 +136,9 @@ def test_an_ancient_deleted_field_passes_the_guard(scenario: Scenario) -> None:
     assert scenario.invariants_hold("assert_jira_unclassified_fields_are_old")
 
 
-def test_the_first_sync_watermark_does_not_drift(scenario: Scenario) -> None:
-    """`bronze_jira.jira_fields` keeps only each field's latest extraction once
-    its parts merge, so a watermark recomputed from it creeps towards the newest
-    sync and an ever-younger set of events counts as "old". The first-seen
-    instant is therefore written once and left alone: a later sync of the same
-    source must not move it."""
+def _seed_first_sync_then_a_later_catalogue(scenario: Scenario) -> None:
     scenario.seed(
-        fields=[field(POINTS, name="Story Points", schema_type="number", extracted_at="2026-01-01T00:00:00")],
+        fields=[field(POINTS, name="Story Points", schema_type="number", extracted_at=FIRST_SYNC)],
         issues=[issue("TST-1", fields={POINTS: 5})],
     )
     scenario.build()
@@ -148,15 +146,57 @@ def test_the_first_sync_watermark_does_not_drift(scenario: Scenario) -> None:
     scenario.warehouse.insert(
         "bronze_jira.jira_fields", [field(POINTS, name="Story Points", schema_type="number", extracted_at=LATER_SYNC)]
     )
-    # The incremental run, as the pipeline does it — without the suite's
-    # `--full-refresh`.
-    scenario.warehouse.dbt("run", "--select", "jira__catalogue_first_seen")
 
+
+def _first_syncs(scenario: Scenario) -> list[str]:
     rows = scenario.warehouse.rows(
         "SELECT toString(catalogue_first_sync) AS first_sync"
-        " FROM staging.jira__catalogue_first_seen"
+        " FROM staging.jira__catalogue_first_seen FINAL"
         " WHERE insight_source_id = {src:String}",
         {"src": SOURCE_ID},
     )
-    assert len(rows) == 1
-    assert rows[0]["first_sync"].startswith("2026-01-01 00:00:00")
+    return [row["first_sync"] for row in rows]
+
+
+@pytest.mark.parametrize(
+    "run_flags",
+    [
+        pytest.param((), id="the pipeline's incremental run"),
+        pytest.param(("--full-refresh",), id="an upgrade's full refresh"),
+    ],
+)
+def test_the_first_sync_survives_a_catalogue_that_forgot_it(scenario: Scenario, run_flags: tuple[str, ...]) -> None:
+    """`bronze_jira.jira_fields` keeps only each field's latest extraction once
+    its parts merge, so a watermark recomputed from it creeps towards the newest
+    sync and an ever-younger set of events counts as "old". The first-seen
+    instant is therefore written once and left alone: neither a later sync nor a
+    full refresh of the same source may move it."""
+    _seed_first_sync_then_a_later_catalogue(scenario)
+
+    scenario.warehouse.dbt("run", "--select", "jira__catalogue_first_seen", *run_flags)
+
+    first_syncs = _first_syncs(scenario)
+    assert len(first_syncs) == 1, f"{run_flags}: {first_syncs}"
+    assert first_syncs[0].startswith(FIRST_SYNC_TEXT), f"{run_flags}: {first_syncs}"
+
+
+def test_two_runs_recording_one_source_keep_the_earlier_boundary(scenario: Scenario) -> None:
+    """Two runs that both found the source unrecorded each append a row; the
+    merge must settle on the one that saw the catalogue first, whichever landed
+    last."""
+    _seed_first_sync_then_a_later_catalogue(scenario)
+    scenario.warehouse.execute("DROP TABLE IF EXISTS staging.jira__catalogue_first_seen_early")
+    scenario.warehouse.execute(
+        "CREATE TABLE staging.jira__catalogue_first_seen_early ENGINE = Memory"
+        " AS SELECT * FROM staging.jira__catalogue_first_seen"
+    )
+    scenario.warehouse.execute("TRUNCATE TABLE staging.jira__catalogue_first_seen")
+    scenario.warehouse.dbt("run", "--select", "jira__catalogue_first_seen")
+    scenario.warehouse.execute(
+        "INSERT INTO staging.jira__catalogue_first_seen SELECT * FROM staging.jira__catalogue_first_seen_early"
+    )
+    scenario.warehouse.execute("DROP TABLE staging.jira__catalogue_first_seen_early")
+
+    first_syncs = _first_syncs(scenario)
+    assert len(first_syncs) == 1, first_syncs
+    assert first_syncs[0].startswith(FIRST_SYNC_TEXT), first_syncs
