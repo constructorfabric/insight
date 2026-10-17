@@ -99,15 +99,14 @@ fn renamed(mut body: Value, from: &str, to: &str) -> Value {
     body
 }
 
-/// The body a board has once it is laid out: its own title, and this list.
+/// The body a board has once it is laid out: everything else it says about
+/// itself, such as its title and time ranges, and this list.
 ///
 /// The list is the whole list, so the shorthand goes — left in place it would
 /// still say what the board used to draw.
 pub(crate) fn laid_out(previous: &Value, items: &[Item]) -> Result<Value, serde_json::Error> {
-    let mut object = serde_json::Map::new();
-    if let Some(title) = previous.get("title") {
-        object.insert("title".to_owned(), title.clone());
-    }
+    let mut object = previous.as_object().cloned().unwrap_or_default();
+    object.remove("widgets");
     object.insert("items".to_owned(), serde_json::to_value(items)?);
 
     Ok(Value::Object(object))

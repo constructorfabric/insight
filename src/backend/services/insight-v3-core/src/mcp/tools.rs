@@ -305,7 +305,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "arrange_dashboard",
-        description = "Lays out a dashboard that already exists: the order its widgets are drawn in, and the headings and lines of prose between them. Send the whole list top to bottom — it replaces the previous one, and the title is kept. Every widget it names must already exist."
+        description = "Lays out a dashboard that already exists: the order its widgets are drawn in, and the headings and lines of prose between them. Send the whole list top to bottom — it replaces the previous one, and the title and time ranges are kept. Every widget it names must already exist."
     )]
     async fn arrange_dashboard(
         &self,
