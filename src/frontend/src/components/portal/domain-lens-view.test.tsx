@@ -237,6 +237,14 @@ afterEach(() => vi.clearAllMocks());
 /* ── tests ───────────────────────────────────────────────────────────── */
 
 describe("headline (rules 1–2: per-capita + PoP delta)", () => {
+  it("keeps metric values when Home supplies the page heading", () => {
+    render(<DomainLensView config={HEADLINE_CONFIG} embedded />);
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+    expect(screen.getByText("100 commits")).toBeInTheDocument();
+    expect(screen.getByText(/25 commits per active person/)).toBeInTheDocument();
+    expect(screen.getByText("-50%")).toBeInTheDocument();
+  });
+
   it("leads with the team total the dialog explains, and keeps the per-person read", () => {
     render(<DomainLensView config={HEADLINE_CONFIG} />);
     // The figure is the roster's, because that is the set the evidence dialog

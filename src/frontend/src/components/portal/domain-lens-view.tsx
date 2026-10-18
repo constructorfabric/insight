@@ -132,7 +132,7 @@ import type { TeamMember } from "@/types/insight";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { useMetricCollection } from "@/queries/metric-results";
 import { useMemberGridData } from "@/queries/member-grid";
-import { TEXT_FIGURE } from "@/lib/type-scale";
+import { TEXT_EYEBROW, TEXT_FIGURE, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
@@ -147,8 +147,10 @@ const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
 export function DomainLensView({
   config: declared,
   gridKeys: gridKeysProp,
+  embedded = false,
 }: {
   config: LensConfig;
+  embedded?: boolean;
   /**
    * Direction-wide metric key union (see `directionMetricKeys`). When
    * provided, the fetched member grid requests this stable set instead of
@@ -580,7 +582,7 @@ export function DomainLensView({
   };
 
   return (
-    <div className="flex flex-col gap-6 p-4 md:p-6">
+    <div className={cn("flex flex-col gap-6", embedded ? "home-metrics" : "p-4 md:p-6")}>
       {scoped ? (
         <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm">
           <button
@@ -596,7 +598,7 @@ export function DomainLensView({
           <span className="font-medium">{scopedLabel ?? scoped}</span>
         </nav>
       ) : null}
-      <div className="relative flex items-start justify-between gap-3">
+      {!embedded ? <div className="relative flex items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold tracking-tight">
             {scoped ? (scopedLabel ?? scoped) : config.title}
@@ -619,7 +621,7 @@ export function DomainLensView({
             })}
           />
         ) : null}
-      </div>
+      </div> : null}
 
       {config.sections.map((s, i) => (
         <Section
@@ -970,7 +972,7 @@ function CoverageLevelsSection({
           at zero, because that reads as people who did nothing, which is the
           one thing it does not mean. */}
       <div className="flex flex-col gap-2">
-        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        <p className={TEXT_EYEBROW}>
           By section
         </p>
         {parts.map((part) => (
@@ -997,7 +999,7 @@ function CoverageLevelsSection({
       {/* 3 — who. Colour carries the finding, so the shape reads without the
           labels: the amber block IS the number at the top. */}
       <div className="flex flex-col gap-2">
-        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        <p className={TEXT_EYEBROW}>
           By person · sections with data
         </p>
         {levels.map(([level, n], i) => {
@@ -1195,7 +1197,7 @@ function ParticipationSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+      <p className={TEXT_EYEBROW}>
         {spec.title}
       </p>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(14rem,1fr))] gap-3">
@@ -1275,10 +1277,10 @@ function HeadlineSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+      <p className={TEXT_EYEBROW}>
         Per person · vs previous period
       </p>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-3">
+      <div data-slot="headline-grid" className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-4">
         {cards.map((c) => (
           <HeadlineCard
             key={c.key}
@@ -1332,7 +1334,7 @@ function HeadlineCard({
             wide has room to say it. */}
         <MetricName
           metric={c.r}
-          className="text-xs font-medium text-muted-foreground"
+          className={TEXT_NAME}
         />
         <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
       </div>
@@ -1351,10 +1353,10 @@ function HeadlineCard({
     </CardContent>
   );
 
-  if (!selection || !evidence) return <Card>{body}</Card>;
+  if (!selection || !evidence) return <Card className="py-0">{body}</Card>;
 
   return (
-    <Card className="transition-colors hover:bg-muted/40 focus-within:ring-2 focus-within:ring-ring">
+    <Card className="py-0 transition-colors hover:bg-card-hover focus-within:ring-2 focus-within:ring-ring">
       <button
         type="button"
         aria-haspopup="dialog"
@@ -1398,7 +1400,7 @@ function StatTilesSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+      <p className={TEXT_EYEBROW}>
         {title}
       </p>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
@@ -1619,7 +1621,7 @@ function DistributionSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+      <p className={TEXT_EYEBROW}>
         {spec.title} · {entries.length} people
       </p>
       <Card>
@@ -1758,7 +1760,7 @@ function EventHistogramSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+      <p className={TEXT_EYEBROW}>
         {spec.title} · {total} events
       </p>
       <Card>
@@ -1877,7 +1879,7 @@ function ConcentrationSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+      <p className={TEXT_EYEBROW}>
         {copy.heading}
       </p>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(14rem,1fr))] gap-3">
@@ -1960,7 +1962,7 @@ function CompositionSection({
   if (compIsError) {
     return (
       <section className="flex flex-col gap-3">
-        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        <p className={TEXT_EYEBROW}>
           {spec.title}
         </p>
         <ComingSoon
@@ -2165,7 +2167,7 @@ function HeatmapHoursSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+      <p className={TEXT_EYEBROW}>
         {spec.title} · {formatMetricValue(total, r.format, r.unit)}
       </p>
       <Card>
@@ -2260,7 +2262,7 @@ function DimensionTableSection({
   if (tableIsError) {
     return (
       <section className="flex flex-col gap-3">
-        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        <p className={TEXT_EYEBROW}>
           {spec.title}
         </p>
         <ComingSoon
@@ -2344,7 +2346,7 @@ function DimensionTableSection({
   return (
     <section className="flex flex-col gap-3">
       <div className="flex items-baseline justify-between gap-3">
-        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        <p className={TEXT_EYEBROW}>
           {spec.title} · {ranked.length} {spec.noun}
         </p>
         {expanded && ranked.length > limit ? (
@@ -2466,7 +2468,7 @@ function OwnershipSection({
   if (compIsError) {
     return (
       <section className="flex flex-col gap-3">
-        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        <p className={TEXT_EYEBROW}>
           {spec.title}
         </p>
         <ComingSoon
@@ -2527,7 +2529,7 @@ function OwnershipSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+      <p className={TEXT_EYEBROW}>
         {spec.title}
       </p>
       <Card>
@@ -2754,7 +2756,7 @@ function DirectionCardsSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+      <p className={TEXT_EYEBROW}>
         By direction
       </p>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(16rem,1fr))] gap-3">
@@ -2987,7 +2989,7 @@ export function BarList({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+      <p className={TEXT_EYEBROW}>
         {title}
       </p>
       <Card>

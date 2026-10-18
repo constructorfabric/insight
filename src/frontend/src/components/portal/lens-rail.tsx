@@ -1,5 +1,5 @@
 import { MessageSquare, Settings2, type LucideIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import brandSymbol from "@/assets/brand-symbol.svg";
 import { TEXT_NAME } from "@/lib/type-scale";
@@ -179,6 +179,7 @@ export function LensRail() {
       <Sidebar
         collapsible="none"
         className="w-(--rail-width)! overflow-visible border-e"
+        style={{ "--sidebar": "var(--rail)" } as CSSProperties}
       >
         {/* A fade beside the panel, not a flat veil.
             The pane's rows do not object to being dimmed — they object to
@@ -236,9 +237,9 @@ export function LensRail() {
             <img
               src={brandSymbol}
               alt="Constructor Fabric"
-              className="size-8 max-w-none shrink-0"
-              width={32}
-              height={32}
+              className="size-[34px] max-w-none shrink-0"
+              width={34}
+              height={34}
             />
             {/* The word rides the rail's own open state, like every zone
                 label: while shut there is no room for it. */}
