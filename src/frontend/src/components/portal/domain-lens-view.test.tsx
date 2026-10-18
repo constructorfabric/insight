@@ -245,6 +245,18 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
     expect(screen.getByText("-50%")).toBeInTheDocument();
   });
 
+  it("identifies the headline comparison and explains missing history", () => {
+    render(<DomainLensView config={HEADLINE_CONFIG} embedded />);
+    expect(screen.getByText("Per person")).toBeInTheDocument();
+    expect(screen.getByTitle("Compared with previous period")).toHaveTextContent("-50%");
+  });
+
+  it("does not silently omit unavailable headline comparisons", () => {
+    mocks.grid.previousByKey = new Map();
+    render(<DomainLensView config={HEADLINE_CONFIG} embedded />);
+    expect(screen.getByText("No comparison")).toHaveAttribute("title", "Previous period data is unavailable or zero");
+  });
+
   it("leads with the team total the dialog explains, and keeps the per-person read", () => {
     render(<DomainLensView config={HEADLINE_CONFIG} />);
     // The figure is the roster's, because that is the set the evidence dialog

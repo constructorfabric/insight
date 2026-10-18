@@ -3,7 +3,7 @@ import { trendSnapshot } from "@/lib/insight/explain-snapshot";
 import { Link } from "@tanstack/react-router";
 import { Fragment, useMemo, useState, type CSSProperties } from "react";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
-import { ArrowDownRight, ArrowUpRight } from "lucide-react";
+import { TrendingDown, TrendingUp } from "lucide-react";
 import { AttentionList } from "@/components/portal/attention-list";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -1278,7 +1278,7 @@ function HeadlineSection({
   return (
     <section className="flex flex-col gap-3">
       <p className={TEXT_EYEBROW}>
-        Per person · vs previous period
+        Per person
       </p>
       <div data-slot="headline-grid" className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-4">
         {cards.map((c) => (
@@ -1326,7 +1326,7 @@ function HeadlineCard({
     ? personsEvidenceSelection(c.carrier.selection, memberIds)
     : null;
   const body = (
-    <CardContent className="p-4">
+    <CardContent className="flex flex-col gap-1 p-4">
       <div className="flex items-center justify-between gap-2">
         {/* The full label, not the short one: `short_label` exists for a grid
             column head or a heatmap axis, and it drops the very word that says
@@ -1336,16 +1336,16 @@ function HeadlineCard({
           metric={c.r}
           className={TEXT_NAME}
         />
-        <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
+        <Delta now={c.now} prev={c.prev} direction={c.r.direction} showUnavailable />
       </div>
-      <div className={cn("mt-1", TEXT_FIGURE)}>
+      <div className={TEXT_FIGURE}>
         {formatMetricValue(c.now, c.r.format, c.r.unit)}
       </div>
       {/* The team total leads, because the dialog this card opens lists the
         roster's records — a per-person figure on the face and a roster-sized
         table behind it read as a contradiction. The per-person figure keeps
         its place underneath, where the comparison it serves still works. */}
-      <div className="text-xs text-muted-foreground">
+      <div className="text-xs font-medium text-muted-foreground">
         {c.isSum
           ? `team total · ${formatMetricValue(perCapita(c.r, memberIds), c.r.format, c.r.unit)} per active person`
           : "median / person"}
@@ -3138,16 +3138,24 @@ export function Delta({
   now,
   prev,
   direction,
+  showUnavailable = false,
 }: {
   now: number;
   prev: number | null;
   direction: MetricDirection;
+  showUnavailable?: boolean;
 }) {
-  if (prev == null || prev === 0) return null;
+  if (prev == null || prev === 0) {
+    return showUnavailable ? (
+      <span className="text-xs text-muted-foreground" title="Previous period data is unavailable or zero">
+        No comparison
+      </span>
+    ) : null;
+  }
   const diff = now - prev;
   if (Math.abs(diff) / Math.abs(prev) < 0.01) {
     return (
-      <span className="text-xs text-muted-foreground tabular-nums">±0%</span>
+      <span title="Compared with previous period" className="text-xs text-muted-foreground tabular-nums">±0%</span>
     );
   }
   const up = diff > 0;
@@ -3163,13 +3171,14 @@ export function Delta({
       : good
         ? "text-success"
         : "text-destructive";
-  const Icon = up ? ArrowUpRight : ArrowDownRight;
+  const Icon = up ? TrendingUp : TrendingDown;
   const pct = Math.round((diff / Math.abs(prev)) * 100);
   return (
     <span
-      className={`flex items-center gap-0.5 text-xs font-medium tabular-nums ${color}`}
+      title="Compared with previous period"
+      className={`flex shrink-0 items-center gap-1 text-xs font-medium tabular-nums ${color}`}
     >
-      <Icon className="h-3.5 w-3.5" />
+      <Icon aria-hidden className="size-3" />
       {up ? "+" : ""}
       {pct}%
     </span>
