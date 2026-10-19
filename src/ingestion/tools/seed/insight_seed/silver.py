@@ -75,6 +75,7 @@ from .generators import (
     wiki,
 )
 from .generators.base import seed_days
+from .generators.snapshots import prune_seeded_snapshots, source_models
 from .profiles import build_seeded_roster, get_dev_user_email
 
 LOG = logging.getLogger("seed.silver")
@@ -359,6 +360,16 @@ def build_gold(dbt_select: str | None = None, *, full_refresh: bool = False) -> 
     LOG.info("gold: %s built", script.name)
 
 
+def reset_seeded_snapshots(client: clickhouse_connect.driver.client.Client) -> None:
+    """Prune every snapshot over seeded bronze to what its rebuilt source holds.
+
+    INVARIANT: runs after the bronze is written and before the main build, so the
+    snapshots append only to the entities this seed's roster holds.
+    """
+    build_gold(dbt_select=" ".join(f"+{model}" for model in source_models()), full_refresh=True)
+    prune_seeded_snapshots(client, config.parse_tenant_id(os.environ))
+
+
 def generate_rows(
     client: clickhouse_connect.driver.client.Client,
 ) -> None:
@@ -421,6 +432,7 @@ def run() -> None:
         #    inputs. Gold builds unresolved here — the orchestrator runs the
         #    persons-seed/sync pair and then the `gold` subcommand to rebuild it.
         apply_ch_migrations()
+        reset_seeded_snapshots(client)
         build_gold(
             dbt_select=" ".join(
                 [

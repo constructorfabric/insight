@@ -48,8 +48,6 @@ def emitted(monkeypatch: pytest.MonkeyPatch) -> Rows:
         return len(rows)
 
     monkeypatch.setattr(wiki, "truncate", lambda client, schema, table: None)
-
-    monkeypatch.setattr(wiki, "prune_to_bronze", lambda client, snapshot, tenant: None)
     monkeypatch.setattr(wiki, "bulk_insert", capture)
     return captured
 

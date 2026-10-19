@@ -34,8 +34,6 @@ def emitted(monkeypatch: pytest.MonkeyPatch) -> dict[str, Table]:
         return len(rows)
 
     monkeypatch.setattr(collab, "truncate", lambda client, schema, table: None)
-
-    monkeypatch.setattr(collab, "prune_to_bronze", lambda client, snapshot, tenant: None)
     monkeypatch.setattr(collab, "bulk_insert", capture)
     return captured
 
