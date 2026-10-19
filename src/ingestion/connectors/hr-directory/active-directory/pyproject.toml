@@ -14,6 +14,11 @@ dependencies = [
     "ldap3>=2.9.1",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
 [project.scripts]
 source-active-directory = "source_active_directory.source:main"
 
@@ -24,6 +29,9 @@ exclude-newer = "7 days"
 # airbyte-cdk pins nltk==3.9.1 (fixed CRITICAL CVE-2025-14009); the image installs 3.10.3
 # over it (see Dockerfile), so keep the resolved dependency graph on the same version.
 override-dependencies = ["nltk>=3.10.3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["."]
