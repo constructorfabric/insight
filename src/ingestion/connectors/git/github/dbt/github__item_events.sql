@@ -42,7 +42,10 @@ WITH pull_request_events AS (
     FROM {{ source('bronze_github', 'pull_request_timeline_events') }} AS e FINAL
     {% if is_incremental() %}
     LEFT JOIN (
-        SELECT tenant_id, source_id, max(_airbyte_extracted_at) AS watermark
+        SELECT
+            tenant_id,
+            source_id,
+            max(_airbyte_extracted_at) AS watermark
         FROM {{ this }}
         GROUP BY tenant_id, source_id
     ) AS w
