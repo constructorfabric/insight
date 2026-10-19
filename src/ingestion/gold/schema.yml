@@ -754,6 +754,7 @@ models:
                   - total_chat_messages
                   - channel_posts
                   - direct_and_group_messages
+                  - split_chat_messages
                   - emails_sent
                   - emails_received
                   - emails_read
@@ -766,7 +767,7 @@ models:
                   - meetings_organized
                   - adhoc_meetings_attended
                   - scheduled_meetings_attended
-                  - focus_hours
+                  - workday_meeting_hours
                   - working_hours
                   - chat_active_day
                   - meeting_free_day
@@ -782,15 +783,15 @@ models:
           - not_null
       - name: subject_key
         description: >
-          Distinct-count subject: the date for active_day, the modality for
-          active_modality. NULL for sum and presence measures.
+          Distinct-count subject: the date for active_day and chat_active_day,
+          the modality for active_modality. NULL for sum and presence measures.
       - name: dimensions
         description: >
           Array(Tuple(key, value, label)). `tool` carries the collaboration
           tool discriminator (data_source with the insight_ prefix stripped)
           with static product labels; `scope` (files_shared only) carries the
           recipient scope (internal/external). Empty for whole-person
-          measures (focus_hours, working_hours, meeting_free_day,
+          measures (workday_meeting_hours, working_hours, meeting_free_day,
           active_modality).
 
   - name: task_metric_observations

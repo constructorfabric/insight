@@ -67,6 +67,7 @@ mod m20260823_000001_ratio_denominator_aggregation;
 mod m20260824_000001_metric_percentile_stddev_computation;
 mod m20260825_000001_metric_evidence_presentation;
 mod m20260903_000001_metric_definition_first_observed;
+mod m20261014_000001_drop_unread_catalog_tables;
 pub(crate) use m20260822_000001_feedback::feedback_schema;
 pub(crate) use m20260822_000002_ai_assist::ai_assist_schema;
 
@@ -145,6 +146,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260824_000001_metric_percentile_stddev_computation::Migration),
             Box::new(m20260825_000001_metric_evidence_presentation::Migration),
             Box::new(m20260903_000001_metric_definition_first_observed::Migration),
+            Box::new(m20261014_000001_drop_unread_catalog_tables::Migration),
         ]
     }
 }
@@ -152,21 +154,8 @@ impl MigratorTrait for Migrator {
 /// Per-table CHECK constraint names that the startup probe asserts present.
 ///
 /// Source of truth for the probe in `infra/db/check_probe.rs`. Each entry maps
-/// a table name to the CHECK names the corresponding migration emits. Keep in
-/// sync with the `REQUIRED_CHECKS` const in each migration module.
+/// a table name to the CHECK names the corresponding migration emits.
 pub const REQUIRED_CHECKS_BY_TABLE: &[(&str, &[&str])] = &[
-    (
-        "metric_catalog",
-        m20260522_000001_metric_catalog::REQUIRED_CHECKS,
-    ),
-    (
-        "metric_threshold",
-        m20260522_000002_metric_threshold::REQUIRED_CHECKS,
-    ),
-    (
-        "threshold_lock_audit",
-        m20260522_000003_threshold_lock_audit::REQUIRED_CHECKS,
-    ),
     (
         "metric_sources",
         m20260625_000001_metric_definitions::REQUIRED_SOURCE_CHECKS,
@@ -191,58 +180,20 @@ pub const REQUIRED_CHECKS_BY_TABLE: &[(&str, &[&str])] = &[
         "metric_definition_tags",
         m20260810_000002_metric_definition_tags::REQUIRED_TAG_CHECKS,
     ),
-    (
-        "semantic_datasets",
-        m20260805_000001_semantic_definition_core::REQUIRED_DATASET_CHECKS,
-    ),
-    (
-        "semantic_measures",
-        m20260805_000001_semantic_definition_core::REQUIRED_MEASURE_CHECKS,
-    ),
-    (
-        "semantic_metrics",
-        m20260805_000001_semantic_definition_core::REQUIRED_METRIC_CHECKS,
-    ),
-    (
-        "semantic_definition_revisions",
-        m20260805_000001_semantic_definition_core::REQUIRED_REVISION_CHECKS,
-    ),
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Guards against a developer adding a new catalog migration but
-    /// forgetting to register its `REQUIRED_CHECKS` in
-    /// [`REQUIRED_CHECKS_BY_TABLE`]. Catches the "silent probe degradation"
-    /// failure mode where a missing CHECK at runtime would never be
-    /// reported because the probe iterates this list.
-    ///
-    /// This test pins the catalog scope only — adding a non-catalog
-    /// migration (e.g., another `analytics.metrics` rewrite) does not need
-    /// a `REQUIRED_CHECKS_BY_TABLE` entry, so we don't enumerate all
-    /// migrations. Tighten this test (or extract a per-migration
-    /// `REQUIRED_CHECKS` registry trait) the day a fourth catalog
-    /// migration lands.
+    /// A table whose migration declares CHECKs must be registered in
+    /// [`REQUIRED_CHECKS_BY_TABLE`], or the probe never reports them missing.
     #[test]
     fn required_checks_by_table_covers_every_catalog_table() {
-        // Wire each catalog migration's REQUIRED_CHECKS by its own const
+        // Wire each migration's CHECK list by its own const
         // pointer so renaming the const on one side fails compilation here
         // first — there is no string-matching slop in this comparison.
         let expected: &[(&str, &[&str])] = &[
-            (
-                "metric_catalog",
-                m20260522_000001_metric_catalog::REQUIRED_CHECKS,
-            ),
-            (
-                "metric_threshold",
-                m20260522_000002_metric_threshold::REQUIRED_CHECKS,
-            ),
-            (
-                "threshold_lock_audit",
-                m20260522_000003_threshold_lock_audit::REQUIRED_CHECKS,
-            ),
             (
                 "metric_sources",
                 m20260625_000001_metric_definitions::REQUIRED_SOURCE_CHECKS,
@@ -266,22 +217,6 @@ mod tests {
             (
                 "metric_definition_tags",
                 m20260810_000002_metric_definition_tags::REQUIRED_TAG_CHECKS,
-            ),
-            (
-                "semantic_datasets",
-                m20260805_000001_semantic_definition_core::REQUIRED_DATASET_CHECKS,
-            ),
-            (
-                "semantic_measures",
-                m20260805_000001_semantic_definition_core::REQUIRED_MEASURE_CHECKS,
-            ),
-            (
-                "semantic_metrics",
-                m20260805_000001_semantic_definition_core::REQUIRED_METRIC_CHECKS,
-            ),
-            (
-                "semantic_definition_revisions",
-                m20260805_000001_semantic_definition_core::REQUIRED_REVISION_CHECKS,
             ),
         ];
 

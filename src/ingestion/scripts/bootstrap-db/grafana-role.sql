@@ -14,6 +14,9 @@ GRANT SELECT ON presentation.* TO grafana_ro;
 GRANT SELECT ON product_usage.* TO grafana_ro;
 GRANT SELECT ON ingestion_history.* TO grafana_ro;
 GRANT SELECT ON config.* TO grafana_ro;
+-- Connector freshness alert reads max(_airbyte_extracted_at) per bronze_*
+-- database (#3745). Wildcard: connectors add databases without a migration.
+GRANT SELECT ON bronze_*.* TO grafana_ro;
 
 -- The disk-usage and slow-query dashboards read these two system tables;
 -- without an explicit grant the server refuses SELECT on them. system.tables

@@ -77,6 +77,8 @@
 {%- set t_ids = jira_split_bracketed_ids(to_id) -%}
 {%- set f_disp = jira_split_bare_comma(from_str) -%}
 {%- set t_disp = jira_split_bare_comma(to_str) -%}
+{%- set f_listed = "arrayFilter(x -> x != '[]', " ~ f_disp ~ ")" -%}
+{%- set t_listed = "arrayFilter(x -> x != '[]', " ~ t_disp ~ ")" -%}
     multiIf(
         {{ kind }} = 'scalar',
         (
@@ -180,17 +182,18 @@
             if(COALESCE({{ to_str }},   '') = '', [], [CAST({{ jira_text_prefix(to_str) }} AS String)])
         ),
 
-        {#- The display side stands in only when the id side is ABSENT. An id side
-            that is present and empty (`[]`) is a real value — the field was
-            cleared — and falling back there yields the display of an empty
-            list, which is the literal text `[]` parsed as one option. -#}
+        {#- The display side stands in whenever the id side names no element: it
+            is absent, or an empty `[]` beside displays, which a migrated
+            instance writes for every option it carried over. An empty list
+            renders as the literal display `[]`, which is dropped, so clearing
+            the field still yields no element rather than one option named "[]". -#}
         {{ kind }} = 'option_array',
         (
-            CAST(if(COALESCE({{ from_id }}, '') = '', {{ f_disp }}, {{ f_ids }}) AS Array(String)),
-            CAST(if(COALESCE({{ from_id }}, '') = '', {{ f_disp }},
+            CAST(if(empty({{ f_ids }}), {{ f_listed }}, {{ f_ids }}) AS Array(String)),
+            CAST(if(empty({{ f_ids }}), {{ f_listed }},
                     if(length({{ f_disp }}) = length({{ f_ids }}), {{ f_disp }}, {{ f_ids }})) AS Array(String)),
-            CAST(if(COALESCE({{ to_id }}, '') = '', {{ t_disp }}, {{ t_ids }}) AS Array(String)),
-            CAST(if(COALESCE({{ to_id }}, '') = '', {{ t_disp }},
+            CAST(if(empty({{ t_ids }}), {{ t_listed }}, {{ t_ids }}) AS Array(String)),
+            CAST(if(empty({{ t_ids }}), {{ t_listed }},
                     if(length({{ t_disp }}) = length({{ t_ids }}), {{ t_disp }}, {{ t_ids }})) AS Array(String))
         ),
 
@@ -230,9 +233,15 @@
   resolved them, because `duration` folds zero to the empty state and `null -> 0`
   is a real event. Element-wise kinds are exempt from the second rule: an item
   naming the same element on both sides is the RENAME of that element.
+
+  A `link_array` item whose id side is all digits is a REMOTE link (a Confluence
+  page, a web link): Jira logs it in `issuelinks`, but it is a separate resource
+  and never appears in the field, whose elements are issue keys (§3.7).
 -#}
 {% macro jira_item_is_live(kind, from_id, from_str, to_id, to_str) %}
     ({{ jira_delta_action(kind, from_id, from_str, to_id, to_str) }} != 'none'
+     AND NOT ({{ kind }} = 'link_array'
+              AND match(COALESCE({{ to_id }}, {{ from_id }}, ''), '^[0-9]+$'))
      AND ({{ kind }} IN {{ jira_element_wise_kinds() }}
           OR NOT (COALESCE({{ from_id }}, '') = COALESCE({{ to_id }}, '')
                   AND COALESCE({{ from_str }}, '') = COALESCE({{ to_str }}, ''))))

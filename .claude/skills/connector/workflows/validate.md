@@ -235,18 +235,17 @@ The Airbyte destination creates every bronze table as `ReplacingMergeTree(_airby
 - [ ] No `promote_bronze_to_rmt` calls or `__bronze_promoted` models are introduced
 ### Dashboard metric surfacing (only if the connector should appear in the UI)
 
-A connector whose silver class feeds a dashboard metric does NOT surface in the
-UI from the silver model alone — the gold view, the metric `query_ref`(s), and
-the catalog each enumerate inputs explicitly (see `create.md` §3.6c).
-If the connector is expected to show a per-person card, verify the full chain;
-if it is bronze-only or its class has no gold consumer, confirm the README says
-so and skip this section.
+A connector whose silver class feeds a dashboard metric surfaces through a gold
+evidence model and a registry entry (see `create.md` §3.6c). If the connector is
+expected on a lens or overview, verify the chain; if it is bronze-only or no gold
+evidence model reads its class, confirm the README says so and skip this section.
 
 - [ ] Silver class `class_<X>.sql` carries `-- depends_on: {{ ref('<snake>__<class>') }}` for the connector.
-- [ ] The gold `insight.<section>_bullet_rows` view has a branch `FROM silver.class_<X> WHERE data_source = 'insight_<snake>'` emitting the connector's `metric_key`(s). (`data_source` literal == what the silver model SELECTs.)
-- [ ] EVERY bullet `query_ref` that should show the key was re-set in a NEW append-only SeaORM migration — the key appears in both the `sumIf(... metric_key='<k>') AS <k>_v` list AND the `ARRAY JOIN [('<k>', <k>_v), …]` unpivot. A section typically has several copies (IC `…0012`-style, Team, member-values `…0041`, dept-dist `…0045`); each must be updated for the surface it backs. Base the new SQL on the LATEST migration that set that id (grep the metric hex id), and register the migration in `migration/mod.rs`.
-- [ ] A `metric_catalog` row + product-default `metric_threshold` for `<section>_bullet_rows.<metric_key>` exists (new append-only migration, `source_tags: ["<slug>"]`, registered in `mod.rs`).
-- [ ] An e2e fixture (`/metric-test`) seeds bronze and asserts the metric_key's value end-to-end; any sibling test asserting the section's `size(items)` was bumped for the new key.
+- [ ] The family's gold evidence model reads `silver.class_<X>`, the branch of every measure the connector should feed accepts its rows (filters, joins, `data_source` mappings), and the source's dimension value has a display label in the family's label macro (`collab_tool_label`, `ai_tool_label`, `git_source_label`).
+- [ ] A source that contributes account ids to identity maps its `data_source` to an identity source type where the evidence model sets `account_source_type`.
+- [ ] Any new measure is emitted by the evidence model and listed under its source in `registry.yaml`; any new metric is under `metrics:` there, and `passports.md` was regenerated.
+- [ ] No analytics SeaORM migration, `metric_catalog` row, threshold row or `insight.*_bullet_rows` view was added.
+- [ ] A `/metric-test` fixture seeds bronze and asserts the connector's contribution through `/v1/metric-results`.
 
 ### Credentials Template
 - [ ] `credentials.yaml.example` lists all required fields

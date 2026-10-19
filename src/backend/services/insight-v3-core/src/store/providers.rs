@@ -6,6 +6,7 @@
 //! later attempt may repeat and which may therefore land twice.
 
 mod discord;
+mod slack;
 mod telegram;
 mod zulip;
 
@@ -20,6 +21,7 @@ use crate::config::DestinationConfig;
 use crate::domain::alerts::delivery::{Provider, SendError};
 
 pub(crate) use discord::Discord;
+pub(crate) use slack::Slack;
 pub(crate) use telegram::Telegram;
 pub(crate) use zulip::Zulip;
 
@@ -45,6 +47,9 @@ pub(crate) fn providers(
                     bot_token.clone(),
                     chat_id.clone(),
                 )),
+                DestinationConfig::Slack { bot_token, channel } => {
+                    Arc::new(Slack::new(http.clone(), bot_token.clone(), channel.clone()))
+                }
                 DestinationConfig::Zulip {
                     site_url,
                     bot_email,

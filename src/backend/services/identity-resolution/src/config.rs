@@ -50,6 +50,10 @@ pub struct GearConfig {
     pub clickhouse_user: String,
     /// `ClickHouse` password.
     pub clickhouse_password: String,
+    /// Topology of the warehouse: whether the relations this service creates
+    /// must replicate, and the cluster its DDL is qualified with.
+    pub clickhouse_cluster_mode: bool,
+    pub clickhouse_cluster_name: String,
     /// Default tenant for the bootstrap-admin seed. Empty = bootstrap skipped
     /// with a warning
     /// when a bootstrap person is configured.
@@ -81,10 +85,23 @@ impl std::fmt::Debug for GearConfig {
             .field("clickhouse_database", &self.clickhouse_database)
             .field("clickhouse_user", &self.clickhouse_user)
             .field("clickhouse_password", &REDACTED)
+            .field("clickhouse_cluster_mode", &self.clickhouse_cluster_mode)
+            .field("clickhouse_cluster_name", &self.clickhouse_cluster_name)
             .field("tenant_default_id", &self.tenant_default_id)
             .field("bootstrap_admin_person_id", &self.bootstrap_admin_person_id)
             .field("visibility_policy", &self.visibility_policy)
             .finish()
+    }
+}
+
+impl GearConfig {
+    /// Whether the warehouse replicates, as the DDL this service emits reads it.
+    #[must_use]
+    pub fn topology(&self) -> insight_clickhouse::Topology {
+        insight_clickhouse::Topology::new(
+            self.clickhouse_cluster_mode,
+            &self.clickhouse_cluster_name,
+        )
     }
 }
 
@@ -100,6 +117,8 @@ impl Default for GearConfig {
             clickhouse_database: "identity".to_owned(),
             clickhouse_user: String::new(),
             clickhouse_password: String::new(),
+            clickhouse_cluster_mode: false,
+            clickhouse_cluster_name: String::new(),
             tenant_default_id: String::new(),
             bootstrap_admin_person_id: String::new(),
             visibility_policy: VisibilityPolicy::OrgChart,
@@ -152,5 +171,26 @@ mod tests {
     fn only_the_flat_policy_reports_itself_flat() {
         assert!(VisibilityPolicy::Flat.is_flat());
         assert!(!VisibilityPolicy::OrgChart.is_flat());
+    }
+
+    #[test]
+    fn an_install_that_says_nothing_is_a_standalone_single_node() -> anyhow::Result<()> {
+        let config = config(serde_json::json!({}))?;
+
+        assert!(!config.topology().is_replicated());
+        assert!(config.topology().on_cluster().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn the_operators_pair_reaches_the_writer_as_one_topology() -> anyhow::Result<()> {
+        let config = config(serde_json::json!({
+            "clickhouse_cluster_mode": true,
+            "clickhouse_cluster_name": "insight_cluster",
+        }))?;
+
+        assert!(config.topology().is_replicated());
+        assert_eq!(config.topology().on_cluster(), Some("insight_cluster"));
+        Ok(())
     }
 }

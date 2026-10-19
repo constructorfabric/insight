@@ -32,9 +32,9 @@ def topology(cluster_mode: str, cluster_name: str) -> dict[str, object]:
     """The replication keys, or nothing at all while the install is standalone.
 
     `use_replicated_engines` prefixes every created engine with `Replicated`;
-    `cluster_name` appends `ON CLUSTER` to CREATE / ALTER / EXCHANGE / DROP and
-    is unnecessary when the target database itself uses the `Replicated`
-    database engine — hence an empty name under an enabled flag.
+    `cluster_name` appends `ON CLUSTER` to CREATE / ALTER / EXCHANGE / DROP. The
+    chart refuses an enabled flag with no name, so the key is omitted only while
+    the install is standalone.
     """
     if cluster_mode.strip().lower() not in _TRUTHY:
         return {}

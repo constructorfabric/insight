@@ -1,7 +1,6 @@
 -- Product adoption events (#2573). Its own database: `presentation` is swept by
 -- metric exports and customer extracts, which must never carry usage rows.
 
-CREATE DATABASE IF NOT EXISTS product_usage;
 
 CREATE TABLE IF NOT EXISTS product_usage.usage_events (
     event_id    UUID DEFAULT generateUUIDv4(),
@@ -14,6 +13,6 @@ CREATE TABLE IF NOT EXISTS product_usage.usage_events (
     target      String,
     app_name    LowCardinality(String),
     app_version String
-) ENGINE = MergeTree
+) ENGINE = /*@@REPLICATED@@*/MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (tenant_id, ts, event_id);

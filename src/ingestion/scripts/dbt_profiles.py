@@ -1,7 +1,7 @@
 """The one writer of every throwaway dbt profiles.yml.
 
-Each step that runs dbt — the Argo dbt-run and data-quality steps, the deploy
-hook, bootstrap, the sample seeder, the two transform rigs, the data-path
+Each step that runs dbt — the Argo dbt-run and data-quality steps, the gold
+build, bootstrap, the sample seeder, the two transform rigs, the data-path
 harness — picks its own target name and warehouse and takes the body from here,
 so the connection shape and the ClickHouse topology (epic #2010) are stated
 once instead of once per step.
@@ -57,10 +57,10 @@ def cluster_mode() -> bool:
 def on_cluster() -> str:
     """The cluster the adapter's `cluster` key names, or nothing.
 
-    Empty on a standalone install, and on a cluster whose database carries the
-    `Replicated` engine: that one distributes DDL itself and needs no
-    `ON CLUSTER` clause. A name without the flag names no cluster — the flag
-    is what turns on the replicated engines the clause would qualify.
+    Empty on a standalone install. A name without the flag names no cluster —
+    the flag is what turns on the replicated engines the clause would qualify.
+    The flag without a name is refused by the chart, so no name arrives here
+    while one is needed.
     """
     if not cluster_mode():
         return ""

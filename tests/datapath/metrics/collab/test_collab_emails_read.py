@@ -1,8 +1,8 @@
-"""Emails read per person over a window, from the M365 email-activity report.
+"""Email read actions per person over a window, from the M365 email-activity report.
 
 Bronze: the daily M365 email-activity report per person (send, receive and read
-counts). Silver: one row per person/day with the read-email count, duplicates
-collapsed. Gold serves the requested member's per-person sum of emails read over
+counts). Silver: one row per person/day with the read-action count, duplicates
+collapsed. Gold serves the requested member's per-person sum of read actions over
 the window; the peer view is the distribution of those sums across the member's
 department. A re-synced duplicate row changes nothing.
 """

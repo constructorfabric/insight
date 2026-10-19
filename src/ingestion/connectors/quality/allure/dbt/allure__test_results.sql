@@ -48,6 +48,16 @@ env AS (
         toJSONString(mapFromArrays(groupArray(variable_name), groupArray(value))) AS env_json
     FROM env_values
     GROUP BY tenant_id, source_id, launch_id
+),
+
+instance AS (
+    SELECT
+        tenant_id AS instance_tenant_id,
+        source_id AS instance_source_id,
+        toInt64(COALESCE(id, 0)) AS instance_project_id,
+        COALESCE(allure_url, '') AS base_url
+    FROM {{ source('bronze_allure', 'projects') }} FINAL
+    WHERE COALESCE(allure_url, '') != ''
 )
 
 SELECT
@@ -79,6 +89,9 @@ SELECT
     COALESCE(historyKey, '') AS history_key,
     COALESCE(message, '') AS message,
     ifNull(nullIf(env_json, ''), '{}') AS launch_env,
+    if(ifNull(base_url, '') = '', '', concat(ifNull(base_url, ''), '/project/', toString(COALESCE(projectId, 0)), '/test-results/', toString(COALESCE(id, 0)))) AS test_result_url,
+    if(ifNull(base_url, '') = '', '', concat(ifNull(base_url, ''), '/project/', toString(COALESCE(projectId, 0)), '/launches/', toString(COALESCE(launchId, 0)))) AS launch_url,
+    if(ifNull(base_url, '') = '' OR testCaseId IS NULL, '', concat(ifNull(base_url, ''), '/project/', toString(COALESCE(projectId, 0)), '/test-cases/', toString(ifNull(testCaseId, 0)))) AS test_case_url,
     arrayFilter(n -> n != '', arrayMap(t -> JSONExtractString(t, 'name'), JSONExtractArrayRaw(tags_json))) AS tag_names,
     fromUnixTimestamp64Milli(createdDate, 'UTC') AS created_at,
     fromUnixTimestamp64Milli(lastModifiedDate, 'UTC') AS last_modified_at,
@@ -90,3 +103,7 @@ LEFT JOIN env
     ON env.env_tenant_id = bronze.tenant_id
     AND env.env_source_id = bronze.source_id
     AND env.env_launch_id = toInt64(COALESCE(bronze.launchId, 0))
+LEFT JOIN instance
+    ON instance.instance_tenant_id = bronze.tenant_id
+    AND instance.instance_source_id = bronze.source_id
+    AND instance.instance_project_id = toInt64(COALESCE(bronze.projectId, 0))

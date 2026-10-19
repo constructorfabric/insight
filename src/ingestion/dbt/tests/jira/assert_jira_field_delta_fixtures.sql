@@ -121,6 +121,14 @@ WITH fixtures AS (
                  ['13027'], ['Alpha'], CAST([] AS Array(String)), CAST([] AS Array(String))),
             ('option_array both empty lists','option_array', '[]','[]','[]','[]',
                  CAST([] AS Array(String)), CAST([] AS Array(String)),
+                 CAST([] AS Array(String)), CAST([] AS Array(String))),
+            -- a migrated instance writes `[]` on the id side of every carried-over
+            -- option while the displays still list the values; reading the empty
+            -- id side would record the field as cleared at every event.
+            ('option_array ids lost in migration','option_array', '[]','Alpha','[]','Alpha,Beta',
+                 ['Alpha'], ['Alpha'], ['Alpha','Beta'], ['Alpha','Beta']),
+            ('option_array migrated then cleared','option_array', '[]','Alpha,Beta','[]','',
+                 ['Alpha','Beta'], ['Alpha','Beta'],
                  CAST([] AS Array(String)), CAST([] AS Array(String)))
         ]) AS t
     )

@@ -1,13 +1,15 @@
-//! The one number a check reads out of a metric's rows, and whether it can
-//! be compared at all.
+//! A number a check compares exactly, and what one check found.
 
 use std::cmp::Ordering;
 use std::fmt;
 
 use serde::Serialize;
 
-use super::rule::Condition;
-use crate::domain::query::metric_query::RunResult;
+use super::condition::Witness;
+
+/// How precisely a float is written for a reader.
+const SIGNIFICANT_DIGITS: i32 = 6;
+const MAX_DECIMALS: i32 = 12;
 
 /// Integers past this magnitude are no longer exact as `f64`, so comparing
 /// one with a float would be comparing a rounded value. The bound itself
@@ -85,15 +87,45 @@ impl Number {
         }
     }
 
-    /// The number as a row stores it, which is also how it is parsed back.
-    pub(crate) fn to_stored(self) -> String {
+    /// The number exactly as it was written: an integer in digits, a float
+    /// the way JavaScript prints it, so a threshold reads the same in a
+    /// message as in the portal.
+    pub(crate) fn exact(self) -> String {
         match self {
             Self::Int(int) => int.to_string(),
-            Self::Float(float) => format!("{float:?}"),
+            Self::Float(float) => javascript_float(float),
         }
     }
 
-    /// A number as [`Number::to_stored`] wrote it.
+    /// The number as a person reads it: an integer exactly, a float to six
+    /// significant digits with no trailing zeros.
+    pub(crate) fn readable(self) -> String {
+        let Self::Float(float) = self else {
+            return self.to_string();
+        };
+        if float == 0.0 {
+            return "0".to_owned();
+        }
+
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "log10 of a finite f64 fits in i32"
+        )]
+        let magnitude = float.abs().log10().floor() as i32;
+        let decimals = usize::try_from((SIGNIFICANT_DIGITS - 1 - magnitude).clamp(0, MAX_DECIMALS))
+            .unwrap_or_default();
+        let written = format!("{float:.decimals$}");
+        let trimmed = if written.contains('.') {
+            written.trim_end_matches('0').trim_end_matches('.')
+        } else {
+            written.as_str()
+        };
+
+        trimmed.to_owned()
+    }
+
+    /// A number as a row wrote it: an integer in digits, or a float as
+    /// Rust's `Debug` writes one.
     pub(crate) fn from_stored(value: &str) -> Option<Self> {
         if let Ok(int) = value.parse::<i128>() {
             return Some(Self::Int(int));
@@ -105,6 +137,50 @@ impl Number {
             .filter(|float| float.is_finite())
             .map(Self::Float)
     }
+}
+
+/// `Number.prototype.toString` for a finite float: the shortest digits that
+/// read back as the same float, in positional form while the decimal point
+/// sits within 21 places, in exponent form past that.
+fn javascript_float(float: f64) -> String {
+    if float == 0.0 {
+        return "0".to_owned();
+    }
+
+    let scientific = format!("{:e}", float.abs());
+    let Some((mantissa, exponent)) = scientific.split_once('e') else {
+        return scientific;
+    };
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let Ok(exponent) = exponent.parse::<i32>() else {
+        return scientific;
+    };
+    let count = i32::try_from(digits.len()).unwrap_or(i32::MAX);
+    let point = exponent + 1;
+    let sign = if float < 0.0 { "-" } else { "" };
+
+    let written = if count <= point && point <= 21 {
+        let zeros = usize::try_from(point - count).unwrap_or_default();
+        format!("{digits}{}", "0".repeat(zeros))
+    } else if 0 < point && point <= 21 {
+        let (whole, fraction) = digits.split_at(usize::try_from(point).unwrap_or_default());
+        format!("{whole}.{fraction}")
+    } else if -6 < point && point <= 0 {
+        let zeros = usize::try_from(-point).unwrap_or_default();
+        format!("0.{}{digits}", "0".repeat(zeros))
+    } else {
+        let shown = exponent;
+        let exponent_sign = if shown >= 0 { "+" } else { "-" };
+        let (first, rest) = digits.split_at(1);
+        let mantissa = if rest.is_empty() {
+            first.to_owned()
+        } else {
+            format!("{first}.{rest}")
+        };
+        format!("{mantissa}e{exponent_sign}{}", shown.unsigned_abs())
+    };
+
+    format!("{sign}{written}")
 }
 
 fn as_exact_float(int: i128) -> Option<f64> {
@@ -123,7 +199,7 @@ fn is_safe_integer(int: i128) -> bool {
 }
 
 /// An integer written as text and nothing else: an optional minus and
-/// digits, as [`Number::to_stored`] and [`Number::to_json`] write one.
+/// digits, as [`Number::to_json`] writes one.
 fn integer_literal(text: &str) -> Option<i128> {
     let digits = text.strip_prefix('-').unwrap_or(text);
     if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -148,16 +224,23 @@ impl fmt::Display for Number {
 pub(crate) enum UnknownReason {
     /// The metric answered no rows.
     NoRows,
-    /// The metric answered more than one row, and no row is the one.
+    /// The rule asks for exactly one row, and the metric answered more.
     ManyRows,
     /// The rule names a column the metric does not produce.
     ColumnMissing,
     /// The value is null.
     Null,
-    /// The value is not a number.
+    /// A number test read a cell that is not a number.
     NonNumeric,
+    /// A text test read a cell that is neither text nor a boolean.
+    NonText,
+    /// A date test read a cell that is not a timestamp.
+    NonDate,
     /// The value is a number too wide to compare with the threshold exactly.
     Incomparable,
+    /// The run stopped at the row bound before the condition could be
+    /// decided over every row.
+    RowLimit,
     /// The rule names a metric that is not stored.
     MetricMissing,
     /// The metric's body or window could not be compiled.
@@ -176,7 +259,10 @@ impl UnknownReason {
             Self::ColumnMissing => "column_missing",
             Self::Null => "null",
             Self::NonNumeric => "non_numeric",
+            Self::NonText => "non_text",
+            Self::NonDate => "non_date",
             Self::Incomparable => "incomparable",
+            Self::RowLimit => "row_limit",
             Self::MetricMissing => "metric_missing",
             Self::CompileFailed => "compile_failed",
             Self::RunFailed => "run_failed",
@@ -191,7 +277,10 @@ impl UnknownReason {
             Self::ColumnMissing,
             Self::Null,
             Self::NonNumeric,
+            Self::NonText,
+            Self::NonDate,
             Self::Incomparable,
+            Self::RowLimit,
             Self::MetricMissing,
             Self::CompileFailed,
             Self::RunFailed,
@@ -203,11 +292,12 @@ impl UnknownReason {
 }
 
 /// What one check found.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Outcome {
-    /// One number, compared: the condition is met or it is not.
-    Valid { value: Number, breached: bool },
-    /// No number to compare, for the reason given.
+    /// The condition could be judged: it is met or it is not, and the
+    /// witness shows the rows that decided it.
+    Valid { breached: bool, witness: Witness },
+    /// The condition could not be judged, for the reason given.
     Unknown(UnknownReason),
 }
 
@@ -223,9 +313,9 @@ impl Outcome {
         }
     }
 
-    pub(crate) fn value(&self) -> Option<Number> {
+    pub(crate) fn witness(&self) -> Option<&Witness> {
         match self {
-            Self::Valid { value, .. } => Some(*value),
+            Self::Valid { witness, .. } => Some(witness),
             Self::Unknown(_) => None,
         }
     }
@@ -235,34 +325,5 @@ impl Outcome {
             Self::Valid { .. } => None,
             Self::Unknown(reason) => Some(*reason),
         }
-    }
-}
-
-/// The outcome of comparing what a metric answered with a condition.
-///
-/// Exactly one row and exactly the named column count; anything else is
-/// unknown rather than a guess at which row was meant.
-pub(crate) fn classify(result: &RunResult, column: &str, condition: &Condition) -> Outcome {
-    let Some(position) = result.columns.iter().position(|name| name == column) else {
-        return Outcome::Unknown(UnknownReason::ColumnMissing);
-    };
-
-    let row = match result.rows.as_slice() {
-        [] => return Outcome::Unknown(UnknownReason::NoRows),
-        [row] => row,
-        _ => return Outcome::Unknown(UnknownReason::ManyRows),
-    };
-
-    let cell = row.get(position).unwrap_or(&serde_json::Value::Null);
-    if cell.is_null() {
-        return Outcome::Unknown(UnknownReason::Null);
-    }
-    let Some(value) = Number::parse(cell) else {
-        return Outcome::Unknown(UnknownReason::NonNumeric);
-    };
-
-    match condition.holds(value) {
-        Some(breached) => Outcome::Valid { value, breached },
-        None => Outcome::Unknown(UnknownReason::Incomparable),
     }
 }

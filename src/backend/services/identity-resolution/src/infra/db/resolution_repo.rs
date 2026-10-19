@@ -448,8 +448,8 @@ pub async fn append_binding_if_unbound(
 /// Whether MariaDB refused the statement because another transaction held the
 /// rows: deadlock (1213) or lock-wait timeout (1205).
 ///
-/// Classified from the message for the same reason `is_missing_relation` does
-/// it for ClickHouse — the driver surfaces the server's code in the text and
+/// Classified from the message for the same reason `MissingRelation` does it
+/// for ClickHouse — the driver surfaces the server's code in the text and
 /// exposes no typed variant for either condition.
 fn is_lock_conflict(error: &sea_orm::DbErr) -> bool {
     let message = error.to_string();

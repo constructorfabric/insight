@@ -20,7 +20,7 @@ SELECT
     MD5(concat(tenant_id, '-', source_id, '-', agent_id)) AS unique_key,
     'zendesk'                       AS data_source,
     agent_id                        AS source_agent_id,
-    lower(email)                    AS person_key,        -- FK → insight.people
+    lower(email)                    AS person_key,
     email,
     display_name,
     -- Canonical role across vendors. Zendesk: admin | agent | end-user;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { percentShareLabels } from "@/lib/metrics/shares";
+import { formatMetricNumber } from "@/lib/format";
+import { displayedParts, percentShareLabels } from "@/lib/metrics/shares";
 
 const sum = (labels: string[]) =>
   labels.reduce((total, label) => total + Number(label), 0);
@@ -42,5 +43,34 @@ describe("percentShareLabels", () => {
 
   it("gives a single part the whole 100%", () => {
     expect(percentShareLabels([42])).toEqual(["100"]);
+  });
+});
+
+describe("displayedParts", () => {
+  const addAsShown = (parts: number[]) =>
+    parts.reduce(
+      (total, part) => total + Number(formatMetricNumber(part, "decimal")),
+      0,
+    );
+
+  it.each([
+    { parts: [37.87, 30.56], total: 68.43, shown: 68.4 },
+    { parts: [1.26, 1.26], total: 2.52, shown: 2.5 },
+    { parts: [0.04, 0.04, 0.04], total: 0.12, shown: 0.1 },
+  ])("decimal parts add up to the shown total $shown", ({ parts, total, shown }) => {
+    const shownParts = displayedParts(parts, total, "decimal");
+    expect(addAsShown(shownParts), `parts ${parts}`).toBeCloseTo(shown, 9);
+  });
+
+  it("keeps a part that already rounds into the total unchanged", () => {
+    expect(displayedParts([37.9, 30.5], 68.4, "decimal")).toEqual([37.9, 30.5]);
+  });
+
+  it("leaves parts of a non-additive metric to their own rounding", () => {
+    expect(displayedParts([80, 60], 70, "percent")).toEqual([80, 60]);
+  });
+
+  it("leaves integer parts that sum to the total as they are", () => {
+    expect(displayedParts([3, 4], 7, "integer")).toEqual([3, 4]);
   });
 });

@@ -31,6 +31,6 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_credit_usage
     `collected_at` Nullable(DateTime64(3)),
     `_version` Int64
 )
-ENGINE = ReplacingMergeTree(_version)
+ENGINE = /*@@REPLICATED@@*/ReplacingMergeTree(_version)
 ORDER BY unique_key
 SETTINGS allow_nullable_key = 1;

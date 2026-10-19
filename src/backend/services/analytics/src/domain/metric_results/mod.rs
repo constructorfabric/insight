@@ -25,7 +25,7 @@ pub use dto::{
     MetricDimensionFilterDto, MetricResultDto, MetricResultSelectionDto, MetricResultViewDto,
     MetricResultsEntityDto, MetricResultsPeriodDto, MetricResultsRequest, MetricResultsResponse,
 };
-pub use failure::ViewFailure;
+pub use failure::{ViewAbsence, ViewFailure};
 #[cfg(test)]
 pub(crate) use validation::DateWindow;
 pub(crate) use validation::{

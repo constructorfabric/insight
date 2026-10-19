@@ -2,7 +2,7 @@
 
 Use the five vectors to help an author discover and clarify product quality
 expectations. This guide produces improvement suggestions for FR/NFR wording
-and the optional per-requirement `**Vector**` tag; a missing tag, or an FR/NFR
+and the optional `**Vector**` tag on an NFR; a missing tag, or an FR/NFR
 left unclear, does not by itself create a validation failure. PRD section 6.1
 Quality Vector Analysis is checked separately, at HIGH severity, by checklist
 item ARCH-PRD-006: there, a missing vector row is a finding. Existing
@@ -61,13 +61,12 @@ in DESIGN and FEATURE; a PRD need not prescribe a test harness.
 Keep one authoritative FR/NFR definition and ID. An NFR carries `**Threshold**` and
 `**Rationale**`; the threshold may be an absolute invariant rather than a number.
 
-A vector qualifies a **claim**, not a requirement and not a section. The same
-requirement is often verified under different vectors depending on what a
-scenario asserts about it — that a resolver returns the right person is
-Reliability, that it covers every source is Versatility. So a requirement
-carries `**Vector**` only where one vector is intrinsic to it, such as a
-latency budget or an isolation property. Where scenarios span vectors, the
-requirement carries none and each scenario names its own.
+A functional requirement carries no vector. It says what the system does, and
+a check of it falls under different vectors depending on what the check
+asserts — that a resolver returns the right person is Reliability, that it
+covers every source is Versatility. An NFR carries `**Vector**` where one
+vector is intrinsic to it, such as a latency budget or an isolation property;
+otherwise the 6.1 row that cites the NFR names its vector.
 
 Before that tag is written, the same word names a different thing: the
 vector as an elicitation lens run over the module. It is generative — a
@@ -112,7 +111,7 @@ requirement under a vector; it says nothing about adequacy or results.
 
 Use DESIGN's existing NFR Allocation table to explain the responsible component,
 design response and verification approach. For shared obligations, identify the
-contribution scope, responsible FEATURE or scenarios, and role responsible for
+contribution scope, responsible FEATURE, and role responsible for
 assessing the complete requirement. A FEATURE's successful local checks may be
 only part of that evidence. For performance, state the measurement boundary and
 any derived component budget; retain end-to-end verification of the original
@@ -126,6 +125,8 @@ over what window and in which environment; observation validates after the fact
 and cannot gate a change.
 
 FEATURE section 1.2 references applicable FR/NFR IDs. Flows, algorithms and DoDs
-describe its contribution. Preserve canonical section 6 Acceptance Criteria as
-the feature's readable completion checklist. Insight's section 7 Testing maps
-the feature's claims to vector-attributed scenarios and exact executable tests.
+describe its contribution, and section 6 Acceptance Criteria is the feature's
+readable completion checklist. Tests prove the DoD items: a test names the DoD
+or flow ID it verifies, and a DoD is checked once its implementation is in place,
+those tests pass and, under FULL traceability, its code markers exist. A FEATURE carries no vectors of its own; they stay on the
+PRD's NFRs.

@@ -450,33 +450,32 @@ Rules:
   no emails), skip this section and document in the README how identities
   resolve instead (cross-connector JOIN, Silver Step 2 direct mapping).
 
-#### 3.6c Surfacing the connector in a dashboard metric (silver class → gold → query_ref → catalog)
+#### 3.6c Surfacing the connector in a dashboard metric (silver class → gold evidence → registry)
 
-> **A connector that only reaches silver does NOT appear in the UI.** Tagging a
-> model `silver:class_<X>` makes `union_by_tag` fold it into the shared
-> `silver.class_<X>` table — and that is ALL that is automatic. The gold views,
-> the metric `query_ref`s, and the metric catalog each enumerate their inputs
-> EXPLICITLY; a new source contributes nothing past silver until you wire four
-> more layers by hand. Skip this whole section if the connector is bronze-only
-> or its silver class is not consumed by any gold metric (then say so in the
-> README). Reference implementation: PR constructorfabric/insight#1466 (added
-> Zulip chat to the Collaboration bullet) — open it as a worked example.
+> **A connector that only reaches silver does NOT appear in the UI on its own.**
+> Tagging a model `silver:class_<X>` makes `union_by_tag` fold it into the shared
+> `silver.class_<X>` table. Past that, a metric reaches the portal through a gold
+> evidence model and a registry entry. Skip this section if the connector is
+> bronze-only or no gold evidence model reads its silver class (then say so in the
+> README).
 
-The data path for a per-person dashboard metric:
+The data path for a dashboard metric:
 
 ```
 bronze_<snake>.<stream>
-  → <snake>__<class>.sql            (silver, tag silver:class_<X>)   ← §3.5
-    → silver.class_<X>              (union_by_tag — AUTOMATIC)
-      → insight.<section>_bullet_rows   (gold VIEW, CH migration)    ← layer A
-        → metrics.query_ref (…IC/Team/member/dept)  (SeaORM)         ← layer B
-          → metric_catalog row      (label/threshold, SeaORM)        ← layer C
-            → analytics-api → person-profile <Section> card (UI)
+  → <snake>__<class>.sql                (silver, tag silver:class_<X>)   ← §3.5
+    → silver.class_<X>                  (union_by_tag — AUTOMATIC)
+      → insight.<family>_metric_evidence     (gold dbt model)            ← layer A
+        → insight.<family>_metric_observations  (gold dbt, AUTOMATIC)
+          → registry.yaml source / measure / metric  (reconciled at migrate) ← layer B
+            → POST /v1/metric-results → portal lens or overview          ← layer C
 ```
 
-What to add (use an EXISTING section like `collab` / `git` / `ai` / `support`
-when the metric fits one; only create a new `<section>_bullet_rows` view +
-metric ids for a genuinely new section):
+`<family>` is the relation prefix of one registry source (`ai`, `ai_cost`, `ci`,
+`collab`, `git`, `task`, `wiki`). Gold evidence models read the whole class rather
+than one source, but each measure's branch can still filter or join its rows away —
+an e-mail shape filter, a `data_source` mapping, a join to another class. A connector
+counts in a measure only when that branch accepts its rows.
 
 - **Layer 0 — silver class build edge.** Add
   `-- depends_on: {{ ref('<snake>__<class>') }}` to
@@ -496,34 +495,40 @@ metric ids for a genuinely new section):
      unless your bronze database exists, which requires the
      `connectors-config.yaml` entry from §3.8 step 1. Adding this edge without
      that entry is precisely the #2048 failure.
-- **Layer A — gold view branch.** In the CH migration that defines
-  `insight.<section>_bullet_rows`
-  (`src/ingestion/scripts/migrations/*-bullet-rewrite.sql`; idempotent
-  `DROP+CREATE`, no tracking table → edit the canonical definition in place),
-  add a branch `... FROM silver.class_<X> WHERE data_source = 'insight_<snake>'`
-  emitting your `metric_key`(s). The `data_source` literal is exactly what your
-  silver model SELECTs (`'insight_<snake>'`). Join `insight.people` on
-  `lower(email) = p.person_id` for `org_unit_id`.
-- **Layer B — query_ref(s).** The bullet `query_ref`s materialize EVERY
-  FE-visible `metric_key` as `sumIf(metric_value, metric_key='<k>') AS <k>_v`
-  then unpivot via `ARRAY JOIN [('<k>', <k>_v), …]`. Add your key to BOTH lists.
-  SeaORM migrations are append-only — write a NEW
-  `m<date>_<n>_<section>_<conn>.rs` that `UPDATE metrics SET query_ref=… WHERE
-  id = UNHEX('<hex>')`, basing the SQL on the LATEST migration that set that
-  query_ref (grep the metric id; a section has SEVERAL copies — IC bullet,
-  Team bullet, member-values `…0041`, dept-distribution `…0045` — update each
-  surface you need). Register the migration in
-  `src/backend/services/analytics-api/src/migration/mod.rs`.
-- **Layer C — catalog row.** New append-only migration
-  `m<date>_<n>_seed_<conn>_<section>_catalog.rs` inserting a `metric_catalog`
-  row (`<section>_bullet_rows.<metric_key>`, label, sublabel, unit,
-  `source_tags: ["<slug>"]`) + a product-default `metric_threshold`. Model it on
-  `m20260620_000002_seed_wiki_catalog.rs`. Register in `mod.rs`.
+- **Layer A — gold evidence.** In `src/ingestion/gold/<family>_metric_evidence.sql`:
+  - **Existing measure:** read the branch that emits each measure the connector
+    should feed and confirm its filters and joins accept the connector's rows
+    (keys, `data_source` values, the classes it joins); extend the branch where they
+    do not. Give the source's dimension value a display label in the family's label macro
+    (`collab_tool_label`, `ai_tool_label`, `git_source_label` under
+    `src/ingestion/dbt/macros/`); an unmapped value shows as its raw code. If the
+    source contributes account ids to identity, map its `data_source` to the
+    identity source type where the model sets `account_source_type` (see
+    `git_metric_evidence.sql`); otherwise resolution falls back to email.
+  - **New measure:** add a branch emitting the new `measure_key` with the shape
+    macros in `src/ingestion/dbt/macros/metric_observation_measures.sql`. Key the
+    row by the source identity (`normalized_email(...)`), never by a resolved person:
+    the analytics service resolves through `identity.person_map` while it serves.
+  - **New family:** a new `<family>_metric_evidence.sql` and
+    `<family>_metric_observations.sql` pair built with `metric_evidence_table()` /
+    `metric_observations_table()`, and a regenerated `connectors-ddl/insight.sql`
+    snapshot (`bootstrap-db/dump-ddl.sh`). Only for a genuinely new subject area.
+- **Layer B — registry.** In
+  `src/backend/services/analytics/src/domain/metric_definitions/registry.yaml`, list
+  a new measure under its source (`key`, `evidence_granularity`) and add the metric
+  under `metrics:` (a `metric_key` with the prefix the source's metrics already use, `source_key`, `subject`, label,
+  description, `format`, `direction`, `entity_type`, `computation`, `inputs`,
+  `dimensions`). The `migrate` job reconciles the registry into the MariaDB
+  definition tables; there is no hand-written analytics migration and no catalog row.
+  Regenerate the committed passports or the drift test fails:
+  `cargo run -p analytics -- passports > src/backend/services/analytics/src/domain/metric_definitions/passports.md`.
+- **Layer C — portal placement.** A new `metric_key` appears on a lens or overview
+  only where `src/frontend/src/lib/portal/lens-configs.ts` or `overview-configs.ts`
+  lists it. A source joining an existing measure needs no change here.
 
-Then prove the whole chain with a `/metric-test` fixture (see that skill) —
-seed bronze, query the bullet metric, assert your `metric_key`'s value. Adding a
-key to a shared section raises its `size(items)`, so bump any sibling test that
-asserts the old count.
+Then prove the chain with a `/metric-test` fixture (see that skill): seed bronze,
+request the metric from `/v1/metric-results`, and assert the value the connector
+contributes.
 
 ### For CDK (`CONNECTOR_TYPE=cdk`):
 

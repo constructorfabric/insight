@@ -1,20 +1,20 @@
-//! Analytics API — read-only query service over predefined `ClickHouse` metrics.
+//! Analytics API — query service over `ClickHouse` metric observations.
 //!
-//! Serves admin-defined metrics (SQL queries stored in `MariaDB`) with tenant-scoped,
-//! org-scoped security filters and `OData`-style querying.
+//! Serves metric definitions stored in `MariaDB` over tenant- and
+//! visibility-scoped reads of the gold serving relations.
 //!
 //! # Architecture
 //!
 //! Runs as a gears-rust host on [`toolkit::bootstrap::run_server`]. The
 //! `api-gateway` system gear is the REST host; the analytics functionality is
-//! the [`gear::AnalyticsApiGear`] (`rest` + `stateful`). Auth is **enabled** on
+//! the [`gear::AnalyticsApiGear`] (`rest`). Auth is **enabled** on
 //! this host: `oidc-authn-plugin` verifies the ES256 gateway JWT (signature /
 //! `iss` / `aud` / `exp`) against the authenticator's JWKS, and the `authverify`
-//! layer maps the signed claims (`sub`, `roles`, `tenants[]` + the `X-Tenant-ID`
-//! selector) into the request `SecurityContext` (`NGINX_BFF` R1 / G2). There is
-//! no `auth_disabled` path — a request without a valid gateway JWT gets 401.
+//! layer maps the signed claims (`sub`, `roles`, `tenant_id`) into the request
+//! `SecurityContext` (`NGINX_BFF` R1 / G2). There is no `auth_disabled` path — a
+//! request without a valid gateway JWT gets 401.
 //!
-//! The MariaDB connection, its 45 sea-orm migrations, and the startup CHECK /
+//! The MariaDB connection, its sea-orm migrations, and the startup CHECK /
 //! product-default probes remain self-managed inside the gear (we do not use
 //! the toolkit `db` capability — `ClickHouse` is not a toolkit-db backend
 //! anyway).

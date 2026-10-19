@@ -30,7 +30,7 @@ models:
       - name: unique_key
         tests: [unique, not_null]
       - name: person_key
-        description: lower(email) → FK insight.people. Never blank (blank-email agents are filtered).
+        description: lower(email). Never blank (blank-email agents are filtered).
         tests:
           - not_null
       - name: data_source
@@ -87,7 +87,7 @@ models:
       - name: metric_date
         tests: [not_null]
       - name: actor_person_key
-        description: lower(email) of the audit author (the actor) → FK insight.people.
+        description: lower(email) of the audit author (the actor).
         tests: [not_null]
       - name: event_type
         tests:

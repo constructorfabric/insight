@@ -51,7 +51,7 @@ meeting_source AS (
         tenant_id,
         {{ normalized_email('person_key') }} AS entity_id,
         date AS metric_date,
-        meetings_attended,
+        meetings_attended + ifNull(calls_count, 0) AS meetings_and_calls_attended,
         meetings_organized,
         adhoc_meetings_attended,
         scheduled_meetings_attended,
@@ -112,17 +112,14 @@ document_source AS (
     WHERE person_key LIKE '%@%'
       AND date IS NOT NULL
 ),
-focus_source AS (
+working_hours_source AS (
     SELECT
         insight_tenant_id AS tenant_id,
         {{ normalized_email('email') }} AS entity_id,
-        day AS metric_date,
-        dev_time_h,
-        working_hours_per_day,
-        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
-    FROM {{ ref('class_focus_metrics') }} FINAL
+        max(working_hours_per_day) AS working_hours_per_day
+    FROM {{ ref('class_hr_working_hours') }} FINAL
     WHERE email LIKE '%@%'
-      AND day IS NOT NULL
+    GROUP BY tenant_id, entity_id
 ),
 deliberate_activity AS (
     SELECT
@@ -155,8 +152,21 @@ deliberate_activity AS (
             UNION ALL
             SELECT tenant_id, entity_id, metric_date, tool_value, 'meetings' AS modality
             FROM meeting_source
-            WHERE meetings_attended > 0
+            WHERE meetings_and_calls_attended > 0
         )
+    )
+),
+meeting_covered_days AS (
+    -- INVARIANT: an address no meeting source ever reported has unknown meeting time,
+    -- so its days are neither meeting-free nor focus days.
+    SELECT DISTINCT
+        tenant_id,
+        entity_id,
+        metric_date
+    FROM deliberate_activity
+    WHERE (tenant_id, entity_id) IN (
+        SELECT DISTINCT tenant_id, entity_id
+        FROM meeting_source
     )
 ),
 meeting_free_source AS (
@@ -167,13 +177,13 @@ meeting_free_source AS (
         if(sum(meeting_seconds) = 0, 1, 0) AS meeting_free_flag,
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
     FROM (
-        SELECT DISTINCT
+        SELECT
             tenant_id,
             entity_id,
             metric_date,
             0 AS meeting_seconds,
             1 AS is_active
-        FROM deliberate_activity
+        FROM meeting_covered_days
         UNION ALL
         SELECT
             tenant_id,
@@ -188,6 +198,36 @@ meeting_free_source AS (
     GROUP BY tenant_id, entity_id, metric_date
     HAVING max(is_active) = 1
 ),
+workday_source AS (
+    SELECT
+        active_days.tenant_id AS tenant_id,
+        active_days.entity_id AS entity_id,
+        active_days.metric_date AS metric_date,
+        -- WORKAROUND: under join_use_nulls=0 an unmatched LEFT JOIN yields 0, not NULL.
+        if(hours.working_hours_per_day > 0, hours.working_hours_per_day, 8.0) AS working_hours,
+        least(ifNull(meetings.meeting_hours, 0), working_hours) AS workday_meeting_hours,
+        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
+    FROM meeting_covered_days AS active_days
+    LEFT JOIN (
+        SELECT
+            tenant_id,
+            entity_id,
+            metric_date,
+            sum(greatest(
+                ifNull(audio_duration_seconds, 0),
+                ifNull(video_duration_seconds, 0),
+                ifNull(screen_share_duration_seconds, 0)
+            )) / 3600.0 AS meeting_hours
+        FROM meeting_source
+        GROUP BY tenant_id, entity_id, metric_date
+    ) AS meetings
+        ON meetings.tenant_id = active_days.tenant_id
+       AND meetings.entity_id = active_days.entity_id
+       AND meetings.metric_date = active_days.metric_date
+    LEFT JOIN working_hours_source AS hours
+        ON hours.tenant_id = active_days.tenant_id
+       AND hours.entity_id = active_days.entity_id
+),
 value_measures AS (
     {{ sum_measure('total_chat_messages', 'chat_source', 'total_chat_messages', 'tool_dimensions') }}
 
@@ -198,6 +238,12 @@ value_measures AS (
     UNION ALL
 
     {{ sum_measure('direct_and_group_messages', 'chat_source', 'direct_and_group_messages', 'tool_dimensions') }}
+
+    UNION ALL
+
+    -- INVARIANT: only tools that tell direct from channel messages apart feed this,
+    -- so a total without that split never dilutes the direct share.
+    {{ sum_measure('split_chat_messages', 'chat_source', 'if(direct_and_group_messages IS NULL, NULL, total_chat_messages)', 'tool_dimensions') }}
 
     UNION ALL
 
@@ -237,7 +283,7 @@ value_measures AS (
 
     UNION ALL
 
-    {{ sum_measure('meetings_attended', 'meeting_source', 'meetings_attended', 'tool_dimensions') }}
+    {{ sum_measure('meetings_attended', 'meeting_source', 'meetings_and_calls_attended', 'tool_dimensions') }}
 
     UNION ALL
 
@@ -253,15 +299,11 @@ value_measures AS (
 
     UNION ALL
 
-    {{ sum_measure('focus_hours', 'focus_source', 'dev_time_h', 'no_dimensions') }}
+    {{ sum_measure('workday_meeting_hours', 'workday_source', 'workday_meeting_hours', 'no_dimensions') }}
 
     UNION ALL
 
-    {{ sum_measure('working_hours', 'focus_source', 'working_hours_per_day', 'no_dimensions') }}
-
-    UNION ALL
-
-    {{ sum_measure('chat_active_day', 'chat_source', 'if(total_chat_messages > 0, 1, NULL)', 'tool_dimensions') }}
+    {{ sum_measure('working_hours', 'workday_source', 'working_hours', 'no_dimensions') }}
 
     UNION ALL
 
@@ -274,6 +316,15 @@ active_day_grain AS (
         metric_date,
         tool_dimensions
     FROM deliberate_activity
+),
+chat_active_day_grain AS (
+    SELECT DISTINCT
+        tenant_id,
+        entity_id,
+        metric_date,
+        tool_dimensions
+    FROM chat_source
+    WHERE total_chat_messages > 0
 ),
 active_modality_grain AS (
     SELECT DISTINCT
@@ -290,6 +341,10 @@ subject_measures AS (
     UNION ALL
 
     {{ distinct_measure('active_modality', 'active_modality_grain', 'modality', 'no_dimensions') }}
+
+    UNION ALL
+
+    {{ distinct_measure('chat_active_day', 'chat_active_day_grain', 'metric_date', 'tool_dimensions') }}
 )
 SELECT
     assumeNotNull(tenant_id) AS tenant_id,
@@ -308,7 +363,7 @@ SELECT
     ) AS record_id,
     measure_key AS record_kind,
     if(
-        measure_key IN ('focus_hours', 'working_hours', 'meeting_free_day'),
+        measure_key IN ('workday_meeting_hours', 'working_hours', 'meeting_free_day'),
         'derived_population',
         'source_summary'
     ) AS granularity,

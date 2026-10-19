@@ -24,7 +24,6 @@
 --
 -- Spec: docs/components/backend/analytics/specs/connector-health.
 
-CREATE DATABASE IF NOT EXISTS ingestion_history;
 
 CREATE TABLE IF NOT EXISTS ingestion_history.sync_events (
     event_id         UUID DEFAULT generateUUIDv4(),
@@ -40,7 +39,7 @@ CREATE TABLE IF NOT EXISTS ingestion_history.sync_events (
     job_updated_at   Nullable(DateTime64(3, 'UTC')),
     duration_ms      Nullable(UInt64),
     records_reported Nullable(UInt64)
-) ENGINE = MergeTree
+) ENGINE = /*@@REPLICATED@@*/MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (event, connector, ts, event_id)
 TTL toDateTime(ts) + INTERVAL 6 MONTH;

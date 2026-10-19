@@ -51,13 +51,15 @@ permissions:
   contents: read
 
 # Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
-# from a branch of this repository takes the ephemeral ARC scale set, a fork's
+# by a member or collaborator takes the ephemeral ARC scale set, anyone else's
 # takes a GitHub-hosted runner, everything else takes the shared self-hosted
-# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted. e2e starts
+# containers, so only a pull request from a branch of this repository takes the
+# scale set there.
 jobs:
   e2e:
     name: e2e (8 suites)
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,7 +86,7 @@ jobs:
       # run-e2e.sh generates the realm through `uv run --project`: the
       # generator is a console script of the seed package, and uv resolves and
       # installs it on first use. The runner has python3 but not uv.
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           cache-suffix: authenticator-e2e
           save-cache: ${{ github.event_name == 'push' }}
@@ -102,7 +104,7 @@ jobs:
       # suite (the ledger holds whatever ran before the failure).
       - name: Upload coverage ledger
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-inputs-authenticator
           path: observed_authenticator_endpoints.json
@@ -118,7 +120,7 @@ jobs:
     name: Authenticator endpoint coverage gate
     needs: e2e
     if: ${{ !cancelled() && needs.e2e.result != 'skipped' }}
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     timeout-minutes: 10
     steps:
       # Checkout only for the gate script + the committed OpenAPI spec (the
@@ -129,7 +131,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-inputs-authenticator
           path: coverage-inputs

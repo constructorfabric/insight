@@ -8,7 +8,8 @@ use crate::domain::metric_results::compiler::{
     CompiledQuery, QueryBucket, TimeseriesQueryRow, compile_report_timeseries_query,
 };
 use crate::domain::metric_results::query_row_limit;
-use crate::infra::metrics::QueryKind;
+use crate::domain::not_ready::NotReadyReason;
+use crate::infra::metrics::{ErrorClass, QueryKind};
 use crate::infra::query::{QueryFetchError, fetch_json_rows};
 
 use super::period::ReportBucket;
@@ -43,9 +44,17 @@ pub(crate) enum ReportQueryError {
     InvalidResultShape,
 }
 
+/// What one metric's query answered: its values, or that a relation it reads
+/// has not been built yet.
+#[derive(Debug)]
+pub(crate) enum ReportMetricRead {
+    Values(ReportMetricValues),
+    NotReady(NotReadyReason),
+}
+
 #[async_trait]
 pub(crate) trait ReportQueryRunner: Sync {
-    async fn run(&self, query: ReportMetricQuery) -> Result<ReportMetricValues, ReportQueryError>;
+    async fn run(&self, query: ReportMetricQuery) -> Result<ReportMetricRead, ReportQueryError>;
 }
 
 pub(crate) struct ClickHouseReportQueryRunner<'a> {
@@ -60,9 +69,9 @@ impl<'a> ClickHouseReportQueryRunner<'a> {
 
 #[async_trait]
 impl ReportQueryRunner for ClickHouseReportQueryRunner<'_> {
-    async fn run(&self, query: ReportMetricQuery) -> Result<ReportMetricValues, ReportQueryError> {
+    async fn run(&self, query: ReportMetricQuery) -> Result<ReportMetricRead, ReportQueryError> {
         let log_comment = format!("report:timeseries:{}", query.metric_key);
-        let rows = fetch_json_rows::<TimeseriesQueryRow>(
+        let rows = match fetch_json_rows::<TimeseriesQueryRow>(
             self.client,
             &query.compiled.sql,
             &query.compiled.params,
@@ -70,7 +79,17 @@ impl ReportQueryRunner for ClickHouseReportQueryRunner<'_> {
             &log_comment,
         )
         .await
-        .map_err(ReportQueryError::Fetch)?;
+        {
+            Ok(rows) => rows,
+            // The one classifier, shared with every other read, so a message
+            // can never map to two different classes.
+            Err(error) if matches!(error.class(), ErrorClass::RelationMissing) => {
+                return Ok(ReportMetricRead::NotReady(
+                    NotReadyReason::SourceRelationMissing,
+                ));
+            }
+            Err(error) => return Err(ReportQueryError::Fetch(error)),
+        };
         if rows.len() >= query_row_limit() {
             return Err(ReportQueryError::InvalidResultShape);
         }
@@ -101,10 +120,10 @@ impl ReportQueryRunner for ClickHouseReportQueryRunner<'_> {
             });
         }
 
-        Ok(ReportMetricValues {
+        Ok(ReportMetricRead::Values(ReportMetricValues {
             metric_index: query.metric_index,
             values,
-        })
+        }))
     }
 }
 

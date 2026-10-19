@@ -720,3 +720,48 @@ fn a_clustered_warehouse_carries_its_cluster_into_every_client() {
         );
     }
 }
+
+#[test]
+fn a_slack_destination_is_read_from_its_provider_tag() {
+    let parsed: DestinationConfig = serde_json::from_value(json!({
+        "provider": "slack",
+        "bot_token": "xoxb-token",
+        "channel": "C0123456789",
+    }))
+    .unwrap_or_else(|error| panic!("should read a slack destination: {error}"));
+
+    assert_eq!(parsed.provider().as_str(), "slack");
+    let DestinationConfig::Slack { bot_token, channel } = parsed else {
+        panic!("should be a Slack destination");
+    };
+    assert_eq!(bot_token.expose_secret(), "xoxb-token");
+    assert_eq!(channel, "C0123456789");
+}
+
+#[test]
+fn a_slack_destination_needs_a_bot_token_and_a_channel() {
+    let cases = [
+        ("bot_token", " ", "C0123456789"),
+        ("channel", "xoxb-token", " "),
+    ];
+
+    for (field, bot_token, channel) in cases {
+        let mut config = valid_config();
+        config.alerts = AlertsConfig {
+            destinations: std::collections::BTreeMap::from([(
+                "ops".to_owned(),
+                DestinationConfig::Slack {
+                    bot_token: SecretString::from(bot_token),
+                    channel: channel.to_owned(),
+                },
+            )]),
+            ..alerts_on()
+        };
+
+        let outcome = config.validate();
+        assert!(
+            matches!(&outcome, Err(ConfigError::AlertDestinationField { name, field: refused }) if name == "ops" && *refused == field),
+            "should refuse a blank {field}"
+        );
+    }
+}

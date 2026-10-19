@@ -2,6 +2,7 @@
 -- depends_on: {{ ref('jira__issue_field_snapshot') }}
 -- depends_on: {{ ref('jira__changelog_items') }}
 -- depends_on: {{ ref('jira__changelog_entry_ranks') }}
+-- depends_on: {{ ref('jira__issue_key_ids') }}
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',

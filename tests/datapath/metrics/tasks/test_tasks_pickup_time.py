@@ -3,8 +3,9 @@
 Bronze: Jira issues, their status history (Open -> In Progress -> Closed) and users;
 BambooHR employees give the Engineering cohort. Enrich reconstructs status intervals;
 pickup time is the days an issue waited in Open before its first In Progress move.
-Five members hold one issue each, picked up after 1..5 days, so erin's value is 5 and
-the department spreads {1,2,3,4,5}; a window with no issues serves null.
+Five members hold one picked-up issue each, after 1..5 days, so erin's value is 5 and
+the department spreads {1,2,3,4,5}; a window with no issues serves null. Erin's
+second issue skips In Progress, so it has no pickup and must not pull her value down.
 """
 
 from __future__ import annotations
@@ -21,8 +22,9 @@ ERIN = "erin@example.com"
 
 
 def test_tasks_pickup_time(spec: SpecRun) -> None:
-    """Erin's pickup is 5 days; the department ladder gives median 3, p25 2, p75 4,
-    range 1..5; the single Jira instance makes the source breakdown one row."""
+    """Erin's pickup is 5 days, her never-picked-up issue contributing nothing; the
+    department ladder gives median 3, p25 2, p75 4, range 1..5; the single Jira
+    instance makes the source breakdown one row."""
     r = spec.call(
         {
             "url": "/v1/metric-results",

@@ -27,9 +27,9 @@ bronze:
     - {$ref: ../templates/people.yaml#/templates/bamboohr_employee, id: e104, unique_key: bamboohr-test-e104, firstName: Judy, lastName: Unknown, displayName: Judy Unknown, workEmail: judy@example.com}
 
   bronze_slack.users_details:
-    - {$ref: ../templates/slack_member.yaml#/templates/slack_member, user_id: U001, email_address: alice@example.com, date: "2026-12-25", unique_key: sl-alice-20261225, messages_posted_count: 3}
-    - {$ref: ../templates/slack_member.yaml#/templates/slack_member, user_id: U002, email_address: bob@example.com,   date: "2026-12-25", unique_key: sl-bob-20261225,   messages_posted_count: 5,  is_active: false}
-    - {$ref: ../templates/slack_member.yaml#/templates/slack_member, user_id: U003, email_address: frank@example.com, date: "2026-12-25", unique_key: sl-frank-20261225, messages_posted_count: 99, is_guest: true,  is_billable_seat: false}
-    - {$ref: ../templates/slack_member.yaml#/templates/slack_member, user_id: U004, email_address: grace@example.com, date: "2026-12-25", unique_key: sl-grace-20261225, messages_posted_count: 77, is_guest: false, is_billable_seat: false}
-    - {$ref: ../templates/slack_member.yaml#/templates/slack_member, user_id: U005, email_address: ivan@example.com,  date: "2026-12-25", unique_key: sl-ivan-20261225,  messages_posted_count: 44, is_guest: true,  is_billable_seat: true}
-    - {$ref: ../templates/slack_member.yaml#/templates/slack_member, user_id: U006, email_address: judy@example.com,  date: "2026-12-25", unique_key: sl-judy-20261225,  messages_posted_count: 55, is_guest: null,  is_billable_seat: null}
+    - {$ref: ../templates/slack_chat.yaml#/templates/slack_user_day, user_id: U001, email_address: alice@example.com, date: "2026-12-25", unique_key: sl-alice-20261225, messages_posted_count: 3}
+    - {$ref: ../templates/slack_chat.yaml#/templates/slack_user_day, user_id: U002, email_address: bob@example.com,   date: "2026-12-25", unique_key: sl-bob-20261225,   messages_posted_count: 5,  is_active: false}
+    - {$ref: ../templates/slack_chat.yaml#/templates/slack_user_day, user_id: U003, email_address: frank@example.com, date: "2026-12-25", unique_key: sl-frank-20261225, messages_posted_count: 99, is_guest: true,  is_billable_seat: false}
+    - {$ref: ../templates/slack_chat.yaml#/templates/slack_user_day, user_id: U004, email_address: grace@example.com, date: "2026-12-25", unique_key: sl-grace-20261225, messages_posted_count: 77, is_guest: false, is_billable_seat: false}
+    - {$ref: ../templates/slack_chat.yaml#/templates/slack_user_day, user_id: U005, email_address: ivan@example.com,  date: "2026-12-25", unique_key: sl-ivan-20261225,  messages_posted_count: 44, is_guest: true,  is_billable_seat: true}
+    - {$ref: ../templates/slack_chat.yaml#/templates/slack_user_day, user_id: U006, email_address: judy@example.com,  date: "2026-12-25", unique_key: sl-judy-20261225,  messages_posted_count: 55, is_guest: null,  is_billable_seat: null}

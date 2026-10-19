@@ -57,7 +57,7 @@ impl Provider for Zulip {
                 ("type", "stream"),
                 ("to", self.stream.as_str()),
                 ("topic", self.topic.as_str()),
-                ("content", message.text.as_str()),
+                ("content", message.markdown.as_str()),
             ])
             .send()
             .await

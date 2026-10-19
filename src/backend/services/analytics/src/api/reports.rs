@@ -67,7 +67,7 @@ async fn build_preview(
         plan_report(&preview_recipe, &preview_profiles, limits).map_err(map_planning_error)?;
     preview_plan.columns = full_plan.columns.clone();
     let runner = ClickHouseReportQueryRunner::new(&state.ch);
-    let rows = execute_report(
+    let execution = execute_report(
         &preview_recipe,
         &preview_plan,
         &preview_profiles,
@@ -81,14 +81,23 @@ async fn build_preview(
     .await
     .map_err(report_internal)?;
 
+    // A not-ready read answers the columns it would have filled and no rows;
+    // the planned total describes a table nothing has built, so it reads 0.
+    let total_rows = if execution.not_ready.is_some() {
+        0
+    } else {
+        full_plan.size.total_rows
+    };
+
     Ok(ReportPreviewResponse {
         columns: full_plan
             .columns
             .iter()
             .map(|column| column.metadata.clone())
             .collect(),
-        rows,
-        total_rows: full_plan.size.total_rows,
+        rows: execution.output,
+        total_rows,
+        not_ready: execution.not_ready,
     })
 }
 

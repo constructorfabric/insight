@@ -81,9 +81,9 @@ def test_an_unset_or_disabled_flag_leaves_both_topology_keys_out(flag: str) -> N
     assert done.stdout.rstrip("\n") == STANDALONE_JSON, f"should stay standalone: {flag!r}"
 
 
-def test_the_flag_alone_asks_for_replicated_engines_and_names_no_cluster() -> None:
-    """The epic's chosen mechanism: a database on the `Replicated` engine
-    distributes DDL itself, so `cluster_name` is left out."""
+def test_the_flag_alone_names_no_cluster() -> None:
+    """The chart refuses that pair, so this records only that the composer never
+    invents a cluster name if it is ever reached."""
     done = _compose(STANDALONE_ENV | {"RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE": "true"})
 
     config = json.loads(done.stdout)

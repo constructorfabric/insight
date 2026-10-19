@@ -42,8 +42,22 @@ description: >
   Engineering, so their departments keep them out of the cohort the peer pools are
   drawn from and neither moves the spread. frank holds a seat with no ceiling, so he is
   present in ai.extra_usage_cost and absent from ai.extra_usage_utilisation —
-  honest-NULL, not a zero. Cases: custom scope · dedup of a repeated snapshot · the
-  no-ceiling seat · the seat stopped at its ceiling · empty window.
+  honest-NULL, not a zero.
+
+  Three more Quality members finish the scale (#2479 scenario 2): ivan at 95 % of
+  his ceiling sits just below grace's 100 %, and judy at 104 % reads past it, because
+  the vendor can bill the charge that crosses the ceiling and the ratio is never
+  capped. kim holds two seats that identity resolves to one person (#2479 scenario
+  12): 400¢ against a 1000¢ ceiling, and 300¢ on a seat with no ceiling. Her money
+  is both seats, 7.00; her utilisation is the ceiling-bearing seat alone, 40 %. A
+  ratio that let the no-ceiling seat's spend in would read 70 %.
+
+  Cases: custom scope · dedup of a repeated snapshot · the no-ceiling seat · the seat
+  stopped at its ceiling · the proximity scale uncapped · two seats, one without a
+  ceiling · empty window.
+
+identity_aliases:
+  kim@example.com: [kim.second@example.org]
 
 bronze:
   bronze_bamboohr.employees:
@@ -54,6 +68,13 @@ bronze:
     - $ref: ../templates/people.yaml#/templates/erin
     - {$ref: ../templates/people.yaml#/templates/bamboohr_employee, id: e099, unique_key: bamboohr-test-e099, firstName: Frank, lastName: Zeta, displayName: Frank Zeta, workEmail: frank@example.com, department: Quality}
     - {$ref: ../templates/people.yaml#/templates/bamboohr_employee, id: e098, unique_key: bamboohr-test-e098, firstName: Grace, lastName: Yuen, displayName: Grace Yuen, workEmail: grace@example.com, department: Quality}
+    - {$ref: ../templates/people.yaml#/templates/bamboohr_employee, id: e097, unique_key: bamboohr-test-e097, firstName: Ivan, lastName: Xu, displayName: Ivan Xu, workEmail: ivan@example.com, department: Quality}
+    - {$ref: ../templates/people.yaml#/templates/bamboohr_employee, id: e096, unique_key: bamboohr-test-e096, firstName: Judy, lastName: Wolfe, displayName: Judy Wolfe, workEmail: judy@example.com, department: Quality}
+    - {$ref: ../templates/people.yaml#/templates/bamboohr_employee, id: e095, unique_key: bamboohr-test-e095, firstName: Kim, lastName: Vance, displayName: Kim Vance, workEmail: kim@example.com, department: Quality}
+
+  bronze_claude_team.claude_team_members:
+    - { $ref: ../templates/claude_team_member.yaml#/templates/claude_team_member, unique_key: member-kim,        account: '{"uuid": "seat-kim", "email_address": "kim@example.com", "full_name": "Kim Vance"}' }
+    - { $ref: ../templates/claude_team_member.yaml#/templates/claude_team_member, unique_key: member-kim-second, account: '{"uuid": "seat-kim-second", "email_address": "kim.second@example.org", "full_name": "Kim Vance"}', seat_tier: null }
 
   bronze_claude_team.claude_team_overage_spend:
     - { $ref: ../templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-alice, used_credits: 50,  monthly_credit_limit: 1000, seat_tier: unassigned }
@@ -69,3 +90,7 @@ bronze:
     - { $ref: ../templates/claude_team_overage.yaml#/templates/frank, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-frank, used_credits: 300, monthly_credit_limit: null, seat_tier: unassigned, limit_type: null }
     # ── grace — spent the ceiling exactly: 100 %, the point the vendor blocks at ──
     - { $ref: ../templates/claude_team_overage.yaml#/templates/grace, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-grace, used_credits: 1000, monthly_credit_limit: 1000, out_of_credits: true }
+    - { $ref: ../templates/claude_team_overage.yaml#/templates/claude_team_seat, account_email: ivan@example.com,       account_uuid: seat-ivan,       _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-ivan,       used_credits: 950,  monthly_credit_limit: 1000 }
+    - { $ref: ../templates/claude_team_overage.yaml#/templates/claude_team_seat, account_email: judy@example.com,       account_uuid: seat-judy,       _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-judy,       used_credits: 1040, monthly_credit_limit: 1000, out_of_credits: true }
+    - { $ref: ../templates/claude_team_overage.yaml#/templates/claude_team_seat, account_email: kim@example.com,        account_uuid: seat-kim,        _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-kim,        used_credits: 400,  monthly_credit_limit: 1000 }
+    - { $ref: ../templates/claude_team_overage.yaml#/templates/claude_team_seat, account_email: kim.second@example.org, account_uuid: seat-kim-second, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-kim-second, used_credits: 300,  monthly_credit_limit: null, seat_tier: unassigned, limit_type: null }

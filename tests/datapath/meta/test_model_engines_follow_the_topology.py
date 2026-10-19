@@ -46,8 +46,10 @@ MODEL_SOURCES = (
 #: dbt's own clean-targets, which hold compiled copies of everything above.
 BUILD_DIRS = frozenset({"target", "dbt_packages"})
 
-#: A `config(engine=...)` that is not a call to the macro.
-ENGINE_LITERAL = re.compile(r"engine\s*=\s*(?!insight_engine\()")
+#: A `config(engine=...)` that is not a call to the macro. The trailing `\S` is load
+#: bearing: without something to match after it, `\s*` backtracks to zero width and the
+#: lookahead then passes on the space it left behind, clearing a spaced-out literal.
+ENGINE_LITERAL = re.compile(r"engine\s*=\s*(?!insight_engine\()\S")
 
 Engines = dict[str, str]
 

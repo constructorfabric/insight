@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-use super::scalar::{Number, Outcome, UnknownReason};
+use super::condition::{Condition, ConditionError, ConditionShape, Witness};
+use super::scalar::{Outcome, UnknownReason};
 use crate::domain::definition::{DefinitionName, Page};
+use crate::domain::metric_run::Columns;
 use crate::domain::query::time_window::{WindowError, WindowRequest};
 
 /// The bounds every installation gets unless it sets its own.
@@ -22,9 +24,11 @@ pub(crate) const DEFAULT_EVALUATION_CONCURRENCY: usize = 4;
 pub(crate) const DEFAULT_EVALUATION_LOCK_SECS: u64 = 60;
 pub(crate) const DEFAULT_NOTIFICATIONS_KEPT_PER_RULE: u64 = 200;
 
-const MAX_COLUMN_CHARS: usize = 128;
 /// The longest an alert's name may be. It is shown, never used as a key.
 const MAX_NAME_CHARS: usize = 200;
+/// The most columns a rule may carry beside the ones its condition reads.
+pub(crate) const MAX_CONTEXT_COLUMNS: usize = 5;
+const MAX_COLUMN_CHARS: usize = 128;
 
 /// What an administrator calls an alert: free text, shown in every message
 /// and listing. The id is the handle, so two alerts may share a name.
@@ -48,68 +52,6 @@ impl AlertName {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-/// How the observed value is compared with the threshold.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, utoipa::ToSchema,
-)]
-pub(crate) enum Operator {
-    #[serde(rename = ">")]
-    Gt,
-    #[serde(rename = ">=")]
-    Ge,
-    #[serde(rename = "<")]
-    Lt,
-    #[serde(rename = "<=")]
-    Le,
-}
-
-impl Operator {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Gt => ">",
-            Self::Ge => ">=",
-            Self::Lt => "<",
-            Self::Le => "<=",
-        }
-    }
-
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        [Self::Gt, Self::Ge, Self::Lt, Self::Le]
-            .into_iter()
-            .find(|operator| operator.as_str() == value)
-    }
-}
-
-/// The comparison a rule makes.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Condition {
-    pub(crate) operator: Operator,
-    pub(crate) threshold: Number,
-}
-
-impl Condition {
-    /// Whether `value` meets the condition, or nothing where the two cannot
-    /// be compared exactly.
-    pub(crate) fn holds(&self, value: Number) -> Option<bool> {
-        use std::cmp::Ordering::{Greater, Less};
-
-        let ordering = value.compare(self.threshold)?;
-
-        Some(match self.operator {
-            Operator::Gt => ordering == Greater,
-            Operator::Ge => ordering != Less,
-            Operator::Lt => ordering == Less,
-            Operator::Le => ordering != Greater,
-        })
-    }
-}
-
-impl fmt::Display for Condition {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{} {}", self.operator.as_str(), self.threshold)
     }
 }
 
@@ -164,14 +106,14 @@ pub(crate) struct RuleDraft {
     pub(crate) name: String,
     /// The stored metric to check.
     pub(crate) metric: String,
-    /// The result column holding the number, by the `as_name` the metric
-    /// gives it.
-    pub(crate) column: String,
-    /// One of `>`, `>=`, `<`, `<=`.
-    pub(crate) operator: Operator,
-    /// The number the value is compared with: a JSON number, or the digit
-    /// string a read shows an integer past ±(2^53 − 1) as.
-    pub(crate) threshold: serde_json::Value,
+    /// Which rows must pass, and the test each row takes.
+    #[schemars(with = "ConditionShape")]
+    #[schema(value_type = ConditionShape)]
+    pub(crate) condition: serde_json::Value,
+    /// Result columns, by `as_name`, shown beside the condition's in every
+    /// notification: up to 5.
+    #[serde(default)]
+    pub(crate) context_columns: Vec<String>,
     /// The window the metric is run over, as `run_metric` takes it. Omit it
     /// to run the metric unbounded.
     #[serde(default)]
@@ -197,34 +139,28 @@ impl toolkit::api::api_dto::RequestApiDto for RuleDraft {}
 pub(crate) struct RuleSpec {
     pub(crate) name: AlertName,
     pub(crate) metric: DefinitionName,
-    pub(crate) column: String,
     pub(crate) condition: Condition,
+    /// Columns the witness keeps beside the condition's, in this order.
+    pub(crate) context_columns: Vec<String>,
     pub(crate) range: Option<String>,
     pub(crate) interval_secs: u32,
     pub(crate) destination: String,
 }
 
 impl RuleSpec {
-    /// A draft as a rule, or the first thing wrong with it.
+    /// A draft as a rule, or the first thing wrong with it. `columns` are
+    /// the metric's result columns and what each holds, which the condition
+    /// and the context columns are checked against.
     pub(crate) fn parse(
         draft: &RuleDraft,
         limits: Limits,
         destinations: &Destinations,
+        columns: &Columns,
     ) -> Result<Self, RuleError> {
         let name = AlertName::parse(&draft.name)?;
         let metric = DefinitionName::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
-
-        let column = draft.column.trim();
-        if column.is_empty()
-            || column.chars().count() > MAX_COLUMN_CHARS
-            || !column
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
-            return Err(RuleError::Column);
-        }
-
-        let threshold = Number::parse_written(&draft.threshold).ok_or(RuleError::Threshold)?;
+        let condition = Condition::parse(&draft.condition, &columns.kinds)?;
+        let context_columns = parse_context_columns(&draft.context_columns, columns)?;
 
         if let Some(range) = draft.range.as_deref() {
             WindowRequest::parse(Some(range), Some(false)).map_err(RuleError::Range)?;
@@ -246,11 +182,8 @@ impl RuleSpec {
         Ok(Self {
             name,
             metric,
-            column: column.to_owned(),
-            condition: Condition {
-                operator: draft.operator,
-                threshold,
-            },
+            condition,
+            context_columns,
             range: draft.range.clone(),
             interval_secs: draft.interval_secs,
             destination: draft.destination.clone(),
@@ -264,16 +197,76 @@ impl RuleSpec {
     }
 }
 
+/// The columns a rule asks to carry, each one the metric answers and none
+/// twice. A column the condition reads too is fine: the witness keeps it
+/// once. A group-by column is refused: the witness always shows it, and the
+/// message writes it as the row's group.
+pub(crate) fn parse_context_columns(
+    named: &[String],
+    columns: &Columns,
+) -> Result<Vec<String>, RuleError> {
+    if named.len() > MAX_CONTEXT_COLUMNS {
+        return Err(RuleError::ContextColumns(ContextColumnsProblem::TooMany));
+    }
+
+    let mut kept: Vec<String> = Vec::with_capacity(named.len());
+    for name in named {
+        if !is_column_name(name) {
+            return Err(RuleError::ContextColumns(ContextColumnsProblem::Name));
+        }
+        if kept.iter().any(|seen| seen == name) {
+            return Err(RuleError::ContextColumns(ContextColumnsProblem::Duplicate(
+                name.clone(),
+            )));
+        }
+        if !columns.kinds.iter().any(|(column, _)| column == name) {
+            return Err(RuleError::ContextColumns(
+                ContextColumnsProblem::NoSuchColumn(name.clone()),
+            ));
+        }
+        if columns.groups.contains(name) {
+            return Err(RuleError::ContextColumns(ContextColumnsProblem::GroupBy(
+                name.clone(),
+            )));
+        }
+        kept.push(name.clone());
+    }
+
+    Ok(kept)
+}
+
+fn is_column_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().count() <= MAX_COLUMN_CHARS
+        && name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub(crate) enum ContextColumnsProblem {
+    #[error("holds at most {MAX_CONTEXT_COLUMNS} columns")]
+    TooMany,
+    #[error("must each be the name of a result column: letters, digits or underscore")]
+    Name,
+    #[error("names `{0}` twice")]
+    Duplicate(String),
+    #[error("the metric answers no column `{0}`")]
+    NoSuchColumn(String),
+    #[error("`{0}` is a group-by column, which every notification shows already")]
+    GroupBy(String),
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub(crate) enum RuleError {
     #[error("name must be 1 to {MAX_NAME_CHARS} characters")]
     Name,
     #[error("metric must be a definition name")]
     Metric,
-    #[error("column must be a result column name: letters, digits or underscore")]
-    Column,
-    #[error("threshold must be a finite JSON number, or an integer written as digits")]
-    Threshold,
+    #[error("{}: {}", .0.field(), .0.problem)]
+    Condition(#[from] ConditionError),
+    #[error("context_columns: {0}")]
+    ContextColumns(ContextColumnsProblem),
     #[error("range: {0}")]
     Range(WindowError),
     #[error("interval_secs must be {min} to {max}")]
@@ -357,9 +350,12 @@ pub(crate) struct Notification {
     pub(crate) rule_revision: u32,
     pub(crate) rule_name: AlertName,
     pub(crate) metric: DefinitionName,
-    pub(crate) column: String,
     pub(crate) condition: Condition,
-    pub(crate) value: Number,
+    /// The columns the rule asked to carry when this was owed, so the message
+    /// can tell them from the ones the condition read.
+    pub(crate) context_columns: Vec<String>,
+    /// The rows the check saw that owed this.
+    pub(crate) witness: Witness,
     pub(crate) evaluated_at: DateTime<Utc>,
     pub(crate) destination: String,
     pub(crate) status: NotificationStatus,
@@ -374,7 +370,7 @@ pub(crate) struct Notification {
 }
 
 /// One check as it is handed to a store to record.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct Recording {
     pub(crate) rule_id: Uuid,
     pub(crate) revision: u32,

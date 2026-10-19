@@ -3,6 +3,8 @@ import type {
   AlertDestination,
   AlertDraft,
   AlertPage,
+  AlertPreview,
+  AlertPreviewRequest,
   NotificationPage,
 } from "@/api/alerts-types";
 import {
@@ -63,6 +65,18 @@ export async function createAlert(draft: AlertDraft): Promise<Alert> {
     body: JSON.stringify(draft),
   });
   return readJson<Alert>(res);
+}
+
+/** Runs the rule's metric now and says what a check would find, saving nothing. */
+export async function previewAlert(
+  request: AlertPreviewRequest
+): Promise<AlertPreview> {
+  const res = await fetchWithAuth(`${BASE}/alerts/preview`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(request),
+  });
+  return readJson<AlertPreview>(res);
 }
 
 /**

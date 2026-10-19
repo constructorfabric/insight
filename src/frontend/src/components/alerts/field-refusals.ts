@@ -1,16 +1,22 @@
 import { CustomApiError } from "@/api/custom-client";
 import { refusal } from "@/components/custom/refusal";
-import type { AlertField, FieldErrors } from "@/lib/alerts/draft";
+import type { FieldErrors } from "@/lib/alerts/draft";
 
-const FIELDS: ReadonlySet<string> = new Set<AlertField>([
+/** The draft's own fields; a condition's refusals name a path inside it. */
+const FIELDS: ReadonlySet<string> = new Set([
   "name",
   "metric",
-  "column",
-  "threshold",
   "range",
   "interval_secs",
   "destination",
+  "enabled",
 ]);
+
+function aboutTheDraft(field: string): boolean {
+  return (
+    FIELDS.has(field) || field === "condition" || field.startsWith("condition.")
+  );
+}
 
 interface Violation {
   field?: string;
@@ -18,8 +24,9 @@ interface Violation {
 }
 
 /**
- * What the service refused a save for: each named field's reason, to show on
- * that field, and anything else to show above the form.
+ * What the service refused a draft for: each named field's reason, keyed by
+ * the path it names, to show where that is, and anything else to show above
+ * the form.
  */
 export function savingRefusal(error: unknown): {
   fields: FieldErrors;
@@ -30,11 +37,11 @@ export function savingRefusal(error: unknown): {
       ? ((error.body as { context?: { field_violations?: Violation[] } } | null)
           ?.context?.field_violations ?? [])
       : [];
-  const fields: FieldErrors = {};
+  const fields: Record<string, string> = {};
 
   for (const { field, description } of violations) {
-    if (field && description && FIELDS.has(field)) {
-      fields[field as AlertField] = description;
+    if (field && description && aboutTheDraft(field)) {
+      fields[field] = description;
     }
   }
   if (Object.keys(fields).length > 0) return { fields };

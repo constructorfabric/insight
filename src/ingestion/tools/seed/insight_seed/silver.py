@@ -2,13 +2,17 @@
 ClickHouse silver-layer sample-data generation.
 
 Table + gold-layer setup uses the SAME mechanism as a real deployment —
-the seed does not reimplement any DDL. It runs the exact two scripts the
+the seed does not reimplement any DDL. It runs the exact scripts the
 k8s clickhouse-migrate Hook Job runs, from the ingestion tree bind-mounted
 at /ingestion (docker-compose.yml `seed-sample.volumes`):
 
-1. `create-warehouse-placeholders.sh` — applies the CI-generated DDL
-   snapshot from scripts/connectors-ddl/*.sql (CREATE DATABASE + every
-   identity/staging/silver/insight relation, all IF NOT EXISTS / OR REPLACE).
+1. `create-databases.sh` — every database a deployment holds, plus the
+   roles and users that read them. It is the one site that creates a
+   database, so the snapshot below carries relations only.
+
+   Then `create-warehouse-placeholders.sh` — applies the CI-generated DDL
+   snapshot from scripts/connectors-ddl/*.sql (every identity/staging/silver/
+   insight relation, all IF NOT EXISTS / OR REPLACE).
    This gives the generators the real production schemas to write into.
 
    Bronze is NOT in that snapshot: `destination-clickhouse` is its only
@@ -18,21 +22,28 @@ at /ingestion (docker-compose.yml `seed-sample.volumes`):
    itself, having no Docker. A missing table surfaces here as "has no
    columns".
 
-2. Generate per-team activity rows via `generators/*.py` INTO those silver
-   tables. Volumes scale by team profile + persona; per-day caps live in
-   each generator module.
+2. Generate per-team activity rows via `generators/*.py`. Volumes scale by
+   team profile + persona; per-day caps live in each generator module.
 
-3. `apply-ch-migrations.sh` — applies migrations/*.sql (identity DDL, class
-   contract heals, the contract-version stamp), the staging label repair,
-   and `dbt run --select tag:gold` to build the dbt-owned gold models. Run
-   AFTER seeding so the materialized gold models are built over real seeded
-   silver instead of empty placeholders.
+   Every generator writes the bronze its vendor would have delivered — no
+   generator writes a silver relation. A measure dbt derives is a measure the
+   pipeline is tested on rather than one the seed asserts. The staging and
+   silver chains built from that bronze are selected in step 4.
+
+3. `apply-ch-migrations.sh` — applies migrations/*.sql (class contract
+   heals, the contract-version stamp) and the staging label repair.
 
    Re-running create-warehouse-placeholders.sh from inside this script is a
-   no-op on the seeded tables (IF NOT EXISTS, no DROP/TRUNCATE), and the
-   dbt on-run-start `drop_silver_placeholders_at_start` hook does NOT fire
-   because `--select tag:gold` never materializes a staging model (the
-   hook's required second factor) — so the seeded rows survive.
+   no-op on the seeded tables (IF NOT EXISTS, no DROP/TRUNCATE).
+
+4. `build-gold.sh` — builds the dbt-owned gold models, plus the staging and
+   silver chains standing on bronze this seed wrote. A deploy builds no
+   models (a connector sync does, #3561) and a seed has no sync to ride on,
+   so the seed calls this itself. Run AFTER seeding so the materialized gold
+   models are built over real seeded silver instead of empty placeholders.
+   The dbt on-run-start `drop_silver_placeholders_at_start` hook does NOT
+   fire, because `tag:gold` never materializes a staging model (the hook's
+   required second factor) — so the seeded rows survive.
 
 All steps are idempotent — re-running converges on the same end state.
 """
@@ -58,7 +69,6 @@ from .generators import (
     git,
     git_history,
     git_repos,
-    hr,
     people,
     support,
     task,
@@ -76,8 +86,8 @@ def _ingestion_scripts_dir() -> Path:
     In the seed-sample container the whole ingestion tree is bind-mounted
     at /ingestion (docker-compose.yml `seed-sample.volumes`), mirroring the
     toolbox image layout the scripts resolve their relative paths against
-    (apply-ch-migrations.sh cd's into ../dbt). Host runs resolve it relative
-    to this file: this package lives inside the ingestion tree it seeds.
+    (build-gold.sh cd's into ../dbt). Host runs resolve it relative to this
+    file: this package lives inside the ingestion tree it seeds.
     """
     mounted = Path("/ingestion/scripts")
     if mounted.is_dir():
@@ -87,9 +97,10 @@ def _ingestion_scripts_dir() -> Path:
 
 
 def _script_env() -> dict[str, str]:
-    """Env for the ingestion shell scripts (create-warehouse-placeholders.sh,
-    apply-ch-migrations.sh) — CLICKHOUSE_URL/USER/PASSWORD/DATABASE per
-    lib/ch-exec.sh + apply-ch-migrations.sh's own asserts."""
+    """Env for the ingestion shell scripts (create-databases.sh,
+    create-warehouse-placeholders.sh, apply-ch-migrations.sh, build-gold.sh) —
+    CLICKHOUSE_URL/USER/PASSWORD/DATABASE per lib/ch-exec.sh + those scripts'
+    own asserts."""
     target = config.parse_clickhouse(os.environ)
     return {
         **os.environ,
@@ -102,10 +113,10 @@ def _script_env() -> dict[str, str]:
 
 def _ch_client() -> clickhouse_connect.driver.client.Client:
     target = config.parse_clickhouse(os.environ)
-    # Views (gold) are created by apply-ch-migrations.sh, not this client;
+    # Views (gold) are created by build-gold.sh, not this client;
     # the compose CH ships join_use_nulls=1 as a profile default
     # (deploy/compose/clickhouse-user-defaults.xml) so those CREATE VIEWs
-    # type-check server-side. This client only INSERTs silver rows.
+    # type-check server-side. This client only INSERTs bronze rows.
     return clickhouse_connect.get_client(
         host=target.host,
         port=target.http_port,
@@ -114,22 +125,37 @@ def _ch_client() -> clickhouse_connect.driver.client.Client:
     )
 
 
+def apply_create_databases() -> None:
+    """Every database a deployment holds, plus the access that reads them.
+
+    Runs the ingestion repo's create-databases.sh — the one creation site, and
+    the first thing the k8s clickhouse-migrate Hook Job runs. Nothing after it
+    carries a CREATE DATABASE: not the placeholder snapshot, not a migration,
+    not a dbt on-run-start hook.
+    """
+    _run_ingestion_script("create-databases.sh")
+
+
 def apply_create_warehouse_placeholders() -> None:
-    """CREATE DATABASE + identity/staging/silver/insight placeholder tables.
+    """The identity/staging/silver/insight placeholder tables.
 
     Runs the ingestion repo's create-warehouse-placeholders.sh — the exact
     script the k8s clickhouse-migrate Hook Job runs — so placeholder DDL
     has a single source of truth and cannot drift.
     """
-    script = _ingestion_scripts_dir() / "create-warehouse-placeholders.sh"
+    _run_ingestion_script("create-warehouse-placeholders.sh")
+
+
+def _run_ingestion_script(name: str) -> None:
+    script = _ingestion_scripts_dir() / name
     if not script.is_file():
         raise FileNotFoundError(
-            f"placeholders script not found at {script}. In compose, the "
+            f"deploy script not found at {script}. In compose, the "
             "seed-sample container must mount /ingestion; on a host run, "
             "this package must sit inside the ingestion tree (src/ingestion/tools/seed)."
         )
     subprocess.run(["bash", str(script)], env=_script_env(), check=True)
-    LOG.info("placeholders: %s applied", script.name)
+    LOG.info("deploy script: %s applied", script.name)
 
 
 def ensure_task_config_tables() -> None:
@@ -172,10 +198,98 @@ IDENTITY_INPUTS_SELECT = "+identity_inputs"
 # staging models too, and the placeholder-drop hook then empties their class.
 AI_INVOICE_SELECT = "claude_team__ai_invoice+"
 
+# The bronze-derived support chain. The generators write Zendesk audits and
+# ratings; every support measure is a count dbt derives from them, so the whole
+# chain has to build. Named per model rather than `zendesk__support_agent+`
+# alone, so the selector guard below judges each one.
+SUPPORT_CHAIN_SELECT = (
+    "zendesk__support_agent+",
+    "zendesk__support_event+",
+    "zendesk__support_activity+",
+)
+
+# The bronze-derived wiki chain. Outline's three staging models are views over
+# bronze, so each is named rather than relying on one to pull the others.
+WIKI_CHAIN_SELECT = (
+    "outline__wiki_pages+",
+    "outline__wiki_activity+",
+    "outline__wiki_engagement+",
+)
+
+# The bronze-derived collaboration chain: three connectors union into the
+# three class relations.
+COLLAB_CHAIN_SELECT = (
+    "m365__collab_chat_activity+",
+    "m365__collab_email_activity+",
+    "m365__collab_meeting_activity+",
+    # No row is emitted for these two, but the class they feed has to exist:
+    # gold's collab evidence reads it, and an unbuilt relation fails the model
+    # rather than contributing nothing.
+    "m365__collab_document_activity_onedrive+",
+    "m365__collab_document_activity_sharepoint+",
+    "slack__collab_chat_activity+",
+    # Named before the activity model, which reads it by raw name rather than
+    # ref() — so dbt cannot infer the dependency and would build neither.
+    "zoom__meeting_sessions+",
+    "zoom__collab_meeting_activity+",
+)
+
+# The bronze-derived HR chain. `class_focus_metrics` has no connector of its
+# own — dbt derives it from working hours and meeting activity — so it rides in
+# on the `+` after the working-hours arm.
+HR_CHAIN_SELECT = (
+    "bamboohr__to_class_people+",
+    "bamboohr__working_hours+",
+)
+
+# The bronze-derived AI chain: four connectors union into the two usage
+# relations.
+AI_CHAIN_SELECT = (
+    # Named first: the dev-usage model reads it by raw name, not ref().
+    "cursor__usage_events+",
+    "cursor__ai_dev_usage+",
+    "claude_team__ai_dev_usage+",
+    "chatgpt_team__ai_assistant_usage+",
+    "claude_enterprise__ai_assistant_usage+",
+    "claude_team__ai_overage+",
+    "claude_team__ai_overage_daily+",
+    # No row is emitted for it, but gold's AI cost evidence reads the class it
+    # feeds, and an unbuilt relation fails the model rather than contributing
+    # nothing.
+    "chatgpt_team__ai_credit_usage+",
+)
+
+# The bronze-derived task chain, selected by TAG rather than by model.
+#
+# The Jira journal is derived from the issue JSON and the changelog across
+# roughly thirty staging models, several of which read their upstream by raw
+# relation name rather than `ref()` — so dbt cannot order them from the graph
+# and naming them individually means naming all of them, in the right order,
+# forever. `tag:jira+` is what a connector sync itself selects.
+TASK_CHAIN_SELECT = ("tag:jira+",)
+
+# The bronze-derived CRM chain.
+CRM_CHAIN_SELECT = (
+    "hubspot__crm_users+",
+    "hubspot__crm_deals+",
+    "hubspot__crm_activities+",
+)
+
 # The bronze-derived CI chain. INVARIANT: no entry may feed a silver relation
 # the generators write directly — the on-run-start placeholder hook would drop
 # it and rebuild it from an empty staging union. `tests/test_dbt_selector_guard.py`
-# enforces this against RESET_TARGETS.
+# enforces this against RESET_TARGETS minus BRONZE_DERIVED_SILVER.
+GIT_CHAIN_SELECT = (
+    "github__account_emails+",
+    "github__commits+",
+    "github__file_changes+",
+    "github__pull_requests+",
+    "github__pull_requests_commits+",
+    # No row is emitted for it, but gold's default-branch commits read the
+    # class it feeds, and an unbuilt relation fails the model.
+    "github__repository_branches+",
+)
+
 CI_CHAIN_SELECT = (
     "github__ci_runs+",
     "github__deployments+",
@@ -186,15 +300,38 @@ CI_CHAIN_SELECT = (
 )
 
 
-def apply_ch_migrations(dbt_select: str | None = None, *, full_refresh: bool = False) -> None:
-    """Apply gold-view migrations + build dbt-owned gold models.
+def _ingestion_script(name: str) -> Path:
+    script = _ingestion_scripts_dir() / name
+    if not script.is_file():
+        raise FileNotFoundError(
+            f"{name} not found at {script}. In compose, the "
+            "seed-sample container must mount /ingestion; on a host run, "
+            "this package must sit inside the ingestion tree (src/ingestion/tools/seed)."
+        )
+    return script
+
+
+def apply_ch_migrations() -> None:
+    """Apply the warehouse migrations.
 
     Runs the ingestion repo's apply-ch-migrations.sh — the exact script the
     k8s clickhouse-migrate Hook Job runs. It re-creates placeholders (no-op
-    here), applies migrations/*.sql, repairs staging labels, and runs
-    `dbt run --select tag:gold` (widened by `dbt_select` when given). Must
-    run AFTER seeding so the materialized gold model reflects seeded silver
-    (see module docstring).
+    here), applies migrations/*.sql and repairs staging labels. It builds no
+    models: `build_gold` does that, after the rows are in.
+    """
+    script = _ingestion_script("apply-ch-migrations.sh")
+    subprocess.run(["bash", str(script)], env=_script_env(), check=True)
+    LOG.info("migrations: %s applied", script.name)
+
+
+def build_gold(dbt_select: str | None = None, *, full_refresh: bool = False) -> None:
+    """Build the dbt-owned gold models over what the seed just wrote.
+
+    A deploy builds no models — a connector sync does (#3561) — and seeded
+    silver arrives without a sync, so the seed runs build-gold.sh itself. Must
+    run AFTER seeding so the materialized gold models reflect seeded silver
+    (see module docstring). `dbt_select` widens the script's `tag:gold`
+    default.
 
     `full_refresh` rebuilds the selected models from source rather than
     appending to them. It is a GLOBAL dbt flag, so it reaches every selected
@@ -208,34 +345,28 @@ def apply_ch_migrations(dbt_select: str | None = None, *, full_refresh: bool = F
     describing the previous accounts, persons-seed resolves that stale set,
     and gold serves the old org with no error at any layer.
     """
-    script = _ingestion_scripts_dir() / "apply-ch-migrations.sh"
-    if not script.is_file():
-        raise FileNotFoundError(
-            f"migrations script not found at {script}. In compose, the "
-            "seed-sample container must mount /ingestion; on a host run, "
-            "this package must sit inside the ingestion tree (src/ingestion/tools/seed)."
-        )
+    script = _ingestion_script("build-gold.sh")
 
-    env = _script_env()
-    # Never inherited: the selector is exactly what the caller passes, or the
-    # script's own tag:gold default.
-    if dbt_select is None:
-        env.pop("DBT_GOLD_SELECT", None)
-    else:
-        env["DBT_GOLD_SELECT"] = dbt_select
     # INVARIANT: a flag, never DBT_FULL_REFRESH — that name is
     # reconcile-connectors' and env reaches every child.
     argv = ["bash", str(script)]
+    if dbt_select is not None:
+        argv += ["--select", dbt_select]
     if full_refresh:
         argv.append("--full-refresh")
-    subprocess.run(argv, env=env, check=True)
-    LOG.info("migrations + gold: %s applied", script.name)
+
+    subprocess.run(argv, env=_script_env(), check=True)
+    LOG.info("gold: %s built", script.name)
 
 
 def generate_rows(
     client: clickhouse_connect.driver.client.Client,
 ) -> None:
-    """Populate silver tables with per-team activity for the demo roster."""
+    """Write the bronze each vendor would have delivered for the demo roster.
+
+    dbt builds staging, silver and gold from it in step 4 — no generator writes
+    a silver relation.
+    """
     tenant_uuid = config.parse_tenant_id(os.environ)
     dev_email = get_dev_user_email()
     roster = build_seeded_roster(dev_email, config.parse_org_headcount(os.environ))
@@ -245,7 +376,7 @@ def generate_rows(
     # "unset", which a rendered Job manifest passes for a window nobody pinned.
     days = seed_days()
     LOG.info(
-        "generating silver rows: tenant=%s days=%d persons=%d",
+        "generating bronze rows: tenant=%s days=%d persons=%d",
         tenant_uuid,
         days,
         len(roster),
@@ -259,7 +390,6 @@ def generate_rows(
     totals.update(ci.generate(client, roster, tenant_uuid, days, history))
     totals.update(crm.generate(client, roster, tenant_uuid, days))
     totals.update(collab.generate(client, roster, tenant_uuid, days))
-    totals.update(hr.generate(client, roster, tenant_uuid, days))
     totals.update(ai.generate(client, roster, tenant_uuid, days))
     totals.update(ai_cost.generate(client, roster, tenant_uuid, days))
     totals.update(task.generate(client, roster, tenant_uuid, days))
@@ -268,7 +398,7 @@ def generate_rows(
 
     for table, n in sorted(totals.items()):
         LOG.info("  %-46s %6d rows", table, n)
-    LOG.info("silver rows: %d total across %d tables", sum(totals.values()), len(totals))
+    LOG.info("bronze rows: %d total across %d relations", sum(totals.values()), len(totals))
 
 
 def run() -> None:
@@ -276,7 +406,8 @@ def run() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    # 1. Real deploy mechanism: create the placeholder tables.
+    # 1. Real deploy mechanism: the databases, then the placeholder tables.
+    apply_create_databases()
     apply_create_warehouse_placeholders()
     # config.* tables are dbt-owned (on-run-start macro) but the generators
     # write config.field_value_map before dbt's first run on a fresh stand.
@@ -284,30 +415,50 @@ def run() -> None:
     client = _ch_client()
     try:
         LOG.info("ClickHouse version: %s", client.server_version)
-        # 2. Seed silver rows into the created tables.
+        # 2. Write the bronze a sync would have landed.
         generate_rows(client)
-        # 3. Real deploy mechanism: migrations + gold + identity inputs. Gold
-        #    builds unresolved here — the orchestrator runs the persons-seed/
-        #    sync pair and then the `gold` subcommand to rebuild it.
-        apply_ch_migrations(
+        # 3. Real deploy mechanism: the migrations, then gold + identity
+        #    inputs. Gold builds unresolved here — the orchestrator runs the
+        #    persons-seed/sync pair and then the `gold` subcommand to rebuild it.
+        apply_ch_migrations()
+        build_gold(
             dbt_select=" ".join(
-                ["tag:gold", IDENTITY_INPUTS_SELECT, AI_INVOICE_SELECT, *CI_CHAIN_SELECT]
+                [
+                    "tag:gold",
+                    IDENTITY_INPUTS_SELECT,
+                    AI_INVOICE_SELECT,
+                    *CI_CHAIN_SELECT,
+                    *SUPPORT_CHAIN_SELECT,
+                    *WIKI_CHAIN_SELECT,
+                    *CRM_CHAIN_SELECT,
+                    *COLLAB_CHAIN_SELECT,
+                    *HR_CHAIN_SELECT,
+                    *AI_CHAIN_SELECT,
+                    *GIT_CHAIN_SELECT,
+                    *TASK_CHAIN_SELECT,
+                ]
             ),
             full_refresh=True,
         )
     finally:
         client.close()
-    LOG.info("DONE: silver rows seeded + gold layer built via deploy scripts.")
+    LOG.info("DONE: bronze seeded, silver and gold built from it via deploy scripts.")
 
 
 def run_gold() -> None:
-    """Rebuild the dbt gold models only — gold resolves entity ids at BUILD
-    time, so bindings from a persons-seed/sync land only on a rebuild."""
+    """Rebuild the dbt gold models — gold resolves entity ids at BUILD time, so
+    bindings from a persons-seed/sync land only on a rebuild.
+
+    The migrations run first so this step stands on its own: compose has no
+    migrate service, and a `gold` asked for before any `silver` would otherwise
+    meet a warehouse nothing has created.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     apply_ch_migrations()
+    build_gold()
     LOG.info("DONE: gold models rebuilt over the current identity map.")
 
 

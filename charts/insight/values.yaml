@@ -218,14 +218,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.10.08.10.09-1e40c10" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.10.17.14.38-520d1d5" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.10.08.10.09-1e40c10" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.10.17.14.38-520d1d5" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   airbyteSync:
     pollIntervalSeconds: 30
     statusUnreadableThresholdSeconds: 1800
@@ -291,9 +291,9 @@ clickhouse:
   #                         MergeTree family, so DDL and data reach every
   #                         replica. Requires ClickHouse Keeper.
   #   clusterName:       -> the cluster the `ON CLUSTER <name>` clause names.
-  # The two are independent: a database created with the `Replicated` engine
-  # replicates DDL on its own, so an empty clusterName under clusterMode: true
-  # is a valid clustered install.
+  # The two travel together: clusterMode without a clusterName is refused at
+  # template time, because replicated DDL that reaches one node leaves every
+  # other replica without the relation.
   # Defaults are a standalone single node, which is the DDL shipped today.
   clusterMode: false
   clusterName: ""
@@ -303,26 +303,20 @@ clickhouse:
     # Fixed Secret name — chart convention (one Insight per namespace).
     name: "insight-db-creds"
     key: "clickhouse-password"
-  # Databases the chart's pre-install Hook Job (clickhouse-init-svcdbs-job)
-  # creates against the external ClickHouse via CREATE DATABASE IF NOT
-  # EXISTS. Connector-specific bronze schemas (bronze_jira, bronze_slack, …)
-  # are created by ingestion pipelines themselves; only schemas required
-  # at startup live here.
-  initDatabases:
-    - insight
-    # Empty writable namespace for new gold / saved-query results / scratch
-    # (#1964). The read-only presentation_ro role + grant-less `presentation`
-    # user are provisioned by the clickhouse-migrate Hook (apply-ch-migrations
-    # -> provision-presentation-access.sh).
-    - presentation
-    # Adoption events (#2573). Here rather than in the migration alone because
-    # the presentation_ro grant references it before that migration runs.
-    - product_usage
-    # Dataset record tables (insight-v3-core). The service's migrate step
-    # creates it too; listed so the database stands before the first deploy.
-    - insight_datasets
+  # When true (default), a pre-install/pre-upgrade Hook Job
+  # (clickhouse-databases-job) runs src/ingestion/scripts/create-databases.sh
+  # against the external ClickHouse: every database the release holds, plus the
+  # roles and grant-less users that read them, before the app pods roll. WHICH
+  # databases is not an operator decision — the script names them, and it is
+  # the only site that creates one (#3556). Connector bronze databases
+  # (bronze_jira, bronze_slack, …) are not among them: the Airbyte destination
+  # creates those at sync time.
+  # Set false where the warehouse is provisioned out of band. The deploy hook
+  # still converges them later (clickhouse-migrate -> apply-ch-migrations.sh),
+  # so the service user needs CREATE DATABASE either way.
+  createDatabases: true
   # When true (default), a post-install/post-upgrade Hook Job
-  # (clickhouse-migrate-job) applies the gold-view migrations
+  # (clickhouse-migrate-job) applies the schema migrations
   # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against
   # the external ClickHouse, using ingestion.toolboxImage. Set false to own
   # CH migrations out-of-band (e.g. a managed-warehouse change process).
@@ -684,7 +678,8 @@ insightV3Core:
   # joins it to the URL itself, so it may hold any character.
   # Destinations are named and referenced by rules. Each names its provider
   # and carries what that provider needs. Discord: webhook_url. Telegram:
-  # bot_token, chat_id. Zulip: site_url, bot_email, api_key, stream, topic.
+  # bot_token, chat_id. Slack: bot_token, channel. Zulip: site_url,
+  # bot_email, api_key, stream, topic.
   # Names are lowercase (a-z, 0-9, _ and -): the service lowercases every
   # environment key before it reads it, and the render refuses a name that
   # would come out different.

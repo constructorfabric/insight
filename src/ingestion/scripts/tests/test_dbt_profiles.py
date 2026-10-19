@@ -2,7 +2,7 @@
 
 Each step picks a target name and a warehouse; everything else — the timeouts,
 the session settings, the adapter's `cluster` key — comes from here, so a
-topology decision reaches the deploy hook, bootstrap, the seeder and both test
+topology decision reaches the gold build, bootstrap, the seeder and both test
 rigs without being restated in any of them.
 
 Run: pytest src/ingestion/scripts/tests
@@ -110,9 +110,9 @@ def test_a_cluster_name_without_the_flag_names_no_cluster(monkeypatch) -> None:
     assert "cluster" not in _output()
 
 
-def test_a_replicated_database_needs_no_clause(monkeypatch) -> None:
-    """The epic's chosen mechanism: the database engine distributes the DDL,
-    so the flag stands alone and no clause is written."""
+def test_a_flag_without_a_name_writes_no_clause(monkeypatch) -> None:
+    """The chart refuses that pair, so this records only that the writer neither
+    invents a cluster nor half-writes one if it is ever reached."""
     monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", "true")
 
     assert on_cluster() == ""
@@ -156,7 +156,7 @@ def test_a_step_that_speaks_https_connects_securely(monkeypatch) -> None:
 def test_a_step_that_knows_only_a_url_reads_the_connection_out_of_it(
     monkeypatch, url: str, expected_port: int, expected_secure: bool
 ) -> None:
-    """The deploy hook and the seeder carry `CLICKHOUSE_URL`, not a host/port pair."""
+    """The gold build and the seeder carry `CLICKHOUSE_URL`, not a host/port pair."""
     monkeypatch.setenv("CLICKHOUSE_URL", url)
 
     connection = connection_from_env()

@@ -3,11 +3,12 @@ use futures::StreamExt;
 use futures::stream;
 use uuid::Uuid;
 
+use crate::domain::not_ready::NotReadyReason;
 use crate::infra::identity::IdentityProfile;
 
 use super::planner::{PlannedReportSubject, ReportPlan};
 use super::query::{
-    ReportMetricQuery, ReportQueryError, ReportQueryRunner, ReportQuerySubject,
+    ReportMetricQuery, ReportMetricRead, ReportQueryError, ReportQueryRunner, ReportQuerySubject,
     compile_report_metric_query,
 };
 use super::row::{
@@ -53,6 +54,16 @@ pub(crate) enum ReportExecutionError {
     Sink(#[source] ReportSinkError),
 }
 
+/// A finished report, and whether the warehouse could answer all of it.
+///
+/// A relation nothing has built yet stops the rows there: the output carries
+/// what was written before it, and `not_ready` says why there is no more.
+#[derive(Debug)]
+pub(crate) struct ReportExecution<T> {
+    pub(crate) output: T,
+    pub(crate) not_ready: Option<NotReadyReason>,
+}
+
 pub(crate) async fn execute_report<R, S>(
     recipe: &ValidatedReportRecipe,
     plan: &ReportPlan,
@@ -60,11 +71,12 @@ pub(crate) async fn execute_report<R, S>(
     context: ReportExecutionContext,
     runner: &R,
     mut sink: S,
-) -> Result<S::Output, ReportExecutionError>
+) -> Result<ReportExecution<S::Output>, ReportExecutionError>
 where
     R: ReportQueryRunner,
     S: ReportRowSink,
 {
+    let mut not_ready = None;
     match &plan.subject {
         PlannedReportSubject::People { ids, batches } => {
             if ids.len() != profiles.len()
@@ -82,7 +94,7 @@ where
                 let batch_profiles = profiles
                     .get(batch.person_start..batch.person_end)
                     .ok_or(ReportExecutionError::PlanMismatch)?;
-                let values = execute_metric_queries(
+                let values = match execute_metric_queries(
                     recipe,
                     plan,
                     &plan.periods,
@@ -90,7 +102,14 @@ where
                     ReportQuerySubject::People(batch_ids.to_vec()),
                     runner,
                 )
-                .await?;
+                .await?
+                {
+                    MetricQueryBatch::Values(values) => values,
+                    MetricQueryBatch::NotReady(reason) => {
+                        not_ready = Some(reason);
+                        break;
+                    }
+                };
                 let rows =
                     assemble_people_rows(&plan.columns, &plan.periods, batch_profiles, &values)
                         .map_err(ReportExecutionError::Row)?;
@@ -109,7 +128,7 @@ where
                     .periods
                     .get(batch.period_start..batch.period_end)
                     .ok_or(ReportExecutionError::PlanMismatch)?;
-                let values = execute_metric_queries(
+                let values = match execute_metric_queries(
                     recipe,
                     plan,
                     periods,
@@ -117,7 +136,14 @@ where
                     ReportQuerySubject::Tenant(*id),
                     runner,
                 )
-                .await?;
+                .await?
+                {
+                    MetricQueryBatch::Values(values) => values,
+                    MetricQueryBatch::NotReady(reason) => {
+                        not_ready = Some(reason);
+                        break;
+                    }
+                };
                 let rows = assemble_tenant_rows(&plan.columns, periods, *id, &values)
                     .map_err(ReportExecutionError::Row)?;
 
@@ -128,7 +154,15 @@ where
         }
     }
 
-    sink.finish().await.map_err(ReportExecutionError::Sink)
+    let output = sink.finish().await.map_err(ReportExecutionError::Sink)?;
+
+    Ok(ReportExecution { output, not_ready })
+}
+
+/// One batch's metric reads, or the reason the batch has none.
+enum MetricQueryBatch {
+    Values(Vec<ReportMetricValues>),
+    NotReady(NotReadyReason),
 }
 
 async fn execute_metric_queries<R: ReportQueryRunner>(
@@ -138,7 +172,7 @@ async fn execute_metric_queries<R: ReportQueryRunner>(
     context: ReportExecutionContext,
     subject: ReportQuerySubject,
     runner: &R,
-) -> Result<Vec<ReportMetricValues>, ReportExecutionError> {
+) -> Result<MetricQueryBatch, ReportExecutionError> {
     let from = periods
         .first()
         .ok_or(ReportExecutionError::PlanMismatch)?
@@ -168,7 +202,13 @@ async fn execute_metric_queries<R: ReportQueryRunner>(
         .map(|_| None)
         .collect::<Vec<Option<ReportMetricValues>>>();
     while let Some(result) = results.next().await {
-        let values = result.map_err(ReportExecutionError::Query)?;
+        let values = match result.map_err(ReportExecutionError::Query)? {
+            ReportMetricRead::Values(values) => values,
+            // One metric reading a relation nothing has built makes the whole
+            // report not-ready: a table with that column silently blank would
+            // read as "measured, and empty".
+            ReportMetricRead::NotReady(reason) => return Ok(MetricQueryBatch::NotReady(reason)),
+        };
         let Some(slot) = ordered.get_mut(values.metric_index) else {
             return Err(ReportExecutionError::PlanMismatch);
         };
@@ -181,5 +221,6 @@ async fn execute_metric_queries<R: ReportQueryRunner>(
     ordered
         .into_iter()
         .collect::<Option<Vec<_>>>()
+        .map(MetricQueryBatch::Values)
         .ok_or(ReportExecutionError::PlanMismatch)
 }

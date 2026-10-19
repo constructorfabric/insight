@@ -27,6 +27,12 @@ describe("chart-format", () => {
     expect(groupedNumber(null, "%")).toBe("—");
   });
 
+  it("writes a sum that rounds to nothing as zero, not minus zero", () => {
+    expect(groupedNumber(-2.1e-16)).toBe("0");
+    expect(groupedNumber(-0.004)).toBe("0");
+    expect(groupedNumber(-1.5)).toBe("-1.5");
+  });
+
   it("takes the unit from the metric, which is the only thing that knows", () => {
     expect(unitFor(["pass_rate"], "pass_rate")).toBe("%");
     expect(unitFor(["pass_rate"], "runs")).toBe("");

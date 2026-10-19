@@ -16,12 +16,27 @@ describe("savingRefusal", () => {
             reason: "INVALID",
           },
           { field: "range", description: "too wide", reason: "INVALID" },
+          {
+            field: "condition.where.all[1].op",
+            description: "`contains` does not apply to a number column",
+            reason: "INVALID",
+          },
+          {
+            field: "expected_revision",
+            description: "stale",
+            reason: "INVALID",
+          },
         ],
       },
     });
 
     expect(savingRefusal(error)).toEqual({
-      fields: { interval_secs: "too short", range: "too wide" },
+      fields: {
+        interval_secs: "too short",
+        range: "too wide",
+        "condition.where.all[1].op":
+          "`contains` does not apply to a number column",
+      },
     });
   });
 

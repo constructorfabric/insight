@@ -44,23 +44,26 @@ WITH fixtures AS (
             ('datetime unparsed',  'datetime',     '"not a timestamp"',              ['not a timestamp'],         ['not a timestamp']),
             ('datetime null',      'datetime',     'null',                     CAST([] AS Array(String)), CAST([] AS Array(String))),
 
-            -- link_array: the changelog names the LINKED ISSUE by key, so the key
-            -- is the identifier here too — the link's own id appears nowhere in
-            -- the changelog and is discarded
-            ('link outward',      'link_array',   '[{"id":"157916","outwardIssue":{"key":"PROJ-2"},"type":{"name":"Duplicate"}}]',
-                                                                              ['PROJ-2'],            ['PROJ-2']),
-            ('link inward',       'link_array',   '[{"id":"158190","inwardIssue":{"key":"PROJ-3"},"type":{"name":"Blocks"}}]',
-                                                                              ['PROJ-3'],            ['PROJ-3']),
-            -- a subtask element IS the referenced issue: the key is at the top
-            -- level, and there is no link object around it
+            -- link_array: the LINKED ISSUE's immutable id identifies the
+            -- element and its key is the display; the link's own top-level id
+            -- appears nowhere in the changelog and is discarded
+            ('link outward',      'link_array',   '[{"id":"157916","outwardIssue":{"id":"20002","key":"PROJ-2"},"type":{"name":"Duplicate"}}]',
+                                                                              ['20002'],             ['PROJ-2']),
+            ('link inward',       'link_array',   '[{"id":"158190","inwardIssue":{"id":"20003","key":"PROJ-3"},"type":{"name":"Blocks"}}]',
+                                                                              ['20003'],             ['PROJ-3']),
+            -- a linked issue with no id stays identified by its key
+            ('link without id',   'link_array',   '[{"id":"158191","inwardIssue":{"key":"PROJ-6"},"type":{"name":"Blocks"}}]',
+                                                                              ['PROJ-6'],            ['PROJ-6']),
+            -- a subtask element IS the referenced issue: its id and key are at
+            -- the top level, and there is no link object around it
             ('subtask element',   'link_array',   '[{"id":"1364577","key":"PROJ-4","fields":{"summary":"child"}}]',
-                                                                              ['PROJ-4'],            ['PROJ-4']),
+                                                                              ['1364577'],           ['PROJ-4']),
             -- two link types to the SAME issue are two link objects and one
             -- element: the changelog names only the linked issue, so a repeat
             -- has no history that could reproduce it
             ('link repeated key', 'link_array',
-             '[{"id":"1","outwardIssue":{"key":"PROJ-5"},"type":{"name":"Blocks"}},{"id":"2","inwardIssue":{"key":"PROJ-5"},"type":{"name":"Relates"}}]',
-                                                                              ['PROJ-5'],            ['PROJ-5']),
+             '[{"id":"1","outwardIssue":{"id":"20005","key":"PROJ-5"},"type":{"name":"Blocks"}},{"id":"2","inwardIssue":{"id":"20005","key":"PROJ-5"},"type":{"name":"Relates"}}]',
+                                                                              ['20005'],             ['PROJ-5']),
             ('link empty',        'link_array',   '[]',                       CAST([] AS Array(String)), CAST([] AS Array(String))),
 
             -- single objects

@@ -1,7 +1,8 @@
 # Technical Design — Links Between Work Items
 
-Collecting the links GitHub records between issues, and between an issue and a
-pull request, so that the links in force over any interval can be read back.
+Collecting the links GitHub and Jira record between issues, and between an
+issue and a pull request, so that the links in force over any interval can be
+read back.
 
 <!-- toc -->
 
@@ -11,7 +12,8 @@ pull request, so that the links in force over any interval can be read back.
 - [4. Reading it](#4-reading-it)
 - [5. Edges that are bounds rather than facts](#5-edges-that-are-bounds-rather-than-facts)
 - [6. Both directions are stored](#6-both-directions-are-stored)
-- [7. Deferred](#7-deferred)
+- [7. Jira](#7-jira)
+- [8. Deferred](#8-deferred)
 
 <!-- tocstop -->
 
@@ -113,7 +115,49 @@ Deduplicating to a canonical direction would make the parent's history depend
 on whether the child was collected, and the two ends can live in different
 repositories — one of which the token may not be able to read at all.
 
-## 7. Deferred
+## 7. Jira
+
+`jira__task_links` folds the changelog. A link added or removed is one
+`issuelinks` item naming the linked issue by the key it had then, with a
+sentence ("This issue blocks PROJ-2", or "This work item blocks PROJ-2" in
+newer entries) that is the only place its type survives;
+a parent change is one `parent` item naming the old and the new parent by id
+and key. Every interval is therefore `evidence = event`.
+
+- **An occurrence is a link of one type to an issue.** "blocks PROJ-2" and
+  "relates to PROJ-2" open and close on their own. The occurrence is keyed by
+  the link type's immutable id and this side's direction, never by its phrase:
+  an administrator can reword a type, and the changelog keeps the phrase of the
+  day it was written.
+- **Phrase to type.** The sentence's subject is dropped and its tail, the
+  phrase, is resolved in order: to the link held between the same two issues
+  that states that phrase; to the one held link no phrase states, when it is the
+  only phrase there still added; to a type the phrase has been seen to mean
+  that is already known between the two issues; to the type it means most
+  often. A phrase that resolves to none keeps the occurrence apart by itself.
+- **Mapping.** The Blocks type is `blocking` outward and `blocked_by` inward,
+  and Duplicate outward is `duplicate_of`, by the current name of the resolved
+  type, then by Jira's default wording for a phrase resolved to no type. Every
+  other type — Relates, Cloners, a custom type — is `connected`, and so is
+  Duplicate inward: the vocabulary has no inverse of `duplicate_of`.
+- **Held before collection.** A link whose first event removed it, or that the
+  snapshot holds and no event reaches, opens at the issue's creation with
+  `valid_from_known = 0` — the earliest it can have existed.
+- **Both directions.** Jira logs a link on both issues, so each side is read
+  from its own changelog. It logs a parent change on the child alone, so the
+  parent's `sub_issue` row is mirrored from it.
+- **Immutable target ids.** The changelog's key resolves to the linked issue's
+  id through `jira__issue_key_ids`: the issues' own rows, the `Key` items of
+  moved issues, the links snapshots hold, and parent changes. A key that
+  resolves to nothing — a project the connector cannot read, an issue deleted
+  before it was read — leaves `target_id` NULL and keeps `target_readable`; the
+  key still keeps the occurrence apart.
+
+A link that disappears with no event — the linked issue deleted — stays open,
+because the changelog is the only evidence an interval reads. The producer is
+rebuilt whole, so `class_task_links` reconciles Jira's rows against it.
+
+## 8. Deferred
 
 - **Cross-references.** `CrossReferencedEvent` is a mention, not a link: it has
   no removal counterpart, so it is a point in time and not an interval. It
@@ -121,9 +165,6 @@ repositories — one of which the token may not be able to read at all.
 - **The pull-request side of a connection.** `closingIssuesReferences` states
   the same link from the other end; collecting it would duplicate what the
   issue side already carries.
-- **Jira.** The link sets are already in bronze inside the raw `fields` blob,
-  and the changelog carries their history — but items whose `fieldId` is empty
-  are dropped before staging, which is where link changes are likely to land.
-  Confirming that, and mapping Jira's link vocabulary onto the one above, is
-  its own change.
+- **Jira's Epic Link.** Instances that predate the `parent` field record an
+  epic's children in an app field; only `parent` changes are read.
 - **A consumer.** Nothing in gold reads this yet.

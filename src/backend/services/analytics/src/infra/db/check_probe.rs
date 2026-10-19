@@ -36,7 +36,7 @@ struct ConstraintRow {
     constraint_name: String,
 }
 
-/// Verify that every CHECK constraint required by the metric-catalog schema is
+/// Verify that every CHECK constraint required by the metric-definition schema is
 /// present in the connected database.
 ///
 /// # Errors

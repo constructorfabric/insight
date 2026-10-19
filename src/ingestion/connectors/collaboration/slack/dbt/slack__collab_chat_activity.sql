@@ -58,7 +58,7 @@ SELECT
     now() AS collected_at,
     'insight_slack' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version
-FROM {{ source('bronze_slack', 'users_details') }} AS u
+FROM {{ source('bronze_slack', 'users_details') }} AS u FINAL
 WHERE u.user_id IS NOT NULL
   AND u.user_id != ''
   AND parseDateTimeBestEffortOrNull(u.date) IS NOT NULL

@@ -1,3 +1,6 @@
+import type { MetricFormat } from "@/api/metric-results-client";
+import { roundMetricValue } from "@/lib/format";
+
 /**
  * Display labels for percentage shares of a whole (largest-remainder /
  * Hamilton rounding), summing to exactly 100 so a "parts of a whole" legend
@@ -32,6 +35,25 @@ export function percentShareLabels(values: number[]): string[] {
   return tenths.map((share) =>
     share % 10 === 0 ? String(share / 10) : (share / 10).toFixed(1),
   );
+}
+
+/**
+ * Parts rounded to the display step of `fmt` so they add up to the rounded
+ * total shown beside them (largest remainder), when the parts do sum to that
+ * total. Parts of a non-additive metric keep their own rounding.
+ */
+export function displayedParts(
+  parts: number[],
+  total: number,
+  fmt: MetricFormat,
+): number[] {
+  const partsSum = parts.reduce((sum, value) => sum + value, 0);
+  const additive = Math.abs(partsSum - total) <= 1e-6 * Math.max(1, Math.abs(total));
+  if (!additive || !(partsSum > 0)) return parts;
+
+  const scale = fmt === "decimal" ? 10 : 1;
+  const units = Math.round(roundMetricValue(total, fmt) * scale);
+  return largestRemainder(parts, partsSum, units).map((value) => value / scale);
 }
 
 /** Largest-remainder apportionment of `units` across `values`. */

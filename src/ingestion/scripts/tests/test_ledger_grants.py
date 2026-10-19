@@ -23,43 +23,35 @@ from pathlib import Path
 
 BOOTSTRAP = Path(__file__).resolve().parents[1] / "bootstrap-db"
 ROLE_SQL = BOOTSTRAP / "presentation-role.sql"
+
+#: Every role file whose grants can reach the ledger, including by wildcard.
+#: `insight_v3_ro` lives apart from the query-path role because it is gated on
+#: the assistant being deployed (#3558), and a wildcard is no less a wildcard
+#: for being in another file.
+ROLE_SQL_FILES = (ROLE_SQL, BOOTSTRAP / "v3-role.sql")
+
 LEDGER_DB = "ingestion_history"
 READER_ROLE = "presentation_ro"
 
 #: Anything that could change a recorded fact. The ledger is append-only and the
 #: read surface is a reader; either half failing makes the page a liar.
-WRITE_PRIVILEGES = (
-    "INSERT",
-    "ALTER",
-    "DROP",
-    "TRUNCATE",
-    "DELETE",
-    "UPDATE",
-    "CREATE",
-    "ALL",
-)
+WRITE_PRIVILEGES = ("INSERT", "ALTER", "DROP", "TRUNCATE", "DELETE", "UPDATE", "CREATE", "ALL")
 
 #: Objects a grant can name that reach the ledger. Upper-cased, because the
 #: statements are: a case mismatch here would make every check below match
 #: nothing and pass without asserting anything.
-LEDGER_OBJECTS = (
-    f"{LEDGER_DB.upper()}.*",
-    f"{LEDGER_DB.upper()}.SYNC_EVENTS",
-    "*.*",
-)
+LEDGER_OBJECTS = (f"{LEDGER_DB.upper()}.*", f"{LEDGER_DB.upper()}.SYNC_EVENTS", "*.*")
 
 
-def statements() -> list[str]:
+def statements(role_sql: Path = ROLE_SQL) -> list[str]:
     """The file as statements: comments dropped, whitespace collapsed, upper-cased."""
-    lines = [
-        line for line in ROLE_SQL.read_text().splitlines() if not line.strip().startswith("--")
-    ]
+    lines = [line for line in role_sql.read_text().splitlines() if not line.strip().startswith("--")]
     body = " ".join(lines)
     return [" ".join(part.split()).upper() for part in body.split(";") if part.strip()]
 
 
-def grants() -> list[str]:
-    return [stmt for stmt in statements() if stmt.startswith("GRANT ")]
+def grants(role_sql: Path = ROLE_SQL) -> list[str]:
+    return [stmt for stmt in statements(role_sql) if stmt.startswith("GRANT ")]
 
 
 def _privileges_and_object(grant: str) -> tuple[str, str] | None:
@@ -94,9 +86,7 @@ def test_nothing_that_writes_the_ledger_is_granted_to_the_reader() -> None:
         if obj not in LEDGER_OBJECTS or READER_ROLE.upper() not in grant:
             continue
         for write in WRITE_PRIVILEGES:
-            assert write not in privileges, (
-                f"the query path must not be able to change what it reports on: {grant}"
-            )
+            assert write not in privileges, f"the query path must not be able to change what it reports on: {grant}"
 
 
 def test_the_reader_carries_no_other_role() -> None:
@@ -105,9 +95,7 @@ def test_the_reader_carries_no_other_role() -> None:
     for grant in grants():
         if _privileges_and_object(grant) is not None:
             continue
-        assert READER_ROLE.upper() not in grant, (
-            f"the reader must hold only its own grants: {grant}"
-        )
+        assert READER_ROLE.upper() not in grant, f"the reader must hold only its own grants: {grant}"
 
 
 def test_nothing_revokes_the_reader_s_own_access() -> None:
@@ -126,9 +114,7 @@ def test_the_reader_reaches_the_ledger_in_exactly_one_statement() -> None:
     reaching = [
         grant
         for grant in grants()
-        if (parsed := _privileges_and_object(grant))
-        and parsed[1] in LEDGER_OBJECTS
-        and READER_ROLE.upper() in grant
+        if (parsed := _privileges_and_object(grant)) and parsed[1] in LEDGER_OBJECTS and READER_ROLE.upper() in grant
     ]
     assert len(reaching) == 1, reaching
 
@@ -138,14 +124,18 @@ def test_no_role_at_all_is_granted_a_write_that_reaches_the_ledger() -> None:
 
     `insight_v3_ro` holds SELECT on `*.*` so the assistant can query a bronze
     database a stand gains with a connector — legitimate, and caught here the
-    moment it becomes anything more than a read.
+    moment it becomes anything more than a read. It is provisioned only where
+    the assistant is deployed, which bounds who carries the wildcard, not what
+    the wildcard reaches: an installation that does deploy it still gets this
+    role over the ledger.
     """
-    for grant in grants():
-        parsed = _privileges_and_object(grant)
-        if parsed is None or parsed[1] not in LEDGER_OBJECTS:
-            continue
-        privileges, _ = parsed
-        for write in WRITE_PRIVILEGES:
-            assert write not in privileges, (
-                f"nothing may change what the ingestion page reports on: {grant}"
-            )
+    for role_sql in ROLE_SQL_FILES:
+        for grant in grants(role_sql):
+            parsed = _privileges_and_object(grant)
+            if parsed is None or parsed[1] not in LEDGER_OBJECTS:
+                continue
+            privileges, _ = parsed
+            for write in WRITE_PRIVILEGES:
+                assert write not in privileges, (
+                    f"nothing may change what the ingestion page reports on: {role_sql.name}: {grant}"
+                )

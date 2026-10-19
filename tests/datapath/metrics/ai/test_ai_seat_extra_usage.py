@@ -11,7 +11,7 @@ repeated sync of the same snapshot changes nothing.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import approx, one
+from insight_datapath.metric_expect import MetricResponse, approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -21,6 +21,12 @@ SPEC = "ai_seat_extra_usage"
 ERIN = "erin@example.com"
 FRANK = "frank@example.com"
 GRACE = "grace@example.com"
+IVAN = "ivan@example.com"
+JUDY = "judy@example.com"
+KIM = "kim@example.com"
+
+UTILISATION = "ai.extra_usage_utilisation"
+MONEY = "ai.extra_usage_cost"
 
 
 def test_ai_seat_extra_usage(spec: SpecRun) -> None:
@@ -130,6 +136,59 @@ def test_ai_seat_stopped_at_its_ceiling(spec: SpecRun) -> None:
     assert r.status == 200
     r.row("ai.extra_usage_cost", "period", entity_id=GRACE).equals(value=10.0)
     r.row("ai.extra_usage_utilisation", "period", entity_id=GRACE).equals(value=100.0)
+
+
+def test_utilisation_reads_proximity_to_the_ceiling_uncapped(spec: SpecRun) -> None:
+    """#2479 scenario 2: 25 < 95 < 100 < 104 — a seat past its ceiling is not capped at 100."""
+    people = [ERIN, IVAN, GRACE, JUDY]
+    r = spec.call(
+        {
+            "url": "/v1/metric-results",
+            "method": "POST",
+            "body": {
+                "entity": {"type": "person", "ids": people},
+                "period": {"from": "2026-11-01", "to": "2026-12-12"},
+                "metrics": [{"metric_key": UTILISATION, "views": [{"view": "period"}]}],
+            },
+        }
+    )
+    assert r.status == 200
+    r.row(UTILISATION, "period", entity_id=ERIN).equals(value=25.0)
+    r.row(UTILISATION, "period", entity_id=IVAN).equals(value=95.0)
+    r.row(UTILISATION, "period", entity_id=GRACE).equals(value=100.0)
+    r.row(UTILISATION, "period", entity_id=JUDY).equals(value=104.0)
+
+
+def _kim(spec: SpecRun, key: str) -> MetricResponse:
+    return spec.call(
+        {
+            "url": "/v1/metric-results",
+            "method": "POST",
+            "body": {
+                "entity": {"type": "person", "ids": [KIM]},
+                "period": {"from": "2026-11-01", "to": "2026-12-12"},
+                "metrics": [{"metric_key": key, "views": [{"view": "period"}]}],
+            },
+        }
+    )
+
+
+def test_two_seats_of_one_person_bill_both(spec: SpecRun) -> None:
+    """#2479 scenario 12: the money reads both seats, the one without a ceiling included."""
+    r = _kim(spec, MONEY)
+    assert r.status == 200
+    r.row(MONEY, "period", entity_id=KIM).equals(value=7.0)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="a seat with no ceiling adds its spend to the person's ratio: serves 70.0, not 40.0",
+)
+def test_a_seat_with_no_ceiling_stays_out_of_the_persons_ratio(spec: SpecRun) -> None:
+    """#2479 scenario 12: the ratio reads the ceiling-bearing seat alone."""
+    r = _kim(spec, UTILISATION)
+    assert r.status == 200
+    r.row(UTILISATION, "period", entity_id=KIM).equals(value=40.0)
 
 
 def test_ai_seat_extra_usage_empty_window(spec: SpecRun) -> None:

@@ -1,0 +1,25 @@
+spec_version: 1
+description: >
+  Metric: collab.files_shared — shares inside and outside the organization add up,
+  across OneDrive and SharePoint, and the scope breakdown keeps them apart.
+  How it's computed (bronze → silver → gold):
+    • bronze: the daily OneDrive and SharePoint activity reports per mailbox, with
+      files shared internally and files shared externally.
+    • silver: one row per product, person and day with both counts.
+    • gold:   files_shared = internal + external summed over both products, with a
+      scope dimension; files_shared_internal and files_shared_external are its parts.
+
+  Cast (Engineering): alice shares on OneDrive Dec 10 (3 internal, 1 external) and on
+  SharePoint Dec 11 (2 internal, 6 external) → internal 5, external 7, total 12.
+  Cases: total is the sum of both scopes and both products · the scope breakdown
+  splits it · the part metrics agree with the breakdown.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+
+  bronze_m365.onedrive_activity:
+    - { $ref: ../templates/m365_onedrive.yaml#/templates/alice_onedrive, reportRefreshDate: "2026-12-10", lastActivityDate: "2026-12-10", unique_key: scope-od-alice-20261210, sharedInternallyFileCount: 3, sharedExternallyFileCount: 1 }
+
+  bronze_m365.sharepoint_activity:
+    - { $ref: ../templates/m365_sharepoint.yaml#/templates/alice_sharepoint, reportRefreshDate: "2026-12-11", lastActivityDate: "2026-12-11", unique_key: scope-sp-alice-20261211, sharedInternallyFileCount: 2, sharedExternallyFileCount: 6 }

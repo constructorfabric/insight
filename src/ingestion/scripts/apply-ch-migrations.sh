@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Apply the ClickHouse gold-view migrations against an EXTERNAL ClickHouse.
+# Apply the ClickHouse schema migrations against an EXTERNAL ClickHouse.
 #
 # This is the in-cluster, network-mode counterpart to the ClickHouse half
 # of scripts/init.sh. init.sh `kubectl exec`s into a bundled CH StatefulSet
@@ -9,14 +9,20 @@
 # by the clickhouse-migrate Helm Hook Job (post-install,post-upgrade).
 #
 # Steps (same order and contract as init.sh):
-#   1. Create the core databases (staging, silver, app db).
+#   1. Run create-databases.sh — every database this release owns, plus the
+#      role/user provisioning that reads them. It is the only creation site:
+#      the migrations below, the dbt hooks and the connectors-ddl snapshot all
+#      assume their database already stands.
 #   2. Run create-warehouse-placeholders.sh — minimum-viable identity/
-#      staging/silver/insight stubs so gold-view CREATE VIEW type-checks on a
+#      staging/silver/insight stubs so a gold CREATE VIEW type-checks on a
 #      fresh cluster (CH validates referenced tables at parse time). Bronze is
 #      not among them: the Airbyte destination is its only creator.
 #   3. Apply migrations/*.sql in lexicographic order.
-#   4. Build the dbt gold models (tag:gold) so dbt-owned views exist at
-#      deploy time instead of after the first connector sync.
+#
+# No dbt: a connector sync rebuilds its own models, gold included, because
+# every descriptor's selector ends in `+` (#3561). A deploy therefore leaves
+# gold exactly as the last sync built it, and a relation no sync has built yet
+# is answered as not-ready rather than as a failure.
 #
 # Bookkeeping: none — every migration is re-run on every invocation and
 # MUST stay idempotent/re-runnable (CREATE OR REPLACE / IF NOT EXISTS).
@@ -32,24 +38,17 @@
 #   CLICKHOUSE_CLUSTER_NAME  the cluster the ON CLUSTER clause names
 # Both default to a standalone single node.
 #
-# Options:
-#   --full-refresh   rebuild the selected dbt models from source instead of
-#                    appending to them. The deploy Hook never passes it; the
-#                    seed's silver step does, because a seed REPLACES the org
-#                    and the incremental identity feeders would otherwise
-#                    carry the previous roster forward (see below).
+# Options: none beyond --help. Building models is build-gold.sh's job.
 set -euo pipefail
 
-FULL_REFRESH=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --full-refresh) FULL_REFRESH=1; shift ;;
     -h|--help)
       awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}"
       exit 0 ;;
     *)
       echo "apply-ch-migrations.sh: unknown argument: $1" >&2
-      echo "usage: apply-ch-migrations.sh [--full-refresh]" >&2
+      echo "usage: apply-ch-migrations.sh" >&2
       exit 2 ;;
   esac
 done
@@ -58,47 +57,82 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 : "${CLICKHOUSE_URL:?CLICKHOUSE_URL must be set (e.g. http://ch-host:8123)}"
 : "${CLICKHOUSE_DATABASE:?CLICKHOUSE_DATABASE must be set (the Insight app database)}"
-# Read by the dbt profile below and, through the environment, by the cluster
-# vars in dbt_project.yml. Exported so both see the same values.
+# Exported so create-databases.sh, which this script runs as a child, reads the
+# same topology this one was given.
 export CLICKHOUSE_CLUSTER_MODE="${CLICKHOUSE_CLUSTER_MODE:-false}"
 export CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}"
 
-source "$SCRIPT_DIR/lib/ch-exec.sh"
+source "$SCRIPT_DIR/lib/ch-topology.sh"
+source "$SCRIPT_DIR/lib/retired-relations.sh"
 
-echo "=== Creating core databases (staging, silver, ${CLICKHOUSE_DATABASE}, presentation) ==="
-# `presentation` (#1964): writable namespace for new gold / results / scratch.
-run_ch <<SQL
-CREATE DATABASE IF NOT EXISTS staging;
-CREATE DATABASE IF NOT EXISTS silver;
-CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_DATABASE};
-CREATE DATABASE IF NOT EXISTS presentation;
+bash "$SCRIPT_DIR/create-databases.sh"
+
+# The cohort and coverage relations are dbt VIEWs (identity resolves at query
+# time). A cluster that predates that holds them as MergeTree TABLEs, and dbt's
+# view materialization replaces via CREATE OR REPLACE VIEW, which is not
+# guaranteed to replace a table. It runs BEFORE the snapshot below, whose own
+# CREATE OR REPLACE VIEW would otherwise meet that table and abort the deploy;
+# the snapshot then stands the view up in the same run, and the next sync
+# rebuilds its body from the model.
+#
+# SAFETY: renamed, never dropped. The backup outlives this deploy — an operator
+# can rename it back — and a later deploy drops it once the live relation is a
+# View again.
+heal_gold_view_relation() {
+  local db="$1" table="$2" backup="${2}__pre_view_backup"
+  local engine
+  engine="$(
+    printf "SELECT engine FROM system.tables WHERE database='%s' AND name='%s'" "$db" "$table" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+
+  if [[ "$engine" == "View" ]]; then
+    ch_table_exists "$db" "$backup" || return 0
+    echo "  ${db}.${backup} (superseded by the view, dropping)"
+    run_ch <<SQL
+DROP TABLE IF EXISTS ${db}.${backup};
 SQL
+    return 0
+  fi
 
-echo "=== Provisioning presentation access (role + grant-less user) (#1963/#1964) ==="
-bash "$SCRIPT_DIR/bootstrap-db/provision-presentation-access.sh"
+  # Absent: nothing has built it yet. A backup that exists stays until a view
+  # supersedes it.
+  [[ -n "$engine" ]] || return 0
 
-echo "=== Provisioning insight-v3-core query access (grant-less reader) ==="
-bash "$SCRIPT_DIR/bootstrap-db/provision-v3-access.sh"
+  echo "  ${db}.${table} (${engine}, renamed to ${backup}; the snapshot stands the view up)"
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${db}.${backup};
+RENAME TABLE ${db}.${table} TO ${db}.${backup};
+SQL
+}
 
-if [[ "${MCP_ENABLED:-false}" == "true" || "${SQL_API_ENABLED:-false}" == "true" ]]; then
-  echo "=== Provisioning MCP SQL explorer access ==="
-  bash "$SCRIPT_DIR/bootstrap-db/provision-mcp-access.sh"
-else
-  echo "=== MCP SQL explorer disabled; skipping access provisioning ==="
-fi
-
-echo "=== Provisioning grafana access (SELECT-only role + grant-less user) (#2888) ==="
-bash "$SCRIPT_DIR/bootstrap-db/provision-grafana-access.sh"
+echo "=== Healing gold identity relations still held as tables ==="
+heal_gold_view_relation insight metric_entity_cohorts_current
+heal_gold_view_relation insight identity_resolution_coverage
 
 echo "=== Creating warehouse placeholders (ADR-0007) ==="
 bash "$SCRIPT_DIR/create-warehouse-placeholders.sh"
 
 echo "=== Applying ClickHouse migrations ==="
+# A migration that creates a relation spells its engine family behind the
+# `/*@@REPLICATED@@*/` marker, which ch_render_topology expands for the
+# declared topology: the plain family stands on every replica holding whatever
+# rows reached the node that answered.
 shopt -s nullglob
 for migration in "$SCRIPT_DIR/migrations"/*.sql; do
   echo "  $(basename "$migration")"
-  run_ch < "$migration"
+  ch_render_topology < "$migration" | run_ch
 done
+
+echo "=== Dropping retired databases and relations ==="
+drop_retired_database_if_empty person
+for database in bronze_claude_admin bronze_figma bronze_github_copilot bronze_openai bronze_salesforce bronze_workday; do
+  drop_retired_database_if_empty "${database}"
+done
+drop_retired_table_if_empty insight raw_data
+drop_retired_table_if_empty identity aliases
+drop_orphaned_inner_tables insight
 
 echo "=== Healing GitHub Projects V2 bronze keys ==="
 # Both relations were briefly keyed with the collection day inside `unique_key`.
@@ -187,10 +221,10 @@ echo "=== Healing Jira bronze issue identity ==="
 #    `id_readable`, the key at fetch time. The id is recovered from the two
 #    issue streams, read WITHOUT FINAL and before the rebuild below: a moved
 #    issue holds one bronze row per key it ever had, and those old-key rows
-#    are the only thing that maps a pre-move key to its id. A mutation cannot
-#    join a subquery, so the pairs go through a Join-engine table and joinGet,
-#    keyed by (tenant_id, source_id, id_readable) because one bronze holds
-#    every connector instance. Worklogs prefer Jira's own `issueId`.
+#    are the only thing that maps a pre-move key to its id. The pairs are
+#    joined in a SELECT and the table is rebuilt from the result, keyed by
+#    (tenant_id, source_id, id_readable) because one bronze holds every
+#    connector instance. Worklogs prefer Jira's own `issueId`.
 #
 # 2. jira_issue / jira_issue_keys were keyed by the issue KEY before descriptor
 #    6.0.0, so a moved issue exists once per key and ReplacingMergeTree can
@@ -199,10 +233,118 @@ echo "=== Healing Jira bronze issue identity ==="
 #    INVARIANT: nothing may write to the table between the copy and the
 #    EXCHANGE; only the Argo pipeline writes bronze, so a deploy carrying this
 #    heal must not overlap a Jira sync.
-_jira_issue_id_lookup='staging._jira_issue_id_by_key'
+#
+# Neither is a mutation. (2) rewrites the sort key, which a mutation may not
+# touch at all; (1) reads a second relation, and where the warehouse replicates
+# ClickHouse admits only the row's own columns in an `ALTER … UPDATE`, rejecting
+# joinGet, dictGet and every subquery there as non-deterministic. Both are
+# SELECTs instead, and a SELECT is written into a new table — one swap, below.
+# Distinct keys, not rows: the physical row count of a ReplacingMergeTree is
+# not a quantity to hold a copy against — a background merge collapsing a
+# superseded row between two counts would fail a sound rebuild. `count() FINAL`
+# would say the same thing but only where the table is replacing; a bronze
+# table that is not answers it with ILLEGAL_FINAL.
+_jira_key_count() {
+  ch_scalar "SELECT uniqExact(unique_key) FROM bronze_jira.$1"
+}
 
-# Counts only the rows the lookup can actually fill: a key no issue stream ever
-# delivered stays NULL forever, and counting it would re-run the mutation on
+# The original is under the `__rebuild` name after an EXCHANGE; put it back and
+# leave the rejected copy there for inspection (the next run drops it first).
+_jira_swap_back() {
+  run_ch <<SQL
+EXCHANGE TABLES bronze_jira.$1 AND bronze_jira.$1__rebuild;
+SQL
+}
+
+# Rebuild one bronze_jira table from `select_sql` and swap the result in.
+#
+# `expected` is the exact number of keys the copy must hold. Empty means the
+# rebuild keeps every row: the copy is then held between the table's key count
+# before it started and its count once it finished, so a key lost and a key
+# invented are both rejected while a row a sync committed meanwhile is not.
+# `carry_replace` is the projection those committed rows are carried over
+# under; they are copied whole rather than re-selected, so the rebuild's own
+# filter can drop none of them.
+#
+# INVARIANT: no statement that can lose rows runs before the rows it depends
+# on are verified. The copy is counted against the table before the swap; the
+# swapped-in table is counted again before the old one is dropped; any miss
+# leaves the original table live and stops the deploy. `run_ch` stops at the
+# first failed statement, so a failed copy never reaches the EXCHANGE either
+# way.
+_jira_swap_in_rebuilt() {
+  local table="$1" expected="$2" select_sql="$3" carry_replace="${4:-}"
+  local copy="bronze_jira.${table}__rebuild" before after copied live fault copy_start_ms
+
+  before="$(_jira_key_count "${table}")"
+  copy_start_ms="$(ch_scalar "SELECT toUnixTimestamp64Milli(now64(3))")"
+
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${copy};
+CREATE TABLE ${copy} AS bronze_jira.${table};
+INSERT INTO ${copy}
+${select_sql};
+SQL
+
+  copied="$(_jira_key_count "${table}__rebuild")"
+  fault=""
+  if [[ -n "${expected}" ]]; then
+    [[ "${copied}" -eq "${expected}" ]] || fault="expected ${expected}"
+  else
+    after="$(_jira_key_count "${table}")"
+    expected="${before}"
+    [[ "${copied}" -ge "${before}" && "${copied}" -le "${after}" ]] || fault="expected between ${before} and ${after}"
+  fi
+  if [[ -n "${fault}" ]]; then
+    echo "  bronze_jira.${table}: copy holds ${copied} key(s), ${fault} — leaving the table as it is" >&2
+    run_ch <<SQL
+DROP TABLE IF EXISTS ${copy};
+SQL
+    return 1
+  fi
+
+  run_ch <<SQL
+EXCHANGE TABLES bronze_jira.${table} AND ${copy};
+SQL
+  # From here on the rebuilt table is live and the original sits under the
+  # `__rebuild` name. Every step until the DROP is checked explicitly, and any
+  # failure swaps the original back: under `set -e` a bare failing statement
+  # would end the script with the unverified table still live.
+  #
+  # The hour of slack covers an extraction stamp older than the write. Only the
+  # rows the rebuild did not already take are carried: a row it copied WITH its
+  # fill coming back without one would land on the same key with the same
+  # version, and the pair would settle on whichever of the two a merge kept.
+  if ! run_ch <<SQL
+INSERT INTO bronze_jira.${table}
+SELECT * ${carry_replace}
+FROM ${copy}
+WHERE _airbyte_extracted_at >= fromUnixTimestamp64Milli(${copy_start_ms}) - INTERVAL 1 HOUR
+  AND _airbyte_raw_id NOT IN (
+    SELECT _airbyte_raw_id
+    FROM bronze_jira.${table}
+    WHERE _airbyte_extracted_at >= fromUnixTimestamp64Milli(${copy_start_ms}) - INTERVAL 1 HOUR
+);
+SQL
+  then
+    echo "  bronze_jira.${table}: carrying the late rows over failed — swapping the original back" >&2
+    _jira_swap_back "${table}"
+    return 1
+  fi
+
+  if ! live="$(_jira_key_count "${table}")" || [[ "${live}" -lt "${expected}" ]]; then
+    echo "  bronze_jira.${table}: rebuilt table holds ${live:-?} key(s), expected at least ${expected} — swapping the original back" >&2
+    _jira_swap_back "${table}"
+    return 1
+  fi
+
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${copy};
+SQL
+}
+
+# Counts only the rows the pairs can actually fill: a key no issue stream ever
+# delivered stays NULL forever, and counting it would re-run the rebuild on
 # every deploy. Worklogs carry Jira's own issueId and count whenever it is set.
 _jira_rows_needing_issue_id() {
   local table="$1" own="0"
@@ -222,71 +364,62 @@ _jira_rows_needing_issue_id() {
     "${table}" "${own}")"
 }
 
-_jira_rows_keyed_by_issue_key() {
-  local table="$1"
-  ch_scalar "SELECT count() FROM bronze_jira.${table} WHERE coalesce(unique_key, '') != concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(jira_id, ''))"
+# One row per (tenant, source, key): a key reused across issues resolves to one
+# of its ids, and the aggregate is where that choice is made rather than
+# whichever row the join below met first.
+_jira_issue_id_pairs() {
+  cat <<SQL
+    SELECT tenant_id, source_id, id_readable, any(jira_id) AS jira_id
+    FROM
+    (
+        SELECT assumeNotNull(tenant_id) AS tenant_id, assumeNotNull(source_id) AS source_id,
+               assumeNotNull(id_readable) AS id_readable, assumeNotNull(jira_id) AS jira_id
+        FROM bronze_jira.jira_issue
+        WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL
+        UNION ALL
+        SELECT assumeNotNull(tenant_id) AS tenant_id, assumeNotNull(source_id) AS source_id,
+               assumeNotNull(id_readable) AS id_readable, assumeNotNull(jira_id) AS jira_id
+        FROM bronze_jira.jira_issue_keys
+        WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL
+    )
+    GROUP BY tenant_id, source_id, id_readable
+SQL
+}
+
+# A worklog names its issue itself (Jira's `issueId`) and needs no key; the
+# other two, and a worklog without one, resolve through the pairs and so need
+# the full (tenant, source, key) identity. A row that already carries an id
+# keeps it, which is what makes the rebuild re-runnable, and `ANY` takes at
+# most one match, so the rebuild is row for row whatever the pairs hold.
+_jira_substream_issue_id_select() {
+  local table="$1" own="s.jira_id"
+  [[ "${table}" == "jira_worklogs" ]] && own="COALESCE(s.jira_id, s.issueId)"
+  cat <<SQL
+SELECT s.* REPLACE (COALESCE(${own}, nullIf(pairs.jira_id, '')) AS jira_id)
+FROM bronze_jira.${table} AS s
+LEFT ANY JOIN
+(
+$(_jira_issue_id_pairs)
+) AS pairs
+ON (assumeNotNull(s.tenant_id), assumeNotNull(s.source_id), assumeNotNull(s.id_readable))
+ = (pairs.tenant_id, pairs.source_id, pairs.id_readable)
+SQL
 }
 
 heal_jira_substream_issue_id() {
-  local pending=() table n
+  local table n
   for table in jira_issue_history jira_comments jira_worklogs; do
     ch_table_exists bronze_jira "${table}" || continue
     n="$(_jira_rows_needing_issue_id "${table}")"
     [[ "${n}" -gt 0 ]] || continue
     echo "  bronze_jira.${table}: ${n} row(s) without jira_id — filling from the issue streams"
-    pending+=("${table}")
+    _jira_swap_in_rebuilt "${table}" "" "$(_jira_substream_issue_id_select "${table}")"
   done
-  [[ "${#pending[@]}" -gt 0 ]] || return 0
+}
 
-  run_ch <<SQL
-DROP TABLE IF EXISTS ${_jira_issue_id_lookup};
-CREATE TABLE ${_jira_issue_id_lookup}
-(
-    tenant_id String,
-    source_id String,
-    id_readable String,
-    jira_id String
-)
-ENGINE = Join(ANY, LEFT, tenant_id, source_id, id_readable);
-INSERT INTO ${_jira_issue_id_lookup}
-SELECT tenant_id, source_id, id_readable, jira_id
-FROM
-(
-    SELECT assumeNotNull(tenant_id) AS tenant_id, assumeNotNull(source_id) AS source_id,
-           assumeNotNull(id_readable) AS id_readable, assumeNotNull(jira_id) AS jira_id
-    FROM bronze_jira.jira_issue
-    WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL
-    UNION ALL
-    SELECT assumeNotNull(tenant_id) AS tenant_id, assumeNotNull(source_id) AS source_id,
-           assumeNotNull(id_readable) AS id_readable, assumeNotNull(jira_id) AS jira_id
-    FROM bronze_jira.jira_issue_keys
-    WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL
-)
-GROUP BY tenant_id, source_id, id_readable, jira_id;
-SQL
-
-  local lookup="nullIf(joinGet('${_jira_issue_id_lookup}', 'jira_id', assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)), '')"
-  # A worklog names its issue itself (Jira's `issueId`) and needs no key; the
-  # other two, and a worklog without one, resolve through the lookup and so
-  # need the full (tenant, source, key) identity.
-  for table in "${pending[@]}"; do
-    local value="${lookup}" own="0"
-    if [[ "${table}" == "jira_worklogs" ]]; then
-      value="COALESCE(issueId, ${lookup})"
-      own="issueId IS NOT NULL"
-    fi
-    run_ch <<SQL
-ALTER TABLE bronze_jira.${table}
-    UPDATE jira_id = ${value}
-    WHERE jira_id IS NULL
-      AND (${own} OR (id_readable IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL))
-    SETTINGS mutations_sync = 1;
-SQL
-  done
-
-  run_ch <<SQL
-DROP TABLE IF EXISTS ${_jira_issue_id_lookup};
-SQL
+_jira_rows_keyed_by_issue_key() {
+  local table="$1"
+  ch_scalar "SELECT count() FROM bronze_jira.${table} WHERE coalesce(unique_key, '') != concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(jira_id, ''))"
 }
 
 _jira_rows_without_identity() {
@@ -297,18 +430,33 @@ _jira_issue_count() {
   ch_scalar "SELECT uniqExact(tenant_id, source_id, jira_id) FROM bronze_jira.$1"
 }
 
-_jira_row_count() {
-  ch_scalar "SELECT count() FROM bronze_jira.$1"
+# The key every row of a rekeyed issue table carries: the immutable issue id,
+# not the key the row was fetched under. The rebuild and the late rows it
+# carries over read it from here so they cannot key the same table differently.
+_jira_issue_rekey_replace() {
+  printf "REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)"
 }
 
-# INVARIANT: no statement that can lose rows runs before the rows it depends
-# on are verified. The copy is counted against the number of issues before
-# the swap; the swapped-in table is counted again before the old one is
-# dropped; any miss leaves the original table live and stops the deploy.
-# `run_ch` stops at the first failed statement, so a failed copy never reaches
-# the EXCHANGE either way.
+# MEMORY: the winner per issue is chosen in an aggregation that carries only
+# the raw id, and the rows are then copied by that id list. `ORDER BY … LIMIT
+# 1 BY` would sort the whole table, JSON payload included, and on a real-size
+# jira_issue that sort alone exceeds a server's memory budget — inside a Helm
+# hook, which fails the upgrade. Same two-pass shape as the snapshot model.
+_jira_issue_rekey_select() {
+  local table="$1"
+  cat <<SQL
+SELECT * $(_jira_issue_rekey_replace)
+FROM bronze_jira.${table}
+WHERE _airbyte_raw_id IN (
+    SELECT argMax(_airbyte_raw_id, _airbyte_extracted_at)
+    FROM bronze_jira.${table}
+    GROUP BY tenant_id, source_id, jira_id
+)
+SQL
+}
+
 heal_jira_issue_key() {
-  local table="$1" n orphans expected copied live copy_start_ms
+  local table="$1" n orphans expected
   ch_table_exists bronze_jira "${table}" || return 0
   n="$(_jira_rows_keyed_by_issue_key "${table}")"
   [[ "${n}" -gt 0 ]] || return 0
@@ -324,74 +472,8 @@ heal_jira_issue_key() {
 
   expected="$(_jira_issue_count "${table}")"
   echo "  bronze_jira.${table}: ${n} row(s) keyed by the issue key — rebuilding on the issue id (${expected} issues)"
-  # MEMORY: the winner per issue is chosen in an aggregation that carries only
-  # the raw id, and the rows are then copied by that id list. `ORDER BY … LIMIT
-  # 1 BY` would sort the whole table, JSON payload included, and on a real-size
-  # jira_issue that sort alone exceeds a server's memory budget — inside a Helm
-  # hook, which fails the upgrade. Same two-pass shape as the snapshot model.
-  copy_start_ms="$(ch_scalar "SELECT toUnixTimestamp64Milli(now64(3))")"
-  run_ch <<SQL
-DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
-CREATE TABLE bronze_jira.${table}__rekey AS bronze_jira.${table};
-INSERT INTO bronze_jira.${table}__rekey
-SELECT * REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)
-FROM bronze_jira.${table}
-WHERE _airbyte_raw_id IN (
-    SELECT argMax(_airbyte_raw_id, _airbyte_extracted_at)
-    FROM bronze_jira.${table}
-    GROUP BY tenant_id, source_id, jira_id
-);
-SQL
-
-  copied="$(_jira_row_count "${table}__rekey")"
-  if [[ "${copied}" -ne "${expected}" ]]; then
-    echo "  bronze_jira.${table}: copy holds ${copied} row(s), expected ${expected} — leaving the table as it is" >&2
-    run_ch <<SQL
-DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
-SQL
-    return 1
-  fi
-
-  run_ch <<SQL
-EXCHANGE TABLES bronze_jira.${table} AND bronze_jira.${table}__rekey;
-SQL
-  # From here on the rebuilt table is live and the original sits under the
-  # `__rekey` name. Every step until the DROP is checked explicitly, and any
-  # failure swaps the original back: under `set -e` a bare failing statement
-  # would end the script with the unverified table still live.
-  #
-  # Rows a sync committed into the original while the copy ran are carried
-  # over; the hour of slack covers an extraction stamp older than the write,
-  # and a row copied twice collapses on its key.
-  if ! run_ch <<SQL
-INSERT INTO bronze_jira.${table}
-SELECT * REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)
-FROM bronze_jira.${table}__rekey
-WHERE _airbyte_extracted_at >= fromUnixTimestamp64Milli(${copy_start_ms}) - INTERVAL 1 HOUR;
-SQL
-  then
-    echo "  bronze_jira.${table}: carrying the late rows over failed — swapping the original back" >&2
-    _jira_swap_back "${table}"
-    return 1
-  fi
-
-  if ! live="$(_jira_row_count "${table}")" || [[ "${live}" -lt "${expected}" ]]; then
-    echo "  bronze_jira.${table}: rebuilt table holds ${live:-?} row(s), expected at least ${expected} — swapping the original back" >&2
-    _jira_swap_back "${table}"
-    return 1
-  fi
-
-  run_ch <<SQL
-DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
-SQL
-}
-
-# The original is under the `__rekey` name after an EXCHANGE; put it back and
-# leave the rejected copy there for inspection (the next run drops it first).
-_jira_swap_back() {
-  run_ch <<SQL
-EXCHANGE TABLES bronze_jira.$1 AND bronze_jira.$1__rekey;
-SQL
+  _jira_swap_in_rebuilt "${table}" "${expected}" "$(_jira_issue_rekey_select "${table}")" \
+    "$(_jira_issue_rekey_replace)"
 }
 
 # Plain calls on purpose: `f || exit 1` would switch `set -e` OFF inside the
@@ -466,6 +548,12 @@ ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS tested_by Stri
 ALTER TABLE staging.allure__test_results MODIFY COLUMN tested_by String AFTER assignee;
 ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS launch_env String DEFAULT '{}' AFTER message;
 ALTER TABLE staging.allure__test_results MODIFY COLUMN launch_env String DEFAULT '{}' AFTER message;
+ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS test_result_url String AFTER launch_env;
+ALTER TABLE staging.allure__test_results MODIFY COLUMN test_result_url String AFTER launch_env;
+ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS launch_url String AFTER test_result_url;
+ALTER TABLE staging.allure__test_results MODIFY COLUMN launch_url String AFTER test_result_url;
+ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS test_case_url String AFTER launch_url;
+ALTER TABLE staging.allure__test_results MODIFY COLUMN test_case_url String AFTER launch_url;
 SQL
 }
 
@@ -480,8 +568,8 @@ SQL
 # follow: `author_display`, `delta_value_id`, `delta_value_display` and then
 # `title` left it, and the four discriminators became LowCardinality(String).
 # The silver side is in migrations/*.sql; the arms change here because a
-# staging table exists only after dbt has built it, and dbt runs after the
-# migrations.
+# staging table exists only after dbt has built it, and dbt runs on the next
+# sync, after these migrations.
 #
 # They cannot be skipped. All three models are `incremental`, so their tables
 # survive a run carrying whatever columns they were created with, and
@@ -629,10 +717,10 @@ echo "=== Healing git file-change object id columns ==="
 # here because these tables exist only after a connector has run.
 #
 # bronze_github.file_changes is healed for a different reason: the GitHub
-# staging model READS the two columns, and the destination only widens the table
-# on the connector's next sync — which lands after this deploy's dbt run,
-# leaving the staging model (and every git model downstream of it) failing on an
-# unknown identifier until then.
+# staging model READS the two columns, and nothing but the destination widens
+# that table — so a deploy that lands between an upgrade and the first sync
+# would otherwise leave the staging model (and every git model downstream of it)
+# failing on an unknown identifier.
 #
 # Existing rows heal to NULL and carry an oid from the first sync that
 # re-collects them. Idempotent.
@@ -755,9 +843,13 @@ echo "=== Backfilling git pull-request reported close time from the sources ==="
 # So the reported close is recomputed from bronze under the new contract:
 # `merged_at` when the source states one, else `closed_at`. `unique_key` reaches
 # bronze unchanged through both projections, which is what makes the lookup a
-# key equality rather than a guess. A mutation cannot join a subquery, so the
-# pairs go through a Join-engine table and joinGet, the same way the jira issue
-# identity heal above does.
+# key equality rather than a guess. The lookup is a subquery joined in a SELECT
+# and the answer is written back as a new row: where the warehouse replicates,
+# a mutation may read nothing but the row it rewrites — ClickHouse rejects
+# joinGet, dictGet and every subquery inside an `ALTER … UPDATE` as
+# non-deterministic — while these relations are keyed and versioned, so a row
+# carrying a later `_version` IS the correction. That is how dbt writes them
+# too, and every read of them already takes the newest row per key.
 #
 # Three relations feed it. `bronze_gitlab.merge_requests` is the pre-#3250
 # stream: it is absent from the DDL snapshot and from any fresh cluster, and
@@ -774,27 +866,15 @@ echo "=== Backfilling git pull-request reported close time from the sources ==="
 # Bitbucket is excluded throughout: its `closed_on` may be RECOVERED, and
 # promoting a recovered time to a reported one is the error this column exists
 # to prevent.
-_git_pr_reported_close_lookup='staging._git_pr_reported_close_by_key'
 
-# The relations that carry the column, as "<db> <table> <extra predicate>". The
+# The relations that carry the column, as "<db>|<table>|<eligible rows>". The
 # class holds all three connectors in one table, so it alone needs the filter
 # that keeps Bitbucket out; the staging projections are per connector already.
 _GIT_PR_REPORTED_CLOSE_TARGETS=(
-  "silver|class_git_pull_requests| AND data_source IN ('insight_github', 'insight_gitlab')"
-  "staging|github__pull_requests|"
-  "staging|gitlab__pull_requests|"
+  "silver|class_git_pull_requests|data_source IN ('insight_github', 'insight_gitlab')"
+  "staging|github__pull_requests|1"
+  "staging|gitlab__pull_requests|1"
 )
-
-# Rows this backfill would actually CHANGE. `fillable` is the same expression
-# the UPDATE below uses, so a converged warehouse counts zero and issues no
-# mutation at all — the rows that stay NULL for ever (a merge bronze cannot
-# answer for, a request still open) must not re-trigger it on every deploy.
-_git_pr_rows_needing_reported_close() {
-  local db="$1" table="$2" predicate="$3" fillable="$4"
-  printf "SELECT count() FROM %s.%s WHERE closed_on_reported IS NULL AND unique_key IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL AND (%s)%s" \
-    "${db}" "${table}" "${fillable}" "${predicate}" |
-    _ch_http_query | tr -d '[:space:]'
-}
 
 # One branch of the lookup's UNION: the reported close as the source states it.
 #
@@ -816,8 +896,36 @@ _git_pr_reported_close_branch() {
 SQL
 }
 
+# The rows this backfill would CHANGE: the current row per key, still without a
+# reported close, that a source or the state itself can answer for. A converged
+# warehouse counts zero and writes nothing — the rows that stay NULL for ever
+# (a merge bronze cannot answer for, a request still open) must not re-trigger
+# it on every deploy. The count and the INSERT read this one expression, so the
+# rows written and the rows counted cannot drift apart.
+_git_pr_rows_needing_reported_close() {
+  local db="$1" table="$2" eligible="$3" lookup="$4"
+  cat <<SQL
+FROM
+(
+    SELECT *
+    FROM ${db}.${table}
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY unique_key ORDER BY _version DESC) = 1
+) AS t
+LEFT JOIN
+(
+${lookup}
+) AS src
+ON (assumeNotNull(t.tenant_id), assumeNotNull(t.source_id), assumeNotNull(t.unique_key))
+ = (src.tenant_id, src.source_id, src.unique_key)
+WHERE t.closed_on_reported IS NULL
+  AND t.unique_key IS NOT NULL AND t.tenant_id IS NOT NULL AND t.source_id IS NOT NULL
+  AND (${eligible})
+  AND (coalesce(src.reported_close, '') != '' OR (t.state = 'CLOSED' AND t.closed_on IS NOT NULL))
+SQL
+}
+
 backfill_git_pr_reported_close() {
-  local sources=() source relation rank branches spec db table predicate n candidates=0
+  local sources=() source relation rank branches lookup spec db table eligible rows n candidates=0
   # "<relation> <stream_rank>": the current streams outrank the legacy one.
   for source in "bronze_github.pull_requests 1" "bronze_gitlab.pull_requests 1" \
                 "bronze_gitlab.merge_requests 0"; do
@@ -833,60 +941,43 @@ backfill_git_pr_reported_close() {
     branches+="$(_git_pr_reported_close_branch "${relation}" "${rank}")"$'\n'
   done
 
-  run_ch <<SQL
-DROP TABLE IF EXISTS ${_git_pr_reported_close_lookup};
-CREATE TABLE ${_git_pr_reported_close_lookup}
-(
-    tenant_id String,
-    source_id String,
-    unique_key String,
-    reported_close String
-)
-ENGINE = Join(ANY, LEFT, tenant_id, source_id, unique_key);
-INSERT INTO ${_git_pr_reported_close_lookup}
--- The GROUP BY leaves exactly one row per key, so Join(ANY) never chooses and
--- the insert order is not a contract. The ordering tuple is total: the current
--- stream outranks the legacy one, a later extraction outranks an earlier one,
--- and the value itself breaks a remaining tie — so the answer is a function of
--- the data alone, not of which part a merge happened to leave behind.
-SELECT tenant_id, source_id, unique_key,
-       argMax(reported_close, (stream_rank, extracted_at, reported_close)) AS reported_close
-FROM
-(
+  # One row per key, so the join below cannot duplicate a pull request. The
+  # ordering tuple is total: the current stream outranks the legacy one, a
+  # later extraction outranks an earlier one, and the value itself breaks a
+  # remaining tie — so the answer is a function of the data alone, not of
+  # which part a merge happened to leave behind.
+  lookup="$(cat <<SQL
+    SELECT tenant_id, source_id, unique_key,
+           argMax(reported_close, (stream_rank, extracted_at, reported_close)) AS reported_close
+    FROM
+    (
 ${branches})
-GROUP BY tenant_id, source_id, unique_key;
+    GROUP BY tenant_id, source_id, unique_key
 SQL
-
-  local lookup="joinGet('${_git_pr_reported_close_lookup}', 'reported_close', assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(unique_key))"
-  # The one expression that decides whether a row can be answered at all; the
-  # count and the UPDATE share it so they cannot drift apart.
-  local fillable="${lookup} != '' OR (state = 'CLOSED' AND closed_on IS NOT NULL)"
+)"
 
   for spec in "${_GIT_PR_REPORTED_CLOSE_TARGETS[@]}"; do
-    IFS='|' read -r db table predicate <<<"${spec}"
+    IFS='|' read -r db table eligible <<<"${spec}"
     ch_table_is_real "${db}" "${table}" || continue
-    n="$(_git_pr_rows_needing_reported_close "${db}" "${table}" "${predicate}" "${fillable}")"
-    [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]] || continue
+    rows="$(_git_pr_rows_needing_reported_close "${db}" "${table}" "${eligible}" "${lookup}")"
+    n="$(ch_scalar "SELECT count() ${rows}")"
+    [[ "${n}" -gt 0 ]] || continue
     candidates=$((candidates + n))
     echo "  ${db}.${table}: ${n} row(s)"
+    # `_version` is the write clock these relations dedup on, so stamping it
+    # now is what makes the rewritten row the one every reader sees.
     run_ch <<SQL
-ALTER TABLE ${db}.${table}
-    UPDATE closed_on_reported = if(
-        ${lookup} != '',
-        parseDateTimeBestEffortOrNull(${lookup}),
-        if(state = 'CLOSED', closed_on, CAST(NULL AS Nullable(DateTime)))
-    )
-    WHERE closed_on_reported IS NULL
-      AND unique_key IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL
-      AND (${fillable})${predicate}
-    SETTINGS mutations_sync = 1;
+INSERT INTO ${db}.${table}
+SELECT t.* REPLACE (
+    if(coalesce(src.reported_close, '') != '',
+       parseDateTimeBestEffortOrNull(src.reported_close),
+       t.closed_on) AS closed_on_reported,
+    toUnixTimestamp64Milli(now64(3)) AS _version
+)
+${rows};
 SQL
   done
   [[ "${candidates}" -gt 0 ]] || echo "  every row a source can answer for already carries its reported close"
-
-  run_ch <<SQL
-DROP TABLE IF EXISTS ${_git_pr_reported_close_lookup};
-SQL
 }
 
 backfill_git_pr_reported_close
@@ -990,93 +1081,5 @@ done
 for _task_link_table in github__task_links youtrack__task_links; do
   heal_task_link_ids "${_task_link_table}"
 done
-
-# The cohort and coverage relations are dbt VIEWs (identity resolves at query
-# time). A cluster that predates that holds them as MergeTree TABLEs, and dbt's
-# view materialization replaces via CREATE OR REPLACE VIEW, which is not
-# guaranteed to replace a table.
-#
-# SAFETY: renamed, never dropped, and only when the gold build that recreates
-# them is about to run. A failed build aborts the script (set -e) with the data
-# still in `<table>__pre_view_backup`, which an operator can rename back; the
-# backup is dropped only after the build succeeds.
-GOLD_VIEW_QUARANTINE=()
-
-quarantine_gold_table_for_view() {
-  local db="$1" table="$2"
-  local engine
-  engine="$(
-    printf "SELECT engine FROM system.tables WHERE database='%s' AND name='%s'" "$db" "$table" |
-      _ch_http_query |
-      tr -d '[:space:]'
-  )"
-  [[ -n "$engine" && "$engine" != "View" ]] || return 0
-  echo "  ${db}.${table} (${engine}, renamed to ${table}__pre_view_backup)"
-  run_ch <<SQL
-DROP TABLE IF EXISTS ${db}.${table}__pre_view_backup;
-RENAME TABLE ${db}.${table} TO ${db}.${table}__pre_view_backup;
-SQL
-  GOLD_VIEW_QUARANTINE+=("${db}.${table}__pre_view_backup")
-}
-
-drop_gold_view_quarantine() {
-  local relation
-  for relation in "${GOLD_VIEW_QUARANTINE[@]:-}"; do
-    [[ -n "$relation" ]] || continue
-    echo "  ${relation}"
-    run_ch <<SQL
-DROP TABLE IF EXISTS ${relation};
-SQL
-  done
-}
-
-# SKIP_DBT_GOLD=1 (set by bootstrap-db snapshot generation) skips this step:
-# generation already built every tag:gold model with the pinned dbt venv
-# (run-dbt.sh) BEFORE the migrations ran, and re-running here would need a `dbt`
-# on PATH — which outside the prod toolbox (local dev, the connectors-ddl CI
-# workflow) is absent or the wrong build (dbt-fusion 2.0). Real deploys leave it
-# unset and rely on this step to materialise gold at deploy time.
-if [[ "${SKIP_DBT_GOLD:-}" == "1" ]]; then
-  echo "=== Skipping gold dbt build (SKIP_DBT_GOLD=1; gold pre-built by generation) ==="
-else
-# DBT_GOLD_SELECT widens the selection (space-separated dbt selectors);
-# the seed's silver step adds +identity_inputs, deploys leave it unset.
-read -r -a _dbt_select <<<"${DBT_GOLD_SELECT:-tag:gold}"
-# SAFETY: appended after the override so no caller can narrow the selector and
-# leave the map views at the snapshot's point-in-time bodies.
-_dbt_select+=("tag:identity:map")
-echo "=== Quarantining gold identity relations still held as tables ==="
-quarantine_gold_table_for_view insight metric_entity_cohorts_current
-quarantine_gold_table_for_view insight identity_resolution_coverage
-
-# INVARIANT: never export DBT_FULL_REFRESH — reconcile-connectors owns that
-# name, and env reaches every child.
-_dbt_flags=()
-if [[ "$FULL_REFRESH" == "1" ]]; then
-  _dbt_flags+=(--full-refresh)
-fi
-echo "=== Building gold models (dbt run --select ${_dbt_select[*]} ${_dbt_flags[*]:-}) ==="
-# Gold views are dbt-owned but must exist at DEPLOY time, not first-sync
-# time: the analytics service marks metric definitions schema-error while
-# an observation view is missing, which blanks those metrics for every
-# frontend request until the first connector sync builds the view (hours
-# on a scheduled instance). The placeholders created above guarantee every
-# relation the views reference exists, so this run type-checks on a fresh
-# cluster — the same guarantee the scoped per-connector dbt runs rely on
-# for sideways refs. Idempotent: views are create-or-replace and
-# table-materialized gold models rebuild via atomic swap. Table builds
-# are bounded by the models' own query_settings (memory, threads, disk
-# spill), so this step degrades to a slower build rather than failing
-# the deploy on data volume.
-DBT_PROFILES_DIR="$(mktemp -d)"
-export DBT_PROFILES_DIR
-python3 "$SCRIPT_DIR/dbt_profiles.py" --target migrate --correlated-subqueries \
-  --profiles-dir "$DBT_PROFILES_DIR"
-(cd "$SCRIPT_DIR/../dbt" && dbt run --profiles-dir "$DBT_PROFILES_DIR" --log-format json --select "${_dbt_select[@]}" ${_dbt_flags[@]+"${_dbt_flags[@]}"})
-
-echo "=== Dropping quarantined pre-view tables (gold build succeeded) ==="
-drop_gold_view_quarantine
-rm -rf "$DBT_PROFILES_DIR"
-fi
 
 echo "=== ClickHouse migrations complete ==="

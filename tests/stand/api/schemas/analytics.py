@@ -511,6 +511,10 @@ class View6(StrEnum):
     error = 'error'
 
 
+class View7(StrEnum):
+    not_ready = 'not_ready'
+
+
 class Type3(StrEnum):
     person = 'person'
 
@@ -590,14 +594,13 @@ class MetricSchemaErrorCode(StrEnum):
 
 
 class MetricViewErrorCode(StrEnum):
-    SOURCE_RELATION_MISSING = 'SOURCE_RELATION_MISSING'
     RESOURCE_EXHAUSTED = 'RESOURCE_EXHAUSTED'
     QUERY_TIMEOUT = 'QUERY_TIMEOUT'
     RESULT_PARSE_FAILED = 'RESULT_PARSE_FAILED'
     QUERY_FAILED = 'QUERY_FAILED'
 
 
-class View7(StrEnum):
+class View8(StrEnum):
     period = 'period'
 
 
@@ -605,10 +608,10 @@ class MetricViewRequest1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    view: View7
+    view: View8
 
 
-class View8(StrEnum):
+class View9(StrEnum):
     peer = 'peer'
 
 
@@ -617,10 +620,10 @@ class MetricViewRequest2(BaseModel):
         extra='forbid',
     )
     cohort_key: str | None = None
-    view: View8
+    view: View9
 
 
-class View9(StrEnum):
+class View10(StrEnum):
     timeseries = 'timeseries'
 
 
@@ -631,10 +634,10 @@ class MetricViewRequest3(BaseModel):
     bucket: Bucket | None = None
     dimensions: list[str] | None = None
     group_limit: MetricGroupLimitRequest | None = None
-    view: View9
+    view: View10
 
 
-class View10(StrEnum):
+class View11(StrEnum):
     breakdown = 'breakdown'
 
 
@@ -643,10 +646,10 @@ class MetricViewRequest4(BaseModel):
         extra='forbid',
     )
     dimensions: list[str]
-    view: View10
+    view: View11
 
 
-class View11(StrEnum):
+class View12(StrEnum):
     rollup = 'rollup'
 
 
@@ -656,10 +659,10 @@ class MetricViewRequest5(BaseModel):
     )
     dimensions: list[str]
     group_limit: MetricGroupLimitRequest | None = None
-    view: View11
+    view: View12
 
 
-class View12(StrEnum):
+class View13(StrEnum):
     histogram = 'histogram'
 
 
@@ -668,11 +671,27 @@ class MetricViewRequest6(BaseModel):
         extra='forbid',
     )
     dimensions: list[str] | None = None
-    view: View12
+    view: View13
 
 
 class MetricViewRequest(RootModel[MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6]):
     root: MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6
+
+
+class NotReadyReason(StrEnum):
+    """
+    The marker an empty answer carries when its emptiness is not a reading.
+
+    A relation the warehouse has not built yet is neither a failure nor a zero:
+    no connector has synced, or the build has not reached it. A reader that
+    sees this renders "no data yet"; one that renders `0` reports a measurement
+    nobody took.
+
+    INVARIANT: only absence sets it. A relation that exists and disagrees with
+    the deployed code (`UNKNOWN_IDENTIFIER`) still fails — that is the defect
+    the schema channel exists to catch, and an empty answer would hide it.
+    """
+    SOURCE_RELATION_MISSING = 'SOURCE_RELATION_MISSING'
 
 
 class PeerValueDto(BaseModel):
@@ -832,6 +851,7 @@ class RunResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    not_ready: NotReadyReason | None = None
     rows: list[Any]
 
 
@@ -1320,6 +1340,23 @@ class MetricResultViewDto7(BaseModel):
     view: View6
 
 
+class MetricResultViewDto8(BaseModel):
+    """
+    The data this view reads has not been built yet. It carries no values
+    at all, which is what separates it from a view whose every reading is
+    `0`: nothing failed, and nothing was measured either.
+
+    INVARIANT: a variant rather than a flag on the value-carrying shapes —
+    "not ready" and "here are the values" cannot both be true, so a reader
+    cannot render a zero it was never told.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    reason: NotReadyReason
+    view: View7
+
+
 class MetricResultsRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1368,6 +1405,7 @@ class ReportPreviewResponse(BaseModel):
         extra='forbid',
     )
     columns: list[ReportColumnMetadata]
+    not_ready: NotReadyReason | None = None
     rows: list[ReportRow]
     total_rows: int = Field(..., ge=0)
 
@@ -1565,8 +1603,8 @@ class MetricResultViewDto2(BaseModel):
     view: View1
 
 
-class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7]):
-    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7
+class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7 | MetricResultViewDto8]):
+    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7 | MetricResultViewDto8
 
 
 class MetricDrilldownResponse(BaseModel):
@@ -1575,6 +1613,7 @@ class MetricDrilldownResponse(BaseModel):
     )
     columns: list[MetricDrilldownColumn]
     next_cursor: str | None = None
+    not_ready: NotReadyReason | None = None
     rows: list[MetricDrilldownRow]
     selection: MetricDrilldownSelection
 

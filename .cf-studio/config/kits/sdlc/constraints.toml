@@ -711,15 +711,6 @@ numbered = true
 pattern = "Acceptance Criteria"
 description = "Acceptance criteria for the feature."
 
-[[artifacts.FEATURE.headings]]
-id = "feature-testing"
-level = 2
-required = false
-multiple = false
-numbered = true
-pattern = "Testing"
-description = "Test scenarios mapped to executable tests, each carrying one quality vector and one suite tag."
-
 # ── FEATURE ID kinds ───────────────────────────────────────────
 
 [artifacts.FEATURE.identifiers.algo]

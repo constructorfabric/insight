@@ -5,11 +5,7 @@
 --
 -- Strategy: Enterprise is the canonical source for Claude Code activity
 -- (lines_added, sessions, tool_accepted/rejected) for orgs on the Enterprise
--- subscription. Claude Admin's claude_admin_code_usage is no longer tagged
--- for silver:class_ai_dev_usage — Enterprise covers the same activity at
--- the user-day grain plus additional dimensions (chat, cowork, office) that
--- Admin doesn't expose. Admin remains tagged for silver:class_ai_api_usage
--- (token-level metrics that Enterprise doesn't publish).
+-- subscription, at the user-day grain.
 --
 -- Fundamental gap: Enterprise reports `code_lines_added` (AI-accepted lines)
 -- but does not expose `total_lines_added` (every keystroke including manual

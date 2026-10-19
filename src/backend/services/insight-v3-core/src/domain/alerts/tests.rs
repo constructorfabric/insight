@@ -2,10 +2,13 @@ use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use super::rule::{Condition, Operator, RuleSpec};
-use super::scalar::classify;
+use chrono::{DateTime, Utc};
+
+use super::condition::{Condition, ConditionError, Problem, Witness, evaluate};
+use super::rule::RuleSpec;
 use super::*;
-use crate::domain::query::metric_query::RunResult;
+use crate::domain::metric_run::Columns;
+use crate::domain::query::metric_query::{ColumnKind, RunResult};
 
 fn result(columns: &[&str], rows: &[&[serde_json::Value]]) -> RunResult {
     RunResult {
@@ -17,10 +20,44 @@ fn result(columns: &[&str], rows: &[&[serde_json::Value]]) -> RunResult {
     }
 }
 
+fn columns() -> Vec<(String, ColumnKind)> {
+    vec![("total".to_owned(), ColumnKind::Number)]
+}
+
+/// What the metric answers, as a rule is checked against it.
+fn metric_columns() -> Columns {
+    Columns {
+        kinds: columns(),
+        groups: Vec::new(),
+        imposed_limit: None,
+    }
+}
+
+fn one_total(op: &str, threshold: &serde_json::Value) -> Condition {
+    let written =
+        json!({ "rows": "one", "where": { "column": "total", "op": op, "value": threshold } });
+
+    Condition::parse(&written, &columns()).unwrap_or_else(|error| panic!("{written}: {error}"))
+}
+
 fn above(threshold: &serde_json::Value) -> Condition {
-    Condition {
-        operator: Operator::Gt,
-        threshold: Number::parse(threshold).unwrap_or_else(|| panic!("{threshold} is a number")),
+    one_total(">", threshold)
+}
+
+fn now() -> DateTime<Utc> {
+    DateTime::UNIX_EPOCH
+}
+
+/// A valid one-row check of `total`, and the value it read.
+fn seen(breached: bool, value: serde_json::Value) -> Outcome {
+    Outcome::Valid {
+        breached,
+        witness: Witness {
+            matched: u64::from(breached),
+            answered: 1,
+            columns: vec!["total".to_owned()],
+            rows: vec![vec![value]],
+        },
     }
 }
 
@@ -30,18 +67,12 @@ fn exactly_one_row_and_the_named_column_make_a_valid_check() {
         (
             "one row above",
             result(&["total"], &[&[json!(12)]]),
-            Outcome::Valid {
-                value: Number::Int(12),
-                breached: true,
-            },
+            seen(true, json!(12)),
         ),
         (
             "one row at the threshold is not above it",
             result(&["total"], &[&[json!(10)]]),
-            Outcome::Valid {
-                value: Number::Int(10),
-                breached: false,
-            },
+            seen(false, json!(10)),
         ),
         (
             "no rows",
@@ -71,16 +102,13 @@ fn exactly_one_row_and_the_named_column_make_a_valid_check() {
         (
             "float above an integer threshold",
             result(&["total"], &[&[json!(10.5)]]),
-            Outcome::Valid {
-                value: Number::Float(10.5),
-                breached: true,
-            },
+            seen(true, json!(10.5)),
         ),
     ];
 
     for (case, rows, expected) in cases {
         assert_eq!(
-            classify(&rows, "total", &above(&json!(10))),
+            evaluate(&rows, &above(&json!(10)), &[], &[], None, now()),
             expected,
             "should classify: {case}"
         );
@@ -92,24 +120,18 @@ fn an_integer_too_wide_for_a_float_is_not_compared_with_one() {
     let wide = result(&["total"], &[&[json!(9_007_199_254_740_993_u64)]]);
 
     assert_eq!(
-        classify(&wide, "total", &above(&json!(1.5))),
+        evaluate(&wide, &above(&json!(1.5)), &[], &[], None, now()),
         Outcome::Unknown(UnknownReason::Incomparable)
     );
     assert_eq!(
-        classify(&wide, "total", &above(&json!(1))),
-        Outcome::Valid {
-            value: Number::Int(9_007_199_254_740_993),
-            breached: true,
-        }
+        evaluate(&wide, &above(&json!(1)), &[], &[], None, now()),
+        seen(true, json!("9007199254740993"))
     );
 
     let at_the_bound = result(&["total"], &[&[json!(9_007_199_254_740_992_u64)]]);
     assert_eq!(
-        classify(&at_the_bound, "total", &above(&json!(1.5))),
-        Outcome::Valid {
-            value: Number::Int(9_007_199_254_740_992),
-            breached: true,
-        },
+        evaluate(&at_the_bound, &above(&json!(1.5)), &[], &[], None, now()),
+        seen(true, json!("9007199254740992")),
         "2^53 itself converts exactly"
     );
 }
@@ -206,43 +228,37 @@ fn a_written_number_is_a_json_number_or_an_integer_in_digits_and_nothing_else() 
 }
 
 #[test]
-fn every_operator_reads_as_written() {
+fn every_number_comparison_reads_as_written() {
     let cases = [
-        (Operator::Gt, 11, true),
-        (Operator::Gt, 10, false),
-        (Operator::Ge, 10, true),
-        (Operator::Ge, 9, false),
-        (Operator::Lt, 9, true),
-        (Operator::Lt, 10, false),
-        (Operator::Le, 10, true),
-        (Operator::Le, 11, false),
+        (">", 11, true),
+        (">", 10, false),
+        (">=", 10, true),
+        (">=", 9, false),
+        ("<", 9, true),
+        ("<", 10, false),
+        ("<=", 10, true),
+        ("<=", 11, false),
+        ("==", 10, true),
+        ("==", 11, false),
+        ("!=", 11, true),
+        ("!=", 10, false),
     ];
 
-    for (operator, value, expected) in cases {
-        let condition = Condition {
-            operator,
-            threshold: Number::Int(10),
-        };
+    for (op, value, expected) in cases {
+        let rows = result(&["total"], &[&[json!(value)]]);
 
         assert_eq!(
-            condition.holds(Number::Int(value)),
-            Some(expected),
-            "should decide: {value} {}",
-            operator.as_str()
+            evaluate(&rows, &one_total(op, &json!(10)), &[], &[], None, now()),
+            seen(expected, json!(value)),
+            "should decide: {value} {op} 10"
         );
     }
 }
 
 #[test]
 fn a_notification_is_owed_on_the_first_breach_and_again_only_after_a_valid_clear() {
-    let breach = Outcome::Valid {
-        value: Number::Int(1),
-        breached: true,
-    };
-    let clear = Outcome::Valid {
-        value: Number::Int(0),
-        breached: false,
-    };
+    let breach = seen(true, json!(1));
+    let clear = seen(false, json!(0));
     let unknown = Outcome::Unknown(UnknownReason::NoRows);
 
     let cases = [
@@ -286,10 +302,7 @@ fn a_notification_is_owed_on_the_first_breach_and_again_only_after_a_valid_clear
 #[test]
 fn an_unknown_check_leaves_the_last_valid_finding_as_it_was() {
     let unknown = Outcome::Unknown(UnknownReason::Timeout);
-    let clear = Outcome::Valid {
-        value: Number::Int(0),
-        breached: false,
-    };
+    let clear = seen(false, json!(0));
 
     assert_eq!(last_valid_breached(Some(true), &unknown), Some(true));
     assert_eq!(last_valid_breached(None, &unknown), None);
@@ -298,10 +311,7 @@ fn an_unknown_check_leaves_the_last_valid_finding_as_it_was() {
 
 #[test]
 fn a_breach_that_never_clears_is_notified_once_across_many_checks() {
-    let breach = Outcome::Valid {
-        value: Number::Int(5),
-        breached: true,
-    };
+    let breach = seen(true, json!(5));
     let mut previous = None;
     let mut notified = 0;
 
@@ -323,9 +333,7 @@ fn draft(edit: impl FnOnce(&mut serde_json::Value)) -> RuleDraft {
     let mut body = json!({
         "name": "Too many open PRs",
         "metric": "prs-open",
-        "column": "total",
-        "operator": ">",
-        "threshold": 10,
+        "condition": { "rows": "one", "where": { "column": "total", "op": ">", "value": 10 } },
         "interval_secs": 300,
         "destination": "ops"
     });
@@ -354,14 +362,20 @@ fn a_draft_is_checked_against_the_bounds_before_it_is_a_rule() {
             RuleError::Metric,
         ),
         (
-            "column",
-            draft(|body| body["column"] = json!("to-tal")),
-            RuleError::Column,
+            "a column the metric does not answer",
+            draft(|body| body["condition"]["where"]["column"] = json!("to-tal")),
+            RuleError::Condition(ConditionError {
+                path: "where.column".to_owned(),
+                problem: Problem::NoSuchColumn("to-tal".to_owned()),
+            }),
         ),
         (
             "threshold text that is not an integer",
-            draft(|body| body["threshold"] = json!("1e3")),
-            RuleError::Threshold,
+            draft(|body| body["condition"]["where"]["value"] = json!("1e3")),
+            RuleError::Condition(ConditionError {
+                path: "where.value".to_owned(),
+                problem: Problem::NumberValue,
+            }),
         ),
         (
             "interval below the floor",
@@ -380,14 +394,82 @@ fn a_draft_is_checked_against_the_bounds_before_it_is_a_rule() {
 
     for (case, draft, expected) in cases {
         assert_eq!(
-            RuleSpec::parse(&draft, limits, &destinations()).err(),
+            RuleSpec::parse(&draft, limits, &destinations(), &metric_columns()).err(),
             Some(expected),
             "should refuse: {case}"
         );
     }
 
-    let ok = RuleSpec::parse(&draft(|_| {}), limits, &destinations());
+    let ok = RuleSpec::parse(&draft(|_| {}), limits, &destinations(), &metric_columns());
     assert!(ok.is_ok(), "a whole draft is a rule: {ok:?}");
+}
+
+#[test]
+fn context_columns_name_up_to_five_columns_the_metric_answers() {
+    use super::rule::ContextColumnsProblem;
+
+    let limits = Limits::default();
+    let columns = Columns {
+        kinds: vec![
+            ("team".to_owned(), ColumnKind::Text),
+            ("total".to_owned(), ColumnKind::Number),
+            ("assignee".to_owned(), ColumnKind::Text),
+            ("task_id".to_owned(), ColumnKind::Number),
+        ],
+        groups: vec!["team".to_owned()],
+        imposed_limit: None,
+    };
+    let refused = [
+        (
+            "six columns",
+            json!([
+                "total", "assignee", "task_id", "total", "assignee", "task_id"
+            ]),
+            ContextColumnsProblem::TooMany,
+        ),
+        (
+            "a name that is not a column name",
+            json!(["to-tal"]),
+            ContextColumnsProblem::Name,
+        ),
+        (
+            "a column named twice",
+            json!(["assignee", "task_id", "assignee"]),
+            ContextColumnsProblem::Duplicate("assignee".to_owned()),
+        ),
+        (
+            "a column the metric does not answer",
+            json!(["assignee", "nobody"]),
+            ContextColumnsProblem::NoSuchColumn("nobody".to_owned()),
+        ),
+        (
+            "a group-by column, which the witness shows anyway",
+            json!(["assignee", "team"]),
+            ContextColumnsProblem::GroupBy("team".to_owned()),
+        ),
+    ];
+
+    for (case, context_columns, problem) in refused {
+        let draft = draft(|body| body["context_columns"] = context_columns);
+        assert_eq!(
+            RuleSpec::parse(&draft, limits, &destinations(), &columns).err(),
+            Some(RuleError::ContextColumns(problem)),
+            "should refuse: {case}"
+        );
+    }
+
+    let named = draft(|body| body["context_columns"] = json!(["task_id", "assignee", "total"]));
+    let spec = RuleSpec::parse(&named, limits, &destinations(), &columns)
+        .unwrap_or_else(|error| panic!("named columns are a rule: {error}"));
+    assert_eq!(
+        spec.context_columns,
+        ["task_id", "assignee", "total"],
+        "in the order written, a condition column among them"
+    );
+
+    let unnamed = RuleSpec::parse(&draft(|_| {}), limits, &destinations(), &columns)
+        .unwrap_or_else(|error| panic!("a draft without them is a rule: {error}"));
+    assert!(unnamed.context_columns.is_empty());
 }
 
 #[test]
@@ -396,12 +478,12 @@ fn a_range_is_read_as_a_run_would_read_it() {
 
     let bad = draft(|body| body["range"] = json!("yesterday"));
     assert!(matches!(
-        RuleSpec::parse(&bad, limits, &destinations()),
+        RuleSpec::parse(&bad, limits, &destinations(), &metric_columns()),
         Err(RuleError::Range(_))
     ));
 
     let good = draft(|body| body["range"] = json!("P7D"));
-    let spec = RuleSpec::parse(&good, limits, &destinations())
+    let spec = RuleSpec::parse(&good, limits, &destinations(), &metric_columns())
         .unwrap_or_else(|error| panic!("P7D is a range: {error}"));
     let window = spec
         .window()
@@ -412,28 +494,12 @@ fn a_range_is_read_as_a_run_would_read_it() {
 #[test]
 fn a_draft_names_only_the_fields_a_rule_has() {
     let extra = json!({
-        "name": "n", "metric": "m", "column": "c", "operator": ">", "threshold": 1,
+        "name": "n", "metric": "m",
+        "condition": { "rows": "one", "where": { "column": "total", "op": ">", "value": 1 } },
         "interval_secs": 60, "destination": "ops", "colour": "red"
     });
 
     assert!(serde_json::from_value::<RuleDraft>(extra).is_err());
-}
-
-#[test]
-fn a_number_survives_the_row_it_is_stored_in() {
-    for number in [
-        Number::Int(0),
-        Number::Int(-7),
-        Number::Int(i128::from(u64::MAX)),
-        Number::Float(0.1),
-        Number::Float(-2.5e300),
-    ] {
-        assert_eq!(
-            Number::from_stored(&number.to_stored()),
-            Some(number),
-            "should round-trip: {number}"
-        );
-    }
 }
 
 /// One send through a deliverer over the in-memory store, with a provider
@@ -455,7 +521,6 @@ mod deliveries {
         AlertRule, AlertStore, Limits, Notification, NotificationStatus, Recorded, Recording,
         RuleSpec, Write,
     };
-    use super::super::{Number, Outcome};
     use crate::store::alerts::memory::MemoryAlerts;
 
     fn block_on<T>(future: impl Future<Output = T>) -> T {
@@ -465,9 +530,10 @@ mod deliveries {
     /// A rule whose first check breached: the notification it owes, pending.
     async fn owed(store: &MemoryAlerts) -> (AlertRule, Notification) {
         let spec = RuleSpec::parse(
-            &super::draft(|body| body["threshold"] = json!(10)),
+            &super::draft(|body| body["condition"]["where"]["value"] = json!(10)),
             Limits::default(),
             &super::destinations(),
+            &super::metric_columns(),
         )
         .unwrap_or_else(|error| panic!("the draft is a rule: {error}"));
         let write = Write {
@@ -484,10 +550,7 @@ mod deliveries {
             .record(Recording {
                 rule_id: rule.id,
                 revision: rule.revision,
-                outcome: Outcome::Valid {
-                    value: Number::Int(12),
-                    breached: true,
-                },
+                outcome: super::seen(true, json!(12)),
                 evaluated_at: Utc::now(),
             })
             .await
@@ -631,5 +694,27 @@ mod deliveries {
             output.contains(&notification.id.to_string()) && output.contains("m-late"),
             "the log is where the receipt went: {output}"
         );
+    }
+}
+
+#[test]
+fn a_threshold_is_worded_exactly_as_javascript_writes_it() {
+    let cases = [
+        (Number::Float(123_456.5), "123456.5"),
+        (Number::Float(1e-20), "1e-20"),
+        (Number::Float(1e21), "1e+21"),
+        (Number::Float(1e20), "100000000000000000000"),
+        (Number::Float(0.000_001), "0.000001"),
+        (Number::Float(1e-7), "1e-7"),
+        (Number::Float(-2.5), "-2.5"),
+        (Number::Float(10.0), "10"),
+        (Number::Float(0.1 + 0.2), "0.30000000000000004"),
+        (Number::Float(1.234_5e300), "1.2345e+300"),
+        (Number::Float(-0.0), "0"),
+        (Number::Int(-9_007_199_254_740_993), "-9007199254740993"),
+    ];
+
+    for (number, expected) in cases {
+        assert_eq!(number.exact(), expected, "should write {number:?}");
     }
 }

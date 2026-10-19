@@ -306,12 +306,12 @@ def test_every_repository_walk_lists_repositories_from_the_shared_cursor_bounded
     response cache turns their reads into one. The listing is bounded by the
     cursor the child persists, one lookback window back, so a sync visits only
     repositories pushed to since the last one. The vendor moves a repository's
-    updated_on on commit activity only: exact for commits, file changes and
-    commit authors; for pull requests, pipelines and deployments an event
-    without a push on a repository nobody pushed to waits for its next push,
-    the accepted cost of not listing every repository every sync. A full-refresh
-    child persists no parent state, so its copy opens at the start date and
-    every repository is re-read for heads each sync."""
+    updated_on on commit activity only: exact for commits, file changes, branch
+    heads and commit authors; for pull requests, pipelines and deployments an
+    event without a push on a repository nobody pushed to waits for its next
+    push, the accepted cost of not listing every repository every sync. The
+    CDK persists parent state only for an incremental child, so every walk
+    carries a cursor and declares the dependency."""
     manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
     repositories = manifest["streams"][0]
     assert repositories["name"] == "repositories"
@@ -329,10 +329,8 @@ def test_every_repository_walk_lists_repositories_from_the_shared_cursor_bounded
         if parent["name"] != "repositories":
             continue
         repository_walks.add(owner["name"])
-        if "incremental_sync" in owner:
-            assert config.get("incremental_dependency") is True, f"{owner['name']}: state must persist"
-        else:
-            assert "incremental_dependency" not in config, f"{owner['name']}: full refresh persists no parent state"
+        assert "incremental_sync" in owner, f"{owner['name']}: only an incremental child persists the listing's cursor"
+        assert config.get("incremental_dependency") is True, f"{owner['name']}: state must persist"
     assert repository_walks == {
         "commits",
         "file_changes",
@@ -385,6 +383,36 @@ def test_a_superseded_proxy_snapshot_restarts_the_walk_instead_of_failing_it() -
         assert on_409 == ["RESET_PAGINATION"], f"{path}: a 409 must reset pagination, got {on_409}"
         reset = retriever.get("pagination_reset")
         assert reset == {"type": "PaginationReset", "action": _PROXY_RESET_ACTIONS[path]}, f"{path}: {reset}"
+
+
+def test_the_branches_cursor_persists_the_listing_without_filtering_a_head() -> None:
+    """A head reset to an older commit, or a repository whose heads all predate
+    the cursor, must still land: the cursor exists so the CDK persists the
+    repository listing's state, not to bound what the proxy returns. A request
+    option or a client-side filter on it would drop heads. It reads the
+    vendor's clock — the repository's updated_on — because a head's own date is
+    whatever the pusher's clock said, and a future one would close every later
+    slice."""
+    branches = next(s for s in _streams() if s["name"] == "branches")
+    cursor = branches["incremental_sync"]
+    assert cursor["cursor_field"] == "repository_updated_on"
+    (parent,) = branches["retriever"]["partition_router"]["parent_stream_configs"]
+    assert ["updated_on"] in parent["extra_fields"], "the vendor's update time must reach the record"
+    assert not cursor.get("is_client_side_incremental"), "a filter would drop a head reset to an older commit"
+    assert "start_time_option" not in cursor and "end_time_option" not in cursor, "the proxy lists every head"
+    assert "lookback_window" not in cursor, "nothing is windowed, so nothing needs a lookback"
+
+
+def test_every_proxy_request_pins_its_own_freshness_window() -> None:
+    """A repository is asked of the proxy because it was pushed to since the
+    last sync, so a mirror fetched before this sync must be fetched again
+    whatever the proxy's default window is; one hour lets the streams of one
+    sync share the fetch."""
+    retrievers = _proxy_retrievers(_streams())
+    assert retrievers
+    for retriever in retrievers:
+        headers = retriever["requester"].get("request_headers") or {}
+        assert headers.get("X-Max-Staleness") == "3600", retriever["requester"]["path"]
 
 
 def test_every_proxy_request_carries_the_repository_size_hint() -> None:

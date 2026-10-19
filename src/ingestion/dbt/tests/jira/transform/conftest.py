@@ -67,6 +67,10 @@ PROD_SELECTOR = "tag:jira,tag:staging"
 # so building them per test costs about thirty seconds and proves nothing.
 FIELD_HISTORY_SELECTOR = "+jira__field_history_derived +jira__task_field_text +jira__task_field_unclassified"
 
+# The journal and the links producer: a module about links asserts both, because
+# they resolve a linked issue's key through the same map.
+LINKS_SELECTOR = f"{FIELD_HISTORY_SELECTOR} +jira__task_links"
+
 
 def _env(name: str) -> str:
     value = os.environ.get(name)
@@ -227,8 +231,12 @@ def warehouse() -> Warehouse:
             correlated_subqueries=True,
         )
         profiles_dir.joinpath("profiles.yml").write_text(yaml.safe_dump(profile))
+        # Every database this rig touches. A throwaway warehouse makes its own:
+        # on a deployment create-databases.sh is the one creation site, and
+        # neither the snapshot nor an on-run-start hook carries a CREATE DATABASE.
         wh.execute("CREATE DATABASE IF NOT EXISTS staging")
         wh.execute("CREATE DATABASE IF NOT EXISTS silver")
+        wh.execute("CREATE DATABASE IF NOT EXISTS identity")
         wh.execute("CREATE DATABASE IF NOT EXISTS config")
         wh.execute("CREATE DATABASE IF NOT EXISTS insight")
         create_bronze("jira", port=wh.port, user=wh.user, password=wh.password, database="default")
@@ -384,6 +392,21 @@ class Scenario:
             {"text": text_id or ""},
         )
 
+    def links(self, *, issue_id: str | None = None) -> list[dict[str, Any]]:
+        """The link intervals `jira__task_links` produced, in a fixed order."""
+        return self.warehouse.rows(
+            "SELECT issue_id, id_readable, link_type, target_id, target_readable,"
+            "       toString(valid_from) AS valid_from, valid_from_known,"
+            "       if(valid_to IS NULL, NULL, toString(valid_to)) AS valid_to,"
+            "       added_by, removed_by, origin_event_id, toString(evidence) AS evidence,"
+            "       is_cross_repository, unique_key"
+            " FROM staging.jira__task_links FINAL"
+            " WHERE insight_source_id = {src:String}"
+            "   AND ({issue:String} = '' OR issue_id = {issue:String})"
+            " ORDER BY issue_id, link_type, target_readable, valid_from",
+            {"src": self.source, "issue": issue_id or ""},
+        )
+
     def states(self, field: str, *, issue: str | None = None) -> list[list[str]]:
         """Just the value_ids of one field's rows, in order — the common assert."""
         return [row["value_ids"] for row in self.journal(issue=issue, field=field)]
@@ -428,6 +451,7 @@ class Batch:
             name: Scenario(warehouse, source=f"{SOURCE_ID}-{name[len('test_') :][:60]}") for name in _cases(module)
         }
         self._cases = _cases(module)
+        self._selector: str = getattr(module, "SELECTOR", FIELD_HISTORY_SELECTOR)
         self.generation = -1
 
     def scenario(self, test: str) -> Scenario:
@@ -446,7 +470,7 @@ class Batch:
         for name, scenario in self.scenarios.items():
             spec = self._cases[name]
             scenario.seed(fields=spec.fields, issues=spec.issues, events=spec.events, statuses=spec.statuses)
-        self.warehouse.build()
+        self.warehouse.build(self._selector)
         self.generation = self.warehouse.generation
 
 
