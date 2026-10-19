@@ -24,6 +24,7 @@ import pytest
 BOOTSTRAP_DIR = Path(__file__).resolve().parents[1] / "bootstrap-db"
 CREATE_CONNECTOR_TABLES = BOOTSTRAP_DIR / "create-connector-tables.sh"
 SEED_CONNECTORS = BOOTSTRAP_DIR / "seed-connectors.sh"
+CONNECTOR_CATALOG_LIB = BOOTSTRAP_DIR / "lib" / "connector-catalog.sh"
 
 #: Both scripts parse YAML with mikefarah yq v4 and JSON with jq.
 requires_shell_tooling = pytest.mark.skipif(
@@ -156,7 +157,11 @@ def test_the_workdir_is_allocated_from_a_template_not_the_p_flag() -> None:
     Nothing about the resulting path betrays which spelling produced it, so the
     behavioural tests above cannot catch a return to the non-portable one.
     """
-    allocation = next(line for line in CREATE_CONNECTOR_TABLES.read_text().splitlines() if line.startswith("WORKDIR="))
+    allocation = next(
+        line
+        for line in CONNECTOR_CATALOG_LIB.read_text().splitlines()
+        if "mktemp" in line and not line.lstrip().startswith("#")
+    )
 
     assert "mktemp -d " in allocation and " -p " not in allocation, (
         f"the workdir must be allocated from an explicit template: {allocation}"

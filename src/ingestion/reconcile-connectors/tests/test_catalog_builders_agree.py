@@ -1,9 +1,9 @@
 """The three catalog builders must key bronze the same way.
 
 `normalize_catalog.py` builds the catalog production connections carry,
-`bootstrap-db/create-connector-tables.sh` builds the one the committed DDL
-snapshot is generated from, and the declarative-connector dev tool builds the
-one a connector author runs locally. The destination reads that key to decide
+`bootstrap-db/lib/connector-catalog.sh` builds the one every local and
+cluster-side bronze creation applies, and the declarative-connector dev tool
+builds the one a connector author runs locally. The destination reads that key to decide
 the table's ORDER BY, so a builder that keys a stream differently creates a
 bronze table production never has -- and the difference surfaces only as a
 relation that silently never dedups.
@@ -28,8 +28,8 @@ BUILDERS = {
         '"primaryKey": [[UNIQUE_KEY]]',
         "_stream_has_unique_key",
     ),
-    "bootstrap-db (snapshot generation)": (
-        INGESTION / "scripts/bootstrap-db/create-connector-tables.sh",
+    "bootstrap-db (catalogue builder)": (
+        INGESTION / "scripts/bootstrap-db/lib/connector-catalog.sh",
         'primary_key: [["unique_key"]]',
         'has("unique_key") | not',
     ),

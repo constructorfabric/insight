@@ -21,7 +21,7 @@ committed 26 rather than rebuilding them.
 
 `TEAM_PROFILES` below maps a per-team source-type to a numeric
 multiplier (0 = no rows; 1 = baseline; >1 = heavier). The row
-generators consult these weights to decide which silver rows a given
+generators consult these weights to decide which bronze rows a given
 person produces and at what volume.
 """
 
@@ -336,7 +336,7 @@ def build_roster(dev_user_email: str) -> list[Person]:
     #                     operator reports to nobody. Their own `/v1/subchart`
     #                     is an empty forest, and no other person's view moves.
     #   team=None         every activity generator skips a teamless person, so
-    #                     the operator contributes no silver rows and cannot
+    #                     the operator contributes no activity rows and cannot
     #                     shift a metric.
     #
     # Together those keep the operator invisible to every existing assertion.
