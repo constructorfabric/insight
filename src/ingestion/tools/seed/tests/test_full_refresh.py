@@ -27,13 +27,15 @@ from typing import Any
 
 import pytest
 
-from insight_seed import silver
+from insight_seed import config, silver
+from insight_seed.generators import snapshots
 
 _SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 _MIGRATIONS = _SCRIPTS / "apply-ch-migrations.sh"
 _BUILD_GOLD = _SCRIPTS / "build-gold.sh"
 
 _STUB_SCRIPT_ENV = {"CLICKHOUSE_URL": "http://clickhouse.nonpresent:8123"}
+_STUB_TENANT = "00000000-0000-4000-8000-000000000001"
 
 ScriptRun = tuple[list[str], dict[str, str]]
 
@@ -72,6 +74,8 @@ def refresh_requests(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
     monkeypatch.setattr(silver, "apply_ch_migrations", lambda: None)
     monkeypatch.setattr(silver, "build_gold", record)
+    monkeypatch.setattr(silver, "prune_seeded_snapshots", lambda client, tenant: None)
+    monkeypatch.setenv(config.TENANT_ENV, _STUB_TENANT)
     return requests
 
 
@@ -159,13 +163,34 @@ def test_silver_step_full_refreshes_the_identity_feeders(
 ) -> None:
     silver.run()
 
-    request = _only(refresh_requests, "migration request")
+    request = refresh_requests[-1]
     assert request.get("full_refresh"), (
         "the silver step must full-refresh: it just replaced every silver "
         "relation the seed owns, so the incremental identity feeders have "
         "to be rebuilt from it rather than appended to"
     )
     assert silver.IDENTITY_INPUTS_SELECT in request["dbt_select"]
+
+
+@pytest.mark.usefixtures("offline_silver_step")
+def test_snapshots_are_pruned_between_their_sources_rebuild_and_the_main_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order: list[str] = []
+    monkeypatch.setattr(silver, "apply_ch_migrations", lambda: order.append("migrations"))
+    monkeypatch.setattr(
+        silver, "build_gold", lambda **kwargs: order.append(f"build {kwargs['dbt_select']}")
+    )
+    monkeypatch.setattr(
+        silver, "prune_seeded_snapshots", lambda client, tenant: order.append(f"prune {tenant}")
+    )
+    monkeypatch.setenv(config.TENANT_ENV, _STUB_TENANT)
+
+    silver.run()
+
+    source_build = "build " + " ".join(f"+{model}" for model in snapshots.source_models())
+    assert order[:3] == ["migrations", source_build, f"prune {_STUB_TENANT}"], order
+    assert len(order) == 4 and silver.IDENTITY_INPUTS_SELECT in order[3], order
 
 
 def test_config_tables_exist_before_the_generators_write_them(

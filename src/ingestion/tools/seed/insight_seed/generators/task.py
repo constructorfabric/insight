@@ -37,7 +37,6 @@ from .base import (
     weekday_multiplier,
 )
 from .insert import bulk_insert, truncate
-from .snapshots import prune_to_bronze
 
 if TYPE_CHECKING:
     import clickhouse_connect.driver.client
@@ -962,11 +961,6 @@ def generate(
     }
     totals.update(seed_jira_project(client, tenant_uuid))
     totals.update(seed_jira_issues(client, issues, tenant_uuid))
-    prune_to_bronze(client, ("staging", "jira__users_snapshot"), tenant_uuid)
-    prune_to_bronze(client, ("staging", "jira__worklog_snapshot"), tenant_uuid)
-    prune_to_bronze(client, ("staging", "jira__comment_snapshot"), tenant_uuid)
-    prune_to_bronze(client, ("staging", "jira__issue_availability_snapshot"), tenant_uuid)
-    prune_to_bronze(client, ("staging", "jira__project_visibility_snapshot"), tenant_uuid)
 
     # config.* stays a direct write: the rows are operator-authored bindings
     # from a vendor value to the role and canonical value gold consumes, and no

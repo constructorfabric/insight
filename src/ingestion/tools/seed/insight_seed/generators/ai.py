@@ -33,7 +33,6 @@ from .base import (
     weekday_multiplier,
 )
 from .insert import bulk_insert, truncate
-from .snapshots import prune_to_bronze
 
 if TYPE_CHECKING:
     import clickhouse_connect.driver.client
@@ -387,7 +386,7 @@ def seed_chatgpt_team(
                     },
                 )
             )
-    inserted = {
+    return {
         "bronze_chatgpt_team.chatgpt_team_seats": bulk_insert(
             client, "bronze_chatgpt_team", "chatgpt_team_seats", seat_cols, seats
         ),
@@ -395,8 +394,6 @@ def seed_chatgpt_team(
             client, "bronze_chatgpt_team", "chatgpt_team_chat_activity", activity_cols, activity
         ),
     }
-    prune_to_bronze(client, ("staging", "chatgpt_team__seats_snapshot"), tenant_uuid)
-    return inserted
 
 
 def seed_claude_enterprise_users(
