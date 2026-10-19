@@ -10,7 +10,7 @@ re-observe them in the identity chain.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     import clickhouse_connect.driver.client
@@ -19,19 +19,61 @@ LOG = logging.getLogger("seed.generators")
 
 Relation = tuple[str, str]
 
-#: Every snapshot over bronze the generators rewrite, with the bronze it reads.
-SEEDED_SNAPSHOTS: dict[Relation, Relation] = {
-    ("staging", "bamboohr__employees_snapshot"): ("bronze_bamboohr", "employees"),
+
+class KeySource(NamedTuple):
+    """A bronze relation and the expression that yields a snapshot key from its rows."""
+
+    bronze: Relation
+    key: str = "unique_key"
+
+
+_JIRA_ISSUE_KEY = (
+    "concat(COALESCE(tenant_id, ''), '-', COALESCE(source_id, ''), '-', COALESCE(jira_id, ''))"
+)
+
+#: Every snapshot over bronze the generators rewrite, with the bronze its keys come from.
+SEEDED_SNAPSHOTS: dict[Relation, tuple[KeySource, ...]] = {
+    ("staging", "bamboohr__employees_snapshot"): (KeySource(("bronze_bamboohr", "employees")),),
+    ("staging", "chatgpt_team__seats_snapshot"): (
+        KeySource(("bronze_chatgpt_team", "chatgpt_team_seats")),
+    ),
+    ("staging", "jira__comment_snapshot"): (KeySource(("bronze_jira", "jira_comments")),),
+    ("staging", "jira__issue_availability_snapshot"): (
+        KeySource(("bronze_jira", "jira_issue_census")),
+        KeySource(("bronze_jira", "jira_issue"), _JIRA_ISSUE_KEY),
+        KeySource(("bronze_jira", "jira_issue_keys"), _JIRA_ISSUE_KEY),
+    ),
+    ("staging", "jira__project_visibility_snapshot"): (
+        KeySource(("bronze_jira", "jira_project_visibility")),
+    ),
+    ("staging", "jira__users_snapshot"): (KeySource(("bronze_jira", "jira_user")),),
+    ("staging", "jira__worklog_snapshot"): (KeySource(("bronze_jira", "jira_worklogs")),),
+    ("staging", "outline__users_snapshot"): (KeySource(("bronze_outline", "wiki_users")),),
+    ("staging", "slack__users_snapshot"): (
+        KeySource(
+            ("bronze_slack", "users_details"), "concat(tenant_id, '-', source_id, '-', user_id)"
+        ),
+    ),
 }
 
 
-def prune_statement(snapshot: Relation) -> str:
-    """Delete one tenant's versions whose key is not among `keys`."""
+def prune_statement(snapshot: Relation, sources: tuple[KeySource, ...]) -> str:
+    """Delete one tenant's versions whose key none of `sources` holds."""
     schema, table = snapshot
+    held = " UNION ALL ".join(
+        f"SELECT {source.key} FROM `{source.bronze[0]}`.`{source.bronze[1]}` "
+        "WHERE tenant_id = {tenant:String}"
+        for source in sources
+    )
     return (
         f"ALTER TABLE `{schema}`.`{table}` DELETE "
-        "WHERE tenant_id = {tenant:String} AND NOT has({keys:Array(String)}, unique_key)"
+        f"WHERE tenant_id = {{tenant:String}} AND unique_key NOT IN ({held})"
     )
+
+
+def _exists(client: clickhouse_connect.driver.client.Client, relation: Relation) -> bool:
+    schema, table = relation
+    return bool(int(str(client.command(f"EXISTS TABLE `{schema}`.`{table}`"))))
 
 
 def prune_to_bronze(
@@ -40,30 +82,22 @@ def prune_to_bronze(
     tenant_uuid: str,
 ) -> None:
     """Keep only the versions of entities the snapshot's bronze holds for this tenant."""
-    schema, table = snapshot
-    bronze_schema, bronze_table = SEEDED_SNAPSHOTS[snapshot]
-
-    if not int(str(client.command(f"EXISTS TABLE `{schema}`.`{table}`"))):
+    if not _exists(client, snapshot):
         return
 
-    keys = [
-        str(row[0])
-        for row in client.query(
-            f"SELECT unique_key FROM `{bronze_schema}`.`{bronze_table}` "
-            "WHERE tenant_id = {tenant:String}",
-            parameters={"tenant": tenant_uuid},
-        ).result_rows
-    ]
+    sources = tuple(
+        source for source in SEEDED_SNAPSHOTS[snapshot] if _exists(client, source.bronze)
+    )
+    if not sources:
+        return
+
     client.command(
-        prune_statement(snapshot),
-        parameters={"tenant": tenant_uuid, "keys": keys},
+        prune_statement(snapshot, sources),
+        parameters={"tenant": tenant_uuid},
         settings={"mutations_sync": 2},
     )
     LOG.info(
-        "%s.%s: pruned to the %d entities %s.%s holds",
-        schema,
-        table,
-        len(keys),
-        bronze_schema,
-        bronze_table,
+        "%s.%s: pruned to the entities %s hold",
+        *snapshot,
+        ", ".join(".".join(source.bronze) for source in sources),
     )

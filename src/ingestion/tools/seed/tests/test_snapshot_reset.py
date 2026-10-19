@@ -84,15 +84,25 @@ def _snapshots_over_seeded_bronze() -> dict[Relation, set[Relation]]:
     return found
 
 
-def test_every_snapshot_over_seeded_bronze_is_registered_with_its_bronze() -> None:
+def test_every_snapshot_over_seeded_bronze_is_registered() -> None:
     found = _snapshots_over_seeded_bronze()
 
     assert found, "no snapshot reads seeded bronze: the scan no longer finds them"
-    registered = {snapshot: {bronze} for snapshot, bronze in snapshots.SEEDED_SNAPSHOTS.items()}
-    assert registered == found, (
-        "SEEDED_SNAPSHOTS must name every snapshot over bronze the seed rewrites, "
-        f"with that bronze: registered {registered}, found {found}"
+    assert set(snapshots.SEEDED_SNAPSHOTS) == set(found), (
+        "SEEDED_SNAPSHOTS must name every snapshot over bronze the seed rewrites: "
+        f"registered {sorted(snapshots.SEEDED_SNAPSHOTS)}, found {sorted(found)}"
     )
+
+
+def test_every_registered_snapshot_takes_its_keys_from_bronze_it_reads() -> None:
+    models = _models()
+    schemas = _source_schemas()
+
+    for snapshot, sources in snapshots.SEEDED_SNAPSHOTS.items():
+        read = _bronze_read_by(snapshot[1], models, schemas)
+        strays = {source.bronze for source in sources} - read
+        assert sources, f"{snapshot} names no bronze to keep its keys from"
+        assert not strays, f"{snapshot} does not read {strays}; it reads {read}"
 
 
 def test_every_registered_snapshot_is_pruned_by_a_generator() -> None:
@@ -103,14 +113,25 @@ def test_every_registered_snapshot_is_pruned_by_a_generator() -> None:
     assert called == set(snapshots.SEEDED_SNAPSHOTS), f"pruned {called}"
 
 
-def test_the_prune_keeps_other_tenants_and_listed_keys() -> None:
-    statement = snapshots.prune_statement(("staging", "example__users_snapshot"))
+def test_the_prune_keeps_other_tenants_and_the_keys_bronze_holds() -> None:
+    statement = snapshots.prune_statement(
+        ("staging", "example__users_snapshot"),
+        (
+            snapshots.KeySource(("bronze_example", "users")),
+            snapshots.KeySource(("bronze_example", "members"), "concat(source_id, '-', member_id)"),
+        ),
+    )
 
     assert statement.startswith("ALTER TABLE `staging`.`example__users_snapshot` DELETE")
-    assert "tenant_id = {tenant:String}" in statement, f"should scope to one tenant: {statement!r}"
-    assert "NOT has({keys:Array(String)}, unique_key)" in statement, (
-        f"should keep listed keys: {statement!r}"
+    assert "WHERE tenant_id = {tenant:String} AND unique_key NOT IN (" in statement, (
+        f"should scope to one tenant: {statement!r}"
     )
+    assert (
+        "SELECT unique_key FROM `bronze_example`.`users` WHERE tenant_id = {tenant:String}"
+        " UNION ALL "
+        "SELECT concat(source_id, '-', member_id) FROM `bronze_example`.`members`"
+        " WHERE tenant_id = {tenant:String}"
+    ) in statement, f"should keep every key this tenant's bronze holds: {statement!r}"
 
 
 def test_the_scan_follows_a_ref_chain_to_its_bronze() -> None:

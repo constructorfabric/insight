@@ -222,6 +222,13 @@ COMPONENTS = [
         "paths": ["src/ingestion/connectors/hr-directory/bamboohr"],
     },
     {
+        "name": "active-directory",
+        "lang": "python",
+        "root": "src/ingestion/connectors/hr-directory/active-directory",
+        "cov_package": "source_active_directory",
+        "paths": ["src/ingestion/connectors/hr-directory/active-directory"],
+    },
+    {
         "name": "claude-team-invoices",
         "lang": "python",
         "root": "src/ingestion/connectors/ai/claude-team-invoices",

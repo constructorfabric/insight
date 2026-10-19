@@ -89,6 +89,9 @@ services:
       - mariadb-data:/var/lib/mysql
       - ./deploy/compose/mariadb-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
     healthcheck:
+      # INVARIANT: `--connect` is the guard, and it is a TCP test. The
+      # entrypoint's init server runs `--skip-networking`, so a socket ping
+      # would pass during init and hand dependents a refused connection.
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
       timeout: 5s
@@ -134,7 +137,12 @@ services:
       # Keeps the server's own cap under mem_limit — see the file.
       - ./deploy/compose/clickhouse-memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro
     healthcheck:
-      test: ["CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      # INVARIANT: the container's own address, never `localhost`. CLICKHOUSE_DB
+      # and the initdb scripts put the entrypoint into its init phase, which
+      # listens on 127.0.0.1 alone — a loopback probe reports healthy there
+      # while every dependent still gets `Connection refused`.
+      # `$$HOSTNAME` is compose's escape: the container's shell expands it.
+      test: ["CMD-SHELL", "wget -q --tries=1 --spider http://$$HOSTNAME:8123/ping"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -150,7 +158,9 @@ services:
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # Over the network, like the other base services: a loopback probe cannot
+      # tell "listening for the world" from "listening for itself".
+      test: ["CMD-SHELL", "redis-cli -h $$HOSTNAME ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 30
