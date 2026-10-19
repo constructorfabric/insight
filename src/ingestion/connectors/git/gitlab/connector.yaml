@@ -26,6 +26,7 @@ type: DeclarativeSource
 #   pull_request_label_events  -> /merge_requests/{iid}/resource_label_events
 #   group_members              -> /groups/{g}/members/all         full refresh, per configured scope
 #   pipelines                  -> GraphQL project.pipelines       incremental (updatedAfter), per project
+#   jobs                       -> GraphQL pipeline.jobs           pipeline parent (updatedAt)
 #   deployments                -> /projects/{id}/deployments      incremental (updated_at), per project
 #   users                      -> /users (keyset)                 full refresh, opt-in, instance-wide
 #   commit_authors             -> GitLab /users?search=<e-mail>  per distinct author the proxy enumerates
@@ -544,6 +545,100 @@ definitions:
         type: RequestOption
         field_name: updated_before
         inject_into: request_parameter
+
+  # Pipeline listing used as the jobs fan-out parent: only what a job query
+  # needs, on the same clock and lookback as the pipelines stream.
+  pipelines_window_parent: &pipelines_window_parent
+    type: DeclarativeStream
+    name: pipelines_window
+    primary_key:
+      - id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id: {type: [integer, "null"]}
+          iid: {type: [integer, "null"]}
+          project_id: {type: [integer, "null"]}
+          repo_path: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *graphql_requester
+        request_body_json:
+          query: |
+            query($project: ID!, $updatedAfter: Time, $cursor: String) {
+              project(fullPath: $project) {
+                pipelines(updatedAfter: $updatedAfter, first: 100, after: $cursor) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes { id iid updatedAt }
+                }
+              }
+            }
+          variables:
+            project: "{{ stream_partition.project_path }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, project, pipelines, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ ((((response.get('data') or {}).get('project') or {}).get('pipelines') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('project') or {}).get('pipelines') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: path_with_namespace
+            partition_field: project_path
+            extra_fields:
+              - [id]
+            stream: *projects_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        inject_into: body_json
+        field_path: [variables, updatedAfter]
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [id]
+            value: "{{ (record.get('id') or '').rsplit('/', 1)[-1] }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['id'] }}"
+          - type: AddedFieldDefinition
+            path: [repo_path]
+            value: "{{ stream_partition.project_path }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [updated_at]
+            value: "{{ record['updatedAt'] }}"
+            value_type: string
 
 check:
   type: CheckStream
@@ -2105,6 +2200,222 @@ streams:
           - [finishedAt]
           - [queuedDuration]
 
+  # ── Pipeline jobs (GitLab GraphQL) ──────────────────────────────────────
+  # Every job of a pipeline, retried attempts included: build jobs, trigger
+  # (bridge) jobs, and statuses posted by external CI (`kind` = external).
+  # INVARIANT: every job transition reprocesses its pipeline, and each
+  # terminal or re-opening pipeline transition stamps its updatedAt, so a
+  # pipeline is re-read after its last job change.
+  - type: DeclarativeStream
+    name: jobs
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          repo_path: {type: [string, "null"]}
+          pipeline_id: {type: [integer, "null"]}
+          pipeline_iid: {type: [integer, "null"]}
+          pipeline_updated_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          name: {type: [string, "null"]}
+          kind: {type: [string, "null"]}
+          stage: {type: [string, "null"]}
+          status: {type: [string, "null"]}
+          manual_job: {type: [boolean, "null"]}
+          allow_failure: {type: [boolean, "null"]}
+          retried: {type: [boolean, "null"]}
+          ref: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          queued_at: {type: [string, "null"]}
+          started_at: {type: [string, "null"]}
+          finished_at: {type: [string, "null"]}
+          duration: {type: [integer, "null"]}
+          queued_duration: {type: [number, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *graphql_requester
+        request_body_json:
+          query: |
+            query($project: ID!, $iid: ID!, $cursor: String) {
+              project(fullPath: $project) {
+                pipeline(iid: $iid) {
+                  jobs(first: 100, after: $cursor) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      id
+                      name
+                      kind
+                      status
+                      stage { name }
+                      manualJob
+                      allowFailure
+                      retried
+                      refName
+                      createdAt
+                      queuedAt
+                      startedAt
+                      finishedAt
+                      duration
+                      queuedDuration
+                    }
+                  }
+                }
+              }
+            }
+          variables:
+            project: "{{ stream_slice.extra_fields['repo_path'] }}"
+            iid: "{{ stream_slice.extra_fields['iid'] }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, project, pipeline, jobs, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ (((((response.get('data') or {}).get('project') or {}).get('pipeline') or {}).get('jobs') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not (((((response.get('data') or {}).get('project') or {}).get('pipeline') or {}).get('jobs') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: pipeline_id
+            extra_fields:
+              - [project_id]
+              - [repo_path]
+              - [iid]
+              - [updated_at]
+            # INVARIANT: without it the parent cursor never persists and every
+            # pipeline since the start date is queried again on every sync.
+            incremental_dependency: true
+            stream: *pipelines_window_parent
+    incremental_sync:
+      # INVARIANT: this cursor only carries the parent's state; nothing reads
+      # its value, so one entry per pipeline would only grow the state.
+      type: DatetimeBasedCursor
+      cursor_field: pipeline_updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      global_substream_cursor: true
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['project_id'] }}"
+          - type: AddedFieldDefinition
+            path: [repo_path]
+            value: "{{ stream_slice.extra_fields['repo_path'] or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [pipeline_id]
+            value: "{{ stream_partition.pipeline_id }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [pipeline_iid]
+            value: "{{ stream_slice.extra_fields['iid'] }}"
+          - type: AddedFieldDefinition
+            path: [pipeline_updated_at]
+            value: "{{ stream_slice.extra_fields['updated_at'] }}"
+            value_type: string
+          # INVARIANT: reads the global id, so it precedes the `id` rewrite.
+          - type: AddedFieldDefinition
+            path: [kind]
+            value: "{{ 'external' if '/GenericCommitStatus/' in (record.get('id') or '') else (record.get('kind') or '') | lower }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [id]
+            value: "{{ (record.get('id') or '').rsplit('/', 1)[-1] }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [name]
+            value: "{{ record.get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [stage]
+            value: "{{ (record.get('stage') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [status]
+            value: "{{ (record.get('status') or '') | lower }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [manual_job]
+            value: "{{ record.get('manualJob') }}"
+          - type: AddedFieldDefinition
+            path: [allow_failure]
+            value: "{{ record.get('allowFailure') or false }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [retried]
+            value: "{{ record.get('retried') or false }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [ref]
+            value: "{{ record.get('refName') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [created_at]
+            value: "{{ record.get('createdAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [queued_at]
+            value: "{{ record.get('queuedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [started_at]
+            value: "{{ record.get('startedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [finished_at]
+            value: "{{ record.get('finishedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [queued_duration]
+            value: "{{ record.get('queuedDuration') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ record['id'] }}
+      - type: RemoveFields
+        field_pointers:
+          - [manualJob]
+          - [allowFailure]
+          - [refName]
+          - [createdAt]
+          - [queuedAt]
+          - [startedAt]
+          - [finishedAt]
+          - [queuedDuration]
+
   # ── Environments (GitLab API) ───────────────────────────────────────────
   # The deployment listing embeds its environment without the tier; the
   # environment listing carries it. Full refresh: a tier or name can change,
@@ -2933,6 +3244,7 @@ metadata:
     pull_request_state_events: false
     pull_request_label_events: false
     pipelines: false
+    jobs: false
     environments: false
     deployments: false
     group_members: false
