@@ -9,6 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tenant_migration.clickhouse import ClickHouse, ClickHouseError
 from tenant_migration.inventory import Table, Unfit, classify
 from tenant_migration.keys import Columns, TenantError, Tenants
 from tenant_migration.plan import TablePlan, refusals
@@ -102,3 +103,10 @@ def test_an_unfit_table_with_rows_is_refused_and_an_empty_one_is_not() -> None:
 
     assert refusals([], [(unfit, 3)]) == ["bronze_example.legacy: 3 row(s), and no tenant column"]
     assert refusals([], []) == []
+
+
+def test_an_unreachable_clickhouse_is_reported_as_an_error_not_a_traceback() -> None:
+    unreachable = ClickHouse(url="http://127.0.0.1:1/", user="insight", password="insight")
+
+    with pytest.raises(ClickHouseError, match="unreachable"):
+        unreachable.execute("SELECT 1")

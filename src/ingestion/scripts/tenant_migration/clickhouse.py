@@ -55,6 +55,8 @@ class ClickHouse:
             return response
         except urllib.error.HTTPError as error:
             raise ClickHouseError(error.read().decode("utf-8", "replace").strip()) from error
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+            raise ClickHouseError(f"ClickHouse unreachable at {self.url}: {error}") from error
 
     def execute(self, sql: str, *, fmt: str | None = None) -> str:
         """Run one statement; `fmt` names the output format without touching the SQL."""
