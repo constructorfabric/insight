@@ -6,14 +6,12 @@ databases a spec seeds do not exist yet. This builds them in the order
 
     1. CREATE DATABASE for every database a deployment holds
     2. Run the real connectors into the real destination (`bronze.create_bronze`)
-    3. Apply the scripts/connectors-ddl snapshot (identity, staging, silver, insight)
-    4. Run scripts/migrations/*.sql
+    3. Run scripts/migrations/*.sql
 
-Bronze is created by the destination rather than from the snapshot so that the rig
-has the same single creator a deployment has: a table a spec seeds is the shape this
-tree's connectors and the pinned destination produce. The snapshot holds no bronze
-at all; its four files stand in for relations a deployment gets from dbt (T23
-retires them).
+Bronze is created by the destination so that the rig has the same single creator a
+deployment has: a table a spec seeds is the shape this tree's connectors and the
+pinned destination produce. Nothing pre-creates staging, silver or gold — a spec
+runs dbt for the models it asserts over, which is what a deployment's sync does.
 
 Idempotent: every statement uses CREATE OR REPLACE / IF NOT EXISTS / DROP IF
 EXISTS. We split multi-statement files on `;` because clickhouse-connect's
@@ -35,14 +33,9 @@ from insight_datapath.process import tail
 
 LOG = logging.getLogger("datapath.schema")
 
-#: Every file the snapshot holds, applied in dependency order: `insight`'s views
-#: read `silver`. No connector is among them — bronze has one creator, and a
-#: file applied here would pre-empt it.
-WAREHOUSE_SNAPSHOT = ("identity", "staging", "silver", "insight")
-
 #: The databases a deployment gets from `src/ingestion/scripts/create-databases.sh`,
 #: minus the app database, which the instance names. Nothing else creates them:
-#: neither the snapshot nor a migration nor a dbt hook carries a CREATE DATABASE.
+#: neither a migration nor a dbt hook carries a CREATE DATABASE.
 DATABASES = (
     "staging",
     "silver",
@@ -63,9 +56,6 @@ def apply_all(cfg: InstanceConfig, *, repo_root: Path, project: str) -> int:
         ch.ensure_database(cfg, database)
     # 2. Bronze, from the connectors themselves
     create_bronze(cfg, repo_root=repo_root, project=project)
-    # 3. identity/staging/silver/insight, which a deployment gets from dbt
-    applied = apply_warehouse_snapshot(cfg, repo_root=repo_root)
-    LOG.info("applied %d warehouse-snapshot statements", applied)
 
     migrations_dir = repo_root / "src/ingestion/scripts/migrations"
     files = sorted(migrations_dir.glob("*.sql"))
@@ -78,42 +68,6 @@ def apply_all(cfg: InstanceConfig, *, repo_root: Path, project: str) -> int:
         total += _apply_file(cfg, f)
     LOG.info("applied %d statements from %d migration files", total, len(files))
     return total
-
-
-def apply_warehouse_snapshot(cfg: InstanceConfig, *, repo_root: Path) -> int:
-    """Apply the scripts/connectors-ddl snapshot.
-
-    Same retry semantics as prod's create-warehouse-placeholders.sh: views may
-    reference other views, so failed statements are retried in additional passes
-    until a pass makes no progress.
-    """
-    ddl_dir = repo_root / "src/ingestion/scripts/connectors-ddl"
-    ordered = [ddl_dir / f"{stem}.sql" for stem in WAREHOUSE_SNAPSHOT]
-    absent = [f.name for f in ordered if not f.is_file()]
-    if absent:
-        raise RuntimeError(f"missing DDL snapshot file(s) under {ddl_dir}: {', '.join(absent)}")
-
-    pending: list[str] = []
-    for f in ordered:
-        pending.extend(_split_statements(f.read_text(encoding="utf-8")))
-
-    applied = 0
-    while pending:
-        failed: list[tuple[str, Exception]] = []
-        for stmt in pending:
-            try:
-                ch.execute(cfg, stmt)
-                applied += 1
-            except Exception as exc:
-                failed.append((stmt, exc))
-        if len(failed) == len(pending):
-            summary = "\n".join(f"  {s[:120]!r}: {e}" for s, e in failed[:5])
-            raise RuntimeError(
-                f"DDL snapshot stuck; {len(failed)} statement(s) keep failing:\n{summary}"
-            )
-        pending = [s for s, _ in failed]
-
-    return applied
 
 
 def _apply_file(cfg: InstanceConfig, path: Path) -> int:

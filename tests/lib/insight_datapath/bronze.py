@@ -1,8 +1,8 @@
 """Create an instance's bronze tables the way a connector's first sync does.
 
-The harness used to apply the committed `connectors-ddl` snapshot, which made it a
-second creator of bronze: the tables a spec seeded were whatever shape the snapshot
-carried when it was last dumped, and a table the snapshot lacked was invented. A
+The harness used to apply a committed DDL snapshot, which made it a second creator
+of bronze: the tables a spec seeded were whatever shape the snapshot carried when it
+was last dumped, and a table the snapshot lacked was invented. A
 deployment has exactly one creator — `destination-clickhouse`, handed a catalogue
 built from the connector's own `discover` — so this runs that creator, through the
 same `seed-connectors.sh` / `create-connector-tables.sh` pair `bootstrap-db.sh` uses.
