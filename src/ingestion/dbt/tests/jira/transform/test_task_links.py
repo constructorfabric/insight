@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from conftest import LINKS_SELECTOR, Scenario, case
-from helpers import event, field, issue, item
+from helpers import census_entry, event, field, issue, item
 
 SELECTOR = LINKS_SELECTOR
 
@@ -341,4 +341,21 @@ def test_a_link_re_added_after_its_type_was_reworded_is_one_occurrence(scenario:
         ("1001", "blocking", "1002", "TST-2", DAY_6, 1, DAY_7, "101"),
         ("1001", "blocking", "1002", "TST-2", DAY_8, 1, None, "103"),
     ]
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[LINKS_FIELD],
+    issues=[issue("TST-1", jira_id="1001")],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_added("ARC-7", "relates to", WORK_ITEM_WORDING)], jira_id="1001"),
+        event("TST-1", 102, "2026-01-07T10:00:00", [_removed("ARC-7", "relates to", WORK_ITEM_WORDING)], jira_id="1001"),
+    ],
+    census=[census_entry("ARC-7", jira_id="9007")],
+)
+def test_a_linked_issue_outside_the_sync_window_resolves_through_the_census(scenario: Scenario) -> None:
+    """ARC-7 is neither synced nor held in any snapshot. The census lists every
+    issue a visible project holds, so its key still resolves to its id."""
+    assert _intervals(scenario.links()) == [("1001", "connected", "9007", "ARC-7", DAY_6, 1, DAY_7, "101")]
+    assert scenario.changelog_states(LINKS, issue="TST-1") == [["9007"], []]
     assert scenario.round_trip_holds()

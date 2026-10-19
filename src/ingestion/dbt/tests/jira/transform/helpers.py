@@ -105,6 +105,22 @@ def issue(
     }
 
 
+def census_entry(key: str, *, jira_id: str, extracted_at: str = OBSERVED_AT) -> dict[str, Any]:
+    """One issue the census saw in a visible project: its id and current key,
+    whether or not the issue itself is synced."""
+    return {
+        **_airbyte(extracted_at),
+        "id": jira_id,
+        "tenant_id": TENANT_ID,
+        "source_id": SOURCE_ID,
+        "unique_key": f"{SOURCE_ID}-census-{jira_id}",
+        "jira_id": jira_id,
+        "id_readable": key,
+        "project_key": key.split("-")[0],
+        "collected_at": extracted_at,
+    }
+
+
 def status(status_id: str, *, name: str, category_key: str, extracted_at: str = OBSERVED_AT) -> dict[str, Any]:
     """One row of the status dimension; `category_key` is Jira's statusCategory key."""
     return {

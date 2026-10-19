@@ -128,7 +128,12 @@ name: jira
 # `opaque_id`. `jira__task_links` adds Jira rows to `class_task_links`. MAJOR
 # because rows already written change, and only the full refresh a major
 # dispatches (ADR-0015) re-derives them.
-version: "14.0.0"
+# 14.1.0: `jira_issue_census` keeps each issue's current key beside its id, so
+# `jira__issue_key_ids` resolves a linked issue's key to its immutable id even
+# when the issue was never updated inside the sync window. MINOR per ADR-0015:
+# reconcile republishes the manifest and refreshes the catalog, the destination
+# adds the column on the next sync, and nothing already stored changes meaning.
+version: "14.1.0"
 schedule: "0 3 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer

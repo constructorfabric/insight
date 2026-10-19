@@ -17,8 +17,8 @@
 -- rows win over what another issue's data says about it.
 --
 -- A key no input names has no row: an issue in a project the connector cannot
--- read and that no synced issue's snapshot links to, or one deleted before it
--- was ever read.
+-- read and that no synced issue's snapshot links to, one deleted before it was
+-- ever read, or an earlier key of an issue whose own changelog is not synced.
 
 WITH issue_rows AS (
     -- Every row, not the newest: bronze keeps one per key the connector saw.
@@ -37,6 +37,17 @@ WITH issue_rows AS (
         COALESCE(toString(jira_id), '')                               AS issue_id,
         toUInt8(1)                                                    AS precedence
     FROM {{ source('bronze_jira', 'jira_issue_keys') }}
+
+    UNION ALL
+
+    -- The census lists every issue a visible project holds, whatever its last
+    -- update, so a key outside the sync window still resolves.
+    SELECT
+        COALESCE(source_id, '')                                       AS insight_source_id,
+        COALESCE(toString(id_readable), '')                           AS issue_key,
+        COALESCE(toString(jira_id), '')                               AS issue_id,
+        toUInt8(1)                                                    AS precedence
+    FROM {{ source('bronze_jira', 'jira_issue_census') }}
 ),
 
 -- A move is a `Key` item on the moved issue's own changelog, with no field id,
