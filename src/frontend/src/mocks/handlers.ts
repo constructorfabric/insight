@@ -6,6 +6,7 @@ import type { MetricResultsRequest } from "@/api/metric-results-client";
 import { isPersonId } from "@/lib/metrics/entity";
 
 import { buildMetricDefinitions } from "./metric-definitions-factory";
+import { dashboardHandlers } from "./dashboard-handlers";
 import {
   buildMetricDrilldownCsv,
   buildMetricDrilldownResponse,
@@ -180,6 +181,7 @@ const mockContext = new Map<
 ]);
 
 export const handlers = [
+  ...dashboardHandlers,
   http.get("/auth/me", () =>
     HttpResponse.json({ ...MOCK_SESSION, ...mockSessionTiming() })
   ),

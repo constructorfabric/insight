@@ -119,20 +119,27 @@ repositories — one of which the token may not be able to read at all.
 
 `jira__task_links` folds the changelog. A link added or removed is one
 `issuelinks` item naming the linked issue by the key it had then, with a
-sentence ("This issue blocks PROJ-2") that is the only place its type survives;
+sentence ("This issue blocks PROJ-2", or "This work item blocks PROJ-2" in
+newer entries) that is the only place its type survives;
 a parent change is one `parent` item naming the old and the new parent by id
 and key. Every interval is therefore `evidence = event`.
 
-- **An occurrence is a relation to an issue.** "blocks PROJ-2" and "relates to
-  PROJ-2" open and close on their own. The relation is the link type's phrase
-  for this side: the snapshot states it as the type's `outward` or `inward`, the
-  changelog renders it in the sentence.
+- **An occurrence is a link of one type to an issue.** "blocks PROJ-2" and
+  "relates to PROJ-2" open and close on their own. The occurrence is keyed by
+  the link type's immutable id and this side's direction, never by its phrase:
+  an administrator can reword a type, and the changelog keeps the phrase of the
+  day it was written.
+- **Phrase to type.** The sentence's subject is dropped and its tail, the
+  phrase, is resolved in order: to the link held between the same two issues
+  that states that phrase; to the one held link no phrase states, when it is the
+  only phrase there still added; to a type the phrase has been seen to mean
+  that is already known between the two issues; to the type it means most
+  often. A phrase that resolves to none keeps the occurrence apart by itself.
 - **Mapping.** The Blocks type is `blocking` outward and `blocked_by` inward,
-  and Duplicate outward is `duplicate_of`, matched by type name through the
-  phrases the snapshots carry, then by Jira's default wording for a phrase no
-  snapshot names. Every other type — Relates, Cloners, a custom type — is
-  `connected`, and so is Duplicate inward: the vocabulary has no inverse of
-  `duplicate_of`.
+  and Duplicate outward is `duplicate_of`, by the current name of the resolved
+  type, then by Jira's default wording for a phrase resolved to no type. Every
+  other type — Relates, Cloners, a custom type — is `connected`, and so is
+  Duplicate inward: the vocabulary has no inverse of `duplicate_of`.
 - **Held before collection.** A link whose first event removed it, or that the
   snapshot holds and no event reaches, opens at the issue's creation with
   `valid_from_known = 0` — the earliest it can have existed.

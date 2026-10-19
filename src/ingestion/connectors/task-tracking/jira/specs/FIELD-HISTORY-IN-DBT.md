@@ -539,7 +539,8 @@ the element differently:
   component-shaped normalizer takes the top-level `id`, which is the link's own;
 - the **changelog** names the LINKED ISSUE by the key it had at the time in the
   id side, with a rendered sentence in the display side ("This issue duplicates
-  PROJ-1"). The link's own id appears nowhere in it.
+  PROJ-1", or "This work item duplicates PROJ-1" in newer entries). Neither the
+  link's own id nor its type's id appears anywhere in it.
 
 So identifying by the link id leaves the two sides with no id in common, and
 every issue holding a link disagrees with its own history. Measured, this was
