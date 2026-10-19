@@ -39,6 +39,7 @@ from .base import (
     weekday_multiplier,
 )
 from .insert import bulk_insert, truncate
+from .snapshots import prune_to_bronze
 
 if TYPE_CHECKING:
     import clickhouse_connect.driver.client
@@ -328,7 +329,9 @@ def seed_slack_users_details(
                     },
                 )
             )
-    return bulk_insert(client, "bronze_slack", "users_details", cols, rows)
+    inserted = bulk_insert(client, "bronze_slack", "users_details", cols, rows)
+    prune_to_bronze(client, ("staging", "slack__users_snapshot"), tenant_uuid)
+    return inserted
 
 
 def seed_zoom_meetings(

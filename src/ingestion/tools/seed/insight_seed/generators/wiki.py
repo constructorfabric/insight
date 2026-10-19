@@ -37,6 +37,7 @@ from .base import (
     weekday_multiplier,
 )
 from .insert import bulk_insert, truncate
+from .snapshots import prune_to_bronze
 
 if TYPE_CHECKING:
     import clickhouse_connect.driver.client
@@ -209,7 +210,9 @@ def seed_wiki_users(
                 },
             )
         )
-    return bulk_insert(client, "bronze_outline", "wiki_users", cols, rows)
+    inserted = bulk_insert(client, "bronze_outline", "wiki_users", cols, rows)
+    prune_to_bronze(client, ("staging", "outline__users_snapshot"), tenant_uuid)
+    return inserted
 
 
 def seed_wiki_spaces(

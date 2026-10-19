@@ -67,6 +67,8 @@ def _capture_generate(mp: pytest.MonkeyPatch, roster: list[profiles.Person]) -> 
         return len(data)
 
     mp.setattr(task, "truncate", lambda client, schema, table: None)
+
+    mp.setattr(task, "prune_to_bronze", lambda client, snapshot, tenant: None)
     mp.setattr(task, "bulk_insert", capture)
     task.generate(_NO_CLIENT, roster, _TENANT, _DAYS)
     return captured
