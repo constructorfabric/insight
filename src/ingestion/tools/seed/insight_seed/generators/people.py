@@ -35,7 +35,6 @@ from typing import TYPE_CHECKING
 from ..profiles import Person
 from .base import deterministic_uuid
 from .insert import bulk_insert, truncate
-from .snapshots import prune_to_bronze
 
 # Identity keys bindings on (source_type, source_id, account_id): one stable value must span claims and bindings.
 _BAMBOOHR_SOURCE_ID = "seed-bamboohr"
@@ -113,6 +112,11 @@ def _measured_persons(roster: Sequence[Person]) -> list[Person]:
     return [p for p in roster if p.role != "admin"]
 
 
+def employee_unique_key(tenant_uuid: str, employee_id: str) -> str:
+    """The key the BambooHR connector writes: stable per employee, whatever their attributes."""
+    return f"{tenant_uuid}-{_BAMBOOHR_SOURCE_ID}-{employee_id}"
+
+
 def seed_bamboohr_employees(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
@@ -120,6 +124,7 @@ def seed_bamboohr_employees(
 ) -> int:
     truncate(client, "bronze_bamboohr", "employees")
     cols = [
+        "unique_key",
         "id",
         "status",
         "firstName",
@@ -161,6 +166,7 @@ def seed_bamboohr_employees(
         }
         rows.append(
             (
+                employee_unique_key(tenant_uuid, record["id"]),
                 record["id"],
                 record["status"],
                 record["firstName"],
@@ -177,9 +183,7 @@ def seed_bamboohr_employees(
                 json.dumps(record),
             )
         )
-    inserted = bulk_insert(client, "bronze_bamboohr", "employees", cols, rows)
-    prune_to_bronze(client, ("staging", "bamboohr__employees_snapshot"), tenant_uuid)
-    return inserted
+    return bulk_insert(client, "bronze_bamboohr", "employees", cols, rows)
 
 
 def generate(
