@@ -117,8 +117,10 @@ def test_an_unreachable_clickhouse_is_reported_as_an_error_not_a_traceback() -> 
     "saved",
     [
         "CREATE TABLE bronze_example.items\n(`unique_key` String)\nENGINE = MergeTree ORDER BY unique_key",
-        "CREATE TABLE bronze_example.items UUID '5f1c0e3a-7b2d-4c8e-9a01-23456789abcd'\n(`unique_key` String)\n"
-        "ENGINE = MergeTree ORDER BY unique_key",
+        (
+            "CREATE TABLE bronze_example.items UUID '5f1c0e3a-7b2d-4c8e-9a01-23456789abcd'\n(`unique_key` String)\n"
+            "ENGINE = MergeTree ORDER BY unique_key"
+        ),
     ],
     ids=["without uuid", "with the dumped table's uuid"],
 )
@@ -134,4 +136,3 @@ def test_the_saved_ddl_names_the_restore_table_and_no_uuid(saved: str) -> None:
 def test_saved_ddl_that_is_not_a_create_table_is_refused() -> None:
     with pytest.raises(MigrationError):
         retarget("ATTACH TABLE bronze_example.items", Relation("bronze_example", "items"), RESTORE)
-

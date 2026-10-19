@@ -10,6 +10,7 @@ Needs a throwaway server — it drops and recreates the databases it seeds:
 
 from __future__ import annotations
 
+import gzip
 import os
 import sys
 from collections.abc import Callable
@@ -21,9 +22,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tenant_migration import apply as migration
+from tenant_migration import ddl
 from tenant_migration.__main__ import main
 from tenant_migration.clickhouse import ClickHouse, ClickHouseError
-from tenant_migration.inventory import discover, history_relations
+from tenant_migration.inventory import Relation, discover, history_relations
 from tenant_migration.keys import Tenants
 from tenant_migration.plan import Plan, survey
 from tenant_migration.prerequisites import fill_youtrack_comment_ids
@@ -413,8 +415,7 @@ TAB_AND_NEWLINE = "synthetic\titems\nsecond line"
 
 
 def _set_items_comment(ch: ClickHouse, comment: str) -> None:
-    escaped = comment.replace("\\", "\\\\").replace("'", "\\'")
-    ch.execute(f"ALTER TABLE bronze_example.items MODIFY COMMENT '{escaped}'")
+    ch.execute(ddl.set_comment(Relation("bronze_example", "items"), "", comment))
 
 
 def _finalize(ch: ClickHouse, tmp_path: Path) -> None:
@@ -459,3 +460,36 @@ def test_a_dump_whose_ddl_names_the_table_uuid_still_restores(warehouse: ClickHo
     migration.restore(warehouse, tmp_path / "dump")
 
     assert _fingerprint(warehouse) == before
+
+
+def _truncated(data: bytes) -> bytes:
+    return data[: len(data) // 2]
+
+
+def _exception_appended(data: bytes) -> bytes:
+    """What a reply that failed after its 200 leaves: the rows so far, then the error text."""
+    return gzip.compress(gzip.decompress(data) + b"Code: 241. DB::Exception: synthetic failure mid-stream")
+
+
+@dataclass(frozen=True)
+class CorruptingDump(ClickHouse):
+    corrupt: Callable[[bytes], bytes] = _truncated
+
+    def dump(self, sql: str, path: Path) -> None:
+        super().dump(sql, path)
+        path.write_bytes(self.corrupt(path.read_bytes()))
+
+
+@pytest.mark.parametrize("corrupt", [_truncated, _exception_appended], ids=["truncated", "exception appended"])
+def test_a_dump_that_does_not_load_back_stops_the_apply_before_anything_changes(
+    warehouse: ClickHouse, tmp_path: Path, corrupt: Callable[[bytes], bytes]
+) -> None:
+    before = _fingerprint(warehouse)
+    corrupting = CorruptingDump(url=warehouse.url, user=warehouse.user, password=warehouse.password, corrupt=corrupt)
+
+    with pytest.raises(migration.MigrationError, match="the dump does not load back"):
+        _apply(corrupting, _plan(warehouse), tmp_path)
+
+    assert _fingerprint(warehouse) == before
+    assert not (tmp_path / "dump" / "manifest.json").exists()
+    assert warehouse.scalar("SELECT count() FROM system.tables WHERE name LIKE '%\\_\\_tenant\\_%'") == 0

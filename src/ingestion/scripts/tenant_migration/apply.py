@@ -24,7 +24,7 @@ from pathlib import Path
 
 from tenant_migration import ddl, keys
 from tenant_migration.clickhouse import ClickHouse
-from tenant_migration.inventory import BACKUP, COPY, REJECTED, RESTORE, Relation, Table
+from tenant_migration.inventory import BACKUP, COPY, DUMP_CHECK, REJECTED, RESTORE, Relation, Table
 from tenant_migration.inventory import WORK_SUFFIXES as WORK
 from tenant_migration.plan import Plan, TablePlan
 
@@ -97,18 +97,37 @@ def dump(ch: ClickHouse, plan: Plan, directory: Path) -> None:
         rel = Relation(table.database, table.name)
         (directory / f"{table.relation}.sql").write_text(ch.execute(ddl.show_create(table.rel), fmt="TabSeparatedRaw"))
         counted = measure(ch, table)
-        ch.dump(f"SELECT * FROM {table.sql()}", directory / f"{table.relation}.native.gz")
-        entries.append(
-            {
-                "relation": table.relation,
-                "rows": counted.rows,
-                "keys": counted.keys,
-                "by_keys": _by_keys(table),
-                "comment": _comments(ch, rel).get("", ""),
-            }
-        )
+        path = directory / f"{table.relation}.native.gz"
+        ch.dump(f"SELECT * FROM {table.sql()}", path)
+        entry: dict[str, object] = {
+            "relation": table.relation,
+            "rows": counted.rows,
+            "keys": counted.keys,
+            "by_keys": _by_keys(table),
+            "comment": _comments(ch, rel).get("", ""),
+        }
+        verify_dump(ch, rel, path, entry)
+        entries.append(entry)
     manifest = {"tenant": plan.tenants.new, "old_tenant": plan.tenants.old, "tables": entries}
     (directory / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n")
+
+
+def verify_dump(ch: ClickHouse, rel: Relation, path: Path, entry: dict[str, object]) -> None:
+    """Load the dump into a scratch copy, as `restore` would, before it counts as the way back.
+
+    SAFETY: a streamed reply can end in an exception after a 200, leaving a file no restore can load.
+    """
+    ch.execute(ddl.drop(rel, DUMP_CHECK))
+    try:
+        ch.execute(ddl.create_like(rel, DUMP_CHECK))
+        ch.load(rel.sql(DUMP_CHECK), path)
+        loaded = _matches_dump(ch, rel, DUMP_CHECK, entry)
+    except Exception as error:
+        raise MigrationError(f"{rel}: the dump does not load back, nothing changed — {error}") from error
+    finally:
+        ch.execute(ddl.drop(rel, DUMP_CHECK))
+    if not loaded:
+        raise MigrationError(f"{rel}: the dump does not load back to what was counted, nothing changed")
 
 
 def migrate_table(ch: ClickHouse, t: TablePlan, tenants: keys.Tenants) -> Measure:
