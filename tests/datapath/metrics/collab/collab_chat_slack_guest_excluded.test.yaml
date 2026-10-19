@@ -1,0 +1,32 @@
+spec_version: 1
+description: >
+  Metric: collab.messages_sent — Slack guest accounts never reach chat metrics.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: Slack member analytics, one row per account per day, carrying the
+      account's guest flag and activity-derived flags (active, billable)
+    • silver: a proven guest is dropped; an unknown guest flag keeps the row;
+      the activity-derived flags never filter
+    • gold:   messages sent = the day's posted-message count, summed over the period
+
+  Cases, each with one Slack row dated 2026-12-25:
+    • alice — member, 3 messages → kept, 3 (control)
+    • bob   — member, active and billable flags false, 5 messages → kept, 5
+    • frank — guest, not billable, 99 messages → excluded
+    • ivan  — billable guest, 44 messages → excluded
+    • judy  — guest flag unknown, 55 messages → kept, 55
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - {$ref: ../templates/people.yaml#/templates/bamboohr_employee, id: e101, unique_key: bamboohr-test-e101, firstName: Frank, lastName: Guest, displayName: Frank Guest, workEmail: frank@example.com}
+    - {$ref: ../templates/people.yaml#/templates/bamboohr_employee, id: e103, unique_key: bamboohr-test-e103, firstName: Ivan, lastName: Partner, displayName: Ivan Partner, workEmail: ivan@example.com}
+    - {$ref: ../templates/people.yaml#/templates/bamboohr_employee, id: e104, unique_key: bamboohr-test-e104, firstName: Judy, lastName: Unknown, displayName: Judy Unknown, workEmail: judy@example.com}
+
+  bronze_slack.users_details:
+    - {$ref: ../templates/slack_chat.yaml#/templates/slack_user_day, user_id: U001, email_address: alice@example.com, date: "2026-12-25", unique_key: sl-alice-20261225, messages_posted_count: 3}
+    - {$ref: ../templates/slack_chat.yaml#/templates/slack_user_day, user_id: U002, email_address: bob@example.com,   date: "2026-12-25", unique_key: sl-bob-20261225,   messages_posted_count: 5,  is_active: false, is_billable_seat: false}
+    - {$ref: ../templates/slack_chat.yaml#/templates/slack_user_day, user_id: U003, email_address: frank@example.com, date: "2026-12-25", unique_key: sl-frank-20261225, messages_posted_count: 99, is_guest: true, is_billable_seat: false}
+    - {$ref: ../templates/slack_chat.yaml#/templates/slack_user_day, user_id: U005, email_address: ivan@example.com,  date: "2026-12-25", unique_key: sl-ivan-20261225,  messages_posted_count: 44, is_guest: true, is_billable_seat: true}
+    - {$ref: ../templates/slack_chat.yaml#/templates/slack_user_day, user_id: U006, email_address: judy@example.com,  date: "2026-12-25", unique_key: sl-judy-20261225,  messages_posted_count: 55, is_guest: null}

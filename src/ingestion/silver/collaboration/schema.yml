@@ -52,6 +52,13 @@ models:
       telling one-to-one from group chats, and Slack's residual mixes DMs
       and MPIMs, so `direct_and_group_messages` is comparable across the
       two; Zulip leaves it NULL.
+
+      **Population:** only accounts the source counts as members. Each
+      feeder drops the accounts its source's account-status signal proves
+      are out of scope (M365: unlicensed, `isLicensed`; Slack: guests,
+      `is_guest`), so the class carries no status column and gold needs no
+      status filter. Guest or offboarded activity belongs in a separate
+      model over bronze.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
