@@ -126,17 +126,19 @@ def test_two_builds_at_the_same_anchor_agree() -> None:
     assert task_totals(roster, _DAYS, _ANCHOR) == task_totals(roster, _DAYS, _ANCHOR)
 
 
-def test_golden_totals_equal_the_rows_the_generator_writes(
+def test_golden_totals_equal_the_bronze_the_generator_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Counted from the emitted rows, not from the shared plan.
+    """Counted from the emitted bronze, not from the shared plan.
 
     The derivation and the emitter both call `plan_issues`; what this pins is
     the remaining gap — that the emitter turns every planned close into exactly
-    one changelog row and attributes it to the planning person.
+    one changelog entry, carrying the issue's own type and assignee, so the
+    journal dbt derives from it reproduces the oracle. The rest of that chain
+    is proven against a warehouse, not here.
     """
     monkeypatch.setattr(base, "_anchor_cache", _ANCHOR)
-    captured: dict[str, object] = {}
+    captured: dict[str, list[dict[str, object]]] = {}
 
     def _capture(
         client: object,
@@ -145,35 +147,28 @@ def test_golden_totals_equal_the_rows_the_generator_writes(
         cols: list[str],
         rows: list[tuple[object, ...]],
     ) -> int:
-        captured["cols"] = cols
-        captured["rows"] = rows
+        captured[f"{schema}.{table}"] = [dict(zip(cols, row, strict=True)) for row in rows]
         return len(rows)
 
     monkeypatch.setattr(task, "truncate", lambda *args: None)
     monkeypatch.setattr(task, "bulk_insert", _capture)
 
     roster = profiles.build_seeded_roster(_EMAIL, config.DEFAULT_ORG_HEADCOUNT)
-    task.seed_task_field_history(None, roster, _TENANT, _DAYS)  # type: ignore[arg-type]
+    issues = task.planned_issues(roster, _DAYS)
+    task.seed_jira_issues(None, issues, _TENANT)  # type: ignore[arg-type]
+    task.seed_jira_issue_history(None, issues, _TENANT)  # type: ignore[arg-type]
+    task.seed_jira_user(None, roster, _TENANT)  # type: ignore[arg-type]
 
-    cols = captured["cols"]
-    assert isinstance(cols, list)
-    kind = cols.index("event_kind")
-    field = cols.index("field_id")
-    issue = cols.index("issue_id")
-    author = cols.index("author_id")
-    display = cols.index("value_displays")
-
+    assignee_email = {row["account_id"]: row["email"] for row in captured["bronze_jira.jira_user"]}
     issue_type: dict[str, str] = {}
     issue_author: dict[str, str] = {}
-    closed: set[str] = set()
-    rows = captured["rows"]
-    assert isinstance(rows, list) and rows
-    for row in rows:
-        if row[kind] == "synthetic_initial" and row[field] == "issuetype":
-            issue_type[row[issue]] = row[display][0]
-            issue_author[row[issue]] = row[author]
-        elif row[kind] == "changelog" and row[field] == "status":
-            closed.add(row[issue])
+    for row in captured["bronze_jira.jira_issue"]:
+        fields = json.loads(str(row["custom_fields_json"]))
+        issue_type[str(row["jira_id"])] = fields["issuetype"]["name"]
+        issue_author[str(row["jira_id"])] = assignee_email[row["assignee_id"]]
+
+    closed = {str(row["jira_id"]) for row in captured["bronze_jira.jira_issue_history"]}
+    assert closed, "no issue was closed, so this proves nothing"
 
     observed: dict[str, dict[str, int]] = {}
     for issue_id in closed:

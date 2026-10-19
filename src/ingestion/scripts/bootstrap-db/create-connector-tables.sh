@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Create one connector's bronze tables on a ClickHouse this host can reach, by
+# handing its discovered catalogue to destination-clickhouse — the one creator
+# of that layer.
+#
+# The catalogue itself is built by lib/connector-catalog.sh, which needs no
+# ClickHouse; a cluster with no Docker applies the same catalogue through a Job
+# instead (tools/seed/seed-stand.sh).
 set -euo pipefail
 
 CONNECTOR_DIR="${1:?usage: create-connector-tables.sh <connector-dir> <config.json>}"
@@ -21,110 +28,12 @@ if [[ -n "${DOCKER_NETWORK:-}" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONNECTOR_DIR="$(cd "${CONNECTOR_DIR}" && pwd)"
-DESCRIPTOR="${CONNECTOR_DIR}/descriptor.yaml"
+source "${SCRIPT_DIR}/lib/connector-catalog.sh"
 
-NAME="$(yq -r '.name' "${DESCRIPTOR}")"
-CONNECTOR_TYPE="$(yq -r '.type // "nocode"' "${DESCRIPTOR}")"
-NAMESPACE="$(yq -r '.connection.namespace' "${DESCRIPTOR}")"
-
-# INVARIANT: a directory handed to `docker -v` is resolved by the DAEMON, not by
-# the client, so it must live where both can see it. RUNNER_TEMP is that place
-# under Actions (including a docker-in-docker runner, where the client's own
-# /tmp is private to it); /tmp stays the local fallback. Spelled as a template
-# rather than `-p`, which not every mktemp implementation carries.
-WORKDIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/connector-tables.XXXXXXXX")"
+WORKDIR="$(allocate_connector_workdir)"
 trap 'rm -rf "${WORKDIR}"' EXIT
-# The images run as their own non-root user, while `mktemp -d` is 0700 owned by
-# the invoking user — so on a Linux host the bind-mounted /work is unreadable
-# inside the container and every connector dies with "Permission denied:
-# '/work/config.json'". macOS Docker Desktop hides this (its file sharing
-# ignores uid and mode), so the failure only appears on Linux, e.g. in the
-# connectors-ddl CI lane.
-#
-# The fix differs per image class:
-#   * SOURCE images (nocode runtime and every CDK connector) tolerate an
-#     arbitrary uid, so they run as the invoking user (--user + HOME=/tmp for
-#     the CDK cache paths) and config.json — the file holding the connector
-#     credentials — stays 0600 inside a 0755 directory.
-#   * DESTINATION-clickhouse does NOT start under a foreign uid (its entrypoint
-#     sources /airbyte/base.sh, readable only by its baked-in user), so its two
-#     inputs are made world-readable below instead. They carry no connector
-#     secrets — only the ClickHouse password for a throwaway localhost instance.
-chmod 0755 "${WORKDIR}"
-cp "${CONFIG_JSON}" "${WORKDIR}/config.json"
-chmod 0600 "${WORKDIR}/config.json"
-RUN_AS="$(id -u):$(id -g)"
 
-echo "[${NAME}] discover"
-if [[ "${CONNECTOR_TYPE}" == "cdk" ]]; then
-  # Always built from the working tree, never pulled from images.cdk.image.
-  # bump-descriptors pins that ref only after a branch lands, so the pin
-  # describes the PREVIOUS connector: a branch that adds a stream field would
-  # discover a Bronze table without it, and the snapshot this lane dumps has to
-  # be a function of the tree it is dumped from. Building here also keeps the
-  # lane credential-less.
-  DOCKERFILE="$(yq -r '.images.cdk.dockerfile' "${DESCRIPTOR}")"
-  CONTEXT="$(yq -r '.images.cdk.context' "${DESCRIPTOR}")"
-  SOURCE_IMAGE="insight-connectors-ddl/${NAME}:local"
-  echo "[${NAME}] building ${SOURCE_IMAGE} from ${DOCKERFILE}"
-  docker build --quiet -t "${SOURCE_IMAGE}" \
-    -f "${CONNECTOR_DIR}/${DOCKERFILE}" "${CONNECTOR_DIR}/${CONTEXT}" >&2
-  docker run --rm --user "${RUN_AS}" -e HOME=/tmp -v "${WORKDIR}:/work:ro" "${SOURCE_IMAGE}" \
-    discover --config /work/config.json \
-    > "${WORKDIR}/discover.jsonl" \
-    || { tail -n 3 "${WORKDIR}/discover.jsonl" >&2; exit 1; }
-else
-  : "${SOURCE_DECLARATIVE_MANIFEST_IMAGE:?SOURCE_DECLARATIVE_MANIFEST_IMAGE must be set}"
-  docker run --rm --user "${RUN_AS}" -e HOME=/tmp -v "${WORKDIR}:/work:ro" -v "${CONNECTOR_DIR}:/manifest:ro" \
-    "${SOURCE_DECLARATIVE_MANIFEST_IMAGE}" \
-    discover --config /work/config.json --manifest-path /manifest/connector.yaml \
-    > "${WORKDIR}/discover.jsonl" \
-    || { tail -n 3 "${WORKDIR}/discover.jsonl" >&2; exit 1; }
-fi
-
-jq -Rc 'fromjson? | select(.type == "CATALOG") | .catalog' "${WORKDIR}/discover.jsonl" \
-  | tail -n 1 > "${WORKDIR}/catalog.json"
-[[ -s "${WORKDIR}/catalog.json" ]] || { echo "[${NAME}] no CATALOG message in discover output" >&2; exit 1; }
-
-# unique_key is the dedup key of every bronze table; a stream without it is
-# an authoring bug (missing identity stamp) and must fail here, not land as an
-# ever-duplicating table. Same contract as reconcile's normalize_catalog.py.
-KEYLESS="$(jq -r '[.streams[] | select((.json_schema.properties // {}) | has("unique_key") | not) | .name] | join(", ")' "${WORKDIR}/catalog.json")"
-if [[ -n "${KEYLESS}" ]]; then
-  echo "[${NAME}] streams without a unique_key schema property: ${KEYLESS} — every stream must carry the identity stamp (tenant_id, source_id, unique_key)" >&2
-  exit 1
-fi
-
-# append_dedup + primary_key [["unique_key"]] mirrors normalize_catalog.py:
-# the destination creates the table as ReplacingMergeTree ORDER BY unique_key
-# itself, so the dumped snapshot is byte-identical to what a real sync creates.
-jq --arg ns "${NAMESPACE}" '{streams: [.streams[] | {
-    stream: {
-      name: .name,
-      namespace: $ns,
-      json_schema: .json_schema,
-      supported_sync_modes: (.supported_sync_modes // ["full_refresh"])
-    },
-    sync_mode: "full_refresh",
-    destination_sync_mode: "append_dedup",
-    primary_key: [["unique_key"]],
-    generation_id: 1,
-    minimum_generation_id: 0,
-    sync_id: 1
-  }]}' "${WORKDIR}/catalog.json" > "${WORKDIR}/configured_catalog.json"
-
-jq -c --arg ns "${NAMESPACE}" '.streams[] | {
-    type: "TRACE",
-    trace: {
-      type: "STREAM_STATUS",
-      emitted_at: 1,
-      stream_status: {
-        stream_descriptor: {name: .name, namespace: $ns},
-        status: "COMPLETE"
-      }
-    }
-  }' "${WORKDIR}/catalog.json" > "${WORKDIR}/traces.jsonl"
+NAMESPACE="$(build_configured_catalog "${CONNECTOR_DIR}" "${CONFIG_JSON}" "${WORKDIR}")"
 
 jq -n '{
     host: env.CLICKHOUSE_HOST,
@@ -136,9 +45,11 @@ jq -n '{
     enable_json: false
   }' > "${WORKDIR}/destination_config.json"
 
-echo "[${NAME}] create tables in ${NAMESPACE}"
-# World-readable is deliberate: destination-clickhouse cannot run under our uid
-# (see the WORKDIR comment), and these two files hold no connector secrets.
+echo "create tables in ${NAMESPACE}"
+# World-readable is deliberate: destination-clickhouse does NOT start under a
+# foreign uid (its entrypoint sources /airbyte/base.sh, readable only by its
+# baked-in user), so its two inputs are made readable to it instead. They carry
+# no connector secrets — only the ClickHouse password.
 chmod 0644 "${WORKDIR}/destination_config.json" "${WORKDIR}/configured_catalog.json"
 docker run --rm -i ${DESTINATION_NETWORK[@]+"${DESTINATION_NETWORK[@]}"} \
   -v "${WORKDIR}:/work:ro" "${DESTINATION_CLICKHOUSE_IMAGE}" \
@@ -146,4 +57,3 @@ docker run --rm -i ${DESTINATION_NETWORK[@]+"${DESTINATION_NETWORK[@]}"} \
   < "${WORKDIR}/traces.jsonl" \
   > "${WORKDIR}/write.jsonl" \
   || { tail -n 5 "${WORKDIR}/write.jsonl" >&2; exit 1; }
-

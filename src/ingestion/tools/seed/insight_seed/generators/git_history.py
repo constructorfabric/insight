@@ -1,6 +1,6 @@
 """The commit and pull-request skeleton every git-derived generator reads.
 
-Owns the RNG draws for both. `git.py` shapes silver rows from these values and
+Owns the RNG draws for both. `git.py` shapes GitHub's bronze from these values and
 `ci.py` anchors CI runs to them, so a run's head SHA is a hash git.py wrote.
 """
 

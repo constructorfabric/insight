@@ -26,6 +26,10 @@ PARENT_FIELD = field(PARENT, name="Parent")
 BLOCKS = {"id": "10000", "name": "Blocks", "outward": "blocks", "inward": "is blocked by"}
 DUPLICATE = {"id": "10001", "name": "Duplicate", "outward": "duplicates", "inward": "is duplicated by"}
 CAUSES = {"id": "10900", "name": "Causes", "outward": "causes", "inward": "is caused by"}
+DEPENDENCE = {"id": "10610", "name": "Dependence", "outward": "blocks (Dependence)", "inward": "depends on (blocks)"}
+
+ISSUE_WORDING = "This issue"
+WORK_ITEM_WORDING = "This work item"
 
 CREATED = "2026-01-05 09:00:00.000"
 DAY_6 = "2026-01-06 10:00:00.000"
@@ -41,12 +45,12 @@ def _inward(link_id: str, link_type: dict[str, str], issue_id: str, key: str) ->
     return {"id": link_id, "type": link_type, "inwardIssue": {"id": issue_id, "key": key}}
 
 
-def _added(key: str, relation: str) -> dict[str, Any]:
-    return item(LINKS, to=key, to_str=f"This issue {relation} {key}")
+def _added(key: str, relation: str, wording: str = ISSUE_WORDING) -> dict[str, Any]:
+    return item(LINKS, to=key, to_str=f"{wording} {relation} {key}")
 
 
-def _removed(key: str, relation: str) -> dict[str, Any]:
-    return item(LINKS, frm=key, frm_str=f"This issue {relation} {key}")
+def _removed(key: str, relation: str, wording: str = ISSUE_WORDING) -> dict[str, Any]:
+    return item(LINKS, frm=key, frm_str=f"{wording} {relation} {key}")
 
 
 def _intervals(rows: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
@@ -242,4 +246,99 @@ def test_a_key_that_resolves_to_no_id_leaves_the_target_id_empty(scenario: Scena
     assert _intervals(rows) == [("1001", "connected", None, "EXT-4", DAY_6, 1, DAY_7, "101")]
     assert rows[0]["is_cross_repository"] is True
     assert scenario.changelog_states(LINKS, issue="TST-1") == [["EXT-4"], []]
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[LINKS_FIELD],
+    issues=[
+        issue("TST-1", jira_id="1001", fields={LINKS: [_outward("1", BLOCKS, "1002", "TST-2")]}),
+        issue("TST-2", jira_id="1002"),
+    ],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_added("TST-2", "blocks")], jira_id="1001"),
+        event("TST-1", 102, "2026-01-07T10:00:00", [_removed("TST-2", "blocks", WORK_ITEM_WORDING)], jira_id="1001"),
+        event("TST-1", 103, "2026-01-08T10:00:00", [_added("TST-2", "blocks", WORK_ITEM_WORDING)], jira_id="1001"),
+    ],
+)
+def test_a_link_reads_the_same_whichever_subject_the_sentence_names(scenario: Scenario) -> None:
+    """Jira opens the sentence with "This issue" or "This work item"; the
+    subject says nothing about the link, so one link stays one occurrence."""
+    assert _intervals(scenario.links()) == [
+        ("1001", "blocking", "1002", "TST-2", DAY_6, 1, DAY_7, "101"),
+        ("1001", "blocking", "1002", "TST-2", DAY_8, 1, None, "103"),
+    ]
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[LINKS_FIELD],
+    issues=[
+        issue("TST-1", jira_id="1001", fields={LINKS: [_outward("1", DEPENDENCE, "1002", "TST-2")]}),
+        issue("TST-2", jira_id="1002", fields={LINKS: [_inward("1", DEPENDENCE, "1001", "TST-1")]}),
+        issue("TST-3", jira_id="1003", fields={LINKS: [_outward("2", BLOCKS, "1004", "TST-4")]}),
+        issue("TST-4", jira_id="1004"),
+    ],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_added("TST-2", "blocks")], jira_id="1001"),
+        event("TST-2", 201, "2026-01-06T10:00:00", [_added("TST-1", "depends on")], jira_id="1002"),
+        event("TST-3", 301, "2026-01-06T10:00:00", [_added("TST-4", "blocks")], jira_id="1003"),
+    ],
+)
+def test_a_reworded_link_type_is_the_type_the_link_holds_not_the_phrase_it_had(scenario: Scenario) -> None:
+    """The changelog keeps the phrase of its day. A Dependence link added while
+    the type still read "blocks" is the Dependence link the snapshot holds
+    between the same two issues, not a Blocks link that now owns that phrase."""
+    assert _intervals(scenario.links()) == [
+        ("1001", "connected", "1002", "TST-2", DAY_6, 1, None, "101"),
+        ("1002", "connected", "1001", "TST-1", DAY_6, 1, None, "201"),
+        ("1003", "blocking", "1004", "TST-4", DAY_6, 1, None, "301"),
+    ]
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[LINKS_FIELD],
+    issues=[
+        issue("TST-1", jira_id="1001", fields={LINKS: [_outward("1", BLOCKS, "1002", "TST-2")]}),
+        issue("TST-2", jira_id="1002"),
+        issue("TST-5", jira_id="1005"),
+        issue("TST-6", jira_id="1006"),
+    ],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_added("TST-2", "must finish before")], jira_id="1001"),
+        event("TST-5", 501, "2026-01-06T10:00:00", [_added("TST-6", "must finish before")], jira_id="1005"),
+        event("TST-5", 502, "2026-01-07T10:00:00", [_removed("TST-6", "blocks", WORK_ITEM_WORDING)], jira_id="1005"),
+    ],
+)
+def test_a_retired_phrase_means_the_type_it_was_seen_on_for_a_link_no_longer_held(scenario: Scenario) -> None:
+    """No snapshot holds TST-5's link any more. Its old phrase was seen on a
+    Blocks link that is still held, so the addition in the old phrase and the
+    removal in the new one are the same Blocks link."""
+    assert _intervals(scenario.links()) == [
+        ("1001", "blocking", "1002", "TST-2", DAY_6, 1, None, "101"),
+        ("1005", "blocking", "1006", "TST-6", DAY_6, 1, DAY_7, "501"),
+    ]
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[LINKS_FIELD],
+    issues=[
+        issue("TST-1", jira_id="1001", fields={LINKS: [_outward("1", BLOCKS, "1002", "TST-2")]}),
+        issue("TST-2", jira_id="1002"),
+    ],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_added("TST-2", "must finish before")], jira_id="1001"),
+        event("TST-1", 102, "2026-01-07T10:00:00", [_removed("TST-2", "blocks")], jira_id="1001"),
+        event("TST-1", 103, "2026-01-08T10:00:00", [_added("TST-2", "blocks")], jira_id="1001"),
+    ],
+)
+def test_a_link_re_added_after_its_type_was_reworded_is_one_occurrence(scenario: Scenario) -> None:
+    """The new phrase states the held link but first removes it, so the link
+    was there before under another phrase: the old phrase still added is it."""
+    assert _intervals(scenario.links()) == [
+        ("1001", "blocking", "1002", "TST-2", DAY_6, 1, DAY_7, "101"),
+        ("1001", "blocking", "1002", "TST-2", DAY_8, 1, None, "103"),
+    ]
     assert scenario.round_trip_holds()

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from conftest import Scenario
+from conftest import LINKS_SELECTOR, Scenario
 from helpers import OTHER_TENANT, SOURCE_ID, TENANT_ID, as_other_tenant, event, field, issue, item
 
 POINTS = "customfield_10001"
@@ -19,6 +19,10 @@ LABEL = "customfield_10002"
 CHOICE = "customfield_10005"
 NOTES = "customfield_10010"
 STATUS = "status"
+LINKS = "issuelinks"
+
+BLOCKS = {"id": "10000", "name": "Blocks", "outward": "blocks", "inward": "is blocked by"}
+GATES = {"id": "10500", "name": "Example Gate", "outward": "blocks", "inward": "is gated by"}
 
 SAME_INSTANT = "2026-01-06T10:00:00"
 STATUS_NAMES = {"1": "Open", "3": "In Progress", "6": "Closed"}
@@ -257,3 +261,61 @@ def test_long_text_bodies_come_only_from_the_tenant_that_classifies_the_field_as
     ]
 
     assert bodies == [("adf_json", NOTES_BODY), ("rendered_text", "mine before"), ("rendered_text", "mine now")]
+
+
+def _holds(link_id: str, link_type: dict[str, str], issue_id: str, key: str) -> dict[str, Any]:
+    return {LINKS: [{"id": link_id, "type": link_type, "outwardIssue": {"id": issue_id, "key": key}}]}
+
+
+def _adds(key: str, changelog_id: int, at: str, target: str, jira_id: str) -> dict[str, Any]:
+    return event(key, changelog_id, at, [item(LINKS, to=target, to_str=f"This issue blocks {target}")], jira_id=jira_id)
+
+
+def test_each_tenant_resolves_its_link_occurrences_within_the_tenant(scenario: Scenario) -> None:
+    """Both tenants share issue ids, keys and changelog ids, and log the same
+    phrase. In the first it means type 10000; in the other it means type
+    10500, held twice, so a phrase resolved across tenants would take 10500 for
+    the first tenant's unheld TST-3 link, and a key resolved across tenants
+    would count each operation twice."""
+    links = [field(LINKS, name="Linked Issues", schema_type="array", schema_items="issuelinks")]
+    scenario.seed(
+        fields=links,
+        issues=[
+            issue("TST-1", jira_id="1001", fields=_holds("1", BLOCKS, "1002", "TST-2")),
+            issue("TST-2", jira_id="1002"),
+            issue("TST-3", jira_id="1003"),
+        ],
+        events=[
+            _adds("TST-1", 101, "2026-01-06T10:00:00", "TST-2", "1001"),
+            _adds("TST-1", 102, "2026-01-07T10:00:00", "TST-3", "1001"),
+        ],
+    )
+    scenario.seed(
+        fields=as_other_tenant(links),
+        issues=as_other_tenant(
+            [
+                issue("TST-1", jira_id="1001", fields=_holds("1", GATES, "1002", "TST-2")),
+                issue("TST-2", jira_id="1002"),
+                issue("TST-4", jira_id="1004", fields=_holds("2", GATES, "1002", "TST-2")),
+            ]
+        ),
+        events=as_other_tenant([_adds("TST-1", 101, "2026-01-06T10:00:00", "TST-2", "1001")]),
+    )
+    scenario.build(LINKS_SELECTOR)
+
+    rows = _rows(
+        scenario,
+        "SELECT tenant_id, issue_id, occurrence_key, target_ident, length(ops) AS op_count, held_before"
+        " FROM staging.jira__link_occurrences FINAL"
+        " WHERE insight_source_id = {src:String} ORDER BY tenant_id, issue_id, target_ident",
+    )
+
+    assert [
+        (r["tenant_id"], r["issue_id"], r["occurrence_key"], r["target_ident"], r["op_count"], r["held_before"])
+        for r in rows
+    ] == [
+        (TENANT_ID, "1001", "type:10000:outward", "1002", 1, False),
+        (TENANT_ID, "1001", "type:10000:outward", "1003", 1, False),
+        (OTHER_TENANT, "1001", "type:10500:outward", "1002", 1, False),
+        (OTHER_TENANT, "1004", "type:10500:outward", "1002", 0, True),
+    ]

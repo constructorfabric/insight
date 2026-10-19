@@ -25,13 +25,15 @@ from typing import Any
 import pytest
 
 from insight_seed import profiles
-from insight_seed.generators import base, git
+from insight_seed.generators import base, git, git_history
+from insight_seed.generators.git_history import build_history
 
 _TENANT = "00000000-df51-5b42-9538-d2b56b7ee953"
 _ANCHOR = _dt.date(2026, 8, 11)
 _DAYS = 60
 
-Rows = dict[str, list[tuple[Any, ...]]]
+Table = tuple[list[str], list[tuple[Any, ...]]]
+Rows = dict[str, Table]
 
 
 @pytest.fixture(autouse=True)
@@ -46,7 +48,7 @@ def emitted(monkeypatch: pytest.MonkeyPatch) -> Rows:
     def capture(
         client: Any, schema: str, table: str, cols: list[str], rows: list[tuple[Any, ...]]
     ) -> int:
-        captured[f"{schema}.{table}"] = list(rows)
+        captured[f"{schema}.{table}"] = (list(cols), list(rows))
         return len(rows)
 
     monkeypatch.setattr(git, "truncate", lambda client, schema, table: None)
@@ -80,37 +82,52 @@ def test_the_fixture_window_reaches_the_zero_draw_case(roster: list[profiles.Per
     )
 
 
+def _column(table: Table, name: str) -> list[Any]:
+    cols, rows = table
+    return [row[cols.index(name)] for row in rows]
+
+
 def test_every_eligible_person_day_emits_at_least_one_commit(
     emitted: Rows, roster: list[profiles.Person]
 ) -> None:
-    git.seed_class_git_commits(None, roster, _TENANT, _DAYS)
+    """A person-day with no commit is a hole in every git metric for that day."""
+    history = build_history(roster, _DAYS)
 
-    person_days = {(row[6], row[7]) for row in emitted["silver.class_git_commits"]}
+    git.seed_commits(None, history, _TENANT)
+
+    table = emitted["bronze_github.commits"]
+    authored = set(
+        zip(
+            _column(table, "author_email"),
+            [stamp[:10] for stamp in _column(table, "committed_date")],
+            strict=True,
+        )
+    )
     expected = {
-        (person.email, day) for person in git._eligible(roster) for day in base.days_window(_DAYS)
+        (person.email, day.isoformat())
+        for person in git_history.eligible(roster)
+        for day in base.days_window(_DAYS)
     }
-    assert person_days == expected
+    assert authored == expected
 
 
 def test_every_pr_gets_link_rows_and_links_point_at_emitted_commits(
     emitted: Rows, roster: list[profiles.Person]
 ) -> None:
-    git.seed_class_git_commits(None, roster, _TENANT, _DAYS)
-    git.seed_class_git_pull_requests(None, roster, _TENANT, _DAYS)
-    git.seed_class_git_pull_requests_commits(None, roster, _TENANT, _DAYS)
+    history = build_history(roster, _DAYS)
 
-    commit_hashes = {row[1] for row in emitted["silver.class_git_commits"]}
-    pr_ids = {row[1] for row in emitted["silver.class_git_pull_requests"]}
-    links = emitted["silver.class_git_pull_requests_commits"]
-    linked_prs = {row[4] for row in links}
-    linked_hashes = {row[5] for row in links}
+    git.seed_commits(None, history, _TENANT)
+    git.seed_pull_requests(None, history, _TENANT)
 
-    orphaned_prs = pr_ids - linked_prs
-    assert not orphaned_prs, (
-        f"PRs without link rows vanish from gold's pr_commit_emails join: {orphaned_prs}"
+    commit_shas = set(_column(emitted["bronze_github.commits"], "sha"))
+    pr_numbers = set(_column(emitted["bronze_github.pull_requests"], "number"))
+    links = emitted["bronze_github.pull_request_commits"]
+    linked_prs = set(_column(links, "pull_number"))
+    linked_shas = set(_column(links, "sha"))
+
+    orphaned = pr_numbers - linked_prs
+    assert not orphaned, (
+        f"requests without link rows vanish from gold's pr_commit_emails join: {orphaned}"
     )
-
-    dangling_links = linked_hashes - commit_hashes
-    assert not dangling_links, (
-        f"link rows must point at commits class_git_commits emitted: {dangling_links}"
-    )
+    dangling = linked_shas - commit_shas
+    assert not dangling, f"link rows must point at commits the connector emitted: {dangling}"
