@@ -151,6 +151,8 @@ def test_golden_totals_equal_the_bronze_the_generator_writes(
         return len(rows)
 
     monkeypatch.setattr(task, "truncate", lambda *args: None)
+
+    monkeypatch.setattr(task, "prune_to_bronze", lambda client, snapshot, tenant: None)
     monkeypatch.setattr(task, "bulk_insert", _capture)
 
     roster = profiles.build_seeded_roster(_EMAIL, config.DEFAULT_ORG_HEADCOUNT)
