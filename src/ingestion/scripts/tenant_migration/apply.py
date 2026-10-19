@@ -31,7 +31,7 @@ from tenant_migration.plan import Plan, TablePlan
 MIGRATED = "tenant_migration: rewritten copy"
 RESTORED = "tenant_migration: loaded from dump"
 MANIFEST = "manifest.json"
-CREATE_TABLE = re.compile(r"^CREATE TABLE \S+")
+CREATE_TABLE = re.compile(r"^CREATE TABLE \S+(?: UUID '[0-9A-Fa-f-]+')?")
 
 
 class MigrationError(RuntimeError):
@@ -219,7 +219,8 @@ def finalize(ch: ClickHouse) -> list[str]:
     return dropped
 
 
-def _retarget(ddl: str, rel: Relation, suffix: str) -> str:
+def retarget(ddl: str, rel: Relation, suffix: str) -> str:
+    """The saved DDL naming the work table; an explicit UUID is dropped, as it is the dumped table's."""
     if not CREATE_TABLE.match(ddl):
         raise MigrationError(f"{rel}: the saved DDL does not start with CREATE TABLE")
     return CREATE_TABLE.sub(f"CREATE TABLE {rel.sql(suffix)}", ddl, count=1)
@@ -240,7 +241,7 @@ def restore_relation(ch: ClickHouse, dump_dir: Path, entry: dict[str, object]) -
         if REJECTED in comments:
             raise MigrationError(f"{rel}{REJECTED} exists — finalize before restoring")
         ch.execute(ddl.drop(rel, RESTORE))
-        ch.execute(_retarget((dump_dir / f"{rel}.sql").read_text(), rel, RESTORE))
+        ch.execute(retarget((dump_dir / f"{rel}.sql").read_text(), rel, RESTORE))
         _set_comment(ch, rel, RESTORE, RESTORED)
         ch.load(rel.sql(RESTORE), dump_dir / f"{rel}.native.gz")
         if not _matches_dump(ch, rel, RESTORE, entry):

@@ -436,3 +436,26 @@ def test_a_comment_with_a_tab_and_a_newline_comes_back_whole(
     settle(warehouse, tmp_path)
 
     assert _comment(warehouse, "bronze_example", "items") == TAB_AND_NEWLINE
+
+
+@dataclass(frozen=True)
+class WithTableUuids(ClickHouse):
+    """ClickHouse whose SHOW CREATE names each table's UUID, as a server-wide profile setting would."""
+
+    def execute(self, sql: str, *, fmt: str | None = None) -> str:
+        params = {"show_table_uuid_in_table_create_query_if_not_nil": "1"}
+        if fmt:
+            params["default_format"] = fmt
+        with self._request(sql.encode("utf-8"), params=params) as response:
+            return str(response.read().decode("utf-8"))
+
+
+def test_a_dump_whose_ddl_names_the_table_uuid_still_restores(warehouse: ClickHouse, tmp_path: Path) -> None:
+    before = _fingerprint(warehouse)
+    with_uuids = WithTableUuids(url=warehouse.url, user=warehouse.user, password=warehouse.password)
+    _apply(with_uuids, _plan(warehouse), tmp_path)
+    assert " UUID '" in (tmp_path / "dump" / "bronze_example.items.sql").read_text()
+
+    migration.restore(warehouse, tmp_path / "dump")
+
+    assert _fingerprint(warehouse) == before

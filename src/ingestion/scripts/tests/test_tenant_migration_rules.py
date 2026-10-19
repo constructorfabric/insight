@@ -9,8 +9,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tenant_migration.apply import MigrationError, retarget
 from tenant_migration.clickhouse import ClickHouse, ClickHouseError
-from tenant_migration.inventory import Table, Unfit, classify
+from tenant_migration.inventory import RESTORE, Relation, Table, Unfit, classify
 from tenant_migration.keys import Columns, TenantError, Tenants
 from tenant_migration.plan import TablePlan, refusals
 
@@ -110,3 +111,27 @@ def test_an_unreachable_clickhouse_is_reported_as_an_error_not_a_traceback() -> 
 
     with pytest.raises(ClickHouseError, match="unreachable"):
         unreachable.execute("SELECT 1")
+
+
+@pytest.mark.parametrize(
+    "saved",
+    [
+        "CREATE TABLE bronze_example.items\n(`unique_key` String)\nENGINE = MergeTree ORDER BY unique_key",
+        "CREATE TABLE bronze_example.items UUID '5f1c0e3a-7b2d-4c8e-9a01-23456789abcd'\n(`unique_key` String)\n"
+        "ENGINE = MergeTree ORDER BY unique_key",
+    ],
+    ids=["without uuid", "with the dumped table's uuid"],
+)
+def test_the_saved_ddl_names_the_restore_table_and_no_uuid(saved: str) -> None:
+    rel = Relation("bronze_example", "items")
+
+    created = retarget(saved, rel, RESTORE)
+
+    assert created.startswith(f"CREATE TABLE {rel.sql(RESTORE)}\n(`unique_key` String)"), created
+    assert "UUID" not in created, f"should drop the dumped table's uuid: {created!r}"
+
+
+def test_saved_ddl_that_is_not_a_create_table_is_refused() -> None:
+    with pytest.raises(MigrationError):
+        retarget("ATTACH TABLE bronze_example.items", Relation("bronze_example", "items"), RESTORE)
+
