@@ -131,17 +131,19 @@ models:
     description: "Every link occurrence an issue has had — one link of one type to one linked issue, keyed by the type's immutable id and direction, or by its phrase when it resolves to no type — with the changelog operations that opened and closed it and whether it was held before them. Read by jira__task_links."
     columns:
       - name: unique_key
-        description: "Source, issue, kind, occurrence key and the linked issue."
+        description: "Tenant, source, issue, kind, occurrence key and the linked issue."
         tests:
           - unique
           - not_null
+      - name: tenant_id
+        description: "Tenant the issue belongs to; every resolution and grouping stays within it, since Jira ids, keys and link type ids are unique only within one tenant's source."
       - name: occurrence_key
         description: "'type:<type id>:<direction>', 'phrase:<phrase>' for a phrase resolved to no type, or 'parent'."
   - name: jira__issue_link_snapshot
     description: "The issue links and the parent each issue holds now, one row per link object, with the linked issue's immutable id and key and the link type's phrase for this side. Read by jira__task_links and jira__issue_key_ids."
     columns:
       - name: unique_key
-        description: "Source, issue, kind, the link's own id and the linked issue."
+        description: "Tenant, source, issue, kind, the link's own id and the linked issue."
         tests:
           - unique
           - not_null
@@ -174,7 +176,7 @@ models:
     description: "Every key an issue is known to have had, with its immutable id: the issue's own bronze rows, Key events of moved issues, the links snapshots hold, and parent changes. Resolves the keys the changelog names linked issues by."
     columns:
       - name: unique_key
-        description: "Source and key."
+        description: "Tenant, source and key."
         tests:
           - unique
           - not_null
