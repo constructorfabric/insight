@@ -10,8 +10,10 @@ Needs a throwaway server — it drops and recreates the databases it seeds:
 
 from __future__ import annotations
 
+import gzip
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,9 +22,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tenant_migration import apply as migration
+from tenant_migration import ddl
 from tenant_migration.__main__ import main
 from tenant_migration.clickhouse import ClickHouse, ClickHouseError
-from tenant_migration.inventory import discover, history_relations
+from tenant_migration.inventory import Relation, discover, history_relations
 from tenant_migration.keys import Tenants
 from tenant_migration.plan import Plan, survey
 from tenant_migration.prerequisites import fill_youtrack_comment_ids
@@ -283,8 +286,8 @@ def _interrupted(ch: ClickHouse, *, at: str = "", after: str = "", once: str = "
 
 
 def _comment(ch: ClickHouse, database: str, name: str) -> str:
-    rows = ch.rows(f"SELECT comment FROM system.tables WHERE database = '{database}' AND name = '{name}'")
-    return rows[0][0] if rows and rows[0] else ""
+    rows = ch.rows(f"SELECT base64Encode(comment) FROM system.tables WHERE database = '{database}' AND name = '{name}'")
+    return migration.decode_comment(rows[0][0]) if rows and rows[0] else ""
 
 
 WITHOUT_COMMENT_IDS = [t for t in TABLES if t != "bronze_youtrack.youtrack_comments"]
@@ -406,3 +409,87 @@ def test_the_command_line_plans_applies_and_refuses_a_bad_tenant(warehouse: Clic
     assert main(["apply", "--tenant", NEW, "--old-tenant", OLD, "--dump-dir", str(tmp_path / "dump")]) == 0
     assert (tmp_path / "dump" / "manifest.json").is_file()
     assert main(["finalize"]) == 0
+
+
+TAB_AND_NEWLINE = "synthetic\titems\nsecond line"
+
+
+def _set_items_comment(ch: ClickHouse, comment: str) -> None:
+    ch.execute(ddl.set_comment(Relation("bronze_example", "items"), "", comment))
+
+
+def _finalize(ch: ClickHouse, tmp_path: Path) -> None:
+    migration.finalize(ch)
+
+
+def _finalize_and_restore(ch: ClickHouse, tmp_path: Path) -> None:
+    migration.finalize(ch)
+    migration.restore(ch, tmp_path / "dump")
+
+
+@pytest.mark.parametrize("settle", [_finalize, _finalize_and_restore], ids=["finalize", "restore"])
+def test_a_comment_with_a_tab_and_a_newline_comes_back_whole(
+    warehouse: ClickHouse, tmp_path: Path, settle: Callable[[ClickHouse, Path], None]
+) -> None:
+    _set_items_comment(warehouse, TAB_AND_NEWLINE)
+    _apply(warehouse, _plan(warehouse), tmp_path)
+
+    settle(warehouse, tmp_path)
+
+    assert _comment(warehouse, "bronze_example", "items") == TAB_AND_NEWLINE
+
+
+@dataclass(frozen=True)
+class WithTableUuids(ClickHouse):
+    """ClickHouse whose SHOW CREATE names each table's UUID, as a server-wide profile setting would."""
+
+    def execute(self, sql: str, *, fmt: str | None = None) -> str:
+        params = {"show_table_uuid_in_table_create_query_if_not_nil": "1"}
+        if fmt:
+            params["default_format"] = fmt
+        with self._request(sql.encode("utf-8"), params=params) as response:
+            return str(response.read().decode("utf-8"))
+
+
+def test_a_dump_whose_ddl_names_the_table_uuid_still_restores(warehouse: ClickHouse, tmp_path: Path) -> None:
+    before = _fingerprint(warehouse)
+    with_uuids = WithTableUuids(url=warehouse.url, user=warehouse.user, password=warehouse.password)
+    _apply(with_uuids, _plan(warehouse), tmp_path)
+    assert " UUID '" in (tmp_path / "dump" / "bronze_example.items.sql").read_text()
+
+    migration.restore(warehouse, tmp_path / "dump")
+
+    assert _fingerprint(warehouse) == before
+
+
+def _truncated(data: bytes) -> bytes:
+    return data[: len(data) // 2]
+
+
+def _exception_appended(data: bytes) -> bytes:
+    """What a reply that failed after its 200 leaves: the rows so far, then the error text."""
+    return gzip.compress(gzip.decompress(data) + b"Code: 241. DB::Exception: synthetic failure mid-stream")
+
+
+@dataclass(frozen=True)
+class CorruptingDump(ClickHouse):
+    corrupt: Callable[[bytes], bytes] = _truncated
+
+    def dump(self, sql: str, path: Path) -> None:
+        super().dump(sql, path)
+        path.write_bytes(self.corrupt(path.read_bytes()))
+
+
+@pytest.mark.parametrize("corrupt", [_truncated, _exception_appended], ids=["truncated", "exception appended"])
+def test_a_dump_that_does_not_load_back_stops_the_apply_before_anything_changes(
+    warehouse: ClickHouse, tmp_path: Path, corrupt: Callable[[bytes], bytes]
+) -> None:
+    before = _fingerprint(warehouse)
+    corrupting = CorruptingDump(url=warehouse.url, user=warehouse.user, password=warehouse.password, corrupt=corrupt)
+
+    with pytest.raises(migration.MigrationError, match="the dump does not load back"):
+        _apply(corrupting, _plan(warehouse), tmp_path)
+
+    assert _fingerprint(warehouse) == before
+    assert not (tmp_path / "dump" / "manifest.json").exists()
+    assert warehouse.scalar("SELECT count() FROM system.tables WHERE name LIKE '%\\_\\_tenant\\_%'") == 0

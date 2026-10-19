@@ -19,7 +19,8 @@ from tenant_migration.keys import Columns
 HISTORY_TABLES = "history-tables.txt"
 IDENTIFIER = re.compile(r"^[A-Za-z0-9_]+$")
 COPY, BACKUP, REJECTED, RESTORE = "__tenant_copy", "__tenant_backup", "__tenant_rejected", "__tenant_restore"
-WORK_SUFFIXES = (COPY, BACKUP, REJECTED, RESTORE)
+DUMP_CHECK = "__tenant_dumpcheck"
+WORK_SUFFIXES = (COPY, BACKUP, REJECTED, RESTORE, DUMP_CHECK)
 
 TENANT_COLUMNS = ("tenant_id", "insight_tenant_id")
 SOURCE_COLUMNS = ("source_id", "insight_source_id")
