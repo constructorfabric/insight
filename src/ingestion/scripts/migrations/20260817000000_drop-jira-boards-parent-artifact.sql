@@ -9,4 +9,5 @@
 -- model reads it. Board data lives in bronze_jira.jira_boards.
 --
 -- Idempotent: this channel has no ledger and re-runs on every deploy.
-DROP TABLE IF EXISTS bronze_jira._boards;
+-- bronze_jira is an Atomic database, so the statement takes the cluster clause.
+DROP TABLE IF EXISTS bronze_jira._boards /*@@ON_CLUSTER@@*/;

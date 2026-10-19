@@ -121,14 +121,55 @@ def test_a_flag_without_a_name_writes_no_clause(monkeypatch) -> None:
 
 def test_a_clustered_install_reads_what_the_step_before_it_wrote(monkeypatch) -> None:
     """Without a quorum on the write and sequential consistency on the read, a
-    replica that has not caught up answers the next model with a partial table."""
+    replica that has not caught up answers the next model with a partial table;
+    a parallel quorum voids that read, a Replicated table refuses a mutation
+    with a subquery, and CH 25.7.5 loses a CTE on INSERT ... SELECT."""
     monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", "true")
 
-    assert _output()["custom_settings"] == {"insert_quorum": "auto", "select_sequential_consistency": 1}
+    assert _output()["custom_settings"] == {
+        "insert_quorum": "auto",
+        "insert_quorum_parallel": 0,
+        "select_sequential_consistency": 1,
+        "allow_nondeterministic_mutations": 1,
+        "parallel_distributed_insert_select": 0,
+    }
 
 
-def test_a_single_node_waits_for_no_quorum() -> None:
-    assert "custom_settings" not in _output()
+def test_a_clustered_install_tells_the_adapter_its_databases_are_replicated(monkeypatch) -> None:
+    """The adapter decides ON CLUSTER from this key alone, never from the server:
+    without it every model's DDL carries the clause a Replicated database rejects."""
+    monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", "true")
+
+    assert _output()["database_engine"] == "Replicated"
+
+
+def test_a_clustered_install_skips_the_exchange_probe(monkeypatch) -> None:
+    """The probe's CREATE / EXCHANGE / DROP reach different replicas behind a
+    load balancer and leak its tables there; `cluster_mode` is the adapter's
+    switch for it."""
+    monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", "true")
+
+    output = _output()
+
+    assert output["cluster_mode"] is True
+    assert "check_exchange" not in output
+
+
+def test_a_single_node_writes_the_connection_and_nothing_else() -> None:
+    """The standalone profile is the one every install runs today; the topology
+    keys appear only where the flag is on."""
+    assert set(_output()) == {
+        "type",
+        "threads",
+        "host",
+        "port",
+        "schema",
+        "user",
+        "password",
+        "secure",
+        "send_receive_timeout",
+        "connect_timeout",
+    }
 
 
 def test_the_connection_comes_from_host_and_port() -> None:
