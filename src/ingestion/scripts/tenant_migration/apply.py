@@ -14,6 +14,7 @@ stopped). Each step re-reads the original and stops if it changed under it.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import re
@@ -64,8 +65,15 @@ def _by_keys(table: Table) -> bool:
 def _comments(ch: ClickHouse, rel: Relation) -> dict[str, str]:
     """suffix → table comment, for the relation and each of its work tables that exists."""
     names = ", ".join(f"'{rel.name}{suffix}'" for suffix in ("", *WORK))
-    rows = ch.rows(f"SELECT name, comment FROM system.tables WHERE database = '{rel.database}' AND name IN ({names})")
-    return {name[len(rel.name) :]: comment for name, comment in rows}
+    rows = ch.rows(
+        f"SELECT name, base64Encode(comment) FROM system.tables WHERE database = '{rel.database}' AND name IN ({names})"
+    )
+    return {name[len(rel.name) :]: decode_comment(encoded) for name, encoded in rows}
+
+
+def decode_comment(encoded: str) -> str:
+    """A comment read through base64, so a tab or newline in it cannot split the row."""
+    return base64.b64decode(encoded).decode("utf-8")
 
 
 def _set_comment(ch: ClickHouse, rel: Relation, suffix: str, comment: str) -> None:

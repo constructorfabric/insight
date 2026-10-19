@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -283,8 +284,8 @@ def _interrupted(ch: ClickHouse, *, at: str = "", after: str = "", once: str = "
 
 
 def _comment(ch: ClickHouse, database: str, name: str) -> str:
-    rows = ch.rows(f"SELECT comment FROM system.tables WHERE database = '{database}' AND name = '{name}'")
-    return rows[0][0] if rows and rows[0] else ""
+    rows = ch.rows(f"SELECT base64Encode(comment) FROM system.tables WHERE database = '{database}' AND name = '{name}'")
+    return migration.decode_comment(rows[0][0]) if rows and rows[0] else ""
 
 
 WITHOUT_COMMENT_IDS = [t for t in TABLES if t != "bronze_youtrack.youtrack_comments"]
@@ -406,3 +407,32 @@ def test_the_command_line_plans_applies_and_refuses_a_bad_tenant(warehouse: Clic
     assert main(["apply", "--tenant", NEW, "--old-tenant", OLD, "--dump-dir", str(tmp_path / "dump")]) == 0
     assert (tmp_path / "dump" / "manifest.json").is_file()
     assert main(["finalize"]) == 0
+
+
+TAB_AND_NEWLINE = "synthetic\titems\nsecond line"
+
+
+def _set_items_comment(ch: ClickHouse, comment: str) -> None:
+    escaped = comment.replace("\\", "\\\\").replace("'", "\\'")
+    ch.execute(f"ALTER TABLE bronze_example.items MODIFY COMMENT '{escaped}'")
+
+
+def _finalize(ch: ClickHouse, tmp_path: Path) -> None:
+    migration.finalize(ch)
+
+
+def _finalize_and_restore(ch: ClickHouse, tmp_path: Path) -> None:
+    migration.finalize(ch)
+    migration.restore(ch, tmp_path / "dump")
+
+
+@pytest.mark.parametrize("settle", [_finalize, _finalize_and_restore], ids=["finalize", "restore"])
+def test_a_comment_with_a_tab_and_a_newline_comes_back_whole(
+    warehouse: ClickHouse, tmp_path: Path, settle: Callable[[ClickHouse, Path], None]
+) -> None:
+    _set_items_comment(warehouse, TAB_AND_NEWLINE)
+    _apply(warehouse, _plan(warehouse), tmp_path)
+
+    settle(warehouse, tmp_path)
+
+    assert _comment(warehouse, "bronze_example", "items") == TAB_AND_NEWLINE
