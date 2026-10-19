@@ -62,11 +62,10 @@ FROM {{ source('bronze_slack', 'users_details') }} AS u FINAL
 WHERE u.user_id IS NOT NULL
   AND u.user_id != ''
   AND parseDateTimeBestEffortOrNull(u.date) IS NOT NULL
-  -- INVARIANT: the class holds billable members only — guests, deactivated and
-  -- non-billable accounts are dropped here, and an unknown flag drops the row.
-  -- `is_active` is per-day activity, not account status: never filter on it.
-  AND coalesce(u.is_billable_seat, false)
-  AND NOT coalesce(u.is_guest, true)
+  -- INVARIANT: the class holds workspace members only — a proven guest is dropped,
+  -- an unknown flag keeps the row. `is_active` and `is_billable_seat` derive from
+  -- activity (the latter is unreliable off invoiced plans): never filter on them.
+  AND NOT coalesce(u.is_guest, false)
 {% if is_incremental() %}
   -- Watermark on the source EXTRACT time, not the business date (see zoom model header for
   -- the backfill-strand failure mode this fixes — Slack chat had the same gap on virtuozzo,
