@@ -307,3 +307,11 @@ def test_a_worklog_names_an_issue_the_run_emitted(
         assert row["id_readable"] == issues[row["jira_id"]]["id_readable"], (
             f"worklog {row['worklog_id']} disagrees with the issue's readable key"
         )
+
+
+@pytest.mark.parametrize("table", _TABLES)
+def test_every_seeded_row_belongs_to_the_install_tenant(rows: Rows, table: str) -> None:
+    """The task classes are built from these rows and joined on tenant, so a row without it reads as nobody's."""
+    assert rows[table], f"{table} seeds no rows"
+    strays = {row.get("tenant_id") for row in rows[table]} - {_TENANT}
+    assert not strays, f"{table} carries rows outside the install tenant: {strays!r}"
