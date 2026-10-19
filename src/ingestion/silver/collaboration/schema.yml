@@ -55,6 +55,13 @@ models:
       `data_source` values systematically under-counts Teams users
       who chat heavily in group DMs. Document that caveat in any
       cross-vendor Gold metric.
+
+      **Population:** only accounts the source counts as licensed members.
+      Each feeder drops unlicensed, guest and deactivated accounts on its
+      source's account-status signal (M365: `isLicensed`; Slack:
+      `is_billable_seat` and not `is_guest`), so the class
+      carries no status column and gold needs no status filter. Guest or
+      offboarded activity is a separate model over bronze.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"

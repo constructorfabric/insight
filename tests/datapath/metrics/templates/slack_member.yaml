@@ -1,0 +1,35 @@
+# Reusable Slack member-analytics records (bronze_slack.users_details).
+# The base lists EVERY schema field so a merged bronze row is complete; unused
+# fields default to null. It defaults to a billable, non-guest member: the chat
+# feeder drops every other account, so an unset flag would exclude the row.
+templates:
+  slack_member:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    unique_key: null
+    tenant_id: "{{ tenant }}"
+    source_id: "slack-test"
+    date: null
+    team_id: "T0000TEST"
+    user_id: null
+    email_address: null
+    is_guest: false
+    is_billable_seat: true
+    is_active: true
+    is_active_ios: null
+    is_active_android: null
+    is_active_desktop: null
+    is_active_apps: null
+    is_active_workflows: null
+    is_active_slack_connect: null
+    reactions_added_count: null
+    messages_posted_count: null
+    channel_messages_posted_count: null
+    files_added_count: null
+    total_calls_count: null
+    slack_calls_count: null
+    slack_huddles_count: null
+    search_count: null
+    date_claimed: null

@@ -88,7 +88,8 @@ Evidence: `docs/CONNECTORS_REFERENCE.md:333–347` — `github_collection_runs`.
 5. **Connector → silver via `union_by_tag`** — connectors write to per-connector staging models tagged `silver:<class>`; silver class models do `union_by_tag('silver:<class>')`. Never write directly to silver from a connector.
 6. **Staging tables not owned by dbt** — wrap on the dbt side as `materialized='ephemeral'` (no DB object; dbt inlines as CTE). None exist today: the Jira field history, once written by a Rust binary, is derived in dbt.
 7. **Read pattern** — silver consumers MUST use `SELECT … FROM silver.X FINAL` or `argMax(... ORDER BY _version)`. RMT tables hold multiple versions per `unique_key` until background merge.
-8. **Airbyte sync mode** — always `destinationSyncMode='append_dedup'` with `primaryKey=[['unique_key']]`. A stream without a `unique_key` schema property fails catalog normalization (it would land as an ever-duplicating table); `append` and `overwrite` are forbidden. The 2.x destination performs no destination-side dedup work — append_dedup is the same append-only insert path with an engine-level-dedup table shape, so the old OOM concern does not apply.
+8. **Silver class = the analysed population only** — a `class_*` table is a clean view for the metrics built on it, not a mirror of bronze. A connector's staging feeder drops accounts the source proves are outside that population (unlicensed, guest, deactivated, non-billable) with a `WHERE` on the source's account-status signal; the class carries no status column for gold to filter on. Analysing the excluded accounts (guest engagement, offboarding) is a separate model reading bronze, which keeps every raw row. Filter on account status, never on a per-day activity flag (a quiet day is not an inactive account), and state in a comment whether a `NULL` signal keeps or drops the row. Adding the filter to an existing incremental feeder needs a MAJOR connector version bump: that dispatches the `dbt --full-refresh` that purges rows written before it. Reference: the M365 `m365__collab_*` feeders (`isLicensed` / `assignedProducts`).
+9. **Airbyte sync mode** — always `destinationSyncMode='append_dedup'` with `primaryKey=[['unique_key']]`. A stream without a `unique_key` schema property fails catalog normalization (it would land as an ever-duplicating table); `append` and `overwrite` are forbidden. The 2.x destination performs no destination-side dedup work — append_dedup is the same append-only insert path with an engine-level-dedup table shape, so the old OOM concern does not apply.
 
 ### Anti-patterns
 
@@ -98,6 +99,7 @@ Evidence: `docs/CONNECTORS_REFERENCE.md:333–347` — `github_collection_runs`.
 - ❌ `incremental_strategy='delete+insert'` with RMT — two dedup mechanisms stacked
 - ❌ Reading silver without `FINAL` / `argMax`
 - ❌ Connector emitting record without `unique_key` field
+- ❌ Account-status columns (`is_guest`, `is_licensed`, …) on a silver class so gold can filter — drop the out-of-scope accounts in the staging feeder instead
 
 ### Reference: shared macros
 
