@@ -88,6 +88,20 @@ impl Shelf {
         }
 
         let (stamps, log_lines, log_damaged) = read_stamps(&dir.join(STAMPS_LOG));
+        // An entry naming an author with no stamp would never report them: its
+        // snapshot reads as folded, so nothing stamps them again. Dropping it
+        // makes its next refresh fold it afresh and stamp every author it holds.
+        let before = entries.len();
+        entries.retain(|_, record| {
+            record
+                .authors
+                .keys()
+                .all(|email| stamps.contains_key(email))
+        });
+        let unstamped = entries.len() < before;
+        if unstamped {
+            tracing::error!(dropped = before - entries.len(), dir = %dir.display(), "author index entries named authors without stamps; they are folded again on their next fetch");
+        }
         let shelf = Self {
             dir,
             log_lines,
@@ -96,7 +110,7 @@ impl Shelf {
         (
             shelf,
             Book::restore(stamps, entries),
-            damaged || log_damaged,
+            damaged || log_damaged || unstamped,
         )
     }
 
@@ -151,8 +165,15 @@ impl Shelf {
             .create(true)
             .append(true)
             .open(self.dir.join(STAMPS_LOG))?;
-        log.write_all(&bytes)?;
-        log.sync_all()?;
+        let intact_len = log.metadata()?.len();
+        // A failed append can leave a partial line; cut it off, or the next
+        // append glues onto it and both lines are lost to the reader.
+        if let Err(e) = log.write_all(&bytes).and_then(|()| log.sync_all()) {
+            if let Err(cut) = log.set_len(intact_len) {
+                tracing::error!(error = %cut, "could not cut a failed append off the author stamp log");
+            }
+            return Err(e);
+        }
         self.log_lines += stamped.len();
         Ok(())
     }
@@ -328,6 +349,44 @@ mod tests {
         assert_eq!(
             book.stamps().get("c@example.com").map(|s| s.changed_us),
             Some(30)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_entry_naming_an_author_without_a_stamp_is_folded_again() {
+        use super::super::book::EntryAuthor;
+
+        let dir = temp_dir("unstamped");
+        let (mut shelf, book, _) = Shelf::load(dir.clone());
+        let record = EntryRecord {
+            clone_url: "https://git.example.com/acme/app.git".to_owned(),
+            incarnation: "inc".to_owned(),
+            generation: 1,
+            fingerprints: vec!["fp".to_owned()],
+            authors: std::iter::once((
+                "a@example.com".to_owned(),
+                EntryAuthor {
+                    name: "A".to_owned(),
+                    sha: "a".repeat(40),
+                    committed: "2026-01-01T00:00:00Z".to_owned(),
+                    ordinal: "2026-01-01T00:00:00.000000000Z".to_owned(),
+                    count: 1,
+                },
+            ))
+            .collect(),
+        };
+        // The entry document landed; its stamp did not.
+        if let Err(e) = shelf.persist(&[], Some(&("app".to_owned(), record)), &book) {
+            panic!("persist: {e}");
+        }
+
+        let (_, book, damaged) = Shelf::load(dir.clone());
+
+        assert!(damaged, "an unstamped author is damage worth counting");
+        assert!(
+            book.needs_fold("app", "inc", 1),
+            "the entry must be folded again so its author gets a stamp"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

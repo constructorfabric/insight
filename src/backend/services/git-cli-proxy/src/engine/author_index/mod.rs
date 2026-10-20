@@ -84,7 +84,8 @@ impl AuthorIndex {
         })
     }
 
-    /// Forget a mirror whose repository origin reports gone.
+    /// Forget a mirror whose repository origin reports gone to a caller
+    /// holding `fingerprint` — only if the entry recorded that credential.
     ///
     /// # Errors
     ///
@@ -95,10 +96,11 @@ impl AuthorIndex {
         tenant_id: &str,
         source_id: &str,
         dir_name: &str,
+        fingerprint: &str,
     ) -> std::io::Result<()> {
         let loaded = self.loaded(tenant_id, source_id).await;
         let mut loaded = loaded.lock().await;
-        if loaded.book.forget(dir_name) {
+        if loaded.book.forget(dir_name, fingerprint) {
             loaded.shelf.remove_entry(dir_name)?;
         }
         Ok(())
