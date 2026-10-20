@@ -45,6 +45,10 @@ class _StubClient:
 
     server_version = "0.0.0-stub"
 
+    def command(self, sql: str, **_: Any) -> int:
+        """A fresh stand: no table a probe asks about exists yet."""
+        return 0
+
     def close(self) -> None:
         pass
 
@@ -74,7 +78,7 @@ def refresh_requests(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
     monkeypatch.setattr(silver, "apply_ch_migrations", lambda: None)
     monkeypatch.setattr(silver, "build_gold", record)
-    monkeypatch.setattr(silver, "prune_seeded_snapshots", lambda client, tenant: None)
+    monkeypatch.setattr(silver, "prune_seeded_snapshots", lambda client, tenant, present: None)
     monkeypatch.setenv(config.TENANT_ENV, _STUB_TENANT)
     return requests
 
@@ -181,7 +185,12 @@ def test_snapshots_are_pruned_between_their_sources_rebuild_and_the_main_build(
         silver, "build_gold", lambda **kwargs: order.append(f"build {kwargs['dbt_select']}")
     )
     monkeypatch.setattr(
-        silver, "prune_seeded_snapshots", lambda client, tenant: order.append(f"prune {tenant}")
+        silver,
+        "prune_seeded_snapshots",
+        lambda client, tenant, present: order.append(f"prune {tenant}"),
+    )
+    monkeypatch.setattr(
+        silver, "existing_snapshots", lambda client: sorted(snapshots.SEEDED_SNAPSHOTS)
     )
     monkeypatch.setenv(config.TENANT_ENV, _STUB_TENANT)
 
@@ -190,6 +199,31 @@ def test_snapshots_are_pruned_between_their_sources_rebuild_and_the_main_build(
     source_build = "build " + " ".join(f"+{model}" for model in snapshots.source_models())
     assert order[:3] == ["migrations", source_build, f"prune {_STUB_TENANT}"], order
     assert len(order) == 4 and silver.IDENTITY_INPUTS_SELECT in order[3], order
+
+
+@pytest.mark.usefixtures("offline_silver_step")
+def test_a_fresh_stand_rebuilds_and_prunes_no_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing to prune yet, and a source rebuild would build the identity map
+    views before the main build has created the identity_inputs they read."""
+    order: list[str] = []
+    monkeypatch.setattr(silver, "apply_ch_migrations", lambda: order.append("migrations"))
+    monkeypatch.setattr(
+        silver, "build_gold", lambda **kwargs: order.append(f"build {kwargs['dbt_select']}")
+    )
+    monkeypatch.setattr(
+        silver,
+        "prune_seeded_snapshots",
+        lambda client, tenant, present: order.append(f"prune {tenant}"),
+    )
+    monkeypatch.setattr(silver, "existing_snapshots", lambda client: [])
+    monkeypatch.setenv(config.TENANT_ENV, _STUB_TENANT)
+
+    silver.run()
+
+    assert order[0] == "migrations", order
+    assert len(order) == 2 and silver.IDENTITY_INPUTS_SELECT in order[1], (
+        f"a fresh stand should go straight to the main build: {order}"
+    )
 
 
 def test_config_tables_exist_before_the_generators_write_them(

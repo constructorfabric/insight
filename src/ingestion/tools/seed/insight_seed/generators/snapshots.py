@@ -15,7 +15,7 @@ bronze and before the snapshot appends to it.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -45,11 +45,24 @@ SEEDED_SNAPSHOTS: dict[Relation, Relation] = {
 }
 
 
+def sources_to_rebuild(present: Iterable[Relation]) -> list[str]:
+    """The dbt models the given snapshots read, which must be rebuilt before pruning."""
+    sources = (SEEDED_SNAPSHOTS[snapshot] for snapshot in present)
+    return sorted({table for schema, table in sources if not schema.startswith("bronze_")})
+
+
 def source_models() -> list[str]:
-    """The dbt models a seeded snapshot reads, which must be rebuilt before pruning."""
-    return sorted(
-        {table for schema, table in SEEDED_SNAPSHOTS.values() if not schema.startswith("bronze_")}
-    )
+    """Every dbt model a seeded snapshot reads."""
+    return sources_to_rebuild(SEEDED_SNAPSHOTS)
+
+
+def existing_snapshots(client: clickhouse_connect.driver.client.Client) -> list[Relation]:
+    """The seeded snapshots a previous seed has already built."""
+    return [
+        snapshot
+        for snapshot in sorted(SEEDED_SNAPSHOTS)
+        if int(str(client.command(f"EXISTS TABLE `{snapshot[0]}`.`{snapshot[1]}`")))
+    ]
 
 
 def stale_keys_query(snapshot: Relation, source: Relation) -> str:
@@ -124,6 +137,7 @@ def prune_to_source(
 def prune_seeded_snapshots(
     client: clickhouse_connect.driver.client.Client,
     tenant_uuid: str,
+    present: Iterable[Relation],
 ) -> None:
-    for snapshot in sorted(SEEDED_SNAPSHOTS):
+    for snapshot in present:
         prune_to_source(client, snapshot, tenant_uuid)

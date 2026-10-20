@@ -62,7 +62,7 @@ from .generators import (
     wiki,
 )
 from .generators.base import seed_days
-from .generators.snapshots import prune_seeded_snapshots, source_models
+from .generators.snapshots import existing_snapshots, prune_seeded_snapshots, sources_to_rebuild
 from .profiles import build_seeded_roster, get_dev_user_email
 
 LOG = logging.getLogger("seed.silver")
@@ -336,13 +336,22 @@ def build_gold(dbt_select: str | None = None, *, full_refresh: bool = False) -> 
 
 
 def reset_seeded_snapshots(client: clickhouse_connect.driver.client.Client) -> None:
-    """Prune every snapshot over seeded bronze to what its rebuilt source holds.
+    """Prune every snapshot an earlier seed built to what its rebuilt source holds.
 
     INVARIANT: runs after the bronze is written and before the main build, so the
-    snapshots append only to the entities this seed's roster holds.
+    snapshots append only to the entities this seed's roster holds. A fresh stand
+    holds no snapshot, so it rebuilds and prunes nothing — the rebuild would also
+    build the identity map views, whose identity_inputs only the main build creates.
     """
-    build_gold(dbt_select=" ".join(f"+{model}" for model in source_models()), full_refresh=True)
-    prune_seeded_snapshots(client, config.parse_tenant_id(os.environ))
+    present = existing_snapshots(client)
+    if not present:
+        LOG.info("snapshots: none built yet, nothing to prune")
+        return
+
+    sources = sources_to_rebuild(present)
+    if sources:
+        build_gold(dbt_select=" ".join(f"+{model}" for model in sources), full_refresh=True)
+    prune_seeded_snapshots(client, config.parse_tenant_id(os.environ), present)
 
 
 def generate_rows(
