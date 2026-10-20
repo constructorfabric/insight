@@ -67,7 +67,10 @@ WITH source_data AS (
         'snapshot(): column drift between ' ~ source_ref ~ ' and persisted ' ~ this ~ '. ' ~
         'Missing in source: [' ~ missing_in_source | join(', ') ~ ']. ' ~
         'New in source: [' ~ missing_in_target | join(', ') ~ ']. ' ~
-        'Migrate or rebuild the snapshot table before appending — a blind append would corrupt it.'
+        'A blind append would corrupt it, and a --full-refresh does not rebuild a snapshot: ' ~
+        'add the new columns to the persisted table with ALTER TABLE ... ADD COLUMN (a guarded heal in ' ~
+        'apply-ch-migrations.sh) and drop the vanished ones only once nothing reads them; dropping the ' ~
+        'table loses the history it alone holds.'
     ) }}
 {%- endif %}
 
