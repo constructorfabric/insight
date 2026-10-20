@@ -120,7 +120,7 @@ def prepare(client: Client, rows: int, work: Path) -> dict[str, Workload]:
 
 def targets(client: Client, workload: Workload, partition: str) -> None:
     for name in ("expected", "baseline", "candidate"):
-        client.execute(f"DROP TABLE IF EXISTS benchmark.{name}")
+        client.execute("DROP TABLE IF EXISTS benchmark.{table:Identifier}", settings={"param_table": name})
     # SAFETY: all fragments are repo-owned SQL or compiled model configuration, not external data values.
     # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
     client.execute(

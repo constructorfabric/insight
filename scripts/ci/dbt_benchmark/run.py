@@ -84,7 +84,7 @@ def benchmark(client: Client, workload: Workload, experiment: Experiment, repeat
                 continue
             config = pair[variant]
             settings = {key: value for key, value in config.items() if key != "partition_by"}
-            client.execute(f"TRUNCATE TABLE benchmark.{variant}")
+            client.execute("TRUNCATE TABLE benchmark.{table:Identifier}", settings={"param_table": variant})
             record = {"workload": workload.name, "variant": variant, "repeat": repeat, "parameters": config}
             try:
                 measured = measure(client, f"INSERT INTO benchmark.{variant} {workload.sql}", settings)
@@ -125,7 +125,7 @@ def insertion(
         for variant in order:
             if variant in failed:
                 continue
-            client.execute(f"TRUNCATE TABLE benchmark.{variant}")
+            client.execute("TRUNCATE TABLE benchmark.{table:Identifier}", settings={"param_table": variant})
             record = {"workload": "insert_dedup", "variant": variant, "repeat": repeat, "parameters": pair[variant]}
             try:
                 samples = []
