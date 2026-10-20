@@ -1,0 +1,52 @@
+name: Connector CI research
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ci-research-connectors.yml
+      - scripts/ci/research_connectors/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: isolated-ci-research
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || 'insight-vhc-arc' }}
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: c17b00723a99efec1cafa94242e412aedccdfe20
+          path: application
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          save-cache: false
+      - name: Install one shared dependency environment
+        run: |
+          uv venv .research-venv
+          uv pip install --python .research-venv/bin/python -e 'application/src/ingestion/tests/connectors[dev]' 'airbyte-cdk==7.35.0' 'PyYAML==6.0.3' 'pytest==9.1.1' 'pytest-cov==7.1.0'
+      - name: Compare isolated changes serially
+        run: .research-venv/bin/python scripts/ci/research_connectors/run.py --source application --output results --repeats 3
+      - name: Preserve measurements
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: connector-ci-research
+          path: results/
+          if-no-files-found: error
+      - name: Show findings
+        if: always()
+        run: cat results/summary.txt >> "$GITHUB_STEP_SUMMARY"
