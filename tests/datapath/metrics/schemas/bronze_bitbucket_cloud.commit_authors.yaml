@@ -1,4 +1,4 @@
-# Derived from the bronze_bitbucket_cloud DDL snapshot.
+# Derived from the bronze_bitbucket_cloud tables the Airbyte destination creates.
 schemas:
   bronze_bitbucket_cloud.commit_authors:
     $schema: http://json-schema.org/draft-07/schema#
