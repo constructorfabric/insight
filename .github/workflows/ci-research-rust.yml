@@ -52,7 +52,14 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rust-ci-research
-          path: results/
+          path: |
+            results/results.json
+            results/summary.txt
+            results/fetch.log
+            results/**/clippy.log
+            results/**/tests.log
+            results/**/coverage.log
+            results/**/coverage.xml
           if-no-files-found: error
       - name: Show findings
         if: always()
