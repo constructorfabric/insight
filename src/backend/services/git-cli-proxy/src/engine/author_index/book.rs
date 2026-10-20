@@ -279,8 +279,19 @@ impl Book {
 
     /// Drop a mirror whose repository origin no longer has, so none of its
     /// commits is offered as a sample the vendor would answer 404 for.
-    /// Returns whether the book held it.
-    pub(crate) fn forget(&mut self, dir_name: &str) -> bool {
+    /// Returns whether the book dropped it.
+    ///
+    /// SAFETY: only on the word of a credential the entry recorded. Origin
+    /// answers 404 to a credential that cannot see a private repository, and
+    /// such a caller must not erase what others proved access to.
+    pub(crate) fn forget(&mut self, dir_name: &str, fingerprint: &str) -> bool {
+        let proven = self
+            .entries
+            .get(dir_name)
+            .is_some_and(|record| record.fingerprints.iter().any(|proof| proof == fingerprint));
+        if !proven {
+            return false;
+        }
         let Some(record) = self.entries.remove(dir_name) else {
             return false;
         };
@@ -725,7 +736,11 @@ mod tests {
             2_000,
         );
 
-        assert!(book.forget("gone"));
+        assert!(
+            !book.forget("gone", OTHER_FP),
+            "a credential the entry never recorded cannot erase it"
+        );
+        assert!(book.forget("gone", FP));
 
         let alice = &everything(&book)[0];
         assert_eq!(
@@ -733,7 +748,7 @@ mod tests {
             "a".repeat(40),
             "the surviving repository supplies it"
         );
-        assert!(!book.forget("gone"), "forgetting twice is a no-op");
+        assert!(!book.forget("gone", FP), "forgetting twice is a no-op");
     }
 
     #[test]

@@ -686,7 +686,12 @@ impl RepoStore {
         if matches!(refreshed, Err(GitError::NotFound))
             && let Err(e) = self
                 .authors
-                .forget(&key.tenant_id, &key.source_id, &key.dir_name())
+                .forget(
+                    &key.tenant_id,
+                    &key.source_id,
+                    &key.dir_name(),
+                    &fingerprint,
+                )
                 .await
         {
             tracing::warn!(error = %e, dir = %key.dir_name(), "could not forget a vanished repository's authors");
