@@ -86,7 +86,7 @@ def variants(baseline: dict[str, str | int]) -> dict[str, dict[str, str | int]]:
 def prepare(client: Client, rows: int, work: Path) -> tuple[str, dict[str, str | int]]:
     existing = client.rows(
         "SELECT database, name FROM system.tables WHERE database NOT IN "
-        "('system', 'INFORMATION_SCHEMA', 'information_schema', 'default')"
+        "('system', 'INFORMATION_SCHEMA', 'information_schema')"
     )
     if existing:
         raise RuntimeError("benchmark requires a fresh disposable ClickHouse; refusing an existing warehouse")
@@ -98,7 +98,12 @@ def prepare(client: Client, rows: int, work: Path) -> tuple[str, dict[str, str |
     node = run_dbt(profiles, work / "target")
     sql = node["compiled_code"].strip().rstrip(";")
     baseline = query_settings(node["config"]["query_settings"])
-    client.execute(f"CREATE TABLE benchmark.expected ENGINE = MergeTree ORDER BY tuple() AS {sql}", settings=baseline)
+    order_by = ", ".join(node["config"]["order_by"])
+    # SAFETY: both fragments come from this repository's compiled dbt model, not external data values.
+    # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
+    client.execute(
+        f"CREATE TABLE benchmark.expected ENGINE = MergeTree ORDER BY ({order_by}) AS {sql}", settings=baseline
+    )
     client.execute("CREATE TABLE benchmark.actual AS benchmark.expected")
     return sql, baseline
 
@@ -146,6 +151,8 @@ def benchmark(client: Client, model_sql: str, baseline: dict[str, str | int], re
         if name != MODEL:
             client.execute("DROP TABLE benchmark.expected")
             client.execute("DROP TABLE benchmark.actual")
+            # SAFETY: sql is one of the constant benchmark workload queries, not external data.
+            # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
             client.execute(
                 f"CREATE TABLE benchmark.expected ENGINE = MergeTree ORDER BY tuple() AS {sql}", settings=baseline
             )

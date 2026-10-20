@@ -11,9 +11,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   compare:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
     timeout-minutes: 35
     env:
       CLICKHOUSE_URL: http://127.0.0.1:18127
@@ -55,7 +59,7 @@ jobs:
           set -euo pipefail
           /tmp/dbt-settings-venv/bin/python -m unittest discover -s scripts/ci/dbt_benchmark -p 'test_*.py'
           /tmp/dbt-settings-venv/bin/python scripts/ci/dbt_benchmark/run.py --rows 1000000 --repeats 3 --output benchmark-results
-          docker inspect "${CLICKHOUSE_CONTAINER}" --format '{"cpu_nanoseconds": {{.HostConfig.NanoCpus}}, "memory_bytes": {{.HostConfig.Memory}}}' > benchmark-results/resources.json
+          docker inspect "${CLICKHOUSE_CONTAINER}" --format '{"cpu_nanocpus": {{.HostConfig.NanoCpus}}, "memory_bytes": {{.HostConfig.Memory}}}' > benchmark-results/resources.json
       - name: Summary
         if: always()
         run: |

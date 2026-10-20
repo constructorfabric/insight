@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import unittest
 
+from client import Client
 from run import MIB, variants
 
 
 class SettingsTests(unittest.TestCase):
+    def test_benchmark_refuses_non_loopback_or_non_http_endpoints(self) -> None:
+        for url in ("https://127.0.0.1:18127", "file:///tmp/input", "http://example.com", "http://127.0.0.1/admin"):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                Client(url, "synthetic", "synthetic")
+
     def test_experiments_preserve_the_query_memory_cap_and_automatic_join_fallback(self) -> None:
         baseline = {
             "max_memory_usage": 2 * 1024 * MIB,
