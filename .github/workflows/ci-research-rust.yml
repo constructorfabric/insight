@@ -1,0 +1,53 @@
+name: Rust CI research
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ci-research-rust.yml
+      - scripts/ci/research_rust/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: isolated-ci-research
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: c17b00723a99efec1cafa94242e412aedccdfe20
+          path: application
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: '1.98.1'
+          components: clippy,llvm-tools-preview
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8
+        with:
+          tool: cargo-llvm-cov@0.9.1,sccache@0.18.0
+      - name: Compare isolated changes serially
+        run: python3 scripts/ci/research_rust/run.py --source application --output results --repeats 3
+      - name: Preserve measurements
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rust-ci-research
+          path: results/
+          if-no-files-found: error
+      - name: Show findings
+        if: always()
+        run: cat results/summary.txt >> "$GITHUB_STEP_SUMMARY"
