@@ -112,9 +112,10 @@ mod tests {
     type R = Result<(), Box<dyn std::error::Error>>;
 
     const CLICKHOUSE_URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
-    const ABSENCE_MIGRATION: &str = include_str!(
-        "../../../../../ingestion/scripts/migrations/20260916000000_person-absences.sql"
-    );
+    const ABSENCE_CLASS: &str = "CREATE TABLE IF NOT EXISTS silver.class_person_absences
+         (insight_tenant_id String, unique_key String, account_source_type String,
+          account_source_id String, account_id String, start_date Date, end_date Date)
+         ENGINE = ReplacingMergeTree ORDER BY unique_key";
 
     fn warehouse_client() -> Option<insight_clickhouse::Client> {
         let url = std::env::var(CLICKHOUSE_URL_VAR).unwrap_or_default();
@@ -143,7 +144,7 @@ mod tests {
              (tenant_id String, source_type String, source_id UUID, account_id String,
               person_id UUID, created_at DateTime64(6))
              ENGINE = MergeTree ORDER BY (source_type, source_id, account_id)",
-            ABSENCE_MIGRATION,
+            ABSENCE_CLASS,
         ] {
             client.query(statement).execute().await?;
         }
