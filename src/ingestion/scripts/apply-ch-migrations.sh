@@ -65,6 +65,7 @@ source "$SCRIPT_DIR/lib/ch-topology.sh"
 source "$SCRIPT_DIR/lib/retired-relations.sh"
 source "$SCRIPT_DIR/lib/heal-youtrack-field-observation-tenant.sh"
 source "$SCRIPT_DIR/lib/heal-task-producer-tenant.sh"
+source "$SCRIPT_DIR/lib/heal-identity-map-tenant.sh"
 
 bash "$SCRIPT_DIR/create-databases.sh"
 
@@ -109,6 +110,9 @@ SQL
 echo "=== Healing gold identity relations still held as tables ==="
 heal_gold_view_relation insight metric_entity_cohorts_current
 heal_gold_view_relation insight identity_resolution_coverage
+
+echo "=== Dropping identity map views that predate their tenant ==="
+heal_identity_map_tenants
 
 echo "=== Applying ClickHouse migrations ==="
 # A migration that creates a relation spells its engine family behind the
