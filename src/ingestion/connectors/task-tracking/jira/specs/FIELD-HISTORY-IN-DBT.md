@@ -539,7 +539,8 @@ the element differently:
   component-shaped normalizer takes the top-level `id`, which is the link's own;
 - the **changelog** names the LINKED ISSUE by the key it had at the time in the
   id side, with a rendered sentence in the display side ("This issue duplicates
-  PROJ-1"). The link's own id appears nowhere in it.
+  PROJ-1", or "This work item duplicates PROJ-1" in newer entries). Neither the
+  link's own id nor its type's id appears anywhere in it.
 
 So identifying by the link id leaves the two sides with no id in common, and
 every issue holding a link disagrees with its own history. Measured, this was
@@ -1259,9 +1260,9 @@ destination recreate it:
 
 1. add a `RemoveFields` transformation for `fields` to the `jira_issue` stream
 2. bump the connector descriptor, deploy, let one sync complete
-3. add a migration under `src/ingestion/scripts/migrations/` performing
+3. add a `ch_table_exists`-guarded heal to
+   `src/ingestion/scripts/apply-ch-migrations.sh` performing
    `ALTER TABLE bronze_jira.jira_issue DROP COLUMN IF EXISTS fields`
-4. drop the column from `src/ingestion/scripts/connectors-ddl/jira.sql`
 
 This is storage hygiene, independent of the defects above, and can land
 separately.

@@ -56,6 +56,9 @@ vi.mock("@/components/portal/domain-lens-view", () => ({
   ),
   Pending: ({ label }: { label: string }) => <div data-testid="pending">{label}</div>,
 }));
+vi.mock("@/components/portal/home-dashboards", () => ({
+  HomeDashboards: () => <div data-testid="home-dashboards">Dashboards</div>,
+}));
 vi.mock("@/components/portal/ai-cost-view", () => ({
   AiCostView: () => <div data-testid="ai-cost" />,
 }));
@@ -192,11 +195,17 @@ describe("DirectionView", () => {
 describe("OverviewView", () => {
   it("defaults a null item to At a glance", () => {
     render(<OverviewView item={null} />);
+    expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument();
+    expect(
+      screen.getByTestId("home-dashboards").compareDocumentPosition(screen.getByTestId("domain-lens")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.getByTestId("domain-lens")).toHaveTextContent("Overview");
   });
 
   it("resolves a named item through the registry", () => {
     render(<OverviewView item="contribution" />);
+    expect(screen.queryByTestId("home-dashboards")).toBeNull();
     expect(screen.getByTestId("domain-lens")).toHaveTextContent(
       "Overview · Contribution breakdown",
     );

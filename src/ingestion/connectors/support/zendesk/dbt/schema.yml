@@ -71,7 +71,7 @@ models:
       exploded from support_ticket_events.events[]. Source of the activity
       counts in zendesk__support_activity. Materialises in `staging` — it is an
       intermediate of this connector, not a class-contract contributor, so it
-      carries no `silver:` tag and no silver placeholder is created for it.
+      carries no `silver:` tag and contributes to no class.
     columns:
       - name: unique_key
         description: MD5(tenant_id, insight_source_id, audit_id, event_id) — instance-scoped, so audit ids cannot collide across sources.

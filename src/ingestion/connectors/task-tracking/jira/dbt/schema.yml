@@ -110,6 +110,16 @@ models:
     description: "Per-field transitions derived from the worklog snapshot; raw input for the lifecycle events."
   - name: jira__worklog_lifecycle_events
     description: "Worklog add/set/remove as field-history events (field_id='worklog', event_kind='lifecycle'); value carries the worklog id — the lookup key into class_task_worklogs; remove is dated by the /worklog/deleted tombstone when available. Unioned into silver.class_task_field_history."
+  - name: jira__link_occurrences
+    description: "Every link occurrence an issue has had — one link of one type to one linked issue, keyed by the type's immutable id and direction, or by its phrase when it resolves to no type — with the changelog operations that opened and closed it and whether it was held before them. Read by jira__task_links."
+    columns:
+      - name: unique_key
+        description: "Source, issue, kind, occurrence key and the linked issue."
+        tests:
+          - unique
+          - not_null
+      - name: occurrence_key
+        description: "'type:<type id>:<direction>', 'phrase:<phrase>' for a phrase resolved to no type, or 'parent'."
   - name: jira__issue_link_snapshot
     description: "The issue links and the parent each issue holds now, one row per link object, with the linked issue's immutable id and key and the link type's phrase for this side. Read by jira__task_links and jira__issue_key_ids."
     columns:
@@ -125,6 +135,8 @@ models:
               values: ['issuelink', 'parent']
       - name: link_id
         description: "The link object's own id; empty for a parent."
+      - name: type_id
+        description: "The link type's immutable id; empty for a parent. Its name and phrases can be reworded, the id cannot."
       - name: type_name
         description: "The link type's name (Blocks, Duplicate, ...); empty for a parent."
       - name: type_outward

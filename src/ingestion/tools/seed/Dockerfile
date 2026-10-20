@@ -24,8 +24,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     HOME=/tmp
 
-# curl + bash: scripts/create-warehouse-placeholders.sh and
-# scripts/apply-ch-migrations.sh use both, and slim ships dash and no curl.
+# curl + bash: scripts/apply-ch-migrations.sh uses both, and slim ships dash
+# and no curl.
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends curl bash \

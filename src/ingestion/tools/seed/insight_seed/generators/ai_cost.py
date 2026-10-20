@@ -19,7 +19,6 @@ be multiplied, the per-line grain a seat price is recoverable from.
 from __future__ import annotations
 
 import datetime as _dt
-import json
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -62,37 +61,46 @@ def seed_ai_seat_overage(
     tenant_uuid: str,
     days: int,
 ) -> int:
-    """Claude Team seat spend against its ceiling, one row per seat per month.
+    """Claude Team seat spend against its ceiling, one snapshot per seat per month.
 
-    `used_amount_cents` is the money billed once a seat exhausted the usage its
-    fee included — not the excess over the ceiling. A fifth of tiered
-    seat-months land a few cents past the ceiling, which is what an enforced
-    limit looks like.
+    `used_credits` is the money billed once a seat exhausted the usage its fee
+    included — not the excess over the ceiling. A fifth of tiered seat-months
+    land a few cents past the ceiling, which is what an enforced limit looks
+    like.
+
+    INVARIANT: each monthly snapshot carries its OWN `_airbyte_extracted_at`.
+    `claude_team__ai_overage` partitions and dedups by the extract month, so
+    snapshots sharing one stamp collapse to a single row per seat.
     """
+    truncate(client, "bronze_claude_team", "claude_team_overage_spend")
+    truncate(client, "staging", "claude_team__ai_overage")
+    truncate(client, "staging", "claude_team__ai_overage_daily")
     truncate(client, "silver", "class_ai_overage")
+    truncate(client, "silver", "class_ai_overage_daily")
     cols = [
-        "insight_tenant_id",
-        "source_id",
+        "_airbyte_raw_id",
+        "_airbyte_extracted_at",
+        "_airbyte_meta",
+        "_airbyte_generation_id",
         "unique_key",
-        "email",
-        "account_id",
-        "period_month",
-        "tool",
-        "seat_tier",
-        "currency",
-        "credit_limit_cents",
-        "used_amount_cents",
-        "overage_cents",
-        "is_over_limit",
-        "is_enabled",
-        "overage_metrics_json",
-        "source",
-        "data_source",
+        "tenant_id",
+        "source_id",
         "collected_at",
-        "_version",
+        "data_source",
+        "snapshot_date",
+        "account_uuid",
+        "account_email",
+        "account_name",
+        "seat_tier",
+        "is_enabled",
+        "monthly_credit_limit",
+        "used_credits",
+        "currency",
+        "out_of_credits",
+        "used_credits_basis",
+        "limit_type",
     ]
     rows: list[tuple[object, ...]] = []
-    version = 1
     # One connector instance serves the whole stream, as a tenant's single
     # claude-team source does.
     source_id = deterministic_uuid("ai.overage.src", tenant_uuid)
@@ -113,37 +121,37 @@ def seed_ai_seat_overage(
                 used = ceiling + rng.randint(2, 48)
             else:
                 used = int(min(rng.uniform(300, 9000) * persona, ceiling - 100))
+            read_at = _dt.datetime.combine(read_day, _dt.time(), tzinfo=_dt.UTC)
+            key = f"{tenant_uuid}:{source_id}:{account_id}:{period_month:%Y-%m}"
             rows.append(
-                (
-                    tenant_uuid,
-                    source_id,
-                    f"{tenant_uuid}-{source_id}-{account_id}-{period_month:%Y-%m}",
-                    p.email,
-                    account_id,
-                    period_month,
-                    "claude",
-                    tier,
-                    "USD",
-                    ceiling,
-                    used,
-                    None if ceiling is None else max(0, used - ceiling),
-                    None if ceiling is None else int(used > ceiling),
-                    1,
-                    json.dumps(
-                        {
-                            "limit_type": "" if ceiling is None else "seat_tier",
-                            "used_credits_basis": "post_discount",
-                            "out_of_credits": "",
-                            "seat_tier": tier,
-                        }
-                    ),
-                    "claude_team",
-                    "insight_claude_team",
-                    _dt.datetime.combine(read_day, _dt.time(), tzinfo=_dt.UTC),
-                    version,
+                tuple(
+                    {
+                        "_airbyte_raw_id": deterministic_uuid("ai.overage.raw", key),
+                        "_airbyte_extracted_at": read_at,
+                        "_airbyte_meta": "{}",
+                        "_airbyte_generation_id": 0,
+                        "unique_key": key,
+                        "tenant_id": tenant_uuid,
+                        "source_id": source_id,
+                        "collected_at": read_at.isoformat(),
+                        "data_source": "insight_claude_team",
+                        "snapshot_date": read_day.isoformat(),
+                        "account_uuid": account_id,
+                        "account_email": p.email,
+                        "account_name": p.display_name,
+                        "seat_tier": tier,
+                        "is_enabled": True,
+                        "monthly_credit_limit": ceiling,
+                        "used_credits": used,
+                        "currency": "USD",
+                        "out_of_credits": ceiling is not None and used > ceiling,
+                        "used_credits_basis": "post_discount",
+                        "limit_type": "" if ceiling is None else "seat_tier",
+                    }.get(col)
+                    for col in cols
                 )
             )
-    return bulk_insert(client, "silver", "class_ai_overage", cols, rows)
+    return bulk_insert(client, "bronze_claude_team", "claude_team_overage_spend", cols, rows)
 
 
 def seed_claude_team_invoices_bronze(
@@ -316,7 +324,9 @@ def generate(
     days: int,
 ) -> dict[str, int]:
     return {
-        "silver.class_ai_overage": seed_ai_seat_overage(client, roster, tenant_uuid, days),
+        "bronze_claude_team.claude_team_overage_spend": seed_ai_seat_overage(
+            client, roster, tenant_uuid, days
+        ),
         "bronze_claude_team_invoices.claude_team_invoice_lines": seed_claude_team_invoices_bronze(
             client, roster, tenant_uuid, days
         ),

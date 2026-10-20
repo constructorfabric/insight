@@ -93,7 +93,7 @@ jobs:
   # untested data-path changes. It covers everything a stand raises or the
   # suite reads at run time:
   #
-  #   src/ingestion/    dbt models, the migration and connectors-ddl scripts,
+  #   src/ingestion/    dbt models, the migration and bootstrap scripts,
   #                     and every connector's enrich source
   #   src/backend/      analytics, identity-resolution, the gateway and the
   #                     authenticator — the stand runs them, and the analytics
@@ -244,7 +244,7 @@ jobs:
       - name: Reclaim cache dir ownership from the build container
         run: sudo chown -R "$(id -u):$(id -g)" .ci-cargo
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name != 'push'
         with:
           name: backend-binaries
@@ -292,7 +292,7 @@ jobs:
           cache-from: |
             type=registry,ref=${{ env.BUILDCACHE }}:insight-v3-core-amd64
             type=registry,ref=${{ env.BUILDCACHE }}:backend-deps-amd64
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name != 'push'
         with:
           name: backend-images
@@ -338,7 +338,7 @@ jobs:
         with:
           python-version: "3.13"
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           cache-suffix: datapath
 
@@ -348,7 +348,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: ${{ needs.changes.outputs.backend == 'true' }}
         with:
           name: backend-binaries
@@ -360,7 +360,7 @@ jobs:
         if: ${{ needs.changes.outputs.backend == 'true' }}
         run: find deploy/compose/build -type f -exec chmod 0755 {} +
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: ${{ needs.changes.outputs.backend == 'true' }}
         with:
           name: backend-images
@@ -464,7 +464,7 @@ jobs:
       # in every shard; the ledgers are per shard and the gate unions them.
       - name: Upload coverage inputs
         if: ${{ !cancelled() && matrix.shard != 'identity' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-inputs-metrics-${{ matrix.shard }}
           path: .artifacts/
@@ -522,7 +522,7 @@ jobs:
       # Merge every shard's artifact into one directory. metric_definitions.json
       # is the full builtin registry and is identical in every shard, so any one
       # will do; the assertion ledgers are per-shard and the gate takes them all.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: coverage-inputs-metrics-*
           merge-multiple: true

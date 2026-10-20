@@ -10,6 +10,8 @@ leaves the bug / non-bug measures empty while every row still "looks" seeded.
 from __future__ import annotations
 
 import datetime as _dt
+import json
+import re
 from typing import Any
 
 import pytest
@@ -31,11 +33,13 @@ Rows = dict[str, list[dict[str, Any]]]
 Issues = dict[str, list[dict[str, Any]]]
 
 _TABLES = (
-    "silver.class_task_worklogs",
-    "silver.class_task_users",
-    "silver.class_task_field_history",
-    "silver.class_task_statuses",
-    "silver.class_task_issuetypes",
+    "bronze_jira.jira_issue",
+    "bronze_jira.jira_issue_history",
+    "bronze_jira.jira_worklogs",
+    "bronze_jira.jira_user",
+    "bronze_jira.jira_statuses",
+    "bronze_jira.jira_issuetypes",
+    "bronze_jira.jira_fields",
     "config.field_value_map",
     "config.field_value_defaults",
 )
@@ -86,26 +90,24 @@ def rows(runs: tuple[Rows, Rows]) -> Rows:
 
 
 @pytest.fixture(scope="module")
-def history(rows: Rows) -> list[dict[str, Any]]:
-    return rows["silver.class_task_field_history"]
+def issues(rows: Rows) -> dict[str, dict[str, Any]]:
+    """Each issue by its Jira id, with its field snapshot already parsed."""
+    parsed: dict[str, dict[str, Any]] = {}
+    for row in rows["bronze_jira.jira_issue"]:
+        fields = json.loads(row["custom_fields_json"])
+        parsed[row["jira_id"]] = {**row, "fields": fields}
+    return parsed
 
 
 @pytest.fixture(scope="module")
-def issues(history: list[dict[str, Any]]) -> Issues:
-    grouped: Issues = {}
-    for row in history:
-        grouped.setdefault(row["issue_id"], []).append(row)
+def closes(rows: Rows) -> dict[str, list[dict[str, Any]]]:
+    """The changelog entries that close an issue, by Jira id."""
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows["bronze_jira.jira_issue_history"]:
+        for item in json.loads(row["items"]):
+            if item["field"] == "status":
+                grouped.setdefault(row["jira_id"], []).append(item)
     return grouped
-
-
-def _issuetype_initial(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        e for e in events if e["event_kind"] == "synthetic_initial" and e["field_id"] == "issuetype"
-    ]
-
-
-def _close_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [e for e in events if e["event_kind"] == "changelog"]
 
 
 # ─── Determinism ─────────────────────────────────────────────────────────
@@ -123,82 +125,87 @@ def test_a_rerun_over_the_same_roster_and_window_reproduces_every_row(
 # ─── Field-history row shape ─────────────────────────────────────────────
 
 
-def test_every_issue_opens_with_an_issuetype_event_that_carries_a_value_id(
-    issues: Issues,
+def test_every_issue_snapshot_carries_an_issuetype_id(
+    issues: dict[str, dict[str, Any]],
 ) -> None:
-    """The docstring'd trap: an issuetype event without a value_id cannot join
-    the dimension, and gold reads the issue as an unclassified type."""
-    for issue_id, events in issues.items():
-        typed = _issuetype_initial(events)
-        assert len(typed) == 1, f"issue {issue_id} has {len(typed)} issuetype initials"
-        event = typed[0]
-        assert len(event["value_ids"]) == 1, (
-            f"issue {issue_id}: issuetype event carries {event['value_ids']}"
+    """The docstring'd trap, one layer earlier: the journal derives the
+    issuetype event from this snapshot, and an id the dimension does not carry
+    leaves gold reading the issue as an unclassified type."""
+    for issue_id, issue in issues.items():
+        issuetype = issue["fields"].get("issuetype")
+        assert issuetype, f"issue {issue_id} carries no issuetype"
+        assert issuetype["id"], f"issue {issue_id}: issuetype has no id"
+        assert issuetype["name"] in task._ISSUE_TYPE_DIM, (
+            f"issue {issue_id}: issuetype {issuetype['name']!r} is not in the dimension"
         )
-        assert event["value_ids"][0], f"issue {issue_id}: issuetype event has no value_id"
-        assert event["value_id_type"] == "string_literal", issue_id
 
 
-def test_every_issue_gets_one_synthetic_initial_row_per_tracked_field(
-    issues: Issues,
+def test_every_issue_snapshot_carries_each_tracked_field(
+    issues: dict[str, dict[str, Any]],
 ) -> None:
-    for issue_id, events in issues.items():
-        initial = [e for e in events if e["event_kind"] == "synthetic_initial"]
-        fields = [e["field_id"] for e in initial]
-        assert set(fields) == _INITIAL_FIELDS, f"issue {issue_id} initial fields: {sorted(fields)}"
-        assert len(fields) == len(_INITIAL_FIELDS), f"issue {issue_id} duplicates a field"
+    """`jira__issue_field_snapshot` unpivots exactly this object, so a field
+    missing here produces no synthetic_initial row for it."""
+    for issue_id, issue in issues.items():
+        assert set(issue["fields"]) == _INITIAL_FIELDS, (
+            f"issue {issue_id} snapshot fields: {sorted(issue['fields'])}"
+        )
 
 
-def test_a_close_event_flips_status_to_a_done_status_with_its_dimension_id(
-    issues: Issues,
+def test_a_closed_issue_snapshots_the_status_it_closed_into(
+    issues: dict[str, dict[str, Any]], closes: dict[str, list[dict[str, Any]]]
 ) -> None:
-    for issue_id, events in issues.items():
-        for event in _close_events(events):
-            assert event["field_id"] == "status", f"issue {issue_id} changelog is not a status"
-            display = event["value_displays"][0]
-            assert display in task._CLOSE_STATUSES, f"issue {issue_id} closes to {display!r}"
-            assert event["value_ids"][0] == task._STATUS_DIM[display][0], (
-                f"issue {issue_id}: close value_id does not match the {display!r} dimension row"
-            )
-            assert event["event_at"].date() < _ANCHOR, f"issue {issue_id} closes after the anchor"
+    """INVARIANT: the journal derives an issue's opening status by walking the
+    changelog back from the snapshot. A snapshot pinned to the opening status
+    contradicts the close entry, and the issue never reaches a done category."""
+    for issue_id, items in closes.items():
+        assert len(items) == 1, f"issue {issue_id} has {len(items)} status changes"
+        item = items[0]
+        assert item["fromString"] == "To Do", f"issue {issue_id} does not open To Do"
+        assert item["toString"] in task._CLOSE_STATUSES, (
+            f"issue {issue_id} closes to {item['toString']!r}"
+        )
+        assert item["to"] == task._STATUS_DIM[item["toString"]][0], (
+            f"issue {issue_id}: the close id does not match the dimension row"
+        )
+        assert issues[issue_id]["fields"]["status"]["name"] == item["toString"], (
+            f"issue {issue_id}: the snapshot disagrees with the changelog"
+        )
 
 
 def test_roughly_the_configured_share_of_old_enough_issues_is_closed(
-    issues: Issues,
+    issues: dict[str, dict[str, Any]], closes: dict[str, list[dict[str, Any]]]
 ) -> None:
     """Issues older than the max close delay are closable whatever delay the
     rng drew, so only there is the 55% share observable undiluted."""
     cutoff = _ANCHOR - _dt.timedelta(days=_MAX_DAYS_TO_CLOSE + 1)
-    old = {
-        issue_id: events
-        for issue_id, events in issues.items()
-        if events[0]["event_at"].date() <= cutoff
-    }
+    old = [
+        issue_id
+        for issue_id, issue in issues.items()
+        if _dt.date.fromisoformat(issue["created"][:10]) <= cutoff
+    ]
     assert len(old) >= 100, f"only {len(old)} old issues; widen _DAYS"
 
-    closed = sum(1 for events in old.values() if _close_events(events))
-    share = closed / len(old)
+    share = sum(1 for issue_id in old if issue_id in closes) / len(old)
     assert 0.45 <= share <= 0.65, f"close share {share:.3f} strays from the configured 0.55"
 
 
 # ─── Issue-type distribution ─────────────────────────────────────────────
 
 
-def _issue_types(issues: Issues) -> dict[str, str]:
-    return {
-        issue_id: _issuetype_initial(events)[0]["value_ids"][0]
-        for issue_id, events in issues.items()
-    }
+def _issue_types(issues: dict[str, dict[str, Any]]) -> dict[str, str]:
+    return {issue_id: issue["fields"]["issuetype"]["id"] for issue_id, issue in issues.items()}
 
 
 @pytest.mark.parametrize("type_name", task._ISSUE_TYPES)
-def test_every_issue_type_appears_across_the_roster(issues: Issues, type_name: str) -> None:
+def test_every_issue_type_appears_across_the_roster(
+    issues: dict[str, dict[str, Any]], type_name: str
+) -> None:
     type_id = task._ISSUE_TYPE_DIM[type_name][0]
     seeded = [t for t in _issue_types(issues).values() if t == type_id]
     assert seeded, f"no issue seeded with type {type_name!r} ({type_id})"
 
 
-def test_bugs_are_roughly_a_quarter_of_all_issues(issues: Issues) -> None:
+def test_bugs_are_roughly_a_quarter_of_all_issues(issues: dict[str, dict[str, Any]]) -> None:
     types = _issue_types(issues)
     assert len(types) >= 300, f"only {len(types)} issues; widen _DAYS or roster"
 
@@ -206,119 +213,95 @@ def test_bugs_are_roughly_a_quarter_of_all_issues(issues: Issues) -> None:
     assert 0.19 <= share <= 0.31, f"bug share {share:.3f} strays from the uniform 0.25"
 
 
-def test_closed_bugs_exist_so_bugs_fixed_is_non_zero(issues: Issues) -> None:
+def test_closed_bugs_exist_so_bugs_fixed_is_non_zero(
+    issues: dict[str, dict[str, Any]], closes: dict[str, list[dict[str, Any]]]
+) -> None:
     types = _issue_types(issues)
-    closed_bugs = [
-        issue_id
-        for issue_id, events in issues.items()
-        if types[issue_id] == _BUG_TYPE_ID and _close_events(events)
-    ]
+    closed_bugs = [i for i in closes if types[i] == _BUG_TYPE_ID]
     assert closed_bugs, "no closed bug in the whole window — bugs_fixed would read zero"
 
 
-# ─── Issue-type dimension ────────────────────────────────────────────────
+# ─── Dimensions the journal joins ────────────────────────────────────────
 
 
-def test_the_issuetype_dimension_emits_exactly_the_declared_rows_per_source(
-    rows: Rows,
-) -> None:
-    by_source: dict[str, dict[str, str]] = {}
-    for row in rows["silver.class_task_issuetypes"]:
-        per_source = by_source.setdefault(row["insight_source_id"], {})
-        assert row["issue_type_id"] not in per_source, (
-            f"source {row['insight_source_id']} duplicates type {row['issue_type_id']}"
+def test_the_issuetype_catalogue_declares_every_type_once(rows: Rows) -> None:
+    seen: dict[str, str] = {}
+    for row in rows["bronze_jira.jira_issuetypes"]:
+        assert row["issuetype_id"] not in seen, f"type {row['issuetype_id']} is declared twice"
+        seen[row["issuetype_id"]] = row["name"]
+
+    assert seen == {type_id: name for name, (type_id, _) in task._ISSUE_TYPE_DIM.items()}
+
+
+def test_the_status_catalogue_declares_a_done_category_for_every_close_status(rows: Rows) -> None:
+    """Gold detects a closed task by status CATEGORY, never a localized name,
+    so a close status whose row is missing or mis-categorised reads as open."""
+    categories = {row["name"]: row["category_key"] for row in rows["bronze_jira.jira_statuses"]}
+
+    for status in task._CLOSE_STATUSES:
+        assert categories.get(status) == "done", (
+            f"close status {status!r} is categorised {categories.get(status)!r}"
         )
-        per_source[row["issue_type_id"]] = row["issue_type_name"]
-
-    declared = {type_id: name for name, (type_id, _kind) in task._ISSUE_TYPE_DIM.items()}
-    for source_id, per_source in by_source.items():
-        assert per_source == declared, f"source {source_id} diverges from _ISSUE_TYPE_DIM"
 
 
-@pytest.mark.parametrize(
-    ("field", "dim"),
-    [("issue_type", task._ISSUE_TYPE_DIM), ("resolution", task._RESOLUTION_DIM)],
-    ids=["issue_type", "resolution"],
-)
-def test_the_value_map_emits_exactly_the_declared_decisions_per_source(
-    rows: Rows, field: str, dim: dict[str, tuple[str, str]]
-) -> None:
-    by_source: dict[str, dict[str, tuple[str, str]]] = {}
-    for row in rows["config.field_value_map"]:
-        assert row["tenant_id"] == _TENANT
-        assert row["field"] in ("issue_type", "resolution")
-        assert row["is_deleted"] == 0
-        if row["field"] != field:
-            continue
-        per_source = by_source.setdefault(row["insight_source_id"], {})
-        assert row["source_key"] not in per_source, (
-            f"source {row['insight_source_id']} duplicates decision {row['source_key']}"
-        )
-        per_source[row["source_key"]] = (row["display_name"], row["target_value"])
+def test_every_field_the_snapshot_carries_is_declared_in_the_catalogue(rows: Rows) -> None:
+    """`jira__issue_field_snapshot` RAISES on a field whose kind is unknown,
+    so an undeclared field fails the whole build rather than dropping a value."""
+    declared = {row["field_id"] for row in rows["bronze_jira.jira_fields"]}
 
-    declared = {source_key: (name, kind) for name, (source_key, kind) in dim.items()}
-    for source_id, per_source in by_source.items():
-        assert per_source == declared, f"source {source_id} diverges from the {field} dimension"
+    assert declared >= _INITIAL_FIELDS, f"undeclared fields: {sorted(_INITIAL_FIELDS - declared)}"
 
 
-def test_the_value_map_carries_a_bug_decision_keyed_by_the_history_value_id(
-    rows: Rows,
-) -> None:
-    bug_rows = [r for r in rows["config.field_value_map"] if r["target_value"] == "bug"]
-    assert bug_rows, "no bug decision — gold cannot classify any bug"
-    for row in bug_rows:
-        assert row["source_key"] == _BUG_TYPE_ID, (
-            f"bug decision keyed {row['source_key']!r}, history events use {_BUG_TYPE_ID!r}"
-        )
-        assert row["display_name"] == "Bug"
+def test_the_value_map_carries_a_bug_decision_for_the_snapshot_id(rows: Rows) -> None:
+    """The reconciliation gold classifies an issue through: an issuetype id with
+    no mapping row leaves bugs_fixed empty while every row still looks seeded."""
+    decisions = {
+        (row["insight_source_id"], row["field"], row["source_key"]): row["target_value"]
+        for row in rows["config.field_value_map"]
+    }
+
+    assert (task.JIRA_SOURCE_ID, "issue_type", _BUG_TYPE_ID) in decisions, (
+        "no issue_type decision for the bug type id"
+    )
+    assert decisions[(task.JIRA_SOURCE_ID, "issue_type", _BUG_TYPE_ID)] == "bug"
 
 
-def test_every_source_carries_a_default_decision_for_each_classified_field(rows: Rows) -> None:
+def test_the_source_carries_a_default_decision_for_each_classified_field(rows: Rows) -> None:
     """`assert_task_field_value_defaults_exist` blocks the gold build without
-    these rows, so a seeded stand states the fallback rather than leaving it to
-    gold's hardcoded terminal."""
-    mapped = {(row["insight_source_id"], row["field"]) for row in rows["config.field_value_map"]}
-    assert mapped, "no value-map rows — nothing to default for"
-
-    by_key: dict[tuple[str, str], str] = {}
-    for row in rows["config.field_value_defaults"]:
-        assert row["tenant_id"] == _TENANT
-        assert row["is_deleted"] == 0
-        key = (row["insight_source_id"], row["field"])
-        assert key not in by_key, f"{key} duplicates its default decision"
-        by_key[key] = row["default_value"]
-
-    assert set(by_key) == mapped, "a task source has decisions for a field but no default"
-    assert set(by_key.values()) == {"unknown"}
-
-
-# ─── Referential integrity of the seed itself ────────────────────────────
-
-
-def test_every_issuetype_value_id_in_history_exists_in_the_dimension(
-    rows: Rows, history: list[dict[str, Any]]
-) -> None:
-    """The join gold depends on: (insight_source_id, issue_type_id)."""
-    dimension = {
-        (r["insight_source_id"], r["issue_type_id"]) for r in rows["silver.class_task_issuetypes"]
+    one, so a field classified by the map needs its fallback too."""
+    defaults = {
+        (row["insight_source_id"], row["field"]) for row in rows["config.field_value_defaults"]
     }
-    for event in history:
-        if event["field_id"] != "issuetype":
-            continue
-        key = (event["insight_source_id"], event["value_ids"][0])
-        assert key in dimension, f"issue {event['issue_id']} references unseeded type {key}"
+
+    for field in ("issue_type", "resolution"):
+        assert (task.JIRA_SOURCE_ID, field) in defaults, f"no default decision for {field}"
 
 
-def test_every_status_value_id_in_history_exists_in_the_status_dimension(
-    rows: Rows, history: list[dict[str, Any]]
+def test_every_issue_key_is_unique_and_numeric(issues: dict[str, dict[str, Any]]) -> None:
+    """`jira__issue_key_ids` keeps only `^[^-]+-[0-9]+$` keys over `^[0-9]+$`
+    ids, and collapses colliding keys with `GROUP BY issue_key`. A hash of the
+    plan's uuid satisfied neither: four hex characters over a few hundred
+    issues collide by birthday, and most are not numeric at all."""
+    keys = [issue["id_readable"] for issue in issues.values()]
+
+    assert len(set(keys)) == len(keys), "two issues share a readable key"
+    assert len(set(issues)) == len(issues), "two issues share a jira_id"
+    for key, jira_id in zip(keys, issues, strict=True):
+        assert re.match(r"^[^-]+-[0-9]+$", key), f"{key} is not a numeric Jira key"
+        assert re.match(r"^[0-9]+$", jira_id), f"{jira_id} is not a numeric Jira id"
+
+
+def test_a_worklog_names_an_issue_the_run_emitted(
+    rows: Rows, issues: dict[str, dict[str, Any]]
 ) -> None:
-    """Same trap one dimension over: an unmatched status_id yields a NULL
-    status_category and the closed-task measures go empty."""
-    dimension = {
-        (r["insight_source_id"], r["status_id"]) for r in rows["silver.class_task_statuses"]
-    }
-    for event in history:
-        if event["field_id"] != "status":
-            continue
-        key = (event["insight_source_id"], event["value_ids"][0])
-        assert key in dimension, f"issue {event['issue_id']} references unseeded status {key}"
+    """A bronze worklog names its issue by id and the staging model joins it."""
+    worklogs = rows["bronze_jira.jira_worklogs"]
+    assert worklogs, "no worklog was emitted"
+
+    for row in worklogs:
+        assert row["jira_id"] in issues, (
+            f"worklog names issue {row['jira_id']}, which no row carries"
+        )
+        assert row["id_readable"] == issues[row["jira_id"]]["id_readable"], (
+            f"worklog {row['worklog_id']} disagrees with the issue's readable key"
+        )

@@ -4,5 +4,5 @@ description: Insight v3 Core — token-authenticated raw-data ingestion
 version: 0.1.0
 # appVersion is managed by the release pipeline (build-images.yml): it is
 # bumped to the freshly built image tag on merges that change this service.
-appVersion: "2026.10.15.09.37-3db1231"
+appVersion: "2026.10.17.16.58-e29cba6"
 type: application
