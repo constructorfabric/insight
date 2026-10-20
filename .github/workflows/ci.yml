@@ -20,6 +20,7 @@ on:
       - "src/ingestion/connectors/**"
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/ci-timings.yml"
       # The rust matrix boots live_ch entries' ClickHouse through this script.
       - ".github/workflows/scripts/start-clickhouse.sh"
       # The ingestion-scripts component root; also holds connectors-config.yaml
@@ -44,6 +45,7 @@ on:
       - "src/ingestion/connectors/**"
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/ci-timings.yml"
       - ".github/workflows/scripts/start-clickhouse.sh"
       - "src/ingestion/scripts/**"
       - "src/ingestion/silver/_shared/**"
@@ -57,11 +59,10 @@ on:
         type: boolean
         default: false
 
-# A new push obsoletes any run still in flight for the same ref — cancel it so a
-# rebase/force-push doesn't leave a slow instrumented build burning minutes.
+# INVARIANT: trusted cache producers finish; only superseded PR runs are cancelled.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -200,6 +201,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 -m unittest discover -s scripts/ci/tests -p "test_logging_bar.py" -q
 
+      - name: Timing report self-test
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest discover -s scripts/ci/tests -p "test_timings.py" -q
+
   # One unified job per Rust crate: fmt + clippy (when entry.lint) and coverage
   # (when entry.cover). Replaces the old standalone workspace rust-lint — fmt and
   # clippy now run per crate, gated by the lint flag from changed.py (a shared
@@ -208,6 +213,10 @@ jobs:
     name: Rust — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.rust != '[]' }}
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     runs-on: ${{ (matrix.entry.live_db || matrix.entry.live_ch) && (matrix.entry.cover || matrix.entry.test) && ((vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]')) || vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     strategy:
       fail-fast: false
@@ -234,6 +243,9 @@ jobs:
           # rustfmt + clippy for the lint steps; llvm-tools-preview for cargo-llvm-cov.
           components: rustfmt, clippy, llvm-tools-preview
 
+      - name: Install compiler cache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           # Both possible workspaces declared; only the relevant one is used per
@@ -252,9 +264,8 @@ jobs:
       - name: Clippy (${{ matrix.entry.name }})
         if: ${{ matrix.entry.lint && matrix.entry.clippy }}
         working-directory: ${{ matrix.entry.root }}
-        # -D warnings stays on clippy only — never the coverage build.
         env:
-          RUSTFLAGS: "-D warnings"
+          CARGO_BUILD_WARNINGS: deny
         run: |
           feats=""
           if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
@@ -423,6 +434,10 @@ jobs:
       - name: Remove the service containers
         if: always()
         run: docker rm -f insight-maria insight-redis insight-clickhouse >/dev/null 2>&1 || true
+
+      - name: Compiler cache statistics
+        if: ${{ !cancelled() }}
+        run: sccache --show-stats
 
   # One producer job per changed Python connector. Collects inline with
   # pytest-cov in an isolated uv venv; exit-5 (no tests collected) is tolerated.

@@ -11,18 +11,21 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-
 from airbyte_cdk.test.mock_http import HttpMocker
 
 __all__ = [
+    "cached_source_definitions",
     "connector_inventory",
     "http_mocker",
     "pytest_collectstart",
     "pytest_runtest_makereport",
     "pytest_terminal_summary",
+    "retry_delays",
 ]
 
 _CONNECTORS_DIR = Path(__file__).resolve().parents[3] / "connectors"
@@ -37,7 +40,32 @@ def pytest_runtest_makereport(item, call):
 
 
 @pytest.fixture
-def http_mocker(request):
+def cached_source_definitions(monkeypatch: pytest.MonkeyPatch) -> None:
+    from airbyte_cdk.sources.declarative import concurrent_declarative_source
+    from airbyte_cdk.sources.declarative.yaml_declarative_source import YamlDeclarativeSource
+
+    from connector_tests import runtime
+
+    monkeypatch.setattr(YamlDeclarativeSource, "_read_and_parse_yaml_file", runtime.read_manifest)
+    monkeypatch.setattr(concurrent_declarative_source, "_get_declarative_component_schema", runtime.component_schema)
+
+
+@pytest.fixture
+def retry_delays(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    import backoff._sync as backoff_sync
+    from airbyte_cdk.sources.streams.http import rate_limiting
+
+    delays: list[float] = []
+    sleeper = SimpleNamespace(sleep=delays.append)
+    monkeypatch.setattr(backoff_sync, "time", sleeper)
+    monkeypatch.setattr(rate_limiting, "time", sleeper)
+    return delays
+
+
+@pytest.fixture
+def http_mocker(
+    request: pytest.FixtureRequest, cached_source_definitions: None, retry_delays: list[float]
+) -> Iterator[HttpMocker]:
     """Transport-level HTTP mock: every request the connector issues must match
     a registered fixture (no network fallthrough). On a passing test, every
     registered matcher must have been hit at least once — mirroring the
@@ -109,9 +137,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     nocode = [r for r in rows if r["type"] == "nocode"]
     covered = [r for r in nocode if r["covered"]]
     terminalreporter.section("connector mock-test coverage")
-    terminalreporter.line(
-        f"nocode connectors with a mock suite: {len(covered)}/{len(nocode)}"
-    )
+    terminalreporter.line(f"nocode connectors with a mock suite: {len(covered)}/{len(nocode)}")
     for r in rows:
         mark = "covered" if r["covered"] else "MISSING"
         note = " (own component)" if r["type"] == "cdk" else ""
@@ -119,7 +145,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if step_summary:
-        with open(step_summary, "a") as f:
+        with Path(step_summary).open("a") as f:
             f.write(
                 f"\n## Connector test coverage\n\n"
                 f"Nocode connectors with a mock suite: **{len(covered)}/{len(nocode)}**\n\n"

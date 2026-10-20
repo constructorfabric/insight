@@ -25,6 +25,15 @@ manifest, and the test boundary is HTTP:
    `tenant_id`/`source_id`/`unique_key` stamping, and record shape against the
    stream schema.
 
+The `http_mocker` fixture caches parsed manifest contents and the CDK component
+schema, copying them for each new source. Source instances and state remain
+independent. The harness meta suite compares cached manifests with the original
+CDK parser. Editing a manifest changes its cache key.
+
+HTTP retry sleeps are recorded by the `retry_delays` fixture instead of waiting.
+Retry policy, request sequences and attempt limits still execute. Tests can
+assert the recorded delays; process-wide sleep and production retries are unchanged.
+
 ## Layout
 
 ```text
