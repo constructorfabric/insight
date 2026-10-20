@@ -260,7 +260,7 @@ jobs:
           if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
           cargo clippy -p ${{ matrix.entry.package }} --all-targets $feats
 
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         if: ${{ matrix.entry.cover }}
         with:
           tool: cargo-llvm-cov
@@ -310,7 +310,7 @@ jobs:
           CLICKHOUSE_URL: http://127.0.0.1:8123
         run: |
           set -euo pipefail
-          # pins.env is plain KEY=VALUE (same load as connectors-ddl), so the
+          # pins.env is plain KEY=VALUE (same load as the field-parity lane), so the
           # server image stays pinned in exactly one committed place.
           . src/ingestion/scripts/bootstrap-db/pins.env
           export CLICKHOUSE_SERVER_IMAGE
@@ -412,7 +412,7 @@ jobs:
 
       - name: Upload Cobertura
         if: ${{ matrix.entry.cover }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: cobertura-rust-${{ matrix.entry.name }}
           path: coverage/*.xml
@@ -445,7 +445,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           # Per-connector cache key so parallel setup-uv jobs don't race to
           # reserve one shared key ("Unable to reserve cache …").
@@ -484,7 +484,7 @@ jobs:
 
       - name: Upload Cobertura
         if: ${{ matrix.entry.collect }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: cobertura-python-${{ matrix.entry.name }}
           path: coverage/*.xml
@@ -531,7 +531,7 @@ jobs:
         with:
           package_json_file: ${{ matrix.entry.root }}/package.json
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: ${{ matrix.entry.root }}/.nvmrc
           cache: pnpm
@@ -591,7 +591,7 @@ jobs:
 
       - name: Upload Cobertura
         if: ${{ matrix.entry.cover }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: cobertura-js-${{ matrix.entry.name }}
           path: coverage/*.xml
@@ -656,7 +656,7 @@ jobs:
         run: python3 -m unittest discover -s scripts/ci/tests -p 'test_coverage_reanchor.py'
 
       - name: Download all Cobertura reports
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: cobertura-*
           merge-multiple: true

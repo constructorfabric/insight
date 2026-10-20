@@ -239,9 +239,9 @@ jobs:
       # Before anything touches the cluster: a broken lockfile or a missing
       # binary must not surface after an upgrade has already landed.
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           cache-suffix: test-stand-smoke
 
@@ -586,7 +586,7 @@ jobs:
         # unrewritten — they are page renders, carrying seeded persona data but
         # no header and no cookie.
         if: always() && steps.redact_traces.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: stand-suite-traces
           path: |

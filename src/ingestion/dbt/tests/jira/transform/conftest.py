@@ -26,7 +26,6 @@ from __future__ import annotations
 import functools
 import json
 import os
-import re
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -51,10 +50,6 @@ sys.path.insert(0, str(INGESTION_DIR / "scripts"))
 
 from bronze import create_bronze  # noqa: E402
 from dbt_profiles import Connection, build_profile  # noqa: E402
-
-# The class tables gold reads. `test_title_role.py` seeds them directly, and
-# the union models that normally create them need every source's staging arm.
-SILVER_DDL = INGESTION_DIR / "scripts" / "connectors-ddl" / "silver.sql"
 
 # What the prod staging step selects. Building it is its own assertion — that
 # the field-history models coexist with every other Jira staging model — and
@@ -213,20 +208,33 @@ class Warehouse:
         )
 
 
-def _apply_sql_file(warehouse: Warehouse, path: Path) -> None:
-    """Apply a multi-statement .sql file one statement at a time.
+#: The class relations that must stand before the first test runs: two a module
+#: writes into directly (`test_title_role` seeds the journal and an actor,
+#: `test_silver_incremental_boundary` plants another producer's row) and two more
+#: that `task_issue_state` joins by name, which no test seeds.
+SEEDED_CLASSES = ("class_task_field_history", "class_task_users", "class_task_issuetypes", "class_task_statuses")
 
-    The HTTP endpoint takes one statement per request. Splitting on `;` is safe
-    for this file: it is generated DDL with no semicolon inside any literal.
-    """
-    for statement in re.split(r";\s*\n", path.read_text()):
-        if statement.strip():
-            warehouse.execute(statement)
+#: Their Jira arms, built first: `union_by_tag` unions the contributors that are
+#: readable and skips the rest, so a class built with none of them would fall back
+#: to selecting from a target that does not exist yet. Named per model rather than
+#: by class, because the other trackers' arms have no bronze on this rig.
+SEEDED_CLASS_ARMS = (
+    "+jira__field_history_derived",
+    "+jira__task_users",
+    "+jira__task_issuetypes",
+    "+jira__task_statuses",
+)
 
 
 @pytest.fixture(scope="session")
 def warehouse() -> Warehouse:
-    """Session setup: databases, bronze and silver DDL, a dbt profile pointing at them."""
+    """Session setup: databases, bronze, the classes a module seeds, and a dbt
+    profile pointing at them.
+
+    Nothing else in silver is pre-created. A class this connector feeds is built
+    by the run that asserts over it; one it does not feed is excluded by
+    `list_unbuildable_models` rather than standing empty.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         profiles_dir = Path(tmp)
         wh = Warehouse(profiles_dir)
@@ -240,17 +248,18 @@ def warehouse() -> Warehouse:
         profiles_dir.joinpath("profiles.yml").write_text(yaml.safe_dump(profile))
         # Every database this rig touches. A throwaway warehouse makes its own:
         # on a deployment create-databases.sh is the one creation site, and
-        # neither the snapshot nor an on-run-start hook carries a CREATE DATABASE.
+        # no on-run-start hook carries a CREATE DATABASE.
         wh.execute("CREATE DATABASE IF NOT EXISTS staging")
         wh.execute("CREATE DATABASE IF NOT EXISTS silver")
         wh.execute("CREATE DATABASE IF NOT EXISTS identity")
         wh.execute("CREATE DATABASE IF NOT EXISTS config")
         wh.execute("CREATE DATABASE IF NOT EXISTS insight")
         create_bronze("jira", port=wh.port, user=wh.user, password=wh.password, database="default")
-        _apply_sql_file(wh, SILVER_DDL)
         # Parse here rather than inside whichever test runs first, so a broken
         # project reads as a setup error and costs one test no seconds.
         _ = wh.dbt_project
+        wh.build(" ".join(SEEDED_CLASS_ARMS))
+        wh.build(" ".join(SEEDED_CLASSES))
         yield wh
 
 

@@ -1,4 +1,4 @@
-# Derived from the bronze_gitlab DDL snapshot. Array/object fields
+# Derived from the bronze_gitlab tables the Airbyte destination creates. Array/object fields
 # land in bronze as JSON strings (the staging models toString() them), so they
 # are typed string here.
 schemas:

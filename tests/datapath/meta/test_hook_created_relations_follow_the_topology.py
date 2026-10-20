@@ -11,11 +11,6 @@ exists to remove -- while every model around it replicated correctly.
 Both renderers live in `dbt/macros/insight_engine.sql`, and the source rules below
 are what keeps the hooks using them. The warehouse rules then read what a dbt run
 actually created, which is what a broken interpolation would show up in.
-
-Scope of the warehouse rules is `config` alone. `identity.identity_persons` has a
-second creator -- the `connectors-ddl` snapshot this suite applies before dbt runs
--- so its shape on a stand is not evidence about this hook until T23 retires that
-snapshot. The source rules cover it either way.
 """
 
 from __future__ import annotations
@@ -31,8 +26,7 @@ from insight_datapath.topology import Topology, from_environment
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-#: The `on-run-start` hooks that emit DDL. `drop_silver_placeholders_at_start`
-#: creates nothing and is deliberately not one of them.
+#: The `on-run-start` hooks that emit DDL.
 RAW_DDL_MACROS = sorted((REPO_ROOT / "src/ingestion/dbt/macros").glob("create_*.sql"))
 
 #: Any member of the MergeTree family, spelled out.
@@ -47,16 +41,15 @@ CREATES_A_RELATION = re.compile(r"\bCREATE (?:TABLE|DATABASE)\b")
 RENDERERS = {"engine": "insight_engine(", "on_cluster": "insight_on_cluster()"}
 CLUSTER_CLAUSE_NAME = "on_cluster"
 
-CONFIG_DATABASE = "config"
-
 #: Every relation the hooks alone create, and the family each is created with.
-CONFIG_RELATIONS = {
-    "ai_credit_pricing": "ReplacingMergeTree",
-    "ai_seat_tier_map": "ReplacingMergeTree",
-    "field_value_defaults": "ReplacingMergeTree",
-    "field_value_map": "ReplacingMergeTree",
-    "task_field_roles": "ReplacingMergeTree",
-    "task_value_map": "ReplacingMergeTree",
+HOOK_RELATIONS = {
+    "config.ai_credit_pricing": "ReplacingMergeTree",
+    "config.ai_seat_tier_map": "ReplacingMergeTree",
+    "config.field_value_defaults": "ReplacingMergeTree",
+    "config.field_value_map": "ReplacingMergeTree",
+    "config.task_field_roles": "ReplacingMergeTree",
+    "config.task_value_map": "ReplacingMergeTree",
+    "identity.identity_persons": "MergeTree",
 }
 
 
@@ -71,18 +64,20 @@ def topology() -> Topology:
 
 
 @pytest.fixture(scope="session")
-def config_engines(instance_cfg: InstanceConfig, dbt_runner: DbtRunner) -> dict[str, str]:
+def hook_engines(instance_cfg: InstanceConfig, dbt_runner: DbtRunner) -> dict[str, str]:
     """The engine family ClickHouse reports for each relation the hooks created.
 
     Taken after a dbt run rather than after the schema fixture: `on-run-start` is
     the only thing that creates these, so without one there would be nothing here
     and every rule below would pass on an empty warehouse.
     """
+    wanted = ", ".join(f"'{relation}'" for relation in HOOK_RELATIONS)
     rows = ch.query(
         instance_cfg,
-        f"SELECT name, engine FROM system.tables WHERE database = '{CONFIG_DATABASE}'",
+        "SELECT concat(database, '.', name) AS relation, engine FROM system.tables "
+        f"WHERE relation IN ({wanted})",
     )
-    return {str(name): str(engine) for name, engine in rows}
+    return {str(relation): str(engine) for relation, engine in rows}
 
 
 def test_the_hooks_are_the_macros_this_file_reads() -> None:
@@ -130,18 +125,18 @@ def test_what_a_hook_interpolates_comes_from_the_shared_renderers(macro: Path) -
     assert not rebound, f"{macro.name} binds {rebound} to something other than its renderer"
 
 
-def test_a_dbt_run_creates_every_operator_authored_relation(config_engines: dict[str, str]) -> None:
+def test_a_dbt_run_creates_every_operator_authored_relation(hook_engines: dict[str, str]) -> None:
     """A model reads an operator's bindings as a source, so a hook that failed to
     create one fails the build rather than reporting an unmapped value."""
-    assert set(config_engines) == set(CONFIG_RELATIONS)
+    assert set(hook_engines) == set(HOOK_RELATIONS)
 
 
 def test_an_operator_authored_relation_carries_the_family_its_topology_calls_for(
-    config_engines: dict[str, str], topology: Topology
+    hook_engines: dict[str, str], topology: Topology
 ) -> None:
     """Read as the family name alone: a `Replicated*` engine also names its keeper
     path and replica, and both are an operator's choice no test may pin."""
     prefix = "Replicated" if topology is Topology.REPLICATED else ""
-    expected = {name: f"{prefix}{family}" for name, family in CONFIG_RELATIONS.items()}
+    expected = {name: f"{prefix}{family}" for name, family in HOOK_RELATIONS.items()}
 
-    assert config_engines == expected
+    assert hook_engines == expected

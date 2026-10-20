@@ -2,19 +2,18 @@
 # Simulate deploying this branch onto a WARM installation.
 #
 # A warm installation's ClickHouse relations were created by an earlier
-# release: `CREATE TABLE IF NOT EXISTS` never widens them, so a gold model
-# that references a new silver/staging column builds fine on a fresh install
-# (the snapshot already carries the new shape) and fails with
-# UNKNOWN_IDENTIFIER on every installation that already holds data — unless
-# the change ships a numbered migration or a guarded heal. Since #3561 that
-# failure lands on the first connector sync after the upgrade rather than on
-# the deploy, so this script reproduces both halves:
+# release and nothing widens them in place, so a gold model that references a
+# new silver/staging column builds fine on a fresh install — where the
+# relation is created by the run that first builds it — and fails with
+# UNKNOWN_IDENTIFIER on every installation that already holds data, unless the
+# change ships a guarded heal. Since #3561 that failure lands on the first
+# connector sync after the upgrade rather than on the deploy, so this script
+# reproduces both halves:
 #
-#   1. Install BASE_SHA: run the base tree's own deploy hook
-#      (create-warehouse-placeholders + migrations + heals, with dbt pinned
-#      from the base tree's pins.env) — what an existing installation's last
-#      deploy left behind, plus the bronze a connector would have synced into
-#      it (seed_warm_bronze below).
+#   1. Install BASE_SHA: run the base tree's own deploy hook (migrations and
+#      heals, with dbt pinned from the base tree's pins.env) — what an
+#      existing installation's last deploy left behind, plus the bronze a
+#      connector would have synced into it (seed_warm_bronze below).
 #   2. Deploy the working tree: run this branch's apply-ch-migrations.sh end
 #      to end — exactly what the Helm clickhouse-migrate hook runs — and then
 #      its build-gold.sh over the warm silver, with dbt pinned from this tree's
@@ -486,7 +485,7 @@ assert_task_producer_tenants
 echo "=== Step 3: build gold over the warm silver, as the first sync would ==="
 if ! PATH="$WORKDIR/branch-venv/bin:$PATH" \
     bash "$REPO_ROOT/src/ingestion/scripts/build-gold.sh"; then
-  echo "::error title=first sync after the upgrade fails — forgotten migration or heal::A gold model reads a silver/staging column that only exists in the new snapshot, so the first connector sync after this release fails on every installation that already holds data. Ship the companion ALTER — a numbered migration in src/ingestion/scripts/migrations/ for silver.class_*, a guarded heal in src/ingestion/scripts/apply-ch-migrations.sh for staging.* — per the Warehouse contract changes rules in AGENTS.md."
+  echo "::error title=first sync after the upgrade fails — forgotten heal::A gold model reads a silver/staging column this branch adds but no heal widens an existing relation with, so the first connector sync after this release fails on every installation that already holds data. Ship the companion ALTER — a ch_table_exists-guarded heal in src/ingestion/scripts/apply-ch-migrations.sh, for silver.class_* as for staging.* — per the Warehouse contract changes rules in AGENTS.md."
   exit 1
 fi
 

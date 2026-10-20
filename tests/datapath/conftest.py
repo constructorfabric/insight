@@ -116,9 +116,7 @@ def warehouse_schema(instance_cfg: InstanceConfig, warehouse_is_ours: None) -> i
     A stand raised with `test-stand minimal` carries identity and nothing else, so
     the databases a spec seeds have to be created before anything can write them.
     """
-    applied = apply_all(instance_cfg, repo_root=REPO_ROOT, project=_instance_name())
-    restart_analytics(repo_root=REPO_ROOT, project=_instance_name(), env_file=_env_file())
-    return applied
+    return apply_all(instance_cfg, repo_root=REPO_ROOT, project=_instance_name())
 
 
 @pytest.fixture(scope="session")
@@ -129,11 +127,15 @@ def warehouse_floor(instance_cfg: InstanceConfig, warehouse_schema: int) -> int:
 
 @pytest.fixture(scope="session")
 def dbt_runner(instance_cfg: InstanceConfig, warehouse_floor: int) -> Iterator[DbtRunner]:
-    """dbt against this instance, with every non-gold model materialized once.
+    """dbt against this instance, with every model materialized once.
 
     The closure build is what makes relation existence a session constant: a spec
     builds only its own slice, and a compile-time probe for a relation another
     connector owns must answer the same however few specs have run.
+
+    Gold is then run once over that empty closure and analytics restarted: it
+    decides which metrics it can serve once, at startup, from the observation
+    relations present then, and nothing creates those before a gold build (#3562).
     """
     runner = DbtRunner(
         instance_cfg,
@@ -142,6 +144,8 @@ def dbt_runner(instance_cfg: InstanceConfig, warehouse_floor: int) -> Iterator[D
     )
     runner.setup()
     runner.build_closure()
+    runner.run("tag:gold")
+    restart_analytics(repo_root=REPO_ROOT, project=_instance_name(), env_file=_env_file())
     yield runner
     runner.cleanup()
 

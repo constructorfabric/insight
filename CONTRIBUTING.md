@@ -469,11 +469,12 @@ the BambooHR org-chart source so per-caller `/v1/persons/{email}`
 lookups resolve correctly — dev lead sees their 5 reports, CEO sees
 the whole tree.
 
-**Silver content (after `seed silver`):** bronze + silver placeholder
-tables, every `src/ingestion/scripts/migrations/*.sql` applied
-(produces the `insight.*` gold views), ~29k rows across 19 silver
-tables profile-typed per team (`class_git_*` for devs, `class_crm_*`
-for sales, …). The full per-team activity table is in
+**Silver content (after `seed silver`):** the bronze each vendor would
+have delivered, profile-typed per team (`git_*` for devs, `crm_*` for
+sales, …), every `src/ingestion/scripts/migrations/*.sql` applied, and
+then a dbt build over that bronze — so the staging, silver and
+`insight.*` gold relations are the ones the pipeline itself produces,
+not rows the seed asserts. The full per-team activity table is in
 [`insight_seed/profiles.py`](src/ingestion/tools/seed/insight_seed/profiles.py). analytics's
 schema validator flips from "80 metrics error" to "80 ok".
 
