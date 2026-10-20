@@ -1,0 +1,73 @@
+name: dbt settings benchmark
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/ci/dbt_benchmark/**
+      - .github/workflows/dbt-settings-benchmark.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CLICKHOUSE_URL: http://127.0.0.1:18127
+      CLICKHOUSE_USER: benchmark
+      CLICKHOUSE_PASSWORD: synthetic-benchmark
+      CLICKHOUSE_CONTAINER: dbt-settings-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Start a resource-bounded disposable ClickHouse
+        run: |
+          set -euo pipefail
+          source src/ingestion/scripts/bootstrap-db/pins.env
+          docker run -d --name "${CLICKHOUSE_CONTAINER}" --cpus 4 --memory 3g \
+            -p 127.0.0.1:18127:8123 \
+            -e CLICKHOUSE_USER -e CLICKHOUSE_PASSWORD \
+            -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+            -v "${GITHUB_WORKSPACE}/deploy/compose/clickhouse-memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro" \
+            "${CLICKHOUSE_SERVER_IMAGE}"
+          for _ in $(seq 1 60); do
+            if curl --fail --silent "${CLICKHOUSE_URL}/ping"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+      - name: Install the pinned dbt versions
+        run: |
+          set -euo pipefail
+          source src/ingestion/scripts/bootstrap-db/pins.env
+          python -m venv /tmp/dbt-settings-venv
+          /tmp/dbt-settings-venv/bin/pip install "dbt-core==${DBT_CORE_VERSION}" "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}"
+      - name: Compare CPU, spill thresholds and insert deduplication
+        run: |
+          set -euo pipefail
+          /tmp/dbt-settings-venv/bin/python -m unittest discover -s scripts/ci/dbt_benchmark -p 'test_*.py'
+          /tmp/dbt-settings-venv/bin/python scripts/ci/dbt_benchmark/run.py --rows 1000000 --repeats 3 --output benchmark-results
+          docker inspect "${CLICKHOUSE_CONTAINER}" --format '{"cpu_nanoseconds": {{.HostConfig.NanoCpus}}, "memory_bytes": {{.HostConfig.Memory}}}' > benchmark-results/resources.json
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f benchmark-results/summary.md ]; then
+            cat benchmark-results/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: dbt-settings-results
+          path: benchmark-results/
+          if-no-files-found: warn
+      - name: Remove the disposable ClickHouse
+        if: always()
+        run: docker rm -f "${CLICKHOUSE_CONTAINER}"
