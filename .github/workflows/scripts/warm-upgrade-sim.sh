@@ -461,12 +461,49 @@ assert_task_producer_tenants() {
   echo "=== Task class producers carry their tenant ==="
 }
 
+# A task class built before the tenant column gains it right after unique_key,
+# where every producer's rebuilt SELECT now puts it. The fixture holds only the
+# columns the heal reads and is dropped once asserted, so the gold build below
+# meets only relations a build created.
+seed_task_class_tenant_warm_state() {
+  echo "=== Seeding a pre-tenant task class ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  run_ch <<'SQL'
+CREATE TABLE IF NOT EXISTS silver.class_task_comments
+(
+    unique_key String, insight_source_id String, comment_id String, _version UInt64
+)
+ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key;
+INSERT INTO silver.class_task_comments VALUES ('jira-1-comment-1', 'jira-1', '1', 1);
+SQL
+}
+
+assert_task_class_tenant() {
+  echo "=== Asserting the task class carries its tenant ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  local got
+  local expected="2:Nullable(String)|1"
+  got="$(printf "SELECT concat(
+      (SELECT concat(toString(position), ':', type) FROM system.columns
+       WHERE database = 'silver' AND table = 'class_task_comments' AND name = 'tenant_id'), '|',
+      toString((SELECT count() FROM silver.class_task_comments)))" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=warm upgrade left a task class without a tenant::Expected '${expected}' — a Nullable(String) tenant_id right after unique_key and the class row kept — but got '${got}'."
+    exit 1
+  fi
+  run_ch <<'SQL'
+DROP TABLE silver.class_task_comments;
+SQL
+  echo "=== Task class carries its tenant ==="
+}
+
 seed_warm_bronze
 seed_git_close_time_warm_state
 seed_jira_issue_identity_warm_state
 seed_jira_catalogue_first_seen_warm_state
 seed_youtrack_field_observation_warm_state
 seed_task_producer_tenant_warm_state
+seed_task_class_tenant_warm_state
 
 echo "=== Step 2: deploy the working tree onto the warm state ==="
 dbt_venv_for "$REPO_ROOT/src/ingestion/scripts/bootstrap-db/pins.env" "$WORKDIR/branch-venv"
@@ -481,6 +518,7 @@ assert_jira_issue_identity_recovered
 assert_jira_catalogue_first_seen_kept
 assert_youtrack_field_observation_tenants
 assert_task_producer_tenants
+assert_task_class_tenant
 
 echo "=== Step 3: build gold over the warm silver, as the first sync would ==="
 if ! PATH="$WORKDIR/branch-venv/bin:$PATH" \

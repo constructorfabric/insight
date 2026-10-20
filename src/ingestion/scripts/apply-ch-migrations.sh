@@ -1070,6 +1070,9 @@ for _task_link_table in github__task_links youtrack__task_links; do
   heal_task_link_ids "${_task_link_table}"
 done
 
+echo "=== Healing task class tenants ==="
+heal_task_class_tenants
+
 echo "=== Healing task class producer tenants ==="
 heal_task_producer_tenants
 
