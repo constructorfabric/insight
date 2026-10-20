@@ -479,8 +479,8 @@ when boards arrive and a board column's meaning genuinely changes on a date.
 ### 4.6 Ownership
 
 The `config` relations must not be dbt models — dbt would recreate and wipe
-them. They are created by migration alongside the connectors-ddl snapshot and
-declared to dbt as sources.
+them. They are created by an `on-run-start` hook (`create_task_config_tables()`)
+and declared to dbt as sources.
 
 ## 5. Making Gold Source-Neutral
 

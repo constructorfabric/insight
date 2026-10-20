@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # start-clickhouse.sh <container-name> — bring up one throwaway ClickHouse for
-# the connectors-ddl lane and wait until it answers queries.
+# the field-parity lane and wait until it answers queries.
 #
 # Same version production runs (CLICKHOUSE_SERVER_IMAGE from
 # scripts/bootstrap-db/pins.env, loaded into the job env), and the same flags the

@@ -1260,9 +1260,9 @@ destination recreate it:
 
 1. add a `RemoveFields` transformation for `fields` to the `jira_issue` stream
 2. bump the connector descriptor, deploy, let one sync complete
-3. add a migration under `src/ingestion/scripts/migrations/` performing
+3. add a `ch_table_exists`-guarded heal to
+   `src/ingestion/scripts/apply-ch-migrations.sh` performing
    `ALTER TABLE bronze_jira.jira_issue DROP COLUMN IF EXISTS fields`
-4. drop the column from `src/ingestion/scripts/connectors-ddl/jira.sql`
 
 This is storage hygiene, independent of the defects above, and can land
 separately.

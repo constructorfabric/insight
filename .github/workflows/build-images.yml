@@ -481,7 +481,7 @@ jobs:
       # Hand the PR-built image to e2e-stand.yml, which has no PR images to pull.
       - name: Upload image for the e2e rig
         if: needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-prebuilt-insight-analytics
           path: ${{ runner.temp }}/e2e-prebuilt.tar
@@ -496,7 +496,7 @@ jobs:
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-analytics-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -520,7 +520,7 @@ jobs:
           echo "::error::backend-analytics finished '${{ needs.backend-analytics.result }}' — nothing to merge."
           exit 1
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-analytics-*
@@ -608,7 +608,7 @@ jobs:
             ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:backend-deps-{1},mode=max,ignore-error=true', env.BUILDCACHE, matrix.arch) || '' }}
       - name: Upload image for E2E workflows
         if: needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-prebuilt-insight-authenticator
           path: ${{ runner.temp }}/e2e-prebuilt.tar
@@ -623,7 +623,7 @@ jobs:
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-authenticator-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -645,7 +645,7 @@ jobs:
           echo "::error::backend-authenticator finished '${{ needs.backend-authenticator.result }}' — nothing to merge."
           exit 1
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-authenticator-*
@@ -728,7 +728,7 @@ jobs:
           cache-to: ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:gateway-{1},mode=max,ignore-error=true', env.BUILDCACHE, matrix.arch) || '' }}
       - name: Upload image for E2E workflows
         if: needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-prebuilt-insight-gateway
           path: ${{ runner.temp }}/e2e-prebuilt.tar
@@ -743,7 +743,7 @@ jobs:
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-gateway-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -765,7 +765,7 @@ jobs:
           echo "::error::backend-gateway finished '${{ needs.backend-gateway.result }}' — nothing to merge."
           exit 1
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-gateway-*
@@ -857,7 +857,7 @@ jobs:
             ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:backend-deps-{1},mode=max,ignore-error=true', env.BUILDCACHE, matrix.arch) || '' }}
       - name: Upload image for the e2e rig
         if: github.event_name == 'pull_request' && matrix.arch == 'amd64'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-prebuilt-insight-git-cli-proxy
           path: ${{ runner.temp }}/e2e-prebuilt.tar
@@ -872,7 +872,7 @@ jobs:
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-git-cli-proxy-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -894,7 +894,7 @@ jobs:
           echo "::error::backend-git-cli-proxy finished '${{ needs.backend-git-cli-proxy.result }}' — nothing to merge."
           exit 1
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-git-cli-proxy-*
@@ -986,7 +986,7 @@ jobs:
             ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:backend-deps-{1},mode=max,ignore-error=true', env.BUILDCACHE, matrix.arch) || '' }}
       - name: Upload image for the e2e rig
         if: needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-prebuilt-insight-identity-resolution
           path: ${{ runner.temp }}/e2e-prebuilt.tar
@@ -1001,7 +1001,7 @@ jobs:
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-identity-resolution-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -1023,7 +1023,7 @@ jobs:
           echo "::error::backend-identity-resolution finished '${{ needs.backend-identity-resolution.result }}' — nothing to merge."
           exit 1
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-identity-resolution-*
@@ -1120,7 +1120,7 @@ jobs:
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-insight-v3-core-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -1142,7 +1142,7 @@ jobs:
           echo "::error::backend-insight-v3-core finished '${{ needs.backend-insight-v3-core.result }}' — nothing to merge."
           exit 1
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-insight-v3-core-*
@@ -1238,7 +1238,7 @@ jobs:
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-previews-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -1260,7 +1260,7 @@ jobs:
           echo "::error::backend-previews finished '${{ needs.backend-previews.result }}' — nothing to merge."
           exit 1
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-previews-*
@@ -1365,7 +1365,7 @@ jobs:
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-frontend-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -1395,7 +1395,7 @@ jobs:
           echo "::error::frontend finished '${{ needs.frontend.result }}' — nothing to merge."
           exit 1
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-frontend-*
@@ -1547,7 +1547,7 @@ jobs:
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-toolbox-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -1569,7 +1569,7 @@ jobs:
           echo "::error::toolbox finished '${{ needs.toolbox.result }}' — nothing to merge."
           exit 1
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-toolbox-*
@@ -1712,7 +1712,7 @@ jobs:
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-seed-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -1734,7 +1734,7 @@ jobs:
           echo "::error::seed finished '${{ needs.seed.result }}' — nothing to merge."
           exit 1
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-seed-*
@@ -1820,7 +1820,7 @@ jobs:
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-${{ matrix.entry.name }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -1850,7 +1850,7 @@ jobs:
           echo "::error::build-image finished '${{ needs.build-image.result }}' — nothing to merge."
           exit 1
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-${{ matrix.entry.name }}-*
@@ -2036,7 +2036,7 @@ jobs:
     steps:
       - name: Mint chart-release App token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.AUTOMATION_APP_ID }}
           private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
@@ -2262,7 +2262,7 @@ jobs:
       # packages: write — the App was deliberately not granted that scope.
       - name: Mint chart-release App token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.AUTOMATION_APP_ID }}
           private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}

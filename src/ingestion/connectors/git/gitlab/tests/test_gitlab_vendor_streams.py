@@ -739,6 +739,142 @@ def test_a_graphql_null_project_yields_no_rows_and_no_crash(http_mocker: HttpMoc
     assert output.records == []
 
 
+# ── pipeline jobs ────────────────────────────────────────────────────────
+
+
+def _pipelines_window_body(variables: dict[str, Any]) -> dict[str, Any]:
+    parent = load_manifest(_CONNECTOR)["definitions"]["pipelines_window_parent"]
+    body = dict(parent["retriever"]["requester"]["request_body_json"])
+    body["query"] = body["query"].rstrip("\n")
+    body["variables"] = dict(variables)
+    return body
+
+
+def _pipelines_window(*updated_at: str) -> HttpResponse:
+    nodes = [{"id": "gid://gitlab/Ci::Pipeline/9001", "iid": "12", "updatedAt": at} for at in updated_at]
+    return _ok(
+        {"data": {"project": {"pipelines": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}}}}
+    )
+
+
+def _job_node(job_id: int, job_class: str = "Ci::Build", **overrides: Any) -> dict[str, Any]:
+    return {
+        "id": f"gid://gitlab/{job_class}/{job_id}",
+        "name": f"job-{job_id}",
+        "kind": "BRIDGE" if job_class == "Ci::Bridge" else "BUILD",
+        "status": "SUCCESS",
+        "stage": {"name": "deploy"},
+        "manualJob": False,
+        "allowFailure": False,
+        "retried": False,
+        "refName": "main",
+        "createdAt": "2026-06-20T10:00:00Z",
+        "queuedAt": "2026-06-20T10:00:05Z",
+        "startedAt": "2026-06-20T10:00:10Z",
+        "finishedAt": "2026-06-20T10:01:00Z",
+        "duration": 50,
+        "queuedDuration": 5.0,
+        **overrides,
+    }
+
+
+def _jobs_page(*nodes: dict[str, Any], next_cursor: str | None = None) -> HttpResponse:
+    page = {"hasNextPage": next_cursor is not None, "endCursor": next_cursor}
+    return _ok({"data": {"project": {"pipeline": {"jobs": {"pageInfo": page, "nodes": list(nodes)}}}}})
+
+
+_JOBS_VARS = {"project": "acme/app", "iid": 12}
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_jobs_cover_builds_bridges_external_statuses_and_retries(http_mocker: HttpMocker) -> None:
+    config = GitlabConfigBuilder().build()
+    _mock_roster(http_mocker)
+    http_mocker.post(
+        HttpRequest(GRAPHQL_URL, body=_pipelines_window_body(_PROJECT_VARS)), _pipelines_window("2026-06-20T10:05:00Z")
+    )
+    manual = _job_node(501, manualJob=True)
+    retried = _job_node(502, status="FAILED", retried=True, stage=None, startedAt=None, finishedAt=None, duration=None)
+    bridge = _job_node(503, "Ci::Bridge", manualJob=None, queuedDuration=None)
+    external = _job_node(504, "GenericCommitStatus")
+    http_mocker.post(
+        HttpRequest(GRAPHQL_URL, body=_graphql_body("jobs", _JOBS_VARS)), _jobs_page(manual, retried, next_cursor="c1")
+    )
+    http_mocker.post(
+        HttpRequest(GRAPHQL_URL, body=_graphql_body("jobs", _JOBS_VARS, cursor="c1")), _jobs_page(bridge, external)
+    )
+
+    output = read_stream(_CONNECTOR, "jobs", config)
+
+    assert not output.errors
+    by_id = {r.record.data["id"]: r.record.data for r in output.records}
+    assert set(by_id) == {501, 502, 503, 504}, "every page of the pipeline's jobs must be read"
+    first = by_id[501]
+    assert (first["name"], first["kind"], first["stage"], first["status"]) == ("job-501", "build", "deploy", "success")
+    assert first["manual_job"] is True and first["retried"] is False
+    assert (first["started_at"], first["finished_at"]) == ("2026-06-20T10:00:10Z", "2026-06-20T10:01:00Z")
+    assert (first["project_id"], first["repo_path"]) == (7, "acme/app")
+    assert (first["pipeline_id"], first["pipeline_iid"]) == (9001, 12)
+    assert first["pipeline_updated_at"] == "2026-06-20T10:05:00Z"
+    assert first["unique_key"] == "test-tenant:test-source:7:501"
+    second = by_id[502]
+    assert (second["status"], second["retried"], second["stage"], second["started_at"]) == ("failed", True, "", "")
+    assert second.get("duration") is None
+    third = by_id[503]
+    assert third["kind"] == "bridge" and third.get("queued_duration") is None
+    assert third.get("manual_job") is None, "an unknown manual flag must not read as false"
+    assert by_id[504]["kind"] == "external"
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "jobs", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_jobs_resume_from_the_stored_pipeline_cursor_and_reread_moved_pipelines(http_mocker: HttpMocker) -> None:
+    """A resumed run asks only for pipelines updated since the stored cursor,
+    and a pipeline that moved again has its jobs read at their new state."""
+    config = GitlabConfigBuilder().build()
+    _mock_roster(http_mocker)
+    http_mocker.post(
+        HttpRequest(GRAPHQL_URL, body=_pipelines_window_body(_PROJECT_VARS)), _pipelines_window("2026-06-20T10:05:00Z")
+    )
+    http_mocker.post(
+        HttpRequest(
+            GRAPHQL_URL, body=_pipelines_window_body({**_PROJECT_VARS, "updatedAfter": "2026-06-19T10:05:00Z"})
+        ),
+        _pipelines_window("2026-06-25T09:00:00Z"),
+    )
+    http_mocker.post(
+        HttpRequest(GRAPHQL_URL, body=_graphql_body("jobs", _JOBS_VARS)),
+        [_jobs_page(_job_node(501, status="MANUAL", manualJob=True)), _jobs_page(_job_node(501, manualJob=True))],
+    )
+
+    first = read_stream(_CONNECTOR, "jobs", config)
+    assert first.state_messages, "an incremental read must emit state"
+    resumed = read_stream(_CONNECTOR, "jobs", config, state=[m.state for m in first.state_messages][-1:])
+
+    assert not resumed.errors
+    assert [r.record.data["status"] for r in first.records] == ["manual"]
+    assert [r.record.data["status"] for r in resumed.records] == ["success"]
+    assert resumed.records[0].record.data["pipeline_updated_at"] == "2026-06-25T09:00:00Z"
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_pipeline_gone_before_its_jobs_are_read_yields_no_rows(http_mocker: HttpMocker) -> None:
+    config = GitlabConfigBuilder().build()
+    _mock_roster(http_mocker)
+    http_mocker.post(
+        HttpRequest(GRAPHQL_URL, body=_pipelines_window_body(_PROJECT_VARS)), _pipelines_window("2026-06-20T10:05:00Z")
+    )
+    http_mocker.post(
+        HttpRequest(GRAPHQL_URL, body=_graphql_body("jobs", _JOBS_VARS)), _ok({"data": {"project": {"pipeline": None}}})
+    )
+
+    output = read_stream(_CONNECTOR, "jobs", config)
+
+    assert not output.errors
+    assert output.records == []
+
+
 # ── deployments, members, users ──────────────────────────────────────────
 
 

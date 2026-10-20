@@ -45,7 +45,22 @@ def test_no_column_is_dropped_and_then_added_back() -> None:
     assert not offenders, f"these columns are emptied on every deploy: {offenders}"
 
 
-def test_the_parser_sees_both_verbs() -> None:
-    """A parser that matched nothing would make the guard above pass by accident."""
-    verbs = {verb for _, verb, _, _ in column_changes()}
-    assert verbs == {"DROP", "ADD"}, f"expected both verbs, saw {verbs}"
+def test_the_parser_reads_both_verbs() -> None:
+    """A parser that matched nothing would make the guard above pass by accident.
+
+    Asserted over a fixture rather than over the corpus: the channel no longer
+    carries a DROP COLUMN at all — #3562 deleted the silver class ALTERs — and
+    a guard that only works while some migration happens to use a verb stops
+    guarding the day the last one goes.
+    """
+    sql = "ALTER TABLE silver.class_x DROP COLUMN IF EXISTS gone, ADD COLUMN IF NOT EXISTS added Int64 AFTER id"
+    alter = ALTER_TABLE.match(sql)
+    assert alter is not None, "the ALTER TABLE form is no longer recognised"
+
+    assert DROP.findall(alter.group(2)) == ["gone"]
+    assert ADD.findall(alter.group(2)) == ["added"]
+
+
+def test_the_corpus_is_read_at_all() -> None:
+    """`column_changes` walking an empty set would be a silent pass."""
+    assert list(MIGRATIONS.glob("*.sql")), f"no migration under {MIGRATIONS}"

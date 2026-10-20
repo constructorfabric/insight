@@ -1,14 +1,14 @@
 """The Zendesk staging models land their first rows into targets that already exist
 empty, and keep landing the rows of later syncs.
 
-A fresh install creates every staging and silver relation from the connectors-ddl
-snapshot before the first sync, so the connector's first dbt run is already an
-incremental one over an empty target. The models' watermark is anchored on the
-target's own last build (`max(collected_at)`), and ClickHouse arithmetic on the
-`max()` of an empty DateTime column wraps past 2106 — without the explicit
-empty-target guard every row would fall below that boundary and the table would
-stay empty forever. The second build proves the non-empty path: a row extracted
-after the last build lands next to the rows already there, once.
+A target that exists and holds nothing is the ordinary outcome of a sync whose
+bronze carried no matching row, and it is what this suite's reset leaves behind.
+The models' watermark is anchored on the target's own last build
+(`max(collected_at)`), and ClickHouse arithmetic on the `max()` of an empty
+DateTime column wraps past 2106 — without the explicit empty-target guard every
+row would fall below that boundary and the table would stay empty forever. The
+second build proves the non-empty path: a row extracted after the last build
+lands next to the rows already there, once.
 
 Support has no served metric yet (#899), so this module asserts on the staging
 and silver relations directly rather than through a spec.
