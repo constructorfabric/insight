@@ -154,6 +154,7 @@ def benchmark(client: Client, model_sql: str, baseline: dict[str, str | int], re
     candidates = variants(baseline)
     rng = random.Random(0)
     for name, sql in workloads(model_sql).items():
+        failed = set()
         if name != MODEL:
             client.execute("DROP TABLE benchmark.expected")
             client.execute("DROP TABLE benchmark.actual")
@@ -167,10 +168,27 @@ def benchmark(client: Client, model_sql: str, baseline: dict[str, str | int], re
             order = list(candidates)
             rng.shuffle(order)
             for variant in order:
+                if variant in failed:
+                    continue
                 settings = candidates[variant]
                 client.execute("TRUNCATE TABLE benchmark.actual")
-                measured = measure(client, f"INSERT INTO benchmark.actual {sql}", settings)
-                client.assert_equal("SELECT * FROM benchmark.actual", "SELECT * FROM benchmark.expected")
+                try:
+                    measured = measure(client, f"INSERT INTO benchmark.actual {sql}", settings)
+                    client.assert_equal("SELECT * FROM benchmark.actual", "SELECT * FROM benchmark.expected")
+                except (RuntimeError, AssertionError) as error:
+                    failed.add(variant)
+                    results.append(
+                        {
+                            "workload": name,
+                            "variant": variant,
+                            "repeat": repeat,
+                            "settings": settings,
+                            "error": str(error)[:2000],
+                        }
+                    )
+                    sys.stdout.write(f"{name}/{variant}/{repeat}: FAILED: {str(error)[:300]}\n")
+                    sys.stdout.flush()
+                    continue
                 if repeat:
                     results.append(
                         {
@@ -233,7 +251,13 @@ def report(results: list[dict[str, object]], output: Path) -> None:
         "|---|---|---:|---:|",
     ]
     for workload, variant in groups:
-        samples = [row["wall_seconds"] for row in results if row["workload"] == workload and row["variant"] == variant]
+        matching = [row for row in results if row["workload"] == workload and row["variant"] == variant]
+        errors = [row for row in matching if "error" in row]
+        if errors:
+            message = str(errors[0]["error"]).replace("|", " ").replace("\n", " ")[:300]
+            lines.append(f"| {workload} | {variant} | FAILED: {message} | — |")
+            continue
+        samples = [row["wall_seconds"] for row in matching]
         memories = []
         for row in results:
             if row["workload"] == workload and row["variant"] == variant:
@@ -281,6 +305,8 @@ def main() -> None:
     }
     (args.output / "results.json").write_text(json.dumps(metadata, indent=2) + "\n")
     report(results, args.output / "summary.md")
+    if any("error" in row for row in results):
+        raise SystemExit("one or more settings variants failed; see the comparison artifact")
 
 
 if __name__ == "__main__":

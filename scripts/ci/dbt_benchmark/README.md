@@ -45,4 +45,6 @@ python scripts/ci/dbt_benchmark/run.py --rows 10000 --repeats 1 --output /tmp/db
 ```
 
 No timing threshold is enforced: the workflow fails on execution errors or
-output differences and reports performance for review.
+output differences and reports performance for review. A failed query variant
+is recorded and skipped in later repetitions; other variants still run, so an
+unsafe memory setting does not hide the rest of the comparison.

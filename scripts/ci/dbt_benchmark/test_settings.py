@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import unittest
 
-from client import Client
+from client import Client, checked_body
 from run import MIB, variants
 
 
 class SettingsTests(unittest.TestCase):
+    def test_a_late_clickhouse_error_is_rejected_even_with_http_success(self) -> None:
+        with self.assertRaises(RuntimeError):
+            checked_body(200, "Code: 241. DB::Exception: synthetic memory limit exceeded")
+        self.assertEqual(checked_body(200, '{"value":"Code: example"}\n'), '{"value":"Code: example"}\n')
+
     def test_benchmark_refuses_non_loopback_or_non_http_endpoints(self) -> None:
         for url in ("https://127.0.0.1:18127", "file:///tmp/input", "http://example.com", "http://127.0.0.1/admin"):
             with self.subTest(url=url), self.assertRaises(ValueError):

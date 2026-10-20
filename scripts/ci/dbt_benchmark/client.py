@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from http.client import HTTPConnection
 from urllib.parse import urlencode, urlsplit
+
+
+def checked_body(status: int, body: str) -> str:
+    if status >= 400 or re.search(r"(?:^|\n)Code: \d+\. DB::Exception:", body):
+        raise RuntimeError(body)
+    return body
 
 
 @dataclass(frozen=True)
@@ -23,7 +30,7 @@ class Client:
         return cls(os.environ["CLICKHOUSE_URL"], os.environ["CLICKHOUSE_USER"], os.environ["CLICKHOUSE_PASSWORD"])
 
     def execute(self, sql: str, *, settings: dict[str, str | int] | None = None) -> str:
-        query = urlencode(settings or {})
+        query = urlencode({"wait_end_of_query": 1, **(settings or {})})
         parsed = urlsplit(self.url)
         connection = HTTPConnection(parsed.hostname, parsed.port, timeout=300)
         try:
@@ -35,9 +42,7 @@ class Client:
             )
             response = connection.getresponse()
             body = response.read().decode()
-            if response.status >= 400:
-                raise RuntimeError(body)
-            return body
+            return checked_body(response.status, body)
         finally:
             connection.close()
 
