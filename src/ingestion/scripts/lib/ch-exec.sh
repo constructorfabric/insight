@@ -12,6 +12,7 @@
 # Exposes:
 #   run_ch           — execute a (multi-statement) SQL block read from stdin.
 #   ch_table_exists  — `ch_table_exists <db> <table>`; exit 0 if present.
+#   ch_scalar        — one numeric answer of a SELECT, or failure.
 #
 # Required env:
 #   CLICKHOUSE_URL       e.g. http://ch-host:8123

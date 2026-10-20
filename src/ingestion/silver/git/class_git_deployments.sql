@@ -9,7 +9,7 @@
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     schema='silver',
-    tags=['silver']
+    tags=['silver', 'history']
 ) }}
 
 -- INVARIANT: like class_git_ci_runs, this accumulates past the source API's
