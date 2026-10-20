@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from statistics import median
 from tempfile import TemporaryDirectory
-from time import perf_counter
+from time import perf_counter, sleep
 from uuid import uuid4
 
 from client import Client
@@ -127,17 +127,23 @@ def measure(client: Client, sql: str, settings: dict[str, str | int]) -> dict[st
             "query_id": query_id,
             "log_queries": 1,
             "log_queries_probability": 1,
+            "log_queries_min_query_duration_ms": 0,
             "use_query_cache": 0,
         },
     )
     elapsed = perf_counter() - started
-    client.execute("SYSTEM FLUSH LOGS")
-    logs = client.rows(
-        "SELECT query_duration_ms, memory_usage, read_rows, read_bytes, written_rows, "
-        "mapFilter((k, v) -> startsWith(k, 'External') OR k IN "
-        "('UserTimeMicroseconds', 'SystemTimeMicroseconds'), ProfileEvents) AS events "
-        f"FROM system.query_log WHERE query_id = '{query_id}' AND type = 'QueryFinish'"
-    )
+    logs = []
+    for _ in range(20):
+        client.execute("SYSTEM FLUSH LOGS")
+        logs = client.rows(
+            "SELECT query_duration_ms, memory_usage, read_rows, read_bytes, written_rows, "
+            "mapFilter((k, v) -> startsWith(k, 'External') OR k IN "
+            "('UserTimeMicroseconds', 'SystemTimeMicroseconds'), ProfileEvents) AS events "
+            f"FROM system.query_log WHERE query_id = '{query_id}' AND type = 'QueryFinish'"
+        )
+        if logs:
+            break
+        sleep(0.1)
     if len(logs) != 1:
         raise RuntimeError(f"expected one query log record for {query_id}, got {len(logs)}")
     return {"wall_seconds": elapsed, **logs[0]}
