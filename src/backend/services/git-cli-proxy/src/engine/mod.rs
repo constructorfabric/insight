@@ -1,6 +1,7 @@
 //! The git engine: repository cache (blobless bare clones, hashed cache-key
 //! layout, fetch-if-stale freshness) and hermetic git subprocess invocation.
 
+pub mod author_index;
 pub mod disk;
 pub mod index;
 pub mod key;
