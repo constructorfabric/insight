@@ -58,14 +58,17 @@ of them. Nothing else in this document applies.
 |---|---|---|
 | `bronze_*`, the `tag:history` relations (`src/ingestion/scripts/tenant_migration/history-tables.txt`), `config.*`, `ingestion_history.*` — tenant column and the tenant segment of `unique_key` | `tenant_migration apply` (step 6) | the original of each table until `finalize`, and the tool's dump |
 | every other ClickHouse relation dbt owns (staging, silver, gold, `identity.identity_inputs`) | dbt full refresh (step 7) | full ClickHouse backup (step 4) |
+| `silver.class_task_*` and their staging producers — a `tenant_id` column after `unique_key` | the deploy's heals (step 5) | full ClickHouse backup (step 4) |
+| identity map views `identity.person_map` and `identity.account_assignment` | dropped by the deploy when they lack `tenant_id` (step 5), recreated by the rebuild (step 7) | nothing to keep: views hold no rows |
 | identity MariaDB `persons` journal | the identity seed appends to it (step 7) | identity MariaDB backup (step 4) |
 | Airbyte source and connection names, the source's `insight_tenant_id`; Argo sync schedules | reconcile renames in place on its first tick (step 8) | Airbyte database backup, exported CronWorkflows (step 4) |
 
 The identity and analytics MariaDB stores keep their tenant: this runbook moves
 nothing there, so the UUID must be the tenant they already use (step 1).
 
-Plan for: syncs stopped for the whole window; analytics reading empty or partial
-metrics between the deploy (step 5) and the end of the rebuild (step 7); and
+Plan for: syncs stopped for the whole window; analytics answering not-ready, or
+reading empty or partial metrics, between the deploy (step 5) and the end of the
+rebuild (step 7); and
 ClickHouse disk for a second copy of every migrated table until `finalize`.
 
 ### 1. Decide the two values
@@ -173,10 +176,14 @@ is present. Leave `analytics.metricCatalog.enforceTenantScope` at its default
 `true`.
 
 Deploy the release (`helm upgrade`, or sync the GitOps application). Its
-`clickhouse-migrate` hook applies the migrations and heals, and replaces the
-identity map and coverage views with this release's bodies; it builds no dbt
-model, so gold keeps the rows the last sync wrote under `<OLD_TENANT>`. Metrics
-read empty until step 7. Then confirm the CronWorkflows and the seed CronJob
+`clickhouse-migrate` hook applies the migrations and heals: the task classes
+and their producers gain a `tenant_id` column, and the identity map views the
+previous release built are dropped, because they lack the `tenant_id` analytics
+now joins on. It creates and rebuilds no dbt relation — every staging, silver
+and gold relation is built by a dbt run — so gold keeps the rows the last sync
+wrote under `<OLD_TENANT>`, and anything that reads the identity maps answers
+not-ready until step 7.1 recreates them. Metrics read empty or not-ready until
+step 7. Then confirm the CronWorkflows and the seed CronJob
 are still suspended, and run `plan` again: it must print no `REFUSED` line now.
 
 Operator-authored field-value-map bundles
@@ -213,8 +220,9 @@ model, so this rebuild is what moves gold to `<TENANT_UUID>`. History relations
 (`tag:history`) refuse a full refresh: they keep their rows and run
 incrementally, and one that does not exist yet is created. Like a sync, each
 `dbt-run` below also builds the `tag:sync:always` views (the identity map and
-`bronze_insert_events`) and leaves out the models whose Bronze the install does
-not hold.
+`bronze_insert_events`) — the first one recreates the identity map views the
+deploy dropped — and leaves out the models whose Bronze the install does not
+hold.
 
 List the installed connectors and compose the selections:
 
