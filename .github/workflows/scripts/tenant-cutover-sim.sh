@@ -2,9 +2,11 @@
 # Cut a warm installation over to the canonical tenant UUID, the way
 # deploy/TENANT_IDENTITY_UPGRADE.md tells an operator to, and check every step.
 #
-#   1. Deploy this tree onto an empty ClickHouse (apply-ch-migrations.sh). It
-#      builds no model; the identity map views it stands up already key on the
-#      tenant.
+#   1. Deploy this tree (apply-ch-migrations.sh) onto a ClickHouse holding the
+#      identity map views the previous release built, without a tenant column.
+#      The deploy builds no model and drops those views, so analytics answers
+#      not-ready instead of failing on the column until the rebuild recreates
+#      them.
 #   2. Hold the state a warm installation holds at that point: Bronze, a
 #      history relation, operator config and the sync ledger written under a
 #      legacy tenant that is not a UUID, and identity inputs the previous
@@ -17,8 +19,8 @@
 #   5. Apply again and rebuild with `--full-refresh` the way a sync selects,
 #      the history relation in the selection and the `sync:always` views
 #      beside it: the identity inputs carry only the canonical tenant, the
-#      history relation refuses the flag and keeps every row, and `finalize`
-#      leaves no work table behind.
+#      identity map views are back and key on it, the history relation refuses
+#      the flag and keeps every row, and `finalize` leaves no work table behind.
 #
 # Required env (same contract as apply-ch-migrations.sh):
 #   CLICKHOUSE_URL, CLICKHOUSE_USER, CLICKHOUSE_PASSWORD, CLICKHOUSE_DATABASE
@@ -78,15 +80,26 @@ fingerprint() {
   done
 }
 
-echo "=== Step 1: deploy this tree onto an empty ClickHouse ==="
+map_views() {
+  query "SELECT arrayStringConcat(groupArray(concat(t.name, ':', toString(has(c.names, 'tenant_id')))), ',') FROM
+    (SELECT name FROM system.tables WHERE database = 'identity' AND name IN ('account_assignment', 'person_map') ORDER BY name) AS t
+    LEFT JOIN (SELECT table, groupArray(name) AS names FROM system.columns WHERE database = 'identity' GROUP BY table) AS c
+    ON c.table = t.name"
+}
+
+echo "=== Step 1: deploy this tree over the previous release's identity map views ==="
+run_ch <<SQL
+CREATE DATABASE IF NOT EXISTS identity;
+CREATE VIEW identity.account_assignment AS
+    SELECT 'zoom' AS source_type, toUUID('00000000-0000-0000-0000-000000000001') AS source_id,
+           'u1' AS account_id, toUUID('00000000-0000-0000-0000-000000000002') AS person_id;
+CREATE VIEW identity.person_map AS
+    SELECT 'ada@example.com' AS email, person_id FROM identity.account_assignment;
+SQL
 bash "$SCRIPTS/apply-ch-migrations.sh"
 
-map_columns="$(query "SELECT arrayStringConcat(groupArray(concat(table, '.', name)), ',') FROM
-    (SELECT table, name FROM system.columns
-     WHERE database = 'identity' AND table IN ('account_assignment', 'person_map') AND name = 'tenant_id'
-     ORDER BY table)")"
-[[ "$map_columns" == "account_assignment.tenant_id,person_map.tenant_id" ]] \
-  || fail "the deploy must stand up the identity map views keyed by tenant, since no dbt runs until the first sync — got '$map_columns'"
+[[ "$(map_views)" == "" ]] \
+  || fail "the deploy must drop identity map views without a tenant column, so analytics answers not-ready until a sync rebuilds them — got '$(map_views)'"
 
 echo "=== Step 2: the warm state, under the legacy tenant '$OLD_TENANT' ==="
 # Bronze as destination-clickhouse leaves it for the zoom users stream, with
@@ -137,7 +150,10 @@ fi
 grep -q "CANNOT_PARSE_UUID" "$WORKDIR/refused.log" \
   || fail "zoom__identity_inputs failed over Bronze stamped '$OLD_TENANT', but not on its tenant: $(tail -c 2000 "$WORKDIR/refused.log")"
 
-# What the previous release left in the identity inputs: the tenant hashed.
+# What the previous release left in the identity inputs: the tenant hashed. No
+# deploy creates the relation, and this tree's producer refuses the legacy
+# tenant, so it is built empty — this tree's shape — and given that row.
+dbt_run --empty --select zoom__identity_inputs identity_inputs
 run_ch <<SQL
 INSERT INTO identity.identity_inputs (unique_key, insight_tenant_id, insight_source_id, insight_source_type,
     source_account_id, value_type, value, value_field_name, operation_type, _synced_at, _version)
@@ -190,7 +206,12 @@ migration finalize
 echo "=== Step 5: apply, rebuild, finalize ==="
 migration apply --tenant "$NEW_TENANT" --old-tenant "$OLD_TENANT" --dump-dir "$WORKDIR/dump-3"
 assert_migrated
-dbt_run --full-refresh --select zoom__users_snapshot+ tag:sync:always
+# Gold is left out: its views read the evidence of every connector class, and
+# this warm state synced only one.
+dbt_run --full-refresh --select zoom__users_snapshot+ tag:sync:always --exclude tag:gold
+
+[[ "$(map_views)" == "account_assignment:1,person_map:1" ]] \
+  || fail "the rebuild must recreate the identity map views keyed by tenant — got '$(map_views)'"
 
 got="$(query "SELECT concat(
     toString(count()), ':',
