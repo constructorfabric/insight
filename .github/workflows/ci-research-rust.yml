@@ -6,6 +6,14 @@ on:
       - .github/workflows/ci-research-rust.yml
       - scripts/ci/research_rust/**
   workflow_dispatch:
+    inputs:
+      scenario:
+        description: Cargo artifacts retained or missing between trials
+        type: choice
+        required: true
+        options:
+          - retained-targets
+          - missing-targets
 
 permissions:
   contents: read
@@ -43,10 +51,12 @@ jobs:
         with:
           tool: cargo-llvm-cov@0.9.1,sccache@0.18.0
       - name: Compare isolated changes serially
+        env:
+          SCENARIO: ${{ inputs.scenario }}
         run: |
           python3 -m venv .research-venv
           .research-venv/bin/pip install defusedxml==0.7.1
-          .research-venv/bin/python scripts/ci/research_rust/run.py --source application --output results --repeats 3
+          .research-venv/bin/python scripts/ci/research_rust/run.py --source application --output results --repeats 3 --scenario "$SCENARIO"
       - name: Preserve measurements
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

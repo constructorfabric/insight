@@ -163,7 +163,7 @@ def summary(document: dict[str, object]) -> str:
         "| Phase | Variant | Clippy s | Coverage build s | After build s | Report s | Total s |",
         "|---|---|---:|---:|---:|---:|---:|",
     ]
-    for phase in ("cold", "warm", "edit"):
+    for phase in ("cold", "warm", "edit", "cache-reuse"):
         for variant in VARIANTS:
             group = [r for r in rows if r["phase"] == phase and r["variant"] == variant]
             if not group:
@@ -178,9 +178,10 @@ def summary(document: dict[str, object]) -> str:
             lines.append(f"| {phase} | {variant} | " + " | ".join(f"{v:.3f}" for v in values) + " |")
     lines += [
         "",
-        "Cold is one exploratory sample; warm and edit use three repetitions. After-build time includes test execution and Cargo overhead.",
+        "Cold is one exploratory sample; the other phases use three repetitions. After-build time includes test execution and Cargo overhead.",
         "Compiler-cache uses an isolated local disk cache. Remote cache restore/save costs and whole-workflow gains are not measured.",
         "Warm retains Cargo artifacts; edit changes one synthetic test body. No application change is committed.",
+        "Cache-reuse deletes Cargo build artifacts before each sample but retains the compiler cache.",
     ]
     if document.get("error"):
         lines += ["", "FAILED: " + str(document["error"])]
@@ -193,6 +194,7 @@ def main() -> None:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=int, choices=range(1, 4), required=True)
+    parser.add_argument("--scenario", choices=("retained-targets", "missing-targets"), required=True)
     args = parser.parse_args()
     source, output = args.source.resolve(), args.output.resolve()
     if output.exists():
@@ -206,19 +208,27 @@ def main() -> None:
         "rust": subprocess.check_output(["rustc", "-Vv"], text=True),
         "coverage_tool": subprocess.check_output(["cargo", "llvm-cov", "--version"], text=True),
         "package": PACKAGE,
+        "scenario": args.scenario,
         "samples": [],
     }
     try:
         env = environment("baseline", output)
         run(["cargo", "fetch", "--locked"], source / "src/backend", env, output / "fetch.log")
-        for phase, repeat, revision in scenarios(args.repeats):
+        cases = scenarios(args.repeats)
+        variants = VARIANTS
+        if args.scenario == "missing-targets":
+            cases = [("cold", 1, 1)] + [("cache-reuse", n, 1) for n in range(1, args.repeats + 1)]
+            variants = ("baseline", "compiler-cache")
+        for phase, repeat, revision in cases:
             updated = fixture(original, revision)
             if edited.read_text() != updated:
                 edited.write_text(updated)
-            order = VARIANTS if repeat % 2 else tuple(reversed(VARIANTS))
+            order = variants if repeat % 2 else tuple(reversed(variants))
             peers = []
             for variant in order:
                 LOG.info("Starting %s/%s/%s", phase, repeat, variant)
+                if phase == "cache-reuse":
+                    shutil.rmtree(output / variant / "target")
                 row = sample(source, output, variant, phase, repeat)
                 peers.append(row)
                 document["samples"].append(row)
