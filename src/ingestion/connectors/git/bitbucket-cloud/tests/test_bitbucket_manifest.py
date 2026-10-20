@@ -323,7 +323,7 @@ def test_every_repository_walk_lists_repositories_from_the_shared_cursor_bounded
     repository_walks = set()
     for owner, config in _owned_parent_configs(manifest):
         parent = _referenced_stream(manifest, config["stream"])
-        assert "$ref" in config["stream"] or parent["name"] == "repository_authors", (
+        assert "$ref" in config["stream"] or parent["name"] == "author_changes", (
             f"{owner['name']}: an inlined repository listing cannot share the cached read: {parent['name']}"
         )
         if parent["name"] != "repositories":
@@ -338,15 +338,16 @@ def test_every_repository_walk_lists_repositories_from_the_shared_cursor_bounded
         "pull_requests",
         "pipelines",
         "deployments",
-        "commit_authors",
     }
 
 
+# None: the route serves no snapshot, so it never answers 409 and has no walk
+# to restart.
 _PROXY_RESET_ACTIONS = {
     "/v1/commits": "SPLIT_USING_CURSOR",
     "/v1/file-changes": "SPLIT_USING_CURSOR",
     "/v1/branches": "RESET",
-    "/v1/authors": "RESET",
+    "/v1/authors/changes": None,
 }
 
 
@@ -382,7 +383,9 @@ def test_a_superseded_proxy_snapshot_restarts_the_walk_instead_of_failing_it() -
         on_409 = [f["action"] for f in filters if 409 in f.get("http_codes", [])]
         assert on_409 == ["RESET_PAGINATION"], f"{path}: a 409 must reset pagination, got {on_409}"
         reset = retriever.get("pagination_reset")
-        assert reset == {"type": "PaginationReset", "action": _PROXY_RESET_ACTIONS[path]}, f"{path}: {reset}"
+        action = _PROXY_RESET_ACTIONS[path]
+        expected = None if action is None else {"type": "PaginationReset", "action": action}
+        assert reset == expected, f"{path}: {reset}"
 
 
 def test_the_branches_cursor_persists_the_listing_without_filtering_a_head() -> None:
@@ -418,13 +421,14 @@ def test_every_proxy_request_pins_its_own_freshness_window() -> None:
 def test_every_proxy_request_carries_the_repository_size_hint() -> None:
     """The proxy reserves cache headroom from the hint instead of its per-repository
     cap; a proxy requester without it, or a proxy parent that does not pass the size
-    along, silently falls back to the cap."""
+    along, silently falls back to the cap. A route that names no repository renders
+    the header empty, which the proxy reads as no hint."""
     retrievers = _proxy_retrievers(_streams())
     assert retrievers
     for retriever in retrievers:
         hint = (retriever["requester"].get("request_headers") or {}).get("X-Repo-Size-Hint", "")
         assert "extra_fields.get('size')" in hint, retriever["requester"]["path"]
-        for parent in retriever["partition_router"]["parent_stream_configs"]:
+        for parent in (retriever.get("partition_router") or {}).get("parent_stream_configs", []):
             if parent.get("partition_field") == "repo_clone_url":
                 assert ["size"] in (parent.get("extra_fields") or []), retriever["requester"]["path"]
 
