@@ -224,7 +224,7 @@ def report(results: list[dict[str, object]], output: Path) -> None:
         memories = []
         for row in results:
             if row["workload"] == workload and row["variant"] == variant:
-                batches = row["batches"] if "batches" in row else [row]
+                batches = row.get("batches", [row])
                 memories.extend(int(batch["memory_usage"]) for batch in batches)
         lines.append(f"| {workload} | {variant} | {median(samples):.3f} | {max(memories) / MIB:.1f} |")
     lines.extend(
