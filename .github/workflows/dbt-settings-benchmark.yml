@@ -16,14 +16,35 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  experiments:
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.experiments.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: experiments
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/ci/dbt_benchmark -p 'test_*.py'
+          echo "matrix=$(python3 scripts/ci/dbt_benchmark/experiments.py)" >> "$GITHUB_OUTPUT"
   compare:
+    name: Compare ${{ matrix.experiment }} only
+    needs: experiments
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.experiments.outputs.matrix) }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
     timeout-minutes: 35
     env:
       CLICKHOUSE_URL: http://127.0.0.1:18127
       CLICKHOUSE_USER: benchmark
       CLICKHOUSE_PASSWORD: synthetic-benchmark
-      CLICKHOUSE_CONTAINER: dbt-settings-${{ github.run_id }}-${{ github.run_attempt }}
+      CLICKHOUSE_CONTAINER: dbt-settings-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.experiment }}
+      BENCHMARK_EXPERIMENT: ${{ matrix.experiment }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,14 +73,17 @@ jobs:
         run: |
           set -euo pipefail
           source src/ingestion/scripts/bootstrap-db/pins.env
-          python -m venv /tmp/dbt-settings-venv
-          /tmp/dbt-settings-venv/bin/pip install "dbt-core==${DBT_CORE_VERSION}" "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}"
-      - name: Compare CPU, spill thresholds and insert deduplication
+          venv="${RUNNER_TEMP}/dbt-settings-${BENCHMARK_EXPERIMENT}"
+          echo "BENCHMARK_VENV=${venv}" >> "$GITHUB_ENV"
+          python -m venv "${venv}"
+          "${venv}/bin/pip" install "dbt-core==${DBT_CORE_VERSION}" "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}"
+      - name: Compare baseline against one isolated change
         run: |
           set -euo pipefail
-          /tmp/dbt-settings-venv/bin/python -m unittest discover -s scripts/ci/dbt_benchmark -p 'test_*.py'
-          /tmp/dbt-settings-venv/bin/python scripts/ci/dbt_benchmark/run.py --rows 1000000 --repeats 3 --output benchmark-results
+          mkdir -p benchmark-results
           docker inspect "${CLICKHOUSE_CONTAINER}" --format '{"cpu_nanocpus": {{.HostConfig.NanoCpus}}, "memory_bytes": {{.HostConfig.Memory}}}' > benchmark-results/resources.json
+          "${BENCHMARK_VENV}/bin/python" scripts/ci/dbt_benchmark/run.py \
+            --experiment "${BENCHMARK_EXPERIMENT}" --rows 1000000 --repeats 3 --output benchmark-results
       - name: Summary
         if: always()
         run: |
@@ -69,9 +93,38 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: dbt-settings-results
+          name: dbt-settings-${{ matrix.experiment }}
           path: benchmark-results/
           if-no-files-found: warn
       - name: Remove the disposable ClickHouse
         if: always()
-        run: docker rm -f "${CLICKHOUSE_CONTAINER}"
+        run: docker rm -fv "${CLICKHOUSE_CONTAINER}"
+
+  summary:
+    name: Isolated comparison summary
+    needs: [experiments, compare]
+    if: ${{ always() && !cancelled() && needs.experiments.result == 'success' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dbt-settings-*
+          path: all-results
+      - name: Validate isolation and compare all results
+        run: python3 scripts/ci/dbt_benchmark/report.py --input-root all-results --output comparison-summary.md
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f comparison-summary.md ]; then
+            cat comparison-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: isolated-comparison-summary
+          path: comparison-summary.md
+          if-no-files-found: warn

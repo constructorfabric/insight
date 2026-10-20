@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from client import Client, checked_body
-from run import MIB, variants
+from experiments import EXPERIMENTS, MIB
 
 
 class SettingsTests(unittest.TestCase):
@@ -25,16 +25,31 @@ class SettingsTests(unittest.TestCase):
             "max_bytes_before_external_sort": 256 * MIB,
             "max_bytes_in_join": 256 * MIB,
             "join_algorithm": "auto",
+            "max_block_size": 32768,
+            "max_insert_block_size": 32768,
+            "min_insert_block_size_rows": 32768,
+            "min_insert_block_size_bytes": 16 * MIB,
+            "optimize_on_insert": 1,
+            "partition_by": "toYYYYMM(metric_date)",
         }
         original = dict(baseline)
-        for name, settings in variants(baseline).items():
-            with self.subTest(variant=name):
+        for experiment in EXPERIMENTS:
+            settings = experiment.candidate(baseline)
+            with self.subTest(experiment=experiment.name):
+                self.assertEqual({key for key in baseline if baseline[key] != settings[key]}, {experiment.parameter})
                 self.assertEqual(settings["max_memory_usage"], baseline["max_memory_usage"])
                 self.assertEqual(settings["join_algorithm"], "auto")
                 self.assertLess(settings["max_bytes_before_external_group_by"], settings["max_memory_usage"])
                 self.assertLess(settings["max_bytes_before_external_sort"], settings["max_memory_usage"])
                 self.assertLess(settings["max_bytes_in_join"], settings["max_memory_usage"])
         self.assertEqual(baseline, original)
+
+    def test_a_comparison_rejects_an_unchanged_candidate_or_an_unknown_parameter(self) -> None:
+        experiment = EXPERIMENTS[0]
+        with self.assertRaises(ValueError):
+            experiment.candidate({experiment.parameter: experiment.value})
+        with self.assertRaises(ValueError):
+            experiment.candidate({"unknown": 1})
 
 
 if __name__ == "__main__":
