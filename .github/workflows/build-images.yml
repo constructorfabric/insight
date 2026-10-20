@@ -70,17 +70,21 @@ permissions:
   id-token: write # keyless OIDC identity for attest-build-provenance
   attestations: write # store SLSA provenance in the repo attestation store
 
-# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
+# Routing, decided by the route job and stated once in
+# .github/runners/insight-vhc/README.md: a pull request
 # from a branch of this repository takes the ephemeral ARC scale set, a fork's
 # takes a GitHub-hosted runner, everything else takes the shared self-hosted
 # pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
+  route:
+    uses: ./.github/workflows/runner-route.yml
   # ─── Backend / chart change detection ──────────────────────────────────────
   # Per-service filters so a single-service code change only rebuilds that one
   # image. Connector image builds are NOT handled here — see discover-images,
   # which scans every descriptor.yaml's `images:` block (ADR-0016).
   changes:
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    needs: route
+    runs-on: ${{ fromJSON(needs.route.outputs.container) }}
     outputs:
       analytics: ${{ steps.filter.outputs.analytics }}
       authenticator: ${{ steps.filter.outputs.authenticator }}
@@ -354,9 +358,9 @@ jobs:
   # entirely — build-image, merge-image and bump-descriptors all key off
   # `outputs.any`, so they cascade-skip with it.
   discover-images:
-    needs: changes
+    needs: [route, changes]
     if: github.event_name != 'merge_group' && (github.event_name != 'workflow_dispatch' || !inputs.frontend_only)
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    runs-on: ${{ fromJSON(needs.route.outputs.container) }}
     outputs:
       matrix: ${{ steps.scan.outputs.matrix }}
       any: ${{ steps.scan.outputs.any }}
@@ -442,7 +446,7 @@ jobs:
 
   # INVARIANT: PR validation builds amd64 only; publishing builds both supported architectures on native runners.
   backend-analytics:
-    needs: changes
+    needs: [route, changes]
     if: |
       needs.changes.outputs.analytics == 'true'
       || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
@@ -450,7 +454,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || fromJSON(needs.route.outputs.container) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -572,7 +576,7 @@ jobs:
           echo '- `${{ env.IMAGE_PREFIX }}/insight-analytics:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
   backend-authenticator:
-    needs: changes
+    needs: [route, changes]
     if: |
       needs.changes.outputs.authenticator == 'true'
       || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
@@ -580,7 +584,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || fromJSON(needs.route.outputs.container) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -697,7 +701,7 @@ jobs:
           echo '- `${{ env.IMAGE_PREFIX }}/insight-authenticator:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
   backend-gateway:
-    needs: changes
+    needs: [route, changes]
     if: |
       needs.changes.outputs.gateway == 'true'
       || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
@@ -705,7 +709,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || fromJSON(needs.route.outputs.container) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -818,7 +822,7 @@ jobs:
 
   # ─── Git CLI Proxy (clone-based git extraction for nocode connectors) ─────
   backend-git-cli-proxy:
-    needs: changes
+    needs: [route, changes]
     if: |
       needs.changes.outputs.git_cli_proxy == 'true'
       || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
@@ -826,7 +830,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || fromJSON(needs.route.outputs.container) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -947,7 +951,7 @@ jobs:
 
   # ─── Identity Resolution (Rust identity service, epic #1602) ──────────────
   backend-identity-resolution:
-    needs: changes
+    needs: [route, changes]
     if: |
       needs.changes.outputs.identity_resolution == 'true'
       || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
@@ -955,7 +959,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || fromJSON(needs.route.outputs.container) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1077,7 +1081,7 @@ jobs:
   # ─── Insight v3 core ───────────────────────────────────────────────────────
   # Not in the e2e compose rig, so no e2e-prebuilt export path.
   backend-insight-v3-core:
-    needs: changes
+    needs: [route, changes]
     if: |
       needs.changes.outputs.insight_v3_core == 'true'
       || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
@@ -1085,7 +1089,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || fromJSON(needs.route.outputs.container) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1195,7 +1199,7 @@ jobs:
   # ─── Previews (preview-experiment provisioning, epic #1981) ───────────────
   # Not in the e2e compose rig, so no e2e-prebuilt export path.
   backend-previews:
-    needs: changes
+    needs: [route, changes]
     if: |
       needs.changes.outputs.previews == 'true'
       || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
@@ -1203,7 +1207,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || fromJSON(needs.route.outputs.container) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1321,7 +1325,7 @@ jobs:
   # this subchart on dispatch (FULL_REBUILD), so without it publish-chart would
   # package a chart referencing a tag that was never pushed.
   frontend:
-    needs: changes
+    needs: [route, changes]
     if: |
       needs.changes.outputs.frontend == 'true'
       || github.event_name == 'workflow_dispatch'
@@ -1329,7 +1333,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || fromJSON(needs.route.outputs.container) }}
     timeout-minutes: 30
     # Narrower than the workflow-level set: this job builds PR-authored source.
     permissions:
@@ -1453,7 +1457,7 @@ jobs:
   # `src/ingestion/**` (which includes descriptor.yaml).
   #
   toolbox:
-    needs: changes
+    needs: [route, changes]
     if: |
       needs.changes.outputs.toolbox == 'true'
       || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
@@ -1461,7 +1465,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || fromJSON(needs.route.outputs.container) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1630,7 +1634,7 @@ jobs:
   # `seed-stand.sh` runs this image as a one-shot Job; the ref it discovers is
   # `ingestion.seedImage`, pinned by publish-chart below.
   seed:
-    needs: changes
+    needs: [route, changes]
     if: |
       needs.changes.outputs.seed == 'true'
       || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
@@ -1638,7 +1642,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || fromJSON(needs.route.outputs.container) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1783,14 +1787,14 @@ jobs:
   # entry — there is no per-connector hardcode in this workflow.
   #
   build-image:
-    needs: [changes, discover-images]
+    needs: [route, changes, discover-images]
     if: needs.discover-images.outputs.any == 'true'
     strategy:
       fail-fast: false
       matrix:
         entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || fromJSON(needs.route.outputs.container) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

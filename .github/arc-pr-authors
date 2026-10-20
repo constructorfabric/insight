@@ -1,0 +1,11 @@
+# Logins whose pull requests run on the ARC scale set (insight-vhc-arc) even
+# when the event payload does not report them as OWNER, MEMBER or COLLABORATOR,
+# which is what a private org membership looks like. One login per line, a
+# leading @ is allowed, # starts a comment. Read from the default branch by
+# .github/workflows/runner-route.yml, so a change applies once it is on main.
+cyberantonz
+mitasovr
+aleksdotbar
+hello1101n
+ktursunov
+mozhaev-dev

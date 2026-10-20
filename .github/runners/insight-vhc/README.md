@@ -10,14 +10,28 @@ it changes whether those lanes pass, which is why it is versioned beside them.
 
 ## Which runs land here
 
-Every x64 `runs-on` in `.github/workflows` carries one rule, except the jobs
-under [The container class](#the-container-class), the heavy jobs under
+Every workflow with an x64 job that may take the scale set starts with a
+`route` job, the reusable `.github/workflows/runner-route.yml`, and each such
+job takes its runner from it, except the heavy jobs under
 [The persistent class](#the-persistent-class) and the one waiting job under
 [The idling class](#the-idling-class):
 
 ```yaml
-runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+jobs:
+  route:
+    uses: ./.github/workflows/runner-route.yml
+  lint:
+    needs: route
+    runs-on: ${{ fromJSON(needs.route.outputs.idle) }}
 ```
+
+`runs-on` is evaluated before any step runs, from the event payload and `vars`
+only, and Actions withholds `vars` from a fork's pull request, so no expression
+can read a list kept outside the workflow file. The route job can: it runs one
+`curl`, reads `.github/arc-pr-authors` from the default branch and emits one
+JSON `runs-on` per class. The route job itself follows the table below without
+the member test: an ephemeral pod for any pull request, the pool otherwise,
+`ubuntu-latest` with the kill switch on.
 
 | Event | Runner |
 |---|---|
@@ -40,10 +54,10 @@ request to it.
 
 **Only project members reach the scale set.** A project member is an author
 the event payload reports as `OWNER`, `MEMBER` or `COLLABORATOR`, or whose
-login is in the `INSIGHT_ARC_PR_AUTHORS` repository variable, a JSON array such
-as `["octocat"]`. The payload reports org membership only when it is public, so
-a member whose membership is private shows as `CONTRIBUTOR` and needs either
-the variable entry or public membership. Where the pull request comes from does
+login is listed in `.github/arc-pr-authors` on the default branch, one login
+per line. The payload reports org membership only when it is public, so a
+member whose membership is private shows as `CONTRIBUTOR` and needs either the
+list entry or public membership. Where the pull request comes from does
 not count: a branch here takes write access, not membership, and Dependabot has
 write access too. Anyone else's pull request stays on a GitHub-hosted runner:
 approval for an outside contributor's workflow is an admission gate, not a
@@ -69,10 +83,11 @@ Left on hosted runners deliberately:
 A job that runs in a job container, starts containers of its own, or builds
 images reaches the scale set only for a project member's pull request from a
 branch here; a fork's pull request runs it on `ubuntu-latest` whoever opened
-it:
+it. The route job's second output carries that rule:
 
 ```yaml
-runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    needs: route
+    runs-on: ${{ fromJSON(needs.route.outputs.container) }}
 ```
 
 The jobs under this rule:
@@ -139,16 +154,18 @@ set, goes to `ubuntu-latest`; unset, empty or `false` leaves routing as
 described above. The polarity is deliberate — an absent variable must not change
 policy, and a variable nobody has created yet reads as empty.
 
-Actions may withhold `vars` from a pull request opened from a fork, so in those
-runs the expression can read an empty string and the switch cannot speak. An
-outside contributor's pull request is hosted by the shape of the expression,
-under every value the variable could have held. A member's fork pull request is
-not: to return it to hosted runners, revert the routing on `main`. A pull
-request runs from its merge commit with `main`, so its next run picks that up.
+Actions withholds `vars` from a pull request opened from a fork, so in those
+runs the route job reads an empty string and the switch cannot speak. An
+outside contributor's pull request is hosted whatever the variable holds. A
+member's fork pull request is not: to return it to hosted runners, drop the
+login from `.github/arc-pr-authors` on `main`, which the route job reads on
+the pull request's next run, or, for a member the payload itself reports,
+revert the routing on `main`. A pull request runs from its merge commit with
+`main`, so its next run picks that up.
 
 Routing is not a security boundary either. A pull request runs the workflow from
-its own merge commit, so a fork can rewrite any of these lines, and the runner is
-picked before the first step executes.
+its own merge commit, so a fork can rewrite the route job or any `runs-on`, and
+the runner is picked before the first step executes.
 
 ## No secrets here
 

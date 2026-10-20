@@ -1,0 +1,67 @@
+# Picks the runner for every pull-request job that may use the ARC scale set.
+# runs-on is evaluated before any step runs, from the payload and `vars` only,
+# and Actions withholds `vars` from a fork's pull request, so the member list
+# lives in .github/arc-pr-authors and this job reads it from the default branch.
+# Callers take `needs.route.outputs.idle` or `.container` through fromJSON().
+# The table is in .github/runners/insight-vhc/README.md.
+name: runner route
+
+on:
+  workflow_call:
+    outputs:
+      idle:
+        description: JSON runs-on for a job that starts no containers
+        value: ${{ jobs.route.outputs.idle }}
+      container:
+        description: JSON runs-on for a job that runs or builds containers
+        value: ${{ jobs.route.outputs.container }}
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || github.event_name == 'pull_request' && 'insight-vhc-arc' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    timeout-minutes: 5
+    outputs:
+      idle: ${{ steps.pick.outputs.idle }}
+      container: ${{ steps.pick.outputs.container }}
+    steps:
+      - id: pick
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FORCE_HOSTED: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED }}
+          EVENT: ${{ github.event_name }}
+          ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          LOGIN: ${{ github.event.pull_request.user.login }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          hosted='"ubuntu-latest"'
+          arc='"insight-vhc-arc"'
+          pool='["self-hosted","linux","x64","insight-vhc"]'
+          case "$FORCE_HOSTED" in [Tt][Rr][Uu][Ee]) forced=true ;; *) forced=false ;; esac
+          if [ "$forced" = true ]; then
+            idle=$hosted; container=$hosted
+          elif [ "$EVENT" != pull_request ]; then
+            idle=$pool; container=$pool
+          else
+            member=false
+            case "$ASSOCIATION" in OWNER|MEMBER|COLLABORATOR) member=true ;; esac
+            if [ "$member" = false ] && [ -n "$LOGIN" ]; then
+              listed=$(curl -fsS --max-time 20 \
+                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                -H "Accept: application/vnd.github.raw+json" \
+                "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/contents/.github/arc-pr-authors?ref=$DEFAULT_BRANCH" \
+                | sed 's/#.*//; s/^[[:space:]]*@\{0,1\}//; s/[[:space:]]*$//' | grep -icxF "$LOGIN" || true)
+              [ "$listed" != 0 ] && member=true
+            fi
+            idle=$hosted; container=$hosted
+            if [ "$member" = true ]; then
+              idle=$arc
+              [ "$SAME_REPO" = true ] && container=$arc
+            fi
+          fi
+          echo "event=$EVENT association=$ASSOCIATION login=$LOGIN same_repo=$SAME_REPO member=${member:-n/a}"
+          echo "idle=$idle container=$container"
+          { echo "idle=$idle"; echo "container=$container"; } >> "$GITHUB_OUTPUT"
