@@ -64,6 +64,12 @@ def stale_keys_query(snapshot: Relation, source: Relation) -> str:
     )
 
 
+def source_rows_query(source: Relation) -> str:
+    """How many rows one tenant holds in a snapshot's source."""
+    source_schema, source_table = source
+    return f"SELECT count() FROM `{source_schema}`.`{source_table}` FINAL WHERE tenant_id = {{tenant:String}}"
+
+
 def delete_statement(snapshot: Relation) -> str:
     """Delete one tenant's versions whose key is among `keys`."""
     schema, table = snapshot
@@ -89,6 +95,14 @@ def prune_to_source(
 
     if not int(str(client.command(f"EXISTS TABLE `{schema}`.`{table}`"))):
         return 0
+
+    if not int(str(client.command(source_rows_query(source), parameters={"tenant": tenant_uuid}))):
+        LOG.warning(
+            "%s.%s: its source %s.%s holds nothing for this tenant, so every version is pruned",
+            schema,
+            table,
+            *source,
+        )
 
     stale = [
         str(row[0])
