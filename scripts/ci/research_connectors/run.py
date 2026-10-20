@@ -5,7 +5,6 @@ import importlib.metadata
 import json
 import logging
 import os
-import random
 import subprocess
 import sys
 import time
@@ -84,8 +83,8 @@ def main() -> None:
     }
     try:
         for repeat in range(1, args.repeats + 1):
-            order = list(VARIANTS)
-            random.Random(repeat).shuffle(order)
+            offset = (repeat - 1) % len(VARIANTS)
+            order = VARIANTS[offset:] + VARIANTS[:offset]
             peers = []
             for variant in order:
                 LOG.info("Starting %s/%s", repeat, variant)
