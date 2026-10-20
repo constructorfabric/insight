@@ -167,6 +167,21 @@ Routing is not a security boundary either. A pull request runs the workflow from
 its own merge commit, so a fork can rewrite the route job or any `runs-on`, and
 the runner is picked before the first step executes.
 
+## The workflow guard
+
+What keeps an outsider's rewrite off the scale set is the approval setting for
+fork pull-request workflows, so the question for the approver is whether the
+pull request changed the workflows at all. `workflow-guard.yml` answers it. It
+runs on `pull_request_target`, which takes the workflow from `main` whatever
+the pull request contains, calls the route job from `main` for the member
+verdict, and never checks out or runs pull-request code. A member's or a
+same-repo pull request passes. An outsider's fork pull request passes when no
+changed file is under `.github/`, because its workflows are then `main`'s. One
+that changes anything under `.github/` fails the check and leaves a comment
+listing the files, so the approver reads those before approving the run. The
+check `workflow guard` is required in the ruleset, so a red verdict cannot
+merge either. Approval itself stays with a human.
+
 ## No secrets here
 
 The registration token, the cloud credentials and any kubeconfig are injected at

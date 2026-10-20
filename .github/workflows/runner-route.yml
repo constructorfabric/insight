@@ -2,7 +2,8 @@
 # runs-on is evaluated before any step runs, from the payload and `vars` only,
 # and Actions withholds `vars` from a fork's pull request, so the member list
 # lives in .github/arc-pr-authors and this job reads it from the default branch.
-# Callers take `needs.route.outputs.idle` or `.container` through fromJSON().
+# Callers take `needs.route.outputs.idle` or `.container` through fromJSON();
+# `member` is the bare verdict, for workflow-guard.yml.
 # The table is in .github/runners/insight-vhc/README.md.
 name: runner route
 
@@ -15,17 +16,21 @@ on:
       container:
         description: JSON runs-on for a job that runs or builds containers
         value: ${{ jobs.route.outputs.container }}
+      member:
+        description: "true when the pull request author is a project member"
+        value: ${{ jobs.route.outputs.member }}
 
 permissions:
   contents: read
 
 jobs:
   route:
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || github.event_name == 'pull_request' && 'insight-vhc-arc' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || startsWith(github.event_name, 'pull_request') && 'insight-vhc-arc' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 5
     outputs:
       idle: ${{ steps.pick.outputs.idle }}
       container: ${{ steps.pick.outputs.container }}
+      member: ${{ steps.pick.outputs.member }}
     steps:
       - id: pick
         env:
@@ -41,12 +46,9 @@ jobs:
           arc='"insight-vhc-arc"'
           pool='["self-hosted","linux","x64","insight-vhc"]'
           case "$FORCE_HOSTED" in [Tt][Rr][Uu][Ee]) forced=true ;; *) forced=false ;; esac
-          if [ "$forced" = true ]; then
-            idle=$hosted; container=$hosted
-          elif [ "$EVENT" != pull_request ]; then
-            idle=$pool; container=$pool
-          else
-            member=false
+          member=false
+          case "$EVENT" in pull_request|pull_request_target) pr=true ;; *) pr=false ;; esac
+          if [ "$pr" = true ]; then
             case "$ASSOCIATION" in OWNER|MEMBER|COLLABORATOR) member=true ;; esac
             if [ "$member" = false ] && [ -n "$LOGIN" ]; then
               listed=$(curl -fsS --max-time 20 \
@@ -56,12 +58,18 @@ jobs:
                 | sed 's/#.*//; s/^[[:space:]]*@\{0,1\}//; s/[[:space:]]*$//' | grep -icxF "$LOGIN" || true)
               [ "$listed" != 0 ] && member=true
             fi
+          fi
+          if [ "$forced" = true ]; then
+            idle=$hosted; container=$hosted
+          elif [ "$pr" = false ]; then
+            idle=$pool; container=$pool
+          else
             idle=$hosted; container=$hosted
             if [ "$member" = true ]; then
               idle=$arc
               [ "$SAME_REPO" = true ] && container=$arc
             fi
           fi
-          echo "event=$EVENT association=$ASSOCIATION login=$LOGIN same_repo=$SAME_REPO member=${member:-n/a}"
+          echo "event=$EVENT association=$ASSOCIATION login=$LOGIN same_repo=$SAME_REPO member=$member"
           echo "idle=$idle container=$container"
-          { echo "idle=$idle"; echo "container=$container"; } >> "$GITHUB_OUTPUT"
+          { echo "idle=$idle"; echo "container=$container"; echo "member=$member"; } >> "$GITHUB_OUTPUT"

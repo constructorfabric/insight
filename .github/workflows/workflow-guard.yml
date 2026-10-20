@@ -1,0 +1,81 @@
+# Runs main's copy of itself on every pull request, whatever the pull request
+# contains: pull_request_target takes the workflow from the base branch. The
+# route job (also main's copy) says whether the author is a project member.
+# A member's or a same-repo pull request has nothing to gate. An outsider's
+# fork pull request that edits anything under .github/ owns the workflows it
+# runs, so this check goes red and lists the files for the human who decides
+# whether to approve the run. No checkout and no pull-request code: payload
+# values enter through env only. Required check `workflow guard` in the
+# ruleset keeps a red verdict unmerged.
+name: workflow guard
+
+on:
+  pull_request_target:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: workflow-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  route:
+    uses: ./.github/workflows/runner-route.yml
+
+  guard:
+    name: workflow guard
+    needs: route
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || 'insight-vhc-arc' }}
+    timeout-minutes: 5
+    steps:
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MEMBER: ${{ needs.route.outputs.member }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          api() {
+            curl -fsS --max-time 30 -X "$1" \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY$2" "${@:3}"
+          }
+          if [ "$MEMBER" = true ] || [ "$SAME_REPO" = true ]; then
+            echo "member=$MEMBER same_repo=$SAME_REPO: nothing to gate"
+            exit 0
+          fi
+
+          touched=""
+          page=1
+          while :; do
+            files=$(api GET "/pulls/$PR_NUMBER/files?per_page=100&page=$page")
+            touched="$touched
+          $(printf '%s' "$files" | jq -r '.[] | .filename, (.previous_filename // empty) | select(startswith(".github/"))')"
+            [ "$(printf '%s' "$files" | jq length)" -lt 100 ] && break
+            page=$((page + 1))
+            if [ "$page" -gt 30 ]; then
+              echo "::error::more than 3000 changed files; cannot tell what the workflows are"
+              exit 1
+            fi
+          done
+          touched=$(printf '%s\n' "$touched" | sed 's/^[[:space:]]*//; /^$/d' | sort -u)
+          if [ -z "$touched" ]; then
+            echo "no .github/ changes: the pull request runs main's workflows"
+            exit 0
+          fi
+
+          marker='<!-- workflow-guard -->'
+          body=$(printf '%s\nThis pull request comes from outside `.github/arc-pr-authors` and changes files under `.github/`. Its workflows run from these files, so read them before approving the run:\n\n```\n%s\n```\n' "$marker" "$touched")
+          existing=$(api GET "/issues/$PR_NUMBER/comments?per_page=100" \
+            | jq -r --arg m "$marker" '[.[] | select(.body | startswith($m))][0].id // empty')
+          payload=$(jq -n --arg body "$body" '{body: $body}')
+          if [ -n "$existing" ]; then
+            api PATCH "/issues/comments/$existing" -d "$payload" >/dev/null
+          else
+            api POST "/issues/$PR_NUMBER/comments" -d "$payload" >/dev/null
+          fi
+          echo "::error::.github/ changed by an author outside the list; read these before approving the run"
+          printf '%s\n' "$touched"
+          exit 1
