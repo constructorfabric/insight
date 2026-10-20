@@ -46,6 +46,6 @@ BY_NAME = {experiment.name: experiment for experiment in EXPERIMENTS}
 
 if __name__ == "__main__":
     matrix = []
-    for topology in TOPOLOGIES:
-        matrix.extend({"experiment": experiment.name, "topology": topology} for experiment in EXPERIMENTS)
+    for experiment in EXPERIMENTS:
+        matrix.extend({"experiment": experiment.name, "topology": topology} for topology in TOPOLOGIES)
     sys.stdout.write(json.dumps({"include": matrix}) + "\n")
