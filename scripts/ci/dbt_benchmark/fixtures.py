@@ -5,13 +5,13 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 
 from client import Client
 from experiments import MODEL, SERVING
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-DBT = ROOT / "src/ingestion/dbt"
 
 READ_PROBES = {
     "month_measure": "tenant_id = 'synthetic' AND source_key = 'synthetic_source' "
@@ -36,18 +36,7 @@ class Workload:
     partition_by: str
 
 
-def run_dbt(profiles: Path, target: Path) -> dict[str, object]:
-    subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "src/ingestion/scripts/dbt_profiles.py"),
-            "--target",
-            "benchmark",
-            "--profiles-dir",
-            str(profiles),
-        ],
-        check=True,
-    )
+def run_dbt(source: Path, profiles: Path, target: Path) -> dict[str, object]:
     subprocess.run(
         [
             str(Path(sys.executable).parent / "dbt"),
@@ -61,7 +50,7 @@ def run_dbt(profiles: Path, target: Path) -> dict[str, object]:
             "--log-path",
             str(target / "logs"),
         ],
-        cwd=DBT,
+        cwd=source / "src/ingestion/dbt",
         check=True,
     )
     return json.loads((target / "manifest.json").read_text())["nodes"]
@@ -76,19 +65,21 @@ def query_settings(settings: dict[str, object]) -> dict[str, str | int]:
     return parsed
 
 
-def prepare(client: Client, rows: int, work: Path) -> dict[str, Workload]:
+def prepare(client: Client, rows: int, work: Path, source: Path, phases: dict[str, float]) -> dict[str, Workload]:
     existing = client.rows(
         "SELECT database, name FROM system.tables WHERE database NOT IN "
         "('system', 'INFORMATION_SCHEMA', 'information_schema')"
     )
     if existing:
         raise RuntimeError("benchmark requires a fresh disposable ClickHouse; refusing an existing warehouse")
+    started = perf_counter()
     for sql in (HERE / "seed.sql").read_text().split(";"):
         if sql.strip():
-            client.execute(sql, settings={"param_rows": rows})
-    profiles = work / "profiles"
-    profiles.mkdir()
-    nodes = run_dbt(profiles, work / "target")
+            client.execute(sql.strip(), settings={"param_rows": rows})
+    phases["seed_seconds"] = perf_counter() - started
+    started = perf_counter()
+    nodes = run_dbt(source, work / "profiles", work / "target")
+    phases["compile_seconds"] = perf_counter() - started
     model = nodes[f"model.ingestion.{MODEL}"]
     serving = nodes["model.ingestion.git_metric_evidence"]["config"]
     settings = query_settings(model["config"]["query_settings"])

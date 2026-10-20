@@ -1,0 +1,16 @@
+services:
+  single:
+    cpus: 4
+    mem_limit: 3g
+  ch1:
+    cpus: 4
+    mem_limit: 3g
+  ch2:
+    cpus: 4
+    mem_limit: 3g
+  keeper:
+    cpus: 0.5
+    mem_limit: 512m
+  proxy:
+    cpus: 0.25
+    mem_limit: 128m

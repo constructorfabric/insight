@@ -4,6 +4,8 @@ import json
 import sys
 from dataclasses import dataclass
 
+from topology import TOPOLOGIES
+
 MIB = 1024 * 1024
 MODEL = "git_authored_commits"
 SERVING = "serving_writes"
@@ -43,4 +45,7 @@ BY_NAME = {experiment.name: experiment for experiment in EXPERIMENTS}
 
 
 if __name__ == "__main__":
-    sys.stdout.write(json.dumps({"include": [{"experiment": experiment.name} for experiment in EXPERIMENTS]}) + "\n")
+    matrix = []
+    for topology in TOPOLOGIES:
+        matrix.extend({"experiment": experiment.name, "topology": topology} for experiment in EXPERIMENTS)
+    sys.stdout.write(json.dumps({"include": matrix}) + "\n")

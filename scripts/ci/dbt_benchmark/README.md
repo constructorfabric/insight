@@ -1,9 +1,19 @@
 # Isolated ClickHouse comparisons
 
-The draft benchmark workflow runs one independent CI job per experiment. Every
-job starts a fresh ClickHouse, seeds the same synthetic inputs, and compares its
-own baseline with one candidate. Each pair changes exactly one parameter.
+The draft benchmark workflow runs all eleven experiments on both standalone
+and replicated ClickHouse: 22 independent CI jobs. Every job starts a fresh
+warehouse, seeds the same synthetic inputs, and compares its own baseline with
+one candidate. Each pair changes exactly one parameter.
 Application models and runtime configuration are unchanged.
+
+Both topologies use the application and rig source pinned to commit
+`e59aa345fc85b1616f3defd95d2ad7d3dd6c96dd`. A second checkout provides that
+source without folding unrelated application changes into this benchmark PR.
+The replicated rig has two replicas, Keeper and a round-robin proxy. Its
+`Replicated` databases, `Replicated*` table engines, quorum writes and sequential
+reads match the pinned application profile. Required consistency settings are
+never removed from a candidate. Fixture table creation splits schema creation
+from inserts because replicated databases reject `CREATE AS SELECT`.
 
 | Experiment | Only change |
 |---|---|
@@ -45,30 +55,39 @@ This validates the setting's semantics, not every dbt model's incremental logic.
 Each candidate has one unmeasured warm-up and three measured repetitions, with
 baseline/candidate ordering shuffled or alternated. Every write is compared
 with the expected output in both directions using `EXCEPT ALL`, including
-duplicate multiplicities. Read results must also match exactly. Timing
+duplicate multiplicities. Replicated trials check writes and read results
+directly on both nodes, audit their database/table engines and compare metadata.
+Query log records are collected from both nodes because the proxy routes each
+request independently. Read results must also match exactly. Timing
 thresholds are exploratory: inspect raw samples before choosing a setting.
 
 Each artifact records parameters, source commit, fixture hashes, server version,
 resource limits, query durations, peak query memory and external-processing
 counters. The final summary checks that all eleven experiments finished with
 the same code, data, repetitions, version, architecture and container limits,
-and validates the one-parameter difference for every workload. Missing reports,
+and validates the one-parameter difference for every workload in both topologies.
+Seed and dbt compile costs are reported separately from the paired SQL timings.
+Missing reports,
 execution failures, incorrect rows or extra changes fail CI.
 
-Each server is capped at four CPUs and 3 GiB. At most two independent jobs run
+Each ClickHouse node is capped at four CPUs and 3 GiB; both replica limits must
+match. Keeper and the proxy have separate fixed limits. This compares each
+candidate against a baseline within the same topology; the two-node topology
+has a larger total resource budget than standalone. At most two independent jobs run
 at once, on separate runners. The workflow excludes queue time, dbt startup,
 full materialization/swap and concurrent production builds from SQL timings.
 The original warehouse layout and `FINAL` policy are retained; partition trials
 change only disposable gold outputs.
 
 For a small local smoke check, start a fresh disposable ClickHouse on loopback,
-set `CLICKHOUSE_URL`, `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`, and record its
+set `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_NODES`,
+`CLICKHOUSE_CLUSTER_MODE` and `CLICKHOUSE_CLUSTER_NAME`, and record its
 Docker limits in the output directory first. Run the pinned Python environment:
 
 ```sh
 mkdir -p /tmp/dbt-settings-results
 docker inspect "$CLICKHOUSE_CONTAINER" --format '{"cpu_nanocpus": {{.HostConfig.NanoCpus}}, "memory_bytes": {{.HostConfig.Memory}}}' > /tmp/dbt-settings-results/resources.json
-python scripts/ci/dbt_benchmark/run.py --experiment aggregation-spill --rows 10000 --repeats 1 --output /tmp/dbt-settings-results
+python scripts/ci/dbt_benchmark/run.py --experiment aggregation-spill --topology standalone --source-root /path/to/pinned-source --rows 10000 --repeats 1 --output /tmp/dbt-settings-results
 ```
 
 The runner refuses a non-empty warehouse or a non-loopback endpoint. Recreate

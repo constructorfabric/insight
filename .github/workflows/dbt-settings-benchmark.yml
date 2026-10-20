@@ -31,7 +31,7 @@ jobs:
           python3 -m unittest discover -s scripts/ci/dbt_benchmark -p 'test_*.py'
           echo "matrix=$(python3 scripts/ci/dbt_benchmark/experiments.py)" >> "$GITHUB_OUTPUT"
   compare:
-    name: Compare ${{ matrix.experiment }} only
+    name: Compare ${{ matrix.experiment }} (${{ matrix.topology }})
     needs: experiments
     strategy:
       fail-fast: false
@@ -40,14 +40,25 @@ jobs:
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
     timeout-minutes: 35
     env:
-      CLICKHOUSE_URL: http://127.0.0.1:18127
-      CLICKHOUSE_USER: benchmark
+      CLICKHOUSE_URL: ${{ matrix.topology == 'replicated' && 'http://127.0.0.1:18123' || 'http://127.0.0.1:18126' }}
+      CLICKHOUSE_NODES: ${{ matrix.topology == 'replicated' && '["http://127.0.0.1:18124","http://127.0.0.1:18125"]' || '["http://127.0.0.1:18126"]' }}
+      CLICKHOUSE_USER: insight
       CLICKHOUSE_PASSWORD: synthetic-benchmark
-      CLICKHOUSE_CONTAINER: dbt-settings-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.experiment }}
+      CLICKHOUSE_CLUSTER_MODE: ${{ matrix.topology == 'replicated' && 'true' || 'false' }}
+      CLICKHOUSE_CLUSTER_NAME: ${{ matrix.topology == 'replicated' && 'rig' || '' }}
+      COMPOSE_FILE: ${{ github.workspace }}/rig-source/src/ingestion/tests/cluster-rig/compose.yaml:${{ github.workspace }}/scripts/ci/dbt_benchmark/resources.compose.yml
+      COMPOSE_PROFILES: ${{ matrix.topology }}
+      COMPOSE_PROJECT_NAME: dbt-settings-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.experiment }}-${{ matrix.topology }}
       BENCHMARK_EXPERIMENT: ${{ matrix.experiment }}
+      BENCHMARK_TOPOLOGY: ${{ matrix.topology }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: e59aa345fc85b1616f3defd95d2ad7d3dd6c96dd
+          path: rig-source
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -55,25 +66,17 @@ jobs:
       - name: Start a resource-bounded disposable ClickHouse
         run: |
           set -euo pipefail
-          source src/ingestion/scripts/bootstrap-db/pins.env
-          docker run -d --name "${CLICKHOUSE_CONTAINER}" --cpus 4 --memory 3g \
-            -p 127.0.0.1:18127:8123 \
-            -e CLICKHOUSE_USER -e CLICKHOUSE_PASSWORD \
-            -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
-            -v "${GITHUB_WORKSPACE}/deploy/compose/clickhouse-memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro" \
-            "${CLICKHOUSE_SERVER_IMAGE}"
-          for _ in $(seq 1 60); do
-            if curl --fail --silent "${CLICKHOUSE_URL}/ping"; then
-              exit 0
-            fi
-            sleep 1
-          done
-          exit 1
+          source rig-source/src/ingestion/scripts/bootstrap-db/pins.env
+          export CLICKHOUSE_SERVER_IMAGE
+          export CLICKHOUSE_KEEPER_IMAGE="${CLICKHOUSE_SERVER_IMAGE/clickhouse-server/clickhouse-keeper}"
+          echo "CLICKHOUSE_SERVER_IMAGE=${CLICKHOUSE_SERVER_IMAGE}" >> "$GITHUB_ENV"
+          echo "CLICKHOUSE_KEEPER_IMAGE=${CLICKHOUSE_KEEPER_IMAGE}" >> "$GITHUB_ENV"
+          docker compose up -d --wait --quiet-pull
       - name: Install the pinned dbt versions
         run: |
           set -euo pipefail
-          source src/ingestion/scripts/bootstrap-db/pins.env
-          venv="${RUNNER_TEMP}/dbt-settings-${BENCHMARK_EXPERIMENT}"
+          source rig-source/src/ingestion/scripts/bootstrap-db/pins.env
+          venv="${RUNNER_TEMP}/dbt-settings-${BENCHMARK_EXPERIMENT}-${BENCHMARK_TOPOLOGY}"
           echo "BENCHMARK_VENV=${venv}" >> "$GITHUB_ENV"
           python -m venv "${venv}"
           "${venv}/bin/pip" install "dbt-core==${DBT_CORE_VERSION}" "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}"
@@ -81,9 +84,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p benchmark-results
-          docker inspect "${CLICKHOUSE_CONTAINER}" --format '{"cpu_nanocpus": {{.HostConfig.NanoCpus}}, "memory_bytes": {{.HostConfig.Memory}}}' > benchmark-results/resources.json
+          node=single
+          if [ "${BENCHMARK_TOPOLOGY}" = replicated ]; then node=ch1; fi
+          docker inspect "$(docker compose ps -q "${node}")" --format '{"cpu_nanocpus": {{.HostConfig.NanoCpus}}, "memory_bytes": {{.HostConfig.Memory}}}' > benchmark-results/resources.json
+          if [ "${BENCHMARK_TOPOLOGY}" = replicated ]; then
+            docker inspect "$(docker compose ps -q ch2)" --format '{"cpu_nanocpus": {{.HostConfig.NanoCpus}}, "memory_bytes": {{.HostConfig.Memory}}}' > benchmark-results/replica-resources.json
+            cmp benchmark-results/resources.json benchmark-results/replica-resources.json
+          fi
           "${BENCHMARK_VENV}/bin/python" scripts/ci/dbt_benchmark/run.py \
-            --experiment "${BENCHMARK_EXPERIMENT}" --rows 1000000 --repeats 3 --output benchmark-results
+            --experiment "${BENCHMARK_EXPERIMENT}" --topology "${BENCHMARK_TOPOLOGY}" \
+            --source-root "${GITHUB_WORKSPACE}/rig-source" --rows 1000000 --repeats 3 --output benchmark-results
       - name: Summary
         if: always()
         run: |
@@ -93,12 +103,16 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: dbt-settings-${{ matrix.experiment }}
+          name: dbt-settings-${{ matrix.topology }}-${{ matrix.experiment }}
           path: benchmark-results/
           if-no-files-found: warn
       - name: Remove the disposable ClickHouse
         if: always()
-        run: docker rm -fv "${CLICKHOUSE_CONTAINER}"
+        run: |
+          source rig-source/src/ingestion/scripts/bootstrap-db/pins.env
+          export CLICKHOUSE_SERVER_IMAGE
+          export CLICKHOUSE_KEEPER_IMAGE="${CLICKHOUSE_SERVER_IMAGE/clickhouse-server/clickhouse-keeper}"
+          docker compose down -v -t 5
 
   summary:
     name: Isolated comparison summary

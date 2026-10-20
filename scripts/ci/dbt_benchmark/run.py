@@ -14,10 +14,13 @@ from tempfile import TemporaryDirectory
 from time import perf_counter, sleep
 from uuid import uuid4
 
+from audit import check_topology
 from client import Client
 from experiments import BY_NAME, MODEL, SERVING, Experiment
 from fixtures import HERE, READ_PROBES, ROOT, Workload, prepare, targets
+from profiles import profile
 from report import write_report
+from topology import TOPOLOGIES
 
 
 def measure(client: Client, sql: str, settings: dict[str, str | int]) -> dict[str, object]:
@@ -37,13 +40,17 @@ def measure(client: Client, sql: str, settings: dict[str, str | int]) -> dict[st
     elapsed = perf_counter() - started
     logs = []
     for _ in range(20):
-        client.execute("SYSTEM FLUSH LOGS")
-        logs = client.rows(
-            "SELECT query_duration_ms, memory_usage, read_rows, read_bytes, written_rows, "
-            "mapFilter((k, v) -> startsWith(k, 'External') OR k IN "
-            "('UserTimeMicroseconds', 'SystemTimeMicroseconds'), ProfileEvents) AS events "
-            f"FROM system.query_log WHERE query_id = '{query_id}' AND type = 'QueryFinish'"
-        )
+        logs = []
+        for node in client.nodes():
+            node.execute("SYSTEM FLUSH LOGS")
+            logs.extend(
+                node.rows(
+                    "SELECT query_duration_ms, memory_usage, read_rows, read_bytes, written_rows, "
+                    "mapFilter((k, v) -> startsWith(k, 'External') OR k IN "
+                    "('UserTimeMicroseconds', 'SystemTimeMicroseconds'), ProfileEvents) AS events "
+                    f"FROM system.query_log WHERE query_id = '{query_id}' AND type = 'QueryFinish' AND is_initial_query"
+                )
+            )
         if logs:
             break
         sleep(0.1)
@@ -58,9 +65,8 @@ def read_probes(client: Client, table: str, settings: dict[str, str | int]) -> l
         query = f"SELECT count(), sum(contribution) FROM benchmark.{table} WHERE {predicate}"
         expected = f"SELECT count(), sum(contribution) FROM benchmark.expected WHERE {predicate}"
         measured = measure(client, query, settings)
-        if client.rows(query) != client.rows(expected):
-            raise AssertionError(f"{name} read differs from the expected result")
-        results.append({"name": name, "exact_rows_equal": True, **measured})
+        client.assert_equal(query, expected)
+        results.append({"name": name, "exact_rows_equal": True, "checked_nodes": len(client.nodes()), **measured})
     return results
 
 
@@ -100,7 +106,16 @@ def benchmark(client: Client, workload: Workload, experiment: Experiment, repeat
                 sys.stdout.flush()
                 continue
             if repeat:
-                results.append({**record, "parts": parts, "reads": reads, "exact_rows_equal": True, **measured})
+                results.append(
+                    {
+                        **record,
+                        "parts": parts,
+                        "reads": reads,
+                        "exact_rows_equal": True,
+                        "checked_nodes": len(client.nodes()),
+                        **measured,
+                    }
+                )
                 sys.stdout.write(f"{workload.name}/{variant}/{repeat}: {measured['wall_seconds']:.3f}s\n")
                 sys.stdout.flush()
     return results
@@ -147,6 +162,7 @@ def insertion(
                     {
                         **record,
                         "exact_rows_equal": True,
+                        "checked_nodes": len(client.nodes()),
                         "batches": samples,
                         "wall_seconds": sum(sample["wall_seconds"] for sample in samples),
                     }
@@ -167,13 +183,19 @@ def main() -> None:
     parser.add_argument("--rows", type=positive, required=True)
     parser.add_argument("--repeats", type=positive, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument("--topology", choices=TOPOLOGIES, required=True)
     args = parser.parse_args()
     experiment = BY_NAME[args.experiment]
-    client = Client.from_env()
     args.output.mkdir(parents=True, exist_ok=True)
     resources = json.loads((args.output / "resources.json").read_text())
+    phases = {}
     with TemporaryDirectory() as directory:
-        workloads = prepare(client, args.rows, Path(directory))
+        work = Path(directory)
+        (work / "profiles").mkdir()
+        session_settings = profile(args.source_root, work / "profiles")
+        client = Client.from_env(args.topology, session_settings)
+        workloads = prepare(client, args.rows, work, args.source_root, phases)
         results = []
         for name in experiment.workloads:
             if name == "insert_dedup":
@@ -182,6 +204,10 @@ def main() -> None:
                 results.extend(benchmark(client, workloads[name], experiment, args.repeats))
     metadata = {
         "experiment": asdict(experiment),
+        "topology": args.topology,
+        "session_settings": session_settings,
+        "topology_checks": check_topology(client, args.topology),
+        "phases": phases,
         "rows": args.rows,
         "repeats": args.repeats,
         "resources": resources,
@@ -191,6 +217,9 @@ def main() -> None:
         "seed_sha256": hashlib.sha256((HERE / "seed.sql").read_bytes()).hexdigest(),
         "serving_sha256": hashlib.sha256((HERE / "serving.sql").read_bytes()).hexdigest(),
         "source_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+        "application_sha": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=args.source_root, text=True
+        ).strip(),
         "results": results,
     }
     (args.output / "results.json").write_text(json.dumps(metadata, indent=2) + "\n")

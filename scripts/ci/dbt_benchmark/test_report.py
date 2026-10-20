@@ -20,11 +20,20 @@ def document() -> dict[str, object]:
                     "repeat": repeat,
                     "parameters": {"max_threads": threads, "max_memory_usage": 2147483648},
                     "exact_rows_equal": True,
+                    "checked_nodes": 1,
                 }
                 if workload == SERVING:
-                    sample["reads"] = [{"name": name, "exact_rows_equal": True} for name in READ_PROBES]
+                    sample["reads"] = [
+                        {"name": name, "exact_rows_equal": True, "checked_nodes": 1} for name in READ_PROBES
+                    ]
                 results.append(sample)
-    return {"experiment": {"name": experiment.name}, "repeats": 3, "results": results}
+    return {
+        "topology": "standalone",
+        "topology_checks": {"node_count": 1, "engines_match": True, "metadata_equal": True},
+        "experiment": {"name": experiment.name},
+        "repeats": 3,
+        "results": results,
+    }
 
 
 class ReportTests(unittest.TestCase):
@@ -60,6 +69,13 @@ class ReportTests(unittest.TestCase):
         invalid = document()
         serving = next(sample for sample in invalid["results"] if sample["workload"] == SERVING)
         serving["reads"].pop()
+        with self.assertRaises(ValueError):
+            validate(invalid)
+
+    def test_replication_cannot_be_claimed_with_only_one_node_checked(self) -> None:
+        invalid = document()
+        invalid["topology"] = "replicated"
+        invalid["topology_checks"]["node_count"] = 2
         with self.assertRaises(ValueError):
             validate(invalid)
 
