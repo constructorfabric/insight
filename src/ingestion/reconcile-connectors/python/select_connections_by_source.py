@@ -3,8 +3,8 @@
 
 Stdin:  JSON list of connection objects.
 CLI:    select_connections_by_source.py <source_id>
-Stdout: One JSON object per matching connection: {connectionId, tags}.
-Exit:   0 always.
+Stdout: One JSON object per matching connection: {connectionId, name, tags}.
+Exit:   0, or 1 when stdin is not a JSON list of connections.
 """
 import json
 import sys
@@ -21,6 +21,7 @@ def main() -> int:
                 json.dumps(
                     {
                         "connectionId": c.get("connectionId"),
+                        "name": c.get("name"),
                         "tags": c.get("tags", []),
                     }
                 )
