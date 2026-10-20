@@ -375,7 +375,7 @@ helm upgrade --install insight oci://ghcr.io/constructorfabric/charts/insight \
 
 - Add `--version <x.y.z>` to pin a chart release; omit it for the latest published one.
 - `--wait --timeout 15m` blocks until every resource is ready, giving a pass/fail signal instead of a detached rollout.
-- The install also runs the `insight-clickhouse-migrate` hook Job. It creates the staging/silver/app databases, seeds bronze placeholders, ALTERs bronze/silver tables and applies `src/ingestion/scripts/migrations/*.sql`. It builds no dbt models — a connector sync does that, gold included — so it stays short on a cluster with real data. It fires on **every** upgrade (gated by `clickhouse.runMigrations`, default `true`) and a failure fails the upgrade; a failure points at Bronze/Silver schema or data.
+- The install also runs the `insight-clickhouse-migrate` hook Job. It applies `src/ingestion/scripts/migrations/*.sql` and the guarded heals that ALTER an already-created bronze, staging or silver table; the `insight-clickhouse-databases` hook creates the databases themselves. It pre-creates nothing and builds no dbt models — a connector sync does that, gold included — so it stays short on a cluster with real data. It fires on **every** upgrade (gated by `clickhouse.runMigrations`, default `true`) and a failure fails the upgrade; a failure points at Bronze/Silver schema or data.
 - If `--wait` stalls with the authenticator and analytics in `ContainerCreating`, the cert-manager Certificate `insight-authenticator-authn-tls` has not issued — `--wait` does not wait on Certificates. Check `kubectl -n insight describe certificate insight-authenticator-authn-tls`.
 
 ## Step 5 — Verify the install

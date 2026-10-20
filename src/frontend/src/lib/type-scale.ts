@@ -63,4 +63,4 @@ export const TEXT_LABEL = "text-xs font-medium text-muted-foreground";
  * at that size; it is the same size and colour on purpose.
  */
 export const TEXT_EYEBROW =
-  "text-xs font-medium tracking-wider text-muted-foreground uppercase";
+  "text-xs font-semibold tracking-[0.05em] text-muted-foreground uppercase";

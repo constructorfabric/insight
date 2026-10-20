@@ -149,6 +149,9 @@ export function buildMetricResultsResponse(
             values: ids.map((entityId) => ({
               entity_id: entityId,
               value: valueFor(entityId, key),
+              ...(request.compare_to
+                ? { compare_to: valueFor(entityId, key, "previous-period") }
+                : {}),
             })),
           };
         case "peer":

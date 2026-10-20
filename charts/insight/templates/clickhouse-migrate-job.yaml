@@ -11,8 +11,8 @@ which `kubectl exec`s into a bundled CH StatefulSet. #1428 dropped the
 bundled L2 subcharts (CH is now always external), so that path can no
 longer reach ClickHouse and nothing else applied the migrations — the
 `clickhouse-databases` Hook only creates databases and access. This Job closes
-that gap: it runs the toolbox image (which bundles the migrations,
-`create-warehouse-placeholders.sh`, and `lib/ch-exec.sh`) and dials
+that gap: it runs the toolbox image (which bundles the migrations and
+`lib/ch-exec.sh`) and dials
 `clickhouse.host` directly over the HTTP interface (CLICKHOUSE_URL selects
 the HTTP backend in lib/ch-exec.sh).
 

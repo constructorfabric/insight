@@ -511,8 +511,7 @@ counts in a measure only when that branch accepts its rows.
     the analytics service resolves through `identity.person_map` while it serves.
   - **New family:** a new `<family>_metric_evidence.sql` and
     `<family>_metric_observations.sql` pair built with `metric_evidence_table()` /
-    `metric_observations_table()`, and a regenerated `connectors-ddl/insight.sql`
-    snapshot (`bootstrap-db/dump-ddl.sh`). Only for a genuinely new subject area.
+    `metric_observations_table()`. Only for a genuinely new subject area.
 - **Layer B — registry.** In
   `src/backend/services/analytics/src/domain/metric_definitions/registry.yaml`, list
   a new measure under its source (`key`, `evidence_granularity`) and add the metric
@@ -672,7 +671,7 @@ plus an undeployable connector.
 
 `src/ingestion/scripts/bootstrap-db/connectors-config.yaml` is a tracked,
 generated file that drives `bootstrap-db.sh` — the script that builds a full
-ClickHouse from scratch and regenerates the committed `connectors-ddl` snapshot.
+ClickHouse from scratch — and the datapath suite, which runs it to create bronze.
 A connector missing from it never gets its bronze database created, so its dbt
 models fail with `Code: 81 UNKNOWN_DATABASE`, `bootstrap-db.sh` trips `set -e`,
 and every model downstream of the failure is skipped.

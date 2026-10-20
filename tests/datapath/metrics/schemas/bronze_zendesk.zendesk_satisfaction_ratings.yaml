@@ -1,4 +1,4 @@
-# Mirrors the bronze_zendesk.zendesk_satisfaction_ratings DDL in scripts/connectors-ddl/zendesk.sql.
+# Mirrors the bronze_zendesk.zendesk_satisfaction_ratings shape the Airbyte destination creates from the stream.
 schemas:
   bronze_zendesk.zendesk_satisfaction_ratings:
     $schema: http://json-schema.org/draft-07/schema#

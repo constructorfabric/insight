@@ -169,7 +169,7 @@ Read connector package files and verify each item:
 
 **Check 6 — Registered in `connectors-config.yaml` (bootstrap-db precondition)**
 
-- `src/ingestion/scripts/bootstrap-db/connectors-config.yaml` MUST contain an entry whose `path` equals `<category>/<name>`. Without it `bootstrap-db.sh` never creates `bronze_<snake>`, the connector's dbt models fail `Code: 81 UNKNOWN_DATABASE`, `set -e` aborts the run before the gold-view migrations, and the regenerated `connectors-ddl` snapshot silently loses whatever was downstream.
+- `src/ingestion/scripts/bootstrap-db/connectors-config.yaml` MUST contain an entry whose `path` equals `<category>/<name>`. Without it `bootstrap-db.sh` never creates `bronze_<snake>`, the connector's dbt models fail `Code: 81 UNKNOWN_DATABASE`, `set -e` aborts the run, and every model downstream of the failure is skipped.
 - Fix: `cd src/ingestion/scripts/bootstrap-db && ./generate-connectors-config.sh '<category>/<name>'`, then merge the fragment by hand. NEVER regenerate the whole file — it replaces the `env:` credential refs with fake `value:` entries.
 
 **Check 7 — Shared silver class column types agree across sources**

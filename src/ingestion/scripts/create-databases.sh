@@ -2,11 +2,10 @@
 # Create every ClickHouse database this release owns, and provision the access
 # that reads them.
 #
-# THE creation site. Nine places used to issue `CREATE DATABASE` — the deploy
-# hook, three numbered migrations, the connectors-ddl snapshot headers, three
-# dbt on-run-start hooks, the chart's pre-install Job and the compose bootstrap.
-# They all route here now, and every one of them may assume its database
-# already stands.
+# THE creation site. Several places used to issue `CREATE DATABASE` — the deploy
+# hook, three numbered migrations, three dbt on-run-start hooks, the chart's
+# pre-install Job and the compose bootstrap. They all route here now, and every
+# one of them may assume its database already stands.
 #
 # Epic #2010 puts the cluster fork on this one statement: inside a `Replicated`
 # database every later DDL is logged in Keeper and replayed on every replica,

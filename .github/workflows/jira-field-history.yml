@@ -93,7 +93,7 @@ jobs:
           set -euo pipefail
           # pins.env is plain KEY=VALUE, so it doubles as a $GITHUB_ENV fragment:
           # the server image and both dbt versions stay pinned in one committed
-          # place, shared with bootstrap-db and connectors-ddl.
+          # place, shared with bootstrap-db and the field-parity lane.
           cat src/ingestion/scripts/bootstrap-db/pins.env >> "$GITHUB_ENV"
           . src/ingestion/scripts/bootstrap-db/pins.env
           export CLICKHOUSE_SERVER_IMAGE

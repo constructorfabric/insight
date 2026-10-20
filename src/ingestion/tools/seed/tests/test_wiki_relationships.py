@@ -63,51 +63,59 @@ def _column(table: Table, name: str) -> list[Any]:
     return [row[index] for row in rows]
 
 
-def test_each_persons_day_reports_the_pages_the_planner_dated_to_it(
+def test_each_persons_day_creates_the_pages_the_planner_dated_to_it(
     emitted: Rows, roster: list[profiles.Person]
 ) -> None:
-    pages = wiki._plan_pages(roster, _DAYS)
-    assert pages, "the pinned window planned no pages, so this proves nothing"
+    """`pages_created` is countIf(revision_ordinal = 1), so a planned page must
+    get its FIRST revision on the day the planner dated it — and no other
+    page's first revision may land on that day."""
+    planned = wiki._plan_pages(roster, _DAYS)
+    backlog = wiki._backlog_pages(roster, _DAYS)
+    assert planned, "the pinned window planned no pages, so this proves nothing"
 
-    wiki.seed_wiki_activity(None, roster, pages, _TENANT, _DAYS)
+    wiki.seed_wiki_page_versions(None, roster, backlog, planned, _TENANT, _DAYS)
 
-    planned = Counter((page.author.uuid, page.created_at.date()) for page in pages)
-    table = emitted["silver.class_wiki_activity"]
-    reported = dict(
-        zip(
-            zip(_column(table, "author_id"), _column(table, "day"), strict=True),
-            _column(table, "pages_created"),
-            strict=True,
-        )
+    table = emitted["bronze_outline.wiki_page_versions"]
+    first_revision: dict[str, tuple[_dt.date, str]] = {}
+    for page_id, author_id, created_at in zip(
+        _column(table, "page_id"),
+        _column(table, "author_id"),
+        _column(table, "created_at"),
+        strict=True,
+    ):
+        at = _dt.datetime.fromisoformat(created_at)
+        if page_id not in first_revision or at.date() < first_revision[page_id][0]:
+            first_revision[page_id] = (at.date(), author_id)
+
+    created = Counter((author_id, day) for day, author_id in first_revision.values())
+    expected = Counter((page.author.uuid, page.created_at.date()) for page in planned)
+    expected.update(Counter((page.author.uuid, page.created_at.date()) for page in backlog))
+
+    assert created == expected, (
+        "the revisions that would count as page creations do not match the pages "
+        "the planner dated to each person-day"
     )
 
-    for person_day, count in planned.items():
-        assert reported.get(person_day) == count, (
-            f"{person_day} planned {count} pages and the activity row reports "
-            f"{reported.get(person_day)}"
-        )
-    for person_day, count in reported.items():
-        assert count == planned[person_day], (
-            f"{person_day} reports {count} pages created and none were planned for it"
-        )
 
-
-def test_every_engagement_row_names_a_planned_page_within_the_window(
+def test_every_comment_names_a_planned_page_within_the_window(
     emitted: Rows, roster: list[profiles.Person]
 ) -> None:
     pages = wiki._plan_pages(roster, _DAYS)
     assert pages, "the pinned window planned no pages, so this proves nothing"
 
-    wiki.seed_wiki_engagement(None, pages, _TENANT, _DAYS)
+    wiki.seed_wiki_comments(None, roster, pages, _TENANT, _DAYS)
 
     window = base.days_window(_DAYS)
     published_on = {page.page_id: page.created_at.date() for page in pages}
-    table = emitted["silver.class_wiki_engagement"]
+    table = emitted["bronze_outline.wiki_comments"]
     assert table[1], "the pinned window drew no comments, so this proves nothing"
 
-    for page_id, day in zip(_column(table, "page_id"), _column(table, "day"), strict=True):
+    for page_id, created_at in zip(
+        _column(table, "page_id"), _column(table, "created_at"), strict=True
+    ):
+        day = _dt.datetime.fromisoformat(created_at).date()
         assert page_id in published_on, (
-            f"a comment row names page {page_id}, which class_wiki_pages never emitted — "
+            f"a comment names page {page_id}, which wiki_pages never emitted — "
             f"gold's INNER join drops it"
         )
         assert published_on[page_id] <= day <= window[-1], (

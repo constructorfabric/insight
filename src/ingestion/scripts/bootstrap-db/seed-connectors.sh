@@ -11,6 +11,9 @@ WANTED=("$@")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONNECTORS_DIR="$(cd "${SCRIPT_DIR}/../../connectors" && pwd)"
 
+# shellcheck source=lib/connector-catalog.sh
+source "${SCRIPT_DIR}/lib/connector-catalog.sh"
+
 # `${a[@]+"${a[@]}"}` rather than `"${a[@]}"`: bash 3.2 (the macOS /bin/bash a
 # developer may still be on) calls an empty array unbound under `set -u`.
 wanted() {
@@ -30,26 +33,17 @@ done
 FAILED=()
 while IFS= read -r name; do
   wanted "${name}" || continue
-  connector_path="$(yq -r ".connectors.\"${name}\".path" "${CONFIG_FILE}")"
+  path="$(connector_path "${CONFIG_FILE}" "${name}")"
   config_json="$(mktemp)"
-  if yq -o=json ".connectors.\"${name}\".config" "${CONFIG_FILE}" \
-      | jq 'with_entries(.value =
-          (if .value | has("env")
-           then (if (env[.value.env] // "") == ""
-                 then error(.value.env + " is not set or empty")
-                 else env[.value.env]
-                 end)
-           else .value.value
-           end))' \
-      > "${config_json}" \
-      && "${SCRIPT_DIR}/create-connector-tables.sh" "${CONNECTORS_DIR}/${connector_path}" "${config_json}"; then
+  if connector_config_json "${CONFIG_FILE}" "${name}" > "${config_json}" \
+      && "${SCRIPT_DIR}/create-connector-tables.sh" "${CONNECTORS_DIR}/${path}" "${config_json}"; then
     echo "[${name}] OK"
   else
     echo "[${name}] FAILED, continuing with the next connector" >&2
     FAILED+=("${name}")
   fi
   rm -f "${config_json}"
-done < <(yq -r '.connectors | keys | .[]' "${CONFIG_FILE}")
+done < <(connector_names "${CONFIG_FILE}")
 
 # Every connector is attempted before this point so one run reports every
 # failure. Exiting non-zero is what stops bootstrap-db.sh from running dbt over

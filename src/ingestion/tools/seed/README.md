@@ -147,10 +147,17 @@ it — it never falls back to a guess.
    authenticator resolves people by the email claim, so the seeded dev-lead
    persona is only reachable by a login that already authenticates. Create the
    user in the realm first, or point `--email` at one that exists.
-2. **The stand's ClickHouse schema must exist** before `--step silver`, i.e. the
-   chart's `clickhouse-migrate` hook has run at least once. The step re-applies
-   the placeholder DDL, runs the migrations and builds gold, but it does not
-   stand in for the release's own migration path.
+2. **The stand's ClickHouse databases must exist** before `--step silver`, i.e.
+   the chart's `clickhouse-databases` hook has run at least once. The step
+   re-applies the migrations and builds the models, but it does not stand in
+   for the release's own migration path.
+3. **A reachable Docker daemon**, for a step that writes bronze. The seeder
+   writes bronze and lets dbt build silver from it, and bronze tables have one
+   creator — `destination-clickhouse`, handed a catalogue built from the
+   connector's own `discover`. The cluster has no Docker, so the catalogue is
+   built on the machine running the script and only the destination runs in the
+   cluster, as a Job per connector. `--no-bronze` skips the whole step for a
+   stand whose connectors have already synced.
 
 ### It refuses rather than making a mess
 
@@ -326,7 +333,7 @@ src/ingestion/tools/seed/
 │   ├── config.py            environment contract: required, defaulted, and why
 │   ├── preflight.py         refuses a stand that cannot take the seed
 │   ├── identity.py          MariaDB: persons, org_chart, person_roles
-│   ├── silver.py            ClickHouse: placeholders → generators → gold build
+│   ├── silver.py            ClickHouse: bronze generators → migrations → dbt build
 │   ├── analytics.py         the catalogue rows no endpoint can create
 │   ├── profiles.py          demo roster + per-team activity weights
 │   ├── scale.py             grows the roster past it; opt-in, never imported
