@@ -365,13 +365,9 @@ streams:
               - boolean
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type:
               - string
@@ -382,6 +378,8 @@ streams:
               - "null"
         required:
           - id
+          - tenant_id
+          - source_id
         additionalProperties: true
     transformations:
       - type: AddFields
@@ -557,13 +555,9 @@ streams:
                       - boolean
                       - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           field_id:
@@ -606,6 +600,8 @@ streams:
                       - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
   - type: DeclarativeStream
     name: jira_projects
@@ -768,13 +764,9 @@ streams:
               - object
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           project_id:
@@ -815,6 +807,8 @@ streams:
               - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
   - type: DeclarativeStream
     name: jira_user
@@ -942,13 +936,9 @@ streams:
               - boolean
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           account_id:
@@ -981,6 +971,8 @@ streams:
               - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
   - type: DeclarativeStream
     name: jira_issue
@@ -1199,19 +1191,13 @@ streams:
               - string
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           jira_id:
-            type:
-              - string
-              - "null"
+            type: string
           id_readable:
             type:
               - string
@@ -1273,6 +1259,9 @@ streams:
         required:
           - unique_key
           - updated
+          - tenant_id
+          - source_id
+          - jira_id
         additionalProperties: true
   - type: DeclarativeStream
     name: jira_issue_history
@@ -1464,13 +1453,9 @@ streams:
               - string
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           id_readable:
@@ -1499,6 +1484,8 @@ streams:
               - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
   - type: DeclarativeStream
     name: jira_comments
@@ -1741,13 +1728,9 @@ streams:
               - boolean
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           comment_id:
@@ -1772,6 +1755,8 @@ streams:
               - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
   - type: DeclarativeStream
     name: jira_worklogs
@@ -2012,13 +1997,9 @@ streams:
               - string
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           worklog_id:
@@ -2051,6 +2032,8 @@ streams:
               - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
   - type: DeclarativeStream
     name: jira_sprints
@@ -2198,13 +2181,9 @@ streams:
               - number
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           sprint_id:
@@ -2246,6 +2225,8 @@ streams:
               - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
   - type: DeclarativeStream
     name: jira_statuses
@@ -2384,13 +2365,9 @@ streams:
                       - string
                       - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           status_id:
@@ -2415,6 +2392,8 @@ streams:
               - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
   - type: DeclarativeStream
     name: jira_priorities
@@ -2498,13 +2477,9 @@ streams:
               - string
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           priority_id:
@@ -2517,6 +2492,8 @@ streams:
               - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
   - type: DeclarativeStream
     name: jira_issuetypes
@@ -2620,13 +2597,9 @@ streams:
               - number
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           issuetype_id:
@@ -2661,6 +2634,8 @@ streams:
                       - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
   - type: DeclarativeStream
     name: jira_resolutions
@@ -2736,13 +2711,9 @@ streams:
               - string
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           resolution_id:
@@ -2755,6 +2726,8 @@ streams:
               - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
 
   # ─── Lightweight parent for issue substreams ──────────────────────────
@@ -2918,13 +2891,9 @@ streams:
               - string
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           id_readable:
@@ -2932,9 +2901,7 @@ streams:
               - string
               - "null"
           jira_id:
-            type:
-              - string
-              - "null"
+            type: string
           updated:
             type: string
           collected_at:
@@ -2944,6 +2911,9 @@ streams:
         required:
           - unique_key
           - updated
+          - tenant_id
+          - source_id
+          - jira_id
         additionalProperties: true
 
   # ─── Deletion & visibility censuses (specs/DELETION-AND-VISIBILITY.md) ──
@@ -3083,13 +3053,9 @@ streams:
               - object
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           # CDK interpolation literal-evals the rendered Jinja value, so the
@@ -3116,6 +3082,8 @@ streams:
         required:
           - unique_key
           - project_status
+          - tenant_id
+          - source_id
         additionalProperties: true
 
   # Id-only sweep of ALL issues in every visible live project. Jira Cloud
@@ -3212,22 +3180,16 @@ streams:
               - string
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           # Declared string like every other stream carrying jira_id (the
           # 2.4.0 consistency rule, held by heal_jira_issue_jira_id_type): bronze
           # jira_issue.jira_id is String and dbt joins the two directly.
           jira_id:
-            type:
-              - string
-              - "null"
+            type: string
           project_key:
             type:
               - string
@@ -3238,6 +3200,9 @@ streams:
               - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
+          - jira_id
         additionalProperties: true
 
   # ─── Worklog deletion tombstones (specs/DELETION-AND-VISIBILITY.md) ─────
@@ -3328,13 +3293,9 @@ streams:
               - array
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           worklog_id:
@@ -3351,6 +3312,8 @@ streams:
               - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
 
   # ─── Board configuration (specs/DATA-COMPLETENESS.md) ──────────────────
@@ -3478,13 +3441,9 @@ streams:
               - object
               - "null"
           tenant_id:
-            type:
-              - string
-              - "null"
+            type: string
           source_id:
-            type:
-              - string
-              - "null"
+            type: string
           unique_key:
             type: string
           board_id:
@@ -3517,6 +3476,8 @@ streams:
               - "null"
         required:
           - unique_key
+          - tenant_id
+          - source_id
         additionalProperties: true
 
 spec:
