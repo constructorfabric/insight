@@ -1,6 +1,6 @@
-"""The task producer tenant heal places tenant_id after unique_key with the type
-each producer's model emits, leaves what ClickHouse says is absent alone, and
-stops at a probe it cannot read.
+"""The task tenant heals place tenant_id after unique_key — on every task class,
+and on every producer with the type its model emits — leave what ClickHouse says
+is absent alone, and stop at a probe they cannot read.
 
 The heal runs against a stub of `_ch_http_query` that answers from a scripted
 catalogue and logs every statement, so no ClickHouse is needed.
@@ -40,6 +40,17 @@ PRODUCER_TYPES = {
     "github__task_field_history": NULLABLE,
     "github__task_links": NULLABLE,
 }
+CLASSES = [
+    "class_task_comments",
+    "class_task_field_history",
+    "class_task_field_metadata",
+    "class_task_issuetypes",
+    "class_task_links",
+    "class_task_projects",
+    "class_task_sprints",
+    "class_task_statuses",
+    "class_task_worklogs",
+]
 PRODUCER_VIEWS = [
     "jira__task_issuetypes",
     "jira__task_projects",
@@ -53,7 +64,7 @@ PRODUCER_VIEWS = [
 
 # Each catalogue entry is `<name> <state>`; a name not listed does not exist.
 # The stub answers a probe the way ClickHouse would for that state, so a probe
-# that forgets to exclude placeholders or views counts them.
+# that forgets to exclude views counts them.
 STUB = r"""
 set -euo pipefail
 source "$SCRIPTS/lib/ch-exec.sh"
@@ -68,7 +79,6 @@ _state() {
 _table_probe() {
   case "$2" in
     table) echo 1 ;;
-    placeholder) [[ "$1" == *"comment != 'INSIGHT_PLACEHOLDER_v1'"* ]] && echo 0 || echo 1 ;;
     stale_view | fresh_view) [[ "$1" == *"engine != 'View'"* ]] && echo 0 || echo 1 ;;
     fail) return 1 ;;
     unreadable) echo "not a number" ;;
@@ -95,7 +105,7 @@ _ch_http_query() {
   state="$(_state "$name")"
   if [[ "$sql" == *"engine = 'View'"* ]]; then _view_probe "$sql" "$state"; else _table_probe "$sql" "$state"; fi
 }
-heal_task_producer_tenants
+"$ENTRY"
 """
 
 
@@ -107,13 +117,13 @@ class Run:
     def altered(self) -> dict[str, list[str]]:
         changes: dict[str, list[str]] = {}
         for statement in self.statements:
-            relation = re.search(r"staging\.\w+", statement)
+            relation = re.search(r"(?:staging|silver)\.\w+", statement)
             if relation and statement.startswith(("ALTER", "DROP")):
                 changes.setdefault(relation[0], []).append(statement)
         return changes
 
 
-def _heal(tmp_path: Path, catalogue: dict[str, str]) -> Run:
+def _heal(tmp_path: Path, catalogue: dict[str, str], entry: str = "heal_task_producer_tenants") -> Run:
     log = tmp_path / "statements.log"
     log.touch()
     result = subprocess.run(
@@ -122,6 +132,7 @@ def _heal(tmp_path: Path, catalogue: dict[str, str]) -> Run:
             "PATH": "/usr/bin:/bin:/opt/homebrew/bin",
             "SCRIPTS": str(SCRIPTS),
             "LOG": str(log),
+            "ENTRY": entry,
             "CATALOGUE": "\n".join(f"{name} {state}" for name, state in catalogue.items()),
             "CLICKHOUSE_URL": "http://clickhouse.invalid:8123",
             "CLICKHOUSE_USER": "test",
@@ -149,7 +160,7 @@ def test_every_producer_table_gains_the_tenant_after_unique_key_with_its_model_t
         ], f"should add and place tenant_id as {kind}: {table}"
 
 
-@pytest.mark.parametrize("state", ["absent", "placeholder", "fresh_view"])
+@pytest.mark.parametrize("state", ["absent", "fresh_view"])
 def test_a_table_that_is_not_a_real_producer_table_is_left_alone(tmp_path: Path, state: str) -> None:
     catalogue = dict.fromkeys(PRODUCER_TYPES, "table")
     catalogue["jira__task_comments"] = state
@@ -190,3 +201,43 @@ def test_a_probe_that_cannot_be_read_stops_the_heal_before_anything_after_it(
     assert run.returncode != 0, f"should fail on a {state} probe of {failing}"
     assert f"'{failing}'" in run.statements[-1], f"nothing is sent past the {state} probe of {failing}"
     assert f"staging.{failing}" not in run.altered()
+
+
+def test_every_task_class_gains_a_nullable_tenant_after_unique_key(tmp_path: Path) -> None:
+    run = _heal(tmp_path, dict.fromkeys(CLASSES, "table"), entry="heal_task_class_tenants")
+
+    assert run.returncode == 0
+    altered = run.altered()
+    assert set(altered) == {f"silver.{name}" for name in CLASSES}
+    for name in CLASSES:
+        assert altered[f"silver.{name}"] == [
+            f"ALTER TABLE silver.{name} ADD COLUMN IF NOT EXISTS tenant_id Nullable(String) AFTER unique_key",
+            f"ALTER TABLE silver.{name} MODIFY COLUMN tenant_id Nullable(String) AFTER unique_key",
+        ], f"should add and place tenant_id: {name}"
+
+
+def test_a_class_no_sync_has_built_is_left_alone(tmp_path: Path) -> None:
+    catalogue = dict.fromkeys(CLASSES, "table")
+    catalogue["class_task_links"] = "absent"
+
+    run = _heal(tmp_path, catalogue, entry="heal_task_class_tenants")
+
+    assert run.returncode == 0
+    altered = run.altered()
+    assert "silver.class_task_links" not in altered, f"should skip an absent class: {altered}"
+    assert len(altered) == len(CLASSES) - 1, "every other class is still healed"
+
+
+@pytest.mark.parametrize("state", ["fail", "unreadable"])
+@pytest.mark.parametrize("failing", ["class_task_comments", "class_task_statuses"])
+def test_a_class_probe_that_cannot_be_read_stops_the_heal_before_anything_after_it(
+    tmp_path: Path, failing: str, state: str
+) -> None:
+    catalogue = dict.fromkeys(CLASSES, "table")
+    catalogue[failing] = state
+
+    run = _heal(tmp_path, catalogue, entry="heal_task_class_tenants")
+
+    assert run.returncode != 0, f"should fail on a {state} probe of {failing}"
+    assert f"'{failing}'" in run.statements[-1], f"nothing is sent past the {state} probe of {failing}"
+    assert f"silver.{failing}" not in run.altered()
