@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, Notify, OwnedRwLockReadGuard, RwLock, Semaphore, SemaphorePermit, watch};
 
+use super::author_index::{AuthorIndex, Refresh};
 use super::disk::{Budget, Candidate, Reclaim, dir_size, needs_consolidation};
 use super::key::CacheKey;
 use super::meta::{RepoMeta, now_epoch_s};
@@ -271,6 +272,7 @@ pub struct RepoStore {
     /// Woken whenever headroom may have appeared: a reservation released, an
     /// entry evicted or its blobs purged. Waiters in `admit_within` re-check.
     space_freed: Notify,
+    authors: AuthorIndex,
 }
 
 impl RepoStore {
@@ -343,6 +345,7 @@ impl RepoStore {
                 }
             }
         }
+        let authors = AuthorIndex::open(data_dir)?;
         Ok(Self {
             data_dir: data_dir.to_owned(),
             runner: GitRunner::new().with_ca_cert(ca_cert_path),
@@ -357,12 +360,19 @@ impl RepoStore {
             reserved_bytes: AtomicU64::new(0),
             admission: Mutex::new(()),
             space_freed: Notify::new(),
+            authors,
         })
     }
 
     #[must_use]
     pub fn runner(&self) -> &GitRunner {
         &self.runner
+    }
+
+    /// Every author this store has observed, per tenant and source.
+    #[must_use]
+    pub fn authors(&self) -> &AuthorIndex {
+        &self.authors
     }
 
     /// The disk figures the disk gauges observe. Shared so the collector's
@@ -667,12 +677,26 @@ impl RepoStore {
                 }
             }
         }
-        if git_dir.is_dir() {
+        let refreshed = if git_dir.is_dir() {
             self.fetch(key, &entry_dir, &git_dir, creds).await
         } else {
             self.clone(key, &entry_dir, &git_dir, creds, size_hint)
                 .await
+        };
+        if matches!(refreshed, Err(GitError::NotFound))
+            && let Err(e) = self
+                .authors
+                .forget(
+                    &key.tenant_id,
+                    &key.source_id,
+                    &key.dir_name(),
+                    &fingerprint,
+                )
+                .await
+        {
+            tracing::warn!(error = %e, dir = %key.dir_name(), "could not forget a vanished repository's authors");
         }
+        refreshed
     }
 
     async fn clone(
@@ -763,6 +787,7 @@ impl RepoStore {
             cred_fingerprints: vec![creds.fingerprint()],
             full_clone: false,
         };
+        self.index_authors(key, git_dir, creds, &meta).await;
         meta.store(entry_dir).map_err(GitError::Io)?;
         // The one place the dir hash is tied to its tenant and source: every
         // later log line names only the hash, and this line is what lets an
@@ -901,6 +926,7 @@ impl RepoStore {
                 &pack_names(git_dir),
             ),
         };
+        self.index_authors(key, git_dir, creds, &meta).await;
         publish_meta(&meta, entry_dir)?;
         discard_parked_meta(entry_dir);
         Ok(generation)
@@ -1026,6 +1052,7 @@ impl RepoStore {
             full_clone: true,
             skeleton_packs: pack_names(&git_dir).into_iter().collect(),
         };
+        self.index_authors(key, &git_dir, creds, &meta).await;
         publish_meta(&meta, &entry_dir)?;
         discard_parked_meta(&entry_dir);
         Ok(generation)
@@ -1666,6 +1693,47 @@ impl RepoStore {
 
         if let Err(e) = built {
             tracing::warn!(error = %e, generation, "page index build failed; pages fall back to the live walk");
+        }
+    }
+
+    /// Fold the refreshed snapshot's authors into the author index.
+    ///
+    /// Called with the entry's write lock held, before `meta` is published.
+    /// Best-effort: the index keeps the snapshot it last folded per entry, so
+    /// a failed fold is retried by the entry's next refresh, which finds the
+    /// recorded snapshot stale — an author is reported late, never lost.
+    async fn index_authors(
+        &self,
+        key: &CacheKey,
+        git_dir: &Path,
+        creds: &GitCredentials,
+        meta: &RepoMeta,
+    ) {
+        let refresh = Refresh {
+            tenant_id: key.tenant_id.clone(),
+            source_id: key.source_id.clone(),
+            dir_name: key.dir_name(),
+            clone_url: key.clone_url.as_str().to_owned(),
+            incarnation: meta.incarnation.clone(),
+            generation: meta.generation,
+            fingerprints: meta.cred_fingerprints.clone(),
+        };
+
+        let authors = if self.authors.needs_fold(&refresh).await {
+            match crate::engine::read::authors::read(&self.runner, git_dir, creds, None).await {
+                Ok(rows) => Some(rows),
+                Err(e) => {
+                    metrics::record_author_index_failure(metrics::AuthorIndexFailure::Fold);
+                    tracing::warn!(error = %e, dir = %refresh.dir_name, "author fold failed; the entry's next refresh retries it");
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Err(e) = self.authors.record(refresh, authors).await {
+            tracing::warn!(error = %e, dir = %key.dir_name(), "author index not persisted; its next update persists it");
         }
     }
 
@@ -2923,6 +2991,65 @@ pub(crate) mod tests {
         assert!(
             super::super::index::index_path(guard.git_dir(), guard.generation()).is_file(),
             "a fetch that moved nothing must still replace a missing index"
+        );
+    }
+
+    async fn authors_changed_since(
+        f: &Fixture,
+        since_us: Option<i64>,
+        fingerprint: &str,
+    ) -> Vec<String> {
+        f.store
+            .authors()
+            .changes("t", "s", fingerprint, since_us, None, 100)
+            .await
+            .items
+            .into_iter()
+            .map(|change| change.email)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_refresh_feeds_new_authors_to_the_change_feed_and_only_them() {
+        let f = fixture("author-feed");
+        let k = key(&f);
+        let fingerprint = creds().fingerprint();
+        drop(open_until_ready(&f, &k, refresh()).await);
+
+        let after_clone = f
+            .store
+            .authors()
+            .changes("t", "s", &fingerprint, None, None, 100)
+            .await
+            .items;
+        assert_eq!(
+            after_clone.len(),
+            1,
+            "the clone's one author: {after_clone:?}"
+        );
+        assert_eq!(after_clone[0].email, "test@example.com");
+        assert_eq!(after_clone[0].sample_url, f.origin_url);
+        let mark = after_clone[0].changed_us;
+
+        sh(
+            &f.root.join("origin"),
+            "echo two > b.txt && git add b.txt && \
+             GIT_AUTHOR_NAME=Newcomer GIT_AUTHOR_EMAIL=new@example.com \
+             GIT_AUTHOR_DATE='2025-01-01T10:00:00+0000' \
+             GIT_COMMITTER_DATE='2025-01-01T10:00:00+0000' git commit -qm back-dated",
+        );
+        drop(open_until_ready(&f, &k, always_fetch()).await);
+
+        assert_eq!(
+            authors_changed_since(&f, Some(mark), &fingerprint).await,
+            vec!["new@example.com"],
+            "a back-dated commit's author is new; the unchanged one is not reported again"
+        );
+        assert!(
+            authors_changed_since(&f, None, "another-credential")
+                .await
+                .is_empty(),
+            "a caller that never proved access to the repository sees nobody"
         );
     }
 

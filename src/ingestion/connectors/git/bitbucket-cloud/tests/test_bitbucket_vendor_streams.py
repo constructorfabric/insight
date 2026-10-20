@@ -242,12 +242,12 @@ def test_credential_family_drives_both_the_rest_scheme_and_the_clone_username(
     header and the username the proxy presents must move together with it."""
     config = BitbucketCloudConfigBuilder().with_field("bitbucket_username", username).build()
     http_mocker.get(
-        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
-        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
+        HttpRequest(f"{PROXY_URL}/v1/authors/changes", query_params=ANY_QUERY_PARAMS),
+        _author_changes_page(_author_change("ada@example.com", "a" * 40)),
     )
     http_mocker.get(
-        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
-        _authors_page(),
+        HttpRequest(f"{BB_URL}/repositories/acme/app/commit/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
+        _resolved_commit("a" * 40, "ada@example.com", "acc-42"),
     )
 
     output = read_stream(_CONNECTOR, "commit_authors", config)
@@ -258,8 +258,6 @@ def test_credential_family_drives_both_the_rest_scheme_and_the_clone_username(
     proxy = next(h for u, h in by_host.items() if u.startswith(PROXY_URL))
     assert rest["Authorization"].startswith(rest_scheme), rest["Authorization"][:16]
     assert proxy["X-Git-Username"] == clone_username
-    assert proxy["X-Repo-Size-Hint"] == "734003200", "the proxy reserves cache from the reported size"
-    assert proxy["X-Max-Staleness"] == "3600", "a pushed repository must not be served from a previous sync's mirror"
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -666,21 +664,27 @@ def test_a_429_is_retried_rather_than_failing_the_stream(http_mocker: HttpMocker
     assert len(output.records) == 1
 
 
-def _authors_page(*rows: dict[str, Any]) -> HttpResponse:
+def _author_changes_page(*rows: dict[str, Any], next_page_token: str | None = None) -> HttpResponse:
     return HttpResponse(
-        body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200
+        body=json.dumps({"items": list(rows), "next_page_token": next_page_token}), status_code=200
     )
 
 
-def _author_row(email: str, sha: str, committed: str = "2026-06-15T10:00:00+00:00") -> dict[str, Any]:
+def _author_change(
+    email: str,
+    sha: str,
+    changed_at: str = "2026-06-20T10:00:00.000001Z",
+    committed: str = "2026-06-15T10:00:00+00:00",
+    repo: str = "app",
+) -> dict[str, Any]:
     return {
         "author_email": email,
         "author_name": "Dev",
-        "sample_sha": sha,
+        "changed_at": changed_at,
+        "first_seen_at": changed_at,
         "last_committed_date": committed,
-        "commit_count": 4,
+        "sample": {"repo_url": f"https://bitbucket.org/acme/{repo}.git", "sha": sha},
     }
-
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -707,17 +711,14 @@ def _repo_with_clone() -> dict[str, Any]:
 
 @freezegun.freeze_time(_FROZEN)
 def test_commit_authors_pair_a_git_email_with_its_account(http_mocker: HttpMocker) -> None:
-    """The proxy names the distinct authors; Bitbucket names the account behind
-    each one. `author.raw` is the git ident the commit rows carry, so the claim
-    is keyed on that rather than on any profile address."""
+    """The proxy names the authors that changed; Bitbucket names the account
+    behind each one. `author.raw` is the git ident the commit rows carry, so the
+    claim is keyed on that rather than on any profile address — once per
+    author, whichever repository the sample commit came from."""
     config = BitbucketCloudConfigBuilder().build()
     http_mocker.get(
-        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
-        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
-    )
-    http_mocker.get(
-        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
-        _authors_page(_author_row("ada@example.com", "a" * 40)),
+        HttpRequest(f"{PROXY_URL}/v1/authors/changes", query_params=ANY_QUERY_PARAMS),
+        _author_changes_page(_author_change("ada@example.com", "a" * 40)),
     )
     http_mocker.get(
         HttpRequest(f"{BB_URL}/repositories/acme/app/commit/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
@@ -751,9 +752,11 @@ def test_commit_authors_pair_a_git_email_with_its_account(http_mocker: HttpMocke
     assert rec["author_account_id"] == "acc-42"
     assert rec["author_uuid"] == "{u-42}"
     assert rec["author_nickname"] == "ada"
-    assert rec["repo_full_name"] == "acme/app"
+    assert rec["repo_full_name"] == "acme/app", "the sample's repository, from its clone URL"
     assert rec["sample_sha"] == "a" * 40
-    assert rec["unique_key"].endswith(":acme/app:author:ada@example.com")
+    assert rec["changed_at"] == "2026-06-20T10:00:00.000001Z"
+    assert rec["unique_key"].endswith(":author:ada@example.com"), rec["unique_key"]
+    assert "acme/app" not in rec["unique_key"], "one row per author, not per repository"
     assert "author" not in rec and "message" not in rec
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "commit_authors", strict=True)
@@ -768,12 +771,8 @@ def test_commit_authors_drops_an_email_with_no_bitbucket_account(
     row is dropped rather than stored as an unresolved one."""
     config = BitbucketCloudConfigBuilder().build()
     http_mocker.get(
-        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
-        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
-    )
-    http_mocker.get(
-        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
-        _authors_page(_author_row("ci@build.local", "b" * 40)),
+        HttpRequest(f"{PROXY_URL}/v1/authors/changes", query_params=ANY_QUERY_PARAMS),
+        _author_changes_page(_author_change("ci@build.local", "b" * 40)),
     )
     http_mocker.get(
         HttpRequest(f"{BB_URL}/repositories/acme/app/commit/{'b' * 40}", query_params=ANY_QUERY_PARAMS),
@@ -797,103 +796,79 @@ def test_commit_authors_drops_an_email_with_no_bitbucket_account(
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_commit_authors_state_carries_the_authors_since_date(http_mocker: HttpMocker) -> None:
-    """The child carries a cursor so the author list's state persists. Without
-    it every sync re-lists every author since the start date and re-resolves
-    each one against Bitbucket; with it, the run emits the date the next run
-    lists from."""
+def test_commit_authors_state_is_one_change_cursor_whatever_the_repository_count(
+    http_mocker: HttpMocker,
+) -> None:
+    """The child carries a cursor so the change feed's cursor persists. That
+    cursor is the proxy's change stamp and nothing else: no per-repository
+    entries, so a sync that resolves authors from thousands of repositories
+    carries the same state as one that resolves a single author."""
     config = BitbucketCloudConfigBuilder().build()
-    committed = "2026-06-15T10:00:00+00:00"
+    rows = [
+        _author_change(f"dev{n}@example.com", f"{n:x}" * 40, changed_at=f"2026-06-20T10:00:00.00000{n}Z", repo=f"repo{n}")
+        for n in range(1, 4)
+    ]
     http_mocker.get(
-        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
-        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
+        HttpRequest(f"{PROXY_URL}/v1/authors/changes", query_params=ANY_QUERY_PARAMS),
+        _author_changes_page(*rows),
     )
-    http_mocker.get(
-        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
-        _authors_page(_author_row("ada@example.com", "a" * 40)),
-    )
-    http_mocker.get(
-        HttpRequest(f"{BB_URL}/repositories/acme/app/commit/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
-        _resolved_commit("a" * 40, "ada@example.com", "acc-42"),
-    )
+    for n in range(1, 4):
+        http_mocker.get(
+            HttpRequest(f"{BB_URL}/repositories/acme/repo{n}/commit/{f'{n:x}' * 40}", query_params=ANY_QUERY_PARAMS),
+            _resolved_commit(f"{n:x}" * 40, f"dev{n}@example.com", f"acc-{n}"),
+        )
 
-    output = read_stream(_CONNECTOR, "commit_authors", config)
+    output = read_stream(_CONNECTOR, "commit_authors", config, sync_mode=SyncMode.incremental)
 
     assert not output.errors
-    assert len(output.records) == 1
-    # The record has no date of its own; it carries the author's last commit
-    # date, which is what the cursor observes.
-    assert output.records[0].record.data["last_committed_date"] == committed
-    assert output.state_messages, "an incremental child must emit state"
+    assert len(output.records) == 3
     state = output.state_messages[-1].state.stream.stream_state.__dict__
-    resumed = state["parent_state"]["repository_authors"]["state"]["last_committed_date"]
-    assert _instant(resumed) == _instant(committed), f"parent state must carry the author's date: {state}"
+    parent = state["parent_state"]["author_changes"]
+    assert parent == {"changed_at": "2026-06-20T10:00:00.000003Z"}, f"one cursor, the newest change: {state}"
+    assert "repositories" not in json.dumps(state), f"no repository listing state: {state}"
     assert_records_conform(output.records, _CONNECTOR, "commit_authors", strict=True)
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_a_resumed_commit_authors_sync_lists_from_one_window_before_the_saved_date(
+def test_a_resumed_commit_authors_sync_asks_for_changes_after_the_saved_one(
     http_mocker: HttpMocker,
 ) -> None:
-    """The start date is a floor paid once. A run carrying state asks the proxy
-    for the authors who committed since one lookback window before the saved
-    date — a commit can be pushed days after it was made — so the Bitbucket
-    lookups it spends follow recent activity rather than the whole history.
-    The repository listing that fans the walk out is bounded the same way, by
-    the newest repository update the run saw, so a repository nobody pushed to
-    since is not walked for authors at all."""
+    """A run carrying state asks the proxy only for authors changed after the
+    last change it saw — the proxy stamps a change when it observes it, so no
+    lookback window is needed — and lists no repositories at all."""
     config = BitbucketCloudConfigBuilder().build()
-    # Far enough back that one window before the saved date is not clamped to it.
-    config["bitbucket_start_date"] = "2026-01-01"
-    one_window_before = "2026-06-08T10:00:00+00:00"
-    repo_window_before = "2026-06-19T10:00:00+00:00"
+    saved = "2026-06-20T10:00:00.000001Z"
     http_mocker.get(
-        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
-        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
-    )
-    http_mocker.get(
-        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
-        _authors_page(_author_row("ada@example.com", "a" * 40)),
+        HttpRequest(f"{PROXY_URL}/v1/authors/changes", query_params=ANY_QUERY_PARAMS),
+        _author_changes_page(_author_change("ada@example.com", "a" * 40, changed_at=saved)),
     )
     http_mocker.get(
         HttpRequest(f"{BB_URL}/repositories/acme/app/commit/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
         _resolved_commit("a" * 40, "ada@example.com", "acc-42"),
     )
-    first = read_stream(_CONNECTOR, "commit_authors", config)
+    first = read_stream(_CONNECTOR, "commit_authors", config, sync_mode=SyncMode.incremental)
     assert not first.errors
     state = [m.state for m in first.state_messages][-1:]
 
     resume_mocker = HttpMocker()
     with resume_mocker:
         resume_mocker.get(
-            HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
-            HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
-        )
-        # The proxy bound is inclusive, so the author on the boundary is listed again.
-        resume_mocker.get(
-            HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
-            _authors_page(_author_row("ada@example.com", "a" * 40)),
-        )
-        resume_mocker.get(
-            HttpRequest(f"{BB_URL}/repositories/acme/app/commit/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
-            _resolved_commit("a" * 40, "ada@example.com", "acc-42"),
+            HttpRequest(f"{PROXY_URL}/v1/authors/changes", query_params=ANY_QUERY_PARAMS),
+            _author_changes_page(),
         )
 
-        second = read_stream(_CONNECTOR, "commit_authors", config, state=state)
+        second = read_stream(_CONNECTOR, "commit_authors", config, state=state, sync_mode=SyncMode.incremental)
 
         assert not second.errors
-        since = [
-            parse_qs(urlparse(r.url).query)["since"][0]
+        asked = [
+            parse_qs(urlparse(r.url).query).get("changed_since", [""])[0]
             for r in resume_mocker._mocker.request_history
-            if r.url.startswith(f"{PROXY_URL}/v1/authors")
+            if r.url.startswith(f"{PROXY_URL}/v1/authors/changes")
         ]
-        assert since, "the resumed run must list authors"
-        assert all(_instant(value) == _instant(one_window_before) for value in since), since
-        bounds = _repository_listing_bounds(resume_mocker)
-        assert bounds, "the resumed run must list repositories"
-        assert all(_instant(b) == _instant(repo_window_before) for b in bounds), bounds
-        lookups = [r.url for r in resume_mocker._mocker.request_history if "/commit/" in r.url]
-        assert len(lookups) == 1, f"one author listed, one lookup: {lookups}"
+        assert asked and all(_instant(value) == _instant(saved) for value in asked), asked
+        assert not any(r.url.startswith(_REPOS_URL) for r in resume_mocker._mocker.request_history), (
+            "the author feed spans the source; it lists no repositories"
+        )
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -922,34 +897,93 @@ def test_a_future_dated_commit_never_becomes_the_commits_cursor(http_mocker: Htt
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_a_future_dated_author_never_becomes_the_authors_since(http_mocker: HttpMocker) -> None:
-    """The author list is what a later sync bounds with `since`; an author whose
-    last commit is dated ahead would push that bound past now and the list
-    would come back empty forever. The author is dropped before the cursor
-    sees them, and the others are still resolved."""
+def test_a_saved_per_repository_author_state_reads_the_whole_change_feed_once(
+    http_mocker: HttpMocker,
+) -> None:
+    """A connection upgraded from the per-repository author list carries state
+    keyed on `last_committed_date` with a `repository_authors` parent. Neither
+    names the change cursor, so the first sync reads the feed from its
+    beginning — every author is resolved once — and saves the new shape."""
     config = BitbucketCloudConfigBuilder().build()
-    http_mocker.get(
-        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
-        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
+    old_state = AirbyteStateMessage(
+        type=AirbyteStateType.STREAM,
+        stream=AirbyteStreamState(
+            stream_descriptor=StreamDescriptor(name="commit_authors"),
+            stream_state=AirbyteStateBlob(
+                {
+                    "use_global_cursor": True,
+                    "states": [],
+                    "lookback_window": 0,
+                    "state": {"last_committed_date": "2026-06-15T10:00:00+0000"},
+                    "parent_state": {
+                        "repository_authors": {
+                            "use_global_cursor": False,
+                            "lookback_window": 0,
+                            "states": [
+                                {
+                                    "partition": {
+                                        "parent_slice": {"workspace": "acme"},
+                                        "repo_clone_url": "https://bitbucket.org/acme/app.git",
+                                    },
+                                    "cursor": {"last_committed_date": "2026-06-15T10:00:00+0000"},
+                                }
+                            ],
+                            "state": {"last_committed_date": "2026-06-15T10:00:00+0000"},
+                        }
+                    },
+                }
+            ),
+        ),
     )
     http_mocker.get(
-        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
-        _authors_page(
-            _author_row("ada@example.com", "a" * 40),
-            _author_row("zed@example.com", "b" * 40, committed="2099-01-01T00:00:00+00:00"),
-        ),
+        HttpRequest(f"{PROXY_URL}/v1/authors/changes", query_params=ANY_QUERY_PARAMS),
+        _author_changes_page(_author_change("ada@example.com", "a" * 40)),
     )
     http_mocker.get(
         HttpRequest(f"{BB_URL}/repositories/acme/app/commit/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
         _resolved_commit("a" * 40, "ada@example.com", "acc-42"),
     )
 
-    output = read_stream(_CONNECTOR, "commit_authors", config)
+    output = read_stream(_CONNECTOR, "commit_authors", config, state=[old_state], sync_mode=SyncMode.incremental)
 
     assert not output.errors
     assert [r.record.data["author_email"] for r in output.records] == ["ada@example.com"]
+    asked = [
+        parse_qs(urlparse(r.url).query).get("changed_since", [""])[0]
+        for r in http_mocker._mocker.request_history
+        if r.url.startswith(f"{PROXY_URL}/v1/authors/changes")
+    ]
+    assert asked and all(value.startswith("1970-01-01") for value in asked), asked
+    saved = output.state_messages[-1].state.stream.stream_state.__dict__
+    # The CDK seeds a parent with no state of its own from the child's, so the
+    # old key rides along; nothing reads it, the cursor is `changed_at`.
+    assert saved["parent_state"]["author_changes"]["changed_at"] == "2026-06-20T10:00:00.000001Z", saved
+    assert "repository_authors" not in saved["parent_state"], f"the old parent must not linger: {saved}"
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_future_dated_commit_never_reaches_the_authors_cursor(http_mocker: HttpMocker) -> None:
+    """An author's commit dates are whatever the committer's clock said; the
+    cursor is the proxy's change stamp, so a commit dated ahead is resolved like
+    any other and leaves no trace in state."""
+    config = BitbucketCloudConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors/changes", query_params=ANY_QUERY_PARAMS),
+        _author_changes_page(
+            _author_change("zed@example.com", "b" * 40, committed="2099-01-01T00:00:00+00:00"),
+        ),
+    )
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/commit/{'b' * 40}", query_params=ANY_QUERY_PARAMS),
+        _resolved_commit("b" * 40, "zed@example.com", "acc-7"),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config, sync_mode=SyncMode.incremental)
+
+    assert not output.errors
+    assert [r.record.data["author_email"] for r in output.records] == ["zed@example.com"]
     saved = json.dumps(output.state_messages[-1].state.stream.stream_state.__dict__)
-    assert "2099" not in saved, f"the future date leaked into state: {saved}"
+    assert "2099" not in saved, f"a commit date leaked into state: {saved}"
 
 
 def _resolved_commit(sha: str, email: str, account_id: str) -> HttpResponse:
