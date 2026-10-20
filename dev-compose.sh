@@ -1246,10 +1246,9 @@ seed_identity_projection() {
 }
 
 # Every connector's bronze, created the way a first sync does: its own `discover`
-# into destination-clickhouse. The DDL snapshot used to pre-create all of it; it
-# no longer carries bronze, and the seed needs the lot — not just the relations
-# its generators write, because the dbt run that follows builds EVERY connector's
-# staging model and each reads its own `bronze_<connector>` database.
+# into destination-clickhouse. The seed needs the lot — not just the relations
+# its generators write — because the dbt run that follows builds EVERY
+# connector's staging model and each reads its own `bronze_<connector>` database.
 #
 # The destination runs in a container, so it joins the stand's network and is
 # handed ClickHouse's address on it: a published port is the host's, not the

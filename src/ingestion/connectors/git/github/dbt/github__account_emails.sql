@@ -99,8 +99,8 @@ noreply_commits AS (
 -- noreply form. Lowercased on both sides (logins are case-preserving, the
 -- address's local part is not reliably cased) and scoped per connection like
 -- everything else here. The roster arm crosses into the github-directory
--- connector's bronze — safe because bootstrap creates every connector's
--- bronze placeholder, and an empty table just contributes no pairs.
+-- connector's bronze — safe because that connector's own destination creates
+-- the table, and an empty one just contributes no pairs.
 -- HAVING keeps the rename/recycle protection: a login our data has seen with
 -- two ids maps to nobody.
 login_to_id AS (

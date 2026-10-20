@@ -1,10 +1,10 @@
 """Create one connector's bronze tables the way its first sync does.
 
-A transform suite reads bronze and has to put tables there first. It used to apply
-the committed `connectors-ddl/<connector>.sql` snapshot, which made the suite a second
-creator of a layer that has exactly one: `destination-clickhouse`, handed a catalogue
-built from the connector's own `discover`. The snapshot is gone, and with it the
-question of whether the shape a test ran against was the shape a deployment gets.
+A transform suite reads bronze and has to put tables there first. It used to apply a
+committed DDL snapshot, which made the suite a second creator of a layer that has
+exactly one: `destination-clickhouse`, handed a catalogue built from the connector's
+own `discover`. The snapshot is gone, and with it the question of whether the shape a
+test ran against was the shape a deployment gets.
 
 So the suite runs that creator, through the same `seed-connectors.sh` /
 `create-connector-tables.sh` pair `bootstrap-db.sh` uses. Docker is therefore a

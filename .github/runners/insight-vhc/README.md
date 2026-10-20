@@ -109,7 +109,7 @@ The jobs under this rule:
 - `functional-k3s.yml`: `cluster-smoke`
 - `jira-field-history.yml`: `transformations`
 - `github-transform.yml`: `transformations`
-- `connectors-ddl.yml`: `connectors-ddl`
+- `field-parity.yml`: `field-parity`
 - `warm-upgrade.yml`: `warm-upgrade`
 - `ci.yml`: `rust`, only the matrix legs that start a database: the entry sets
   `live_db` or `live_ch` in `scripts/ci/components.py` **and** runs tests

@@ -123,10 +123,10 @@ FROM merged
 -- contributions, so a partial row is impossible. Scoped to the (tenant,
 -- source) whose extract touched the date, so one instance's late sync does
 -- not rebuild every other instance's rows for that day.
--- SAFETY: the count() guard is load-bearing. The target exists but is empty
--- on every fresh install (the snapshot creates it as a placeholder before the
--- first sync); max() over it is 1970-01-01, and DateTime minus an interval
--- wraps past 2106, which would select no date and keep the table empty forever.
+-- SAFETY: the count() guard is load-bearing. A sync whose bronze carried no
+-- matching row leaves the target existing and empty; max() over it is
+-- 1970-01-01, and DateTime minus an interval wraps past 2106, which would
+-- select no date and keep the table empty forever.
 WHERE (
     (SELECT count() FROM {{ this }}) = 0
     OR (tenant_id, source_id, date) IN (
