@@ -17,7 +17,7 @@ concurrency:
 jobs:
   compare:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || 'insight-vhc-arc' }}
     timeout-minutes: 50
     env:
       CARGO_BUILD_JOBS: '2'
@@ -40,7 +40,10 @@ jobs:
         with:
           tool: cargo-llvm-cov@0.9.1,sccache@0.18.0
       - name: Compare isolated changes serially
-        run: python3 scripts/ci/research_rust/run.py --source application --output results --repeats 3
+        run: |
+          python3 -m venv .research-venv
+          .research-venv/bin/pip install defusedxml==0.7.1
+          .research-venv/bin/python scripts/ci/research_rust/run.py --source application --output results --repeats 3
       - name: Preserve measurements
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

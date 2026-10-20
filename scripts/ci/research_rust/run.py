@@ -9,9 +9,10 @@ import re
 import shutil
 import subprocess
 import time
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from statistics import median
+
+from defusedxml import ElementTree as ET
 
 VARIANTS = ("baseline", "clippy-flags", "compiler-cache")
 PACKAGE = "insight-clickhouse"
