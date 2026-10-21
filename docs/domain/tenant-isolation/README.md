@@ -135,6 +135,8 @@ The name is `insight_tenant_id`, as agreed in the glossary (ADR-0003). The reaso
 - **From staging up** every relation carries `insight_tenant_id`: staging projects the connector's field under that name, and the models still on `tenant_id` get renamed. While at it, the column becomes non-nullable and gets one type in every table.
 - **Bronze keeps `tenant_id`** for now: the connectors write it, and we don't rework every connector for this. The service user doesn't read Bronze, so the policy doesn't need it there.
 
+**This isn't done yet, and it's a big PR of its own.** Today 237 dbt files use the bare `tenant_id`: the staging models of nearly every connector, the class contracts and gold. Renaming the column there means a lot of migrations under the warehouse-contract rules: numbered migrations for `silver.class_*`, guarded heals for `staging`. Tracked in [#2087](https://github.com/constructorfabric/insight/issues/2087). The RLS policy can only land after it.
+
 ### 6. analytics, v3-core and raw SQL
 
 - **analytics** always filters by tenant, and the `enforceTenantScope` flag goes away. The filter in code stays as the first line of defense, RLS is the safety net underneath. On-by-default is already in [#3830](https://github.com/constructorfabric/insight/pull/3830); the flag itself still has to go.
@@ -179,7 +181,7 @@ The [#3661](https://github.com/constructorfabric/insight/issues/3661) PR series:
 
 Still to do:
 - boundary per (tenant, source) in ~50 staging models, and Zoom dedups with the tenant ([#752](https://github.com/constructorfabric/insight/issues/752));
-- rename `tenant_id` to `insight_tenant_id` from staging up, one type for the column, non-nullable;
+- rename `tenant_id` to `insight_tenant_id` from staging up, one type for the column, non-nullable — a large separate PR across the connectors' staging models with many migrations, needed before the RLS policy ([#2087](https://github.com/constructorfabric/insight/issues/2087));
 - system and service users, the RLS policy on `query_id`, the query cache locked for the service user, analytics, v3-core and identity-resolution sending the session tenant in every `query_id`;
 - drop the flag in analytics;
 - tenant in insight-v3-core;
