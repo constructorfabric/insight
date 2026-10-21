@@ -33,12 +33,11 @@ WITH held_now AS (
 -- The issue's current key and its creation, from its newest bronze row.
 issues AS (
     SELECT
-        COALESCE(source_id, '')                                       AS insight_source_id,
-        COALESCE(toString(jira_id), '')                               AS issue_id,
+        assumeNotNull(source_id)                                      AS insight_source_id,
+        assumeNotNull(jira_id)                                        AS issue_id,
         argMax(COALESCE(toString(id_readable), ''), _airbyte_extracted_at) AS current_key,
         argMax(parseDateTime64BestEffortOrNull(created, 3), _airbyte_extracted_at) AS created_at
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE jira_id IS NOT NULL
     GROUP BY insight_source_id, issue_id
 ),
 

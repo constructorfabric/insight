@@ -56,7 +56,6 @@ issue_winner AS (
     -- per issue, and `unique_key` exists for the merge alone.
     SELECT source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE jira_id IS NOT NULL
     GROUP BY source_id, jira_id
 ),
 
@@ -68,7 +67,7 @@ from_snapshot AS (
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
     ARRAY JOIN JSONExtractKeysAndValuesRaw(COALESCE(i.custom_fields_json, '{}')) AS kv
     INNER JOIN long_text_fields AS f
-        ON f.insight_source_id = COALESCE(i.source_id, '')
+        ON f.insight_source_id = assumeNotNull(i.source_id)
        AND f.field_id = kv.1
     WHERE kv.2 NOT IN ('', 'null', '""', '{}')
 ),

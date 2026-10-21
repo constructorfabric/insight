@@ -30,7 +30,6 @@ issue_fetch AS (
         jira_id,
         max(_airbyte_extracted_at)                      AS last_fetched_at
     FROM {{ source('bronze_jira', 'jira_issue_keys') }} FINAL
-    WHERE jira_id IS NOT NULL
     GROUP BY tenant_id, source_id, jira_id
 ),
 
