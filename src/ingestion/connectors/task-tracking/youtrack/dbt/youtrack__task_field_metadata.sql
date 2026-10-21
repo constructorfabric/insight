@@ -17,7 +17,7 @@ WITH catalogue AS (
                 ('sprints', 'Sprints', 'sprint', 1, 1)] AS prop
     GROUP BY tenant_id, insight_source_id, prop
 )
-SELECT CAST(concat(coalesce(tenant_id, ''), '-', insight_source_id, '-youtrack-field-', field_id) AS Nullable(String))
+SELECT CAST(concat(CAST(tenant_id AS String), '-', insight_source_id, '-youtrack-field-', field_id) AS Nullable(String))
         AS unique_key,
     tenant_id, insight_source_id, 'youtrack' AS data_source, CAST(NULL AS Nullable(String)) AS project_key,
     field_id, field_name, is_multi, field_type, has_id, observed_at,

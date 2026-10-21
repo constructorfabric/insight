@@ -33,3 +33,75 @@ models:
       - name: project_id
         tests:
           - not_null
+  - name: youtrack__task_field_history
+    description: "Per-source staging projection unioned into silver.class_task_field_history."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_field_metadata
+    description: "Per-source staging projection unioned into silver.class_task_field_metadata."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_issuetypes
+    description: "Per-source staging projection unioned into silver.class_task_issuetypes."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_links
+    description: "Per-source staging projection unioned into silver.class_task_links."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_comments
+    description: "Per-source staging projection unioned into silver.class_task_comments."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_projects
+    description: "Per-source staging projection unioned into silver.class_task_projects."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_sprints
+    description: "Per-source staging projection unioned into silver.class_task_sprints."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_statuses
+    description: "Per-source staging projection unioned into silver.class_task_statuses."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_worklogs
+    description: "Per-source staging projection unioned into silver.class_task_worklogs."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty

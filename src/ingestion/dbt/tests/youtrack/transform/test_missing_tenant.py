@@ -62,3 +62,31 @@ def test_a_bronze_row_without_a_tenant_fails_the_build(case: Warehouse, stream: 
 
     with pytest.raises(AssertionError, match=NULL_TO_STRING):
         case.build()
+
+
+PRODUCERS = (
+    "youtrack__task_field_history",
+    "youtrack__task_field_metadata",
+    "youtrack__task_issuetypes",
+    "youtrack__task_links",
+    "youtrack__task_comments",
+    "youtrack__task_projects",
+    "youtrack__task_sprints",
+    "youtrack__task_statuses",
+    "youtrack__task_worklogs",
+)
+
+
+def test_every_task_producer_carries_a_string_tenant(case: Warehouse) -> None:
+    case.issue([])
+    case.build(full_refresh=True)
+
+    types = {
+        row["table"]: row["type"]
+        for row in case.rows(
+            "SELECT table, type FROM system.columns WHERE database = 'staging' AND name = 'tenant_id'"
+            " AND table LIKE 'youtrack\\_\\_task\\_%' AND table != 'youtrack__task_users'"
+        )
+    }
+
+    assert types == dict.fromkeys(PRODUCERS, "String"), f"every producer should carry a String tenant: {types}"

@@ -32,6 +32,7 @@ models:
         description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
         tests:
           - not_null
+          - not_empty
       - name: insight_source_id
         description: "Source instance identifier"
         tests:
@@ -75,6 +76,7 @@ models:
         description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
         tests:
           - not_null
+          - not_empty
       - name: insight_source_id
         tests:
           - not_null
@@ -91,6 +93,7 @@ models:
         description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
         tests:
           - not_null
+          - not_empty
       - name: insight_source_id
         tests:
           - not_null
@@ -107,6 +110,7 @@ models:
         description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
         tests:
           - not_null
+          - not_empty
       - name: insight_source_id
         tests:
           - not_null
@@ -137,6 +141,7 @@ models:
         description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
         tests:
           - not_null
+          - not_empty
       - name: insight_source_id
         tests:
           - not_null
@@ -151,6 +156,7 @@ models:
         description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
         tests:
           - not_null
+          - not_empty
       - name: insight_source_id
         tests:
           - not_null
@@ -179,6 +185,7 @@ models:
         description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
         tests:
           - not_null
+          - not_empty
       - name: insight_source_id
         tests:
           - not_null
@@ -237,6 +244,7 @@ models:
         description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
         tests:
           - not_null
+          - not_empty
       - name: insight_source_id
         tests:
           - not_null
@@ -257,6 +265,7 @@ models:
         description: "Canonical tenant the row belongs to. Every key and join of a task relation includes it: two tenants may share a source label and the tracker's ids."
         tests:
           - not_null
+          - not_empty
       - name: insight_source_id
         tests:
           - not_null

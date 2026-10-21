@@ -18,7 +18,15 @@ from helpers import comment, event, field, issue, item, worklog
 POINTS = "customfield_10001"
 NOTES = "customfield_10010"
 TEXTAREA = "com.atlassian.jira.plugin.system.customfieldtypes:textarea"
-SELECTOR = f"{FIELD_HISTORY_SELECTOR} +jira__task_links {LIFECYCLE_SELECTOR}"
+SELECTOR = f"{FIELD_HISTORY_SELECTOR} +jira__task_links {LIFECYCLE_SELECTOR} +jira__task_field_metadata"
+CLASSES = ("class_task_field_history", "class_task_links", "class_task_field_metadata")
+PRODUCERS = (
+    "jira__field_history_derived",
+    "jira__task_links",
+    "jira__comment_lifecycle_events",
+    "jira__worklog_lifecycle_events",
+    "jira__task_field_metadata",
+)
 NULL_TO_STRING = "Cannot convert NULL value to non-Nullable type"
 
 # Spelled out: a table name cannot be bound, and a formatted statement is what the security gate rejects.
@@ -48,6 +56,7 @@ def _issue() -> dict[str, Any]:
 # model -> (the bronze table it reads, a row of that table)
 CASES: dict[str, tuple[str, Callable[[], dict[str, Any]]]] = {
     "jira__catalogue_first_seen": ("bronze_jira.jira_fields", lambda: field("customfield_10098", schema_type="number")),
+    "jira__task_field_metadata": ("bronze_jira.jira_fields", lambda: field("customfield_10097", schema_type="number")),
     "jira__issue_key_ids": ("bronze_jira.jira_issue", _issue),
     "jira__issue_field_snapshot": ("bronze_jira.jira_issue", _issue),
     "jira__issue_link_snapshot": ("bronze_jira.jira_issue", _issue),
@@ -114,3 +123,20 @@ def test_the_field_kind_view_refuses_a_catalogue_row_without_a_tenant(built: War
             built.rows("SELECT tenant_id FROM staging.jira__task_field_kind")
     finally:
         built.execute(DROP_TENANTLESS["bronze_jira.jira_fields"])
+
+
+def test_the_producers_and_their_classes_carry_a_string_tenant(built: Warehouse) -> None:
+    built.dbt("run", "--select", *CLASSES, "--full-refresh")
+
+    types = {
+        f"{row['database']}.{row['table']}": row["type"]
+        for row in built.rows(
+            "SELECT database, table, type FROM system.columns WHERE name = 'tenant_id'"
+            " AND ((database = 'staging' AND table IN {producers:Array(String)})"
+            " OR (database = 'silver' AND table IN {classes:Array(String)}))",
+            {"producers": list(PRODUCERS), "classes": list(CLASSES)},
+        )
+    }
+
+    expected = {f"staging.{name}": "String" for name in PRODUCERS} | {f"silver.{name}": "String" for name in CLASSES}
+    assert types == expected, f"every producer and class should carry a String tenant: {types}"
