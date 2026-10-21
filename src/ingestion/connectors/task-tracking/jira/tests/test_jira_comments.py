@@ -5,7 +5,7 @@ GET /rest/api/3/issue/{key}/comment per issue partition, `comments`
 extraction, ADF body serialized to JSON.
 
 Coverage matrix rows: parent_chain_fan_out, tenant_source_stamping
-(body tojson).
+(body tojson), unchanged_comment_reemitted.
 
 The clock is frozen at 2026-07-01 00:00 UTC and jira_start_date is 2026-06-01,
 so the parent gets exactly one 30-day slice.
@@ -46,13 +46,13 @@ def _mock_parent_chain(http_mocker: HttpMocker, issue_keys: list[str]) -> None:
     )
 
 
-def _comments_response(ids: list[str]) -> HttpResponse:
+def _comments_response(ids: list[str], *, updated: str = "2026-06-15T11:00:00.000+0000") -> HttpResponse:
     comments = [
         {
             "id": cid,
             "author": {"accountId": "acc-1"},
             "created": "2026-06-15T10:00:00.000+0000",
-            "updated": "2026-06-15T11:00:00.000+0000",
+            "updated": updated,
             "body": _ADF_BODY,
         }
         for cid in ids
@@ -103,3 +103,20 @@ def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
     assert rec["updated"] == "2026-06-15T11:00:00.000+0000"
     # Raw ADF body rides along as JSON; plaintext extraction is deferred to dbt.
     assert rec["body"] == _ADF_BODY
+
+
+@freezegun.freeze_time(_NOW)
+def test_a_read_reemits_comments_older_than_the_cursor(http_mocker: HttpMocker) -> None:
+    config = JiraConfigBuilder().build()
+    _mock_parent_chain(http_mocker, ["PROJ1-1"])
+    http_mocker.get(
+        HttpRequest(f"{JIRA_URL}/rest/api/3/issue/PROJ1-1/comment", query_params=ANY_QUERY_PARAMS),
+        _comments_response(["701"], updated="2025-01-10T09:00:00.000+0000"),
+    )
+
+    output = read_stream(_CONNECTOR, _STREAM, config)
+
+    # jira__comment_state reads a comment a later read left out as deleted, so an
+    # unchanged comment must come back on every read of its issue's list.
+    assert not output.errors
+    assert {r.record.data["comment_id"] for r in output.records} == {701}

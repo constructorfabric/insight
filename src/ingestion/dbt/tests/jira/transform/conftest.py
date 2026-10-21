@@ -421,6 +421,8 @@ def _truncate_bronze(warehouse: Warehouse) -> None:
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_history")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_statuses")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_comments")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_keys")
     warehouse.generation += 1
 
 
