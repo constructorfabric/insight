@@ -50,8 +50,8 @@ The parent [separate-service ADR](../ADR/0001-separate-service.md) still applies
 
 | Requirement | Design Response |
 |-------------|-----------------|
-| `cpt-insightspec-v3-sharing-fr-identity` | UUIDv7 `id` keys; routes, tools and body references take ids |
-| `cpt-insightspec-v3-sharing-fr-upgrade` | Four re-runnable migrations ([Upgrade Procedure](#upgrade-procedure)) |
+| `cpt-insightspec-v3-sharing-fr-identity` | `id` keys: UUIDv7 for new rows, the former name for older ones; routes, tools and body references take ids |
+| `cpt-insightspec-v3-sharing-fr-upgrade` | Re-runnable migrations that rewrite no reference ([Upgrade Procedure](#upgrade-procedure)) |
 | `cpt-insightspec-v3-sharing-fr-owner` | `owner_person_id` from the caller; no route or tool accepts an owner |
 | `cpt-insightspec-v3-sharing-fr-visibility` | `Access` per dashboard; the visibility predicate in every dashboard query |
 | `cpt-insightspec-v3-sharing-fr-owner-actions` | The operation matrix |
@@ -138,7 +138,7 @@ Identity is read with the caller's forwarded authorization, through routes an ad
 
 ### 3.1 Domain Model
 
-- `DashboardId`, `WidgetId`, `MetricId`, `DatasetId`, `FolderId`, `TagId`: UUIDv7 newtypes parsed at the boundary; a malformed id is absent.
+- `DefinitionId`: the id of a metric, widget or dashboard, parsed at the boundary by the former name rule (`^[A-Za-z0-9_-]{1,128}$`, which a UUID satisfies); a malformed id is absent. `FolderId` and tag ids are UUIDs, as before. A dataset's identity is its unique name.
 - `PersonId`: identity's person UUID, the gateway JWT `sub`.
 - `Owner`: `Unowned` (`NULL`, predates ownership) or `Person(PersonId)`.
 - `Access`: `Owner`, `Viewer` or `Ownerless`; none means absent.
@@ -235,7 +235,7 @@ Runs in the service's `migrate` step (the chart's pre-install and pre-upgrade ho
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-interface-rest`
 
-The contract is the service's drift-checked OpenAPI document. `{kind}` is `metrics`, `widgets` or `dashboards`; datasets keep their lifecycle routes, by id.
+The contract is the service's drift-checked OpenAPI document. `{kind}` is `metrics`, `widgets` or `dashboards`; datasets keep their lifecycle routes, by name.
 
 | Operation | Request | Response | Permission |
 |-----------|---------|----------|------------|
@@ -251,7 +251,7 @@ The contract is the service's drift-checked OpenAPI document. `{kind}` is `metri
 | `GET /v1/dashboards/{id}/shares` | — | `[{person_id, granted_by, created_at}]` | `Owner` |
 | `PUT /v1/dashboards/{id}/shares/{person_id}` | — | No content; idempotent | `Owner`; the person is a current administrator and not the owner |
 | `DELETE /v1/dashboards/{id}/shares/{person_id}` | — | No content; idempotent | `Owner` |
-| `GET /v1/dashboards/orphaned` | `limit`, `offset` | One page of `{id, name, owner_person_id, updated_at}` | Any |
+| `GET /v1/orphaned-dashboards` | `limit`, `offset` | One page of `{id, name, owner_person_id, updated_at}` | Any |
 | `POST /v1/dashboards/{id}/transfer` | `{to}`: a person id | No content | Any; the dashboard is orphaned and `to` is a current administrator |
 | `GET /v1/folders`, `POST /v1/folders`, `PATCH /v1/folders/{id}`, `DELETE /v1/folders/{id}` | as today | The caller's and the ownerless folders, each with `owner_person_id` and its visible dashboard count, plus the caller's visible unfiled count | Personal: its owner; ownerless: any |
 | `GET /v1/tags` | — | Names of tags on visible dashboards, each with a count of those dashboards | Any |
@@ -278,7 +278,7 @@ Tools take and return ids and act as the token's subject:
 
 - `list_definitions` and `search_definitions` return `{id, name}`, dashboards filtered.
 - `get_definition`, `delete_definition`, `arrange_dashboard` and `run_metric` take an id.
-- `put_metric`, `put_widget`, `put_dashboard` and `put_dataset` take an optional `id`: without it they create and return one; with it they replace, if the subject may change that definition.
+- `put_metric`, `put_widget` and `put_dashboard` take an optional `id`: without it they create and return one; with it they replace, if the subject may change that definition.
 - `move_dashboard` takes a dashboard id and a folder id or null; `set_dashboard_tags` an id and tag names.
 - `list_folders` and `create_folder` cover the subject's and the ownerless folders; `list_tags` returns visible tags.
 - Alert tools take a metric id.
@@ -298,10 +298,10 @@ A proposal replaces a definition by naming its id and creates one by carrying no
 | Page | Route | Change |
 |------|-------|--------|
 | Dashboards | `/portal/custom` | Owner per row; `Owned by me` and `Shared with me` filters; the caller's and ownerless folders |
-| Dashboard | `/portal/custom/$id` | Actions as the matrix allows; owner named |
+| Dashboard | `/portal/custom/$name`, the segment holding the id | Actions as the matrix allows; owner named |
 | Share | dialog on the dashboard | Shares with remove; a picker of current administrators except the owner |
 | Orphaned | `/portal/custom/orphaned` | Name, owner, last change; transfer with an administrator picker |
-| Editors | `/portal/custom/edit/$kind/$id`, `/portal/custom/new/$kind`, metric, widget and dataset pages by `$id` | Free-text names; body pickers store ids, show names |
+| Editors | `/portal/custom/edit/$kind/$name`, `/portal/custom/new/$kind`, metric and widget pages, the `$name` segment holding the id | Free-text names; body pickers store ids, show names |
 
 The picker searches `GET /v1/persons?q=` and offers only current administrators, read once (§3.5); the server rechecks the target. Owner names come from `GET /v1/persons?q=<person id>`, one read per distinct owner on the page, cached. `POST /v1/profiles/batch` is not used: it is limited to the caller's org-chart visibility.
 
@@ -315,7 +315,7 @@ The picker searches `GET /v1/persons?q=` and offers only current administrators,
 | [Chat storage](../../../../../src/backend/services/insight-v3-core/src/api/chat.rs) | `store_proposed` | Gains the caller and the access rule |
 | [In-use refusal](../../../../../src/backend/services/insight-v3-core/src/domain/surfaces.rs) | `CustomError::InUse` | Holder names filtered to visible ones |
 | [Definition store](../../../../../src/backend/services/insight-v3-core/src/store/definitions/sql/) | Migration ledger and scripts | New columns and tables |
-| [Alerts](../alerts/DESIGN.md) | `alert_rules`, `alert_notifications` | A `metric_id` replaces the metric name |
+| [Alerts](../alerts/DESIGN.md) | `alert_rules.metric`, `alert_notifications.metric` and `metric_name` | `metric` holds the metric id; a notification also records the metric's name |
 | [Usage telemetry](../../../../../src/frontend/src/telemetry.ts) | `screenPath` masks UUID segments | Dashboard names stop reaching usage |
 
 ### 3.5 External Dependencies
@@ -372,26 +372,26 @@ The service reads the owner, asks identity whether owner and target hold the rol
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-db-ownership`
 
-Ids are service-generated UUIDv7 stored as `CHAR(36)`, like `folders.id`. Timestamps are UTC `DATETIME(6)`.
+A new definition's id is a service-generated UUIDv7; an older one's is its former name, in the same `VARCHAR(128)` column. Person ids are `CHAR(36)`. Timestamps are UTC `DATETIME(6)`.
 
-#### Table: metrics, widgets, dashboards, datasets
+#### Table: metrics, widgets, dashboards
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | String | UUIDv7 primary key |
-| `name` | String | Label, indexed for search; unique on datasets only |
+| `id` | String | Primary key: a UUIDv7, or the former name of an older row |
+| `name` | String | Label, indexed for search, not unique |
 | `body` | String (JSON) | As today; references inside are ids |
 | `owner_person_id` | String | Dashboards only; null while ownerless; indexed |
 | `folder_id` | String | Dashboards only; an ownerless dashboard's ownerless folder; always null on an owned one |
 
-Datasets keep their state, physical table and lease columns.
+Datasets are unchanged: their unique `name` stays the key.
 
 #### Table: dashboard shares
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `dashboard_id` | String | Primary key part; cascades on dashboard delete |
-| `person_id` | String | Primary key part; indexed with `dashboard_id` for the list predicate |
+| `dashboard` | String | Primary key part; cascades on dashboard delete |
+| `person` | String | Primary key part; indexed with `dashboard` for the list predicate |
 | `granted_by` | String | The owner who shared |
 | `created_at` | DateTime | When shared |
 
@@ -399,15 +399,15 @@ Datasets keep their state, physical table and lease columns.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `person_id` | String | Primary key part; the folder's owner |
-| `dashboard_id` | String | Primary key part; cascades on dashboard delete |
-| `folder_id` | String | A folder owned by `person_id`; cascades on folder delete |
+| `person` | String | Primary key part; the folder's owner |
+| `dashboard` | String | Primary key part; cascades on dashboard delete |
+| `folder_id` | String | A folder owned by `person`; cascades on folder delete |
 
 #### Table: folders and tags
 
 - `folders` gains `owner_person_id` (null while ownerless) and drops its unique name key.
 - `tags` gains `owner_person_id` and a stored generated `owner_scope` (`COALESCE(owner_person_id, '')`); its unique key becomes `(owner_scope, name)` under the existing case-insensitive collation.
-- `dashboard_tags` and `dashboard_pins` reference `dashboard_id`.
+- `dashboard_tags.dashboard` and `dashboard_pins.dashboard` keep their names and hold dashboard ids.
 - The `tags_lock` and `pins_lock` serialization is unchanged.
 
 ### 3.8 Deployment Topology
@@ -418,23 +418,13 @@ No new process, service or configuration.
 
 ### Upgrade Procedure
 
-MariaDB commits each DDL statement on its own, so the upgrade cannot be one transaction. Four ledger migrations run in the pre-upgrade hook while the previous build still serves and writes by name. Each inspects the schema it finds and does only what is left, so a run stopped at any statement and restarted ends in the same state.
+MariaDB commits each DDL statement on its own, so the upgrade cannot be one transaction. Ledger migrations run in the pre-upgrade hook while the previous build still serves. Each does only what is left, so a run stopped at any statement and restarted ends in the same state.
 
-1. **Ids.** Add a nullable `id` to metrics, widgets, dashboards and datasets, fill it in batches with service-generated UUIDv7s, and add a unique key on it.
-2. **References.** Build a name-to-id map per kind, then:
-   - Rewrite each body: a dashboard's `items[].widget` and older `widgets` shorthand, a widget's `metric` and `detail`, a metric's `dataset`. A value already an id in the map, or matching no name, is left as is; the latter reads as missing.
-   - Add a nullable `metric_id` to `alert_rules` and `alert_notifications`, filled from the map; a name that matches nothing is copied as written and reads as missing.
-   - Add `dashboard_id` to `dashboard_pins` and `dashboard_tags`, filled by joining on name.
-3. **Keys.**
-   - Refuse to start unless both session and global `sql_mode` include `STRICT_TRANS_TABLES`.
-   - Write-lock the definition, pin, tag-link, `alert_rules` and `alert_notifications` tables. Under the lock, give an id to any row the previous build inserted since step 1, rewrite any body, alert, pin or tag link it wrote since step 2, and compare every table's counts before and after. Stop without changing keys if any row lacks an id or holds a reference that resolved by name but not by id.
-   - Then, in this order:
-     1. Make `id` `NOT NULL` without a default, and the primary key.
-     2. On `dashboard_pins` and `dashboard_tags`: make `dashboard_id` `NOT NULL`; move each primary key from `dashboard` to `dashboard_id` in one `ALTER`; drop the foreign keys on `dashboards (name)`; add them on `dashboard_id`; only then drop the `dashboard` columns.
-     3. Replace the unique name keys on metrics, widgets and dashboards with plain indexes.
-     4. Make `metric_id` `NOT NULL` without a default on both alert tables; drop `alert_rules.metric`; rename `alert_notifications.metric` to `metric_name`, so a sent message still shows the name it had.
-   - From here strict mode refuses the previous build's definition and alert inserts, which supply no `id` or `metric_id`, visibly until that build is replaced. A check that build's alert worker cannot record runs again on the new build.
-4. **Ownership.** Add `owner_person_id` to dashboards, folders and tags, and `owner_scope` and its key to tags; create `dashboard_shares` and `dashboard_placements`. Every existing row stays ownerless.
+1. **Ids.** Refuse to start unless the global `sql_mode` includes `STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`. On metrics, widgets and dashboards, rename the `name` column to `id` (InnoDB keeps the primary key and the foreign keys that point at it), add a `name` label column filled from `id`, and index it. An old name already satisfies the id rule, so every reference to one — in a body, `dashboard_pins.dashboard`, `dashboard_tags.dashboard`, `alert_rules.metric` and `alert_notifications.metric` — is already a valid id, and nothing is rewritten. From here an insert by the previous build names no `id`, and strict mode refuses it until that build is replaced.
+2. **Ownership.** Add `owner_person_id` to dashboards, folders and tags, and `owner_scope` with its unique key `(owner_scope, name)` to tags; drop the unique name keys on folders and tags; create `dashboard_shares` and `dashboard_placements`. Every existing row stays ownerless.
+3. **Metric names on notifications.** Add a nullable `alert_notifications.metric_name`, recorded from the metric's label when a check owes a notification; a row without one shows its metric id, which for an older metric is its former name.
+
+While the rollout replaces the previous build, its pods still list every dashboard to every administrator. They cannot create owned dashboards, so the exposure lasts only as long as the rollout and covers only dashboards created on the new build meanwhile.
 
 #### Assigning an Owner by Hand
 
@@ -453,7 +443,7 @@ The later retirement step counts dashboards, folders and tags with a null owner,
 ### Verification and Observability
 
 - Table-driven tests of `access` and the matrix over every owner, share and operation combination.
-- Live MariaDB tests of the upgrade from a seeded previous-release schema (both dashboard body forms, a `detail` metric, a dataset-backed metric, a dangling widget name, pins, tags, an ownerless folder, an alert and its notifications), resumed after every step, and with previous-build writes caught up by step 3 when made between steps 1 and 3 and refused after it; of the retirement guard and owner assignment; and of the list predicate over owned, shared, ownerless and invisible dashboards across paging, totals, folders, tags and search, `EXPLAIN` using the owner and share indexes.
+- Live MariaDB tests of the upgrade from a seeded previous-release schema, where each former name becomes the id and the label and a second run changes nothing; of the retirement guard and owner assignment; and of the list predicate over owned, shared, ownerless and invisible dashboards across paging, totals, folders, tags and search, `EXPLAIN` using the owner and share indexes.
 - A surface walk as an administrator who is neither owner nor viewer: every route, tool and chat answer that can mention a dashboard finds nothing of a private one, counts, caps and the in-use refusal included, with errors identical to a missing id's.
 - Chat: a proposal creating a metric, widgets and a dashboard linked by local keys lands with ids and the caller as owner; replacing a dashboard the caller may not change is refused.
 - Handlers: share, repeated share, withdraw, transfer races, identity unreachable as `internal`.

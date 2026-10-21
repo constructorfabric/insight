@@ -38,7 +38,7 @@ Metrics, widgets, dashboards and datasets are keyed by an installation-wide uniq
 
 * Keep names unique across the installation.
 * Make names unique per owner, keyed by owner and name.
-* Key every definition, folder and tag by a generated UUIDv7.
+* Key every metric, widget, dashboard, folder and tag by a generated UUIDv7.
 
 ## Decision Outcome
 
@@ -47,19 +47,21 @@ Chosen option: "Key by a generated UUIDv7", because only then does a private das
 Two names stay unique:
 
 * A tag's, per owner: tags are applied by name and created on first use, so a name must resolve to one tag.
-* A dataset's, installation-wide: outside producers send records to a dataset by name, and its physical table is named after it. Datasets have no owner, so their names disclose nothing private.
+* A dataset's, installation-wide: outside producers send records to a dataset by name, and its physical table is named after it, so the name stays its identity. Datasets have no owner, so their names disclose nothing private.
+
+A definition that predates the change keeps its former name as its id. A name already satisfies the id rule, so every stored reference stays valid and the upgrade rewrites nothing; new definitions get UUIDv7 ids.
 
 ### Consequences
 
 * Good, because no collision reveals a private dashboard, and every reference points at a key that never changes.
-* Bad, because every route, tool, chat proposal and portal path changes at once, and links by name break.
-* Bad, because the upgrade spans statements MariaDB cannot put in one transaction, so it must resume after an interruption.
+* Bad, because every route, tool and chat proposal changes at once.
+* Bad, because ids are not one shape: older ones are former names, newer ones UUIDs.
 * Bad, because the assistant must read an id to replace a definition; creating a same-named one is no replacement.
 
 ### Confirmation
 
-* No definition, folder or tag table has a unique key on `name`, except `tags` on owner scope and name, and `datasets` on name.
-* Upgrade tests on a seeded previous-release schema assert that every reference resolving by name, in bodies, pins, tag links and alerts, becomes an id, and a dangling one is kept and reads as missing.
+* No metric, widget, dashboard, folder or tag table has a unique key on `name`, except `tags` on owner scope and name; `datasets` stay keyed by name.
+* Upgrade tests on a seeded previous-release schema assert that each former name becomes the id and the label, and that a second run changes nothing.
 * No route or MCP tool takes a name where it means a definition.
 
 ## Pros and Cons of the Options
