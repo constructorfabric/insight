@@ -75,8 +75,8 @@ services:
       # answers any source_type, so the value only has to be non-empty. The
       # external id is the default `sub` claim (the realm user's roster uuid).
       APP__gears__authenticator__config__idp__source_type: "keycloak"
-      # Short exchange-cache window so the logout-revocation phase is fast.
-      APP__gears__authenticator__config__authz_cache_max_age_seconds: "3"
+      # Sourced from conftest.py's AUTHZ_CACHE_MAX_AGE (exported into the env).
+      APP__gears__authenticator__config__authz_cache_max_age_seconds: "${AUTHZ_CACHE_MAX_AGE:-10}"
       # Resolve the baked dev `testclient` registry entry's public_key_paths
       # against the mounted keys dir (conftest generates testclient.pub.pem).
       APP__gears__authenticator__config__service_tokens__public_key_dir: "/keys"

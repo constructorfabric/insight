@@ -739,6 +739,39 @@ reconcile_definitions() {
 }
 
 # ---------------------------------------------------------------------------
+# reconcile_rename_former_tenant <connector_name> <definition_id> <source_id>
+#                                <tenant> <expected_source_name> <target_cfg_json>
+# Renames the instance's source from the tenant it was created under to
+# `tenant` in one update, keeping its id — and so its connection and the
+# connection's sync state. The connection's name and the former tenant's
+# schedule are converged on every pass from the objects themselves, so a pass
+# cut off after this update leaves nothing the next one cannot finish.
+# Fails when the rename would have to choose between sources.
+# ---------------------------------------------------------------------------
+reconcile_rename_former_tenant() {
+  local connector_name="$1" definition_id="$2" source_id_label="$3"
+  local tenant_id="$4" expected_source_name="$5" target_cfg_json="$6"
+  local workspace_id sources_json found former_src_id former_tenant former_name
+
+  workspace_id="$(ab_workspace_id)"
+  sources_json="$(ab_list_sources "${workspace_id}")" || return 1
+  found="$(printf '%s' "${sources_json}" | python3 "${_RECONCILE_PY_DIR}/find_former_tenant_source.py" \
+    "${definition_id}" "${connector_name}" "${source_id_label}" "${tenant_id}")" || return 1
+  [[ -n "${found}" ]] || return 0
+  IFS=$'\t' read -r former_src_id former_tenant former_name <<<"${found}"
+
+  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+    reconcile__log CHANGE "${connector_name}" "would rename source ${former_name} to ${expected_source_name}"
+    return 0
+  fi
+
+  ab_update_source "${former_src_id}" "${target_cfg_json}" "${expected_source_name}" >/dev/null || return 1
+  reconcile__log CHANGE "${connector_name}" \
+    "renamed source ${former_name} (tenant ${former_tenant}) to ${expected_source_name}, keeping its id and sync state"
+  _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+}
+
+# ---------------------------------------------------------------------------
 # reconcile_sources <connector_name> <target_cfg_json> <secret_cfg_hash> \
 #                   <definition_id> <expected_source_name>
 # diff-source-config algorithm. Returns TSV "action\tsource_id" on stdout.
@@ -847,9 +880,17 @@ reconcile_connections() {
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-find-tag
   workspace_id="$(ab_workspace_id)"
-  connections_json="$(ab_list_connections "${workspace_id}")"
-  filtered="$(printf '%s' "${connections_json}" \
-    | python3 "${_RECONCILE_PY_DIR}/select_connections_by_source.py" "${source_id}")"
+  # SAFETY: an unread listing must stop here — read as empty, it would bootstrap
+  # a second connection beside the one holding the sync state.
+  if ! connections_json="$(ab_list_connections "${workspace_id}")"; then
+    reconcile__log ERROR "${connector_name}" "ab_list_connections failed for source ${source_id}"
+    return 1
+  fi
+  if ! filtered="$(printf '%s' "${connections_json}" \
+        | python3 "${_RECONCILE_PY_DIR}/select_connections_by_source.py" "${source_id}")"; then
+    reconcile__log ERROR "${connector_name}" "unreadable connection listing for source ${source_id}"
+    return 1
+  fi
   if [[ -z "${filtered}" ]]; then
     # Bootstrap path: source exists but has no connection yet (clean cluster
     # / first run). Create one with discovered schema, append_dedup sync mode,
@@ -987,6 +1028,11 @@ print("\n".join(sorted(i for i in ids if i)))')"
     local connection_id existing_tags_json desired_action
     connection_id="$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["connectionId"])')"
     existing_tags_json="$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin).get("tags",[])))')"
+    if [[ -n "${source_name}" ]]; then
+      reconcile_converge_connection_name "${connector_name}" "${connection_id}" \
+        "$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("name") or "")')" \
+        "${source_name}-conn" || return 1
+    fi
 
     # @cpt-begin:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-if-drift
     desired_action="$(python3 "${_RECONCILE_PY_DIR}/tag_drift_check.py" \
@@ -1010,6 +1056,27 @@ print("\n".join(sorted(i for i in ids if i)))')"
     fi
     # @cpt-end:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-if-drift
   done <<<"${filtered}"
+}
+
+# ---------------------------------------------------------------------------
+# reconcile_converge_connection_name <connector_name> <connection_id>
+#                                    <current_name> <expected_name>
+# The schedule finds its connection by name, so a connection still named for
+# a former tenant is renamed in place — its id and sync state stay.
+# ---------------------------------------------------------------------------
+reconcile_converge_connection_name() {
+  local connector_name="$1" connection_id="$2" current_name="$3" expected_name="$4"
+  [[ "${current_name}" != "${expected_name}" ]] || return 0
+  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+    reconcile__log CHANGE "${connector_name}" "would rename connection ${current_name} to ${expected_name}" >&2
+    return 0
+  fi
+  if ! ab_rename_connection "${connection_id}" "${expected_name}" >/dev/null; then
+    reconcile__log ERROR "${connector_name}" "failed to rename connection ${connection_id} to ${expected_name}" >&2
+    return 1
+  fi
+  reconcile__log CHANGE "${connector_name}" "renamed connection ${current_name} to ${expected_name}" >&2
+  _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
 }
 
 # ---------------------------------------------------------------------------
@@ -1389,6 +1456,12 @@ _reconcile_one_connector() {
     return 1
   fi
 
+  if ! reconcile_rename_former_tenant "${name}" "${def_id}" "${source_id_label}" \
+        "${tenant_id}" "${expected_source_name}" "${source_cfg_json}" >&2; then
+    log_line ERROR "${name}: cannot carry the source over from its former tenant — leaving it for an operator"
+    return 1
+  fi
+
   local src_result src_id src_action
   if ! src_result="$(reconcile_sources "${name}" "${source_cfg_json}" "${cfg_hash}" \
                 "${def_id}" "${expected_source_name}" "${ns_format}")"; then
@@ -1490,6 +1563,9 @@ _reconcile_one_connector() {
       rc=1
     elif [[ "${apply_rc}" -ne 0 ]]; then
       log_line ERROR "${name}: failed to create/update Argo CronWorkflow"
+      rc=1
+    elif ! argo_delete_former_tenant_cronworkflows "${name}" "${tenant}" "${source_id_label}" >/dev/null; then
+      log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove the ones named for a former tenant"
       rc=1
     fi
   fi

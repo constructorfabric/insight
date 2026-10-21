@@ -1,12 +1,11 @@
 """Reconciling what a generator wrote against what the target can hold.
 
-The generators hardcode their column lists; the schema they write into comes from
-the connectors-ddl snapshot plus the migrations that heal it. (The seed writes
-silver; bronze is the Airbyte destination's and is in no snapshot.) The two drift, and
-every row the seed writes passes through one reconciliation, so what it decides
-is the contract: a column the target cannot hold is dropped, and a column the
-target has and the generator omits takes the engine default — refused when the
-engine keeps one row per sorting key.
+The generators hardcode their column lists; the schema they write into is the one
+destination-clickhouse created from the connector's own catalogue. The two drift,
+and every row the seed writes passes through one reconciliation, so what it decides
+is the contract: a column the target cannot hold is dropped, and a column the target
+has and the generator omits takes the engine default — refused when the engine keeps
+one row per sorting key.
 
 That decision is a pure function of the generator's values and the target's
 shape, so `plan_insert` is what these call. The last three take a stand-in for

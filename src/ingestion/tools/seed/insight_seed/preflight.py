@@ -410,7 +410,6 @@ def _check_clickhouse(target: ClickHouse, scripts: Path, tenant: str, *, force: 
         name
         for name in (
             "create-databases.sh",
-            "create-warehouse-placeholders.sh",
             "apply-ch-migrations.sh",
             "build-gold.sh",
         )

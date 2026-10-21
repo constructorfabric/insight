@@ -5,9 +5,9 @@ belongs on the `CREATE DATABASE` statement, and a second creator that wins the
 race on a fresh cluster leaves a plain database behind — silently, because every
 statement in the deploy path is `IF NOT EXISTS`.
 
-The rest of the deploy path — the numbered migrations, the connectors-ddl
-snapshot, the dbt `on-run-start` hooks, the compose bootstrap, the chart — may
-assume its database already stands.
+The rest of the deploy path — the numbered migrations, the dbt `on-run-start`
+hooks, the compose bootstrap, the chart — may assume its database already
+stands.
 
 Read with comments stripped: these files explain the rule in prose, and a
 guard that matched its own documentation would fire on every mention.
@@ -29,7 +29,6 @@ THE_SITE = INGESTION / "scripts/create-databases.sh"
 #: Every deploy-path tree a `CREATE DATABASE` must not appear in, as (root, glob).
 DEPLOY_PATH = (
     (INGESTION / "scripts/migrations", "*.sql"),
-    (INGESTION / "scripts/connectors-ddl", "*.sql"),
     (INGESTION / "dbt/macros", "*.sql"),
     (REPO_ROOT / "deploy/compose", "*.sql"),
     (REPO_ROOT / "charts/insight/templates", "*.yaml"),
