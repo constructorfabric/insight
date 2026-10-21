@@ -31,6 +31,9 @@ mod updated_at_live_tests;
 #[cfg(test)]
 mod definition_ids_live_tests;
 
+#[cfg(test)]
+mod ownership_live_tests;
+
 use api_gateway as _;
 use authn_resolver as _;
 use authz_resolver as _;

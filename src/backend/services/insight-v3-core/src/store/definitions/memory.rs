@@ -8,35 +8,83 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use uuid::Uuid;
 
+use crate::domain::access::{Owner, PersonId};
+use crate::domain::dashboards::Standing;
 use crate::domain::definition::{
     Change, DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Definitions,
-    Listed, ListedPage, Lookup, Page, StoredDefinition,
+    LibraryKind, Listed, ListedPage, Lookup, Page, StoredDefinition,
 };
 use crate::domain::folders::{
     Folder, FolderError, FolderFilter, FolderId, FolderList, FolderName, FolderSummary, Folders,
     MAX_FOLDERS,
 };
+use crate::domain::sharing::Share;
 use crate::domain::tags::TagName;
 
 const DASHBOARDS: &str = "dashboards";
 
 type Key = (&'static str, String);
 
+#[derive(Debug, Clone)]
+struct HeldFolder {
+    name: FolderName,
+    owner: Owner,
+}
+
+/// The tags one dashboard carries, all of one owner's scope.
+#[derive(Debug, Clone)]
+struct Tagged {
+    scope: Owner,
+    names: Vec<TagName>,
+}
+
 #[derive(Debug, Default, Clone)]
 struct Stored {
     definitions: BTreeMap<Key, StoredDefinition>,
-    folders: BTreeMap<FolderId, FolderName>,
+    /// Dashboards with an owner; any other is ownerless.
+    owners: BTreeMap<String, PersonId>,
+    shares: BTreeMap<(String, PersonId), Share>,
+    folders: BTreeMap<FolderId, HeldFolder>,
+    /// Where an ownerless dashboard is filed.
     filed: BTreeMap<String, FolderId>,
-    tagged: BTreeMap<String, Vec<TagName>>,
-    pinned: BTreeMap<Uuid, Vec<String>>,
+    /// Where each person filed an owned dashboard.
+    placed: BTreeMap<(PersonId, String), FolderId>,
+    tagged: BTreeMap<String, Tagged>,
+    pinned: BTreeMap<PersonId, Vec<String>>,
 }
 
 impl Stored {
     fn has_dashboard(&self, id: &DefinitionId) -> bool {
         self.definitions
             .contains_key(&(DASHBOARDS, id.as_str().to_owned()))
+    }
+
+    fn owner_of(&self, dashboard: &str) -> Owner {
+        self.owners
+            .get(dashboard)
+            .map_or(Owner::Unowned, |person| Owner::Person(*person))
+    }
+
+    fn standing(&self, dashboard: &str, caller: PersonId) -> Option<Standing> {
+        if !self
+            .definitions
+            .contains_key(&(DASHBOARDS, dashboard.to_owned()))
+        {
+            return None;
+        }
+
+        Some(Standing {
+            owner: self.owner_of(dashboard),
+            shared_with_caller: self.shares.contains_key(&(dashboard.to_owned(), caller)),
+        })
+    }
+
+    /// The same rule the store's predicate is.
+    fn visible(&self, dashboard: &str, caller: PersonId) -> bool {
+        self.standing(dashboard, caller)
+            .and_then(|standing| standing.seen_by(caller))
+            .is_some()
     }
 
     fn write(&mut self, key: Key, name: &str, body: serde_json::Value) {
@@ -82,33 +130,43 @@ impl Stored {
 
     fn remove(&mut self, kind: DefinitionKind, id: &DefinitionId) -> bool {
         if kind.table() == DASHBOARDS {
-            self.filed.remove(id.as_str());
-            self.tagged.remove(id.as_str());
-            self.drop_pins(id.as_str());
+            let dashboard = id.as_str();
+            self.owners.remove(dashboard);
+            self.shares.retain(|(held, _), _| held != dashboard);
+            self.filed.remove(dashboard);
+            self.placed.retain(|(_, held), _| held != dashboard);
+            self.tagged.remove(dashboard);
+            self.drop_pins(dashboard);
         }
         let key = MemoryDefinitions::key(kind, id);
         self.definitions.remove(&key).is_some()
     }
 
-    fn name_taken(&self, name: &FolderName, except: Option<FolderId>) -> bool {
-        let wanted = name.as_str().to_lowercase();
+    /// The same rule the store's folder clauses are.
+    fn in_folder(&self, dashboard: &str, caller: PersonId, filter: FolderFilter) -> bool {
+        let held = match self.owner_of(dashboard) {
+            Owner::Unowned => self.filed.get(dashboard),
+            Owner::Person(_) => self.placed.get(&(caller, dashboard.to_owned())),
+        };
 
-        self.folders
-            .iter()
-            .any(|(id, held)| Some(*id) != except && held.as_str().to_lowercase() == wanted)
-    }
-
-    fn in_folder(&self, dashboard: &str, filter: FolderFilter) -> bool {
         match filter {
-            FolderFilter::Unfiled => !self.filed.contains_key(dashboard),
-            FolderFilter::In(id) => self.filed.get(dashboard) == Some(&id),
+            FolderFilter::Unfiled => held.is_none(),
+            FolderFilter::In(id) => held == Some(&id),
         }
     }
 
     fn folder(&self, id: FolderId) -> Option<Folder> {
-        self.folders.get(&id).map(|name| Folder {
+        self.folders.get(&id).map(|held| Folder {
             id,
-            name: name.clone(),
+            name: held.name.clone(),
+            owner: held.owner,
+        })
+    }
+
+    fn reachable_folder(&self, id: FolderId, caller: PersonId) -> Option<Folder> {
+        self.folder(id).filter(|folder| match folder.owner {
+            Owner::Unowned => true,
+            Owner::Person(person) => person == caller,
         })
     }
 
@@ -157,7 +215,8 @@ fn paged(matched: Vec<Listed>, page: Page) -> ListedPage {
 #[derive(Debug, Default)]
 pub(crate) struct MemoryDefinitions {
     stored: Mutex<Stored>,
-    /// Set to fail every write, for the cases about a store that is down.
+    /// Set to fail every write, and every look at who may see a dashboard,
+    /// for the cases about a store that is down.
     failing: bool,
 }
 
@@ -200,6 +259,19 @@ impl MemoryDefinitions {
         Ok(())
     }
 
+    /// Stores a dashboard under `id`, labelled by the id, as `owner`'s.
+    pub(crate) async fn seed_owned(
+        &self,
+        id: &DefinitionId,
+        body: &serde_json::Value,
+        owner: PersonId,
+    ) -> Result<(), DefinitionStoreError> {
+        self.seed(DefinitionKind::Dashboard, id, body).await?;
+        self.lock().owners.insert(id.as_str().to_owned(), owner);
+
+        Ok(())
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Stored> {
         self.stored
             .lock()
@@ -218,6 +290,7 @@ impl MemoryDefinitions {
     }
 }
 
+mod dashboards;
 mod pins;
 mod tags;
 #[cfg(test)]
@@ -248,6 +321,7 @@ impl Definitions for MemoryDefinitions {
         Ok(self.lock().definitions.get(&Self::key(kind, id)).cloned())
     }
 
+    #[cfg(test)]
     async fn create(
         &self,
         kind: DefinitionKind,
@@ -282,11 +356,11 @@ impl Definitions for MemoryDefinitions {
 
     async fn page(
         &self,
-        kind: DefinitionKind,
+        kind: LibraryKind,
         needle: &str,
         page: Page,
     ) -> Result<ListedPage, DefinitionStoreError> {
-        Ok(paged(self.lock().matching(kind, needle), page))
+        Ok(paged(self.lock().matching(kind.kind(), needle), page))
     }
 
     async fn delete(
@@ -311,15 +385,19 @@ impl Definitions for MemoryDefinitions {
                         return Err(DefinitionStoreError::Missing(id.as_str().to_owned()));
                     }
                 }
-                Change::CarryFolder { from, to } => {
-                    if let Some(folder) = applied.filed.get(from.as_str()).copied() {
-                        applied.filed.insert(to.as_str().to_owned(), folder);
+                Change::Own { dashboard, owner } => {
+                    applied.owners.insert(dashboard.as_str().to_owned(), *owner);
+                }
+                Change::CarryPlacement { from, to, person } => {
+                    let held = applied.placed.get(&(*person, from.as_str().to_owned()));
+                    if let Some(folder) = held.copied() {
+                        applied
+                            .placed
+                            .insert((*person, to.as_str().to_owned()), folder);
                     }
                 }
-                Change::CarryTags { from, to } => {
-                    if let Some(tags) = applied.tagged.get(from.as_str()).cloned() {
-                        applied.tagged.insert(to.as_str().to_owned(), tags);
-                    }
+                Change::CarryTags { from, to, scope } => {
+                    applied.carry_tags(from.as_str(), to.as_str(), *scope)?;
                 }
             }
         }
@@ -332,82 +410,132 @@ impl Definitions for MemoryDefinitions {
 
 #[async_trait]
 impl Folders for MemoryDefinitions {
-    async fn list_folders(&self) -> Result<FolderList, FolderError> {
+    async fn list_folders(&self, caller: PersonId) -> Result<FolderList, FolderError> {
         let stored = self.lock();
-        let mut folders: Vec<FolderSummary> = stored
-            .folders
-            .iter()
-            .map(|(id, name)| FolderSummary {
-                folder: Folder {
-                    id: *id,
-                    name: name.clone(),
-                },
-                dashboards: stored.filed.values().filter(|held| *held == id).count() as u64,
-            })
-            .collect();
-        folders.sort_by_key(|summary| summary.folder.name.as_str().to_lowercase());
-
-        let dashboards = stored
+        let visible: Vec<String> = stored
             .definitions
             .keys()
-            .filter(|(table, _)| *table == DASHBOARDS)
-            .count() as u64;
+            .filter(|(table, id)| *table == DASHBOARDS && stored.visible(id, caller))
+            .map(|(_, id)| id.clone())
+            .collect();
+        let count = |filter: FolderFilter| {
+            visible
+                .iter()
+                .filter(|id| stored.in_folder(id, caller, filter))
+                .count() as u64
+        };
+
+        let mut folders: Vec<FolderSummary> = stored
+            .folders
+            .keys()
+            .filter_map(|id| stored.reachable_folder(*id, caller))
+            .map(|folder| FolderSummary {
+                dashboards: count(FolderFilter::In(folder.id)),
+                folder,
+            })
+            .collect();
+        folders.sort_by_key(|summary| {
+            (
+                summary.folder.name.as_str().to_lowercase(),
+                summary.folder.id,
+            )
+        });
 
         Ok(FolderList {
             folders,
-            unfiled: dashboards - stored.filed.len() as u64,
+            unfiled: count(FolderFilter::Unfiled),
         })
     }
 
-    async fn create_folder(&self, name: FolderName) -> Result<Folder, FolderError> {
+    async fn create_folder(
+        &self,
+        owner: PersonId,
+        name: FolderName,
+    ) -> Result<Folder, FolderError> {
         self.writable()?;
         let mut stored = self.lock();
-        if stored.name_taken(&name, None) {
-            return Err(FolderError::NameTaken(name.as_str().to_owned()));
-        }
-        if stored.folders.len() >= MAX_FOLDERS {
+        let held = stored
+            .folders
+            .values()
+            .filter(|folder| folder.owner == Owner::Person(owner))
+            .count();
+        if held >= MAX_FOLDERS {
             return Err(FolderError::TooMany);
         }
+
         let id = FolderId::new();
-        stored.folders.insert(id, name.clone());
+        let owner = Owner::Person(owner);
+        stored.folders.insert(
+            id,
+            HeldFolder {
+                name: name.clone(),
+                owner,
+            },
+        );
 
-        Ok(Folder { id, name })
+        Ok(Folder { id, name, owner })
     }
 
-    async fn rename_folder(&self, id: FolderId, name: FolderName) -> Result<Folder, FolderError> {
+    async fn rename_folder(
+        &self,
+        caller: PersonId,
+        id: FolderId,
+        name: FolderName,
+    ) -> Result<Folder, FolderError> {
         self.writable()?;
         let mut stored = self.lock();
-        if !stored.folders.contains_key(&id) {
+        let Some(folder) = stored.reachable_folder(id, caller) else {
             return Err(FolderError::FolderNotFound(id));
-        }
-        if stored.name_taken(&name, Some(id)) {
-            return Err(FolderError::NameTaken(name.as_str().to_owned()));
-        }
-        stored.folders.insert(id, name.clone());
+        };
+        stored.folders.insert(
+            id,
+            HeldFolder {
+                name: name.clone(),
+                owner: folder.owner,
+            },
+        );
 
-        Ok(Folder { id, name })
+        Ok(Folder {
+            id,
+            name,
+            owner: folder.owner,
+        })
     }
 
-    async fn delete_folder(&self, id: FolderId) -> Result<bool, FolderError> {
+    async fn delete_folder(&self, caller: PersonId, id: FolderId) -> Result<bool, FolderError> {
         self.writable()?;
         let mut stored = self.lock();
+        if stored.reachable_folder(id, caller).is_none() {
+            return Ok(false);
+        }
         stored.filed.retain(|_, held| *held != id);
+        stored.placed.retain(|_, held| *held != id);
 
         Ok(stored.folders.remove(&id).is_some())
     }
 
-    async fn folder_of(&self, dashboard: &DefinitionId) -> Result<Option<Folder>, FolderError> {
-        let stored = self.lock();
+    async fn folder_owner(&self, id: FolderId) -> Result<Option<Owner>, FolderError> {
+        Ok(self.lock().folders.get(&id).map(|held| held.owner))
+    }
 
-        Ok(stored
-            .filed
-            .get(dashboard.as_str())
-            .and_then(|id| stored.folder(*id)))
+    async fn folder_of(
+        &self,
+        dashboard: &DefinitionId,
+        caller: PersonId,
+    ) -> Result<Option<Folder>, FolderError> {
+        let stored = self.lock();
+        let held = match stored.owner_of(dashboard.as_str()) {
+            Owner::Unowned => stored.filed.get(dashboard.as_str()),
+            Owner::Person(_) => stored.placed.get(&(caller, dashboard.as_str().to_owned())),
+        };
+
+        Ok(held.and_then(|id| stored.folder(*id)))
     }
 
     async fn file(
         &self,
         dashboard: &DefinitionId,
+        folders_of: Owner,
         folder: Option<FolderId>,
     ) -> Result<(), FolderError> {
         self.writable()?;
@@ -417,32 +545,28 @@ impl Folders for MemoryDefinitions {
                 dashboard.as_str().to_owned(),
             ));
         }
-        match folder {
-            Some(id) if !stored.folders.contains_key(&id) => Err(FolderError::FolderNotFound(id)),
-            Some(id) => {
-                stored.filed.insert(dashboard.as_str().to_owned(), id);
-                Ok(())
+        if let Some(id) = folder
+            && !stored.folders.contains_key(&id)
+        {
+            return Err(FolderError::FolderNotFound(id));
+        }
+
+        let key = dashboard.as_str().to_owned();
+        match (folders_of, folder) {
+            (Owner::Unowned, Some(id)) => {
+                stored.filed.insert(key, id);
             }
-            None => {
-                stored.filed.remove(dashboard.as_str());
-                Ok(())
+            (Owner::Unowned, None) => {
+                stored.filed.remove(&key);
+            }
+            (Owner::Person(person), Some(id)) => {
+                stored.placed.insert((person, key), id);
+            }
+            (Owner::Person(person), None) => {
+                stored.placed.remove(&(person, key));
             }
         }
-    }
 
-    async fn page_filed(
-        &self,
-        needle: &str,
-        page: Page,
-        filter: FolderFilter,
-    ) -> Result<ListedPage, FolderError> {
-        let stored = self.lock();
-        let matched = stored
-            .matching(DefinitionKind::Dashboard, needle)
-            .into_iter()
-            .filter(|listed| stored.in_folder(&listed.id, filter))
-            .collect();
-
-        Ok(paged(matched, page))
+        Ok(())
     }
 }

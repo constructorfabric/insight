@@ -678,7 +678,7 @@ async fn create_alert(
         .map_err(|error| AlertApiError::invalid_field("body", error.to_string()))?;
 
     let rule = alerts
-        .create(&draft, Some(actor))
+        .create(&draft, Some(actor.uuid()))
         .await
         .map_err(alerts_error)?;
 
@@ -700,7 +700,7 @@ async fn put_alert(
         .map_err(|error| AlertApiError::invalid_field("body", error.to_string()))?;
 
     let rule = alerts
-        .replace(id, &draft, Some(actor))
+        .replace(id, &draft, Some(actor.uuid()))
         .await
         .map_err(alerts_error)?;
 

@@ -2,6 +2,8 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use crate::domain::access::{Owner, PersonId};
+use crate::domain::dashboards::{DashboardCatalogue as _, DashboardQuery};
 use crate::domain::definition::{
     Change, DefinitionId, DefinitionKind, DefinitionLabel, Definitions, Page,
 };
@@ -11,6 +13,11 @@ use crate::live_mariadb::{store_or_skip, unique};
 use crate::store::definitions::MariaDefinitions;
 
 pub(crate) static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
+
+/// Someone who owns nothing here, so sees exactly the ownerless dashboards.
+fn anyone() -> PersonId {
+    PersonId::new(Uuid::now_v7())
+}
 
 fn dashboard(name: &str) -> DefinitionId {
     DefinitionId::parse(name).unwrap_or_else(|error| panic!("{error}"))
@@ -49,7 +56,7 @@ async fn board(store: &MariaDefinitions, name: &DefinitionId) {
     }
 }
 
-fn copied(from: &DefinitionId, to: &DefinitionId) -> [Change; 3] {
+fn copied(from: &DefinitionId, to: &DefinitionId) -> [Change; 2] {
     [
         Change::Create(
             DefinitionKind::Dashboard,
@@ -57,13 +64,10 @@ fn copied(from: &DefinitionId, to: &DefinitionId) -> [Change; 3] {
             DefinitionLabel::of_id(to),
             json!({ "title": "Board", "items": [] }),
         ),
-        Change::CarryFolder {
-            from: from.clone(),
-            to: to.clone(),
-        },
         Change::CarryTags {
             from: from.clone(),
             to: to.clone(),
+            scope: Owner::Unowned,
         },
     ]
 }
@@ -76,7 +80,7 @@ async fn remove(store: &MariaDefinitions, name: &DefinitionId) {
 
 async fn set(store: &MariaDefinitions, name: &DefinitionId, values: &[String]) {
     store
-        .set_tags(name, &tags(values))
+        .set_tags(name, Owner::Unowned, &tags(values))
         .await
         .unwrap_or_else(|error| panic!("{error}"));
 }
@@ -93,7 +97,7 @@ async fn carried(store: &MariaDefinitions, name: &DefinitionId) -> Vec<String> {
 
 async fn count_of(store: &MariaDefinitions, tag: &str) -> Option<u64> {
     store
-        .list_tags()
+        .list_tags(anyone())
         .await
         .unwrap_or_else(|error| panic!("{error}"))
         .into_iter()
@@ -103,7 +107,7 @@ async fn count_of(store: &MariaDefinitions, tag: &str) -> Option<u64> {
 
 async fn total(store: &MariaDefinitions) -> usize {
     store
-        .list_tags()
+        .list_tags(anyone())
         .await
         .unwrap_or_else(|error| panic!("{error}"))
         .len()
@@ -182,8 +186,14 @@ async fn paged(
     wanted: &[String],
 ) -> (Vec<String>, u64) {
     let page = Page::parse(None, None).unwrap_or_else(|error| panic!("{error}"));
+    let query = DashboardQuery {
+        needle: format!("{prefix}{needle}"),
+        folder,
+        tags: Some(any_of(wanted)),
+        owned: None,
+    };
     let found = store
-        .page_tagged(&format!("{prefix}{needle}"), page, folder, &any_of(wanted))
+        .page_dashboards(anyone(), &query, page)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
 
@@ -216,15 +226,17 @@ async fn a_page_by_tag_matches_any_of_them_ignoring_case_inside_a_folder_and_a_s
         board(&store, name).await;
         set(&store, name, carrying).await;
     }
+    let me = anyone();
     let platform = store
         .create_folder(
+            me,
             FolderName::parse(&unique("Platform")).unwrap_or_else(|error| panic!("{error}")),
         )
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     for filed in [named("delivery"), named("hiring")] {
         store
-            .file(&filed, Some(platform.id))
+            .file(&filed, Owner::Unowned, Some(platform.id))
             .await
             .unwrap_or_else(|error| panic!("{error}"));
     }
@@ -246,7 +258,7 @@ async fn a_page_by_tag_matches_any_of_them_ignoring_case_inside_a_folder_and_a_s
         remove(&store, name).await;
     }
     store
-        .delete_folder(platform.id)
+        .delete_folder(me, platform.id)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(everywhere.0, ["delivery", "delivery_ai", "hiring"]);
@@ -264,7 +276,11 @@ async fn tagging_a_dashboard_that_is_not_there_is_refused() {
     let _serial = ONE_AT_A_TIME.lock().await;
 
     let refused = store
-        .set_tags(&dashboard(&unique("nowhere")), &tags(&[short()]))
+        .set_tags(
+            &dashboard(&unique("nowhere")),
+            Owner::Unowned,
+            &tags(&[short()]),
+        )
         .await;
 
     assert!(
@@ -299,6 +315,7 @@ async fn a_set_that_would_take_the_total_past_the_cap_is_refused_and_changes_not
     let refused = store
         .set_tags(
             &last,
+            Owner::Unowned,
             &tags(&[fresh[0].clone(), format!("one more {suffix}")]),
         )
         .await;
@@ -345,7 +362,7 @@ async fn tag_set_copied_and_removed(
     let to = dashboard(&unique("raced"));
 
     store
-        .set_tags(from, wanted)
+        .set_tags(from, Owner::Unowned, wanted)
         .await
         .map_err(|error| format!("set: {error:?}"))?;
     store
@@ -395,4 +412,95 @@ async fn tag_writers_running_at_once_all_land() {
 
     assert!(failures.is_empty(), "{failures:#?}");
     assert_eq!(count_of(&store, &format!("shared {suffix}")).await, None);
+}
+
+async fn owned_board(store: &MariaDefinitions, name: &DefinitionId, owner: PersonId) {
+    store
+        .apply(&[
+            Change::Create(
+                DefinitionKind::Dashboard,
+                name.clone(),
+                DefinitionLabel::of_id(name),
+                json!({ "title": "Board", "items": [] }),
+            ),
+            Change::Own {
+                dashboard: name.clone(),
+                owner,
+            },
+        ])
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[tokio::test]
+async fn two_owners_hold_one_tag_name_apart_and_a_listing_merges_what_the_caller_sees() {
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let _serial = ONE_AT_A_TIME.lock().await;
+    let suffix = short();
+    let delivery = format!("Delivery {suffix}");
+    let (me, them) = (anyone(), anyone());
+    let mine = dashboard(&unique("mine"));
+    let theirs = dashboard(&unique("theirs"));
+    owned_board(&store, &mine, me).await;
+    owned_board(&store, &theirs, them).await;
+
+    store
+        .set_tags(
+            &mine,
+            Owner::Person(me),
+            &tags(std::slice::from_ref(&delivery)),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    store
+        .set_tags(
+            &theirs,
+            Owner::Person(them),
+            &tags(&[delivery.to_lowercase()]),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let before_sharing = store
+        .list_tags(me)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    crate::domain::sharing::Sharing::share(&store, &theirs, me, them)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let shared = store
+        .list_tags(me)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let page = Page::parse(None, None).unwrap_or_else(|error| panic!("{error}"));
+    let found = store
+        .page_dashboards(
+            me,
+            &DashboardQuery {
+                tags: Some(any_of(&[delivery.to_uppercase()])),
+                ..DashboardQuery::default()
+            },
+            page,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let theirs_spelled = carried(&store, &theirs).await;
+    remove(&store, &mine).await;
+    remove(&store, &theirs).await;
+    let count = |listed: &[crate::domain::tags::TagSummary]| {
+        listed
+            .iter()
+            .find(|summary| summary.name.folded() == delivery.to_lowercase())
+            .map(|summary| summary.dashboards)
+    };
+    assert_eq!(
+        theirs_spelled,
+        [delivery.to_lowercase()],
+        "each scope keeps its spelling"
+    );
+    assert_eq!(count(&before_sharing), Some(1));
+    assert_eq!(count(&shared), Some(2));
+    assert_eq!(found.total, 2);
 }

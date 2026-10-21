@@ -245,7 +245,7 @@
       "NameRequest": {
         "properties": {
           "name": {
-            "description": "Trimmed, then 1 to 64 characters, unique ignoring case.",
+            "description": "Trimmed, then 1 to 64 characters.",
             "type": "string"
           }
         },
@@ -803,6 +803,18 @@
         },
         "required": [
           "tags"
+        ],
+        "type": "object"
+      },
+      "TransferRequest": {
+        "properties": {
+          "to": {
+            "description": "The person id of the current administrator to own it from now on.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
         ],
         "type": "object"
       },
@@ -1834,6 +1846,15 @@
               "type": "array"
             },
             "style": "form"
+          },
+          {
+            "description": "`me` for the caller's own dashboards, `shared` for those shared with them; absent lists every visible one",
+            "in": "query",
+            "name": "owned",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1845,7 +1866,7 @@
                 }
               }
             },
-            "description": "One page of ids and names, and how many match"
+            "description": "One page of ids and names, dashboards with their owner and the caller's access, and how many match"
           },
           "400": {
             "content": {
@@ -1960,6 +1981,85 @@
         "x-toolkit-visibility": "exposed"
       }
     },
+    "/v1/dashboards/orphaned": {
+      "get": {
+        "operationId": "insight_v3_core.dashboards.orphaned",
+        "parameters": [
+          {
+            "description": "Page size, 1 to 200",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Dashboards to skip",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "One page of orphaned dashboards, and how many there are"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "List the dashboards whose owner is no longer an administrator",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
     "/v1/dashboards/{id}": {
       "delete": {
         "operationId": "insight_v3_core.dashboards.delete",
@@ -2054,7 +2154,7 @@
                 }
               }
             },
-            "description": "The definition's id, name and body"
+            "description": "The definition's id, name and body; a dashboard's owner, the caller's access, folder and tags"
           },
           "403": {
             "content": {
@@ -2319,6 +2419,16 @@
             },
             "description": "Not Found"
           },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -2340,7 +2450,7 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "Copy a dashboard, its folder and its tags under a fresh id",
+        "summary": "Copy a dashboard under a fresh id as the caller's own, with the caller's folder for it and its tags",
         "x-toolkit-visibility": "exposed"
       }
     },
@@ -2424,7 +2534,269 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "Move a dashboard into a folder, or out of every folder",
+        "summary": "File a dashboard in one of the caller's folders, or an ownerless one in an ownerless folder; null takes it out",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/dashboards/{id}/shares": {
+      "get": {
+        "operationId": "insight_v3_core.dashboards.shares.list",
+        "parameters": [
+          {
+            "description": "Dashboard id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Each share: the person, who granted it, and when"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "List who the caller's dashboard is shared with",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/dashboards/{id}/shares/{person_id}": {
+      "delete": {
+        "operationId": "insight_v3_core.dashboards.shares.delete",
+        "parameters": [
+          {
+            "description": "Dashboard id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "The person's id",
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Not shared"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Withdraw a share of the caller's dashboard, with that person's pin and folder for it",
+        "x-toolkit-visibility": "exposed"
+      },
+      "put": {
+        "operationId": "insight_v3_core.dashboards.shares.put",
+        "parameters": [
+          {
+            "description": "Dashboard id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "The person's id",
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Shared"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Share the caller's dashboard with a current administrator; sharing again changes nothing",
         "x-toolkit-visibility": "exposed"
       }
     },
@@ -2518,7 +2890,101 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "Replace the tags a dashboard carries",
+        "summary": "Replace the tags a dashboard carries, as tags of its owner",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/dashboards/{id}/transfer": {
+      "post": {
+        "operationId": "insight_v3_core.dashboards.transfer",
+        "parameters": [
+          {
+            "description": "Dashboard id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferRequest"
+              }
+            }
+          },
+          "description": "Who owns it from now on",
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Transferred"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Hand an orphaned dashboard to a current administrator",
         "x-toolkit-visibility": "exposed"
       }
     },
@@ -3068,7 +3534,7 @@
                 }
               }
             },
-            "description": "Every folder, and how many dashboards are in none"
+            "description": "The folders, and how many visible dashboards are in none of the caller's"
           },
           "403": {
             "content": {
@@ -3101,7 +3567,7 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "List the dashboard folders, each with how many dashboards it holds",
+        "summary": "List the caller's folders and the ownerless ones, each with how many dashboards the caller sees in it",
         "x-toolkit-visibility": "exposed"
       },
       "post": {
@@ -3179,7 +3645,7 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "Make a dashboard folder",
+        "summary": "Make a dashboard folder of the caller's own",
         "x-toolkit-visibility": "exposed"
       }
     },
@@ -3252,7 +3718,7 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "Remove a dashboard folder; its dashboards are left in none",
+        "summary": "Remove one of the caller's folders or an ownerless one; its dashboards are left in none",
         "x-toolkit-visibility": "exposed"
       },
       "patch": {
@@ -3320,16 +3786,6 @@
             },
             "description": "Not Found"
           },
-          "409": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -3351,7 +3807,7 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "Rename a dashboard folder",
+        "summary": "Rename one of the caller's folders or an ownerless one",
         "x-toolkit-visibility": "exposed"
       }
     },
@@ -3396,7 +3852,7 @@
                 }
               }
             },
-            "description": "One page of ids and names, and how many match"
+            "description": "One page of ids and names, dashboards with their owner and the caller's access, and how many match"
           },
           "400": {
             "content": {
@@ -3605,7 +4061,7 @@
                 }
               }
             },
-            "description": "The definition's id, name and body"
+            "description": "The definition's id, name and body; a dashboard's owner, the caller's access, folder and tags"
           },
           "403": {
             "content": {
@@ -4030,7 +4486,7 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "List the dashboards the caller pinned",
+        "summary": "List the dashboards the caller pinned and still sees",
         "x-toolkit-visibility": "exposed"
       }
     },
@@ -4453,7 +4909,7 @@
                 }
               }
             },
-            "description": "Every tag, sorted by name"
+            "description": "Every such tag name, sorted"
           },
           "403": {
             "content": {
@@ -4486,7 +4942,7 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "List the dashboard tags, each with how many dashboards carry it",
+        "summary": "List the tags on dashboards the caller sees, each with how many of those carry it",
         "x-toolkit-visibility": "exposed"
       }
     },
@@ -4531,7 +4987,7 @@
                 }
               }
             },
-            "description": "One page of ids and names, and how many match"
+            "description": "One page of ids and names, dashboards with their owner and the caller's access, and how many match"
           },
           "400": {
             "content": {
@@ -4740,7 +5196,7 @@
                 }
               }
             },
-            "description": "The definition's id, name and body"
+            "description": "The definition's id, name and body; a dashboard's owner, the caller's access, folder and tags"
           },
           "403": {
             "content": {

@@ -92,13 +92,27 @@ impl Fixture {
     }
 
     fn surfaces(&self) -> Surfaces<'_> {
+        self.surfaces_as(me())
+    }
+
+    fn surfaces_as(&self, caller: PersonId) -> Surfaces<'_> {
         Surfaces::new(
             &self.definitions,
             &self.datasets,
             "insight_datasets",
             self.metrics.people(),
+            caller,
         )
     }
+}
+
+/// Who a case acts as unless it says otherwise.
+fn me() -> PersonId {
+    PersonId::new(uuid::Uuid::from_u128(1))
+}
+
+fn someone_else() -> PersonId {
+    PersonId::new(uuid::Uuid::from_u128(2))
 }
 
 fn legacy() -> crate::domain::query::time_window::WindowRequest {
@@ -495,7 +509,10 @@ async fn a_metric_a_widget_still_draws_is_kept_and_its_dependents_named() -> R {
     };
 
     match error {
-        CustomError::InUse { used_by } => assert_eq!(used_by, vec!["chart".to_owned()]),
+        CustomError::InUse { used_by, hidden } => {
+            assert_eq!(used_by, vec!["chart".to_owned()]);
+            assert_eq!(hidden, 0);
+        }
         other => panic!("should refuse as in use: {other:?}"),
     }
 
@@ -532,7 +549,10 @@ async fn a_widget_a_dashboard_still_holds_is_kept_and_its_dependents_named() -> 
     };
 
     match error {
-        CustomError::InUse { used_by } => assert_eq!(used_by, vec!["board".to_owned()]),
+        CustomError::InUse { used_by, hidden } => {
+            assert_eq!(used_by, vec!["board".to_owned()]);
+            assert_eq!(hidden, 0);
+        }
         other => panic!("should refuse as in use: {other:?}"),
     }
 
@@ -988,13 +1008,14 @@ mod creating_and_replacing {
             .await?;
 
         assert_eq!(
-            holders,
+            holders.holders,
             [Holder {
                 kind: DefinitionKind::Widget,
                 id: widget.into_string(),
                 name: "Actor chart".to_owned(),
             }]
         );
+        assert_eq!(holders.hidden, 0);
 
         Ok(())
     }
@@ -1024,53 +1045,60 @@ mod creating_and_replacing {
 
 mod duplicating_a_dashboard {
     use super::*;
-    use crate::domain::folders::{FolderName, Folders};
-    use crate::domain::pins::Pins;
-    use crate::domain::tags::{TagSet, Tags};
+    use crate::domain::access::Owner;
+    use crate::domain::dashboards::DashboardCatalogue as _;
+    use crate::domain::folders::{self, FolderName, Folders};
+    use crate::domain::pins::{self, Pins};
+    use crate::domain::sharing::Sharing as _;
+    use crate::domain::tags::{self, TagSet, Tags};
 
-    const ANNA: uuid::Uuid = uuid::Uuid::from_u128(1);
-
-    fn board() -> serde_json::Value {
+    fn board_body() -> serde_json::Value {
         json!({"title": "Example board", "widgets": []})
     }
 
-    async fn filed_tagged_and_pinned(fixture: &Fixture) -> Result<FolderName, Box<dyn Error>> {
-        fixture
+    /// A board of mine, in a folder of mine, tagged and pinned.
+    async fn filed_tagged_and_pinned(
+        fixture: &Fixture,
+    ) -> Result<(DefinitionId, FolderName), Box<dyn Error>> {
+        let board = fixture
             .surfaces()
-            .stored_as(DefinitionKind::Dashboard, &name("board"), &board())
+            .create(DefinitionKind::Dashboard, &copy_name(), &board_body())
             .await?;
         let platform = fixture
             .definitions
-            .create_folder(FolderName::parse("Platform")?)
+            .create_folder(me(), FolderName::parse("Platform")?)
             .await?;
-        fixture
-            .definitions
-            .file(&name("board"), Some(platform.id))
-            .await?;
-        fixture
-            .definitions
-            .set_tags(
-                &name("board"),
-                &TagSet::parse(&["Delivery".to_owned(), "Platform".to_owned()])?,
-            )
-            .await?;
-        fixture.definitions.pin(ANNA, &name("board")).await?;
+        folders::file(&fixture.definitions, me(), &board, Some(platform.id)).await?;
+        tags::retag(
+            &fixture.definitions,
+            me(),
+            &board,
+            &TagSet::parse(&["Delivery".to_owned(), "Platform".to_owned()])?,
+        )
+        .await?;
+        pins::pin(&fixture.definitions, me(), &board).await?;
 
-        Ok(platform.name)
+        Ok((board, platform.name))
     }
 
-    async fn placed(fixture: &Fixture, board: &str) -> Result<Option<String>, Box<dyn Error>> {
+    async fn placed(
+        fixture: &Fixture,
+        board: &DefinitionId,
+    ) -> Result<Option<String>, Box<dyn Error>> {
         Ok(fixture
             .definitions
-            .folder_of(&name(board))
+            .folder_of(board, me())
             .await?
             .map(|folder| folder.name.as_str().to_owned()))
     }
 
-    async fn carried(fixture: &Fixture, board: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    async fn carried(
+        fixture: &Fixture,
+        board: &DefinitionId,
+    ) -> Result<Vec<String>, Box<dyn Error>> {
         Ok(fixture
             .definitions
-            .tags_of(&name(board))
+            .tags_of(board)
             .await?
             .into_iter()
             .map(|tag| tag.as_str().to_owned())
@@ -1082,47 +1110,38 @@ mod duplicating_a_dashboard {
     }
 
     #[tokio::test]
-    async fn the_copy_holds_the_body_the_folder_and_the_tags_and_the_source_keeps_them() -> R {
+    async fn the_copy_is_mine_with_the_body_my_folder_and_the_tags_and_the_source_keeps_them() -> R
+    {
         let fixture = Fixture::new().await;
-        let folder = filed_tagged_and_pinned(&fixture).await?;
+        let (board, folder) = filed_tagged_and_pinned(&fixture).await?;
 
-        let copy = fixture
-            .surfaces()
-            .duplicate(&name("board"), &copy_name())
-            .await?;
+        let copy = fixture.surfaces().duplicate(&board, &copy_name()).await?;
 
-        assert_ne!(copy, name("board"), "the copy is given an id of its own");
-        for held in ["board", copy.as_str()] {
+        assert_ne!(copy, board, "the copy is given an id of its own");
+        for held in [&board, &copy] {
             let body = fixture
                 .surfaces()
-                .get(DefinitionKind::Dashboard, &name(held))
+                .get(DefinitionKind::Dashboard, held)
                 .await?;
-            assert_eq!(body, board(), "{held}");
+            assert_eq!(body, board_body(), "{held:?}");
             assert_eq!(
                 placed(&fixture, held).await?.as_deref(),
                 Some(folder.as_str()),
-                "{held}"
+                "{held:?}"
             );
             assert_eq!(carried(&fixture, held).await?, ["Delivery", "Platform"]);
         }
-        let named = fixture
-            .surfaces()
-            .read(DefinitionKind::Dashboard, &copy)
-            .await?
-            .name;
-        assert_eq!(named, "Board copy");
+        let standing = fixture.definitions.standing(&copy, me()).await?;
+        assert_eq!(standing.map(|held| held.owner), Some(Owner::Person(me())));
         Ok(())
     }
 
     #[tokio::test]
     async fn the_copy_is_not_pinned_and_the_source_stays_pinned() -> R {
         let fixture = Fixture::new().await;
-        filed_tagged_and_pinned(&fixture).await?;
+        let (board, _) = filed_tagged_and_pinned(&fixture).await?;
 
-        let copy = fixture
-            .surfaces()
-            .duplicate(&name("board"), &copy_name())
-            .await?;
+        let copy = fixture.surfaces().duplicate(&board, &copy_name()).await?;
 
         fixture
             .surfaces()
@@ -1130,12 +1149,76 @@ mod duplicating_a_dashboard {
             .await?;
         let pinned: Vec<String> = fixture
             .definitions
-            .pins_of(ANNA)
+            .pins_of(me())
             .await?
             .into_iter()
             .map(|listed| listed.id)
             .collect();
-        assert_eq!(pinned, ["board"]);
+        assert_eq!(pinned, [board.as_str()]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_copy_of_an_ownerless_dashboard_is_mine_in_no_folder_with_my_own_tags() -> R {
+        let fixture = Fixture::new().await;
+        fixture
+            .surfaces()
+            .stored_as(DefinitionKind::Dashboard, &name("board"), &board_body())
+            .await?;
+        let shared = fixture
+            .definitions
+            .create_folder(me(), FolderName::parse("Mine")?)
+            .await?;
+        assert!(
+            folders::file(&fixture.definitions, me(), &name("board"), Some(shared.id))
+                .await
+                .is_err(),
+            "an ownerless dashboard is not filed in a folder of mine"
+        );
+        tags::retag(
+            &fixture.definitions,
+            me(),
+            &name("board"),
+            &TagSet::parse(&["Delivery".to_owned()])?,
+        )
+        .await?;
+
+        let copy = fixture
+            .surfaces()
+            .duplicate(&name("board"), &copy_name())
+            .await?;
+
+        assert_eq!(placed(&fixture, &copy).await?, None);
+        assert_eq!(carried(&fixture, &copy).await?, ["Delivery"]);
+        let standing = fixture.definitions.standing(&copy, me()).await?;
+        assert_eq!(standing.map(|held| held.owner), Some(Owner::Person(me())));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_viewer_may_not_copy_and_someone_who_cannot_see_it_finds_nothing() -> R {
+        let fixture = Fixture::new().await;
+        let (board, _) = filed_tagged_and_pinned(&fixture).await?;
+        let viewer = PersonId::new(uuid::Uuid::from_u128(3));
+        fixture.definitions.share(&board, viewer, me()).await?;
+
+        let by_viewer = fixture
+            .surfaces_as(viewer)
+            .duplicate(&board, &copy_name())
+            .await;
+        let by_stranger = fixture
+            .surfaces_as(someone_else())
+            .duplicate(&board, &copy_name())
+            .await;
+
+        assert!(
+            matches!(by_viewer, Err(CustomError::NotOwner)),
+            "{by_viewer:?}"
+        );
+        assert!(
+            matches!(&by_stranger, Err(CustomError::NotFound { id, .. }) if id == board.as_str()),
+            "{by_stranger:?}"
+        );
         Ok(())
     }
 

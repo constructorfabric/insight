@@ -40,6 +40,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261014_000007_alert_conditions::Migration),
             Box::new(m20261015_000008_alert_context_columns::Migration),
             Box::new(m20261021_000009_definition_ids::Migration),
+            Box::new(m20261021_000010_dashboard_ownership::Migration),
         ]
     }
 }
@@ -338,6 +339,8 @@ mod m20261014_000007_alert_conditions;
 
 pub(crate) mod m20261021_000009_definition_ids;
 
+mod m20261021_000010_dashboard_ownership;
+
 mod m20261015_000008_alert_context_columns {
     use super::{DbErr, MigrationName, MigrationTrait, SchemaManager, apply_sql};
 
@@ -411,6 +414,7 @@ mod tests {
                 "m20261014_000007_alert_conditions",
                 "m20261015_000008_alert_context_columns",
                 "m20261021_000009_definition_ids",
+                "m20261021_000010_dashboard_ownership",
             ],
             "a migration's name is the ledger's key, so it is written down here"
         );

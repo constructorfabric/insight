@@ -3,12 +3,15 @@
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::domain::access::{PersonId, Refused};
+use crate::domain::dashboards::{DashboardPage, DashboardQuery, Seen, sight};
 use crate::domain::datasets::{self, Datasets};
 use crate::domain::definition::arriving::Arriving;
 use crate::domain::definition::{
-    Definition, DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Definitions,
-    ListedPage, Page, StoredDefinition,
+    Change, Definition, DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError,
+    LibraryKind, ListedPage, Page, StoredDefinition,
 };
+use crate::domain::folders::DefinitionStore;
 use crate::domain::kinds::dashboard::Item;
 use crate::domain::kinds::metric::CompileAgainst;
 use crate::domain::kinds::metric::answerable::EffectiveClock;
@@ -26,8 +29,10 @@ mod tests;
 pub(crate) enum CustomError {
     #[error("{} `{id}` was not found", kind.singular())]
     NotFound { kind: DefinitionKind, id: String },
-    #[error("still in use by {}", used_by.join(", "))]
-    InUse { used_by: Vec<String> },
+    #[error("only the owner can change this dashboard")]
+    NotOwner,
+    #[error("{}", in_use(.used_by, *.hidden))]
+    InUse { used_by: Vec<String>, hidden: u64 },
     #[error(transparent)]
     Widget(WidgetError),
     #[error("definition body is not valid: {0}")]
@@ -69,6 +74,7 @@ impl CustomError {
     pub(crate) fn is_about_the_caller(&self) -> bool {
         match self {
             Self::NotFound { .. }
+            | Self::NotOwner
             | Self::InUse { .. }
             | Self::Widget(_)
             | Self::Body(_)
@@ -81,20 +87,23 @@ impl CustomError {
     }
 }
 
+/// The definitions as one administrator reaches them.
 #[derive(Debug)]
 pub(crate) struct Surfaces<'a> {
-    definitions: &'a dyn Definitions,
+    definitions: &'a dyn DefinitionStore,
     datasets: &'a dyn Datasets,
     /// What a metric is compiled against before it is stored.
     over: CompileAgainst<'a>,
+    caller: PersonId,
 }
 
 impl<'a> Surfaces<'a> {
     pub(crate) fn new(
-        definitions: &'a dyn Definitions,
+        definitions: &'a dyn DefinitionStore,
         datasets: &'a dyn Datasets,
         datasets_database: &'a str,
         people: &'a People,
+        caller: PersonId,
     ) -> Self {
         Self {
             definitions,
@@ -103,20 +112,37 @@ impl<'a> Surfaces<'a> {
                 database: datasets_database,
                 people,
             },
+            caller,
         }
     }
 
-    /// One page of the definitions of this kind matching `needle`, or of all
-    /// of them when it is blank — a search box that is empty is not a search
+    pub(crate) fn caller(&self) -> PersonId {
+        self.caller
+    }
+
+    /// One page of the metrics or widgets matching `needle`, or of all of
+    /// them when it is blank — a search box that is empty is not a search
     /// for nothing.
     pub(crate) async fn page(
         &self,
-        kind: DefinitionKind,
+        kind: LibraryKind,
         needle: &str,
         page: Page,
     ) -> Result<ListedPage, CustomError> {
         self.definitions
             .page(kind, needle.trim(), page)
+            .await
+            .map_err(CustomError::Store)
+    }
+
+    /// One page of the dashboards the caller sees that match `query`.
+    pub(crate) async fn page_dashboards(
+        &self,
+        query: &DashboardQuery,
+        page: Page,
+    ) -> Result<DashboardPage, CustomError> {
+        self.definitions
+            .page_dashboards(self.caller, query, page)
             .await
             .map_err(CustomError::Store)
     }
@@ -128,11 +154,48 @@ impl<'a> Surfaces<'a> {
             .map_err(CustomError::Store)
     }
 
+    /// How the caller sees a dashboard; one they cannot see is not found.
+    pub(crate) async fn seen(&self, id: &DefinitionId) -> Result<Seen, CustomError> {
+        sight(self.definitions, id, self.caller)
+            .await
+            .map_err(CustomError::Store)?
+            .filter(|seen| seen.access.may_open())
+            .ok_or_else(|| not_found(DefinitionKind::Dashboard, id))
+    }
+
+    /// A dashboard the caller may change, or why they may not.
+    pub(crate) async fn changeable(&self, id: &DefinitionId) -> Result<Seen, CustomError> {
+        let seen = self.seen(id).await?;
+        seen.access.change().map_err(|refused| match refused {
+            Refused::NotOwner | Refused::Ownerless => CustomError::NotOwner,
+        })?;
+
+        Ok(seen)
+    }
+
+    /// Whether this kind's `id` is one the caller may read at all.
+    async fn sighted(&self, kind: DefinitionKind, id: &DefinitionId) -> Result<(), CustomError> {
+        match kind {
+            DefinitionKind::Metric | DefinitionKind::Widget => Ok(()),
+            DefinitionKind::Dashboard => self.seen(id).await.map(|_| ()),
+        }
+    }
+
+    /// Whether this kind's `id` is one the caller may change.
+    async fn writable(&self, kind: DefinitionKind, id: &DefinitionId) -> Result<(), CustomError> {
+        match kind {
+            DefinitionKind::Metric | DefinitionKind::Widget => Ok(()),
+            DefinitionKind::Dashboard => self.changeable(id).await.map(|_| ()),
+        }
+    }
+
     pub(crate) async fn get(
         &self,
         kind: DefinitionKind,
         id: &DefinitionId,
     ) -> Result<Value, CustomError> {
+        self.sighted(kind, id).await?;
+
         self.definitions
             .get(kind, id)
             .await
@@ -145,6 +208,8 @@ impl<'a> Surfaces<'a> {
         kind: DefinitionKind,
         id: &DefinitionId,
     ) -> Result<StoredDefinition, CustomError> {
+        self.sighted(kind, id).await?;
+
         self.definitions
             .read(kind, id)
             .await
@@ -162,6 +227,7 @@ impl<'a> Surfaces<'a> {
         id: &DefinitionId,
         items: &[Item],
     ) -> Result<Value, CustomError> {
+        self.changeable(id).await?;
         let previous = self.read(DefinitionKind::Dashboard, id).await?;
 
         for drawn in items.iter().filter_map(Item::widget) {
@@ -190,7 +256,8 @@ impl<'a> Surfaces<'a> {
         Ok(body)
     }
 
-    /// Stores a new definition under a fresh id, after checking its body.
+    /// Stores a new definition under a fresh id, after checking its body. A
+    /// dashboard is the caller's.
     pub(crate) async fn create(
         &self,
         kind: DefinitionKind,
@@ -200,8 +267,9 @@ impl<'a> Surfaces<'a> {
         kinds::check(kind, body, self.definitions, self.datasets, self.over).await?;
 
         let id = DefinitionId::generate();
+        let changes = creating(kind, &id, name, body.clone(), self.caller);
         self.definitions
-            .create(kind, &id, name, body)
+            .apply(&changes)
             .await
             .map_err(CustomError::Store)?;
 
@@ -217,6 +285,7 @@ impl<'a> Surfaces<'a> {
         name: &DefinitionLabel,
         body: &Value,
     ) -> Result<(), CustomError> {
+        self.writable(kind, id).await?;
         kinds::check(kind, body, self.definitions, self.datasets, self.over).await?;
 
         self.store_replacing(kind, id, name, body).await
@@ -278,10 +347,16 @@ impl<'a> Surfaces<'a> {
         kind: DefinitionKind,
         id: &DefinitionId,
     ) -> Result<(), CustomError> {
-        let used_by = self.dependents_of(kind, id).await?;
-        if !used_by.is_empty() {
+        self.writable(kind, id).await?;
+        let dependents = self.dependents_of(kind, id).await?;
+        if !dependents.is_empty() {
             return Err(CustomError::InUse {
-                used_by: used_by.into_iter().map(|holder| holder.name).collect(),
+                used_by: dependents
+                    .holders
+                    .into_iter()
+                    .map(|holder| holder.name)
+                    .collect(),
+                hidden: dependents.hidden,
             });
         }
 
@@ -321,19 +396,42 @@ impl<'a> Surfaces<'a> {
     }
 
     /// Every stored definition that names this one: what a removal would
-    /// break.
+    /// break. A dashboard the caller cannot see is counted, never named.
     pub(crate) async fn dependents_of(
         &self,
         kind: DefinitionKind,
         id: &DefinitionId,
-    ) -> Result<Vec<Holder>, CustomError> {
-        let mut holders = Vec::new();
+    ) -> Result<Dependents, CustomError> {
+        let mut dependents = Dependents::default();
 
         for holder in kinds::referred_to_by(kind) {
-            holders.extend(self.holders_among(*holder, kind, id).await?);
+            for found in self.holders_among(*holder, kind, id).await? {
+                if self.shows(&found).await? {
+                    dependents.holders.push(found);
+                } else {
+                    dependents.hidden += 1;
+                }
+            }
         }
 
-        Ok(holders)
+        Ok(dependents)
+    }
+
+    /// Whether the caller may be told this holder exists.
+    async fn shows(&self, holder: &Holder) -> Result<bool, CustomError> {
+        match holder.kind {
+            DefinitionKind::Metric | DefinitionKind::Widget => Ok(true),
+            DefinitionKind::Dashboard => {
+                let Ok(id) = DefinitionId::parse(&holder.id) else {
+                    return Ok(false);
+                };
+                let seen = sight(self.definitions, &id, self.caller)
+                    .await
+                    .map_err(CustomError::Store)?;
+
+                Ok(seen.is_some())
+            }
+        }
     }
 
     /// The definitions of one kind that name `id`.
@@ -368,6 +466,58 @@ impl<'a> Surfaces<'a> {
         }
 
         Ok(found)
+    }
+}
+
+/// What names a definition: the holders the caller may see, and how many
+/// more they may not.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Dependents {
+    pub(crate) holders: Vec<Holder>,
+    pub(crate) hidden: u64,
+}
+
+impl Dependents {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.holders.is_empty() && self.hidden == 0
+    }
+}
+
+/// The writes that create a definition; a dashboard is created owned.
+pub(crate) fn creating(
+    kind: DefinitionKind,
+    id: &DefinitionId,
+    name: &DefinitionLabel,
+    body: Value,
+    owner: PersonId,
+) -> Vec<Change> {
+    let create = Change::Create(kind, id.clone(), name.clone(), body);
+
+    match kind {
+        DefinitionKind::Metric | DefinitionKind::Widget => vec![create],
+        DefinitionKind::Dashboard => vec![
+            create,
+            Change::Own {
+                dashboard: id.clone(),
+                owner,
+            },
+        ],
+    }
+}
+
+/// The refusal of a removal, naming the holders the caller may see and
+/// counting the rest.
+fn in_use(used_by: &[String], hidden: u64) -> String {
+    let unseen = match hidden {
+        0 => None,
+        1 => Some("1 dashboard you cannot see".to_owned()),
+        many => Some(format!("{many} dashboards you cannot see")),
+    };
+
+    match (used_by.is_empty(), unseen) {
+        (_, None) => format!("still in use by {}", used_by.join(", ")),
+        (true, Some(unseen)) => format!("still in use by {unseen}"),
+        (false, Some(unseen)) => format!("still in use by {} and {unseen}", used_by.join(", ")),
     }
 }
 

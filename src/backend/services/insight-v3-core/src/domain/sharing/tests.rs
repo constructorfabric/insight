@@ -1,0 +1,76 @@
+use std::sync::Mutex;
+
+use serde_json::json;
+use uuid::Uuid;
+
+use super::*;
+use crate::domain::dashboards::DashboardCatalogue as _;
+use crate::store::definitions::memory::MemoryDefinitions;
+
+const FORMER: PersonId = PersonId::new(Uuid::from_u128(1));
+const CALLER: PersonId = PersonId::new(Uuid::from_u128(2));
+const RACER: PersonId = PersonId::new(Uuid::from_u128(3));
+
+/// Identity as a list of administrators, which hands the dashboard to
+/// someone else the moment its owner is looked up, as a second transfer
+/// landing between the read and the write would.
+struct Racing<'a> {
+    store: &'a MemoryDefinitions,
+    dashboard: DefinitionId,
+    raced: Mutex<bool>,
+}
+
+#[async_trait]
+impl Administrators for Racing<'_> {
+    async fn holds_admin(&self, person: PersonId) -> Result<bool, AdministratorsError> {
+        let first = std::mem::replace(
+            &mut *self
+                .raced
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            true,
+        );
+        if person == FORMER && !first {
+            self.store
+                .transfer(&self.dashboard, FORMER, RACER)
+                .await
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
+
+        Ok(person != FORMER)
+    }
+
+    async fn current(&self) -> Result<Vec<PersonId>, AdministratorsError> {
+        Ok(vec![CALLER, RACER])
+    }
+}
+
+#[tokio::test]
+async fn a_transfer_that_loses_the_race_is_refused_and_leaves_the_winner_owning_it() {
+    let store = MemoryDefinitions::new();
+    let dashboard = DefinitionId::parse("left_behind").unwrap_or_else(|error| panic!("{error}"));
+    store
+        .seed_owned(
+            &dashboard,
+            &json!({ "title": "Left", "widgets": [] }),
+            FORMER,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let administrators = Racing {
+        store: &store,
+        dashboard: dashboard.clone(),
+        raced: Mutex::new(false),
+    };
+
+    let lost = DashboardShares::new(&store, &administrators, CALLER)
+        .transfer(&dashboard, CALLER)
+        .await;
+
+    assert!(matches!(lost, Err(SharingError::Moved)), "{lost:?}");
+    let standing = store
+        .standing(&dashboard, CALLER)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(standing.map(|held| held.owner), Some(Owner::Person(RACER)));
+}

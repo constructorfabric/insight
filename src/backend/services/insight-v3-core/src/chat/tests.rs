@@ -820,3 +820,44 @@ fn a_refusal_names_a_handful_of_datasets_rather_than_every_one() {
     assert!(known.contains("dataset_11"), "{known}");
     assert!(!known.contains("dataset_12"), "{known}");
 }
+
+#[tokio::test]
+async fn the_assistant_is_told_only_the_dashboards_the_caller_sees() {
+    use crate::domain::access::PersonId;
+    use crate::domain::definition::DefinitionId;
+
+    let store = crate::store::definitions::memory::MemoryDefinitions::new();
+    let datasets = crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now());
+    let me = PersonId::new(uuid::Uuid::from_u128(1));
+    let them = PersonId::new(uuid::Uuid::from_u128(2));
+    for (id, owner) in [("mine", Some(me)), ("theirs", Some(them)), ("legacy", None)] {
+        let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{error}"));
+        let body = json!({ "title": id, "widgets": [] });
+        let stored = match owner {
+            Some(owner) => store.seed_owned(&parsed, &body, owner).await,
+            None => {
+                store
+                    .seed(
+                        crate::domain::definition::DefinitionKind::Dashboard,
+                        &parsed,
+                        &body,
+                    )
+                    .await
+            }
+        };
+        stored.unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    let briefing = crate::domain::assistant::Assistant::new(&store, &datasets)
+        .briefing(me)
+        .await;
+
+    let dashboards: Vec<&str> = briefing
+        .catalogue
+        .built()
+        .iter()
+        .filter(|(kind, _)| *kind == crate::domain::definition::DefinitionKind::Dashboard)
+        .flat_map(|(_, listed)| listed.iter().map(|one| one.id.as_str()))
+        .collect();
+    assert_eq!(dashboards, ["legacy", "mine"]);
+}

@@ -464,7 +464,7 @@ fn preview_error(error: PreviewError) -> CanonicalError {
 async fn admin_only(
     state: &AppState,
     headers: &axum::http::HeaderMap,
-) -> Result<uuid::Uuid, CanonicalError> {
+) -> Result<crate::domain::access::PersonId, CanonicalError> {
     crate::api::require_admin(state, headers, || {
         DatasetApiError::permission_denied()
             .with_reason(crate::api::ADMIN_ONLY)

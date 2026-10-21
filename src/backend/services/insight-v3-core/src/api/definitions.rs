@@ -15,17 +15,20 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use super::folders::{folder_error, folder_field_error, folder_json};
-use super::tags::{names_json, tag_error, tag_field_error, tags_in};
+use super::folders::{folder_error, folder_json};
+use super::tags::{names_json, tag_error, tags_in};
+use crate::domain::access::Owner;
+use crate::domain::dashboards::{DashboardQuery, ListedDashboard, QueryError};
 use crate::domain::definition::{
-    DefinitionId, DefinitionKind, DefinitionLabel, Listed, ListedPage, MAX_PAGE_LIMIT, Page,
-    PageError, StoredDefinition,
+    DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Listed, MAX_PAGE_LIMIT,
+    Page, PageError, StoredDefinition,
 };
-use crate::domain::folders::FolderFilter;
 use crate::domain::kinds::metric::answerable::EffectiveClock;
-use crate::domain::surfaces::CustomError;
-use crate::domain::tags::TagFilter;
+use crate::domain::surfaces::{CustomError, Surfaces};
 use crate::domain::violation::Violation;
+
+/// What a viewer is told when they try to change a dashboard.
+pub(crate) const OWNER_ONLY: &str = "only the owner can change this dashboard";
 
 /// The query string on a list: what to look for, in a name or in a body, and
 /// which page of the matches to answer with.
@@ -36,6 +39,7 @@ struct Search {
     limit: Option<u64>,
     offset: Option<u64>,
     folder: Option<String>,
+    owned: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -142,6 +146,11 @@ fn register_list(
                 )
                 .array(true),
             )
+            .param(query_param(
+                "owned",
+                "string",
+                "`me` for the caller's own dashboards, `shared` for those shared with them; absent lists every visible one",
+            ))
     } else {
         builder
     };
@@ -149,7 +158,7 @@ fn register_list(
     builder
         .json_response(
             StatusCode::OK,
-            "One page of ids and names, and how many match",
+            "One page of ids and names, dashboards with their owner and the caller's access, and how many match",
         )
         .error_400(openapi)
         .error_403(openapi)
@@ -213,7 +222,10 @@ fn register_kind(
         .anonymous()
         .exposed()
         .param(id_param.clone())
-        .json_response(StatusCode::OK, "The definition's id, name and body")
+        .json_response(
+            StatusCode::OK,
+            "The definition's id, name and body; a dashboard's owner, the caller's access, folder and tags",
+        )
         .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
@@ -269,20 +281,35 @@ struct DefinitionResponse {
 
 #[derive(Debug, Serialize)]
 struct DashboardMeta {
+    owner_person_id: Option<String>,
+    access: &'static str,
     folder: Option<serde_json::Value>,
     tags: serde_json::Value,
     updated_at: String,
 }
 
+/// An owner as the wire carries it: the person's id, or null for none.
+pub(crate) fn owner_json(owner: Owner) -> Option<String> {
+    owner.person().map(|person| person.to_string())
+}
+
 async fn dashboard_meta(
     state: &AppState,
+    surfaces: &Surfaces<'_>,
     id: &DefinitionId,
     stored: &StoredDefinition,
 ) -> Result<DashboardMeta, CanonicalError> {
-    let folder = state.folders().folder_of(id).await.map_err(folder_error)?;
+    let seen = surfaces.seen(id).await.map_err(custom_error)?;
+    let folder = state
+        .folders()
+        .folder_of(id, surfaces.caller())
+        .await
+        .map_err(folder_error)?;
     let tags = state.tags().tags_of(id).await.map_err(tag_error)?;
 
     Ok(DashboardMeta {
+        owner_person_id: owner_json(seen.owner),
+        access: seen.access.as_str(),
         folder: folder.as_ref().map(folder_json),
         tags: names_json(&tags),
         updated_at: stored
@@ -292,20 +319,27 @@ async fn dashboard_meta(
 }
 
 pub(super) fn custom_error(error: CustomError) -> CanonicalError {
+    let detail = error.to_string();
+
     match error {
         CustomError::NotFound { kind, id } => {
             DefinitionApiError::not_found(format!("{} `{id}` was not found", kind.singular()))
                 .with_resource(&id)
                 .create()
         }
-        CustomError::InUse { used_by } => DefinitionApiError::failed_precondition()
-            .with_precondition_violation(
-                "name",
-                format!("still in use by {}", used_by.join(", ")),
-                "in_use",
-            )
+        CustomError::NotOwner => DefinitionApiError::permission_denied()
+            .with_reason(OWNER_ONLY)
+            .create(),
+        CustomError::InUse { .. } => DefinitionApiError::failed_precondition()
+            .with_precondition_violation("name", detail, "in_use")
             .with_override(Http::status_code(StatusCode::CONFLICT.as_u16()))
             .create(),
+        CustomError::Store(DefinitionStoreError::TagsFull) => {
+            DefinitionApiError::failed_precondition()
+                .with_precondition_violation("tags", detail, "too_many")
+                .with_override(Http::status_code(StatusCode::CONFLICT.as_u16()))
+                .create()
+        }
         CustomError::Widget(source) => widget_error(&source),
         CustomError::DatasetNotReady(named) => DefinitionApiError::invalid_field(
             "body",
@@ -362,13 +396,13 @@ async fn delete_definition(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
 
     let Ok(id) = DefinitionId::parse(&id) else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
 
-    match state.surfaces().delete(kind, &id).await {
+    match state.surfaces(caller).delete(kind, &id).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT.into_response()),
         Err(CustomError::NotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(other) => Err(custom_error(other)),
@@ -413,13 +447,13 @@ async fn create_definition(
     headers: axum::http::HeaderMap,
     body: Result<Json<DefinitionRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
     let Json(request) = body.map_err(|error| DefinitionApiError::unreadable_body(&error))?;
 
     let name =
         DefinitionLabel::parse(&request.name).map_err(DefinitionApiError::definition_error)?;
     let id = state
-        .surfaces()
+        .surfaces(caller)
         .create(kind, &name, &request.body)
         .await
         .map_err(custom_error)?;
@@ -437,14 +471,14 @@ async fn replace_definition(
     headers: axum::http::HeaderMap,
     body: Result<Json<DefinitionRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
     let Json(request) = body.map_err(|error| DefinitionApiError::unreadable_body(&error))?;
 
     let id = DefinitionId::parse(&id).map_err(|_| DefinitionApiError::malformed_id(kind, &id))?;
     let name =
         DefinitionLabel::parse(&request.name).map_err(DefinitionApiError::definition_error)?;
     state
-        .surfaces()
+        .surfaces(caller)
         .replace(kind, &id, &name, &request.body)
         .await
         .map_err(custom_error)?;
@@ -461,8 +495,11 @@ fn widget_error(error: &crate::domain::kinds::widget::WidgetError) -> CanonicalE
 /// What names a definition, as a reader is shown it.
 #[derive(Debug, Serialize)]
 struct Dependents {
-    /// Each holder, as the kind it is, its id and the name it has.
+    /// Each holder the caller may see, as the kind it is, its id and the
+    /// name it has.
     holders: Vec<Holder>,
+    /// How many more holders are dashboards the caller may not see.
+    hidden: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -480,21 +517,23 @@ async fn definition_dependents(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
 
     let Ok(id) = DefinitionId::parse(&id) else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
-    let surfaces = state.surfaces();
+    let surfaces = state.surfaces(caller);
 
     if let Err(CustomError::NotFound { .. }) = surfaces.get(kind, &id).await {
         return Ok(StatusCode::NOT_FOUND.into_response());
     }
 
-    let holders = surfaces
+    let found = surfaces
         .dependents_of(kind, &id)
         .await
-        .map_err(custom_error)?
+        .map_err(custom_error)?;
+    let holders = found
+        .holders
         .into_iter()
         .map(|holder| Holder {
             kind: holder.kind.plural().to_owned(),
@@ -503,7 +542,11 @@ async fn definition_dependents(
         })
         .collect();
 
-    Ok(Json(Dependents { holders }).into_response())
+    Ok(Json(Dependents {
+        holders,
+        hidden: found.hidden,
+    })
+    .into_response())
 }
 
 async fn get_definition(
@@ -512,13 +555,13 @@ async fn get_definition(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
 
     let Ok(id) = DefinitionId::parse(&id) else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
 
-    let surfaces = state.surfaces();
+    let surfaces = state.surfaces(caller);
     let stored = match surfaces.read(kind, &id).await {
         Ok(stored) => stored,
         Err(CustomError::NotFound { .. }) => return Ok(StatusCode::NOT_FOUND.into_response()),
@@ -527,7 +570,7 @@ async fn get_definition(
 
     let clock = surfaces.clock_of(kind, &stored.body).await;
     let meta = if kind == DefinitionKind::Dashboard {
-        Some(dashboard_meta(&state, &id, &stored).await?)
+        Some(dashboard_meta(&state, &surfaces, &id, &stored).await?)
     } else {
         None
     };
@@ -542,39 +585,32 @@ async fn get_definition(
     .into_response())
 }
 
-async fn narrowed(
-    state: &AppState,
-    kind: DefinitionKind,
-    search: &Search,
-    page: Page,
-    tags: &[String],
-) -> Result<ListedPage, CanonicalError> {
-    let folder = search
-        .folder
-        .as_deref()
-        .map(|folder| FolderFilter::parse(kind, folder))
-        .transpose()
-        .map_err(|error| folder_field_error(&error))?;
-    let tags = TagFilter::parse(kind, tags).map_err(|error| tag_field_error(&error))?;
-    let needle = search.q.trim();
+/// What a listing filter that cannot be read says, named by its parameter.
+pub(crate) fn query_error(error: &QueryError) -> CanonicalError {
+    let field = match error {
+        QueryError::Folder(_) => "folder",
+        QueryError::Tag(_) => "tag",
+        QueryError::Owned(_) => "owned",
+    };
 
-    match (folder, tags) {
-        (None, None) => state
-            .surfaces()
-            .page(kind, needle, page)
-            .await
-            .map_err(custom_error),
-        (Some(filter), None) => state
-            .folders()
-            .page_filed(needle, page, filter)
-            .await
-            .map_err(folder_error),
-        (folder, Some(tags)) => state
-            .tags()
-            .page_tagged(needle, page, folder, &tags)
-            .await
-            .map_err(tag_error),
-    }
+    DefinitionApiError::invalid_field(field, error.to_string())
+}
+
+/// One page of what the caller may list of this kind, as the wire shows it.
+async fn listed_page(
+    surfaces: &Surfaces<'_>,
+    kind: DefinitionKind,
+    query: &DashboardQuery,
+    page: Page,
+) -> Result<(serde_json::Value, u64), CustomError> {
+    let Some(library) = kind.library() else {
+        let found = surfaces.page_dashboards(query, page).await?;
+        return Ok((dashboards_json(&found.items), found.total));
+    };
+
+    let found = surfaces.page(library, &query.needle, page).await?;
+
+    Ok((listed_json(&found.items), found.total))
 }
 
 async fn list_definitions(
@@ -584,15 +620,25 @@ async fn list_definitions(
     Query(search): Query<Search>,
     RawQuery(query): RawQuery,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
 
     let page = Page::parse(search.limit, search.offset).map_err(page_error)?;
     let tags = tags_in(query.as_deref());
-    let found = narrowed(&state, kind, &search, page, &tags).await?;
+    let query = DashboardQuery::parse(
+        kind,
+        &search.q,
+        search.folder.as_deref(),
+        &tags,
+        search.owned.as_deref(),
+    )
+    .map_err(|error| query_error(&error))?;
+    let (items, total) = listed_page(&state.surfaces(caller), kind, &query, page)
+        .await
+        .map_err(custom_error)?;
 
     Ok(Json(serde_json::json!({
-        "items": listed_json(&found.items),
-        "total": found.total,
+        "items": items,
+        "total": total,
         "limit": page.limit(),
         "offset": page.offset(),
     }))
@@ -604,6 +650,24 @@ pub(crate) fn listed_json(items: &[Listed]) -> serde_json::Value {
         items
             .iter()
             .map(|listed| serde_json::json!({ "id": listed.id, "name": listed.name }))
+            .collect(),
+    )
+}
+
+/// Dashboards as a listing shows them: with their owner and how the caller
+/// sees each.
+pub(crate) fn dashboards_json(items: &[ListedDashboard]) -> serde_json::Value {
+    serde_json::Value::Array(
+        items
+            .iter()
+            .map(|listed| {
+                serde_json::json!({
+                    "id": listed.id,
+                    "name": listed.name,
+                    "owner_person_id": owner_json(listed.owner),
+                    "access": listed.access.as_str(),
+                })
+            })
             .collect(),
     )
 }

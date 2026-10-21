@@ -16,12 +16,14 @@ use utoipa::ToSchema;
 use super::AppState;
 use super::errors::ApiErrors;
 use crate::chat::{Ask, ChatError, Proposal, Proposed, Turn};
+use crate::domain::access::PersonId;
 use crate::domain::assistant::DatasetSchemas;
 use crate::domain::definition::{
     Change, Definition, DefinitionId, DefinitionKind, DefinitionLabel,
 };
 use crate::domain::kinds;
 use crate::domain::query::metric_query::{MetricQuery, RunResult};
+use crate::domain::surfaces::{Surfaces, creating};
 
 #[resource_error("gts.cf.insight.insight_v3_core.chat.v1~")]
 struct ChatApiError;
@@ -120,7 +122,7 @@ async fn handle_chat(
     headers: axum::http::HeaderMap,
     request: Result<Json<ChatRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, || {
+    let caller = crate::api::require_admin(&state, &headers, || {
         ChatApiError::permission_denied()
             .with_reason(crate::api::ADMIN_ONLY)
             .create()
@@ -128,8 +130,8 @@ async fn handle_chat(
     .await?;
     let Json(request) = request.map_err(|error| ChatApiError::unreadable_body(&error))?;
 
-    let briefing = state.assistant().briefing().await;
-    let schemas = DatasetSchemas::new(state.datasets(), state.definitions());
+    let briefing = state.assistant().briefing(caller).await;
+    let schemas = DatasetSchemas::new(state.datasets(), state.store());
     let proposal = state
         .chat()
         .propose(&Ask {
@@ -163,7 +165,7 @@ async fn handle_chat(
             metric,
             widgets,
             dashboard,
-        } => store_proposed(&state, reply, metric, widgets, dashboard).await,
+        } => store_proposed(&state, caller, reply, metric, widgets, dashboard).await,
     }
 }
 
@@ -178,13 +180,15 @@ struct Landing {
     body: serde_json::Value,
 }
 
-/// Stores what the assistant proposed, or none of it.
+/// Stores what the assistant proposed, as `caller`, or none of it.
 ///
 /// Every name and id is parsed and every body checked before anything is
 /// written, so one refusal leaves the reader what they had rather than half a
-/// dashboard.
+/// dashboard. A dashboard it creates is the caller's; one it replaces must be
+/// one the caller may change.
 async fn store_proposed(
     state: &AppState,
+    caller: PersonId,
     reply: String,
     metric: Option<Proposed>,
     widgets: Vec<Proposed>,
@@ -207,18 +211,23 @@ async fn store_proposed(
     }
     let landing = pointed_at_ids(landing);
 
+    let surfaces = state.surfaces(caller);
+    replaceable(&surfaces, &landing).await?;
+
     let batch: Vec<Definition> = landing
         .iter()
         .map(|item| Definition::new(item.kind, item.id.clone(), item.body.clone()))
         .collect();
-    state
-        .surfaces()
+    surfaces
         .check_batch(&batch)
         .await
         .map_err(crate::api::definitions::custom_error)?;
 
     let (created, updated) = reported(&landing);
-    let changes: Vec<Change> = landing.into_iter().map(change_of).collect();
+    let changes: Vec<Change> = landing
+        .into_iter()
+        .flat_map(|item| changes_of(item, caller))
+        .collect();
     state
         .definitions()
         .apply(&changes)
@@ -231,6 +240,23 @@ async fn store_proposed(
         updated,
     })
     .into_response())
+}
+
+/// Refuses a proposal replacing a dashboard the caller may not change, as
+/// missing when they cannot see it.
+async fn replaceable(surfaces: &Surfaces<'_>, landing: &[Landing]) -> Result<(), CanonicalError> {
+    let replaced = landing
+        .iter()
+        .filter(|item| item.replaces && item.kind == DefinitionKind::Dashboard);
+
+    for item in replaced {
+        surfaces
+            .changeable(&item.id)
+            .await
+            .map_err(crate::api::definitions::custom_error)?;
+    }
+
+    Ok(())
 }
 
 /// The id an item is stored under: the one it replaces, or a fresh one.
@@ -279,12 +305,12 @@ fn pointed_at_ids(landing: Vec<Landing>) -> Vec<Landing> {
         .collect()
 }
 
-fn change_of(item: Landing) -> Change {
+fn changes_of(item: Landing, caller: PersonId) -> Vec<Change> {
     if item.replaces {
-        return Change::Replace(item.kind, item.id, item.name, item.body);
+        return vec![Change::Replace(item.kind, item.id, item.name, item.body)];
     }
 
-    Change::Create(item.kind, item.id, item.name, item.body)
+    creating(item.kind, &item.id, &item.name, item.body, caller)
 }
 
 /// What was created and what was replaced, by id and name.

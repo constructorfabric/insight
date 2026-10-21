@@ -41,7 +41,7 @@ pub(crate) fn register_routes(
 ) -> Router {
     let duplicate = OperationBuilder::post("/v1/dashboards/{id}/duplicate")
         .operation_id("insight_v3_core.dashboards.duplicate")
-        .summary("Copy a dashboard, its folder and its tags under a fresh id")
+        .summary("Copy a dashboard under a fresh id as the caller's own, with the caller's folder for it and its tags")
         .anonymous()
         .exposed()
         .param(ParamSpec::path("id").description("The id of the dashboard to copy"))
@@ -50,6 +50,7 @@ pub(crate) fn register_routes(
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
+        .error_409(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(duplicate_dashboard)
@@ -65,7 +66,7 @@ async fn duplicate_dashboard(
     headers: axum::http::HeaderMap,
     body: Result<Json<DuplicateRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
     let Json(request) = body.map_err(|error| DefinitionApiError::unreadable_body(&error))?;
 
     let from = DefinitionId::parse(&id)
@@ -73,7 +74,7 @@ async fn duplicate_dashboard(
     let name =
         DefinitionLabel::parse(&request.name).map_err(DefinitionApiError::definition_error)?;
     let to = state
-        .surfaces()
+        .surfaces(caller)
         .duplicate(&from, &name)
         .await
         .map_err(custom_error)?;

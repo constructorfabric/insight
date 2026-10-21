@@ -5,17 +5,18 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use super::folders::{COUNT_DASHBOARD, folder_clause, matched, statement};
-use super::{ListedRow, MariaDefinitions, TotalRow};
-use crate::domain::definition::{DefinitionId, DefinitionStoreError, ListedPage, Page};
-use crate::domain::folders::FolderFilter;
-use crate::domain::tags::{MAX_TAGS, TagError, TagFilter, TagName, TagSet, TagSummary, Tags};
+use super::dashboards::{VISIBLE, owner_value, visible_values};
+use super::folders::{COUNT_DASHBOARD, statement};
+use super::{MariaDefinitions, TotalRow};
+use crate::domain::access::{Owner, PersonId};
+use crate::domain::definition::{DefinitionId, DefinitionStoreError};
+use crate::domain::tags::{MAX_TAGS, TagError, TagName, TagSet, TagSummary, Tags};
 
 const LOCK_TAGS: &str = "SELECT id FROM tags_lock WHERE id = 1 FOR UPDATE";
 
-const FIND_TAG: &str = "SELECT id FROM tags WHERE name = ?";
+const FIND_TAG: &str = "SELECT id FROM tags WHERE owner_scope = ? AND name = ?";
 
-const INSERT_TAG: &str = "INSERT INTO tags (id, name) VALUES (?, ?)";
+const INSERT_TAG: &str = "INSERT INTO tags (id, name, owner_person_id) VALUES (?, ?, ?)";
 
 const UNLINK_DASHBOARD: &str = "DELETE FROM dashboard_tags WHERE dashboard = ?";
 
@@ -24,29 +25,22 @@ const LINK_TAG: &str = "INSERT INTO dashboard_tags (dashboard, tag_id) VALUES (?
 const PRUNE_TAGS: &str = "DELETE FROM tags
 WHERE NOT EXISTS (SELECT 1 FROM dashboard_tags WHERE dashboard_tags.tag_id = tags.id)";
 
-const COUNT_TAGS: &str = "SELECT COUNT(*) AS total FROM tags";
+const COUNT_TAGS: &str = "SELECT COUNT(*) AS total FROM tags WHERE owner_scope = ?";
 
-const LIST_TAGS: &str = "SELECT tags.name, COUNT(*) AS dashboards
-FROM tags JOIN dashboard_tags ON dashboard_tags.tag_id = tags.id
-GROUP BY tags.id, tags.name
-ORDER BY tags.name";
+/// One entry per name whatever scope holds it: the name column compares
+/// without case, so grouping by it merges spellings, and one is kept.
+const LIST_TAGS: &str = "SELECT MIN(tags.name) AS name, COUNT(DISTINCT dashboards.id) AS dashboards
+FROM tags
+JOIN dashboard_tags ON dashboard_tags.tag_id = tags.id
+JOIN dashboards ON dashboards.id = dashboard_tags.dashboard
+WHERE {visible}
+GROUP BY tags.name
+ORDER BY MIN(tags.name)";
 
 const TAGS_OF: &str = "SELECT tags.name
 FROM dashboard_tags JOIN tags ON tags.id = dashboard_tags.tag_id
 WHERE dashboard_tags.dashboard = ?
 ORDER BY tags.name";
-
-const PAGE_TAGGED: &str = "SELECT id, name FROM dashboards
-WHERE (name LIKE ? OR body LIKE ?){folder} AND id IN ({tagged})
-ORDER BY name, id
-LIMIT ? OFFSET ?";
-
-const COUNT_TAGGED: &str = "SELECT COUNT(*) AS total FROM dashboards
-WHERE (name LIKE ? OR body LIKE ?){folder} AND id IN ({tagged})";
-
-const TAGGED: &str = "SELECT dashboard_tags.dashboard
-FROM dashboard_tags JOIN tags ON tags.id = dashboard_tags.tag_id
-WHERE tags.name IN ({names})";
 
 #[derive(Debug, FromQueryResult)]
 struct IdRow {
@@ -64,43 +58,18 @@ struct SummaryRow {
     dashboards: i64,
 }
 
-fn narrowed(template: &str, folder: Option<FolderFilter>, tags: &TagFilter) -> String {
-    let folder = folder
-        .map(|filter| format!(" AND {}", folder_clause(filter)))
-        .unwrap_or_default();
-    let names = vec!["?"; tags.names().len()].join(", ");
-
-    template
-        .replace("{folder}", &folder)
-        .replace("{tagged}", &TAGGED.replace("{names}", &names))
+/// What `owner_scope` holds for a scope: the owner, or empty for ownerless.
+pub(super) fn scope_value(scope: Owner) -> Value {
+    scope
+        .person()
+        .map_or_else(String::new, |person| person.to_string())
+        .into()
 }
 
-fn narrowing(needle: &str, folder: Option<FolderFilter>, tags: &TagFilter) -> Vec<Value> {
-    let mut values = matched(needle, folder);
-    values.extend(tags.names().iter().map(|name| name.as_str().into()));
-    values
-}
-
-pub(super) fn page_statement(
-    needle: &str,
-    page: Page,
-    folder: Option<FolderFilter>,
-    tags: &TagFilter,
-) -> Statement {
-    let mut values = narrowing(needle, folder, tags);
-    values.push(page.limit().into());
-    values.push(page.offset().into());
-    statement(&narrowed(PAGE_TAGGED, folder, tags), values)
-}
-
-pub(super) fn count_statement(
-    needle: &str,
-    folder: Option<FolderFilter>,
-    tags: &TagFilter,
-) -> Statement {
+pub(super) fn list_statement(caller: PersonId) -> Statement {
     statement(
-        &narrowed(COUNT_TAGGED, folder, tags),
-        narrowing(needle, folder, tags),
+        &LIST_TAGS.replace("{visible}", VISIBLE),
+        visible_values(caller),
     )
 }
 
@@ -129,10 +98,17 @@ async fn counted(
         .map_or(0, |row| row.total))
 }
 
-async fn resolved(transaction: &DatabaseTransaction, name: &TagName) -> Result<String, DbErr> {
-    let held = IdRow::find_by_statement(statement(FIND_TAG, vec![name.as_str().into()]))
-        .one(transaction)
-        .await?;
+async fn resolved(
+    transaction: &DatabaseTransaction,
+    scope: Owner,
+    name: &TagName,
+) -> Result<String, DbErr> {
+    let held = IdRow::find_by_statement(statement(
+        FIND_TAG,
+        vec![scope_value(scope), name.as_str().into()],
+    ))
+    .one(transaction)
+    .await?;
     if let Some(row) = held {
         return Ok(row.id);
     }
@@ -141,11 +117,71 @@ async fn resolved(transaction: &DatabaseTransaction, name: &TagName) -> Result<S
     transaction
         .execute_raw(statement(
             INSERT_TAG,
-            vec![id.clone().into(), name.as_str().into()],
+            vec![id.clone().into(), name.as_str().into(), owner_value(scope)],
         ))
         .await?;
 
     Ok(id)
+}
+
+/// The ids of `names` as tags of `scope`, made where missing, each once.
+async fn resolved_all(
+    transaction: &DatabaseTransaction,
+    scope: Owner,
+    names: &[TagName],
+) -> Result<Vec<String>, DbErr> {
+    let mut ids: Vec<String> = Vec::with_capacity(names.len());
+    for name in names {
+        let id = resolved(transaction, scope, name).await?;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+
+    Ok(ids)
+}
+
+async fn scope_is_full(transaction: &DatabaseTransaction, scope: Owner) -> Result<bool, DbErr> {
+    let total = counted(transaction, COUNT_TAGS, vec![scope_value(scope)]).await?;
+
+    Ok(usize::try_from(total).unwrap_or(usize::MAX) > MAX_TAGS)
+}
+
+async fn names_on(
+    transaction: &DatabaseTransaction,
+    dashboard: &DefinitionId,
+) -> Result<Vec<TagName>, DefinitionStoreError> {
+    let rows = TagRow::find_by_statement(statement(TAGS_OF, vec![dashboard.as_str().into()]))
+        .all(transaction)
+        .await?;
+
+    rows.iter()
+        .map(|row| {
+            TagName::parse(&row.name).map_err(|_| DefinitionStoreError::UnreadableRow("tag"))
+        })
+        .collect()
+}
+
+/// Tags `to` with the names `from` carries, as tags of `scope`.
+pub(super) async fn carry_tags(
+    transaction: &DatabaseTransaction,
+    from: &DefinitionId,
+    to: &DefinitionId,
+    scope: Owner,
+) -> Result<(), DefinitionStoreError> {
+    let names = names_on(transaction, from).await?;
+    let ids = resolved_all(transaction, scope, &names).await?;
+    for id in ids {
+        transaction
+            .execute_raw(statement(LINK_TAG, vec![to.as_str().into(), id.into()]))
+            .await?;
+    }
+
+    if scope_is_full(transaction, scope).await? {
+        return Err(DefinitionStoreError::TagsFull);
+    }
+
+    Ok(())
 }
 
 async fn relink(
@@ -187,8 +223,8 @@ impl MariaDefinitions {
 
 #[async_trait]
 impl Tags for MariaDefinitions {
-    async fn list_tags(&self) -> Result<Vec<TagSummary>, TagError> {
-        let rows = SummaryRow::find_by_statement(statement(LIST_TAGS, Vec::new()))
+    async fn list_tags(&self, caller: PersonId) -> Result<Vec<TagSummary>, TagError> {
+        let rows = SummaryRow::find_by_statement(list_statement(caller))
             .all(&self.db)
             .await?;
 
@@ -210,7 +246,12 @@ impl Tags for MariaDefinitions {
         rows.iter().map(|row| TagName::parse(&row.name)).collect()
     }
 
-    async fn set_tags(&self, dashboard: &DefinitionId, tags: &TagSet) -> Result<(), TagError> {
+    async fn set_tags(
+        &self,
+        dashboard: &DefinitionId,
+        scope: Owner,
+        tags: &TagSet,
+    ) -> Result<(), TagError> {
         let transaction = self.db.begin().await?;
         lock_tags(&transaction).await?;
         let held = counted(
@@ -223,44 +264,16 @@ impl Tags for MariaDefinitions {
             return Err(TagError::DashboardNotFound(dashboard.as_str().to_owned()));
         }
 
-        let mut ids: Vec<String> = Vec::with_capacity(tags.names().len());
-        for name in tags.names() {
-            let id = resolved(&transaction, name).await?;
-            if !ids.contains(&id) {
-                ids.push(id);
-            }
-        }
+        let ids = resolved_all(&transaction, scope, tags.names()).await?;
         relink(&transaction, dashboard, ids).await?;
         prune_tags(&transaction).await?;
 
-        let total = counted(&transaction, COUNT_TAGS, Vec::new()).await?;
-        if usize::try_from(total).unwrap_or(usize::MAX) > MAX_TAGS {
+        if scope_is_full(&transaction, scope).await? {
             return Err(TagError::TooMany);
         }
         transaction.commit().await?;
 
         Ok(())
-    }
-
-    async fn page_tagged(
-        &self,
-        needle: &str,
-        page: Page,
-        folder: Option<FolderFilter>,
-        tags: &TagFilter,
-    ) -> Result<ListedPage, TagError> {
-        let rows = ListedRow::find_by_statement(page_statement(needle, page, folder, tags))
-            .all(&self.db)
-            .await?;
-        let total = TotalRow::find_by_statement(count_statement(needle, folder, tags))
-            .one(&self.db)
-            .await?
-            .map_or(0, |row| row.total);
-
-        Ok(ListedPage {
-            items: rows.into_iter().map(ListedRow::into_listed).collect(),
-            total: u64::try_from(total).unwrap_or(0),
-        })
     }
 }
 

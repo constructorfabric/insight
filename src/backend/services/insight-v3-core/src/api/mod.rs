@@ -17,12 +17,14 @@ pub(crate) mod metric_drilldown;
 pub(crate) mod metric_run;
 pub(crate) mod pins;
 pub(crate) mod raw_data;
+pub(crate) mod sharing;
 pub(crate) mod tables;
 pub(crate) mod tags;
 
 use admission::IngestAdmission;
 
 use crate::chat::ChatClient;
+use crate::domain::access::PersonId;
 use crate::domain::alerts::delivery::{Deliveries, Provider};
 use crate::domain::alerts::rule::AlertStore;
 use crate::domain::alerts::schedule::AlertSchedule;
@@ -40,7 +42,7 @@ use crate::store::identity::IdentityClient;
 pub(crate) const ADMIN_ONLY: &str = "admin role required for this operation";
 
 /// The caller's own authorization, as the gateway passed it on.
-fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {
+pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {
     headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -54,12 +56,11 @@ fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {
 ///
 /// An identity that is absent or unreachable is a server error, never a
 /// permit: a role check that cannot be made has not passed.
-/// Refuses a caller without the admin role, and names the one with it.
 pub(crate) async fn require_admin(
     state: &AppState,
     headers: &axum::http::HeaderMap,
     denied: fn() -> toolkit_canonical_errors::CanonicalError,
-) -> Result<uuid::Uuid, toolkit_canonical_errors::CanonicalError> {
+) -> Result<PersonId, toolkit_canonical_errors::CanonicalError> {
     if !state.identity.is_configured() {
         tracing::error!("identity service is not configured; admin access cannot be verified");
         return Err(toolkit_canonical_errors::CanonicalError::internal(
@@ -302,6 +303,14 @@ impl AppState {
         self.definitions.as_ref()
     }
 
+    pub(crate) fn store(&self) -> &dyn DefinitionStore {
+        self.definitions.as_ref()
+    }
+
+    pub(crate) fn identity(&self) -> &IdentityClient {
+        &self.identity
+    }
+
     pub(crate) fn metrics(&self) -> &MetricRunner {
         &self.metrics
     }
@@ -310,12 +319,14 @@ impl AppState {
         &self.chat
     }
 
-    pub(crate) fn surfaces(&self) -> crate::domain::surfaces::Surfaces<'_> {
+    /// The definitions as `caller` reaches them.
+    pub(crate) fn surfaces(&self, caller: PersonId) -> crate::domain::surfaces::Surfaces<'_> {
         crate::domain::surfaces::Surfaces::new(
             self.definitions.as_ref(),
             self.datasets(),
             &self.datasets.database,
             self.metrics.people(),
+            caller,
         )
     }
 
@@ -450,6 +461,7 @@ pub(crate) fn register_routes(
     let api = raw_data::register_routes(Router::new(), openapi, state.clone(), admission);
     let api = definitions::register_routes(api, openapi, &state);
     let api = duplicate::register_routes(api, openapi, &state);
+    let api = sharing::register_routes(api, openapi, &state);
     let api = folders::register_routes(api, openapi, &state);
     let api = tags::register_routes(api, openapi, &state);
     let api = pins::register_routes(api, openapi, &state);

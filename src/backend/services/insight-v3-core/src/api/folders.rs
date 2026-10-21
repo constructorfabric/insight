@@ -12,9 +12,10 @@ use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
+use super::definitions::owner_json;
 use super::errors::ApiErrors;
 use crate::domain::definition::{DefinitionId, DefinitionKind};
-use crate::domain::folders::{Folder, FolderError, FolderId, FolderList, FolderName};
+use crate::domain::folders::{self, Folder, FolderError, FolderId, FolderList, FolderName};
 
 #[resource_error("gts.cf.insight.insight_v3_core.folders.v1~")]
 struct FolderApiError;
@@ -49,7 +50,7 @@ impl ApiErrors for FolderApiError {
 
 #[derive(Debug, Deserialize, ToSchema)]
 struct NameRequest {
-    /// Trimmed, then 1 to 64 characters, unique ignoring case.
+    /// Trimmed, then 1 to 64 characters.
     name: String,
 }
 
@@ -65,7 +66,11 @@ struct MoveRequest {
 impl toolkit::api::api_dto::RequestApiDto for MoveRequest {}
 
 pub(crate) fn folder_json(folder: &Folder) -> Value {
-    json!({ "id": folder.id.to_string(), "name": folder.name.as_str() })
+    json!({
+        "id": folder.id.to_string(),
+        "name": folder.name.as_str(),
+        "owner_person_id": owner_json(folder.owner),
+    })
 }
 
 pub(crate) fn folders_json(list: &FolderList) -> Value {
@@ -76,6 +81,7 @@ pub(crate) fn folders_json(list: &FolderList) -> Value {
             json!({
                 "id": summary.folder.id.to_string(),
                 "name": summary.folder.name.as_str(),
+                "owner_person_id": owner_json(summary.folder.owner),
                 "dashboards": summary.dashboards,
             })
         })
@@ -89,7 +95,9 @@ pub(super) fn folder_error(error: FolderError) -> CanonicalError {
 
     match error {
         FolderError::Name => FolderApiError::invalid_field("name", detail),
-        FolderError::NotFiled(_) => FolderApiError::invalid_field("folder", detail),
+        FolderError::NotFiled(_) | FolderError::WrongShelf(_) => {
+            FolderApiError::invalid_field("folder", detail)
+        }
         FolderError::Id => FolderApiError::invalid_field("id", detail),
         FolderError::FolderNotFound(id) => FolderApiError::not_found(detail)
             .with_resource(id.to_string())
@@ -97,7 +105,6 @@ pub(super) fn folder_error(error: FolderError) -> CanonicalError {
         FolderError::DashboardNotFound(name) => FolderApiError::not_found(detail)
             .with_resource(name)
             .create(),
-        FolderError::NameTaken(name) => FolderApiError::name_taken(&name),
         FolderError::TooMany => FolderApiError::failed_precondition()
             .with_precondition_violation("name", detail, "too_many")
             .with_override(Http::status_code(StatusCode::CONFLICT.as_u16()))
@@ -106,7 +113,7 @@ pub(super) fn folder_error(error: FolderError) -> CanonicalError {
     }
 }
 
-pub(super) fn folder_field_error(error: &FolderError) -> CanonicalError {
+fn folder_field_error(error: &FolderError) -> CanonicalError {
     FolderApiError::invalid_field("folder", error.to_string())
 }
 
@@ -129,12 +136,12 @@ pub(crate) fn register_routes(
 
     let list = OperationBuilder::get("/v1/folders")
         .operation_id("insight_v3_core.folders.list")
-        .summary("List the dashboard folders, each with how many dashboards it holds")
+        .summary("List the caller's folders and the ownerless ones, each with how many dashboards the caller sees in it")
         .anonymous()
         .exposed()
         .json_response(
             StatusCode::OK,
-            "Every folder, and how many dashboards are in none",
+            "The folders, and how many visible dashboards are in none of the caller's",
         )
         .error_403(openapi)
         .error_500(openapi)
@@ -145,7 +152,7 @@ pub(crate) fn register_routes(
 
     let create = OperationBuilder::post("/v1/folders")
         .operation_id("insight_v3_core.folders.create")
-        .summary("Make a dashboard folder")
+        .summary("Make a dashboard folder of the caller's own")
         .anonymous()
         .exposed()
         .json_request::<NameRequest>(openapi, "The folder's name")
@@ -161,7 +168,7 @@ pub(crate) fn register_routes(
 
     let rename = OperationBuilder::patch("/v1/folders/{id}")
         .operation_id("insight_v3_core.folders.rename")
-        .summary("Rename a dashboard folder")
+        .summary("Rename one of the caller's folders or an ownerless one")
         .anonymous()
         .exposed()
         .param(id_param.clone())
@@ -170,7 +177,6 @@ pub(crate) fn register_routes(
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
-        .error_409(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(rename_folder)
@@ -179,7 +185,7 @@ pub(crate) fn register_routes(
 
     let remove = OperationBuilder::delete("/v1/folders/{id}")
         .operation_id("insight_v3_core.folders.delete")
-        .summary("Remove a dashboard folder; its dashboards are left in none")
+        .summary("Remove one of the caller's folders or an ownerless one; its dashboards are left in none")
         .anonymous()
         .exposed()
         .param(id_param)
@@ -195,7 +201,7 @@ pub(crate) fn register_routes(
 
     let file = OperationBuilder::put("/v1/dashboards/{id}/folder")
         .operation_id("insight_v3_core.dashboards.folder")
-        .summary("Move a dashboard into a folder, or out of every folder")
+        .summary("File a dashboard in one of the caller's folders, or an ownerless one in an ownerless folder; null takes it out")
         .anonymous()
         .exposed()
         .param(path_param("id", "Dashboard id"))
@@ -222,9 +228,13 @@ async fn list_folders(
     Extension(state): Extension<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
 
-    let listed = state.folders().list_folders().await.map_err(folder_error)?;
+    let listed = state
+        .folders()
+        .list_folders(caller)
+        .await
+        .map_err(folder_error)?;
 
     Ok(Json(folders_json(&listed)).into_response())
 }
@@ -234,13 +244,13 @@ async fn create_folder(
     headers: axum::http::HeaderMap,
     body: Result<Json<NameRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
     let Json(request) = body.map_err(|error| FolderApiError::unreadable_body(&error))?;
 
     let name = FolderName::parse(&request.name).map_err(folder_error)?;
     let folder = state
         .folders()
-        .create_folder(name)
+        .create_folder(caller, name)
         .await
         .map_err(folder_error)?;
 
@@ -253,14 +263,14 @@ async fn rename_folder(
     headers: axum::http::HeaderMap,
     body: Result<Json<NameRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
     let Json(request) = body.map_err(|error| FolderApiError::unreadable_body(&error))?;
 
     let id = FolderId::parse(&id).map_err(folder_error)?;
     let name = FolderName::parse(&request.name).map_err(folder_error)?;
     let folder = state
         .folders()
-        .rename_folder(id, name)
+        .rename_folder(caller, id, name)
         .await
         .map_err(folder_error)?;
 
@@ -272,12 +282,12 @@ async fn delete_folder(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
 
     let id = FolderId::parse(&id).map_err(folder_error)?;
     let removed = state
         .folders()
-        .delete_folder(id)
+        .delete_folder(caller, id)
         .await
         .map_err(folder_error)?;
     if !removed {
@@ -293,7 +303,7 @@ async fn file_dashboard(
     headers: axum::http::HeaderMap,
     body: Result<Json<MoveRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
     let Json(request) = body.map_err(|error| FolderApiError::unreadable_body(&error))?;
 
     let dashboard = DefinitionId::parse(&id)
@@ -304,9 +314,7 @@ async fn file_dashboard(
         .map(FolderId::parse)
         .transpose()
         .map_err(|error| folder_field_error(&error))?;
-    state
-        .folders()
-        .file(&dashboard, folder)
+    folders::file(state.store(), caller, &dashboard, folder)
         .await
         .map_err(folder_error)?;
 

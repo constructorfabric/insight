@@ -67,3 +67,35 @@ fn only_dashboards_are_filtered_by_folder() {
         Err(FolderError::NotFiled("metrics"))
     ));
 }
+
+#[test]
+fn a_folder_holds_a_dashboard_filed_among_its_owners_folders_and_no_other() {
+    let caller = PersonId::new(uuid::Uuid::from_u128(1));
+    let someone = PersonId::new(uuid::Uuid::from_u128(2));
+    let id = FolderId::new();
+    let mine = Owner::Person(caller);
+    let cases = [
+        (mine, Some(mine), "fits"),
+        (mine, Some(Owner::Unowned), "wrong shelf"),
+        (mine, Some(Owner::Person(someone)), "not found"),
+        (mine, None, "not found"),
+        (Owner::Unowned, Some(Owner::Unowned), "fits"),
+        (Owner::Unowned, Some(mine), "wrong shelf"),
+        (Owner::Unowned, Some(Owner::Person(someone)), "not found"),
+        (Owner::Unowned, None, "not found"),
+    ];
+
+    for (folders_of, owner, expected) in cases {
+        let answered = match fits(folders_of, caller, id, owner) {
+            Ok(()) => "fits",
+            Err(FolderError::WrongShelf(_)) => "wrong shelf",
+            Err(FolderError::FolderNotFound(_)) => "not found",
+            Err(other) => panic!("unexpected {other:?}"),
+        };
+
+        assert_eq!(
+            answered, expected,
+            "filed among {folders_of:?} in {owner:?}"
+        );
+    }
+}

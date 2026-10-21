@@ -3,6 +3,7 @@ use std::error::Error;
 use serde_json::json;
 
 use super::*;
+use crate::domain::dashboards::{DashboardCatalogue as _, DashboardPage, DashboardQuery};
 use crate::domain::folders::{FolderError, FolderFilter, FolderName, Folders};
 
 type R = Result<(), Box<dyn Error>>;
@@ -15,15 +16,35 @@ fn folder_name(value: &str) -> FolderName {
     FolderName::parse(value).unwrap_or_else(|error| panic!("the folder name must parse: {error}"))
 }
 
+fn me() -> PersonId {
+    PersonId::new(uuid::Uuid::from_u128(1))
+}
+
+fn someone_else() -> PersonId {
+    PersonId::new(uuid::Uuid::from_u128(2))
+}
+
+fn mine() -> Owner {
+    Owner::Person(me())
+}
+
+/// Boards of mine, under ids the case names.
 async fn with_boards(names: &[&str]) -> MemoryDefinitions {
     let store = MemoryDefinitions::new();
     for board in names {
         store
-            .seed(
-                DefinitionKind::Dashboard,
-                &name(board),
-                &json!({ "title": board }),
-            )
+            .apply(&[
+                Change::Create(
+                    DefinitionKind::Dashboard,
+                    name(board),
+                    label(board),
+                    json!({ "title": board }),
+                ),
+                Change::Own {
+                    dashboard: name(board),
+                    owner: me(),
+                },
+            ])
             .await
             .unwrap_or_else(|error| panic!("`{board}` must store: {error}"));
     }
@@ -41,8 +62,8 @@ fn counts(list: &crate::domain::folders::FolderList) -> Vec<(String, u64)> {
 async fn a_new_folder_is_listed_empty_beside_the_unfiled_count() -> R {
     let store = with_boards(&["delivery", "support"]).await;
 
-    store.create_folder(folder_name("Platform")).await?;
-    let listed = store.list_folders().await?;
+    store.create_folder(me(), folder_name("Platform")).await?;
+    let listed = store.list_folders(me()).await?;
 
     assert_eq!(counts(&listed), vec![("Platform".to_owned(), 0)]);
     assert_eq!(listed.unfiled, 2);
@@ -51,29 +72,36 @@ async fn a_new_folder_is_listed_empty_beside_the_unfiled_count() -> R {
 }
 
 #[tokio::test]
-async fn a_folder_name_taken_in_another_case_is_refused() -> R {
+async fn two_folders_may_share_a_name() -> R {
     let store = MemoryDefinitions::new();
-    store.create_folder(folder_name("Platform")).await?;
+    store.create_folder(me(), folder_name("Platform")).await?;
 
-    let clash = store.create_folder(folder_name("platform")).await;
+    store.create_folder(me(), folder_name("platform")).await?;
 
-    assert!(matches!(clash, Err(FolderError::NameTaken(_))), "{clash:?}");
-    assert_eq!(store.list_folders().await?.folders.len(), 1);
+    assert_eq!(store.list_folders(me()).await?.folders.len(), 2);
 
     Ok(())
 }
 
 #[tokio::test]
-async fn a_rename_onto_a_name_another_folder_holds_is_refused() -> R {
+async fn someone_elses_folder_is_neither_listed_renamed_nor_removed() -> R {
     let store = MemoryDefinitions::new();
-    store.create_folder(folder_name("Platform")).await?;
-    let product = store.create_folder(folder_name("Product")).await?;
+    let theirs = store
+        .create_folder(someone_else(), folder_name("Theirs"))
+        .await?;
 
-    let clash = store
-        .rename_folder(product.id, folder_name("PLATFORM"))
+    let renamed = store
+        .rename_folder(me(), theirs.id, folder_name("Mine now"))
         .await;
+    let removed = store.delete_folder(me(), theirs.id).await?;
 
-    assert!(matches!(clash, Err(FolderError::NameTaken(_))), "{clash:?}");
+    assert!(store.list_folders(me()).await?.folders.is_empty());
+    assert!(
+        matches!(renamed, Err(FolderError::FolderNotFound(_))),
+        "{renamed:?}"
+    );
+    assert!(!removed);
+    assert_eq!(store.list_folders(someone_else()).await?.folders.len(), 1);
 
     Ok(())
 }
@@ -81,13 +109,14 @@ async fn a_rename_onto_a_name_another_folder_holds_is_refused() -> R {
 #[tokio::test]
 async fn a_folder_may_be_renamed_to_its_own_name_in_another_case() -> R {
     let store = MemoryDefinitions::new();
-    let platform = store.create_folder(folder_name("platform")).await?;
+    let platform = store.create_folder(me(), folder_name("platform")).await?;
 
     let renamed = store
-        .rename_folder(platform.id, folder_name("Platform"))
+        .rename_folder(me(), platform.id, folder_name("Platform"))
         .await?;
 
     assert_eq!(renamed.name.as_str(), "Platform");
+    assert_eq!(renamed.owner, mine());
 
     Ok(())
 }
@@ -95,15 +124,20 @@ async fn a_folder_may_be_renamed_to_its_own_name_in_another_case() -> R {
 #[tokio::test]
 async fn a_filed_dashboard_counts_under_its_folder_and_not_as_unfiled() -> R {
     let store = with_boards(&["delivery", "support"]).await;
-    let platform = store.create_folder(folder_name("Platform")).await?;
+    let platform = store.create_folder(me(), folder_name("Platform")).await?;
 
-    store.file(&name("delivery"), Some(platform.id)).await?;
-    let listed = store.list_folders().await?;
+    store
+        .file(&name("delivery"), mine(), Some(platform.id))
+        .await?;
+    let listed = store.list_folders(me()).await?;
 
     assert_eq!(counts(&listed), vec![("Platform".to_owned(), 1)]);
     assert_eq!(listed.unfiled, 1);
     assert_eq!(
-        store.folder_of(&name("delivery")).await?.map(|f| f.id),
+        store
+            .folder_of(&name("delivery"), me())
+            .await?
+            .map(|f| f.id),
         Some(platform.id)
     );
 
@@ -113,19 +147,24 @@ async fn a_filed_dashboard_counts_under_its_folder_and_not_as_unfiled() -> R {
 #[tokio::test]
 async fn filing_into_a_folder_that_is_gone_leaves_the_dashboard_where_it_was() -> R {
     let store = with_boards(&["delivery"]).await;
-    let platform = store.create_folder(folder_name("Platform")).await?;
-    let gone = store.create_folder(folder_name("Gone")).await?;
-    store.file(&name("delivery"), Some(platform.id)).await?;
-    store.delete_folder(gone.id).await?;
+    let platform = store.create_folder(me(), folder_name("Platform")).await?;
+    let gone = store.create_folder(me(), folder_name("Gone")).await?;
+    store
+        .file(&name("delivery"), mine(), Some(platform.id))
+        .await?;
+    store.delete_folder(me(), gone.id).await?;
 
-    let refused = store.file(&name("delivery"), Some(gone.id)).await;
+    let refused = store.file(&name("delivery"), mine(), Some(gone.id)).await;
 
     assert!(
         matches!(refused, Err(FolderError::FolderNotFound(_))),
         "{refused:?}"
     );
     assert_eq!(
-        store.folder_of(&name("delivery")).await?.map(|f| f.id),
+        store
+            .folder_of(&name("delivery"), me())
+            .await?
+            .map(|f| f.id),
         Some(platform.id)
     );
 
@@ -135,9 +174,11 @@ async fn filing_into_a_folder_that_is_gone_leaves_the_dashboard_where_it_was() -
 #[tokio::test]
 async fn filing_a_dashboard_that_does_not_exist_is_refused() -> R {
     let store = MemoryDefinitions::new();
-    let platform = store.create_folder(folder_name("Platform")).await?;
+    let platform = store.create_folder(me(), folder_name("Platform")).await?;
 
-    let refused = store.file(&name("nowhere"), Some(platform.id)).await;
+    let refused = store
+        .file(&name("nowhere"), mine(), Some(platform.id))
+        .await;
 
     assert!(
         matches!(refused, Err(FolderError::DashboardNotFound(_))),
@@ -150,15 +191,17 @@ async fn filing_a_dashboard_that_does_not_exist_is_refused() -> R {
 #[tokio::test]
 async fn deleting_a_folder_leaves_its_dashboards_unfiled() -> R {
     let store = with_boards(&["delivery", "support"]).await;
-    let platform = store.create_folder(folder_name("Platform")).await?;
-    store.file(&name("delivery"), Some(platform.id)).await?;
+    let platform = store.create_folder(me(), folder_name("Platform")).await?;
+    store
+        .file(&name("delivery"), mine(), Some(platform.id))
+        .await?;
 
-    assert!(store.delete_folder(platform.id).await?);
-    let listed = store.list_folders().await?;
+    assert!(store.delete_folder(me(), platform.id).await?);
+    let listed = store.list_folders(me()).await?;
 
     assert!(listed.folders.is_empty());
     assert_eq!(listed.unfiled, 2);
-    assert_eq!(store.folder_of(&name("delivery")).await?, None);
+    assert_eq!(store.folder_of(&name("delivery"), me()).await?, None);
 
     Ok(())
 }
@@ -166,13 +209,15 @@ async fn deleting_a_folder_leaves_its_dashboards_unfiled() -> R {
 #[tokio::test]
 async fn deleting_a_filed_dashboard_takes_it_out_of_its_folder_count() -> R {
     let store = with_boards(&["delivery"]).await;
-    let platform = store.create_folder(folder_name("Platform")).await?;
-    store.file(&name("delivery"), Some(platform.id)).await?;
+    let platform = store.create_folder(me(), folder_name("Platform")).await?;
+    store
+        .file(&name("delivery"), mine(), Some(platform.id))
+        .await?;
 
     Definitions::delete(&store, DefinitionKind::Dashboard, &name("delivery")).await?;
 
     assert_eq!(
-        counts(&store.list_folders().await?),
+        counts(&store.list_folders(me()).await?),
         vec![("Platform".to_owned(), 0)]
     );
 
@@ -182,23 +227,71 @@ async fn deleting_a_filed_dashboard_takes_it_out_of_its_folder_count() -> R {
 #[tokio::test]
 async fn a_body_write_leaves_the_dashboard_in_its_folder() -> R {
     let store = with_boards(&["delivery"]).await;
-    let platform = store.create_folder(folder_name("Platform")).await?;
-    store.file(&name("delivery"), Some(platform.id)).await?;
+    let platform = store.create_folder(me(), folder_name("Platform")).await?;
+    store
+        .file(&name("delivery"), mine(), Some(platform.id))
+        .await?;
 
     store
-        .seed(
+        .replace(
             DefinitionKind::Dashboard,
             &name("delivery"),
+            &label("Delivery"),
             &json!({ "title": "Rewritten" }),
         )
         .await?;
 
     assert_eq!(
-        store.folder_of(&name("delivery")).await?.map(|f| f.id),
+        store
+            .folder_of(&name("delivery"), me())
+            .await?
+            .map(|f| f.id),
         Some(platform.id)
     );
 
     Ok(())
+}
+
+#[tokio::test]
+async fn an_ownerless_dashboard_is_filed_by_its_own_folder_for_everyone() -> R {
+    let store = MemoryDefinitions::new();
+    store
+        .seed(
+            DefinitionKind::Dashboard,
+            &name("legacy"),
+            &json!({ "title": "Legacy" }),
+        )
+        .await?;
+    let shared = store.create_folder(me(), folder_name("Shared")).await?;
+
+    store
+        .file(&name("legacy"), Owner::Unowned, Some(shared.id))
+        .await?;
+
+    for asking in [me(), someone_else()] {
+        assert_eq!(
+            store
+                .folder_of(&name("legacy"), asking)
+                .await?
+                .map(|f| f.id),
+            Some(shared.id),
+            "{asking:?}"
+        );
+    }
+
+    Ok(())
+}
+
+fn dashboard_ids(page: &DashboardPage) -> Vec<&str> {
+    page.items.iter().map(|listed| listed.id.as_str()).collect()
+}
+
+fn in_folder(needle: &str, filter: FolderFilter) -> DashboardQuery {
+    DashboardQuery {
+        needle: needle.to_owned(),
+        folder: Some(filter),
+        ..DashboardQuery::default()
+    }
 }
 
 fn ids(page: &ListedPage) -> Vec<&str> {
@@ -220,23 +313,69 @@ async fn stamp(store: &MemoryDefinitions, id: &str) -> Option<chrono::DateTime<c
 #[tokio::test]
 async fn a_page_of_one_folder_holds_only_its_dashboards_and_still_searches() -> R {
     let store = with_boards(&["delivery", "delivery_ai", "support"]).await;
-    let platform = store.create_folder(folder_name("Platform")).await?;
-    store.file(&name("delivery"), Some(platform.id)).await?;
-    store.file(&name("support"), Some(platform.id)).await?;
+    let platform = store.create_folder(me(), folder_name("Platform")).await?;
+    store
+        .file(&name("delivery"), mine(), Some(platform.id))
+        .await?;
+    store
+        .file(&name("support"), mine(), Some(platform.id))
+        .await?;
     let page = Page::parse(None, None)?;
 
     let filed = store
-        .page_filed("", page, FolderFilter::In(platform.id))
+        .page_dashboards(me(), &in_folder("", FolderFilter::In(platform.id)), page)
         .await?;
     let searched = store
-        .page_filed("deliv", page, FolderFilter::In(platform.id))
+        .page_dashboards(
+            me(),
+            &in_folder("deliv", FolderFilter::In(platform.id)),
+            page,
+        )
         .await?;
-    let unfiled = store.page_filed("", page, FolderFilter::Unfiled).await?;
+    let unfiled = store
+        .page_dashboards(me(), &in_folder("", FolderFilter::Unfiled), page)
+        .await?;
 
-    assert_eq!(ids(&filed), vec!["delivery", "support"]);
+    assert_eq!(dashboard_ids(&filed), vec!["delivery", "support"]);
     assert_eq!(filed.total, 2);
-    assert_eq!(ids(&searched), vec!["delivery"]);
-    assert_eq!(ids(&unfiled), vec!["delivery_ai"]);
+    assert_eq!(dashboard_ids(&searched), vec!["delivery"]);
+    assert_eq!(dashboard_ids(&unfiled), vec!["delivery_ai"]);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_page_keeps_only_the_dashboards_the_caller_sees() -> R {
+    let store = with_boards(&["mine", "shared", "private"]).await;
+    store
+        .apply(&[
+            Change::Own {
+                dashboard: name("shared"),
+                owner: someone_else(),
+            },
+            Change::Own {
+                dashboard: name("private"),
+                owner: someone_else(),
+            },
+        ])
+        .await?;
+    crate::domain::sharing::Sharing::share(&store, &name("shared"), me(), someone_else()).await?;
+    store
+        .seed(
+            DefinitionKind::Dashboard,
+            &name("legacy"),
+            &json!({ "title": "Legacy" }),
+        )
+        .await?;
+
+    let seen = store
+        .page_dashboards(me(), &DashboardQuery::default(), Page::parse(None, None)?)
+        .await?;
+
+    assert_eq!(dashboard_ids(&seen), vec!["legacy", "mine", "shared"]);
+    assert_eq!(seen.total, 3);
+    let accesses: Vec<&str> = seen.items.iter().map(|item| item.access.as_str()).collect();
+    assert_eq!(accesses, vec!["ownerless", "owner", "viewer"]);
 
     Ok(())
 }
@@ -256,7 +395,7 @@ async fn a_page_is_ordered_by_name_then_id_and_answers_both() -> R {
     }
 
     let listed = store
-        .page(DefinitionKind::Widget, "", Page::parse(None, None)?)
+        .page(LibraryKind::Widget, "", Page::parse(None, None)?)
         .await?;
 
     let seen: Vec<(&str, &str)> = listed
@@ -286,7 +425,7 @@ async fn a_search_matches_the_name_as_well_as_the_body() -> R {
         .await?;
 
     let found = store
-        .page(DefinitionKind::Metric, "lead", Page::parse(None, None)?)
+        .page(LibraryKind::Metric, "lead", Page::parse(None, None)?)
         .await?;
 
     assert_eq!(ids(&found), vec!["m1"]);
@@ -295,10 +434,12 @@ async fn a_search_matches_the_name_as_well_as_the_body() -> R {
 }
 
 #[tokio::test]
-async fn a_carried_folder_moves_to_the_copy_in_the_same_batch() -> R {
+async fn a_carried_placement_moves_to_the_copy_in_the_same_batch() -> R {
     let store = with_boards(&["original"]).await;
-    let platform = store.create_folder(folder_name("Platform")).await?;
-    store.file(&name("original"), Some(platform.id)).await?;
+    let platform = store.create_folder(me(), folder_name("Platform")).await?;
+    store
+        .file(&name("original"), mine(), Some(platform.id))
+        .await?;
 
     store
         .apply(&[
@@ -308,19 +449,24 @@ async fn a_carried_folder_moves_to_the_copy_in_the_same_batch() -> R {
                 label("Copy"),
                 json!({ "title": "original" }),
             ),
-            Change::CarryFolder {
+            Change::Own {
+                dashboard: name("copy"),
+                owner: me(),
+            },
+            Change::CarryPlacement {
                 from: name("original"),
                 to: name("copy"),
+                person: me(),
             },
         ])
         .await?;
 
     assert_eq!(
-        store.folder_of(&name("copy")).await?.map(|f| f.id),
+        store.folder_of(&name("copy"), me()).await?.map(|f| f.id),
         Some(platform.id)
     );
     assert_eq!(
-        counts(&store.list_folders().await?),
+        counts(&store.list_folders(me()).await?),
         vec![("Platform".to_owned(), 2)]
     );
 
@@ -470,17 +616,21 @@ async fn a_create_onto_a_held_id_is_refused() -> R {
 }
 
 #[tokio::test]
-async fn a_folder_past_the_cap_is_refused() -> R {
+async fn a_folder_past_one_persons_cap_is_refused_and_another_person_is_not() -> R {
     let store = MemoryDefinitions::new();
     for index in 0..crate::domain::folders::MAX_FOLDERS {
         store
-            .create_folder(folder_name(&format!("f{index}")))
+            .create_folder(me(), folder_name(&format!("f{index}")))
             .await?;
     }
 
-    let refused = store.create_folder(folder_name("one more")).await;
+    let refused = store.create_folder(me(), folder_name("one more")).await;
+    let theirs = store
+        .create_folder(someone_else(), folder_name("one more"))
+        .await;
 
     assert!(matches!(refused, Err(FolderError::TooMany)), "{refused:?}");
+    assert!(theirs.is_ok(), "{theirs:?}");
 
     Ok(())
 }

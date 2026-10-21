@@ -12,7 +12,7 @@ use super::AppState;
 use super::definitions::listed_json;
 use super::errors::ApiErrors;
 use crate::domain::definition::{DefinitionId, DefinitionKind};
-use crate::domain::pins::PinError;
+use crate::domain::pins::{self, PinError};
 
 #[resource_error("gts.cf.insight.insight_v3_core.pins.v1~")]
 struct PinApiError;
@@ -81,7 +81,7 @@ pub(crate) fn register_routes(
 ) -> Router {
     let list = OperationBuilder::get("/v1/pins")
         .operation_id("insight_v3_core.pins.list")
-        .summary("List the dashboards the caller pinned")
+        .summary("List the dashboards the caller pinned and still sees")
         .anonymous()
         .exposed()
         .json_response(
@@ -150,9 +150,7 @@ async fn pin_dashboard(
     let caller = crate::api::require_admin(&state, &headers, denied).await?;
 
     let dashboard = dashboard_id(&id)?;
-    state
-        .pins()
-        .pin(caller, &dashboard)
+    pins::pin(state.store(), caller, &dashboard)
         .await
         .map_err(pin_error)?;
 
@@ -167,9 +165,7 @@ async fn unpin_dashboard(
     let caller = crate::api::require_admin(&state, &headers, denied).await?;
 
     let dashboard = dashboard_id(&id)?;
-    state
-        .pins()
-        .unpin(caller, &dashboard)
+    pins::unpin(state.store(), caller, &dashboard)
         .await
         .map_err(pin_error)?;
 

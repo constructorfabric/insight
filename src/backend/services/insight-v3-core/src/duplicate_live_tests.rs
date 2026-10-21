@@ -1,14 +1,16 @@
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::domain::access::{Owner, PersonId};
+use crate::domain::dashboards::{DashboardCatalogue as _, DashboardQuery};
 use crate::domain::definition::{
     DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Definitions, Lookup,
 };
-use crate::domain::folders::{FolderName, Folders};
-use crate::domain::pins::Pins;
+use crate::domain::folders::{self, FolderName, Folders};
+use crate::domain::pins::{self, Pins};
 use crate::domain::query::metric_query::People;
 use crate::domain::surfaces::Surfaces;
-use crate::domain::tags::{TagSet, Tags};
+use crate::domain::tags::{self, TagSet, Tags};
 use crate::live_mariadb::{store_or_skip, unique};
 use crate::store::datasets::memory::MemoryDatasets;
 use crate::store::definitions::MariaDefinitions;
@@ -55,13 +57,13 @@ struct Held {
     tags: Vec<String>,
 }
 
-async fn held(store: &MariaDefinitions, name: &DefinitionId) -> Held {
+async fn held(store: &MariaDefinitions, name: &DefinitionId, person: PersonId) -> Held {
     let body = store
         .get(DefinitionKind::Dashboard, name)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     let folder = store
-        .folder_of(name)
+        .folder_of(name, person)
         .await
         .unwrap_or_else(|error| panic!("{error}"))
         .map(|folder| folder.name.as_str().to_owned());
@@ -77,38 +79,46 @@ async fn held(store: &MariaDefinitions, name: &DefinitionId) -> Held {
 }
 
 #[tokio::test]
-async fn a_copy_holds_the_body_folder_and_tags_and_no_pins_while_the_source_keeps_all_four() {
+async fn a_copy_is_the_callers_with_the_body_their_folder_and_tags_and_no_pins() {
     let Some(store) = store_or_skip().await else {
         return;
     };
     let _serial = ONE_AT_A_TIME.lock().await;
-    let anna = Uuid::now_v7();
-    let source = dashboard(&unique("source"));
+    let anna = PersonId::new(Uuid::now_v7());
+    let people = People::new("identity");
+    let datasets = MemoryDatasets::at(chrono::Utc::now());
+    let surfaces = Surfaces::new(&store, &datasets, "insight_datasets", &people, anna);
     let label = unique("Platform");
     let tag = a_tag();
-    stored(&store, &source, "Source").await;
-    let folder = store
-        .create_folder(FolderName::parse(&label).unwrap_or_else(|error| panic!("{error}")))
-        .await
-        .unwrap_or_else(|error| panic!("{error}"));
-    store
-        .file(&source, Some(folder.id))
-        .await
-        .unwrap_or_else(|error| panic!("{error}"));
-    store
-        .set_tags(
-            &source,
-            &TagSet::parse(std::slice::from_ref(&tag)).unwrap_or_else(|error| panic!("{error}")),
+    let source = surfaces
+        .create(
+            DefinitionKind::Dashboard,
+            &DefinitionLabel::parse("Source").unwrap_or_else(|error| panic!("{error}")),
+            &body("Source"),
         )
         .await
         .unwrap_or_else(|error| panic!("{error}"));
-    store
-        .pin(anna, &source)
+    let folder = store
+        .create_folder(
+            anna,
+            FolderName::parse(&label).unwrap_or_else(|error| panic!("{error}")),
+        )
         .await
         .unwrap_or_else(|error| panic!("{error}"));
-    let people = People::new("identity");
-    let datasets = MemoryDatasets::at(chrono::Utc::now());
-    let surfaces = Surfaces::new(&store, &datasets, "insight_datasets", &people);
+    folders::file(&store, anna, &source, Some(folder.id))
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    tags::retag(
+        &store,
+        anna,
+        &source,
+        &TagSet::parse(std::slice::from_ref(&tag)).unwrap_or_else(|error| panic!("{error}")),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+    pins::pin(&store, anna, &source)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
 
     let copy = surfaces
         .duplicate(
@@ -122,8 +132,13 @@ async fn a_copy_holds_the_body_folder_and_tags_and_no_pins_while_the_source_keep
         .await
         .unwrap_or_else(|error| panic!("{error}"))
         .map(|stored| stored.name);
-    let copied = held(&store, &copy).await;
-    let kept = held(&store, &source).await;
+    let owner = store
+        .standing(&copy, anna)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"))
+        .map(|standing| standing.owner);
+    let copied = held(&store, &copy, anna).await;
+    let kept = held(&store, &source, anna).await;
     let pins = store
         .pins_of(anna)
         .await
@@ -131,7 +146,7 @@ async fn a_copy_holds_the_body_folder_and_tags_and_no_pins_while_the_source_keep
 
     removed(&store, &[&source, &copy]).await;
     store
-        .delete_folder(folder.id)
+        .delete_folder(anna, folder.id)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     let expected = Held {
@@ -142,6 +157,7 @@ async fn a_copy_holds_the_body_folder_and_tags_and_no_pins_while_the_source_keep
     assert_eq!(copied, expected);
     assert_eq!(kept, expected);
     assert_eq!(named.as_deref(), Some("Source copy"));
+    assert_eq!(owner, Some(Owner::Person(anna)));
     let pins: Vec<&str> = pins.iter().map(|listed| listed.id.as_str()).collect();
     assert_eq!(pins, [source.as_str()]);
 }
@@ -163,7 +179,7 @@ async fn a_create_onto_an_id_already_held_is_refused_and_leaves_that_dashboard_a
             &body("Again"),
         )
         .await;
-    let left = held(&store, &taken).await;
+    let left = held(&store, &taken, PersonId::new(Uuid::now_v7())).await;
 
     removed(&store, &[&taken]).await;
     assert!(
@@ -198,8 +214,12 @@ async fn two_dashboards_may_share_a_name_and_a_page_orders_them_by_name_then_id(
 
     let page = crate::domain::definition::Page::parse(None, None)
         .unwrap_or_else(|error| panic!("{error}"));
+    let query = DashboardQuery {
+        needle: shared.clone(),
+        ..DashboardQuery::default()
+    };
     let found = store
-        .page(DefinitionKind::Dashboard, &shared, page)
+        .page_dashboards(PersonId::new(Uuid::now_v7()), &query, page)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
 

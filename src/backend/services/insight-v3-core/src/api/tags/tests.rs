@@ -10,10 +10,21 @@ use tower::ServiceExt as _;
 
 use crate::api::AppState;
 use crate::chat::ChatClient;
+use crate::domain::access::PersonId;
 use crate::domain::definition::{DefinitionId, DefinitionKind};
 use crate::domain::query::metric_query::{MetricRunner, People};
+use crate::domain::sharing::Sharing as _;
 use crate::domain::tags::MAX_TAGS;
 use crate::store::definitions::memory::MemoryDefinitions;
+
+/// The administrator the fixed identity answers for a request naming none.
+const ME: &str = "00000000-0000-0000-0000-000000000000";
+
+const SOMEONE_ELSE: &str = "0192a1b2-0000-7000-8000-000000000002";
+
+fn person(raw: &str) -> PersonId {
+    PersonId::parse(raw).unwrap_or_else(|| panic!("`{raw}` is a person id"))
+}
 
 fn commits() -> Value {
     json!({
@@ -76,7 +87,15 @@ impl Harness {
     }
 
     async fn send(&self, method: &str, path: &str, body: Option<Value>) -> Answer {
-        let request = Request::builder().method(method).uri(path);
+        self.send_as(ME, method, path, body).await
+    }
+
+    /// A request from the administrator `caller`.
+    async fn send_as(&self, caller: &str, method: &str, path: &str, body: Option<Value>) -> Answer {
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("authorization", format!("Bearer {caller}"));
         let request = match body {
             Some(body) => request
                 .header("content-type", "application/json")
@@ -105,17 +124,13 @@ impl Harness {
         Answer { status, body }
     }
 
-    /// Stores a dashboard under an id the case chooses, or writes its body
-    /// again through the route when it is already there.
+    /// Stores a dashboard of mine under an id the case chooses, or writes
+    /// its body again through the route when it is already there.
     async fn dashboard(&self, id: &str) {
         let path = format!("/v1/dashboards/{id}");
         let body = json!({ "title": id, "widgets": [] });
         if self.send("GET", &path, None).await.status == StatusCode::NOT_FOUND {
-            let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{id}: {error}"));
-            self.definitions
-                .seed(DefinitionKind::Dashboard, &parsed, &body)
-                .await
-                .unwrap_or_else(|error| panic!("`{id}` must store: {error}"));
+            self.owned_by(id, ME).await;
             return;
         }
 
@@ -123,6 +138,26 @@ impl Harness {
             .send("PUT", &path, Some(json!({ "name": id, "body": body })))
             .await;
         assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.body);
+    }
+
+    async fn owned_by(&self, id: &str, owner: &str) {
+        let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{id}: {error}"));
+        self.definitions
+            .seed_owned(
+                &parsed,
+                &json!({ "title": id, "widgets": [] }),
+                person(owner),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("`{id}` must store: {error}"));
+    }
+
+    async fn shared_with(&self, id: &str, viewer: &str, owner: &str) {
+        let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{id}: {error}"));
+        self.definitions
+            .share(&parsed, person(viewer), person(owner))
+            .await
+            .unwrap_or_else(|error| panic!("`{id}` must share: {error}"));
     }
 
     async fn tag(&self, dashboard: &str, tags: Value) -> Answer {
@@ -514,4 +549,113 @@ async fn a_store_that_is_down_answers_a_server_error() {
     let refused = harness.tag("delivery", json!(["Alpha"])).await;
 
     assert_eq!(refused.status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn two_owners_tags_of_one_name_coexist_and_a_filter_finds_both() {
+    let harness = Harness::new();
+    harness.dashboard("mine").await;
+    harness.owned_by("theirs", SOMEONE_ELSE).await;
+    harness.shared_with("theirs", ME, SOMEONE_ELSE).await;
+    harness.tagged("mine", json!(["Delivery"])).await;
+    let theirs = harness
+        .send_as(
+            SOMEONE_ELSE,
+            "PUT",
+            "/v1/dashboards/theirs/tags",
+            Some(json!({ "tags": ["delivery"] })),
+        )
+        .await;
+
+    let listed = harness.listed("tag=DELIVERY").await;
+
+    assert_eq!(theirs.status, StatusCode::NO_CONTENT, "{}", theirs.body);
+    assert_eq!(harness.read("theirs").await["tags"], json!(["delivery"]));
+    assert_eq!(ids(&listed.body), json!(["mine", "theirs"]));
+    assert_eq!(
+        harness.tags().await,
+        json!({ "tags": [{ "name": "Delivery", "dashboards": 2 }] })
+    );
+}
+
+#[tokio::test]
+async fn tags_count_only_the_dashboards_the_caller_sees() {
+    let harness = Harness::new();
+    harness.dashboard("mine").await;
+    harness.owned_by("private", SOMEONE_ELSE).await;
+    harness.tagged("mine", json!(["Shared"])).await;
+    harness
+        .send_as(
+            SOMEONE_ELSE,
+            "PUT",
+            "/v1/dashboards/private/tags",
+            Some(json!({ "tags": ["Shared", "Secret"] })),
+        )
+        .await;
+
+    assert_eq!(
+        harness.tags().await,
+        json!({ "tags": [{ "name": "Shared", "dashboards": 1 }] })
+    );
+    assert_eq!(ids(&harness.listed("tag=Secret").await.body), json!([]));
+}
+
+#[tokio::test]
+async fn a_viewer_may_not_tag_and_someone_who_cannot_see_it_finds_nothing() {
+    let harness = Harness::new();
+    harness.owned_by("theirs", SOMEONE_ELSE).await;
+    harness.shared_with("theirs", ME, SOMEONE_ELSE).await;
+    harness.owned_by("private", SOMEONE_ELSE).await;
+
+    let as_viewer = harness.tag("theirs", json!(["Alpha"])).await;
+    let unseen = harness.tag("private", json!(["Alpha"])).await;
+    let missing = harness.tag("nowhere", json!(["Alpha"])).await;
+
+    assert_eq!(
+        as_viewer.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        as_viewer.body
+    );
+    assert!(
+        as_viewer
+            .body
+            .to_string()
+            .contains("only the owner can change this dashboard"),
+        "{}",
+        as_viewer.body
+    );
+    assert_eq!(unseen.status, StatusCode::NOT_FOUND, "{}", unseen.body);
+    assert_eq!(
+        unseen.body.to_string().replace("private", "nowhere"),
+        missing.body.to_string(),
+        "a dashboard the caller cannot see answers as a missing one"
+    );
+}
+
+#[tokio::test]
+async fn an_ownerless_dashboard_is_tagged_by_anyone() {
+    let harness = Harness::new();
+    let parsed = DefinitionId::parse("legacy").unwrap_or_else(|error| panic!("{error}"));
+    harness
+        .definitions
+        .seed(
+            DefinitionKind::Dashboard,
+            &parsed,
+            &json!({ "title": "legacy", "widgets": [] }),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let tagged = harness
+        .send_as(
+            SOMEONE_ELSE,
+            "PUT",
+            "/v1/dashboards/legacy/tags",
+            Some(json!({ "tags": ["Legacy"] })),
+        )
+        .await;
+
+    assert_eq!(tagged.status, StatusCode::NO_CONTENT, "{}", tagged.body);
+    assert_eq!(harness.read("legacy").await["tags"], json!(["Legacy"]));
 }

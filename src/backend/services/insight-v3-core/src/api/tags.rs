@@ -14,7 +14,7 @@ use utoipa::ToSchema;
 use super::AppState;
 use super::errors::ApiErrors;
 use crate::domain::definition::{DefinitionId, DefinitionKind};
-use crate::domain::tags::{TagError, TagName, TagSet, TagSummary};
+use crate::domain::tags::{self, TagError, TagName, TagSet, TagSummary};
 
 #[resource_error("gts.cf.insight.insight_v3_core.tags.v1~")]
 struct TagApiError;
@@ -87,16 +87,15 @@ pub(super) fn tag_error(error: TagError) -> CanonicalError {
         TagError::DashboardNotFound(name) => {
             TagApiError::not_found(detail).with_resource(name).create()
         }
+        TagError::NotOwner => TagApiError::permission_denied()
+            .with_reason(super::definitions::OWNER_ONLY)
+            .create(),
         TagError::TooMany => TagApiError::failed_precondition()
             .with_precondition_violation("tags", detail, "too_many")
             .with_override(Http::status_code(StatusCode::CONFLICT.as_u16()))
             .create(),
         TagError::Store(source) => TagApiError::definition_store_error(source),
     }
-}
-
-pub(super) fn tag_field_error(error: &TagError) -> CanonicalError {
-    TagApiError::invalid_field("tag", error.to_string())
 }
 
 fn denied() -> CanonicalError {
@@ -112,10 +111,12 @@ pub(crate) fn register_routes(
 ) -> Router {
     let list = OperationBuilder::get("/v1/tags")
         .operation_id("insight_v3_core.tags.list")
-        .summary("List the dashboard tags, each with how many dashboards carry it")
+        .summary(
+            "List the tags on dashboards the caller sees, each with how many of those carry it",
+        )
         .anonymous()
         .exposed()
-        .json_response(StatusCode::OK, "Every tag, sorted by name")
+        .json_response(StatusCode::OK, "Every such tag name, sorted")
         .error_403(openapi)
         .error_500(openapi)
         .error_504(openapi)
@@ -125,7 +126,7 @@ pub(crate) fn register_routes(
 
     let set = OperationBuilder::put("/v1/dashboards/{id}/tags")
         .operation_id("insight_v3_core.dashboards.tags")
-        .summary("Replace the tags a dashboard carries")
+        .summary("Replace the tags a dashboard carries, as tags of its owner")
         .anonymous()
         .exposed()
         .param(ParamSpec::path("id").description("Dashboard id"))
@@ -148,9 +149,9 @@ async fn list_tags(
     Extension(state): Extension<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
 
-    let listed = state.tags().list_tags().await.map_err(tag_error)?;
+    let listed = state.tags().list_tags(caller).await.map_err(tag_error)?;
 
     Ok(Json(tags_json(&listed)).into_response())
 }
@@ -161,15 +162,13 @@ async fn set_tags(
     headers: axum::http::HeaderMap,
     body: Result<Json<TagsRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::require_admin(&state, &headers, denied).await?;
     let Json(request) = body.map_err(|error| TagApiError::unreadable_body(&error))?;
 
     let dashboard = DefinitionId::parse(&id)
         .map_err(|_| TagApiError::malformed_id(DefinitionKind::Dashboard, &id))?;
-    let tags = TagSet::parse(&request.tags).map_err(tag_error)?;
-    state
-        .tags()
-        .set_tags(&dashboard, &tags)
+    let wanted = TagSet::parse(&request.tags).map_err(tag_error)?;
+    tags::retag(state.store(), caller, &dashboard, &wanted)
         .await
         .map_err(tag_error)?;
 

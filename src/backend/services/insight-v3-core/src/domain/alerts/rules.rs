@@ -179,6 +179,7 @@ impl<'a> AlertRules<'a> {
                 | CustomError::Store(_)
                 | CustomError::Datasets(_)
                 | CustomError::InUse { .. }
+                | CustomError::NotOwner
                 | CustomError::Widget(_)
                 | CustomError::Range(_)
                 | CustomError::Unanswerable(_) => AlertsError::Metric(error),

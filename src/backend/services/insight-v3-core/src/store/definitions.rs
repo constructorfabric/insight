@@ -1,8 +1,10 @@
 //! The definitions as `MariaDB` holds them.
 
+mod dashboards;
 mod folders;
 pub(crate) mod migration;
 mod pins;
+mod sharing;
 mod tags;
 
 #[cfg(test)]
@@ -13,13 +15,13 @@ use std::fmt;
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use sea_orm::{
-    ConnectionTrait as _, DatabaseConnection, DbBackend, FromQueryResult, Statement,
-    TransactionTrait as _,
+    ConnectionTrait as _, DatabaseConnection, DatabaseTransaction, DbBackend, FromQueryResult,
+    Statement, TransactionTrait as _,
 };
 
 use crate::domain::definition::{
     Change, DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Definitions,
-    Listed, ListedPage, Lookup, Page, StoredDefinition,
+    LibraryKind, Listed, ListedPage, Lookup, Page, StoredDefinition,
 };
 use crate::store::like_escaped;
 
@@ -33,13 +35,10 @@ const REPLACE_ONE: &str =
 
 const DELETE_ONE: &str = "DELETE FROM {table} WHERE id = ?";
 
-const CARRY_FOLDER: &str = "UPDATE dashboards AS moved
-JOIN dashboards AS source ON source.id = ?
-SET moved.folder_id = source.folder_id
-WHERE moved.id = ?";
+const OWN: &str = "UPDATE dashboards SET owner_person_id = ? WHERE id = ?";
 
-const CARRY_TAGS: &str = "INSERT INTO dashboard_tags (dashboard, tag_id)
-SELECT ?, tag_id FROM dashboard_tags WHERE dashboard = ?";
+const CARRY_PLACEMENT: &str = "INSERT INTO dashboard_placements (person, dashboard, folder_id)
+SELECT person, ?, folder_id FROM dashboard_placements WHERE dashboard = ? AND person = ?";
 
 const SELECT_BODY: &str = "SELECT body FROM {table} WHERE id = ?";
 const SELECT_ONE: &str = "SELECT name, body, updated_at FROM {table} WHERE id = ?";
@@ -142,23 +141,47 @@ impl MariaDefinitions {
         ))
     }
 
-    fn statement_of(change: &Change) -> Result<Statement, DefinitionStoreError> {
-        Ok(match change {
+    /// One change of a batch, inside its transaction.
+    async fn apply_one(
+        transaction: &DatabaseTransaction,
+        change: &Change,
+    ) -> Result<(), DefinitionStoreError> {
+        let statement = match change {
             Change::Create(kind, id, name, body) => Self::insert_statement(*kind, id, name, body)?,
             Change::Replace(kind, id, name, body) => {
                 Self::replace_statement(*kind, id, name, body)?
             }
-            Change::CarryFolder { from, to } => Statement::from_sql_and_values(
+            Change::Own { dashboard, owner } => Statement::from_sql_and_values(
                 DbBackend::MySql,
-                CARRY_FOLDER,
-                [from.as_str().into(), to.as_str().into()],
+                OWN,
+                [owner.to_string().into(), dashboard.as_str().into()],
             ),
-            Change::CarryTags { from, to } => Statement::from_sql_and_values(
+            Change::CarryPlacement { from, to, person } => Statement::from_sql_and_values(
                 DbBackend::MySql,
-                CARRY_TAGS,
-                [to.as_str().into(), from.as_str().into()],
+                CARRY_PLACEMENT,
+                [
+                    to.as_str().into(),
+                    from.as_str().into(),
+                    person.to_string().into(),
+                ],
             ),
-        })
+            Change::CarryTags { from, to, scope } => {
+                return tags::carry_tags(transaction, from, to, *scope).await;
+            }
+        };
+
+        let result = transaction
+            .execute_raw(statement)
+            .await
+            .map_err(|error| refused_or(error, change))?;
+
+        if let Change::Replace(_, id, _, _) = change
+            && result.rows_affected() == 0
+        {
+            return Err(DefinitionStoreError::Missing(id.as_str().to_owned()));
+        }
+
+        Ok(())
     }
 }
 
@@ -209,6 +232,7 @@ impl Definitions for MariaDefinitions {
         }))
     }
 
+    #[cfg(test)]
     async fn create(
         &self,
         kind: DefinitionKind,
@@ -251,10 +275,11 @@ impl Definitions for MariaDefinitions {
 
     async fn page(
         &self,
-        kind: DefinitionKind,
+        kind: LibraryKind,
         needle: &str,
         page: Page,
     ) -> Result<ListedPage, DefinitionStoreError> {
+        let kind = kind.kind();
         let pattern = format!("%{}%", like_escaped(needle));
         let rows = ListedRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::MySql,
@@ -312,17 +337,7 @@ impl Definitions for MariaDefinitions {
         }
 
         for change in changes {
-            let statement = Self::statement_of(change)?;
-            let result = transaction
-                .execute_raw(statement)
-                .await
-                .map_err(|error| refused_or(error, change))?;
-
-            if let Change::Replace(_, id, _, _) = change
-                && result.rows_affected() == 0
-            {
-                return Err(DefinitionStoreError::Missing(id.as_str().to_owned()));
-            }
+            Self::apply_one(&transaction, change).await?;
         }
         transaction.commit().await?;
 
@@ -353,9 +368,10 @@ fn taken_or(error: sea_orm::DbErr, id: &DefinitionId) -> DefinitionStoreError {
 fn refused_or(error: sea_orm::DbErr, change: &Change) -> DefinitionStoreError {
     match change {
         Change::Create(_, id, _, _) => taken_or(error, id),
-        Change::Replace(..) | Change::CarryFolder { .. } | Change::CarryTags { .. } => {
-            DefinitionStoreError::Database(error)
-        }
+        Change::Replace(..)
+        | Change::Own { .. }
+        | Change::CarryPlacement { .. }
+        | Change::CarryTags { .. } => DefinitionStoreError::Database(error),
     }
 }
 

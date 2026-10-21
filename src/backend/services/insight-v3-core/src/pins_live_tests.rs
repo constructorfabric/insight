@@ -3,10 +3,15 @@ use std::sync::Arc;
 use serde_json::json;
 use uuid::Uuid;
 
+use crate::domain::access::PersonId;
 use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionLabel, Definitions};
-use crate::domain::pins::{MAX_PINS, PinError, Pins};
+use crate::domain::pins::{self, MAX_PINS, PinError, Pins};
 use crate::live_mariadb::{store_or_skip, unique};
 use crate::store::definitions::MariaDefinitions;
+
+fn a_person() -> PersonId {
+    PersonId::new(Uuid::now_v7())
+}
 
 fn dashboard(name: &str) -> DefinitionId {
     DefinitionId::parse(name).unwrap_or_else(|error| panic!("{error}"))
@@ -40,14 +45,14 @@ async fn removed(store: &MariaDefinitions, names: &[DefinitionId]) {
     }
 }
 
-async fn pin(store: &MariaDefinitions, person: Uuid, name: &DefinitionId) {
+async fn pin(store: &MariaDefinitions, person: PersonId, name: &DefinitionId) {
     store
         .pin(person, name)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
 }
 
-async fn pinned(store: &MariaDefinitions, person: Uuid) -> Vec<String> {
+async fn pinned(store: &MariaDefinitions, person: PersonId) -> Vec<String> {
     store
         .pins_of(person)
         .await
@@ -66,7 +71,7 @@ async fn each_person_sees_their_own_pins_oldest_first() {
     let Some(store) = store_or_skip().await else {
         return;
     };
-    let (anna, boris) = (Uuid::now_v7(), Uuid::now_v7());
+    let (anna, boris) = (a_person(), a_person());
     let named = boards("own", 3);
     stored(&store, &named).await;
 
@@ -90,7 +95,7 @@ async fn a_repin_keeps_its_place_and_an_unpin_takes_only_that_one_off() {
     let Some(store) = store_or_skip().await else {
         return;
     };
-    let (anna, boris) = (Uuid::now_v7(), Uuid::now_v7());
+    let (anna, boris) = (a_person(), a_person());
     let named = boards("repin", 3);
     stored(&store, &named).await;
     for person in [anna, boris] {
@@ -119,7 +124,7 @@ async fn a_person_pins_twenty_dashboards_and_no_more() {
     let Some(store) = store_or_skip().await else {
         return;
     };
-    let (anna, boris) = (Uuid::now_v7(), Uuid::now_v7());
+    let (anna, boris) = (a_person(), a_person());
     let named = boards("cap", MAX_PINS + 1);
     stored(&store, &named).await;
     for name in &named[..MAX_PINS] {
@@ -145,8 +150,8 @@ async fn pinning_or_unpinning_a_dashboard_that_is_not_there_is_refused() {
     };
     let nowhere = dashboard(&unique("nowhere"));
 
-    let pinned_nothing = store.pin(Uuid::now_v7(), &nowhere).await;
-    let unpinned_nothing = store.unpin(Uuid::now_v7(), &nowhere).await;
+    let pinned_nothing = store.pin(a_person(), &nowhere).await;
+    let unpinned_nothing = pins::unpin(&store, a_person(), &nowhere).await;
 
     for refused in [pinned_nothing, unpinned_nothing] {
         assert!(
@@ -161,7 +166,7 @@ async fn a_pin_answers_the_name_and_a_delete_drops_it() {
     let Some(store) = store_or_skip().await else {
         return;
     };
-    let anna = Uuid::now_v7();
+    let anna = a_person();
     let named = boards("listed", 2);
     stored(&store, &named).await;
     for name in &named {
@@ -196,7 +201,7 @@ async fn pins_racing_for_the_last_places_never_pass_the_cap() {
         return;
     };
     let store = Arc::new(store);
-    let anna = Uuid::now_v7();
+    let anna = a_person();
     let held = boards("held", MAX_PINS - 3);
     let racing = boards("racing", 8);
     stored(&store, &held).await;
