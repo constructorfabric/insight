@@ -10,7 +10,7 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::engine::author_index::{self, AuthorChange, ChangesCursor};
+use crate::engine::author_index::{self, AuthorChange, ChangesCursor, FeedQuery};
 use crate::engine::key::CacheKey;
 use crate::engine::page::PageToken;
 use crate::engine::read::{self, Page, authors, branches, commits, numstat, patches};
@@ -64,6 +64,7 @@ pub struct AuthorsQuery {
 #[derive(Debug, Deserialize)]
 pub struct AuthorChangesQuery {
     changed_since: Option<String>,
+    committed_since: Option<String>,
     page_size: Option<u32>,
     page_token: Option<String>,
 }
@@ -555,6 +556,17 @@ pub async fn list_author_changes(
         ),
         None => None,
     };
+    let committed_since_us = match query
+        .committed_since
+        .as_deref()
+        .filter(|raw| !raw.trim().is_empty())
+    {
+        Some(raw) => Some(
+            author_index::parse_instant_us(raw)
+                .ok_or(BadRequest::MalformedInstant("committed_since"))?,
+        ),
+        None => None,
+    };
     let cursor = match query.page_token.as_deref().filter(|raw| !raw.is_empty()) {
         Some(raw) => Some(ChangesCursor::decode(raw).map_err(|_| BadRequest::MalformedToken)?),
         None => None,
@@ -567,9 +579,12 @@ pub async fn list_author_changes(
             &caller.tenant_id,
             &caller.source_id,
             &caller.creds.fingerprint(),
-            since_us,
-            cursor.as_ref(),
-            clamp_page_size(query.page_size),
+            FeedQuery {
+                since_us,
+                committed_since_us,
+                cursor: cursor.as_ref(),
+                limit: clamp_page_size(query.page_size),
+            },
         )
         .await;
 

@@ -98,6 +98,10 @@ pub(crate) struct Window<'a> {
     pub(crate) after: Option<(i64, &'a str)>,
     /// Inclusive upper bound fixed by the walk's first page.
     pub(crate) high_water_us: i64,
+    /// An author whose newest readable commit predates this instant is not
+    /// reported — as an ordinal (see [`ordinal_of`]), so the comparison is a
+    /// string compare like the sample choice itself.
+    pub(crate) committed_since: Option<&'a str>,
     pub(crate) limit: usize,
 }
 
@@ -227,7 +231,8 @@ impl Book {
 
         let mut page = Vec::new();
         for (_, email) in self.order.range((lower, upper)) {
-            let Some(change) = self.visible_change(email, fingerprint) else {
+            let Some(change) = self.visible_change(email, fingerprint, window.committed_since)
+            else {
                 continue;
             };
             if page.len() == window.limit {
@@ -239,8 +244,14 @@ impl Book {
     }
 
     /// The author as `fingerprint` may see them: the newest commit among the
-    /// entries that recorded that credential, or nothing when none did.
-    fn visible_change(&self, email: &str, fingerprint: &str) -> Option<AuthorChange> {
+    /// entries that recorded that credential, or nothing when none did or
+    /// when that commit predates `committed_since`.
+    fn visible_change(
+        &self,
+        email: &str,
+        fingerprint: &str,
+        committed_since: Option<&str>,
+    ) -> Option<AuthorChange> {
         let stamps = self.stamps.get(email)?;
         let (record, author) = self
             .holders
@@ -250,6 +261,9 @@ impl Book {
             .filter(|record| record.fingerprints.iter().any(|proof| proof == fingerprint))
             .filter_map(|record| record.authors.get(email).map(|author| (record, author)))
             .max_by(|(_, a), (_, b)| a.ordinal.cmp(&b.ordinal))?;
+        if committed_since.is_some_and(|bound| author.ordinal.as_str() < bound) {
+            return None;
+        }
         Some(AuthorChange {
             email: email.to_owned(),
             name: author.name.clone(),
@@ -384,6 +398,7 @@ mod tests {
             since_us,
             after,
             high_water_us,
+            committed_since: None,
             limit,
         }
     }
@@ -546,6 +561,65 @@ mod tests {
             "the newer commit sits in an unreadable entry"
         );
         assert!(alice.sample_url.ends_with("/app.git"));
+    }
+
+    #[test]
+    fn committed_since_judges_the_newest_commit_the_caller_may_read() {
+        let mut book = Book::default();
+        // ALICE: an old commit the caller can read, a new one it cannot.
+        book.apply(
+            folded(
+                "app",
+                1,
+                &[FP],
+                vec![row(ALICE, 'a', "2023-06-01T00:00:00Z", 9)],
+            ),
+            1_000,
+        );
+        book.apply(
+            folded(
+                "secret",
+                1,
+                &[OTHER_FP],
+                vec![row(ALICE, 's', "2026-02-01T00:00:00Z", 1)],
+            ),
+            2_000,
+        );
+        // BOB: recent and readable.
+        book.apply(
+            folded(
+                "lib",
+                1,
+                &[FP],
+                vec![row(BOB, 'b', "2026-01-05T00:00:00Z", 1)],
+            ),
+            3_000,
+        );
+        let bound = ordinal_of("2024-01-01T00:00:00Z");
+
+        let (page, more) = book.changes(
+            FP,
+            Window {
+                committed_since: Some(&bound),
+                ..window(None, None, book.last_stamp_us, 1)
+            },
+        );
+
+        assert_eq!(
+            page.iter().map(|c| c.email.as_str()).collect::<Vec<_>>(),
+            vec![BOB],
+            "ALICE's only readable commit predates the bound; the unreadable one does not count"
+        );
+        assert!(!more, "an omitted author must not promise a further page");
+
+        let (page, _) = book.changes(
+            FP,
+            Window {
+                committed_since: Some(&ordinal_of("2023-01-01T00:00:00Z")),
+                ..window(None, None, book.last_stamp_us, 10)
+            },
+        );
+        assert_eq!(page.len(), 2, "an earlier bound lets ALICE through");
     }
 
     #[test]

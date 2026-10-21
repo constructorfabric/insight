@@ -3001,7 +3001,16 @@ pub(crate) mod tests {
     ) -> Vec<String> {
         f.store
             .authors()
-            .changes("t", "s", fingerprint, since_us, None, 100)
+            .changes(
+                "t",
+                "s",
+                fingerprint,
+                crate::engine::author_index::FeedQuery {
+                    since_us,
+                    limit: 100,
+                    ..crate::engine::author_index::FeedQuery::default()
+                },
+            )
             .await
             .items
             .into_iter()
@@ -3019,7 +3028,15 @@ pub(crate) mod tests {
         let after_clone = f
             .store
             .authors()
-            .changes("t", "s", &fingerprint, None, None, 100)
+            .changes(
+                "t",
+                "s",
+                &fingerprint,
+                crate::engine::author_index::FeedQuery {
+                    limit: 100,
+                    ..crate::engine::author_index::FeedQuery::default()
+                },
+            )
             .await
             .items;
         assert_eq!(
