@@ -11,7 +11,7 @@ use toolkit_canonical_errors::{CanonicalError, resource_error};
 
 use super::AppState;
 use super::errors::ApiErrors;
-use crate::domain::definition::DefinitionName;
+use crate::domain::definition::{DefinitionId, DefinitionKind};
 use crate::domain::query::time_window::WindowRequest;
 
 #[resource_error("gts.cf.insight.insight_v3_core.metric_run.v1~")]
@@ -49,14 +49,14 @@ pub(crate) fn register_routes(
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let name_param = ParamSpec::path("name").description("Metric name");
+    let id_param = ParamSpec::path("id").description("Metric id");
 
-    let run = OperationBuilder::post("/v1/metrics/{name}/run")
+    let run = OperationBuilder::post("/v1/metrics/{id}/run")
         .operation_id("insight_v3_core.metrics.run")
         .summary("Compile and run a metric")
         .anonymous()
         .exposed()
-        .param(name_param)
+        .param(id_param)
         .json_response(StatusCode::OK, "Query result")
         .error_400(openapi)
         .error_403(openapi)
@@ -83,7 +83,7 @@ struct RunBody {
 
 async fn run_metric(
     Extension(state): Extension<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
     body: Option<Json<serde_json::Value>>,
 ) -> Result<Response, CanonicalError> {
@@ -94,7 +94,8 @@ async fn run_metric(
     })
     .await?;
 
-    let name = DefinitionName::parse(&name).map_err(MetricRunApiError::definition_error)?;
+    let id = DefinitionId::parse(&id)
+        .map_err(|_| MetricRunApiError::malformed_id(DefinitionKind::Metric, &id))?;
     let asked = match body {
         Some(Json(value)) => {
             serde_json::from_value::<RunBody>(value).map_err(|error| run_body_error(&error))?
@@ -107,7 +108,7 @@ async fn run_metric(
 
     let result = state
         .metric_runs()
-        .run(&name, &requested)
+        .run(&id, &requested)
         .await
         .map_err(MetricRunApiError::custom_error)?;
 

@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::{Definition, DefinitionKind, DefinitionName, DefinitionStoreError, Lookup};
+use super::{Definition, DefinitionId, DefinitionKind, DefinitionStoreError, Lookup};
 
 /// What a batch is about to write, over what is already stored.
 ///
@@ -28,17 +28,17 @@ impl Lookup for Arriving<'_> {
     async fn get(
         &self,
         kind: DefinitionKind,
-        name: &DefinitionName,
+        id: &DefinitionId,
     ) -> Result<Option<Value>, DefinitionStoreError> {
         let arriving = self
             .batch
             .iter()
             .rev()
-            .find(|arriving| arriving.kind == kind && arriving.name == *name);
+            .find(|arriving| arriving.kind == kind && arriving.id == *id);
 
         match arriving {
             Some(arriving) => Ok(Some(arriving.body.clone())),
-            None => self.stored.get(kind, name).await,
+            None => self.stored.get(kind, id).await,
         }
     }
 }

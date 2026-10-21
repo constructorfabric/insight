@@ -10,7 +10,7 @@ use tower::ServiceExt as _;
 
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::domain::folders::DefinitionStore;
+use crate::domain::definition::{DefinitionId, DefinitionKind};
 use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -24,6 +24,7 @@ fn commits() -> Value {
 struct Harness {
     _clickhouse: Mock,
     router: Router,
+    definitions: Arc<MemoryDefinitions>,
 }
 
 struct Answer {
@@ -36,7 +37,7 @@ impl Harness {
         Self::build(true, Arc::new(MemoryDefinitions::new()))
     }
 
-    fn build(is_admin: bool, store: Arc<dyn DefinitionStore>) -> Self {
+    fn build(is_admin: bool, store: Arc<MemoryDefinitions>) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
         let url = mock.url();
@@ -46,7 +47,7 @@ impl Harness {
                 insight_clickhouse::Client::new(insight_clickhouse::Config::new(url, "insight")),
                 People::new("identity"),
             ),
-            store,
+            store.clone(),
             ChatClient::keyless(),
             crate::store::identity::IdentityClient::fixed(is_admin),
             crate::api::Datasets::holding(url, &[("commits", commits())]),
@@ -59,6 +60,7 @@ impl Harness {
         Self {
             _clickhouse: mock,
             router,
+            definitions: store,
         }
     }
 
@@ -107,13 +109,22 @@ impl Harness {
             .to_owned()
     }
 
-    async fn dashboard(&self, name: &str) {
+    /// Stores a dashboard under an id the case chooses, or writes its body
+    /// again through the route when it is already there.
+    async fn dashboard(&self, id: &str) {
+        let path = format!("/v1/dashboards/{id}");
+        let body = json!({ "title": id, "widgets": [] });
+        if self.send("GET", &path, None).await.status == StatusCode::NOT_FOUND {
+            let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{id}: {error}"));
+            self.definitions
+                .seed(DefinitionKind::Dashboard, &parsed, &body)
+                .await
+                .unwrap_or_else(|error| panic!("`{id}` must store: {error}"));
+            return;
+        }
+
         let answer = self
-            .send(
-                "PUT",
-                &format!("/v1/dashboards/{name}"),
-                Some(json!({ "title": name, "widgets": [] })),
-            )
+            .send("PUT", &path, Some(json!({ "name": id, "body": body })))
             .await;
         assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.body);
     }
@@ -414,9 +425,15 @@ async fn a_dashboard_list_narrows_to_one_folder_or_to_the_unfiled() {
         .await;
 
     assert_eq!(filed.status, StatusCode::OK);
-    assert_eq!(filed.body["names"], json!(["delivery"]));
+    assert_eq!(
+        filed.body["items"],
+        json!([{ "id": "delivery", "name": "delivery" }])
+    );
     assert_eq!(filed.body["total"], 1);
-    assert_eq!(unfiled.body["names"], json!(["delivery_costs"]));
+    assert_eq!(
+        unfiled.body["items"],
+        json!([{ "id": "delivery_costs", "name": "delivery_costs" }])
+    );
     assert_eq!(unfiled.body["total"], 1);
 }
 
@@ -445,18 +462,24 @@ async fn only_dashboards_are_listed_by_folder() {
 #[tokio::test]
 async fn a_read_of_another_kind_names_no_folder() {
     let harness = Harness::new();
-    harness
+    let made = harness
         .send(
-            "PUT",
-            "/v1/metrics/commit_count",
+            "POST",
+            "/v1/metrics",
             Some(json!({
-                "dataset": "commits",
-                "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
+                "name": "Commit count",
+                "body": {
+                    "dataset": "commits",
+                    "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
+                }
             })),
         )
         .await;
+    let id = made.body["id"].as_str().unwrap_or_default();
 
-    let read = harness.send("GET", "/v1/metrics/commit_count", None).await;
+    let read = harness
+        .send("GET", &format!("/v1/metrics/{id}"), None)
+        .await;
 
     assert_eq!(read.status, StatusCode::OK, "{}", read.body);
     assert!(read.body.get("folder").is_none(), "{}", read.body);

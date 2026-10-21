@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use async_trait::async_trait;
 
 use super::{MemoryDefinitions, Stored, paged};
-use crate::domain::definition::{DefinitionKind, DefinitionName, NamePage, Page};
+use crate::domain::definition::{DefinitionId, DefinitionKind, ListedPage, Page};
 use crate::domain::folders::FolderFilter;
 use crate::domain::tags::{MAX_TAGS, TagError, TagFilter, TagName, TagSet, TagSummary, Tags};
 
@@ -61,7 +61,7 @@ impl Tags for MemoryDefinitions {
         Ok(counted.into_values().collect())
     }
 
-    async fn tags_of(&self, dashboard: &DefinitionName) -> Result<Vec<TagName>, TagError> {
+    async fn tags_of(&self, dashboard: &DefinitionId) -> Result<Vec<TagName>, TagError> {
         let mut carried = self
             .lock()
             .tagged
@@ -73,7 +73,7 @@ impl Tags for MemoryDefinitions {
         Ok(carried)
     }
 
-    async fn set_tags(&self, dashboard: &DefinitionName, tags: &TagSet) -> Result<(), TagError> {
+    async fn set_tags(&self, dashboard: &DefinitionId, tags: &TagSet) -> Result<(), TagError> {
         self.writable()?;
         let mut stored = self.lock();
         if !stored.has_dashboard(dashboard) {
@@ -104,13 +104,13 @@ impl Tags for MemoryDefinitions {
         page: Page,
         folder: Option<FolderFilter>,
         tags: &TagFilter,
-    ) -> Result<NamePage, TagError> {
+    ) -> Result<ListedPage, TagError> {
         let stored = self.lock();
         let matched = stored
             .matching(DefinitionKind::Dashboard, needle)
             .into_iter()
-            .filter(|name| folder.is_none_or(|filter| stored.in_folder(name, filter)))
-            .filter(|name| stored.carries_any(name, tags))
+            .filter(|listed| folder.is_none_or(|filter| stored.in_folder(&listed.id, filter)))
+            .filter(|listed| stored.carries_any(&listed.id, tags))
             .collect();
 
         Ok(paged(matched, page))

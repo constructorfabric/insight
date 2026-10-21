@@ -6,8 +6,8 @@ use sea_orm::{
 use uuid::Uuid;
 
 use super::folders::{COUNT_DASHBOARD, folder_clause, matched, statement};
-use super::{MariaDefinitions, NameRow, TotalRow};
-use crate::domain::definition::{DefinitionName, DefinitionStoreError, NamePage, Page};
+use super::{ListedRow, MariaDefinitions, TotalRow};
+use crate::domain::definition::{DefinitionId, DefinitionStoreError, ListedPage, Page};
 use crate::domain::folders::FolderFilter;
 use crate::domain::tags::{MAX_TAGS, TagError, TagFilter, TagName, TagSet, TagSummary, Tags};
 
@@ -36,13 +36,13 @@ FROM dashboard_tags JOIN tags ON tags.id = dashboard_tags.tag_id
 WHERE dashboard_tags.dashboard = ?
 ORDER BY tags.name";
 
-const PAGE_TAGGED: &str = "SELECT name FROM dashboards
-WHERE (name LIKE ? OR body LIKE ?){folder} AND name IN ({tagged})
-ORDER BY name
+const PAGE_TAGGED: &str = "SELECT id, name FROM dashboards
+WHERE (name LIKE ? OR body LIKE ?){folder} AND id IN ({tagged})
+ORDER BY name, id
 LIMIT ? OFFSET ?";
 
 const COUNT_TAGGED: &str = "SELECT COUNT(*) AS total FROM dashboards
-WHERE (name LIKE ? OR body LIKE ?){folder} AND name IN ({tagged})";
+WHERE (name LIKE ? OR body LIKE ?){folder} AND id IN ({tagged})";
 
 const TAGGED: &str = "SELECT dashboard_tags.dashboard
 FROM dashboard_tags JOIN tags ON tags.id = dashboard_tags.tag_id
@@ -150,7 +150,7 @@ async fn resolved(transaction: &DatabaseTransaction, name: &TagName) -> Result<S
 
 async fn relink(
     transaction: &DatabaseTransaction,
-    dashboard: &DefinitionName,
+    dashboard: &DefinitionId,
     ids: Vec<String>,
 ) -> Result<(), DbErr> {
     transaction
@@ -202,7 +202,7 @@ impl Tags for MariaDefinitions {
             .collect()
     }
 
-    async fn tags_of(&self, dashboard: &DefinitionName) -> Result<Vec<TagName>, TagError> {
+    async fn tags_of(&self, dashboard: &DefinitionId) -> Result<Vec<TagName>, TagError> {
         let rows = TagRow::find_by_statement(statement(TAGS_OF, vec![dashboard.as_str().into()]))
             .all(&self.db)
             .await?;
@@ -210,7 +210,7 @@ impl Tags for MariaDefinitions {
         rows.iter().map(|row| TagName::parse(&row.name)).collect()
     }
 
-    async fn set_tags(&self, dashboard: &DefinitionName, tags: &TagSet) -> Result<(), TagError> {
+    async fn set_tags(&self, dashboard: &DefinitionId, tags: &TagSet) -> Result<(), TagError> {
         let transaction = self.db.begin().await?;
         lock_tags(&transaction).await?;
         let held = counted(
@@ -248,8 +248,8 @@ impl Tags for MariaDefinitions {
         page: Page,
         folder: Option<FolderFilter>,
         tags: &TagFilter,
-    ) -> Result<NamePage, TagError> {
-        let rows = NameRow::find_by_statement(page_statement(needle, page, folder, tags))
+    ) -> Result<ListedPage, TagError> {
+        let rows = ListedRow::find_by_statement(page_statement(needle, page, folder, tags))
             .all(&self.db)
             .await?;
         let total = TotalRow::find_by_statement(count_statement(needle, folder, tags))
@@ -257,8 +257,8 @@ impl Tags for MariaDefinitions {
             .await?
             .map_or(0, |row| row.total);
 
-        Ok(NamePage {
-            names: rows.into_iter().map(|row| row.name).collect(),
+        Ok(ListedPage {
+            items: rows.into_iter().map(ListedRow::into_listed).collect(),
             total: u64::try_from(total).unwrap_or(0),
         })
     }

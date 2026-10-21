@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::domain::definition::{
-    DefinitionKind, DefinitionName, DefinitionStoreError, NamePage, Page,
+    DefinitionId, DefinitionKind, DefinitionStoreError, ListedPage, Page,
 };
 use crate::domain::folders::FolderFilter;
 
@@ -103,7 +103,7 @@ pub(crate) enum TagError {
     FilterTooWide,
     #[error("{0} are not tagged")]
     NotTagged(&'static str),
-    #[error("no dashboard is named `{0}`")]
+    #[error("no dashboard has the id `{0}`")]
     DashboardNotFound(String),
     #[error("at most {MAX_TAGS} tags can exist; reuse one that does")]
     TooMany,
@@ -127,9 +127,9 @@ impl From<sea_orm::DbErr> for TagError {
 pub(crate) trait Tags: Send + Sync + fmt::Debug {
     async fn list_tags(&self) -> Result<Vec<TagSummary>, TagError>;
 
-    async fn tags_of(&self, dashboard: &DefinitionName) -> Result<Vec<TagName>, TagError>;
+    async fn tags_of(&self, dashboard: &DefinitionId) -> Result<Vec<TagName>, TagError>;
 
-    async fn set_tags(&self, dashboard: &DefinitionName, tags: &TagSet) -> Result<(), TagError>;
+    async fn set_tags(&self, dashboard: &DefinitionId, tags: &TagSet) -> Result<(), TagError>;
 
     async fn page_tagged(
         &self,
@@ -137,7 +137,7 @@ pub(crate) trait Tags: Send + Sync + fmt::Debug {
         page: Page,
         folder: Option<FolderFilter>,
         tags: &TagFilter,
-    ) -> Result<NamePage, TagError>;
+    ) -> Result<ListedPage, TagError>;
 }
 
 #[cfg(test)]

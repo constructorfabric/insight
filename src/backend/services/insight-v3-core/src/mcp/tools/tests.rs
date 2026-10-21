@@ -121,11 +121,47 @@ fn metric_body() -> Value {
     })
 }
 
-fn put(name: &str, body: Value) -> Parameters<PutRequest> {
+fn put(name: &str, body: Value) -> Parameters<WriteRequest> {
+    Parameters(WriteRequest {
+        id: None,
+        name: name.to_owned(),
+        body,
+    })
+}
+
+fn replacing(id: &str, name: &str, body: Value) -> Parameters<WriteRequest> {
+    Parameters(WriteRequest {
+        id: Some(id.to_owned()),
+        name: name.to_owned(),
+        body,
+    })
+}
+
+fn declaring(name: &str, body: Value) -> Parameters<PutRequest> {
     Parameters(PutRequest {
         name: name.to_owned(),
         body,
     })
+}
+
+/// The id an accepted write answers.
+fn created(result: &CallToolResult) -> String {
+    let written = assert_accepted(result);
+
+    written["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a write answers its id: {written}"))
+        .to_owned()
+}
+
+/// The names a listing answers, in its order.
+fn names(listed: &Value) -> Vec<String> {
+    listed["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a listing answers items: {listed}"))
+        .iter()
+        .map(|item| item["name"].as_str().unwrap_or_default().to_owned())
+        .collect()
 }
 
 #[derive(Debug, Serialize, clickhouse::Row)]
@@ -180,10 +216,10 @@ fn finding(kind: DefinitionKind, query: &str) -> Parameters<SearchRequest> {
     })
 }
 
-fn named(kind: DefinitionKind, name: &str) -> Parameters<NamedRequest> {
-    Parameters(NamedRequest {
+fn named(kind: DefinitionKind, id: &str) -> Parameters<IdRequest> {
+    Parameters(IdRequest {
         kind,
-        name: name.to_owned(),
+        id: id.to_owned(),
     })
 }
 
@@ -278,23 +314,90 @@ fn the_instructions_point_a_client_at_the_discovery_tool_first() {
 async fn a_stored_metric_is_listed_and_read_back() -> R {
     let surfaces = surfaces();
 
-    assert_accepted(&surfaces.put_metric(put("per-actor", metric_body())).await);
+    let id = created(&surfaces.put_metric(put("Per actor", metric_body())).await);
 
     let listed = assert_accepted(
         &surfaces
             .list_definitions(listing(DefinitionKind::Metric))
             .await,
     );
-    assert_eq!(listed["names"], json!(["per-actor"]));
+    assert_eq!(listed["items"], json!([{ "id": id, "name": "Per actor" }]));
 
     let read = assert_accepted(
         &surfaces
-            .get_definition(named(DefinitionKind::Metric, "per-actor"))
+            .get_definition(named(DefinitionKind::Metric, &id))
             .await,
     );
-    assert_eq!(read, json!({ "body": metric_body() }));
+    assert_eq!(
+        read,
+        json!({ "id": id, "name": "Per actor", "body": metric_body() })
+    );
 
     Ok(())
+}
+
+#[tokio::test]
+async fn a_put_without_an_id_creates_and_one_with_an_id_replaces() -> R {
+    let surfaces = surfaces();
+    let first = created(&surfaces.put_metric(put("Per actor", metric_body())).await);
+    let second = created(&surfaces.put_metric(put("Per actor", metric_body())).await);
+    let narrower = json!({
+        "dataset": "commits",
+        "fields": [{"field": "actor", "type": "string", "as_name": "actor"}]
+    });
+
+    let replaced = assert_accepted(
+        &surfaces
+            .put_metric(replacing(&first, "Actors", narrower.clone()))
+            .await,
+    );
+
+    assert_ne!(
+        first, second,
+        "a second create of one name is a second metric"
+    );
+    assert_eq!(
+        replaced,
+        json!({ "id": first, "name": "Actors", "created": false })
+    );
+    let read = assert_accepted(
+        &surfaces
+            .get_definition(named(DefinitionKind::Metric, &first))
+            .await,
+    );
+    assert_eq!(read["body"], narrower);
+    let listed = assert_accepted(
+        &surfaces
+            .list_definitions(listing(DefinitionKind::Metric))
+            .await,
+    );
+    assert_eq!(listed["total"], json!(2));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_put_replacing_an_id_nobody_holds_is_refused_and_stores_nothing() {
+    let surfaces = surfaces();
+
+    let refused = surfaces
+        .put_metric(replacing("nowhere", "Per actor", metric_body()))
+        .await;
+
+    assert_refused(&refused, "metric `nowhere` was not found");
+    let listed = assert_accepted(
+        &surfaces
+            .list_definitions(listing(DefinitionKind::Metric))
+            .await,
+    );
+    assert_eq!(listed["total"], json!(0));
+}
+
+#[tokio::test]
+async fn a_put_whose_name_is_blank_is_refused() {
+    let refused = surfaces().put_metric(put("   ", metric_body())).await;
+
+    assert_refused(&refused, "a name is 1 to 128 characters");
 }
 
 #[tokio::test]
@@ -307,23 +410,23 @@ async fn reading_a_definition_that_was_never_stored_says_so() {
 }
 
 #[tokio::test]
-async fn a_name_the_store_would_not_accept_is_refused_before_any_read() {
+async fn an_id_that_cannot_be_one_names_nothing() {
     let result = surfaces()
-        .get_definition(named(DefinitionKind::Metric, "not a valid name"))
+        .get_definition(named(DefinitionKind::Metric, "not a valid id"))
         .await;
 
-    assert_refused(&result, "definition names");
+    assert_refused(&result, "metric `not a valid id` was not found");
 }
 
 #[tokio::test]
 async fn a_widget_drawing_a_column_its_metric_does_not_produce_is_refused() -> R {
     let surfaces = surfaces();
-    surfaces.put_metric(put("per-actor", metric_body())).await;
+    let metric = created(&surfaces.put_metric(put("Per actor", metric_body())).await);
 
     let result = surfaces
         .put_widget(put(
-            "chart",
-            json!({"type": "line", "metric": "per-actor", "x": "actor", "y": "lines"}),
+            "Chart",
+            json!({"type": "line", "metric": metric, "x": "actor", "y": "lines"}),
         ))
         .await;
 
@@ -336,7 +439,7 @@ async fn a_widget_drawing_a_column_its_metric_does_not_produce_is_refused() -> R
 async fn a_widget_naming_a_metric_that_is_not_stored_is_refused() {
     let result = surfaces()
         .put_widget(put(
-            "chart",
+            "Chart",
             json!({"type": "table", "metric": "absent", "columns": []}),
         ))
         .await;
@@ -347,19 +450,21 @@ async fn a_widget_naming_a_metric_that_is_not_stored_is_refused() {
 #[tokio::test]
 async fn a_metric_a_widget_still_draws_is_not_deleted() -> R {
     let surfaces = surfaces();
-    surfaces.put_metric(put("per-actor", metric_body())).await;
-    surfaces
-        .put_widget(put(
-            "chart",
-            json!({"type": "line", "metric": "per-actor", "x": "actor", "y": "total"}),
-        ))
-        .await;
+    let metric = created(&surfaces.put_metric(put("Per actor", metric_body())).await);
+    created(
+        &surfaces
+            .put_widget(put(
+                "Actor chart",
+                json!({"type": "line", "metric": metric, "x": "actor", "y": "total"}),
+            ))
+            .await,
+    );
 
     let result = surfaces
-        .delete_definition(named(DefinitionKind::Metric, "per-actor"))
+        .delete_definition(named(DefinitionKind::Metric, &metric))
         .await;
 
-    assert_refused(&result, "chart");
+    assert_refused(&result, "Actor chart");
 
     Ok(())
 }
@@ -367,10 +472,10 @@ async fn a_metric_a_widget_still_draws_is_not_deleted() -> R {
 #[tokio::test]
 async fn a_dashboard_is_stored_and_then_removed() -> R {
     let surfaces = surfaces();
-    assert_accepted(
+    let board = created(
         &surfaces
             .put_dashboard(put(
-                "board",
+                "Board",
                 json!({"title": "Example board", "widgets": []}),
             ))
             .await,
@@ -378,7 +483,7 @@ async fn a_dashboard_is_stored_and_then_removed() -> R {
 
     assert_accepted(
         &surfaces
-            .delete_definition(named(DefinitionKind::Dashboard, "board"))
+            .delete_definition(named(DefinitionKind::Dashboard, &board))
             .await,
     );
 
@@ -387,7 +492,7 @@ async fn a_dashboard_is_stored_and_then_removed() -> R {
             .list_definitions(listing(DefinitionKind::Dashboard))
             .await,
     );
-    assert_eq!(listed["names"], json!([]));
+    assert_eq!(listed["items"], json!([]));
 
     Ok(())
 }
@@ -405,7 +510,7 @@ async fn deleting_a_definition_that_was_never_stored_says_so() {
 async fn running_a_metric_that_was_never_stored_says_so() {
     let result = surfaces()
         .run_metric(Parameters(RunRequest {
-            name: "absent".to_owned(),
+            id: "absent".to_owned(),
             range: None,
             bucket: None,
         }))
@@ -418,7 +523,7 @@ async fn running_a_metric_that_was_never_stored_says_so() {
 async fn a_range_the_server_does_not_know_is_refused_by_the_tool() {
     let result = surfaces()
         .run_metric(Parameters(RunRequest {
-            name: "absent".to_owned(),
+            id: "absent".to_owned(),
             range: Some("P14D".to_owned()),
             bucket: None,
         }))
@@ -537,14 +642,14 @@ async fn search_definitions_matches_a_name_and_a_body() {
             .search_definitions(finding(DefinitionKind::Metric, "lines_added"))
             .await,
     );
-    assert_eq!(by_body["names"], json!(["lines_per_day"]));
+    assert_eq!(names(&by_body), ["lines_per_day"]);
 
     let by_name = assert_accepted(
         &surfaces
             .search_definitions(finding(DefinitionKind::Metric, "actors"))
             .await,
     );
-    assert_eq!(by_name["names"], json!(["actors"]));
+    assert_eq!(names(&by_name), ["actors"]);
 }
 
 #[tokio::test]
@@ -558,7 +663,7 @@ async fn an_empty_search_returns_everything_of_that_kind() {
             .await,
     );
 
-    assert_eq!(all["names"], json!(["actors"]));
+    assert_eq!(names(&all), ["actors"]);
 }
 
 #[tokio::test]
@@ -579,7 +684,7 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
             }))
             .await,
     );
-    assert_eq!(first["names"], json!(["a_one", "b_two"]));
+    assert_eq!(names(&first), ["a_one", "b_two"]);
     assert_eq!(first["total"], json!(3));
 
     let second = assert_accepted(
@@ -593,7 +698,7 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
             }))
             .await,
     );
-    assert_eq!(second["names"], json!(["c_three"]));
+    assert_eq!(names(&second), ["c_three"]);
     assert_eq!(second["total"], json!(3));
 }
 
@@ -615,7 +720,7 @@ async fn a_search_pages_the_matches_and_counts_all_of_them() {
             .await,
     );
 
-    assert_eq!(page["names"], json!(["git_two"]));
+    assert_eq!(names(&page), ["git_two"]);
     assert_eq!(page["total"], json!(2));
 }
 
@@ -640,22 +745,23 @@ async fn a_page_beyond_the_cap_is_refused_rather_than_served() {
 #[tokio::test]
 async fn arranging_a_board_orders_its_widgets_and_captions_them() {
     let surfaces = surfaces();
-    assert_accepted(&surfaces.put_metric(put("per-actor", metric_body())).await);
-    for widget in ["first", "second"] {
-        assert_accepted(
+    let metric = created(&surfaces.put_metric(put("Per actor", metric_body())).await);
+    let mut widgets = Vec::new();
+    for widget in ["First", "Second"] {
+        widgets.push(created(
             &surfaces
                 .put_widget(put(
                     widget,
-                    json!({"type": "table", "metric": "per-actor", "columns": ["actor"]}),
+                    json!({"type": "table", "metric": metric, "columns": ["actor"]}),
                 ))
                 .await,
-        );
+        ));
     }
-    assert_accepted(
+    let board = created(
         &surfaces
             .put_dashboard(put(
-                "board",
-                json!({"title": "Example board", "widgets": ["first", "second"]}),
+                "Board",
+                json!({"title": "Example board", "widgets": widgets}),
             ))
             .await,
     );
@@ -663,19 +769,19 @@ async fn arranging_a_board_orders_its_widgets_and_captions_them() {
     let arranged = assert_accepted(
         &surfaces
             .arrange_dashboard(Parameters(ArrangeRequest {
-                name: "board".to_owned(),
+                id: board.clone(),
                 items: vec![
                     Item::Heading(HeadingItem {
                         heading: "Per person".to_owned(),
                     }),
                     Item::Widget(WidgetItem {
-                        widget: "second".to_owned(),
+                        widget: widgets[1].clone(),
                     }),
                     Item::Text(TextItem {
                         text: "Bots excluded.".to_owned(),
                     }),
                     Item::Widget(WidgetItem {
-                        widget: "first".to_owned(),
+                        widget: widgets[0].clone(),
                     }),
                 ],
             }))
@@ -690,21 +796,27 @@ async fn arranging_a_board_orders_its_widgets_and_captions_them() {
             "title": "Example board",
             "items": [
                 { "heading": "Per person" },
-                { "widget": "second" },
+                { "widget": widgets[1] },
                 { "text": "Bots excluded." },
-                { "widget": "first" }
+                { "widget": widgets[0] }
             ]
         })
     );
+    let read = assert_accepted(
+        &surfaces
+            .get_definition(named(DefinitionKind::Dashboard, &board))
+            .await,
+    );
+    assert_eq!(read["name"], "Board", "laying a board out keeps its name");
 }
 
 #[tokio::test]
 async fn arranging_a_board_around_a_widget_that_is_not_there_is_refused() {
     let surfaces = surfaces();
-    assert_accepted(
+    let board = created(
         &surfaces
             .put_dashboard(put(
-                "board",
+                "Board",
                 json!({"title": "Example board", "widgets": []}),
             ))
             .await,
@@ -713,7 +825,7 @@ async fn arranging_a_board_around_a_widget_that_is_not_there_is_refused() {
     assert_refused(
         &surfaces
             .arrange_dashboard(Parameters(ArrangeRequest {
-                name: "board".to_owned(),
+                id: board,
                 items: vec![Item::Widget(WidgetItem {
                     widget: "absent".to_owned(),
                 })],
@@ -730,7 +842,7 @@ async fn arranging_a_board_that_is_not_there_is_refused() {
     assert_refused(
         &surfaces
             .arrange_dashboard(Parameters(ArrangeRequest {
-                name: "absent".to_owned(),
+                id: "absent".to_owned(),
                 items: Vec::new(),
             }))
             .await,
@@ -747,7 +859,7 @@ async fn a_declared_dataset_is_listed_for_a_metric_to_read() {
 
     let stored = assert_accepted(
         &surfaces
-            .put_dataset(administrator(), put("reviews", reviews()))
+            .put_dataset(administrator(), declaring("reviews", reviews()))
             .await,
     );
     assert_eq!(stored["declaration"], reviews());
@@ -766,7 +878,7 @@ async fn a_declaration_wrong_in_several_places_names_every_one() {
     let refused = surfaces
         .put_dataset(
             administrator(),
-            put(
+            declaring(
                 "reviews",
                 json!({
                     "title": "Reviews",
@@ -787,13 +899,13 @@ async fn a_declaration_wrong_in_several_places_names_every_one() {
 #[tokio::test]
 async fn a_replacement_that_would_break_a_metric_names_the_metric() {
     let surfaces = surfaces();
-    assert_accepted(&surfaces.put_metric(put("per-actor", metric_body())).await);
+    let metric = created(&surfaces.put_metric(put("Per actor", metric_body())).await);
 
     assert_refused(
         &surfaces
             .put_dataset(
                 administrator(),
-                put(
+                declaring(
                     "commits",
                     json!({
                         "title": "Commits",
@@ -804,17 +916,17 @@ async fn a_replacement_that_would_break_a_metric_names_the_metric() {
                 ),
             )
             .await,
-        "per-actor",
+        &metric,
     );
 }
 
 #[tokio::test]
 async fn a_board_draws_a_metric_over_a_warehouse_table() -> R {
     let surfaces = surfaces_without_a_dataset();
-    assert_accepted(
+    let metric = created(
         &surfaces
             .put_metric(put(
-                "sessions_by_day",
+                "Sessions by day",
                 json!({
                     "table": "silver.class_ai_assistant_usage",
                     "time": {"column": "day"},
@@ -830,21 +942,21 @@ async fn a_board_draws_a_metric_over_a_warehouse_table() -> R {
             .await,
     );
 
-    assert_accepted(
+    let widget = created(
         &surfaces
             .put_widget(put(
-                "sessions_line",
-                json!({"type": "line", "metric": "sessions_by_day", "x": "bucket", "y": "sessions"}),
+                "Sessions line",
+                json!({"type": "line", "metric": metric, "x": "bucket", "y": "sessions"}),
             ))
             .await,
     );
     assert_accepted(
         &surfaces
             .put_dashboard(put(
-                "ai_usage",
+                "AI usage",
                 json!({
                     "title": "AI usage",
-                    "items": [{"widget": "sessions_line"}],
+                    "items": [{"widget": widget}],
                     "time_ranges": ["P7D", "P30D"],
                     "default_range": "P30D"
                 }),
@@ -880,7 +992,7 @@ async fn a_declaration_no_verified_caller_stands_behind_is_refused() {
 
     assert_refused(
         &surfaces
-            .put_dataset(parts(None), put("reviews", reviews()))
+            .put_dataset(parts(None), declaring("reviews", reviews()))
             .await,
         "administrator",
     );
@@ -963,10 +1075,29 @@ fn moving(dashboard: &str, folder: Option<&str>) -> Parameters<MoveRequest> {
     })
 }
 
-async fn board(surfaces: &CustomSurfaces, name: &str) {
+/// A dashboard stored under an id the case chooses, so the folder and tag
+/// cases can name it.
+async fn board(surfaces: &CustomSurfaces, id: &str) {
+    let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{id}: {error}"));
+
+    surfaces
+        .state
+        .definitions()
+        .create(
+            DefinitionKind::Dashboard,
+            &parsed,
+            &DefinitionLabel::of_id(&parsed),
+            &json!({"title": id, "widgets": []}),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("`{id}` must store: {error}"));
+}
+
+/// The dashboard's body written again through the tool, under its id.
+async fn rewrite(surfaces: &CustomSurfaces, id: &str) {
     assert_accepted(
         &surfaces
-            .put_dashboard(put(name, json!({"title": name, "widgets": []})))
+            .put_dashboard(replacing(id, id, json!({"title": id, "widgets": []})))
             .await,
     );
 }
@@ -1072,7 +1203,7 @@ async fn moving_a_dashboard_that_is_not_there_is_refused() {
 
     let moved = surfaces.move_dashboard(moving("nowhere", Some(&id))).await;
 
-    assert_refused(&moved, "no dashboard is named `nowhere`");
+    assert_refused(&moved, "no dashboard has the id `nowhere`");
 }
 
 #[tokio::test]
@@ -1082,7 +1213,7 @@ async fn rewriting_a_filed_dashboard_keeps_its_folder_and_a_new_one_lands_unfile
     board(&surfaces, "delivery").await;
     assert_accepted(&surfaces.move_dashboard(moving("delivery", Some(&id))).await);
 
-    board(&surfaces, "delivery").await;
+    rewrite(&surfaces, "delivery").await;
     board(&surfaces, "hiring").await;
 
     assert_eq!(folder_of(&surfaces, "delivery").await["id"], json!(id));
@@ -1108,8 +1239,8 @@ async fn a_dashboard_listing_narrows_to_one_folder_or_to_the_unfiled() {
             .await,
     );
 
-    assert_eq!(filed["names"], json!(["delivery"]));
-    assert_eq!(unfiled["names"], json!(["hiring"]));
+    assert_eq!(names(&filed), ["delivery"]);
+    assert_eq!(names(&unfiled), ["hiring"]);
 }
 
 #[tokio::test]
@@ -1158,9 +1289,9 @@ fn a_move_without_its_folder_is_not_read() {
     assert!(read.is_err(), "{read:?}");
 }
 
-fn tagging(name: &str, tags: &[&str]) -> Parameters<TagsRequest> {
+fn tagging(id: &str, tags: &[&str]) -> Parameters<TagsRequest> {
     Parameters(TagsRequest {
-        name: name.to_owned(),
+        id: id.to_owned(),
         tags: tags.iter().map(|tag| (*tag).to_owned()).collect(),
     })
 }
@@ -1273,6 +1404,8 @@ async fn a_dashboard_read_answers_its_body_folder_and_tags() {
     assert_eq!(
         read,
         json!({
+            "id": "delivery",
+            "name": "delivery",
             "body": { "title": "delivery", "widgets": [] },
             "folder": null,
             "tags": ["Alpha", "beta"]
@@ -1290,7 +1423,7 @@ async fn rewriting_a_tagged_dashboard_keeps_its_tags() {
             .await,
     );
 
-    board(&surfaces, "delivery").await;
+    rewrite(&surfaces, "delivery").await;
 
     assert_eq!(tags_of(&surfaces, "delivery").await, json!(["Delivery"]));
 }
@@ -1333,7 +1466,7 @@ async fn a_set_the_rules_refuse_says_why() {
 
     assert_refused(&blank, "1 to 32 characters");
     assert_refused(&crowded, "at most 10 tags");
-    assert_refused(&nowhere, "no dashboard is named `nowhere`");
+    assert_refused(&nowhere, "no dashboard has the id `nowhere`");
 }
 
 #[tokio::test]
@@ -1389,12 +1522,9 @@ async fn a_dashboard_listing_narrows_to_any_of_the_tags_inside_a_folder() {
             .await,
     );
 
-    assert_eq!(
-        everywhere["names"],
-        json!(["delivery", "delivery_ai", "hiring"])
-    );
+    assert_eq!(names(&everywhere), ["delivery", "delivery_ai", "hiring"]);
     assert_eq!(everywhere["total"], 3);
-    assert_eq!(filed["names"], json!(["delivery"]));
+    assert_eq!(names(&filed), ["delivery"]);
 }
 
 #[tokio::test]
@@ -1415,6 +1545,6 @@ fn a_set_names_its_dashboard_and_its_tags() {
 
     let schema = Value::Object((*tool.input_schema).clone());
 
-    assert_eq!(schema["required"], json!(["name", "tags"]), "{schema}");
+    assert_eq!(schema["required"], json!(["id", "tags"]), "{schema}");
     assert!(schema["properties"]["tags"]["description"].is_string());
 }

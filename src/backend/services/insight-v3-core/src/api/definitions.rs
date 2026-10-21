@@ -18,7 +18,8 @@ use super::errors::ApiErrors;
 use super::folders::{folder_error, folder_field_error, folder_json};
 use super::tags::{names_json, tag_error, tag_field_error, tags_in};
 use crate::domain::definition::{
-    DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, NamePage, Page, PageError,
+    DefinitionId, DefinitionKind, DefinitionLabel, Listed, ListedPage, MAX_PAGE_LIMIT, Page,
+    PageError, StoredDefinition,
 };
 use crate::domain::folders::FolderFilter;
 use crate::domain::kinds::metric::answerable::EffectiveClock;
@@ -38,18 +39,19 @@ struct Search {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
-struct RenameRequest {
-    /// The name it should answer to from now on.
-    to: String,
+struct DefinitionRequest {
+    /// What a reader calls it: trimmed, 1 to 128 characters, and shared by
+    /// as many definitions as like.
+    name: String,
+    /// The definition body.
+    body: serde_json::Value,
 }
 
-impl toolkit::api::api_dto::RequestApiDto for RenameRequest {}
+impl toolkit::api::api_dto::RequestApiDto for DefinitionRequest {}
 
-#[derive(Debug, Serialize, ToSchema)]
-struct RenameResponse {
-    name: String,
-    /// The definitions that pointed at the old name and now point here.
-    rewritten: Vec<String>,
+#[derive(Debug, Serialize)]
+struct CreatedResponse {
+    id: String,
 }
 
 #[resource_error("gts.cf.insight.insight_v3_core.definitions.v1~")]
@@ -111,7 +113,7 @@ fn register_list(
 ) -> Router {
     let builder = OperationBuilder::get(format!("/v1/{segment}"))
         .operation_id(format!("insight_v3_core.{segment}.list"))
-        .summary("List definition names, or the ones matching ?q=")
+        .summary("List definitions by id and name, or the ones matching ?q=")
         .anonymous()
         .exposed()
         .param(query_param(
@@ -124,7 +126,7 @@ fn register_list(
             "integer",
             &format!("Page size, 1 to {MAX_PAGE_LIMIT}"),
         ))
-        .param(query_param("offset", "integer", "Names to skip"));
+        .param(query_param("offset", "integer", "Definitions to skip"));
     let builder = if kind == DefinitionKind::Dashboard {
         builder
             .param(query_param(
@@ -145,7 +147,10 @@ fn register_list(
     };
 
     builder
-        .json_response(StatusCode::OK, "One page of names, and how many match")
+        .json_response(
+            StatusCode::OK,
+            "One page of ids and names, and how many match",
+        )
         .error_400(openapi)
         .error_403(openapi)
         .error_500(openapi)
@@ -164,37 +169,51 @@ fn register_kind(
 ) -> Router {
     let segment = kind.plural();
 
-    let name_param = ParamSpec::path("name").description("Definition name");
+    let id_param = ParamSpec::path("id").description("Definition id");
 
-    let delete_param = name_param.clone();
-    let rename_param = name_param.clone();
-    let dependents = register_dependents(openapi, &state, kind, segment, name_param.clone());
+    let dependents = register_dependents(openapi, &state, kind, segment, id_param.clone());
 
-    let put = OperationBuilder::put(format!("/v1/{segment}/{{name}}"))
-        .operation_id(format!("insight_v3_core.{segment}.put"))
-        .summary("Create or replace a definition")
+    let create = OperationBuilder::post(format!("/v1/{segment}"))
+        .operation_id(format!("insight_v3_core.{segment}.create"))
+        .summary("Create a definition under a fresh id")
         .anonymous()
         .exposed()
-        .param(name_param.clone())
-        .json_request::<serde_json::Value>(openapi, "The definition body")
-        .no_content_response(StatusCode::NO_CONTENT, "Definition stored")
+        .json_request::<DefinitionRequest>(openapi, "The definition's name and body")
+        .json_response(StatusCode::CREATED, "The new definition's id")
         .error_400(openapi)
         .error_403(openapi)
         .error_500(openapi)
         .error_504(openapi)
-        .handler(put_definition)
+        .handler(create_definition)
         .register(Router::new(), openapi)
         .layer(Extension(state.clone()))
         .layer(Extension(kind));
 
-    let get = OperationBuilder::get(format!("/v1/{segment}/{{name}}"))
+    let replace = OperationBuilder::put(format!("/v1/{segment}/{{id}}"))
+        .operation_id(format!("insight_v3_core.{segment}.put"))
+        .summary("Replace an existing definition's name and body")
+        .anonymous()
+        .exposed()
+        .param(id_param.clone())
+        .json_request::<DefinitionRequest>(openapi, "The definition's name and body")
+        .no_content_response(StatusCode::NO_CONTENT, "Definition stored")
+        .error_400(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_504(openapi)
+        .handler(replace_definition)
+        .register(Router::new(), openapi)
+        .layer(Extension(state.clone()))
+        .layer(Extension(kind));
+
+    let get = OperationBuilder::get(format!("/v1/{segment}/{{id}}"))
         .operation_id(format!("insight_v3_core.{segment}.get"))
         .summary("Read a definition")
         .anonymous()
         .exposed()
-        .param(name_param)
-        .json_response(StatusCode::OK, "The definition body")
-        .error_400(openapi)
+        .param(id_param.clone())
+        .json_response(StatusCode::OK, "The definition's id, name and body")
         .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
@@ -206,14 +225,13 @@ fn register_kind(
 
     let list = register_list(openapi, &state, kind, segment);
 
-    let remove = OperationBuilder::delete(format!("/v1/{segment}/{{name}}"))
+    let remove = OperationBuilder::delete(format!("/v1/{segment}/{{id}}"))
         .operation_id(format!("insight_v3_core.{segment}.delete"))
         .summary("Remove a definition")
         .anonymous()
         .exposed()
-        .param(delete_param)
+        .param(id_param)
         .no_content_response(StatusCode::NO_CONTENT, "Definition removed")
-        .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
         .error_409(openapi)
@@ -221,34 +239,15 @@ fn register_kind(
         .error_504(openapi)
         .handler(delete_definition)
         .register(Router::new(), openapi)
-        .layer(Extension(state.clone()))
-        .layer(Extension(kind));
-
-    let rename = OperationBuilder::post(format!("/v1/{segment}/{{name}}/rename"))
-        .operation_id(format!("insight_v3_core.{segment}.rename"))
-        .summary("Rename a definition, and everything that points at it")
-        .anonymous()
-        .exposed()
-        .param(rename_param)
-        .json_request::<RenameRequest>(openapi, "The new name")
-        .json_response(StatusCode::OK, "The new name, and what was rewritten")
-        .error_400(openapi)
-        .error_403(openapi)
-        .error_404(openapi)
-        .error_409(openapi)
-        .error_500(openapi)
-        .error_504(openapi)
-        .handler(rename_definition)
-        .register(Router::new(), openapi)
         .layer(Extension(state))
         .layer(Extension(kind));
 
     host_router
-        .merge(put)
+        .merge(create)
+        .merge(replace)
         .merge(get)
         .merge(list)
         .merge(remove)
-        .merge(rename)
         .merge(dependents)
 }
 
@@ -259,6 +258,8 @@ fn register_kind(
 /// card cannot tell from the body alone.
 #[derive(Debug, Serialize)]
 struct DefinitionResponse {
+    id: String,
+    name: String,
     body: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     clock: Option<EffectiveClock>,
@@ -275,32 +276,26 @@ struct DashboardMeta {
 
 async fn dashboard_meta(
     state: &AppState,
-    name: &DefinitionName,
+    id: &DefinitionId,
+    stored: &StoredDefinition,
 ) -> Result<DashboardMeta, CanonicalError> {
-    let folder = state
-        .folders()
-        .folder_of(name)
-        .await
-        .map_err(folder_error)?;
-    let tags = state.tags().tags_of(name).await.map_err(tag_error)?;
-    let updated_at = state
-        .surfaces()
-        .updated_at(DefinitionKind::Dashboard, name)
-        .await
-        .map_err(custom_error)?;
+    let folder = state.folders().folder_of(id).await.map_err(folder_error)?;
+    let tags = state.tags().tags_of(id).await.map_err(tag_error)?;
 
     Ok(DashboardMeta {
         folder: folder.as_ref().map(folder_json),
         tags: names_json(&tags),
-        updated_at: updated_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+        updated_at: stored
+            .updated_at
+            .to_rfc3339_opts(SecondsFormat::Millis, true),
     })
 }
 
 pub(super) fn custom_error(error: CustomError) -> CanonicalError {
     match error {
-        CustomError::NotFound { kind, name } => {
-            DefinitionApiError::not_found(format!("{} `{name}` was not found", kind.singular()))
-                .with_resource(&name)
+        CustomError::NotFound { kind, id } => {
+            DefinitionApiError::not_found(format!("{} `{id}` was not found", kind.singular()))
+                .with_resource(&id)
                 .create()
         }
         CustomError::InUse { used_by } => DefinitionApiError::failed_precondition()
@@ -361,59 +356,29 @@ fn unanswerable(violations: &[Violation]) -> CanonicalError {
     builder.create()
 }
 
-/// The same body, pointed at the new name.
-///
-/// Renames a definition, and rewrites whatever drew it under the old name.
-async fn rename_definition(
-    Extension(state): Extension<Arc<AppState>>,
-    Extension(kind): Extension<DefinitionKind>,
-    Path(name): Path<String>,
-    headers: axum::http::HeaderMap,
-    Json(request): Json<RenameRequest>,
-) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, || {
-        DefinitionApiError::permission_denied()
-            .with_reason(crate::api::ADMIN_ONLY)
-            .create()
-    })
-    .await?;
-
-    let from = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
-    let to = DefinitionName::parse(&request.to).map_err(DefinitionApiError::definition_error)?;
-
-    let rewritten = state
-        .surfaces()
-        .rename(kind, &from, &to)
-        .await
-        .map_err(custom_error)?;
-
-    Ok(Json(RenameResponse {
-        name: to.as_str().to_owned(),
-        rewritten,
-    })
-    .into_response())
-}
-
 async fn delete_definition(
     Extension(state): Extension<Arc<AppState>>,
     Extension(kind): Extension<DefinitionKind>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, || {
-        DefinitionApiError::permission_denied()
-            .with_reason(crate::api::ADMIN_ONLY)
-            .create()
-    })
-    .await?;
+    crate::api::require_admin(&state, &headers, denied).await?;
 
-    let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
+    let Ok(id) = DefinitionId::parse(&id) else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
 
-    match state.surfaces().delete(kind, &name).await {
+    match state.surfaces().delete(kind, &id).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT.into_response()),
         Err(CustomError::NotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(other) => Err(custom_error(other)),
     }
+}
+
+fn denied() -> CanonicalError {
+    DefinitionApiError::permission_denied()
+        .with_reason(crate::api::ADMIN_ONLY)
+        .create()
 }
 
 /// Every definition that names this one, so a reader sees what a removal would
@@ -423,16 +388,15 @@ fn register_dependents(
     state: &Arc<AppState>,
     kind: DefinitionKind,
     segment: &str,
-    name_param: ParamSpec,
+    id_param: ParamSpec,
 ) -> Router {
-    OperationBuilder::get(format!("/v1/{segment}/{{name}}/dependents"))
+    OperationBuilder::get(format!("/v1/{segment}/{{id}}/dependents"))
         .operation_id(format!("insight_v3_core.{segment}.dependents"))
         .summary("Every definition that names this one")
         .anonymous()
         .exposed()
-        .param(name_param)
+        .param(id_param)
         .json_response(StatusCode::OK, "What would break if this were removed")
-        .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
@@ -443,26 +407,45 @@ fn register_dependents(
         .layer(Extension(kind))
 }
 
-async fn put_definition(
+async fn create_definition(
     Extension(state): Extension<Arc<AppState>>,
     Extension(kind): Extension<DefinitionKind>,
-    Path(name): Path<String>,
     headers: axum::http::HeaderMap,
-    body: Result<Json<serde_json::Value>, JsonRejection>,
+    body: Result<Json<DefinitionRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, || {
-        DefinitionApiError::permission_denied()
-            .with_reason(crate::api::ADMIN_ONLY)
-            .create()
-    })
-    .await?;
-    let Json(body) = body.map_err(|error| DefinitionApiError::unreadable_body(&error))?;
+    crate::api::require_admin(&state, &headers, denied).await?;
+    let Json(request) = body.map_err(|error| DefinitionApiError::unreadable_body(&error))?;
 
-    let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
+    let name =
+        DefinitionLabel::parse(&request.name).map_err(DefinitionApiError::definition_error)?;
+    let id = state
+        .surfaces()
+        .create(kind, &name, &request.body)
+        .await
+        .map_err(custom_error)?;
 
+    let created = CreatedResponse {
+        id: id.into_string(),
+    };
+    Ok((StatusCode::CREATED, Json(created)).into_response())
+}
+
+async fn replace_definition(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(kind): Extension<DefinitionKind>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: Result<Json<DefinitionRequest>, JsonRejection>,
+) -> Result<Response, CanonicalError> {
+    crate::api::require_admin(&state, &headers, denied).await?;
+    let Json(request) = body.map_err(|error| DefinitionApiError::unreadable_body(&error))?;
+
+    let id = DefinitionId::parse(&id).map_err(|_| DefinitionApiError::malformed_id(kind, &id))?;
+    let name =
+        DefinitionLabel::parse(&request.name).map_err(DefinitionApiError::definition_error)?;
     state
         .surfaces()
-        .put(kind, &name, &body)
+        .replace(kind, &id, &name, &request.body)
         .await
         .map_err(custom_error)?;
 
@@ -478,13 +461,14 @@ fn widget_error(error: &crate::domain::kinds::widget::WidgetError) -> CanonicalE
 /// What names a definition, as a reader is shown it.
 #[derive(Debug, Serialize)]
 struct Dependents {
-    /// Each holder, as the kind it is and the name it has.
+    /// Each holder, as the kind it is, its id and the name it has.
     holders: Vec<Holder>,
 }
 
 #[derive(Debug, Serialize)]
 struct Holder {
     kind: String,
+    id: String,
     name: String,
 }
 
@@ -493,30 +477,28 @@ struct Holder {
 async fn definition_dependents(
     Extension(state): Extension<Arc<AppState>>,
     Extension(kind): Extension<DefinitionKind>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, || {
-        DefinitionApiError::permission_denied()
-            .with_reason(crate::api::ADMIN_ONLY)
-            .create()
-    })
-    .await?;
+    crate::api::require_admin(&state, &headers, denied).await?;
 
-    let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
+    let Ok(id) = DefinitionId::parse(&id) else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
     let surfaces = state.surfaces();
 
-    if let Err(CustomError::NotFound { .. }) = surfaces.get(kind, &name).await {
+    if let Err(CustomError::NotFound { .. }) = surfaces.get(kind, &id).await {
         return Ok(StatusCode::NOT_FOUND.into_response());
     }
 
     let holders = surfaces
-        .dependents_of(kind, &name)
+        .dependents_of(kind, &id)
         .await
         .map_err(custom_error)?
         .into_iter()
         .map(|holder| Holder {
             kind: holder.kind.plural().to_owned(),
+            id: holder.id,
             name: holder.name,
         })
         .collect();
@@ -527,33 +509,37 @@ async fn definition_dependents(
 async fn get_definition(
     Extension(state): Extension<Arc<AppState>>,
     Extension(kind): Extension<DefinitionKind>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, || {
-        DefinitionApiError::permission_denied()
-            .with_reason(crate::api::ADMIN_ONLY)
-            .create()
-    })
-    .await?;
+    crate::api::require_admin(&state, &headers, denied).await?;
 
-    let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
+    let Ok(id) = DefinitionId::parse(&id) else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
 
     let surfaces = state.surfaces();
-    match surfaces.get(kind, &name).await {
-        Ok(body) => {
-            let clock = surfaces.clock_of(kind, &body).await;
-            let meta = if kind == DefinitionKind::Dashboard {
-                Some(dashboard_meta(&state, &name).await?)
-            } else {
-                None
-            };
+    let stored = match surfaces.read(kind, &id).await {
+        Ok(stored) => stored,
+        Err(CustomError::NotFound { .. }) => return Ok(StatusCode::NOT_FOUND.into_response()),
+        Err(other) => return Err(custom_error(other)),
+    };
 
-            Ok(Json(DefinitionResponse { body, clock, meta }).into_response())
-        }
-        Err(CustomError::NotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
-        Err(other) => Err(custom_error(other)),
-    }
+    let clock = surfaces.clock_of(kind, &stored.body).await;
+    let meta = if kind == DefinitionKind::Dashboard {
+        Some(dashboard_meta(&state, &id, &stored).await?)
+    } else {
+        None
+    };
+
+    Ok(Json(DefinitionResponse {
+        id: id.into_string(),
+        name: stored.name,
+        body: stored.body,
+        clock,
+        meta,
+    })
+    .into_response())
 }
 
 async fn narrowed(
@@ -562,7 +548,7 @@ async fn narrowed(
     search: &Search,
     page: Page,
     tags: &[String],
-) -> Result<NamePage, CanonicalError> {
+) -> Result<ListedPage, CanonicalError> {
     let folder = search
         .folder
         .as_deref()
@@ -598,24 +584,28 @@ async fn list_definitions(
     Query(search): Query<Search>,
     RawQuery(query): RawQuery,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, || {
-        DefinitionApiError::permission_denied()
-            .with_reason(crate::api::ADMIN_ONLY)
-            .create()
-    })
-    .await?;
+    crate::api::require_admin(&state, &headers, denied).await?;
 
     let page = Page::parse(search.limit, search.offset).map_err(page_error)?;
     let tags = tags_in(query.as_deref());
     let found = narrowed(&state, kind, &search, page, &tags).await?;
 
     Ok(Json(serde_json::json!({
-        "names": found.names,
+        "items": listed_json(&found.items),
         "total": found.total,
         "limit": page.limit(),
         "offset": page.offset(),
     }))
     .into_response())
+}
+
+pub(crate) fn listed_json(items: &[Listed]) -> serde_json::Value {
+    serde_json::Value::Array(
+        items
+            .iter()
+            .map(|listed| serde_json::json!({ "id": listed.id, "name": listed.name }))
+            .collect(),
+    )
 }
 
 fn page_error(error: PageError) -> CanonicalError {

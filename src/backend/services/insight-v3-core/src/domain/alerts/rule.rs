@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use super::condition::{Condition, ConditionError, ConditionShape, Witness};
 use super::scalar::{Outcome, UnknownReason};
-use crate::domain::definition::{DefinitionName, Page};
+use crate::domain::definition::{DefinitionId, Page};
 use crate::domain::metric_run::Columns;
 use crate::domain::query::time_window::{WindowError, WindowRequest};
 
@@ -104,7 +104,7 @@ impl Destinations {
 pub(crate) struct RuleDraft {
     /// What the alert is called, as people read it: up to 200 characters.
     pub(crate) name: String,
-    /// The stored metric to check.
+    /// The id of the stored metric to check.
     pub(crate) metric: String,
     /// Which rows must pass, and the test each row takes.
     #[schemars(with = "ConditionShape")]
@@ -138,7 +138,7 @@ impl toolkit::api::api_dto::RequestApiDto for RuleDraft {}
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RuleSpec {
     pub(crate) name: AlertName,
-    pub(crate) metric: DefinitionName,
+    pub(crate) metric: DefinitionId,
     pub(crate) condition: Condition,
     /// Columns the witness keeps beside the condition's, in this order.
     pub(crate) context_columns: Vec<String>,
@@ -158,7 +158,7 @@ impl RuleSpec {
         columns: &Columns,
     ) -> Result<Self, RuleError> {
         let name = AlertName::parse(&draft.name)?;
-        let metric = DefinitionName::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
+        let metric = DefinitionId::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
         let condition = Condition::parse(&draft.condition, &columns.kinds)?;
         let context_columns = parse_context_columns(&draft.context_columns, columns)?;
 
@@ -261,7 +261,7 @@ pub(crate) enum ContextColumnsProblem {
 pub(crate) enum RuleError {
     #[error("name must be 1 to {MAX_NAME_CHARS} characters")]
     Name,
-    #[error("metric must be a definition name")]
+    #[error("metric must be a metric id")]
     Metric,
     #[error("{}: {}", .0.field(), .0.problem)]
     Condition(#[from] ConditionError),
@@ -349,7 +349,7 @@ pub(crate) struct Notification {
     pub(crate) rule_id: Uuid,
     pub(crate) rule_revision: u32,
     pub(crate) rule_name: AlertName,
-    pub(crate) metric: DefinitionName,
+    pub(crate) metric: DefinitionId,
     pub(crate) condition: Condition,
     /// The columns the rule asked to carry when this was owed, so the message
     /// can tell them from the ones the condition read.
@@ -406,7 +406,7 @@ pub(crate) struct Write {
 pub(crate) struct AlertSummary {
     pub(crate) id: Uuid,
     pub(crate) name: AlertName,
-    pub(crate) metric: DefinitionName,
+    pub(crate) metric: DefinitionId,
     pub(crate) enabled: bool,
 }
 

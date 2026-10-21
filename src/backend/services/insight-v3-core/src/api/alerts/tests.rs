@@ -80,22 +80,24 @@ impl TestHarness {
         ));
         let definitions: Arc<dyn DefinitionStore> = Arc::new(MemoryDefinitions::new());
         futures::executor::block_on(async {
-            let name = crate::domain::definition::DefinitionName::parse("prs-open")
+            let name = crate::domain::definition::DefinitionId::parse("prs-open")
                 .unwrap_or_else(|error| panic!("{error}"));
             definitions
-                .put(
-                    DefinitionKind::Metric,
-                    &name,
-                    &json!({"table": "gold.prs", "fields": [{"agg": "count", "type": "int", "as_name": "total"}]}),
+                .create(
+DefinitionKind::Metric,
+&name,
+&crate::domain::definition::DefinitionLabel::of_id(&name),
+&json!({"table": "gold.prs", "fields": [{"agg": "count", "type": "int", "as_name": "total"}]}),
                 )
                 .await
                 .unwrap_or_else(|error| panic!("the metric is stored: {error}"));
-            let grouped = crate::domain::definition::DefinitionName::parse("prs-by-team")
+            let grouped = crate::domain::definition::DefinitionId::parse("prs-by-team")
                 .unwrap_or_else(|error| panic!("{error}"));
             definitions
-                .put(
+                .create(
                     DefinitionKind::Metric,
                     &grouped,
+                    &crate::domain::definition::DefinitionLabel::of_id(&grouped),
                     &json!({
                         "table": "gold.prs",
                         "fields": [
@@ -107,12 +109,13 @@ impl TestHarness {
                 )
                 .await
                 .unwrap_or_else(|error| panic!("the grouped metric is stored: {error}"));
-            let rows = crate::domain::definition::DefinitionName::parse("prs-rows")
+            let rows = crate::domain::definition::DefinitionId::parse("prs-rows")
                 .unwrap_or_else(|error| panic!("{error}"));
             definitions
-                .put(
+                .create(
                     DefinitionKind::Metric,
                     &rows,
+                    &crate::domain::definition::DefinitionLabel::of_id(&rows),
                     &json!({
                         "table": "gold.prs",
                         "fields": [

@@ -1,7 +1,7 @@
 use super::*;
 use crate::domain::definition::{DefinitionKind, Page};
 use crate::domain::folders::FolderId;
-use crate::store::definitions::{UPSERT, sql};
+use crate::store::definitions::{REPLACE_ONE, sql};
 
 fn bound(statement: &Statement) -> Vec<String> {
     statement
@@ -22,9 +22,9 @@ fn a_page() -> Page {
 
 #[test]
 fn a_body_write_names_no_folder_so_a_rewrite_keeps_it() {
-    let upsert = sql(UPSERT, DefinitionKind::Dashboard);
+    let replace = sql(REPLACE_ONE, DefinitionKind::Dashboard);
 
-    assert!(!upsert.contains("folder_id"), "{upsert}");
+    assert!(!replace.contains("folder_id"), "{replace}");
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn a_page_of_the_unfiled_asks_for_no_folder_at_all() {
 
 #[test]
 fn filing_binds_the_folder_then_the_dashboard() {
-    let name = crate::domain::definition::DefinitionName::parse("delivery")
+    let name = crate::domain::definition::DefinitionId::parse("delivery")
         .unwrap_or_else(|error| panic!("{error}"));
 
     let filed = file_statement(&name, Some(an_id()));

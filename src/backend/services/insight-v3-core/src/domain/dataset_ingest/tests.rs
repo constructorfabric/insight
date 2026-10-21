@@ -27,8 +27,8 @@ struct LandedRecord {
     received_at: DateTime<Utc>,
 }
 
-fn name(value: &str) -> DefinitionName {
-    DefinitionName::parse(value).unwrap_or_else(|error| panic!("the name parses: {error}"))
+fn name(value: &str) -> DefinitionId {
+    DefinitionId::parse(value).unwrap_or_else(|error| panic!("the name parses: {error}"))
 }
 
 fn declaration() -> Value {
