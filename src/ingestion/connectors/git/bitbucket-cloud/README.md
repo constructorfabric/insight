@@ -104,6 +104,7 @@ kubectl apply -f src/ingestion/secrets/connectors/bitbucket-cloud.yaml
 | `workspace_members` | `/workspaces/{w}/members` | full refresh | — |
 | `pipelines` | `/repositories/{r}/pipelines` | newest-first data feed, per repository pushed to | `created_on` |
 | `deployments` | `/repositories/{r}/deployments` | newest-first data feed, per repository pushed to | `created_on` |
+| `commit_authors` | proxy `/v1/authors/changes`, then `/repositories/{r}/commit/{sha}` | incremental, one lookup per changed author | `changed_at` |
 
 ### How the streams fit together
 
@@ -118,8 +119,20 @@ persist. It is the repository's `updated_on` stamped onto each head row — the
 vendor's clock — rather than the head's own committer date, which a pusher's
 clock can set in the future and which would then close every later slice.
 
+`commit_authors` is the exception: it does not fan out over repositories. The
+proxy records every author it observes in the repositories it fetches for this
+source and stamps each one with its own clock whenever something about the
+author changes — first sighting, first sighting in another repository, more
+commits, or a credential that can newly read them. The stream reads the authors
+changed since its cursor and asks Bitbucket who each one is through one sample
+commit. Its state is that one cursor, so a sync's memory does not grow with the
+number of repositories it lists; a nested per-repository author list would make
+the CDK hold a copy of the whole per-repository state for every lookup in
+flight. An author revealed by a fetch later in the same sync is resolved by the
+next sync.
+
 The vendor moves a repository's `updated_on` on pushes only. For commits, file
-changes, branch heads and commit authors that bound is exact — a head moves on
+changes and branch heads that bound is exact — a head moves on
 a push and nothing else — with one exception: a default branch changed in the
 repository settings without a push is reported at that repository's next push.
 For pull requests, pipelines
