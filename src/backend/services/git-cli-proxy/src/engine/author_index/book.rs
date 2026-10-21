@@ -227,7 +227,19 @@ impl Book {
             (None, Some(since)) => Bound::Included((since.saturating_add(1), String::new())),
             (None, None) => Bound::Unbounded,
         };
-        let upper = Bound::Excluded((window.high_water_us.saturating_add(1), String::new()));
+        let upper_key = (window.high_water_us.saturating_add(1), String::new());
+
+        // SAFETY: `BTreeSet::range` panics when its start exceeds its end. A
+        // caller's `since` may sit past the newest stamp — a lost index, or a
+        // cursor the caller moved by hand — and such a window is empty.
+        let lower_key = match &lower {
+            Bound::Included(key) | Bound::Excluded(key) => Some(key),
+            Bound::Unbounded => None,
+        };
+        if lower_key.is_some_and(|key| *key >= upper_key) {
+            return (Vec::new(), false);
+        }
+        let upper = Bound::Excluded(upper_key);
 
         let mut page = Vec::new();
         for (_, email) in self.order.range((lower, upper)) {
@@ -710,6 +722,45 @@ mod tests {
         assert_eq!(page.len(), 1);
         assert_eq!(page[0].email, ALICE);
         assert!(!more, "BOB sits above the walk's high-water mark");
+    }
+
+    #[test]
+    fn a_window_past_the_newest_stamp_is_empty() {
+        let mut book = Book::default();
+        book.apply(
+            folded(
+                "app",
+                1,
+                &[FP],
+                vec![row(ALICE, 'a', "2026-01-01T00:00:00Z", 1)],
+            ),
+            1_000,
+        );
+        let newest = book.last_stamp_us;
+
+        let cases = [
+            (
+                "since past the newest stamp",
+                window(Some(newest + 10), None, newest, 10),
+            ),
+            (
+                "since at the newest stamp",
+                window(Some(newest), None, newest, 10),
+            ),
+            (
+                "cursor past the newest stamp",
+                window(None, Some((newest + 10, ALICE)), newest, 10),
+            ),
+            (
+                "cursor at the high-water key",
+                window(None, Some((newest + 1, "")), newest, 10),
+            ),
+        ];
+        for (case, window) in cases {
+            let (page, more) = book.changes(FP, window);
+            assert!(page.is_empty(), "{case}: {page:?}");
+            assert!(!more, "{case}: nothing follows an empty window");
+        }
     }
 
     #[test]
