@@ -11,7 +11,7 @@
 -- from a vendor project to the class contract, and it does not exist yet.
 
 SELECT
-    tenant_id,
+    CAST(tenant_id AS String) AS tenant_id,
     source_id,
     unique_key,
     id AS project_id,
