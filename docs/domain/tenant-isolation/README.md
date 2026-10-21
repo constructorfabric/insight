@@ -96,6 +96,23 @@ The policy lives next to the existing roles in `src/ingestion/scripts/bootstrap-
 
 `query_id` is not a setting at all. `SETTINGS query_id=...` is an error in the outer query and has no effect inside a subquery. Whoever writes the SQL can't pick the tenant; only the service sending the query can.
 
+An example from the test. Table `gold.q` holds one row of tenant A (`a`) and one of tenant B (`b`), and the policy reads the tenant from `query_id`:
+
+| What was sent | Result | Why |
+|---|---|---|
+| `query_id = A:q1`, `SELECT v FROM gold.q` | `a` | the tenant comes from `query_id` |
+| `query_id = B:q2`, the same SQL | `b` | another `query_id`, another tenant |
+| `query_id = A:q3`, `SELECT v FROM gold.q SETTINGS query_id='B:y'` | error | `query_id` is not a setting |
+| `query_id = A:q4`, `SELECT v FROM (SELECT v FROM gold.q SETTINGS query_id='B:x')` | `a` | nesting doesn't change it either |
+| `query_id = garbage`, `SELECT v FROM gold.q` | empty | no tenant, no rows |
+
+The same trick against a policy that reads a setting:
+
+| What was sent | Result |
+|---|---|
+| `SELECT v FROM gold.q SETTINGS SQL_tenant_id='A'` | `a` |
+| `SELECT v FROM (SELECT v FROM gold.q SETTINGS SQL_tenant_id='B') SETTINGS SQL_tenant_id='A'` | `b` — the nested value wins: a leak |
+
 **Why not a role or a user per tenant.**
 - **A user per tenant** means a password and a connection per tenant in every service.
 - **A role per request** only works over HTTP. Over the native protocol a role is set with `SET ROLE` and becomes connection state, so a pooled connection could carry one tenant's role into another tenant's query.
