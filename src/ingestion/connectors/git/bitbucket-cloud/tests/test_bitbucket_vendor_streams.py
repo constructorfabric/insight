@@ -962,6 +962,31 @@ def test_a_saved_per_repository_author_state_reads_the_whole_change_feed_once(
 
 
 @freezegun.freeze_time(_FROZEN)
+def test_the_author_feed_is_bounded_to_the_start_date_on_every_sync(http_mocker: HttpMocker) -> None:
+    """The feed holds every author in a mirror's whole history. A first sync,
+    or one after the proxy lost its index, would look every one of them up at
+    Bitbucket — hours of the hourly budget spent on authors whose commits
+    predate what the connector collects — so every request carries the start
+    date as the bound on the newest commit."""
+    config = BitbucketCloudConfigBuilder().build()
+    config["bitbucket_start_date"] = "2024-01-01"
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors/changes", query_params=ANY_QUERY_PARAMS),
+        _author_changes_page(),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config, sync_mode=SyncMode.incremental)
+
+    assert not output.errors
+    bounds = [
+        parse_qs(urlparse(r.url).query).get("committed_since", [""])[0]
+        for r in http_mocker._mocker.request_history
+        if r.url.startswith(f"{PROXY_URL}/v1/authors/changes")
+    ]
+    assert bounds == ["2024-01-01"], f"every feed request must carry the start date: {bounds}"
+
+
+@freezegun.freeze_time(_FROZEN)
 def test_a_future_dated_commit_never_reaches_the_authors_cursor(http_mocker: HttpMocker) -> None:
     """An author's commit dates are whatever the committer's clock said; the
     cursor is the proxy's change stamp, so a commit dated ahead is resolved like
