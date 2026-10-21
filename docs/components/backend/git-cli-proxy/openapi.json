@@ -1,6 +1,61 @@
 {
   "components": {
     "schemas": {
+      "AuthorChangeRow": {
+        "description": "One author whose record changed, workspace-wide.",
+        "properties": {
+          "author_email": {
+            "type": "string"
+          },
+          "author_name": {
+            "type": "string"
+          },
+          "changed_at": {
+            "description": "Proxy time of the author's most recent change; strictly increasing per\ntenant and source. The caller's cursor.",
+            "type": "string"
+          },
+          "first_seen_at": {
+            "description": "Proxy time the author was first observed.",
+            "type": "string"
+          },
+          "last_committed_date": {
+            "description": "Newest committer date among the author's indexed commits; never a\ncursor.",
+            "type": "string"
+          },
+          "sample": {
+            "$ref": "#/components/schemas/AuthorSample"
+          }
+        },
+        "required": [
+          "author_email",
+          "author_name",
+          "changed_at",
+          "first_seen_at",
+          "last_committed_date",
+          "sample"
+        ],
+        "type": "object"
+      },
+      "AuthorChangesPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorChangeRow"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "AuthorRow": {
         "description": "One distinct commit author, with a commit of theirs to look them up by.\n\nGit records an author as a name and an e-mail and knows nothing of vendor\naccounts, so a consumer that needs the account resolves it against the\nvendor — one lookup per author rather than one per commit, which is the\nwhole reason this endpoint exists.",
         "properties": {
@@ -29,6 +84,23 @@
           "sample_sha",
           "last_committed_date",
           "commit_count"
+        ],
+        "type": "object"
+      },
+      "AuthorSample": {
+        "description": "The author's newest commit in a repository the caller may read — what a\nconsumer asks the vendor about.",
+        "properties": {
+          "repo_url": {
+            "description": "The clone URL as the caller sent it when the repository was fetched.",
+            "type": "string"
+          },
+          "sha": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_url",
+          "sha"
         ],
         "type": "object"
       },
@@ -474,6 +546,98 @@
           }
         ],
         "summary": "Distinct commit authors, ascending by e-mail"
+      }
+    },
+    "/v1/authors/changes": {
+      "get": {
+        "operationId": "git_cli_proxy.authors.changes",
+        "parameters": [
+          {
+            "description": "Exclusive lower bound on changed_at (RFC 3339); absent reads from the beginning",
+            "in": "query",
+            "name": "changed_since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1..=1000, default 1000; larger values are clamped",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Cursor from a previous page; fixes the walk's high-water mark",
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorChangesPage"
+                }
+              }
+            },
+            "description": "One page of changed authors"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Commit authors changed since a point, across the source's repositories"
       }
     },
     "/v1/branches": {

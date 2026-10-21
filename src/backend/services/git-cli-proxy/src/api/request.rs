@@ -115,6 +115,8 @@ pub enum BadRequest {
     BadRepoUrl(#[from] CloneUrlError),
     #[error("query parameters could not be parsed")]
     MalformedQuery,
+    #[error("{0} is not an RFC 3339 instant")]
+    MalformedInstant(&'static str),
 }
 
 /// `Query<T>`, but a rejection leaves through [`ApiError`] like every other
@@ -191,6 +193,32 @@ impl RequestContext {
             creds: GitCredentials { username, token },
             max_staleness: staleness(headers)?,
             size_hint: optional_u64(headers, SIZE_HINT_HEADER)?,
+        })
+    }
+}
+
+/// Who is asking, for a route that spans every repository of a source rather
+/// than naming one.
+#[derive(Debug)]
+pub struct Caller {
+    pub tenant_id: String,
+    pub source_id: String,
+    pub creds: GitCredentials,
+}
+
+impl Caller {
+    /// # Errors
+    ///
+    /// [`BadRequest::MissingHeader`] when an identity or credential header is
+    /// absent or empty.
+    pub fn from_headers(headers: &HeaderMap) -> Result<Self, BadRequest> {
+        Ok(Self {
+            tenant_id: required_header(headers, TENANT_HEADER)?,
+            source_id: required_header(headers, SOURCE_HEADER)?,
+            creds: GitCredentials {
+                username: required_header(headers, GIT_USER_HEADER)?,
+                token: required_header(headers, GIT_TOKEN_HEADER)?,
+            },
         })
     }
 }
