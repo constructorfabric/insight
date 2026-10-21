@@ -299,7 +299,8 @@ fn bad_request_field(error: &BadRequest) -> String {
     match error {
         BadRequest::MissingHeader(name)
         | BadRequest::NotANumber(name)
-        | BadRequest::MissingParam(name) => (*name).to_owned(),
+        | BadRequest::MissingParam(name)
+        | BadRequest::MalformedInstant(name) => (*name).to_owned(),
         BadRequest::MalformedToken => "page_token".to_owned(),
         BadRequest::MalformedSha(_) => "sha".to_owned(),
         BadRequest::BadRepoUrl(_) => "repo".to_owned(),

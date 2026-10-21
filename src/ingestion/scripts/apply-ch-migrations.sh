@@ -478,6 +478,10 @@ heal_jira_substream_issue_id
 heal_jira_issue_key jira_issue
 heal_jira_issue_key jira_issue_keys
 
+echo "=== Healing the Jira catalogue first-sync record ==="
+source "$SCRIPT_DIR/lib/heal-jira-catalogue-first-seen.sh"
+heal_jira_catalogue_first_seen
+
 echo "=== Healing YouTrack field observation tenants ==="
 heal_youtrack_field_observation_tenant
 

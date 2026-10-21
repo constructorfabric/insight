@@ -603,6 +603,19 @@ ab_delete_connection() {
 }
 
 # ---------------------------------------------------------------------------
+# ab_rename_connection <connection_id> <name>
+# POST /api/v1/connections/update with the name alone — every other field,
+# the sync state included, stays as it is.
+# ---------------------------------------------------------------------------
+ab_rename_connection() {
+  local connection_id="$1" name="$2"
+  local body
+  body="$(python3 -c 'import sys, json; print(json.dumps({"connectionId": sys.argv[1], "name": sys.argv[2]}))' \
+    "${connection_id}" "${name}")"
+  ab__curl POST /api/v1/connections/update "${body}"
+}
+
+# ---------------------------------------------------------------------------
 # ab_list_connections <workspace_id>
 # Returns JSON array of connections in workspace.
 # ---------------------------------------------------------------------------
