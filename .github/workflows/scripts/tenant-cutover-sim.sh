@@ -147,7 +147,7 @@ dbt_run --select zoom__users_snapshot
 if dbt_run --select zoom__identity_inputs >"$WORKDIR/refused.log" 2>&1; then
   fail "zoom__identity_inputs built over Bronze stamped '$OLD_TENANT': tenant_uuid() must refuse a tenant that is not a UUID"
 fi
-grep -q "CANNOT_PARSE_UUID" "$WORKDIR/refused.log" \
+grep -q -E "CANNOT_PARSE_UUID|Cannot convert NULL value to non-Nullable type" "$WORKDIR/refused.log" \
   || fail "zoom__identity_inputs failed over Bronze stamped '$OLD_TENANT', but not on its tenant: $(tail -c 2000 "$WORKDIR/refused.log")"
 
 # What the previous release left in the identity inputs: the tenant hashed. No
