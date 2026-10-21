@@ -11,6 +11,7 @@ use crate::domain::access::{Owner, PersonId, Refused};
 use crate::domain::dashboards::{Seen, sight};
 use crate::domain::definition::{DefinitionId, DefinitionStoreError, Page};
 use crate::domain::folders::DefinitionStore;
+use crate::domain::tags::TagSet;
 
 /// One person a dashboard is shared with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,6 +259,7 @@ impl<'a> DashboardShares<'a> {
         if !self.store.transfer(dashboard, owner, to).await? {
             return Err(SharingError::Moved);
         }
+        self.retag_for(dashboard, to).await;
         tracing::info!(
             actor_person_id = %self.caller,
             dashboard_id = dashboard.as_str(),
@@ -267,6 +269,29 @@ impl<'a> DashboardShares<'a> {
         );
 
         Ok(())
+    }
+
+    /// Moves the dashboard's tags into its new owner's scope under the same
+    /// names. The transfer has already landed, so a failure here leaves the
+    /// tags where they were and is logged, not answered.
+    async fn retag_for(&self, dashboard: &DefinitionId, owner: PersonId) {
+        let moved = async {
+            let held = self.store.tags_of(dashboard).await?;
+            let names: Vec<String> = held.iter().map(|tag| tag.as_str().to_owned()).collect();
+            let tags = TagSet::parse(&names)?;
+
+            self.store
+                .set_tags(dashboard, Owner::Person(owner), &tags)
+                .await
+        };
+
+        if let Err(error) = moved.await {
+            tracing::error!(
+                error = %error,
+                dashboard_id = dashboard.as_str(),
+                "transferred dashboard kept its previous owner's tags"
+            );
+        }
     }
 
     async fn owned(&self, dashboard: &DefinitionId) -> Result<Seen, SharingError> {

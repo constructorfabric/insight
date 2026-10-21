@@ -232,7 +232,7 @@ impl Harness {
     }
 
     async fn orphaned(&self, caller: &str) -> Answer {
-        self.send(caller, "GET", "/v1/dashboards/orphaned", None)
+        self.send(caller, "GET", "/v1/orphaned-dashboards", None)
             .await
     }
 

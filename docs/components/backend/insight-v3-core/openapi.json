@@ -1981,85 +1981,6 @@
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/dashboards/orphaned": {
-      "get": {
-        "operationId": "insight_v3_core.dashboards.orphaned",
-        "parameters": [
-          {
-            "description": "Page size, 1 to 200",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Dashboards to skip",
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            },
-            "description": "One page of orphaned dashboards, and how many there are"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "500": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Internal Server Error"
-          },
-          "504": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Gateway Timeout"
-          }
-        },
-        "summary": "List the dashboards whose owner is no longer an administrator",
-        "x-toolkit-visibility": "exposed"
-      }
-    },
     "/v1/dashboards/{id}": {
       "delete": {
         "operationId": "insight_v3_core.dashboards.delete",
@@ -4438,6 +4359,85 @@
           }
         },
         "summary": "Compile and run a metric",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/orphaned-dashboards": {
+      "get": {
+        "operationId": "insight_v3_core.orphaned_dashboards.list",
+        "parameters": [
+          {
+            "description": "Page size, 1 to 200",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Dashboards to skip",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "One page of orphaned dashboards, and how many there are"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "List the dashboards whose owner is no longer an administrator",
         "x-toolkit-visibility": "exposed"
       }
     },

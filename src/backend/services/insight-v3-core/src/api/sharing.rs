@@ -216,8 +216,8 @@ fn share_routes(openapi: &dyn OpenApiRegistry, state: &Arc<AppState>) -> Router 
 }
 
 fn transfer_routes(openapi: &dyn OpenApiRegistry, state: &Arc<AppState>) -> Router {
-    let orphaned = OperationBuilder::get("/v1/dashboards/orphaned")
-        .operation_id("insight_v3_core.dashboards.orphaned")
+    let orphaned = OperationBuilder::get("/v1/orphaned-dashboards")
+        .operation_id("insight_v3_core.orphaned_dashboards.list")
         .summary("List the dashboards whose owner is no longer an administrator")
         .anonymous()
         .exposed()
