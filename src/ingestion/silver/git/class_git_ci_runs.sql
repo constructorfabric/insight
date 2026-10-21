@@ -9,7 +9,7 @@
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     schema='silver',
-    tags=['silver']
+    tags=['silver', 'history']
 ) }}
 
 -- INVARIANT: this table is the only archive of CI history. The source APIs

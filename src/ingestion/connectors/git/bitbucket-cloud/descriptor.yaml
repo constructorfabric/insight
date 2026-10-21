@@ -52,7 +52,15 @@ name: bitbucket-cloud
 #   cursor. MINOR per ADR-0015: the catalog gains a cursor and bronze a
 #   column, so reconcile must republish the connection; stored rows keep
 #   their meaning.
-version: "7.8.0"
+# 7.9.0: `commit_authors` reads the proxy's source-wide author change feed
+#   instead of each repository's author list, so its parent state is one
+#   change cursor rather than one entry per repository, and an author is
+#   resolved once rather than once per repository. Rows are keyed per author
+#   (`repo_full_name` names the sample's repository) and gain `changed_at`.
+#   MINOR per ADR-0015: staging reads only the account, the e-mail, the
+#   tenant and the source, so its grain does not change; earlier per-repository
+#   rows stay in bronze, deduplicated on their own key.
+version: "7.9.0"
 # Every four hours, off the hours other connectors use: replication pods sharing
 # a slot with other connector syncs can be starved of workers, which surfaces as
 # startup and activity timeouts rather than as a connector error.

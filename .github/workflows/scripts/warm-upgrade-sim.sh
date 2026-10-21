@@ -315,9 +315,62 @@ assert_jira_issue_identity_recovered() {
   echo "=== Jira issue id recovered and the moved issue collapsed onto it ==="
 }
 
+# Before the catalogue first-sync record kept its history, it was a plain
+# MergeTree keyed by source. Bronze has already forgotten the first extraction —
+# what it holds now is younger — so the upgrade must carry the recorded instant
+# over rather than re-derive it. One source still has bronze rows to name its
+# tenant; the other does not, and keeps an empty one.
+seed_jira_catalogue_first_seen_warm_state() {
+  echo "=== Seeding the pre-history Jira catalogue first-sync record ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  run_ch <<'SQL'
+CREATE DATABASE IF NOT EXISTS bronze_jira;
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields
+(
+    unique_key String, tenant_id Nullable(String), source_id Nullable(String),
+    _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+INSERT INTO bronze_jira.jira_fields (unique_key, tenant_id, source_id, _airbyte_raw_id, _airbyte_extracted_at)
+VALUES ('warm-jira-1-summary', 'warm', 'jira-1', 'raw-f1', '2026-03-01 00:00:00');
+
+CREATE TABLE IF NOT EXISTS staging.jira__catalogue_first_seen
+(
+    insight_source_id String, catalogue_first_sync DateTime64(3), recorded_at DateTime64(3)
+)
+ENGINE = MergeTree ORDER BY insight_source_id;
+INSERT INTO staging.jira__catalogue_first_seen (insight_source_id, catalogue_first_sync, recorded_at)
+VALUES
+    ('jira-1', '2026-01-01 00:00:00', '2026-01-01 00:05:00'),
+    ('jira-gone', '2026-01-02 00:00:00', '2026-01-02 00:05:00');
+SQL
+}
+
+assert_jira_catalogue_first_seen_kept() {
+  echo "=== Asserting the catalogue first sync survived the upgrade ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  local got
+  local expected="ReplacingMergeTree|-jira-gone,,jira-gone,2026-01-02 00:00:00.000;warm-jira-1,warm,jira-1,2026-01-01 00:00:00.000"
+  got="$(printf "SELECT concat(
+      (SELECT engine FROM system.tables WHERE database = 'staging' AND name = 'jira__catalogue_first_seen'), '|',
+      arrayStringConcat(groupArray(row), ';'))
+    FROM
+    (
+        SELECT concat(unique_key, ',', tenant_id, ',', insight_source_id, ',', toString(catalogue_first_sync)) AS row
+        FROM staging.jira__catalogue_first_seen FINAL
+        ORDER BY unique_key
+    )" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=warm upgrade lost the Jira catalogue first sync::Expected '${expected}' — the record rebuilt as a ReplacingMergeTree keyed by tenant and source, each source keeping the instant it was first recorded with, and the tenant taken from bronze where bronze still names one — but got '${got}'."
+    exit 1
+  fi
+  echo "=== Jira catalogue first sync kept through the upgrade ==="
+}
+
 seed_warm_bronze
 seed_git_close_time_warm_state
 seed_jira_issue_identity_warm_state
+seed_jira_catalogue_first_seen_warm_state
 
 echo "=== Step 2: deploy the working tree onto the warm state ==="
 dbt_venv_for "$REPO_ROOT/src/ingestion/scripts/bootstrap-db/pins.env" "$WORKDIR/branch-venv"
@@ -329,6 +382,7 @@ fi
 
 assert_git_close_time_recovered
 assert_jira_issue_identity_recovered
+assert_jira_catalogue_first_seen_kept
 
 echo "=== Step 3: build gold over the warm silver, as the first sync would ==="
 if ! PATH="$WORKDIR/branch-venv/bin:$PATH" \

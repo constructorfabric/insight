@@ -112,6 +112,11 @@ def _measured_persons(roster: Sequence[Person]) -> list[Person]:
     return [p for p in roster if p.role != "admin"]
 
 
+def employee_unique_key(tenant_uuid: str, employee_id: str) -> str:
+    """The key the BambooHR connector writes: stable per employee, whatever their attributes."""
+    return f"{tenant_uuid}-{_BAMBOOHR_SOURCE_ID}-{employee_id}"
+
+
 def seed_bamboohr_employees(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
@@ -119,6 +124,7 @@ def seed_bamboohr_employees(
 ) -> int:
     truncate(client, "bronze_bamboohr", "employees")
     cols = [
+        "unique_key",
         "id",
         "status",
         "firstName",
@@ -160,6 +166,7 @@ def seed_bamboohr_employees(
         }
         rows.append(
             (
+                employee_unique_key(tenant_uuid, record["id"]),
                 record["id"],
                 record["status"],
                 record["firstName"],
