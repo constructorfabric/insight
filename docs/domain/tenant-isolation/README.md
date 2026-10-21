@@ -157,17 +157,17 @@ The best move now is to bring everything to `tenant_id`, so we don't have to rew
 
 ## What's done and what's left
 
-The [#3661](https://github.com/constructorfabric/insight/issues/3661) PR series, almost all still open:
+The [#3661](https://github.com/constructorfabric/insight/issues/3661) PR series: three merged, the rest open.
 
-| PR | What | When to merge |
-|---|---|---|
-| [#3795](https://github.com/constructorfabric/insight/pull/3795) | history is never rebuilt | any time |
-| [#3796](https://github.com/constructorfabric/insight/pull/3796) | one tenant source in the chart | cutover window |
-| [#3799](https://github.com/constructorfabric/insight/pull/3799) | key migration tool | any time, run at cutover |
-| [#3807](https://github.com/constructorfabric/insight/pull/3807) | renaming Airbyte and Argo objects | any time |
-| [#3814](https://github.com/constructorfabric/insight/pull/3814), [#3819](https://github.com/constructorfabric/insight/pull/3819), [#3825](https://github.com/constructorfabric/insight/pull/3825) | tenant in staging and task classes | #3819 any time, the rest in the window |
-| [#3830](https://github.com/constructorfabric/insight/pull/3830) | identity per tenant, analytics filter on by default | cutover window |
-| [#3844](https://github.com/constructorfabric/insight/pull/3844) | runbook, migration simulation, neighbour-tenant tests | last |
+| PR | What | When to merge | Status |
+|---|---|---|---|
+| [#3795](https://github.com/constructorfabric/insight/pull/3795) | history is never rebuilt | any time | merged Oct 20 |
+| [#3796](https://github.com/constructorfabric/insight/pull/3796) | one tenant source in the chart | cutover window | open |
+| [#3799](https://github.com/constructorfabric/insight/pull/3799) | key migration tool | any time, run at cutover | merged Oct 21 |
+| [#3807](https://github.com/constructorfabric/insight/pull/3807) | renaming Airbyte and Argo objects | any time | merged Oct 20 |
+| [#3814](https://github.com/constructorfabric/insight/pull/3814), [#3819](https://github.com/constructorfabric/insight/pull/3819), [#3825](https://github.com/constructorfabric/insight/pull/3825) | tenant in staging and task classes | #3819 any time, the rest in the window | open |
+| [#3830](https://github.com/constructorfabric/insight/pull/3830) | identity per tenant, analytics filter on by default | cutover window | open |
+| [#3844](https://github.com/constructorfabric/insight/pull/3844) | runbook, migration simulation, neighbour-tenant tests | last | open |
 
 Still to do:
 - boundary per (tenant, source) in ~50 staging models, and Zoom dedups with the tenant ([#752](https://github.com/constructorfabric/insight/issues/752));
