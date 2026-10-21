@@ -29,16 +29,23 @@ def capture(cfg: InstanceConfig, tenant: str, target: Path, output: Path) -> Non
     output.mkdir()
     tables = []
     names = set()
+    omitted = []
     for node in manifest["nodes"].values():
         if node["resource_type"] != "model" or "gold" not in node["tags"]:
             continue
+        materialized = node["config"]["materialized"]
+        if materialized in ("ephemeral", "view"):
+            omitted.append({"name": node["name"], "materialized": materialized})
+            continue
+        if materialized not in ("table", "incremental"):
+            raise ValueError("unsupported gold materialization")
         database, table = node["schema"], node["alias"]
         if (database, table) in names:
             raise ValueError("duplicate gold relation")
         names.add((database, table))
         relation = f"{identifier(database)}.{identifier(table)}"
         with ch.client(cfg) as client:
-            ddl = client.command(f"SHOW CREATE TABLE {relation}")
+            ddl = client.query(f"SHOW CREATE TABLE {relation}").result_rows[0][0]
             columns = [
                 row[0]
                 for row in client.query(
@@ -65,7 +72,13 @@ def capture(cfg: InstanceConfig, tenant: str, target: Path, output: Path) -> Non
         raise ValueError("no gold tables captured")
     (output / "snapshot.json").write_text(
         json.dumps(
-            {"tenant": tenant, "tables": tables, "source_sha": os.environ["INSIGHT_RESEARCH_SOURCE_SHA"]}, indent=2
+            {
+                "tenant": tenant,
+                "tables": tables,
+                "omitted_non_table_models": omitted,
+                "source_sha": os.environ["INSIGHT_RESEARCH_SOURCE_SHA"],
+            },
+            indent=2,
         )
         + "\n"
     )
@@ -83,7 +96,7 @@ def replay(cfg: InstanceConfig, tenant: str, snapshot: Path) -> None:
             relation = f"{identifier(database)}.{identifier(table)}"
             client.command(f"CREATE DATABASE IF NOT EXISTS {identifier(database)}")
             client.command(entry["ddl"])
-            if client.command(f"SHOW CREATE TABLE {relation}") != entry["ddl"]:
+            if client.query(f"SHOW CREATE TABLE {relation}").result_rows[0][0] != entry["ddl"]:
                 raise AssertionError(f"DDL changed for {relation}")
             native = (snapshot / entry["file"]).read_bytes()
             if hashlib.sha256(native).hexdigest() != entry["sha256"]:

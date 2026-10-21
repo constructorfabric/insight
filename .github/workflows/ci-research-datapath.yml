@@ -52,11 +52,26 @@ jobs:
           fi
           uv sync --project application/tests --frozen --group datapath --no-group dev
       - name: Compare the full path with gold-seeded API assertions
+        timeout-minutes: 65
         run: python3 scripts/ci/research_datapath/run.py --source application --output results
+      - name: Clean up only this run's compose projects
+        if: always()
+        working-directory: application
+        run: |
+          for mode in baseline data api; do
+            instance="ci-split-${GITHUB_RUN_ID}-${mode}"
+            if [ -f ".env.compose.test-stand-${instance}" ]; then
+              ./dev-compose.sh test-stand down "--instance=${instance}"
+            fi
+          done
       - name: Preserve measurements and synthetic gold fixture
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: datapath-ci-research
-          path: results/
+          path: |
+            results/results.json
+            results/baseline/*.json
+            results/api/*.json
+            results/gold-snapshot/
           if-no-files-found: error

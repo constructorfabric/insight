@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from insight_datapath.dbt_runner import DbtRunner
 from insight_datapath.fixture_loader import load
@@ -16,6 +17,7 @@ from insight_datapath.metric_expect import Ledger
 from insight_datapath.schema import restart_analytics
 from insight_datapath.spec_runner import SpecRun, run_spec
 from insight_stand.manifest import Manifest
+from insight_stand.stand import parse_env_file
 from snapshot import capture, duration_values, replay
 
 MODE = os.environ["INSIGHT_RESEARCH_MODE"]
@@ -46,7 +48,23 @@ def seeded_gold(
         project=os.environ["INSIGHT_RESEARCH_PROJECT"],
         env_file=Path(os.environ["INSIGHT_STAND_ENV_FILE"]),
     )
+    wait_analytics()
     TIMINGS.append({"stage": "gold_replay_and_restart", "seconds": time.monotonic() - started})
+
+
+def wait_analytics() -> None:
+    values = parse_env_file(Path(os.environ["INSIGHT_STAND_ENV_FILE"]))
+    port = int(values["ANALYTICS_PORT"])
+    deadline = time.monotonic() + 60
+    with httpx.Client(timeout=1.0) as client:
+        while time.monotonic() < deadline:
+            try:
+                if client.get(f"http://localhost:{port}/health").status_code == 200:
+                    return
+            except httpx.TransportError:
+                pass
+            time.sleep(0.1)
+    raise TimeoutError("analytics health did not become ready")
 
 
 @pytest.fixture(scope="module", params=[1, 2, 3])
@@ -68,7 +86,7 @@ def spec(request: pytest.FixtureRequest, instance_cfg: InstanceConfig, stand_man
         return SpecRun(
             spec=loaded, caller=caller, tenant=stand_manifest.tenant, to_person_id={}, to_email={}, ledger=LEDGER
         )
-    if MODE != "baseline":
+    if MODE not in ("baseline", "data"):
         raise ValueError("unknown research mode")
     seeder = request.getfixturevalue("ch_seeder")
     runner = request.getfixturevalue("dbt_runner")
@@ -90,7 +108,7 @@ def spec(request: pytest.FixtureRequest, instance_cfg: InstanceConfig, stand_man
     TIMINGS.append(
         {"stage": "transformation_with_dbt_tests", "repeat": request.param, "seconds": time.monotonic() - started}
     )
-    if request.param == 3:
+    if MODE == "baseline" and request.param == 3:
         capture(instance_cfg, stand_manifest.tenant, runner.target_dir, SNAPSHOT)
     return result
 
