@@ -23,7 +23,7 @@
 
 WITH first_syncs AS (
     SELECT
-        COALESCE(tenant_id, '')                           AS tenant_id,
+        CAST(tenant_id AS String)                         AS tenant_id,
         COALESCE(source_id, '')                           AS insight_source_id,
         min(_airbyte_extracted_at)                        AS catalogue_first_sync,
         now64(3)                                          AS recorded_at

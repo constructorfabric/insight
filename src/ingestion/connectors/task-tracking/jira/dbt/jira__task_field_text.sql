@@ -44,7 +44,7 @@
 -- asymmetry, not an oversight.
 
 WITH long_text_fields AS (
-    SELECT insight_source_id, field_id
+    SELECT tenant_id, insight_source_id, field_id
     FROM {{ ref('jira__task_field_kind') }}
     WHERE field_kind = 'long_text'
 ),
@@ -52,12 +52,12 @@ WITH long_text_fields AS (
 -- Current bodies, from the issue JSON.
 issue_winner AS (
     -- Read-time dedup of the ReplacingMergeTree by the issue's stable key
-    -- within a source, (source_id, jira_id): unmerged parts hold several rows
-    -- per issue, and `unique_key` exists for the merge alone.
-    SELECT source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
+    -- within a tenant's source, (tenant_id, source_id, jira_id): unmerged parts
+    -- hold several rows per issue, and `unique_key` exists for the merge alone.
+    SELECT tenant_id, source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
     WHERE jira_id IS NOT NULL
-    GROUP BY source_id, jira_id
+    GROUP BY tenant_id, source_id, jira_id
 ),
 
 from_snapshot AS (
@@ -68,7 +68,8 @@ from_snapshot AS (
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
     ARRAY JOIN JSONExtractKeysAndValuesRaw(COALESCE(i.custom_fields_json, '{}')) AS kv
     INNER JOIN long_text_fields AS f
-        ON f.insight_source_id = COALESCE(i.source_id, '')
+        ON f.tenant_id = CAST(i.tenant_id AS String)
+       AND f.insight_source_id = COALESCE(i.source_id, '')
        AND f.field_id = kv.1
     WHERE kv.2 NOT IN ('', 'null', '""', '{}')
 ),
@@ -82,13 +83,15 @@ from_changelog AS (
         SELECT ci.value_from_string AS content
         FROM {{ ref('jira__changelog_items') }} AS ci
         INNER JOIN long_text_fields AS f
-            ON f.insight_source_id = ci.insight_source_id
+            ON f.tenant_id = ci.tenant_id
+           AND f.insight_source_id = ci.insight_source_id
            AND f.field_id = ci.field_id
         UNION ALL
         SELECT ci.value_to_string AS content
         FROM {{ ref('jira__changelog_items') }} AS ci
         INNER JOIN long_text_fields AS f
-            ON f.insight_source_id = ci.insight_source_id
+            ON f.tenant_id = ci.tenant_id
+           AND f.insight_source_id = ci.insight_source_id
            AND f.field_id = ci.field_id
     )
     WHERE content IS NOT NULL AND content != ''
