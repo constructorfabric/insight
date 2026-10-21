@@ -24,7 +24,7 @@
 
 SELECT
     CAST(concat(m.tenant_id, ':', m.insight_source_id, ':github:status:', m.value_id) AS Nullable(String)) AS unique_key,
-    CAST(m.tenant_id AS Nullable(String))                   AS tenant_id,
+    CAST(m.tenant_id AS String)                             AS tenant_id,
     CAST(m.insight_source_id AS Nullable(String))           AS insight_source_id,
     CAST('github' AS String)                                AS data_source,
     CAST(m.value_id AS Nullable(String))                    AS status_id,

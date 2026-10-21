@@ -4,7 +4,7 @@ WITH custom AS (
     SELECT i.*, arrayJoin(JSONExtractArrayRaw(custom_fields)) AS f
     FROM {{ ref('youtrack__issue_observations') }} AS i FINAL
 ), field_types AS (
-    SELECT coalesce(tenant_id, '') AS tenant_id, insight_source_id, field_id, observed_at, field_type
+    SELECT CAST(tenant_id AS String) AS tenant_id, insight_source_id, field_id, observed_at, field_type
     FROM {{ ref('youtrack__field_observations') }} FINAL
 ), first_field_types AS (
     SELECT tenant_id, insight_source_id, field_id, argMin(field_type, observed_at) AS field_type

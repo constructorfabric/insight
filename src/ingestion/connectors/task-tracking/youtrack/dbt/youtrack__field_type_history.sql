@@ -1,6 +1,6 @@
 {{ config(materialized='view', schema='staging', tags=['youtrack', 'staging']) }}
 
-SELECT coalesce(tenant_id, '') AS tenant_id, insight_source_id, field_id, field_type, observed_at,
+SELECT CAST(tenant_id AS String) AS tenant_id, insight_source_id, field_id, field_type, observed_at,
     multiIf(field_type = '', 'unknown', endsWith(field_type, '[*]'), 'multi', 'single') AS observed_cardinality,
     lagInFrame(toNullable(observed_at)) OVER w AS previously_observed_at,
     lagInFrame(toNullable(field_type)) OVER w AS previously_observed_type

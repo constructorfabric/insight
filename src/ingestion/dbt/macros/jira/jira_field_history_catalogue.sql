@@ -149,7 +149,7 @@
             sources is absent from their union. -#}
         DELETE FROM {{ this }}
         WHERE (tenant_id, insight_source_id, issue_id) NOT IN (
-                  SELECT COALESCE(tenant_id, ''), COALESCE(source_id, ''), COALESCE(toString(jira_id), '')
+                  SELECT CAST(tenant_id AS String), COALESCE(source_id, ''), COALESCE(toString(jira_id), '')
                   FROM {{ source('bronze_jira', 'jira_issue') }}
                   WHERE jira_id IS NOT NULL
               )

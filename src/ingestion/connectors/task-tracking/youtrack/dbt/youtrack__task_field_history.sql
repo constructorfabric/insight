@@ -137,7 +137,7 @@ WITH changes AS (
         ORDER BY event_at, {{ task_event_band('event_kind') }}, _seq
         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
 )
-SELECT concat(coalesce(h.tenant_id, ''), '-', h.insight_source_id, '-youtrack-', h.issue_id, '-', h.field_id, '-',
+SELECT concat(CAST(h.tenant_id AS String), '-', h.insight_source_id, '-youtrack-', h.issue_id, '-', h.field_id, '-',
               h.event_id) AS unique_key,
     h.tenant_id AS tenant_id,
     h.insight_source_id AS insight_source_id, 'youtrack' AS data_source, h.issue_id AS issue_id, h.id_readable AS id_readable, h.event_id AS event_id, h.event_at AS event_at,

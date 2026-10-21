@@ -17,16 +17,34 @@ _task_tenant_probe() {
   printf '%s' "${count}"
 }
 
+# Added as Nullable, so rows predating the column read as tenantless, not under an empty tenant.
+# SAFETY: narrowing a column that holds a NULL fails its mutation and leaves the table unreadable.
+_heal_task_tenant_column() {
+  local relation="$1" tenantless
+  run_ch <<SQL
+ALTER TABLE ${relation} ADD COLUMN IF NOT EXISTS tenant_id Nullable(String) AFTER unique_key;
+SQL
+  tenantless="$(_task_tenant_probe "${relation} holds rows without a tenant" \
+    "SELECT count() FROM ${relation} WHERE tenant_id IS NULL")" || return 1
+  if [[ "${tenantless}" -gt 0 ]]; then
+    echo "  ${relation}: ${tenantless} row(s) without a tenant; tenant_id stays Nullable until a rebuild replaces them"
+    run_ch <<SQL
+ALTER TABLE ${relation} MODIFY COLUMN tenant_id Nullable(String) AFTER unique_key;
+SQL
+    return 0
+  fi
+  run_ch <<SQL
+ALTER TABLE ${relation} MODIFY COLUMN tenant_id String AFTER unique_key;
+SQL
+}
+
 heal_task_producer_tenant() {
-  local table="$1" type="$2" present
+  local table="$1" present
   present="$(_task_tenant_probe "staging.${table} exists" \
     "SELECT count() FROM system.tables WHERE database = 'staging' AND name = '${table}' AND engine != 'View'")" || return 1
   [[ "${present}" -gt 0 ]] || return 0
   echo "  staging.${table}"
-  run_ch <<SQL
-ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS tenant_id ${type} AFTER unique_key;
-ALTER TABLE staging.${table} MODIFY COLUMN tenant_id ${type} AFTER unique_key;
-SQL
+  _heal_task_tenant_column "staging.${table}"
 }
 
 heal_task_class_tenant() {
@@ -35,10 +53,7 @@ heal_task_class_tenant() {
     "SELECT count() FROM system.tables WHERE database = 'silver' AND name = '${class}'")" || return 1
   [[ "${present}" -gt 0 ]] || return 0
   echo "  silver.${class}"
-  run_ch <<SQL
-ALTER TABLE silver.${class} ADD COLUMN IF NOT EXISTS tenant_id Nullable(String) AFTER unique_key;
-ALTER TABLE silver.${class} MODIFY COLUMN tenant_id Nullable(String) AFTER unique_key;
-SQL
+  _heal_task_tenant_column "silver.${class}"
 }
 
 # A view cannot be altered and only its own connector's run recreates it, so a
@@ -60,16 +75,11 @@ TASK_CLASSES=(
   class_task_projects class_task_sprints class_task_statuses class_task_worklogs
 )
 
-# INVARIANT: each table sits in the list of the type its model emits; a mismatch
-# converts the column on every deploy and back on every rebuild.
-TASK_PRODUCERS_STRING_TENANT=(
-  jira__field_history_derived jira__comment_lifecycle_events jira__worklog_lifecycle_events
+TASK_PRODUCERS=(
+  jira__field_history_derived jira__comment_lifecycle_events jira__worklog_lifecycle_events jira__availability_events
+  jira__task_comments jira__task_worklogs jira__task_field_metadata jira__task_links
   youtrack__task_field_history youtrack__task_field_metadata youtrack__task_issuetypes youtrack__task_links
-)
-TASK_PRODUCERS_NULLABLE_TENANT=(
-  jira__availability_events jira__task_comments jira__task_worklogs jira__task_field_metadata jira__task_links
-  youtrack__task_comments youtrack__task_projects youtrack__task_sprints youtrack__task_statuses
-  youtrack__task_worklogs
+  youtrack__task_comments youtrack__task_projects youtrack__task_sprints youtrack__task_statuses youtrack__task_worklogs
   github__task_field_history github__task_links
 )
 TASK_PRODUCER_VIEWS=(
@@ -86,11 +96,8 @@ heal_task_class_tenants() {
 
 heal_task_producer_tenants() {
   local table
-  for table in "${TASK_PRODUCERS_STRING_TENANT[@]}"; do
-    heal_task_producer_tenant "${table}" String
-  done
-  for table in "${TASK_PRODUCERS_NULLABLE_TENANT[@]}"; do
-    heal_task_producer_tenant "${table}" 'Nullable(String)'
+  for table in "${TASK_PRODUCERS[@]}"; do
+    heal_task_producer_tenant "${table}"
   done
   for table in "${TASK_PRODUCER_VIEWS[@]}"; do
     heal_task_producer_view "${table}"

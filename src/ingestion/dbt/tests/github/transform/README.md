@@ -45,4 +45,5 @@ dropped so its first build is a full one.
 
 The scenarios cover two tenants sharing one source id: the item-event
 watermark is kept per tenant and source, and a commit e-mail owned in one
-tenant stays unowned in another.
+tenant stays unowned in another. A bronze row without a tenant fails the build
+instead of landing under an empty one.

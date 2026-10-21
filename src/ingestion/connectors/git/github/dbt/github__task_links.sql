@@ -143,7 +143,7 @@ orphan_removes AS (
 pr_observations AS (
     SELECT
         COALESCE(s.source_id, '')                               AS insight_source_id,
-        COALESCE(s.tenant_id, '')                               AS tenant_id,
+        CAST(s.tenant_id AS String)                             AS tenant_id,
         concat(COALESCE(s.repo_full_name, ''), '#', toString(COALESCE(s.item_number, 0))) AS id_readable,
         concat(
             JSONExtractString(JSONExtractRaw(link_raw, 'repository'), 'nameWithOwner'),
@@ -164,7 +164,7 @@ pr_observations AS (
 -- link removed by emptying the set would read as still open.
 latest_observation AS (
     SELECT
-        COALESCE(tenant_id, '')                                 AS tenant_id,
+        CAST(tenant_id AS String)                               AS tenant_id,
         COALESCE(source_id, '')                                 AS insight_source_id,
         concat(COALESCE(repo_full_name, ''), '#', toString(COALESCE(item_number, 0))) AS id_readable,
         max(_tracked_at)                                        AS last_version_at
@@ -215,11 +215,11 @@ every_interval AS (
 
 SELECT
     CAST(concat(
-        coalesce(tenant_id, ''), '-',
+        CAST(tenant_id AS String), '-',
         insight_source_id, '-github-', id_readable, '-', link_type, '-',
         target_readable, '-', toString(toUnixTimestamp64Milli(valid_from))
     ) AS String)                                                AS unique_key,
-    CAST(tenant_id AS Nullable(String))                         AS tenant_id,
+    CAST(tenant_id AS String)                                   AS tenant_id,
     CAST(insight_source_id AS String)                           AS insight_source_id,
     CAST('github' AS String)                                    AS data_source,
     CAST(id_readable AS String)                                 AS id_readable,

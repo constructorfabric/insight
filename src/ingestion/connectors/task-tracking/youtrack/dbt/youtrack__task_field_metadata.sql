@@ -1,7 +1,7 @@
 {{ config(materialized='table', engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_field_metadata']) }}
 
 WITH catalogue AS (
-    SELECT coalesce(tenant_id, '') AS tenant_id, insight_source_id, field_id, field_name, field_type,
+    SELECT CAST(tenant_id AS String) AS tenant_id, insight_source_id, field_id, field_name, field_type,
         toUInt8(endsWith(field_type, '[*]')) AS is_multi,
         toUInt8(match(field_type, '^(enum|state|version|build|ownedField|user|group)')) AS has_id,
         observed_at
@@ -17,7 +17,7 @@ WITH catalogue AS (
                 ('sprints', 'Sprints', 'sprint', 1, 1)] AS prop
     GROUP BY tenant_id, insight_source_id, prop
 )
-SELECT CAST(concat(coalesce(tenant_id, ''), '-', insight_source_id, '-youtrack-field-', field_id) AS Nullable(String))
+SELECT CAST(concat(CAST(tenant_id AS String), '-', insight_source_id, '-youtrack-field-', field_id) AS Nullable(String))
         AS unique_key,
     tenant_id, insight_source_id, 'youtrack' AS data_source, CAST(NULL AS Nullable(String)) AS project_key,
     field_id, field_name, is_multi, field_type, has_id, observed_at,

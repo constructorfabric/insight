@@ -1,6 +1,6 @@
-"""The task tenant heals place tenant_id after unique_key — on every task class,
-and on every producer with the type its model emits — leave what ClickHouse says
-is absent alone, and stop at a probe they cannot read.
+"""The task tenant heals place tenant_id after unique_key on every task class and
+producer, narrow it to String only when no row lacks a tenant, leave what
+ClickHouse says is absent alone, and stop at a probe they cannot read.
 
 The heal runs against a stub of `_ch_http_query` that answers from a scripted
 catalogue and logs every statement, so no ClickHouse is needed.
@@ -17,29 +17,27 @@ import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 
-STRING = "String"
-NULLABLE = "Nullable(String)"
-PRODUCER_TYPES = {
-    "jira__field_history_derived": STRING,
-    "jira__comment_lifecycle_events": STRING,
-    "jira__worklog_lifecycle_events": STRING,
-    "jira__availability_events": NULLABLE,
-    "jira__task_comments": NULLABLE,
-    "jira__task_worklogs": NULLABLE,
-    "jira__task_field_metadata": NULLABLE,
-    "jira__task_links": NULLABLE,
-    "youtrack__task_field_history": STRING,
-    "youtrack__task_field_metadata": STRING,
-    "youtrack__task_issuetypes": STRING,
-    "youtrack__task_links": STRING,
-    "youtrack__task_comments": NULLABLE,
-    "youtrack__task_projects": NULLABLE,
-    "youtrack__task_sprints": NULLABLE,
-    "youtrack__task_statuses": NULLABLE,
-    "youtrack__task_worklogs": NULLABLE,
-    "github__task_field_history": NULLABLE,
-    "github__task_links": NULLABLE,
-}
+PRODUCERS = [
+    "jira__field_history_derived",
+    "jira__comment_lifecycle_events",
+    "jira__worklog_lifecycle_events",
+    "jira__availability_events",
+    "jira__task_comments",
+    "jira__task_worklogs",
+    "jira__task_field_metadata",
+    "jira__task_links",
+    "youtrack__task_field_history",
+    "youtrack__task_field_metadata",
+    "youtrack__task_issuetypes",
+    "youtrack__task_links",
+    "youtrack__task_comments",
+    "youtrack__task_projects",
+    "youtrack__task_sprints",
+    "youtrack__task_statuses",
+    "youtrack__task_worklogs",
+    "github__task_field_history",
+    "github__task_links",
+]
 CLASSES = [
     "class_task_comments",
     "class_task_field_history",
@@ -64,7 +62,8 @@ PRODUCER_VIEWS = [
 
 # Each catalogue entry is `<name> <state>`; a name not listed does not exist.
 # The stub answers a probe the way ClickHouse would for that state, so a probe
-# that forgets to exclude views counts them.
+# that forgets to exclude views counts them. `tenantless` is a table holding rows
+# without a tenant; `nulls_<fail|unreadable>` a table whose NULL count cannot be read.
 STUB = r"""
 set -euo pipefail
 source "$SCRIPTS/lib/ch-exec.sh"
@@ -78,7 +77,7 @@ _state() {
 }
 _table_probe() {
   case "$2" in
-    table) echo 1 ;;
+    table | tenantless | nulls_*) echo 1 ;;
     stale_view | fresh_view) [[ "$1" == *"engine != 'View'"* ]] && echo 0 || echo 1 ;;
     fail) return 1 ;;
     unreadable) echo "not a number" ;;
@@ -96,11 +95,23 @@ _view_probe() {
     *) echo 0 ;;
   esac
 }
+_null_probe() {
+  case "$1" in
+    tenantless) echo 3 ;;
+    nulls_fail) return 1 ;;
+    nulls_unreadable) echo "not a number" ;;
+    *) echo 0 ;;
+  esac
+}
 _ch_http_query() {
   local sql name state
   sql="$(cat)"
   printf '%s\n;;\n' "$sql" >> "$LOG"
   [[ "$sql" == SELECT* ]] || return 0
+  if [[ "$sql" == *"WHERE tenant_id IS NULL"* ]]; then
+    _null_probe "$(_state "$(sed -nE 's/.*FROM (staging|silver)\.([a-z_]+).*/\2/p' <<< "$sql")")"
+    return
+  fi
   name="$(sed -nE "s/.*name = '([a-z_]+)'.*/\1/p" <<< "$sql")"
   state="$(_state "$name")"
   if [[ "$sql" == *"engine = 'View'"* ]]; then _view_probe "$sql" "$state"; else _table_probe "$sql" "$state"; fi
@@ -147,22 +158,77 @@ def _heal(tmp_path: Path, catalogue: dict[str, str], entry: str = "heal_task_pro
     return Run(result.returncode, statements)
 
 
-def test_every_producer_table_gains_the_tenant_after_unique_key_with_its_model_type(tmp_path: Path) -> None:
-    run = _heal(tmp_path, dict.fromkeys(PRODUCER_TYPES, "table"))
+def _added_and_narrowed(relation: str) -> list[str]:
+    return [
+        f"ALTER TABLE {relation} ADD COLUMN IF NOT EXISTS tenant_id Nullable(String) AFTER unique_key",
+        f"ALTER TABLE {relation} MODIFY COLUMN tenant_id String AFTER unique_key",
+    ]
+
+
+def _added_and_kept_nullable(relation: str) -> list[str]:
+    return [
+        f"ALTER TABLE {relation} ADD COLUMN IF NOT EXISTS tenant_id Nullable(String) AFTER unique_key",
+        f"ALTER TABLE {relation} MODIFY COLUMN tenant_id Nullable(String) AFTER unique_key",
+    ]
+
+
+def test_every_producer_table_gains_a_string_tenant_after_unique_key(tmp_path: Path) -> None:
+    run = _heal(tmp_path, dict.fromkeys(PRODUCERS, "table"))
 
     assert run.returncode == 0
     altered = run.altered()
-    assert set(altered) == {f"staging.{table}" for table in PRODUCER_TYPES}
-    for table, kind in PRODUCER_TYPES.items():
-        assert altered[f"staging.{table}"] == [
-            f"ALTER TABLE staging.{table} ADD COLUMN IF NOT EXISTS tenant_id {kind} AFTER unique_key",
-            f"ALTER TABLE staging.{table} MODIFY COLUMN tenant_id {kind} AFTER unique_key",
-        ], f"should add and place tenant_id as {kind}: {table}"
+    assert set(altered) == {f"staging.{table}" for table in PRODUCERS}
+    for table in PRODUCERS:
+        assert altered[f"staging.{table}"] == _added_and_narrowed(f"staging.{table}"), (
+            f"should add and narrow tenant_id: {table}"
+        )
+
+
+@pytest.mark.parametrize(
+    ("entry", "database", "relations"),
+    [("heal_task_producer_tenants", "staging", PRODUCERS), ("heal_task_class_tenants", "silver", CLASSES)],
+)
+def test_a_relation_holding_rows_without_a_tenant_keeps_a_nullable_tenant(
+    tmp_path: Path, entry: str, database: str, relations: list[str]
+) -> None:
+    catalogue = dict.fromkeys(relations, "table")
+    catalogue[relations[1]] = "tenantless"
+
+    run = _heal(tmp_path, catalogue, entry=entry)
+
+    assert run.returncode == 0
+    altered = run.altered()
+    assert altered[f"{database}.{relations[1]}"] == _added_and_kept_nullable(f"{database}.{relations[1]}"), (
+        f"should never narrow a column holding NULLs: {relations[1]}"
+    )
+    assert altered[f"{database}.{relations[0]}"] == _added_and_narrowed(f"{database}.{relations[0]}"), (
+        "every other relation is still narrowed"
+    )
+
+
+@pytest.mark.parametrize("state", ["nulls_fail", "nulls_unreadable"])
+@pytest.mark.parametrize(
+    ("entry", "database", "relations"),
+    [("heal_task_producer_tenants", "staging", PRODUCERS), ("heal_task_class_tenants", "silver", CLASSES)],
+)
+def test_an_unreadable_null_count_stops_the_heal_before_it_narrows_anything(
+    tmp_path: Path, entry: str, database: str, relations: list[str], state: str
+) -> None:
+    catalogue = dict.fromkeys(relations, "table")
+    catalogue[relations[1]] = state
+
+    run = _heal(tmp_path, catalogue, entry=entry)
+
+    assert run.returncode != 0, f"should fail on a {state} NULL count"
+    assert run.statements[-1].endswith(f"FROM {database}.{relations[1]} WHERE tenant_id IS NULL"), (
+        "nothing is sent past the unreadable count"
+    )
+    assert not any("MODIFY" in statement for statement in run.altered()[f"{database}.{relations[1]}"])
 
 
 @pytest.mark.parametrize("state", ["absent", "fresh_view"])
 def test_a_table_that_is_not_a_real_producer_table_is_left_alone(tmp_path: Path, state: str) -> None:
-    catalogue = dict.fromkeys(PRODUCER_TYPES, "table")
+    catalogue = dict.fromkeys(PRODUCERS, "table")
     catalogue["jira__task_comments"] = state
 
     run = _heal(tmp_path, catalogue)
@@ -170,7 +236,7 @@ def test_a_table_that_is_not_a_real_producer_table_is_left_alone(tmp_path: Path,
     assert run.returncode == 0
     altered = run.altered()
     assert "staging.jira__task_comments" not in altered, f"should skip a {state} table: {altered}"
-    assert len(altered) == len(PRODUCER_TYPES) - 1, "every other producer is still healed"
+    assert len(altered) == len(PRODUCERS) - 1, "every other producer is still healed"
 
 
 def test_only_a_producer_view_without_the_tenant_is_dropped(tmp_path: Path) -> None:
@@ -193,7 +259,7 @@ def test_only_a_producer_view_without_the_tenant_is_dropped(tmp_path: Path) -> N
 def test_a_probe_that_cannot_be_read_stops_the_heal_before_anything_after_it(
     tmp_path: Path, failing: str, state: str
 ) -> None:
-    catalogue = dict.fromkeys(PRODUCER_TYPES, "table") | dict.fromkeys(PRODUCER_VIEWS, "stale_view")
+    catalogue = dict.fromkeys(PRODUCERS, "table") | dict.fromkeys(PRODUCER_VIEWS, "stale_view")
     catalogue[failing] = state
 
     run = _heal(tmp_path, catalogue)
@@ -203,17 +269,14 @@ def test_a_probe_that_cannot_be_read_stops_the_heal_before_anything_after_it(
     assert f"staging.{failing}" not in run.altered()
 
 
-def test_every_task_class_gains_a_nullable_tenant_after_unique_key(tmp_path: Path) -> None:
+def test_every_task_class_gains_a_string_tenant_after_unique_key(tmp_path: Path) -> None:
     run = _heal(tmp_path, dict.fromkeys(CLASSES, "table"), entry="heal_task_class_tenants")
 
     assert run.returncode == 0
     altered = run.altered()
     assert set(altered) == {f"silver.{name}" for name in CLASSES}
     for name in CLASSES:
-        assert altered[f"silver.{name}"] == [
-            f"ALTER TABLE silver.{name} ADD COLUMN IF NOT EXISTS tenant_id Nullable(String) AFTER unique_key",
-            f"ALTER TABLE silver.{name} MODIFY COLUMN tenant_id Nullable(String) AFTER unique_key",
-        ], f"should add and place tenant_id: {name}"
+        assert altered[f"silver.{name}"] == _added_and_narrowed(f"silver.{name}"), f"should add and narrow: {name}"
 
 
 def test_a_class_no_sync_has_built_is_left_alone(tmp_path: Path) -> None:

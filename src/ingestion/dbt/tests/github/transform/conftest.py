@@ -57,7 +57,7 @@ class Warehouse:
         )
         assert result.success, "\n".join(messages)[-10000:]
 
-    def insert(self, table: str, tenant: str, row: Mapping[str, object], extracted: str) -> None:
+    def insert(self, table: str, tenant: str | None, row: Mapping[str, object], extracted: str) -> None:
         qualified = "bronze_github." + table
         assert qualified in self.tables, f"no bronze table {qualified}"
         values = {

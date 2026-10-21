@@ -415,9 +415,10 @@ assert_youtrack_field_observation_tenants() {
 }
 
 # The task class producers predate their tenant column. A producer table gains
-# it right after unique_key with the type its model emits; a producer view cannot
-# be altered, so one without the column is dropped for its own connector's run to
-# recreate, and one that already has it is left alone.
+# it right after unique_key: String when it holds no row, Nullable while rows
+# without a tenant wait for the rebuild; a producer view cannot be altered, so
+# one without the column is dropped for its own connector's run to recreate, and
+# one that already has it is left alone.
 seed_task_producer_tenant_warm_state() {
   echo "=== Seeding the pre-tenant task class producers ==="
   source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
@@ -434,6 +435,11 @@ CREATE TABLE IF NOT EXISTS staging.youtrack__task_issuetypes
 )
 ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
 INSERT INTO staging.youtrack__task_issuetypes VALUES ('yt-1-youtrack-type-1', 'yt-1', '1', 1);
+CREATE TABLE IF NOT EXISTS staging.youtrack__task_links
+(
+    unique_key String, insight_source_id Nullable(String), _version UInt64
+)
+ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key;
 CREATE VIEW IF NOT EXISTS staging.github__task_projects AS
     SELECT 'gh-1-project-1' AS unique_key, 'gh-1' AS insight_source_id;
 CREATE VIEW IF NOT EXISTS staging.jira__task_projects AS
@@ -445,17 +451,17 @@ assert_task_producer_tenants() {
   echo "=== Asserting the task class producers carry their tenant ==="
   source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
   local got
-  local expected="jira__task_comments:2:Nullable(String);youtrack__task_issuetypes:2:String|jira__task_projects"
+  local expected="jira__task_comments:2:Nullable(String);youtrack__task_issuetypes:2:Nullable(String);youtrack__task_links:2:String|jira__task_projects"
   got="$(printf "SELECT concat(
       (SELECT arrayStringConcat(groupArray(concat(table, ':', toString(position), ':', type)), ';')
        FROM (SELECT table, position, type FROM system.columns
              WHERE database = 'staging' AND name = 'tenant_id'
-               AND table IN ('jira__task_comments', 'youtrack__task_issuetypes') ORDER BY table)), '|',
+               AND table IN ('jira__task_comments', 'youtrack__task_issuetypes', 'youtrack__task_links') ORDER BY table)), '|',
       (SELECT arrayStringConcat(groupArray(name), ';')
        FROM (SELECT name FROM system.tables
              WHERE database = 'staging' AND name IN ('github__task_projects', 'jira__task_projects') ORDER BY name)))" | _ch_http_query | tr -d '\n')"
   if [[ "${got}" != "${expected}" ]]; then
-    echo "::error title=warm upgrade left a task class producer without a tenant::Expected '${expected}' — tenant_id right after unique_key with each producer model's type, the producer view without the column dropped and the one with it kept — but got '${got}'."
+    echo "::error title=warm upgrade left a task class producer without a tenant::Expected '${expected}' — tenant_id right after unique_key, String only where no row lacks a tenant, the producer view without the column dropped and the one with it kept — but got '${got}'."
     exit 1
   fi
   echo "=== Task class producers carry their tenant ==="
@@ -488,7 +494,7 @@ assert_task_class_tenant() {
        WHERE database = 'silver' AND table = 'class_task_comments' AND name = 'tenant_id'), '|',
       toString((SELECT count() FROM silver.class_task_comments)))" | _ch_http_query | tr -d '\n')"
   if [[ "${got}" != "${expected}" ]]; then
-    echo "::error title=warm upgrade left a task class without a tenant::Expected '${expected}' — a Nullable(String) tenant_id right after unique_key and the class row kept — but got '${got}'."
+    echo "::error title=warm upgrade left a task class without a tenant::Expected '${expected}' — a Nullable(String) tenant_id right after unique_key, never narrowed while a row lacks a tenant, and the class row kept — but got '${got}'."
     exit 1
   fi
   run_ch <<'SQL'
