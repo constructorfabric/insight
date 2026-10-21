@@ -148,4 +148,3 @@ gears:
       redis_url: ""
       metric_catalog:
         tenant_metrics_enabled: false
-        enforce_tenant_scope: true

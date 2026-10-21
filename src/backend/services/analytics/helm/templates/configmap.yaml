@@ -159,7 +159,6 @@ data:
             allow_insecure_private_network: {{ (((.Values.global).mcp).allowInsecurePrivateNetwork) | default false }}
           metric_catalog:
             tenant_metrics_enabled: {{ .Values.metricCatalog.tenantMetricsEnabled }}
-            enforce_tenant_scope: {{ .Values.metricCatalog.enforceTenantScope }}
           reports:
             temp_dir: {{ .Values.reports.tempDir | quote }}
           external_sources: {{- if not .Values.externalSources }} []{{- end }}
