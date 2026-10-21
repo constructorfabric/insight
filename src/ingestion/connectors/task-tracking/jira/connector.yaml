@@ -1536,6 +1536,9 @@ streams:
             extra_fields:
               - [id]
             incremental_dependency: true
+    # INVARIANT: no `is_client_side_incremental`. Every read of an issue's list
+    # re-emits each comment still on it; jira__comment_state reads a comment a
+    # later read left out as deleted.
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated

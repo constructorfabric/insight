@@ -128,7 +128,14 @@ name: jira
 # `opaque_id`. `jira__task_links` adds Jira rows to `class_task_links`. MAJOR
 # because rows already written change, and only the full refresh a major
 # dispatches (ADR-0015) re-derives them.
-version: "14.0.0"
+# 15.0.0 (major): a comment is deleted only when a later read of its own
+# issue's comment list left it out, or its issue is deleted or trashed. The
+# issue-key list is a stream of its own whose extraction time says nothing
+# about when an issue's comments were read, so comparing the two flagged
+# comments that still exist as deleted (#3708). MAJOR because the false
+# `remove` lifecycle events already written stay until the full refresh a
+# major dispatches (ADR-0015) rebuilds the journal.
+version: "15.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
