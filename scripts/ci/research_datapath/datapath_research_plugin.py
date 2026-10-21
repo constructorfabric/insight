@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 import pytest
+from insight_datapath import mariadb
 from insight_datapath.dbt_runner import DbtRunner
 from insight_datapath.fixture_loader import load
 from insight_datapath.instance import InstanceConfig
@@ -49,6 +50,7 @@ def seeded_gold(
         env_file=Path(os.environ["INSIGHT_STAND_ENV_FILE"]),
     )
     wait_analytics()
+    wait_metric(instance_cfg)
     TIMINGS.append({"stage": "gold_replay_and_restart", "seconds": time.monotonic() - started})
 
 
@@ -65,6 +67,20 @@ def wait_analytics() -> None:
                 pass
             time.sleep(0.1)
     raise TimeoutError("analytics health did not become ready")
+
+
+def wait_metric(cfg: InstanceConfig) -> None:
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        rows = mariadb.query(
+            cfg,
+            "SELECT schema_status FROM metric_definitions WHERE metric_key = %s AND tenant_id IS NULL",
+            ["ci.run_duration_min"],
+        )
+        if rows == [("ok",)]:
+            return
+        time.sleep(0.1)
+    raise TimeoutError("metric validation did not accept the restored serving schema")
 
 
 @pytest.fixture(scope="module", params=[1, 2, 3])

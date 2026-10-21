@@ -24,21 +24,50 @@ def duration_values(cfg: InstanceConfig, tenant: str) -> None:
         raise AssertionError(f"gold durations differ from independent fixture expectations: {rows}")
 
 
+def serving_nodes(manifest: dict[str, object]) -> list[dict[str, object]]:
+    models = {key: node for key, node in manifest["nodes"].items() if node["resource_type"] == "model"}
+    by_name = {node["name"]: key for key, node in models.items()}
+    ordered = []
+    seen = set()
+
+    def visit(key: str) -> None:
+        if key in seen:
+            return
+        seen.add(key)
+        node = models[key]
+        if node["config"]["materialized"] == "view":
+            for dependency in node["depends_on"]["nodes"]:
+                if dependency in models:
+                    visit(dependency)
+        ordered.append(node)
+
+    for key, node in models.items():
+        if "gold" in node["tags"] and node["config"]["materialized"] in ("table", "incremental"):
+            visit(key)
+    visit(by_name["metric_entity_cohorts_current"])
+    return ordered
+
+
 def capture(cfg: InstanceConfig, tenant: str, target: Path, output: Path) -> None:
     manifest = json.loads((target / "manifest.json").read_text())
     output.mkdir()
     tables = []
     names = set()
-    omitted = []
-    for node in manifest["nodes"].values():
-        if node["resource_type"] != "model" or "gold" not in node["tags"]:
-            continue
+    views = []
+    nodes = serving_nodes(manifest)
+    selected = {node["unique_id"] for node in nodes}
+    omitted = [
+        {"name": node["name"], "materialized": node["config"]["materialized"]}
+        for node in manifest["nodes"].values()
+        if node["resource_type"] == "model" and "gold" in node["tags"] and node["unique_id"] not in selected
+    ]
+    nodes.insert(
+        0, {"schema": "identity", "alias": "identity_persons", "config": {"materialized": "table"}, "stand_owned": True}
+    )
+    for node in nodes:
         materialized = node["config"]["materialized"]
-        if materialized in ("ephemeral", "view"):
-            omitted.append({"name": node["name"], "materialized": materialized})
-            continue
-        if materialized not in ("table", "incremental"):
-            raise ValueError("unsupported gold materialization")
+        if materialized not in ("table", "incremental", "view"):
+            raise ValueError("unsupported serving materialization")
         database, table = node["schema"], node["alias"]
         if (database, table) in names:
             raise ValueError("duplicate gold relation")
@@ -46,6 +75,9 @@ def capture(cfg: InstanceConfig, tenant: str, target: Path, output: Path) -> Non
         relation = f"{identifier(database)}.{identifier(table)}"
         with ch.client(cfg) as client:
             ddl = client.query(f"SHOW CREATE TABLE {relation}").result_rows[0][0]
+            if materialized == "view":
+                views.append({"database": database, "table": table, "ddl": ddl})
+                continue
             columns = [
                 row[0]
                 for row in client.query(
@@ -66,6 +98,7 @@ def capture(cfg: InstanceConfig, tenant: str, target: Path, output: Path) -> Non
                 "rows": int(count),
                 "file": filename,
                 "sha256": hashlib.sha256(native).hexdigest(),
+                "stand_owned": bool(node.get("stand_owned")),
             }
         )
     if not tables:
@@ -75,6 +108,7 @@ def capture(cfg: InstanceConfig, tenant: str, target: Path, output: Path) -> Non
             {
                 "tenant": tenant,
                 "tables": tables,
+                "views": views,
                 "omitted_non_table_models": omitted,
                 "source_sha": os.environ["INSIGHT_RESEARCH_SOURCE_SHA"],
             },
@@ -95,14 +129,25 @@ def replay(cfg: InstanceConfig, tenant: str, snapshot: Path) -> None:
             database, table = entry["database"], entry["table"]
             relation = f"{identifier(database)}.{identifier(table)}"
             client.command(f"CREATE DATABASE IF NOT EXISTS {identifier(database)}")
-            client.command(entry["ddl"])
+            exists = int(client.command(f"EXISTS TABLE {relation}"))
+            if not exists:
+                client.command(entry["ddl"])
+            elif not entry["stand_owned"]:
+                raise ValueError(f"fixture target already exists: {relation}")
             if client.query(f"SHOW CREATE TABLE {relation}").result_rows[0][0] != entry["ddl"]:
                 raise AssertionError(f"DDL changed for {relation}")
             native = (snapshot / entry["file"]).read_bytes()
             if hashlib.sha256(native).hexdigest() != entry["sha256"]:
                 raise ValueError("gold fixture bytes changed")
+            if exists and entry["stand_owned"]:
+                continue
             if entry["rows"]:
                 client.raw_insert(relation, column_names=entry["columns"], insert_block=native, fmt="Native")
             if int(client.command(f"SELECT count() FROM {relation}")) != entry["rows"]:
                 raise AssertionError(f"row count differs for {relation}")
+        for entry in document["views"]:
+            relation = f"{identifier(entry['database'])}.{identifier(entry['table'])}"
+            client.command(entry["ddl"])
+            if client.query(f"SHOW CREATE TABLE {relation}").result_rows[0][0] != entry["ddl"]:
+                raise AssertionError(f"view DDL changed for {relation}")
     duration_values(cfg, tenant)

@@ -51,6 +51,7 @@ jobs:
             sudo apt-get install -y --no-install-recommends iproute2
           fi
           uv sync --project application/tests --frozen --group datapath --no-group dev
+          application/tests/.venv/bin/python -m unittest discover -s scripts/ci/research_datapath -p 'test_*.py'
       - name: Compare the full path with gold-seeded API assertions
         timeout-minutes: 65
         run: python3 scripts/ci/research_datapath/run.py --source application --output results
