@@ -5,8 +5,9 @@ Applies to the first release that contains
 release on, an install has one tenant: the lowercase UUID in
 `authenticator.oidc.defaultTenantId`. Every tenant column, every stored key,
 identity resolution, sign-in and analytics filtering use it, and analytics
-refuses rows of any other tenant (`analytics.metricCatalog.enforceTenantScope`,
-on by default).
+filters every read to the session tenant; there is no switch to turn that off.
+No row is written without a tenant: a Bronze row that lacks one fails the dbt
+build that reads it.
 
 A **fresh install** only sets that value — see [Fresh install](#fresh-install).
 An install that **already holds data** wrote its Bronze, history relations,
@@ -172,12 +173,14 @@ authenticator:
 
 and delete `global.tenantDefaultId`, `ingestion.reconcile.tenantId` and
 `identityResolution.seed.tenantDefaultId` — the render fails while any of them
-is present. Leave `analytics.metricCatalog.enforceTenantScope` at its default
-`true`.
+is present. `analytics.metricCatalog.enforceTenantScope` no longer exists;
+remove it if the values still set it (it is ignored).
 
 Deploy the release (`helm upgrade`, or sync the GitOps application). Its
 `clickhouse-migrate` hook applies the migrations and heals: the task classes
-and their producers gain a `tenant_id` column, and the identity map views the
+and their producers gain a `tenant_id` column — `String`, or `Nullable(String)`
+on a table still holding rows written before it, until step 7 rebuilds that
+table — and the identity map views the
 previous release built are dropped, because they lack the `tenant_id` analytics
 now joins on. It creates and rebuilds no dbt relation — every staging, silver
 and gold relation is built by a dbt run — so gold keeps the rows the last sync
@@ -351,7 +354,6 @@ expected and leaves history relations alone.
 - [ ] Airbyte: the source and connection ids are the ones recorded in step 4,
       their names end in `<TENANT_UUID>`, and no source or connection was created.
 - [ ] Argo: one sync CronWorkflow per connection, none named for `<OLD_TENANT>`.
-- [ ] `analytics.metricCatalog.enforceTenantScope` is `true` in the rendered values.
 
 ### 10. Finalize
 
