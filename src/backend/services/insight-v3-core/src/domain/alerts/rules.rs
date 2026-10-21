@@ -158,7 +158,8 @@ impl<'a> AlertRules<'a> {
             &context,
             Utc::now(),
         )
-        .await)
+        .await
+        .outcome)
     }
 
     async fn columns_of(&self, metric: &DefinitionId) -> Result<Columns, AlertsError> {

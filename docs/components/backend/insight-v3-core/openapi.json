@@ -340,7 +340,15 @@
             ]
           },
           "metric": {
+            "description": "The id of the metric checked.",
             "type": "string"
+          },
+          "metric_name": {
+            "description": "What the metric was called when the notification was owed; null\nwhere only its id is known.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "provider_receipt": {
             "type": [

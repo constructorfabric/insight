@@ -896,6 +896,7 @@ async fn a_notification_shows_its_delivery_state() -> R {
                     true,
                 ),
             },
+            metric_name: None,
             evaluated_at: chrono::Utc::now(),
         })
         .await?
@@ -920,6 +921,8 @@ async fn a_notification_shows_its_delivery_state() -> R {
     assert_eq!(shown["attempts"], json!(2));
     assert_eq!(shown["provider_receipt"], json!("m-9"));
     assert_eq!(shown["context_columns"], json!(["total"]));
+    assert_eq!(shown["metric"], json!("prs-open"));
+    assert_eq!(shown["metric_name"], Value::Null);
     assert_eq!(
         shown["witness"],
         json!({ "matched": 1, "answered": 1, "columns": ["total"], "rows": [[12]] })
@@ -971,6 +974,70 @@ async fn two_teams() -> (String, tokio::task::JoinHandle<()>) {
     });
 
     (format!("http://{address}"), server)
+}
+
+#[tokio::test]
+async fn a_check_records_what_its_metric_is_called_and_a_listing_shows_it() -> R {
+    use crate::domain::alerts::evaluation::{Evaluated, EvaluationJob};
+    use crate::domain::alerts::rule::Recorded;
+    use crate::domain::definition::{DefinitionId, DefinitionLabel};
+
+    let (url, server) = two_teams().await;
+    let harness = TestHarness::over_warehouse(&url, true);
+    let metric = DefinitionId::generate();
+    harness
+        .state
+        .definitions()
+        .create(
+            DefinitionKind::Metric,
+            &metric,
+            &DefinitionLabel::parse("Open PRs by team")?,
+            &json!({
+                "table": "gold.prs",
+                "fields": [
+                    {"column": "team", "type": "string", "as_name": "team"},
+                    {"agg": "count", "type": "int", "as_name": "total"}
+                ],
+                "group_by": ["team"]
+            }),
+        )
+        .await?;
+    let id = harness
+        .create(rule(|body| {
+            body["metric"] = json!(metric.as_str());
+            body["condition"] =
+                json!({ "rows": "any", "where": { "column": "total", "op": ">", "value": 10 } });
+        }))
+        .await;
+
+    let evaluator = harness
+        .state
+        .alert_evaluator()
+        .unwrap_or_else(|| panic!("alerts are on"));
+    let evaluated = evaluator
+        .evaluate(EvaluationJob {
+            rule_id: uuid::Uuid::parse_str(&id)?,
+            revision: 1,
+        })
+        .await?;
+    server.abort();
+
+    let Evaluated::Recorded(Recorded::Accepted(accepted)) = evaluated else {
+        panic!("the check is recorded: {evaluated:?}");
+    };
+    let owed = accepted
+        .notification
+        .unwrap_or_else(|| panic!("the breach owes a notification"));
+    assert_eq!(owed.metric_name.as_deref(), Some("Open PRs by team"));
+
+    let listed = harness
+        .send("GET", &format!("/v1/alerts/{id}/notifications"), None)
+        .await;
+    let shown = &listed.json()["notifications"][0];
+    assert_eq!(shown["metric"], json!(metric.as_str()));
+    assert_eq!(shown["metric_name"], json!("Open PRs by team"));
+
+    Ok(())
 }
 
 fn preview(test: &Value) -> Value {

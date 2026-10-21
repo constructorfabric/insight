@@ -350,6 +350,9 @@ pub(crate) struct Notification {
     pub(crate) rule_revision: u32,
     pub(crate) rule_name: AlertName,
     pub(crate) metric: DefinitionId,
+    /// What the metric was called when this was owed. Without one, the
+    /// message names the metric by its id.
+    pub(crate) metric_name: Option<String>,
     pub(crate) condition: Condition,
     /// The columns the rule asked to carry when this was owed, so the message
     /// can tell them from the ones the condition read.
@@ -375,6 +378,9 @@ pub(crate) struct Recording {
     pub(crate) rule_id: Uuid,
     pub(crate) revision: u32,
     pub(crate) outcome: Outcome,
+    /// What the metric was called when the check read it, for the
+    /// notification it may owe.
+    pub(crate) metric_name: Option<String>,
     pub(crate) evaluated_at: DateTime<Utc>,
 }
 
