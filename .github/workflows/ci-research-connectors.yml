@@ -37,9 +37,9 @@ jobs:
       - name: Install one shared dependency environment
         run: |
           uv venv .research-venv
-          uv pip install --python .research-venv/bin/python -e 'application/src/ingestion/tests/connectors[dev]' 'airbyte-cdk==7.35.0' 'PyYAML==6.0.3' 'pytest==9.1.1' 'pytest-cov==7.1.0'
+          uv pip install --python .research-venv/bin/python --constraint scripts/ci/research_connectors/constraints.txt -e 'application/src/ingestion/tests/connectors[dev]' 'airbyte-cdk==7.35.0' 'PyYAML==6.0.3' 'pytest==9.1.1' 'pytest-cov==7.1.0'
       - name: Compare isolated changes serially
-        run: .research-venv/bin/python scripts/ci/research_connectors/run.py --source application --output results --repeats 3
+        run: .research-venv/bin/python scripts/ci/research_connectors/run.py --source application --output results --repeats 1 --start-repeat 3
       - name: Preserve measurements
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

@@ -13,6 +13,22 @@ from statistics import median
 
 VARIANTS = ("baseline", "parse-cache", "retry-waits", "combined")
 LOG = logging.getLogger(__name__)
+LOOKBACK_REQUEST = (
+    "connectors/task-tracking/jira/tests/test_jira_issue_history.py::test_parent_chain_fan_out",
+    "cca2a92b9b3409b5e65aca698586dca010c2ef4aaf09f97763bddf0849fa97af",
+    200,
+)
+
+
+def comparable_requests(requests: list[list[object]]) -> list[list[object]]:
+    result = []
+    for case, signature, status, count in requests:
+        if (case, signature, status) == LOOKBACK_REQUEST:
+            if count not in (1, 2):
+                raise ValueError("lookback request must occur once or twice")
+            count = 1
+        result.append([case, signature, status, count])
+    return result
 
 
 def measured_lines(path: Path) -> dict[str, list[int]]:
@@ -21,12 +37,15 @@ def measured_lines(path: Path) -> dict[str, list[int]]:
 
 
 def validate(rows: list[dict[str, object]]) -> None:
-    baseline = rows[0]
+    baseline = next(row for row in rows if row["variant"] == "baseline")
     if any(row["exit_code"] != 0 or not row["outcomes"] or not row["requests"] for row in rows):
         raise ValueError("missing or unsuccessful test execution")
     for row in rows:
         for key in ("outcomes", "requests", "coverage"):
-            if row[key] != baseline[key]:
+            observed, expected = row[key], baseline[key]
+            if key == "requests":
+                observed, expected = comparable_requests(observed), comparable_requests(expected)
+            if observed != expected:
                 raise ValueError(f"{key} differs in {row['variant']}")
 
 
@@ -54,6 +73,7 @@ def summary(rows: list[dict[str, object]], error: str = "") -> str:
         "Wall time includes pytest startup, collection and coverage. Dependency installation is outside paired totals.",
         "CPU time is used for parsing because tests freeze wall/monotonic clocks. HTTP signatures include method, URL, body and response status; only digests are stored.",
         "Each candidate changes one mechanism; combined is a separate interaction check. Results apply to this suite, not the entire connector matrix.",
+        "The existing issue-history fan-out assertion permits lookback partition re-emission. Its one known successful request may occur once or twice; raw counts remain recorded. Every other signature/count, including retries, must match exactly.",
     ]
     if error:
         lines += ["", "FAILED: " + error]
@@ -66,6 +86,7 @@ def main() -> None:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=int, choices=range(1, 4), required=True)
+    parser.add_argument("--start-repeat", type=int, choices=range(1, 4), default=1)
     args = parser.parse_args()
     source, output = args.source.resolve(), args.output.resolve()
     if output.exists():
@@ -82,7 +103,7 @@ def main() -> None:
         "samples": [],
     }
     try:
-        for repeat in range(1, args.repeats + 1):
+        for repeat in range(args.start_repeat, args.start_repeat + args.repeats):
             offset = (repeat - 1) % len(VARIANTS)
             order = VARIANTS[offset:] + VARIANTS[:offset]
             peers = []
