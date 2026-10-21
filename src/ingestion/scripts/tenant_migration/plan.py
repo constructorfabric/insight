@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from tenant_migration import keys
+from tenant_migration import ddl, keys
 from tenant_migration.clickhouse import ClickHouse
 from tenant_migration.inventory import WORK_SUFFIXES, Table, Unfit
 from tenant_migration.keys import Tenants
@@ -86,10 +86,6 @@ def refusals(tables: list[TablePlan], unfit_with_rows: list[tuple[Unfit, int]]) 
     return reasons
 
 
-def _literal(value: str) -> str:
-    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
 def _rows_of(ch: ClickHouse, unfit: Unfit) -> int:
     """Read from system.tables: an unfit table's own name may not be a plain identifier.
 
@@ -98,7 +94,7 @@ def _rows_of(ch: ClickHouse, unfit: Unfit) -> int:
     database, name = unfit.relation.split(".", 1)
     return ch.scalar(
         "SELECT ifNull(total_rows, 1) FROM system.tables"
-        f" WHERE database = {_literal(database)} AND name = {_literal(name)}"
+        f" WHERE database = {ddl.literal(database)} AND name = {ddl.literal(name)}"
     )
 
 

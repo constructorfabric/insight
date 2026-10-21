@@ -9,11 +9,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tenant_migration import apply as migration
 from tenant_migration.apply import MigrationError, retarget
 from tenant_migration.clickhouse import ClickHouse, ClickHouseError
 from tenant_migration.inventory import RESTORE, Relation, Table, Unfit, classify
 from tenant_migration.keys import Columns, TenantError, Tenants
-from tenant_migration.plan import TablePlan, refusals
+from tenant_migration.plan import Plan, TablePlan, refusals
 
 NEW = "0f6b3c2e-5d4a-4e7b-9c1d-2a3b4c5d6e7f"
 
@@ -163,3 +164,37 @@ def test_a_replicated_table_whose_keeper_path_names_no_table_is_unfit(engine_ful
     table = classify("bronze_example", "items", engine_full.split("(")[0].split(" ")[0], types, engine_full)
 
     assert isinstance(table, Table) is fit, f"should be {'fit' if fit else 'unfit'}: {engine_full!r}"
+
+
+def _table_plan(name: str) -> TablePlan:
+    table = Table(
+        "bronze_example", name, "ReplacingMergeTree", Columns(tenant="tenant_id", source="source_id", key="unique_key")
+    )
+    return TablePlan(table=table, rows=1, moving=1, ambiguous=0, foreign=(), leftovers=())
+
+
+@pytest.mark.parametrize(
+    ("failing", "named"),
+    [("first", []), ("third", ["bronze_example.first", "bronze_example.second"])],
+    ids=["nothing swapped yet", "two swapped before it"],
+)
+def test_a_failed_table_names_the_tables_already_swapped_before_it(
+    monkeypatch: pytest.MonkeyPatch, failing: str, named: list[str]
+) -> None:
+    def migrate(_ch: ClickHouse, table_plan: TablePlan, _tenants: Tenants) -> object:
+        if table_plan.table.name == failing:
+            raise MigrationError(f"{table_plan.table.relation}: not migrated, the table is unchanged")
+        return object()
+
+    monkeypatch.setattr(migration, "dump", lambda *_args: None)
+    monkeypatch.setattr(migration, "migrate_table", migrate)
+    plan = Plan(
+        tenants=Tenants.parse(NEW, "example-legacy"), tables=[_table_plan(n) for n in ("first", "second", "third")]
+    )
+
+    with pytest.raises(MigrationError) as raised:
+        migration.apply(ClickHouse("http://127.0.0.1:1/", "u", "p"), plan, Path(), before_rewrite=[])
+
+    message = str(raised.value)
+    assert all(relation in message for relation in named), f"should name {named}: {message}"
+    assert ("rollback" in message and "finalize" in message) is bool(named), message

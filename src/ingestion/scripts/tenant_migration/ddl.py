@@ -10,6 +10,11 @@ from __future__ import annotations
 from tenant_migration.inventory import Relation
 
 
+def literal(value: str) -> str:
+    """A ClickHouse string literal for `value`."""
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
 def show_create(rel: Relation) -> str:
     return f"SHOW CREATE TABLE {rel.sql()}"
 
