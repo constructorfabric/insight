@@ -9,12 +9,11 @@
 ) }}
 
 -- Current state per comment, deletion included (specs/DELETION-AND-VISIBILITY.md).
--- is_deleted: deleting a comment bumps the issue's `updated`, which re-syncs
--- the issue's FULL comment list — a comment whose last observation predates
--- its issue's last re-fetch was deleted at the source; comments of
--- deleted/trashed issues are marked through the availability state (their
--- list is never re-fetched). Feeds both the class projection
--- (jira__task_comments) and the lifecycle snapshot chain.
+-- is_deleted: every read of an issue's comment list re-emits each comment still
+-- on it, so a comment last emitted before its issue's newest comment read was
+-- deleted at the source; comments of deleted/trashed issues are marked through
+-- the availability state. Feeds both the class projection (jira__task_comments)
+-- and the lifecycle snapshot chain.
 
 WITH comments AS (
     SELECT *
@@ -23,13 +22,15 @@ WITH comments AS (
     LIMIT 1 BY unique_key
 ),
 
-issue_fetch AS (
+-- INVARIANT: only a read of the same list is evidence, and it holds only while
+-- jira_comments re-emits the whole list (no client-side cursor filter).
+issue_comment_reads AS (
     SELECT
         tenant_id,
         source_id,
         jira_id,
-        max(_airbyte_extracted_at)                      AS last_fetched_at
-    FROM {{ source('bronze_jira', 'jira_issue_keys') }} FINAL
+        max(_airbyte_extracted_at)                      AS last_read_at
+    FROM comments
     WHERE jira_id IS NOT NULL
     GROUP BY tenant_id, source_id, jira_id
 ),
@@ -55,16 +56,16 @@ SELECT
     parseDateTime64BestEffortOrNull(c.updated, 3)       AS edited_at,
     c.body                                              AS body,
     toUInt8(
-        (f.last_fetched_at IS NOT NULL
-         AND c._airbyte_extracted_at < f.last_fetched_at
-             - INTERVAL {{ var('jira_comment_refetch_tolerance_hours', 6) }} HOUR)
+        (r.last_read_at IS NOT NULL
+         AND c._airbyte_extracted_at < r.last_read_at
+             - INTERVAL {{ var('jira_comment_refetch_tolerance_hours', 1) }} HOUR)
         OR ui.jira_id IS NOT NULL
     )                                                   AS is_deleted
 FROM comments AS c
-LEFT JOIN issue_fetch AS f
-    ON f.tenant_id = c.tenant_id
-    AND f.source_id = c.source_id
-    AND f.jira_id = c.jira_id
+LEFT JOIN issue_comment_reads AS r
+    ON r.tenant_id = c.tenant_id
+    AND r.source_id = c.source_id
+    AND r.jira_id = c.jira_id
 LEFT JOIN unavailable_issues AS ui
     ON ui.tenant_id = c.tenant_id
     AND ui.source_id = c.source_id
