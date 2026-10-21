@@ -46,7 +46,7 @@ WITH winner AS (
 exploded AS (
     SELECT
         COALESCE(h.source_id, '')                                AS insight_source_id,
-        COALESCE(h.tenant_id, '')                                AS tenant_id,
+        CAST(h.tenant_id AS String)                              AS tenant_id,
         COALESCE(h.id_readable, '')                              AS id_readable,
         h.jira_id                                                AS jira_id,
         COALESCE(toString(h.changelog_id), '')                   AS changelog_id,
@@ -84,7 +84,7 @@ parsed AS (
 -- `unique_key` encodes the same content-identity so silver/RMT dedup works on a single column.
 SELECT
     CAST(concat(
-        coalesce(tenant_id, ''), '-',
+        tenant_id, '-',
         coalesce(insight_source_id, ''), '-',
         coalesce(changelog_id, ''), '-',
         coalesce(field_id, ''), '-',

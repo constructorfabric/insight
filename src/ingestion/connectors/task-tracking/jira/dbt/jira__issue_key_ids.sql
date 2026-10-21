@@ -23,7 +23,7 @@
 WITH issue_rows AS (
     -- Every row, not the newest: bronze keeps one per key the connector saw.
     SELECT
-        COALESCE(tenant_id, '')                                       AS tenant_id,
+        CAST(tenant_id AS String)                                     AS tenant_id,
         COALESCE(source_id, '')                                       AS insight_source_id,
         COALESCE(toString(id_readable), '')                           AS issue_key,
         COALESCE(toString(jira_id), '')                               AS issue_id,
@@ -33,7 +33,7 @@ WITH issue_rows AS (
     UNION ALL
 
     SELECT
-        COALESCE(tenant_id, '')                                       AS tenant_id,
+        CAST(tenant_id AS String)                                     AS tenant_id,
         COALESCE(source_id, '')                                       AS insight_source_id,
         COALESCE(toString(id_readable), '')                           AS issue_key,
         COALESCE(toString(jira_id), '')                               AS issue_id,
@@ -58,7 +58,7 @@ moves AS (
         toUInt8(2)                                                    AS precedence
     FROM (
         SELECT
-            COALESCE(tenant_id, '')                                   AS tenant_id,
+            CAST(tenant_id AS String)                                 AS tenant_id,
             COALESCE(source_id, '')                                   AS insight_source_id,
             COALESCE(toString(jira_id), '')                           AS issue_id,
             arrayJoin(JSONExtractArrayRaw(COALESCE(items, '[]')))     AS item

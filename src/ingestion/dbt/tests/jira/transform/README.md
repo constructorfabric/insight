@@ -35,6 +35,11 @@ worklog streams — `scenario.seed(comments=..., worklogs=...)`, with rows from
 the `comment` and `worklog` builders — and it builds `LIFECYCLE_SELECTOR`, the
 two lifecycle producers and their ancestors, instead of the journal's.
 
+`test_missing_tenant.py` proves the other half of tenant isolation: a bronze
+row with no tenant fails the model that reads it instead of landing under an
+empty one. Every bronze read converts the tenant with `CAST(tenant_id AS String)`,
+which raises on NULL.
+
 Bronze is created by the Airbyte destination from the Jira connector's own
 catalogue, through the same scripts `bootstrap-db.sh` uses — so the tables carry
 production's engines and types, including the ReplacingMergeTree shape, because
