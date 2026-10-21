@@ -53,8 +53,7 @@
         {%- set relation = api.Relation.create(
              schema=orphan[0],
              identifier=orphan[1],
-             type='table',
-             can_on_cluster=insight_cluster_mode()) -%}
+             type='table') -%}
         {%- do adapter.drop_relation(relation) -%}
     {%- endfor -%}
 {% endmacro %}
