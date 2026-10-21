@@ -108,6 +108,11 @@ function TransferDashboard({
 }) {
   const transfer = useTransferDashboard();
   const [to, setTo] = useState<PersonSummary | null>(null);
+  // INVARIANT: the dialog plays a close transition after `dashboard` is gone,
+  // so its title keeps the last one rather than shrinking to "Transfer ".
+  const [held, setHeld] = useState(dashboard);
+  if (dashboard !== null && dashboard !== held) setHeld(dashboard);
+  const shown = dashboard ?? held;
 
   function close() {
     setTo(null);
@@ -121,7 +126,7 @@ function TransferDashboard({
       onOpenChange={(next) => {
         if (!next) close();
       }}
-      title={`Transfer ${dashboard?.name ?? ""}`}
+      title={`Transfer ${shown?.name ?? ""}`}
       confirmLabel="Transfer"
       isPending={transfer.isPending}
       confirmDisabled={to === null}
@@ -155,7 +160,7 @@ function TransferDashboard({
         </div>
       ) : (
         <AdminPicker
-          exclude={dashboard ? [dashboard.owner_person_id] : []}
+          exclude={shown ? [shown.owner_person_id] : []}
           onPick={setTo}
         />
       )}

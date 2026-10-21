@@ -20,7 +20,6 @@ const CATALOGUE: Record<EditableKind, string> = {
   dashboards: "/portal/custom",
 };
 
-/** Where a definition of each kind is looked at. */
 const PAGE: Record<EditableKind, string> = {
   datasets: "/portal/custom/datasets/$name",
   metrics: "/portal/custom/metrics/$name",
@@ -100,7 +99,6 @@ export function EditorPage({
   );
 }
 
-/** Removal lives with editing: the one place a definition is changed by hand. */
 function Removal({
   kind,
   id,

@@ -6,9 +6,9 @@ import type {
   DashboardShare,
 } from "@/api/custom-client";
 
+import { isAdministrator } from "./admin-assignments";
 import { PEOPLE } from "./registry";
 
-/** The signed-in person in mock mode, as `/me` answers. */
 const CALLER = PEOPLE[0]?.person_id ?? "";
 const COLLEAGUE = PEOPLE[1]?.person_id ?? "";
 const LEAVER = PEOPLE[2]?.person_id ?? "";
@@ -60,6 +60,10 @@ function accessOf(id: string): DashboardAccess | null {
   return shared ? "viewer" : null;
 }
 
+function isOrphaned(dashboard: MockDashboard): boolean {
+  return dashboard.owner !== null && !isAdministrator(dashboard.owner);
+}
+
 function listed(id: string) {
   const dashboard = dashboards[id];
   const access = accessOf(id);
@@ -81,6 +85,15 @@ function page<T>(items: T[], query: URLSearchParams) {
 }
 
 const notFound = () => new HttpResponse(null, { status: 404 });
+
+const refusedTransfer = (kind: string, description: string) =>
+  HttpResponse.json(
+    {
+      detail: "Failed precondition",
+      context: { violations: [{ type: kind, subject: "owner", description }] },
+    },
+    { status: 409 }
+  );
 
 const ownerOnly = () =>
   HttpResponse.json(
@@ -108,11 +121,11 @@ export const dashboardHandlers = [
   http.get("/api/v3/v1/orphaned-dashboards", ({ request }) => {
     const query = new URL(request.url).searchParams;
     const items = Object.entries(dashboards)
-      .filter(([, dashboard]) => dashboard.owner === LEAVER)
+      .filter(([, dashboard]) => isOrphaned(dashboard))
       .map(([id, dashboard]) => ({
         id,
         name: dashboard.name,
-        owner_person_id: LEAVER,
+        owner_person_id: dashboard.owner,
         updated_at: UPDATED_AT,
       }));
 
@@ -172,14 +185,38 @@ export const dashboardHandlers = [
   http.post("/api/v3/v1/dashboards/:id/transfer", async ({ params, request }) => {
     const dashboard = dashboards[String(params.id)];
     if (!dashboard) return notFound();
-    if (dashboard.owner !== LEAVER) {
-      return HttpResponse.json(
-        { detail: "The dashboard is not orphaned." },
-        { status: 400 }
+    if (dashboard.owner === null) {
+      return refusedTransfer(
+        "ownerless",
+        "an ownerless dashboard cannot be shared or transferred"
+      );
+    }
+    if (!isOrphaned(dashboard)) {
+      return refusedTransfer(
+        "owner_is_administrator",
+        "the dashboard's owner is still an administrator"
       );
     }
 
     const { to } = (await request.json()) as { to: string };
+    if (!isAdministrator(to)) {
+      return HttpResponse.json(
+        {
+          detail: "Invalid argument",
+          context: {
+            field_violations: [
+              {
+                field: "to",
+                description:
+                  "a dashboard is transferred only to a current administrator",
+              },
+            ],
+          },
+        },
+        { status: 400 }
+      );
+    }
+
     dashboard.owner = to;
     return new HttpResponse(null, { status: 204 });
   }),

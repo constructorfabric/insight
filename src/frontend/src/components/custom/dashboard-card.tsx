@@ -36,8 +36,8 @@ export function DashboardCard({ dashboard }: { dashboard: DashboardListed }) {
                 <span className={cn(TEXT_LABEL, "truncate")}>{name}</span>
               ) : null}
               {owner ? (
-                <span className={cn(TEXT_LABEL, "truncate")}>
-                  <PersonName personId={owner} />
+                <span className={cn(TEXT_LABEL, "truncate font-normal")}>
+                  Owner: <PersonName personId={owner} />
                 </span>
               ) : null}
             </span>

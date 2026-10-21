@@ -37,7 +37,6 @@ function toolUsed(reply: ChatReply): string {
   return reply.created || reply.updated ? "create" : "answer";
 }
 
-/** One definition the assistant wrote, where it is looked at. */
 interface Written {
   noun: "metric" | "widget" | "dashboard";
   id: string;

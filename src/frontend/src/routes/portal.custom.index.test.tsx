@@ -63,8 +63,6 @@ describe("/portal/custom", () => {
 
     render(<Component />, { wrapper });
 
-    // The name stands in until a title arrives, so the link is still
-    // reachable when a definition cannot be read.
     expect(
       await screen.findByRole("link", { name: "engineering" })
     ).toHaveAttribute("href", "/portal/custom/engineering");

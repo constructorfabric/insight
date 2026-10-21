@@ -20,8 +20,8 @@ import { useTranslation } from "react-i18next";
 import type { PersonSummary } from "@/api/identity-client";
 import { PersonCell } from "@/components/portal/person-cell";
 import { personDisplayName } from "@/lib/identities/person-display";
-import { normalizePersonId } from "@/lib/metrics/entity";
 import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
+import { normalizePersonId } from "@/lib/metrics/entity";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -97,7 +97,9 @@ export function PersonPicker({
         .flatMap((page) => page.items)
         .filter((p) => !excluded.has(p.person_id))
         .filter(
-          (p) => onlyIds === undefined || onlyIds.has(normalizePersonId(p.person_id)),
+          (p) =>
+            onlyIds === undefined ||
+            onlyIds.has(normalizePersonId(p.person_id))
         )
     : [];
   const loading = list.isFetching && !list.isFetchingNextPage;

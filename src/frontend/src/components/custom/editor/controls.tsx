@@ -131,30 +131,22 @@ export function ChoiceControl({
   );
 }
 
-// INVARIANT: a value may be typed whether or not the catalogue lists it; the
+// INVARIANT: a name may be typed whether or not the catalogue lists it; the
 // service decides whether it resolves, and the catalogue may be a page behind.
 export function ReferenceControl({
   id,
   value,
   names,
-  labels,
   describe,
   onChange,
 }: {
   id: string;
   value: string;
   names: readonly string[];
-  /** What each offered value is called, where that is not the value itself. */
-  labels?: ReadonlyMap<string, string>;
   describe?: Describing;
   onChange: (value: string) => void;
 }) {
   const listId = `${id}-names`;
-  const label = (name: string) => {
-    const called = labels?.get(name);
-    return called !== undefined && called !== name ? called : undefined;
-  };
-  const chosen = label(value);
 
   return (
     <>
@@ -168,16 +160,9 @@ export function ReferenceControl({
       />
       <datalist id={listId}>
         {names.map((name) => (
-          <option key={name} value={name}>
-            {label(name)}
-          </option>
+          <option key={name} value={name} />
         ))}
       </datalist>
-      {chosen ? (
-        <span className={cn(TEXT_LABEL, "text-muted-foreground")}>
-          {chosen}
-        </span>
-      ) : null}
     </>
   );
 }

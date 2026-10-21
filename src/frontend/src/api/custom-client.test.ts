@@ -849,13 +849,25 @@ describe("orphaned dashboards", () => {
   });
 
   it("refuses a dashboard that is no longer orphaned with what the service said", async () => {
+    const refused = {
+      detail: "Failed precondition",
+      context: {
+        violations: [
+          {
+            type: "owner_is_administrator",
+            subject: "owner",
+            description: "the dashboard's owner is still an administrator",
+          },
+        ],
+      },
+    };
     mockFetch.mockResolvedValueOnce(
-      response({ detail: "not orphaned" }, { ok: false, status: 400 })
+      response(refused, { ok: false, status: 409 })
     );
 
     await expect(transferDashboard("d1", "p1")).rejects.toMatchObject({
-      status: 400,
-      body: { detail: "not orphaned" },
+      status: 409,
+      body: refused,
     });
   });
 });

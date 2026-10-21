@@ -62,7 +62,7 @@ export function Held({
   holders: Holder[] | undefined;
   hidden?: number;
 }) {
-  const unseen = hiddenHolders(hidden);
+  const unseen = hiddenHolders(hidden, holders?.length ?? 0);
 
   return (
     <Card>

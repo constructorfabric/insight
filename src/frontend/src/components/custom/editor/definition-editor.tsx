@@ -105,11 +105,8 @@ export function DefinitionEditor({
   const given = called.trim();
   const isDataset = kind === "datasets";
   const creating = id === undefined;
-  // SAFETY: a dataset is written under its name, and writing one replaces it.
-  // A new dataset given a name the catalogue already holds would write over
-  // that one, so the form refuses what it can see is taken; the catalogue may
-  // run a page behind, so this is a guard against a slip, not the service's
-  // own check.
+  // SAFETY: writing a dataset replaces the one under its name, so a new one
+  // may not take a name the catalogue lists; the catalogue may lag the service.
   const taken =
     isDataset && creating && listed(kind).some((item) => item.id === given);
 

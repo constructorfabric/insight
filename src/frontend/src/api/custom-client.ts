@@ -138,11 +138,7 @@ export async function putDefinition(
   await ensureOk(res);
 }
 
-/**
- * Gives a definition a new name and keeps what it holds.
- *
- * Nothing points at a definition by its name, so nothing else changes.
- */
+/** Gives a definition a new name and keeps what it holds. */
 export async function renameDefinition(
   kind: DefinitionKind,
   id: string,

@@ -84,7 +84,6 @@ const SHARES_PREFIX = ["custom", "shares"] as const;
 const ORPHANED_PREFIX = ["custom", "orphaned"] as const;
 const DASHBOARD_PREFIX = ["custom", "dashboard"] as const;
 
-/** What one entry of each catalogue is. */
 interface Catalogued {
   metrics: Listed;
   widgets: Listed;

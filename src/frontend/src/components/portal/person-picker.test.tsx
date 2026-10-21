@@ -154,8 +154,6 @@ describe("PersonPicker", () => {
     expect(screen.queryByText(/at least 2 characters/i)).not.toBeInTheDocument();
   });
 
-  // The id the service lists may be spelled in either case; the allowed set is
-  // normalized, so the match must be too.
   it("offers only the persons the caller allows, whatever the case of their id", () => {
     list.state.data = { pages: [page([BOB, CAROL])] };
     render(

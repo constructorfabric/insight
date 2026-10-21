@@ -16,7 +16,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     deleteDefinition: vi.fn(),
   };
 });
-// The dialog has its own tests; here only whether the page opens it, and for whom.
 vi.mock("@/components/custom/share-dashboard", () => ({
   ShareDashboard: ({
     open,

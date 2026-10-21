@@ -129,11 +129,24 @@ describe("AlertPage", () => {
           id: "n0",
           rule_revision: 2,
           metric: "prs-stale",
+          metric_name: "Stale pull requests",
           condition: {
             rows: "one",
             where: { column: "count", op: ">", value: 5 },
           },
           witness: { matched: 1, answered: 1, columns: ["count"], rows: [[7]] },
+        },
+        {
+          ...NOTIFICATION,
+          id: "n-1",
+          rule_revision: 1,
+          metric: "prs-closed",
+          metric_name: null,
+          condition: {
+            rows: "one",
+            where: { column: "count", op: ">", value: 3 },
+          },
+          witness: null,
         },
       ])
     );
@@ -144,8 +157,11 @@ describe("AlertPage", () => {
     expect(table.getByText("total above 10")).toBeInTheDocument();
     expect(table.getByText("count above 5")).toBeInTheDocument();
     expect(table.getByText("count 7")).toBeInTheDocument();
-    expect(table.getByText("prs-stale")).toBeInTheDocument();
+    expect(table.getByText("Stale pull requests")).toBeInTheDocument();
+    expect(table.queryByText("prs-stale")).toBeNull();
+    expect(table.getByText("prs-closed")).toBeInTheDocument();
     expect(table.queryByText("prs-open")).toBeNull();
+    expect(table.queryByText("Open pull requests")).toBeNull();
   });
 
   it("shows how many rows a notification matched, and which", async () => {

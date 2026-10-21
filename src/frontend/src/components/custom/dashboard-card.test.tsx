@@ -100,11 +100,11 @@ describe("<DashboardCard>", () => {
       owner_person_id: OWNER,
       access: "owner",
     });
-    expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
+    expect(await screen.findByText("Owner: Jane Doe")).toBeInTheDocument();
     unmount();
 
     card();
     await screen.findByText("Delivery");
-    expect(screen.queryByText("Jane Doe")).toBeNull();
+    expect(screen.queryByText(/Owner:/)).toBeNull();
   });
 });

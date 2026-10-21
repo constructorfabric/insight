@@ -3,6 +3,7 @@ import type { Path, Shape } from "@/lib/custom/editor/describe";
 import { read } from "@/lib/custom/editor/document";
 import { called } from "@/lib/custom/editor/exclusive";
 import { tableAddress } from "@/lib/custom/editor/source";
+import { DefinitionPicker } from "@/components/custom/definition-picker";
 import {
   ChoiceControl,
   FlagControl,
@@ -71,20 +72,28 @@ export function Control({
           onChange={onChange}
         />
       );
-    case "reference": {
-      const listed = editing.listed(shape.to);
+    case "reference":
+      if (shape.to === "datasets") {
+        return (
+          <ReferenceControl
+            id={id}
+            describe={describe}
+            value={written}
+            names={editing.listed("datasets").map((item) => item.id)}
+            onChange={(next) => onChange(next === "" ? emptied : next)}
+          />
+        );
+      }
 
       return (
-        <ReferenceControl
+        <DefinitionPicker
+          kind={shape.to}
           id={id}
           describe={describe}
           value={written}
-          names={listed.map((item) => item.id)}
-          labels={new Map(listed.map((item) => [item.id, item.name]))}
           onChange={(next) => onChange(next === "" ? emptied : next)}
         />
       );
-    }
     case "pick":
       return (
         <ReferenceControl

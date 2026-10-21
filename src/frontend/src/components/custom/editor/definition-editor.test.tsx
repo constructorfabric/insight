@@ -9,7 +9,9 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     createDefinition: vi.fn(),
     putDefinition: vi.fn(),
     putDataset: vi.fn(),
+    fetchMetric: vi.fn(),
     fetchMetrics: vi.fn(),
+    fetchWidget: vi.fn(),
     fetchWidgets: vi.fn(),
     fetchDashboards: vi.fn(),
     fetchDatasetNames: vi.fn(),
@@ -26,7 +28,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as customClient from "@/api/custom-client";
 
 import {
-  labelsOfferedBy,
   mockCatalogues,
   offeredBy,
   showText,
@@ -145,7 +146,6 @@ describe("<DefinitionEditor> holding one document", () => {
     );
   });
 
-  // Nothing points at a definition by its name, so a rename is an ordinary save.
   it("renames an existing definition by saving it under the new name", async () => {
     const user = userEvent.setup();
     const stored = vi.fn();
@@ -239,8 +239,6 @@ describe("<DefinitionEditor> holding one document", () => {
     );
   });
 
-  // A dataset is written under its name: a new one under a taken name would
-  // write over the one that exists.
   it("refuses to create a dataset under a name the catalogue already holds", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
@@ -273,7 +271,6 @@ describe("<DefinitionEditor> holding one document", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
-  // Names are labels: two metrics may share one.
   it("lets a new metric take a name another metric already has", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchMetrics).mockResolvedValue({
@@ -345,12 +342,12 @@ describe("<DefinitionEditor> holding one document", () => {
     ]);
   });
 
-  it("offers a reference by id, shown under its name, and names the one chosen", async () => {
+  it("offers a reference by its name and stores its id", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchMetrics).mockResolvedValue({
       items: [
         { id: "0192f0aa-0000-7000-8000-000000000001", name: "Commits" },
-        { id: "legacy_metric", name: "legacy_metric" },
+        { id: "0192f0aa-0000-7000-8000-000000000002", name: "Reviews" },
       ],
       total: 2,
     });
@@ -360,23 +357,47 @@ describe("<DefinitionEditor> holding one document", () => {
         kind="widgets"
         id="w1"
         name="Commits table"
-        document={{ type: "table", metric: "", columns: [] }}
+        document={{ type: "stat", metric: "", value: "total" }}
         onStored={vi.fn()}
       />,
       { wrapper }
     );
 
-    const metric = screen.getByLabelText("Metric");
-    await waitFor(() =>
-      expect(offeredBy(metric)).toEqual([
-        "0192f0aa-0000-7000-8000-000000000001",
-        "legacy_metric",
-      ])
+    await user.click(screen.getByLabelText("Metric"));
+    expect(
+      await screen.findByRole("option", { name: "Reviews" })
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: "Commits" }));
+
+    expect(screen.getByLabelText("Metric")).toHaveValue("Commits");
+    expect(JSON.parse((await showText(user)).value)).toMatchObject({
+      metric: "0192f0aa-0000-7000-8000-000000000001",
+    });
+  });
+
+  it("shows the reference already chosen by its name", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "Commits",
+      definition: { dataset: "commits", fields: [] },
+    });
+
+    render(
+      <DefinitionEditor
+        kind="widgets"
+        id="w1"
+        name="Commits table"
+        document={{
+          type: "stat",
+          metric: "0192f0aa-0000-7000-8000-000000000001",
+          value: "total",
+        }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
     );
-    expect(labelsOfferedBy(metric)).toEqual(["Commits", ""]);
 
-    await user.type(metric, "0192f0aa-0000-7000-8000-000000000001");
-
-    expect(screen.getByText("Commits", { selector: "span" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Metric")).toHaveValue("Commits")
+    );
   });
 });

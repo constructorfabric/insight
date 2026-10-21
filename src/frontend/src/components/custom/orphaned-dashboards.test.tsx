@@ -165,7 +165,18 @@ describe("<OrphanedDashboards>", () => {
 
   it("keeps the dialog open with what the service said when it refuses", async () => {
     vi.mocked(customClient.transferDashboard).mockRejectedValue(
-      new CustomApiError(400, { detail: "The dashboard is not orphaned." })
+      new CustomApiError(409, {
+        detail: "Failed precondition",
+        context: {
+          violations: [
+            {
+              type: "owner_is_administrator",
+              subject: "owner",
+              description: "the dashboard's owner is still an administrator",
+            },
+          ],
+        },
+      })
     );
     const user = renderPage();
     const dialog = await openTransfer(user);
@@ -174,7 +185,7 @@ describe("<OrphanedDashboards>", () => {
     await user.click(within(dialog).getByRole("button", { name: "Transfer" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "The dashboard is not orphaned."
+      "the dashboard's owner is still an administrator"
     );
   });
 });

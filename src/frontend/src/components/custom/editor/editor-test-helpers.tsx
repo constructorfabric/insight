@@ -14,7 +14,7 @@ export function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
-/** Every catalogue answers empty, and every dataset declares nothing, unless a test says otherwise. */
+/** Every catalogue answers empty, every dataset declares nothing, and no definition is found, unless a test says otherwise. */
 export function mockCatalogues(): void {
   const none = { items: [], total: 0 };
   vi.mocked(customClient.fetchMetrics).mockResolvedValue(none);
@@ -24,6 +24,12 @@ export function mockCatalogues(): void {
     names: [],
     total: 0,
   });
+  vi.mocked(customClient.fetchMetric).mockRejectedValue(
+    new CustomApiError(404, null)
+  );
+  vi.mocked(customClient.fetchWidget).mockRejectedValue(
+    new CustomApiError(404, null)
+  );
   vi.mocked(customClient.fetchDataset).mockImplementation(async (name) => ({
     name,
     declaration: { title: name, fields: [] },
@@ -58,21 +64,12 @@ export function invalid(
   });
 }
 
-function optionsOf(input: HTMLElement): HTMLOptionElement[] {
+/** What an input offers to pick from, in the order it offers it. */
+export function offeredBy(input: HTMLElement): string[] {
   const listId = input.getAttribute("list");
   const list = listId ? document.getElementById(listId) : null;
   if (!list) throw new Error("input offers nothing");
-  return [...list.querySelectorAll("option")];
-}
-
-/** What an input offers to pick from, in the order it offers it. */
-export function offeredBy(input: HTMLElement): string[] {
-  return optionsOf(input).map((option) => option.value);
-}
-
-/** What each offered value is shown as, where it is shown as something else. */
-export function labelsOfferedBy(input: HTMLElement): string[] {
-  return optionsOf(input).map((option) => option.textContent ?? "");
+  return [...list.querySelectorAll("option")].map((option) => option.value);
 }
 
 /** The row a control sits in: its label, hint and whatever was said about it. */

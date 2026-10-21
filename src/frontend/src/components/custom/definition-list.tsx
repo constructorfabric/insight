@@ -99,12 +99,6 @@ export function DefinitionList({
   );
 }
 
-/**
- * One definition's card, under its name.
- *
- * What may be done to it is passed in rather than assumed: a dataset owns
- * records and cannot be renamed, so the actions differ by kind.
- */
 export function DefinitionCard({
   name,
   actions,

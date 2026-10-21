@@ -156,7 +156,7 @@ describe("/portal/custom/metrics/$name", () => {
     render(<Component />, { wrapper });
 
     expect(
-      await screen.findByText("and 2 dashboards you can't see")
+      await screen.findByText("2 dashboards you can't see")
     ).toBeInTheDocument();
     expect(screen.queryByText("Nothing draws it yet.")).toBeNull();
   });

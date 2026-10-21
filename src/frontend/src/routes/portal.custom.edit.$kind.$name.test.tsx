@@ -10,6 +10,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   return {
     ...actual,
     fetchDefinition: vi.fn(),
+    fetchMetric: vi.fn(),
     fetchDataset: vi.fn(),
     fetchTables: vi.fn(),
     fetchTable: vi.fn(),
@@ -233,7 +234,6 @@ describe("/portal/custom/edit/$kind/$name", () => {
     expect(screen.getByRole("button", { name: "Keep" })).toBeInTheDocument();
   });
 
-  // The id stays when the name changes, so the editor need not follow it anywhere.
   it("renames a metric by saving it under the new name, keeping its id", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchDefinition).mockResolvedValue(
@@ -298,12 +298,16 @@ describe("/portal/custom/edit/$kind/$name", () => {
     },
     {
       kind: "widgets",
-      arrange: () =>
+      arrange: () => {
         vi.mocked(customClient.fetchDefinition).mockResolvedValue({
           id: "thing",
           name: "Thing",
           body: { type: "stat", metric: "commits", value: "total" },
-        }),
+        });
+        vi.mocked(customClient.fetchMetric).mockRejectedValue(
+          new CustomApiError(404, null)
+        );
+      },
       label: "Metric",
       value: "commits",
     },
