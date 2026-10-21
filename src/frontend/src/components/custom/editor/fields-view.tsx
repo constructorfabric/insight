@@ -1,6 +1,6 @@
 import { Plus, X } from "lucide-react";
 
-import type { DeclaredField, EditableKind } from "@/api/custom-client";
+import type { DeclaredField, EditableKind, Listed } from "@/api/custom-client";
 import { Control } from "@/components/custom/editor/control";
 import { Row } from "@/components/custom/editor/controls";
 import { Variants } from "@/components/custom/editor/variants";
@@ -23,7 +23,8 @@ export interface Editing {
   document: Record<string, unknown>;
   /** What the service said, by the path it named. */
   said: ReadonlyMap<string, string>;
-  names: (kind: EditableKind) => readonly string[];
+  /** What a reference to each kind may point at: its id, under its name. */
+  listed: (kind: EditableKind) => readonly Listed[];
   /** What a dataset declares, for a metric's fields to be offered and typed by. */
   declared: (dataset: string) => readonly DeclaredField[];
   /** Every warehouse table the catalogue lists, as `database.table`. */

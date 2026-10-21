@@ -227,3 +227,21 @@ describe("the dashboard tag param", () => {
     expect(PORTAL_SEARCH_KEYS).not.toContain("tag");
   });
 });
+
+describe("the dashboard ownership param", () => {
+  it.each(["me", "shared"])("keeps %s", (owned) => {
+    expect(validatePortalSearch({ owned }).owned).toBe(owned);
+  });
+
+  it.each([
+    ["an empty value", ""],
+    ["an unknown filter", "everyone"],
+    ["a list", ["me"]],
+  ])("drops %s", (_case, owned) => {
+    expect(validatePortalSearch({ owned }).owned).toBeUndefined();
+  });
+
+  it("rides only on the link that names it, never into another zone", () => {
+    expect(PORTAL_SEARCH_KEYS).not.toContain("owned");
+  });
+});

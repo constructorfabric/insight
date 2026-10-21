@@ -6,11 +6,12 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
   return {
     ...actual,
+    createDefinition: vi.fn(),
     putDefinition: vi.fn(),
     putDataset: vi.fn(),
-    fetchMetricNames: vi.fn(),
-    fetchWidgetNames: vi.fn(),
-    fetchDashboardNames: vi.fn(),
+    fetchMetrics: vi.fn(),
+    fetchWidgets: vi.fn(),
+    fetchDashboards: vi.fn(),
     fetchDatasetNames: vi.fn(),
     fetchDataset: vi.fn(),
     fetchTables: vi.fn(),
@@ -25,6 +26,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as customClient from "@/api/custom-client";
 
 import {
+  labelsOfferedBy,
   mockCatalogues,
   offeredBy,
   showText,
@@ -35,6 +37,7 @@ import { DefinitionEditor } from "./definition-editor";
 beforeEach(() => {
   vi.resetAllMocks();
   mockCatalogues();
+  vi.mocked(customClient.createDefinition).mockResolvedValue("m-new");
   vi.mocked(customClient.putDefinition).mockResolvedValue(undefined);
   vi.mocked(customClient.putDataset).mockResolvedValue({
     name: "x",
@@ -43,25 +46,26 @@ beforeEach(() => {
 });
 
 describe("<DefinitionEditor> holding one document", () => {
-  it("offers the fields the kind admits, and sends what was written", async () => {
+  it("creates a new definition from what was written, and hands back its id", async () => {
     const user = userEvent.setup();
     const stored = vi.fn();
 
     render(<DefinitionEditor kind="metrics" onStored={stored} />, { wrapper });
 
-    await user.type(screen.getByLabelText("Name"), "lines_per_day");
+    await user.type(screen.getByLabelText("Name"), "Lines per day");
     await user.type(screen.getByLabelText("Dataset"), "commits");
     await user.type(screen.getByLabelText("Limit"), "100");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
-      expect(customClient.putDefinition).toHaveBeenCalledWith(
+      expect(customClient.createDefinition).toHaveBeenCalledWith(
         "metrics",
-        "lines_per_day",
+        "Lines per day",
         { dataset: "commits", limit: 100 }
       )
     );
-    await waitFor(() => expect(stored).toHaveBeenCalledWith("lines_per_day"));
+    expect(customClient.putDefinition).not.toHaveBeenCalled();
+    await waitFor(() => expect(stored).toHaveBeenCalledWith("m-new"));
   });
 
   it("shows what the fields wrote as text, because they are one document", async () => {
@@ -93,7 +97,12 @@ describe("<DefinitionEditor> holding one document", () => {
     const user = userEvent.setup();
 
     render(
-      <DefinitionEditor kind="metrics" name="broken" onStored={vi.fn()} />,
+      <DefinitionEditor
+        kind="metrics"
+        id="broken"
+        name="Broken"
+        onStored={vi.fn()}
+      />,
       { wrapper }
     );
 
@@ -111,7 +120,8 @@ describe("<DefinitionEditor> holding one document", () => {
     render(
       <DefinitionEditor
         kind="metrics"
-        name="kept"
+        id="kept"
+        name="Kept"
         document={{ dataset: "commits", something_new: 7 }}
         onStored={vi.fn()}
       />,
@@ -125,6 +135,7 @@ describe("<DefinitionEditor> holding one document", () => {
       expect(customClient.putDefinition).toHaveBeenCalledWith(
         "metrics",
         "kept",
+        "Kept",
         {
           dataset: "commits",
           something_new: 7,
@@ -134,30 +145,45 @@ describe("<DefinitionEditor> holding one document", () => {
     );
   });
 
-  // A rename rewrites everything that pointed at the old name, so it is its
-  // own action; a field that looked editable and was not read as broken.
-  it("shows an existing definition's name as text, and says where it is renamed", () => {
+  // Nothing points at a definition by its name, so a rename is an ordinary save.
+  it("renames an existing definition by saving it under the new name", async () => {
+    const user = userEvent.setup();
+    const stored = vi.fn();
+
     render(
       <DefinitionEditor
         kind="metrics"
-        name="already_there"
+        id="m1"
+        name="Already there"
         document={{ dataset: "commits" }}
-        onStored={vi.fn()}
+        onStored={stored}
       />,
       { wrapper }
     );
 
-    expect(
-      screen.queryByRole("textbox", { name: "Name" })
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("already_there")).toBeInTheDocument();
-    expect(screen.getByText(/Renamed under Rename, below/)).toBeInTheDocument();
+    const name = screen.getByRole("textbox", { name: "Name" });
+    expect(name).toHaveValue("Already there");
+    expect(name).toHaveAttribute("maxLength", "128");
+    await user.clear(name);
+    await user.type(name, "Renamed");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(customClient.putDefinition).toHaveBeenCalledWith(
+        "metrics",
+        "m1",
+        "Renamed",
+        { dataset: "commits" }
+      )
+    );
+    await waitFor(() => expect(stored).toHaveBeenCalledWith("m1"));
   });
 
   it("says that a dataset keeps its name", () => {
     render(
       <DefinitionEditor
         kind="datasets"
+        id="commits"
         name="commits"
         document={{ title: "Commits", fields: [] }}
         onStored={vi.fn()}
@@ -192,7 +218,8 @@ describe("<DefinitionEditor> holding one document", () => {
     render(
       <DefinitionEditor
         kind="metrics"
-        name="unlimited"
+        id="unlimited"
+        name="Unlimited"
         document={{ dataset: "commits" }}
         onStored={vi.fn()}
       />,
@@ -206,14 +233,15 @@ describe("<DefinitionEditor> holding one document", () => {
       expect(customClient.putDefinition).toHaveBeenCalledWith(
         "metrics",
         "unlimited",
+        "Unlimited",
         { dataset: "commits" }
       )
     );
   });
 
-  // The service replaces on write: a new definition under a taken name would
+  // A dataset is written under its name: a new one under a taken name would
   // write over the one that exists.
-  it("refuses to create under a name the catalogue already holds", async () => {
+  it("refuses to create a dataset under a name the catalogue already holds", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
       names: ["commits"],
@@ -245,25 +273,20 @@ describe("<DefinitionEditor> holding one document", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
-  it("does not mistake an existing definition for a clash with itself", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
-      names: ["lines_per_day"],
+  // Names are labels: two metrics may share one.
+  it("lets a new metric take a name another metric already has", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: [{ id: "m1", name: "Lines per day" }],
       total: 1,
     });
 
-    render(
-      <DefinitionEditor
-        kind="metrics"
-        name="lines_per_day"
-        document={{ dataset: "commits" }}
-        onStored={vi.fn()}
-      />,
-      { wrapper }
-    );
+    render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, { wrapper });
 
-    await waitFor(() =>
-      expect(customClient.fetchMetricNames).toHaveBeenCalled()
-    );
+    await waitFor(() => expect(customClient.fetchMetrics).toHaveBeenCalled());
+    await user.type(screen.getByLabelText("Name"), "Lines per day");
+    await user.type(screen.getByLabelText("Dataset"), "commits");
+
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
@@ -286,7 +309,8 @@ describe("<DefinitionEditor> holding one document", () => {
     render(
       <DefinitionEditor
         kind="metrics"
-        name="ready"
+        id="ready"
+        name="Ready"
         document={{ dataset: "commits" }}
         onStored={vi.fn()}
       />,
@@ -300,6 +324,7 @@ describe("<DefinitionEditor> holding one document", () => {
       expect(customClient.putDefinition).toHaveBeenCalledWith(
         "metrics",
         "ready",
+        "Ready",
         { dataset: "commits" }
       )
     );
@@ -318,5 +343,40 @@ describe("<DefinitionEditor> holding one document", () => {
       "commits",
       "pull_requests",
     ]);
+  });
+
+  it("offers a reference by id, shown under its name, and names the one chosen", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: [
+        { id: "0192f0aa-0000-7000-8000-000000000001", name: "Commits" },
+        { id: "legacy_metric", name: "legacy_metric" },
+      ],
+      total: 2,
+    });
+
+    render(
+      <DefinitionEditor
+        kind="widgets"
+        id="w1"
+        name="Commits table"
+        document={{ type: "table", metric: "", columns: [] }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    const metric = screen.getByLabelText("Metric");
+    await waitFor(() =>
+      expect(offeredBy(metric)).toEqual([
+        "0192f0aa-0000-7000-8000-000000000001",
+        "legacy_metric",
+      ])
+    );
+    expect(labelsOfferedBy(metric)).toEqual(["Commits", ""]);
+
+    await user.type(metric, "0192f0aa-0000-7000-8000-000000000001");
+
+    expect(screen.getByText("Commits", { selector: "span" })).toBeInTheDocument();
   });
 });

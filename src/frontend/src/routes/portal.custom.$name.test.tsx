@@ -15,12 +15,16 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     runMetric: vi.fn(),
     sendChat: vi.fn(),
     fetchPins: vi.fn(),
-    renameDefinition: vi.fn(),
+    fetchFolders: vi.fn(),
+    fetchDashboardFolder: vi.fn(),
   };
 });
+vi.mock("@/queries/person-name", () => ({
+  usePersonName: () => ({ isPending: false, data: "Jane Doe" }),
+}));
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,6 +33,14 @@ import * as customClient from "@/api/custom-client";
 import { portalRouter } from "@/test/portal-router";
 
 import { Route } from "./portal.custom.$name";
+
+/** What every read here carries besides its body. */
+const READ = {
+  name: "engineering",
+  tags: [],
+  ownerPersonId: null,
+  access: "ownerless" as const,
+};
 
 const Component = (Route as unknown as { component: () => React.ReactNode })
   .component;
@@ -46,15 +58,19 @@ beforeEach(() => {
 });
 
 describe("/portal/custom/$name", () => {
-  it("renders a widget per name in the dashboard", async () => {
+  it("renders a widget per id in the dashboard", async () => {
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
       body: { title: "Engineering", widgets: ["commits_table"] },
       tags: [],
     });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
-      type: "table",
-      metric: "commits_per_day",
-      columns: ["day", "lines"],
+      name: "Widget",
+      widget: {
+        type: "table",
+        metric: "commits_per_day",
+        columns: ["day", "lines"],
+      },
     });
     vi.mocked(customClient.runMetric).mockResolvedValue({
       columns: ["day", "lines"],
@@ -73,6 +89,7 @@ describe("/portal/custom/$name", () => {
 
   it("offers Edit and the ··· menu in the header", async () => {
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
       body: { title: "Engineering", widgets: [] },
       tags: [],
     });
@@ -92,37 +109,56 @@ describe("/portal/custom/$name", () => {
     ).toBeInTheDocument();
   });
 
-  it("lands on the new name after a rename, though the old one is gone", async () => {
-    vi.mocked(customClient.fetchPins).mockResolvedValue([]);
-    vi.mocked(customClient.fetchDashboardRead)
-      .mockResolvedValueOnce({
-        body: { title: "Engineering", widgets: [] },
-        tags: [],
-      })
-      .mockRejectedValue(new customClient.CustomApiError(404, null));
-    vi.mocked(customClient.renameDefinition).mockResolvedValue({
-      name: "platform",
-      rewritten: [],
+  it("names the owner, and offers a viewer neither Edit nor Share", async () => {
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
+      body: { title: "Engineering", widgets: [] },
+      ownerPersonId: "01900000-0000-7000-8000-00000000000a",
+      access: "viewer",
     });
     portalRouter.go("/portal/custom/engineering");
-    const user = userEvent.setup();
 
     render(<Component />, { wrapper });
-    await user.click(
-      await screen.findByRole("button", { name: "More for engineering" })
-    );
-    await user.click(await screen.findByRole("menuitem", { name: "Rename…" }));
-    const field = await screen.findByRole("textbox", { name: "Dashboard name" });
-    await user.clear(field);
-    await user.type(field, "platform{Enter}");
 
-    await waitFor(() =>
-      expect(portalRouter.pathname).toBe("/portal/custom/platform")
+    const header = (await screen.findByRole("heading", {
+      level: 1,
+      name: "Engineering",
+    })).closest("header") as HTMLElement;
+    expect(within(header).getByText(/Owner:/)).toHaveTextContent(
+      "Owner: Jane Doe"
+    );
+    expect(
+      within(header).queryByRole("button", { name: "Edit engineering" })
+    ).toBeNull();
+    expect(
+      within(header).queryByRole("button", { name: "Share engineering" })
+    ).toBeNull();
+    expect(
+      within(header).getByRole("button", { name: "More for engineering" })
+    ).toBeInTheDocument();
+  });
+
+  it("reads the dashboard by the id in the path and heads it by name when it has no title", async () => {
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
+      name: "Platform board",
+      body: { title: "", widgets: [] },
+    });
+    portalRouter.go("/portal/custom/0190aaaa-0000-7000-8000-000000000001");
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Platform board" })
+    ).toBeInTheDocument();
+    expect(customClient.fetchDashboardRead).toHaveBeenCalledWith(
+      "0190aaaa-0000-7000-8000-000000000001"
     );
   });
 
   it("draws items in order, with headings and prose between the widgets", async () => {
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
       body: {
         title: "Engineering",
         items: [
@@ -134,9 +170,12 @@ describe("/portal/custom/$name", () => {
       tags: [],
     });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
-      type: "table",
-      metric: "commits_per_day",
-      columns: ["day"],
+      name: "Widget",
+      widget: {
+        type: "table",
+        metric: "commits_per_day",
+        columns: ["day"],
+      },
     });
     vi.mocked(customClient.runMetric).mockResolvedValue({
       columns: ["day"],
@@ -170,7 +209,7 @@ describe("/portal/custom/$name", () => {
     ).toBeInTheDocument();
   });
 
-  it("says an unknown dashboard name was not found, with no retry offered", async () => {
+  it("says a dashboard it cannot read is not there, with no retry offered", async () => {
     vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(
       new customClient.CustomApiError(404, { title: "not found" })
     );
@@ -178,7 +217,9 @@ describe("/portal/custom/$name", () => {
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText(/no dashboard named/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText("That dashboard is not there.")
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /retry/i })
     ).not.toBeInTheDocument();
@@ -201,6 +242,7 @@ describe("/portal/custom/$name", () => {
 describe("/portal/custom/$name — the window it is read over", () => {
   /** A metric a window can select by, and the date it would use. */
   const CLOCKED = {
+    name: "Opened",
     definition: {
       dataset: "events",
       fields: [{ agg: "count", type: "int", as_name: "total" }],
@@ -209,6 +251,7 @@ describe("/portal/custom/$name — the window it is read over", () => {
   };
   /** The same metric over a dataset that marks no date. */
   const CLOCKLESS = {
+    name: "Opened",
     definition: {
       dataset: "events",
       fields: [{ agg: "count", type: "int", as_name: "total" }],
@@ -217,14 +260,18 @@ describe("/portal/custom/$name — the window it is read over", () => {
 
   function board(extra: Record<string, unknown>) {
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
       body: { title: "Engineering", widgets: ["opened_line"], ...extra },
       tags: [],
     });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
-      type: "line",
-      metric: "opened",
-      x: "bucket",
-      y: "total",
+      name: "Widget",
+      widget: {
+        type: "line",
+        metric: "opened",
+        x: "bucket",
+        y: "total",
+      },
     });
     vi.mocked(customClient.runMetric).mockResolvedValue({
       columns: ["bucket", "total"],
@@ -329,6 +376,7 @@ describe("/portal/custom/$name — the window it is read over", () => {
 
   it("asks for a stat as one number over the whole window", async () => {
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
       body: {
         title: "Engineering",
         widgets: ["merged_stat"],
@@ -338,10 +386,13 @@ describe("/portal/custom/$name — the window it is read over", () => {
       tags: [],
     });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
-      type: "stat",
-      metric: "merged",
-      value: "total",
-      label: "Merged",
+      name: "Widget",
+      widget: {
+        type: "stat",
+        metric: "merged",
+        value: "total",
+        label: "Merged",
+      },
     });
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
     vi.mocked(customClient.runMetric).mockResolvedValue({
@@ -364,6 +415,7 @@ describe("/portal/custom/$name — the window it is read over", () => {
 describe("/portal/custom/$name — a definition that cannot be read", () => {
   it("says the metric could not be read and offers a retry", async () => {
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
       body: {
         title: "Engineering",
         widgets: ["opened_line"],
@@ -373,10 +425,13 @@ describe("/portal/custom/$name — a definition that cannot be read", () => {
       tags: [],
     });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
-      type: "line",
-      metric: "opened",
-      x: "bucket",
-      y: "opened",
+      name: "Widget",
+      widget: {
+        type: "line",
+        metric: "opened",
+        x: "bucket",
+        y: "opened",
+      },
     });
     vi.mocked(customClient.fetchMetric).mockRejectedValue(new Error("down"));
     portalRouter.go("/portal/custom/engineering");

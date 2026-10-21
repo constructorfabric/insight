@@ -7,7 +7,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
   return {
     ...actual,
-    fetchMetricNames: vi.fn(),
+    fetchMetrics: vi.fn(),
     fetchMetric: vi.fn(),
     fetchDataset: vi.fn(),
   };
@@ -39,7 +39,13 @@ import { portalRouter } from "@/test/portal-router";
 
 import { EditAlertPage, NewAlertPage } from "./alert-form";
 
+/** A catalogue page whose ids are the names they are listed under. */
+function listed(names: string[]) {
+  return names.map((name) => ({ id: name, name }));
+}
+
 const PRS_OPEN = {
+  name: "prs-open",
   definition: {
     table: "gold.prs",
     fields: [{ column: "id", type: "int", agg: "count", as_name: "total" }],
@@ -105,8 +111,8 @@ beforeEach(() => {
   vi.mocked(alertsClient.fetchAlertDestinations).mockResolvedValue([
     { name: "ops", provider: "zulip" },
   ]);
-  vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
-    names: ["prs-open"],
+  vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+    items: listed(["prs-open"]),
     total: 1,
   });
   vi.mocked(customClient.fetchMetric).mockResolvedValue(storedMetric(PRS_OPEN));
@@ -275,12 +281,30 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     expect(customClient.fetchMetric).toHaveBeenCalledTimes(2);
   });
 
+  it("offers each metric by its name and reads the one picked by its id", async () => {
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: [{ id: "m-1", name: "Open pull requests" }],
+      total: 1,
+    });
+
+    render(<NewAlertPage />, { wrapper });
+    await userEvent.type(await screen.findByLabelText("Metric"), "open");
+    await userEvent.click(
+      await screen.findByRole("option", { name: "Open pull requests" })
+    );
+
+    await waitFor(() =>
+      expect(customClient.fetchMetric).toHaveBeenCalledWith("m-1")
+    );
+    expect(screen.getByLabelText("Metric")).toHaveValue("Open pull requests");
+  });
+
   it("asks the service for the metrics matching what is typed", async () => {
     render(<NewAlertPage />, { wrapper });
     await userEvent.type(await screen.findByLabelText("Metric"), "gold.prs");
 
     await waitFor(() =>
-      expect(customClient.fetchMetricNames).toHaveBeenCalledWith(
+      expect(customClient.fetchMetrics).toHaveBeenCalledWith(
         expect.objectContaining({ search: "gold.prs" })
       )
     );
@@ -289,9 +313,9 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
   it("reads the next page of metrics when the list is scrolled to its end", async () => {
     scrollEndOutOfView();
     const first = Array.from({ length: 50 }, (_, at) => `metric-${at}`);
-    vi.mocked(customClient.fetchMetricNames)
-      .mockResolvedValueOnce({ names: first, total: 51 })
-      .mockResolvedValueOnce({ names: ["metric-50"], total: 51 });
+    vi.mocked(customClient.fetchMetrics)
+      .mockResolvedValueOnce({ items: listed(first), total: 51 })
+      .mockResolvedValueOnce({ items: listed(["metric-50"]), total: 51 });
 
     render(<NewAlertPage />, { wrapper });
     await userEvent.click(await screen.findByLabelText("Metric"));
@@ -304,7 +328,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     expect(
       await screen.findByRole("option", { name: "metric-50" })
     ).toBeInTheDocument();
-    expect(customClient.fetchMetricNames).toHaveBeenLastCalledWith(
+    expect(customClient.fetchMetrics).toHaveBeenLastCalledWith(
       expect.objectContaining({ offset: 50 })
     );
   });
@@ -312,10 +336,10 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
   it("says when the next page of metrics cannot be read, and reads it again on request", async () => {
     scrollEndOutOfView();
     const first = Array.from({ length: 50 }, (_, at) => `metric-${at}`);
-    vi.mocked(customClient.fetchMetricNames)
-      .mockResolvedValueOnce({ names: first, total: 51 })
+    vi.mocked(customClient.fetchMetrics)
+      .mockResolvedValueOnce({ items: listed(first), total: 51 })
       .mockRejectedValueOnce(new CustomApiError(500, null))
-      .mockResolvedValueOnce({ names: ["metric-50"], total: 51 });
+      .mockResolvedValueOnce({ items: listed(["metric-50"]), total: 51 });
 
     render(<NewAlertPage />, { wrapper });
     await userEvent.click(await screen.findByLabelText("Metric"));
@@ -339,9 +363,9 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
   it("offers a metric once when a later page repeats it", async () => {
     scrollEndOutOfView();
     const first = Array.from({ length: 50 }, (_, at) => `metric-${at}`);
-    vi.mocked(customClient.fetchMetricNames)
-      .mockResolvedValueOnce({ names: first, total: 51 })
-      .mockResolvedValueOnce({ names: ["metric-49", "metric-50"], total: 52 });
+    vi.mocked(customClient.fetchMetrics)
+      .mockResolvedValueOnce({ items: listed(first), total: 51 })
+      .mockResolvedValueOnce({ items: listed(["metric-49", "metric-50"]), total: 52 });
 
     render(<NewAlertPage />, { wrapper });
     await userEvent.click(await screen.findByLabelText("Metric"));
@@ -523,8 +547,8 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
   });
 
   it("forgets the columns ticked when another metric is picked", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
-      names: ["prs-open", "prs-stale"],
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: listed(["prs-open", "prs-stale"]),
       total: 2,
     });
     vi.mocked(customClient.fetchMetric).mockResolvedValue(
@@ -754,8 +778,8 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
   ])(
     "starts a test over when another metric has %s",
     async (_case, other, kept) => {
-      vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
-        names: ["prs-open", "prs-other"],
+      vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+        items: listed(["prs-open", "prs-other"]),
         total: 2,
       });
       vi.mocked(customClient.fetchMetric).mockImplementation(async (name) =>
@@ -948,7 +972,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
   });
 
   it("says when the metrics cannot be listed", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockRejectedValue(
+    vi.mocked(customClient.fetchMetrics).mockRejectedValue(
       new Error("offline")
     );
 

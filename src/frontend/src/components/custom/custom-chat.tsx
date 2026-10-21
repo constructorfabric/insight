@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { SendHorizontal, Sparkles } from "lucide-react";
 
@@ -26,8 +27,8 @@ interface Exchange {
 }
 
 /**
- * Which tool the model called, read from the shape of what came back: names
- * mean it built, anything else answered. Never inferred from the prose.
+ * Which tool the model called, read from the shape of what came back: written
+ * definitions mean it built, anything else answered. Never inferred from the prose.
  *
  * Keyed off `created`, not `result`: an answer about what data exists runs no
  * query, so a reply without rows is still an answer.
@@ -36,15 +37,24 @@ function toolUsed(reply: ChatReply): string {
   return reply.created || reply.updated ? "create" : "answer";
 }
 
-/** A creation set read out as prose: `metric x · widget y`. */
-function names(set: ChatCreated | undefined): string[] {
+/** One definition the assistant wrote, where it is looked at. */
+interface Written {
+  noun: "metric" | "widget" | "dashboard";
+  id: string;
+  name: string;
+}
+
+/** A creation set, in the order it reads: metric, widgets, dashboard. */
+function written(set: ChatCreated | undefined): Written[] {
+  if (!set) return [];
+
   return [
-    set?.metric ? `metric ${set.metric}` : null,
-    set?.widgets.length
-      ? `${set.widgets.length === 1 ? "widget" : "widgets"} ${set.widgets.join(", ")}`
-      : null,
-    set?.dashboard ? `dashboard ${set.dashboard}` : null,
-  ].filter((entry): entry is string => entry !== null);
+    ...(set.metric ? [{ noun: "metric" as const, ...set.metric }] : []),
+    ...set.widgets.map((widget) => ({ noun: "widget" as const, ...widget })),
+    ...(set.dashboard
+      ? [{ noun: "dashboard" as const, ...set.dashboard }]
+      : []),
+  ];
 }
 
 export function CustomChat({ onCreated }: CustomChatProps) {
@@ -195,8 +205,8 @@ export function CustomChat({ onCreated }: CustomChatProps) {
 
 function ChatAnswer({ reply }: { reply: ChatReply }) {
   const tool = toolUsed(reply);
-  const built = names(reply.created);
-  const replaced = names(reply.updated);
+  const built = written(reply.created);
+  const replaced = written(reply.updated);
 
   return (
     <div className="me-auto flex w-full flex-col gap-2 rounded-2xl rounded-es-sm bg-background px-3 py-2 shadow-xs">
@@ -215,13 +225,63 @@ function ChatAnswer({ reply }: { reply: ChatReply }) {
         </div>
       ) : null}
 
-      {built.length ? (
-        <p className={TEXT_LABEL}>Built {built.join(" · ")}</p>
-      ) : null}
+      {built.length ? <WrittenLine verb="Built" items={built} /> : null}
 
       {replaced.length ? (
-        <p className={TEXT_LABEL}>Replaced {replaced.join(" · ")}</p>
+        <WrittenLine verb="Replaced" items={replaced} />
       ) : null}
     </div>
   );
+}
+
+function WrittenLine({ verb, items }: { verb: string; items: Written[] }) {
+  return (
+    <p className={TEXT_LABEL}>
+      {verb}{" "}
+      {items.map((item, index) => (
+        <span key={`${item.noun}-${item.id}`}>
+          {index > 0 ? " · " : null}
+          {item.noun}{" "}
+          <WrittenLink item={item} />
+        </span>
+      ))}
+    </p>
+  );
+}
+
+const LINK_CLASS = "underline decoration-dotted underline-offset-4";
+
+function WrittenLink({ item }: { item: Written }) {
+  switch (item.noun) {
+    case "metric":
+      return (
+        <Link
+          to="/portal/custom/metrics/$name"
+          params={{ name: item.id }}
+          className={LINK_CLASS}
+        >
+          {item.name}
+        </Link>
+      );
+    case "widget":
+      return (
+        <Link
+          to="/portal/custom/widgets/$name"
+          params={{ name: item.id }}
+          className={LINK_CLASS}
+        >
+          {item.name}
+        </Link>
+      );
+    case "dashboard":
+      return (
+        <Link
+          to="/portal/custom/$name"
+          params={{ name: item.id }}
+          className={LINK_CLASS}
+        >
+          {item.name}
+        </Link>
+      );
+  }
 }

@@ -11,7 +11,7 @@ import { CustomChat } from "@/components/custom/custom-chat";
 import { CustomPageShell } from "@/components/custom/custom-page-shell";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { dashboardNameFromPath } from "@/lib/custom/dashboard-path";
+import { dashboardIdFromPath } from "@/lib/custom/dashboard-path";
 import { useIsAdmin } from "@/queries/identity-me";
 import {
   invalidateDashboardList,
@@ -33,7 +33,7 @@ export const Route = createFileRoute("/portal/custom")({
 function CustomZone() {
   const { isAdmin, isPending, isError, retry } = useIsAdmin();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const openDashboard = dashboardNameFromPath(pathname);
+  const openDashboard = dashboardIdFromPath(pathname);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -45,10 +45,10 @@ function CustomZone() {
       void invalidateDashboardPage(queryClient, openDashboard);
     }
     if (created.dashboard) {
-      void invalidateDashboardPage(queryClient, created.dashboard);
+      void invalidateDashboardPage(queryClient, created.dashboard.id);
       void navigate({
         to: "/portal/custom/$name",
-        params: { name: created.dashboard },
+        params: { name: created.dashboard.id },
       });
     }
   }

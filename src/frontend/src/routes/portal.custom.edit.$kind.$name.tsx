@@ -2,7 +2,7 @@ import { createFileRoute, useRouterState } from "@tanstack/react-router";
 
 import { EditorPage } from "@/components/custom/editor/editor-page";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { kindFromPath, nameFromPath } from "@/lib/custom/editor/route";
+import { idFromPath, kindFromPath } from "@/lib/custom/editor/route";
 
 export const Route = createFileRoute("/portal/custom/edit/$kind/$name")({
   component: EditDefinition,
@@ -11,11 +11,11 @@ export const Route = createFileRoute("/portal/custom/edit/$kind/$name")({
 function EditDefinition() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const kind = kindFromPath(pathname, "edit");
-  const name = nameFromPath(pathname);
+  const id = idFromPath(pathname);
 
-  if (kind === undefined || name === undefined) return <NoSuchKind />;
+  if (kind === undefined || id === undefined) return <NoSuchKind />;
 
-  return <EditorPage kind={kind} name={name} />;
+  return <EditorPage kind={kind} id={id} />;
 }
 
 function NoSuchKind() {

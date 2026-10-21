@@ -24,6 +24,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import * as customClient from "@/api/custom-client";
+import type { DashboardAccess, FolderSummary } from "@/api/custom-client";
 import { toast } from "@/components/ui/sonner";
 import { pinsQuery } from "@/queries/custom";
 
@@ -46,7 +47,7 @@ function PinnedPane() {
   return null;
 }
 
-async function openMenu() {
+async function openMenu(access: DashboardAccess = "owner") {
   const user = userEvent.setup();
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -54,7 +55,7 @@ async function openMenu() {
   render(
     <QueryClientProvider client={queryClient}>
       <PinnedPane />
-      <DashboardMenu name="delivery" />
+      <DashboardMenu id="dash-1" name="delivery" access={access} />
     </QueryClientProvider>
   );
 
@@ -75,17 +76,20 @@ describe("pinning from the ··· menu", () => {
 
     await user.click(item);
 
-    expect(customClient.pinDashboard).toHaveBeenCalledWith("delivery");
+    expect(customClient.pinDashboard).toHaveBeenCalledWith("dash-1");
     await waitFor(() => expect(pinsRead()).toBeGreaterThan(before));
   });
 
   it("unpins a pinned dashboard", async () => {
-    vi.mocked(customClient.fetchPins).mockResolvedValue(["hiring", "delivery"]);
+    vi.mocked(customClient.fetchPins).mockResolvedValue([
+      { id: "dash-0", name: "hiring" },
+      { id: "dash-1", name: "delivery" },
+    ]);
 
     const user = await openMenu();
     await user.click(await screen.findByRole("menuitem", { name: "Unpin" }));
 
-    expect(customClient.unpinDashboard).toHaveBeenCalledWith("delivery");
+    expect(customClient.unpinDashboard).toHaveBeenCalledWith("dash-1");
     expect(customClient.pinDashboard).not.toHaveBeenCalled();
   });
 
@@ -109,4 +113,56 @@ describe("pinning from the ··· menu", () => {
     );
     expect(pinsRead()).toBeGreaterThan(before);
   });
+});
+
+const FOLDERS: FolderSummary[] = [
+  {
+    id: "f-mine",
+    name: "Mine",
+    owner_person_id: "01900000-0000-7000-8000-00000000000a",
+    dashboards: 2,
+  },
+  { id: "f-shared", name: "Everyone", owner_person_id: null, dashboards: 1 },
+];
+
+describe("what the ··· menu offers by access", () => {
+  it.each([
+    [
+      "owner",
+      ["Pin", "Rename…", "Duplicate…", "New folder…", "Edit tags…", "Delete…"],
+    ],
+    [
+      "ownerless",
+      ["Pin", "Rename…", "Duplicate…", "Edit tags…", "Delete…"],
+    ],
+    ["viewer", ["Pin", "New folder…"]],
+  ] as const)("offers a caller with %s access %j", async (access, offered) => {
+    await openMenu(access);
+
+    await screen.findByRole("menuitem", { name: "Pin" });
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent)
+    ).toEqual(offered);
+  });
+
+  it.each([
+    ["owner", ["Mine", "Unfiled"]],
+    ["viewer", ["Mine", "Unfiled"]],
+    ["ownerless", ["Everyone", "Unfiled"]],
+  ] as const)(
+    "files a dashboard with %s access only in %j",
+    async (access, folders) => {
+      vi.mocked(customClient.fetchFolders).mockResolvedValue({
+        folders: FOLDERS,
+        unfiled: 1,
+      });
+
+      await openMenu(access);
+
+      await screen.findByRole("menuitemradio", { name: folders[0] });
+      expect(
+        screen.getAllByRole("menuitemradio").map((item) => item.textContent)
+      ).toEqual(folders);
+    }
+  );
 });

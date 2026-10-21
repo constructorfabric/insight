@@ -6,11 +6,12 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
   return {
     ...actual,
+    createDefinition: vi.fn(),
     putDefinition: vi.fn(),
     putDataset: vi.fn(),
-    fetchMetricNames: vi.fn(),
-    fetchWidgetNames: vi.fn(),
-    fetchDashboardNames: vi.fn(),
+    fetchMetrics: vi.fn(),
+    fetchWidgets: vi.fn(),
+    fetchDashboards: vi.fn(),
     fetchDatasetNames: vi.fn(),
     fetchDataset: vi.fn(),
     fetchTables: vi.fn(),
@@ -70,6 +71,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="widgets"
+        id="chart"
         name="chart"
         document={{
           type: "table",
@@ -121,6 +123,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="widgets"
+        id="chart"
         name="chart"
         document={{ type: "table", metric: "commits", columns: ["day"] }}
         onStored={vi.fn()}
@@ -142,6 +145,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="widgets"
+        id="chart"
         name="chart"
         document={{ type: "table", metric: "commits", columns: ["day"] }}
         onStored={vi.fn()}
@@ -156,6 +160,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
       expect(customClient.putDefinition).toHaveBeenCalledWith(
         "widgets",
         "chart",
+        "chart",
         { type: "stat", metric: "commits" }
       )
     );
@@ -167,6 +172,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="dashboards"
+        id="board"
         name="board"
         document={{ title: "Board", items: [{ widget: "chart" }] }}
         onStored={vi.fn()}
@@ -185,6 +191,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="dashboards"
+        id="board"
         name="board"
         document={{ title: "Board", items: [{ widget: "chart" }] }}
         onStored={vi.fn()}
@@ -199,6 +206,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     await waitFor(() =>
       expect(customClient.putDefinition).toHaveBeenCalledWith(
         "dashboards",
+        "board",
         "board",
         { title: "Board", items: [{ heading: "Flow" }] }
       )
@@ -260,6 +268,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="datasets"
+        id="commits"
         name="commits"
         document={{
           title: "Commits",
@@ -287,6 +296,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="metrics"
+        id="big"
         name="big"
         document={{
           dataset: "commits",
@@ -305,6 +315,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     await waitFor(() =>
       expect(customClient.putDefinition).toHaveBeenCalledWith(
         "metrics",
+        "big",
         "big",
         expect.objectContaining({
           filters: [{ field: "lines", type: "int", op: "gt", value: 500 }],
@@ -331,6 +342,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="metrics"
+        id="merged_only"
         name="merged_only"
         document={{
           dataset: "commits",
@@ -352,6 +364,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     await waitFor(() =>
       expect(customClient.putDefinition).toHaveBeenCalledWith(
         "metrics",
+        "merged_only",
         "merged_only",
         expect.objectContaining({
           filters: [
@@ -378,6 +391,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="metrics"
+        id="by_author"
         name="by_author"
         document={{
           dataset: "commits",
@@ -411,6 +425,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="metrics"
+        id="grouped"
         name="grouped"
         document={{
           dataset: "commits",
@@ -486,6 +501,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="metrics"
+        id="open_issues"
         name="open_issues"
         document={{
           table: "issues",
@@ -508,6 +524,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="metrics"
+        id="lines"
         name="lines"
         document={{
           database: "silver",
@@ -532,6 +549,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     render(
       <DefinitionEditor
         kind="metrics"
+        id="per_actor"
         name="per_actor"
         document={{
           dataset: "commits",

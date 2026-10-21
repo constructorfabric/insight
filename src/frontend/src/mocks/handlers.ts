@@ -513,7 +513,17 @@ export const handlers = [
         );
   }),
   http.get("/api/identity/v1/person-roles", ({ request }) => {
-    const personId = new URL(request.url).searchParams.get("person") ?? "";
+    const params = new URL(request.url).searchParams;
+    const personId = params.get("person");
+    if (personId === null) {
+      const role = params.get("role");
+      return HttpResponse.json({
+        items: [...ADMIN_ASSIGNMENTS.values()].filter(
+          (assignment) => role === null || assignment.role_id === role
+        ),
+        next_cursor: null,
+      });
+    }
     const assignment = ADMIN_ASSIGNMENTS.get(personId.toLowerCase());
     return HttpResponse.json({
       items: assignment ? [assignment] : [],

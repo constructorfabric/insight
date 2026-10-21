@@ -45,7 +45,10 @@ const TABLE = {
   title: "Lines by author",
 };
 
+const STORED = { name: "Lines table", widget: TABLE };
+
 const CLOCKED = {
+  name: "Lines summed",
   definition: {
     dataset: "commits",
     fields: [{ field: "lines", type: "int", agg: "sum", as_name: "lines" }],
@@ -55,10 +58,13 @@ const CLOCKED = {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  portalRouter.reset("/portal/custom/widgets/lines_table");
-  vi.mocked(customClient.fetchWidget).mockResolvedValue(TABLE);
+  portalRouter.reset("/portal/custom/widgets/w-5");
+  vi.mocked(customClient.fetchWidget).mockResolvedValue(STORED);
   vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
-  vi.mocked(customClient.fetchDependents).mockResolvedValue([]);
+  vi.mocked(customClient.fetchDependents).mockResolvedValue({
+    holders: [],
+    hidden: 0,
+  });
   vi.mocked(customClient.runMetric).mockResolvedValue({
     columns: ["author", "lines"],
     rows: [["ada", 120]],
@@ -69,7 +75,6 @@ describe("/portal/custom/widgets/$name", () => {
   // A reader who opened this from the catalogue needs the way back, whether
   // or not the page found what it was looking for.
   it("offers the way back to the catalogue", async () => {
-    vi.mocked(customClient.fetchWidget).mockResolvedValue(TABLE);
 
     render(<Component />, { wrapper });
 
@@ -93,10 +98,13 @@ describe("/portal/custom/widgets/$name", () => {
   it("runs over the window picked, sliced as the chart draws it", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
-      type: "line",
-      metric: "lines_by_author",
-      x: "bucket",
-      y: "lines",
+      name: "Lines graph",
+      widget: {
+        type: "line",
+        metric: "lines_by_author",
+        x: "bucket",
+        y: "lines",
+      },
     });
 
     render(<Component />, { wrapper });
@@ -115,6 +123,7 @@ describe("/portal/custom/widgets/$name", () => {
   it("says that a window means all time when nothing dates the metric", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: CLOCKED.name,
       definition: CLOCKED.definition,
     });
 
@@ -130,18 +139,35 @@ describe("/portal/custom/widgets/$name", () => {
   });
 
   // What a removal would break, before a reader asks for one.
-  it("names what draws it", async () => {
-    vi.mocked(customClient.fetchDependents).mockResolvedValue([
-      { kind: "dashboards", name: "engineering" },
-    ]);
+  it("names what draws it, and links each by its id", async () => {
+    vi.mocked(customClient.fetchDependents).mockResolvedValue({
+      holders: [{ kind: "dashboards", id: "d-9", name: "Engineering" }],
+      hidden: 1,
+    });
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText("engineering")).toBeInTheDocument();
-    expect(customClient.fetchDependents).toHaveBeenCalledWith(
-      "widgets",
-      expect.any(String)
-    );
+    expect(
+      await screen.findByRole("link", { name: "Engineering" })
+    ).toHaveAttribute("href", "/portal/custom/d-9");
+    expect(
+      screen.getByText("and 1 dashboard you can't see")
+    ).toBeInTheDocument();
+    expect(customClient.fetchDependents).toHaveBeenCalledWith("widgets", "w-5");
+  });
+
+  it("heads the page with the stored name and names its metric", async () => {
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("heading", { name: "Lines table" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Edit Lines table" })
+    ).toHaveAttribute("href", "/portal/custom/edit/widgets/w-5");
+    expect(
+      await screen.findByRole("link", { name: "Lines summed" })
+    ).toHaveAttribute("href", "/portal/custom/metrics/lines_by_author");
   });
 
   it("says when nothing draws it", async () => {

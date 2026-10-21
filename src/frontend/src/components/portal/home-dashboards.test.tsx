@@ -59,12 +59,26 @@ describe("Home dashboards", () => {
   it("shows at most three dashboards with existing open, menu and creation actions", async () => {
     server.use(
       http.get(`${base}/dashboards`, () =>
-        HttpResponse.json({ names: ["one", "two", "three", "four"], total: 4 })
-      ),
-      http.get(`${base}/dashboards/:name`, ({ params }) =>
         HttpResponse.json({
-          body: { title: `Board ${params.name}`, widgets: [] },
+          items: ["one", "two", "three", "four"].map((id) => ({
+            id,
+            name: id,
+            owner_person_id: null,
+            access: "ownerless",
+          })),
+          total: 4,
+          limit: 50,
+          offset: 0,
+        })
+      ),
+      http.get(`${base}/dashboards/:id`, ({ params }) =>
+        HttpResponse.json({
+          id: params.id,
+          name: params.id,
+          body: { title: `Board ${params.id}`, widgets: [] },
           tags: [],
+          owner_person_id: null,
+          access: "ownerless",
         })
       )
     );
@@ -93,7 +107,7 @@ describe("Home dashboards", () => {
   it("keeps creation available when no dashboards exist", async () => {
     server.use(
       http.get(`${base}/dashboards`, () =>
-        HttpResponse.json({ names: [], total: 0 })
+        HttpResponse.json({ items: [], total: 0, limit: 50, offset: 0 })
       )
     );
     home();
@@ -119,7 +133,7 @@ describe("Home dashboards", () => {
     ).toBeInTheDocument();
     server.use(
       http.get(`${base}/dashboards`, () =>
-        HttpResponse.json({ names: [], total: 0 })
+        HttpResponse.json({ items: [], total: 0, limit: 50, offset: 0 })
       )
     );
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));

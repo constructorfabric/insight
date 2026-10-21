@@ -27,8 +27,11 @@ const TAGS = [
 
 function carrying(tags: string[]) {
   vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+    name: "delivery",
     body: { title: "Delivery", widgets: [] },
     tags,
+    ownerPersonId: null,
+    access: "ownerless",
   });
 }
 
@@ -51,7 +54,7 @@ async function openTagsDialog(staleTime = 0) {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <DashboardMenu name="delivery" />
+      <DashboardMenu id="delivery" name="delivery" access="ownerless" />
     </QueryClientProvider>
   );
 
@@ -261,7 +264,13 @@ describe("the tags dialog", () => {
 
     const { user } = await openTagsDialog();
     await user.type(screen.getByRole("textbox", { name: "Add tag" }), "Qa{Enter}");
-    arrive({ body: { title: "Delivery", widgets: [] }, tags: ["Ops"] });
+    arrive({
+      name: "delivery",
+      body: { title: "Delivery", widgets: [] },
+      tags: ["Ops"],
+      ownerPersonId: null,
+      access: "ownerless",
+    });
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Done" })).toBeEnabled()
     );

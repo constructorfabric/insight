@@ -2,7 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { FolderPlus } from "lucide-react";
 import { useState } from "react";
 
-import { FOLDER_NAME_MAX, type Folder } from "@/api/custom-client";
+import {
+  FOLDER_NAME_MAX,
+  type DashboardAccess,
+  type Folder,
+} from "@/api/custom-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { refusal } from "@/components/custom/refusal";
 import {
@@ -15,6 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/sonner";
+import { fileableFolders } from "@/lib/custom/dashboard-access";
 import {
   dashboardFolderQuery,
   foldersQuery,
@@ -25,19 +30,25 @@ import {
 const UNFILED = "unfiled";
 
 export function MoveToFolderItems({
-  name,
+  id,
+  access,
   open,
   onNewFolder,
 }: {
-  name: string;
+  id: string;
+  access: DashboardAccess;
   open: boolean;
   onNewFolder: () => void;
 }) {
   const folders = useQuery({ ...foldersQuery(), enabled: open });
-  const current = useQuery({ ...dashboardFolderQuery(name), enabled: open });
+  const current = useQuery({ ...dashboardFolderQuery(id), enabled: open });
   const move = useMoveDashboard();
 
   const filed = current.data === undefined ? "" : (current.data?.id ?? UNFILED);
+  const offered = fileableFolders(access, folders.data?.folders ?? []);
+  // INVARIANT: a folder made here is the caller's own, and an ownerless
+  // dashboard cannot be filed in one.
+  const canMakeFolder = access !== "ownerless";
 
   return (
     <>
@@ -47,7 +58,7 @@ export function MoveToFolderItems({
           value={filed}
           onValueChange={(value: string) =>
             move.mutate(
-              { name, folder: value === UNFILED ? null : value },
+              { id, folder: value === UNFILED ? null : value },
               {
                 onError: (error) =>
                   toast.error(
@@ -57,7 +68,7 @@ export function MoveToFolderItems({
             )
           }
         >
-          {folders.data?.folders.map((folder) => (
+          {offered.map((folder) => (
             <DropdownMenuRadioItem
               key={folder.id}
               value={folder.id}
@@ -71,20 +82,26 @@ export function MoveToFolderItems({
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuGroup>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem onClick={onNewFolder}>
-        <FolderPlus />
-        New folder…
-      </DropdownMenuItem>
+      {canMakeFolder ? (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={onNewFolder}>
+            <FolderPlus />
+            New folder…
+          </DropdownMenuItem>
+        </>
+      ) : null}
     </>
   );
 }
 
 export function NewFolderAndMove({
+  id,
   name,
   open,
   onClose,
 }: {
+  id: string;
   name: string;
   open: boolean;
   onClose: () => void;
@@ -108,7 +125,7 @@ export function NewFolderAndMove({
     try {
       const folder = made ?? (await create.mutateAsync(value));
       setMade(folder);
-      await move.mutateAsync({ name, folder: folder.id });
+      await move.mutateAsync({ id, folder: folder.id });
       close();
     } catch (failure) {
       setError(refusal(failure, "The folder could not be made."));

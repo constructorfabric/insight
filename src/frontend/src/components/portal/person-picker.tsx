@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import type { PersonSummary } from "@/api/identity-client";
 import { PersonCell } from "@/components/portal/person-cell";
 import { personDisplayName } from "@/lib/identities/person-display";
+import { normalizePersonId } from "@/lib/metrics/entity";
 import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -42,6 +43,8 @@ export function PersonPicker({
   onPick,
   /** Persons already shown elsewhere in the panel — filtered out, not repeated. */
   excludeIds = [],
+  /** The only persons that may be offered, by normalized id; absent offers anyone. */
+  onlyIds,
   browseWhenEmpty = false,
   /**
    * The picker IS the surface rather than a field inside a panel: the list gets
@@ -57,6 +60,7 @@ export function PersonPicker({
 }: {
   onPick: (person: PersonSummary) => void;
   excludeIds?: string[];
+  onlyIds?: ReadonlySet<string>;
   browseWhenEmpty?: boolean;
   asSurface?: boolean;
   /** What the field starts with — a caller that remembers the terms elsewhere
@@ -92,6 +96,9 @@ export function PersonPicker({
     ? (list.data?.pages ?? [])
         .flatMap((page) => page.items)
         .filter((p) => !excluded.has(p.person_id))
+        .filter(
+          (p) => onlyIds === undefined || onlyIds.has(normalizePersonId(p.person_id)),
+        )
     : [];
   const loading = list.isFetching && !list.isFetchingNextPage;
   // Reads the live field rather than the debounced one: the answer to "why is

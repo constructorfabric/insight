@@ -10,12 +10,13 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   return {
     ...actual,
     putDataset: vi.fn(),
+    createDefinition: vi.fn(),
     fetchDataset: vi.fn(),
     fetchTables: vi.fn(),
     fetchTable: vi.fn(),
-    fetchMetricNames: vi.fn(),
-    fetchWidgetNames: vi.fn(),
-    fetchDashboardNames: vi.fn(),
+    fetchMetrics: vi.fn(),
+    fetchWidgets: vi.fn(),
+    fetchDashboards: vi.fn(),
     fetchDatasetNames: vi.fn(),
   };
 });
@@ -41,19 +42,22 @@ function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
-const NO_NAMES = { names: [], total: 0 };
+const NO_ITEMS = { items: [], total: 0 };
 
 beforeEach(() => {
   vi.resetAllMocks();
   portalRouter.reset("/portal/custom/new/datasets");
-  for (const names of [
-    customClient.fetchMetricNames,
-    customClient.fetchWidgetNames,
-    customClient.fetchDashboardNames,
-    customClient.fetchDatasetNames,
+  for (const page of [
+    customClient.fetchMetrics,
+    customClient.fetchWidgets,
+    customClient.fetchDashboards,
   ]) {
-    vi.mocked(names).mockResolvedValue(NO_NAMES);
+    vi.mocked(page).mockResolvedValue(NO_ITEMS);
   }
+  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
+    names: [],
+    total: 0,
+  });
 });
 
 describe("/portal/custom/new/$kind", () => {
@@ -67,7 +71,7 @@ describe("/portal/custom/new/$kind", () => {
     expect(customClient.fetchDataset).not.toHaveBeenCalled();
   });
 
-  it("stores what was written under the name it was given", async () => {
+  it("stores a dataset under the name it was given, then opens it", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.putDataset).mockResolvedValue({
       name: "deployments",
@@ -85,9 +89,48 @@ describe("/portal/custom/new/$kind", () => {
         title: "Deployments",
       })
     );
-    expect(portalRouter.navigations).toContainEqual({
-      to: "/portal/custom/datasets",
-    });
+    await waitFor(() =>
+      expect(portalRouter.navigations).toContainEqual({
+        to: "/portal/custom/datasets/$name",
+        params: { name: "deployments" },
+      })
+    );
+  });
+
+  it.each([
+    ["metrics", "/portal/custom/metrics/$name"],
+    ["widgets", "/portal/custom/widgets/$name"],
+    ["dashboards", "/portal/custom/$name"],
+  ])("creates a new %s and opens it by the id it was given", async (kind, page) => {
+    const user = userEvent.setup();
+    portalRouter.reset(`/portal/custom/new/${kind}`);
+    vi.mocked(customClient.createDefinition).mockResolvedValue(
+      "0192f0aa-0000-7000-8000-000000000004"
+    );
+
+    render(<Component />, { wrapper });
+
+    const text = { metrics: "Commits", widgets: "Commits", dashboards: "Board" };
+    await user.type(screen.getByLabelText("Name"), text[kind as keyof typeof text]);
+    await user.click(screen.getByRole("button", { name: "JSON" }));
+    const document = screen.getByLabelText(/as text/i);
+    await user.clear(document);
+    await user.type(document, '{{"title": "Board"}');
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(customClient.createDefinition).toHaveBeenCalledWith(
+        kind,
+        text[kind as keyof typeof text],
+        { title: "Board" }
+      )
+    );
+    await waitFor(() =>
+      expect(portalRouter.navigations).toContainEqual({
+        to: page,
+        params: { name: "0192f0aa-0000-7000-8000-000000000004" },
+      })
+    );
   });
 
   it("will not store anything until it has been named", () => {

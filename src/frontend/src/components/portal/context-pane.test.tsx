@@ -66,11 +66,16 @@ vi.mock("@/lib/portal/portal-store", async (orig) => ({
 }));
 vi.mock("@/api/custom-client", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
-  fetchDashboardNames: async () => ({ names: ["delivery"], total: 14 }),
+  fetchDashboards: async () => ({
+    items: [
+      { id: "delivery", name: "delivery", owner_person_id: null, access: "ownerless" },
+    ],
+    total: 14,
+  }),
   fetchFolders: async () => ({
     folders: [
-      { id: "f1", name: "Platform", dashboards: 3 },
-      { id: "f2", name: "Product", dashboards: 0 },
+      { id: "f1", name: "Platform", owner_person_id: "me@x", dashboards: 3 },
+      { id: "f2", name: "Product", owner_person_id: null, dashboards: 0 },
     ],
     unfiled: 11,
   }),
@@ -551,6 +556,37 @@ describe("Dashboards pane", () => {
       "href",
       "/portal/custom/alerts",
     );
+    expect(screen.getByRole("link", { name: "Orphaned" })).toHaveAttribute(
+      "href",
+      "/portal/custom/orphaned",
+    );
+  });
+
+  it("narrows the list to what the reader owns, or what is shared with them", () => {
+    inZone("custom");
+    pane();
+    expect(screen.getByRole("link", { name: "Owned by me" })).toHaveAttribute(
+      "href",
+      "/portal/custom?owned=me",
+    );
+    expect(screen.getByRole("link", { name: "Shared with me" })).toHaveAttribute(
+      "href",
+      "/portal/custom?owned=shared",
+    );
+  });
+
+  it("keeps the picked tags when narrowing by ownership", () => {
+    inZone("custom");
+    act(() => {
+      portalRouter.go("/portal/custom");
+      portalRouter.set({ tag: ["Ops"] });
+    });
+    pane();
+
+    const query = new URLSearchParams(
+      screen.getByRole("link", { name: "Owned by me" }).getAttribute("href")!.split("?")[1],
+    );
+    expect(Object.fromEntries(query)).toEqual({ owned: "me", tag: "Ops" });
   });
 
   it("no longer lists each saved dashboard", async () => {
@@ -560,17 +596,16 @@ describe("Dashboards pane", () => {
     expect(screen.queryByText("delivery")).toBeNull();
   });
 
-  it("shows the planned browse filters only with planned sections on", () => {
+  it("shows the planned browse filter only with planned sections on", () => {
     inZone("custom");
     const { unmount } = pane();
-    expect(screen.queryByText("Shared with me")).toBeNull();
+    expect(screen.queryByText("Starred")).toBeNull();
     unmount();
 
     mocks.showPlanned = true;
     pane();
-    for (const label of ["My dashboards", "Shared with me", "Starred"]) {
-      expect(buttonFor(label)).toHaveAttribute("aria-disabled", "true");
-    }
+    expect(buttonFor("Starred")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByText("My dashboards")).toBeNull();
     expect(screen.queryByText("Starter")).toBeNull();
   });
 });
@@ -741,11 +776,14 @@ describe("Dashboards pane pins", () => {
     delivery: "Delivery",
   };
 
-  function pinned(names: string[]) {
-    mocks.fetchPins.mockResolvedValue(names);
-    mocks.fetchDashboardRead.mockImplementation(async (name: string) => ({
-      body: { title: TITLES[name] ?? "", widgets: [] },
+  function pinned(ids: string[]) {
+    mocks.fetchPins.mockResolvedValue(ids.map((id) => ({ id, name: id })));
+    mocks.fetchDashboardRead.mockImplementation(async (id: string) => ({
+      name: id,
+      body: { title: TITLES[id] ?? "", widgets: [] },
       tags: [],
+      ownerPersonId: null,
+      access: "ownerless",
     }));
     inZone("custom");
   }
@@ -780,22 +818,35 @@ describe("Dashboards pane pins", () => {
   });
 
   it("names a pinned dashboard by its name while its title loads or when it has none", async () => {
-    mocks.fetchPins.mockResolvedValue(["loading", "untitled"]);
-    mocks.fetchDashboardRead.mockImplementation((name: string) =>
-      name === "loading"
+    mocks.fetchPins.mockResolvedValue([
+      { id: "d-loading", name: "Loading board" },
+      { id: "d-untitled", name: "Untitled board" },
+    ]);
+    mocks.fetchDashboardRead.mockImplementation((id: string) =>
+      id === "d-loading"
         ? new Promise(() => {})
-        : Promise.resolve({ body: { title: "", widgets: [] }, tags: [] }),
+        : Promise.resolve({
+            name: "Untitled board",
+            body: { title: "", widgets: [] },
+            tags: [],
+            ownerPersonId: null,
+            access: "ownerless",
+          }),
     );
     inZone("custom");
     pane();
 
-    await screen.findByRole("link", { name: "loading" });
+    await screen.findByRole("link", { name: "Loading board" });
     await waitFor(() =>
-      expect(mocks.fetchDashboardRead).toHaveBeenCalledWith("untitled"),
+      expect(mocks.fetchDashboardRead).toHaveBeenCalledWith("d-untitled"),
     );
     expect(pinnedRows().map((row) => row.textContent)).toEqual([
-      "loading",
-      "untitled",
+      "Loading board",
+      "Untitled board",
+    ]);
+    expect(pinnedRows().map((row) => row.getAttribute("href"))).toEqual([
+      "/portal/custom/d-loading",
+      "/portal/custom/d-untitled",
     ]);
   });
 

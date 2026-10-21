@@ -16,11 +16,14 @@ export function wrapper({ children }: { children: ReactNode }) {
 
 /** Every catalogue answers empty, and every dataset declares nothing, unless a test says otherwise. */
 export function mockCatalogues(): void {
-  const none = { names: [], total: 0 };
-  vi.mocked(customClient.fetchMetricNames).mockResolvedValue(none);
-  vi.mocked(customClient.fetchWidgetNames).mockResolvedValue(none);
-  vi.mocked(customClient.fetchDashboardNames).mockResolvedValue(none);
-  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue(none);
+  const none = { items: [], total: 0 };
+  vi.mocked(customClient.fetchMetrics).mockResolvedValue(none);
+  vi.mocked(customClient.fetchWidgets).mockResolvedValue(none);
+  vi.mocked(customClient.fetchDashboards).mockResolvedValue(none);
+  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
+    names: [],
+    total: 0,
+  });
   vi.mocked(customClient.fetchDataset).mockImplementation(async (name) => ({
     name,
     declaration: { title: name, fields: [] },
@@ -55,12 +58,21 @@ export function invalid(
   });
 }
 
-/** What an input offers to pick from, in the order it offers it. */
-export function offeredBy(input: HTMLElement): string[] {
+function optionsOf(input: HTMLElement): HTMLOptionElement[] {
   const listId = input.getAttribute("list");
   const list = listId ? document.getElementById(listId) : null;
   if (!list) throw new Error("input offers nothing");
-  return [...list.querySelectorAll("option")].map((option) => option.value);
+  return [...list.querySelectorAll("option")];
+}
+
+/** What an input offers to pick from, in the order it offers it. */
+export function offeredBy(input: HTMLElement): string[] {
+  return optionsOf(input).map((option) => option.value);
+}
+
+/** What each offered value is shown as, where it is shown as something else. */
+export function labelsOfferedBy(input: HTMLElement): string[] {
+  return optionsOf(input).map((option) => option.textContent ?? "");
 }
 
 /** The row a control sits in: its label, hint and whatever was said about it. */

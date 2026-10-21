@@ -40,11 +40,12 @@ beforeEach(() => {
 
 describe("/portal/custom/metrics", () => {
   it("names every metric and reads its query back", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
-      names: ["lines_per_day"],
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: [{ id: "lines_per_day", name: "lines_per_day" }],
       total: 1,
     });
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "stored",
       definition: {
         dataset: "commits",
         fields: [
@@ -77,11 +78,12 @@ describe("/portal/custom/metrics", () => {
   it("reads back a query over a dataset, by its declared fields", async () => {
     // Metrics grew columns, a database and a resolved person after this card
     // was written, and it printed `undefined` for every one of them.
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
-      names: ["pr_merged_by_author"],
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: [{ id: "pr_merged_by_author", name: "pr_merged_by_author" }],
       total: 1,
     });
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "stored",
       definition: {
         dataset: "pull_requests",
         fields: [
@@ -112,11 +114,12 @@ describe("/portal/custom/metrics", () => {
   });
 
   it("counts rows without naming a column", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
-      names: ["how_many"],
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: [{ id: "how_many", name: "how_many" }],
       total: 1,
     });
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "stored",
       definition: {
         dataset: "commits",
         fields: [{ type: "int", agg: "count", as_name: "commits" }],
@@ -131,11 +134,12 @@ describe("/portal/custom/metrics", () => {
   });
 
   it("leaves out the rows a metric does not use", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
-      names: ["everything"],
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: [{ id: "everything", name: "everything" }],
       total: 1,
     });
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "stored",
       definition: {
         dataset: "commits",
         fields: [{ field: "lines", type: "int", as_name: "lines" }],
@@ -154,8 +158,8 @@ describe("/portal/custom/metrics", () => {
   });
 
   it("says so when there are no metrics yet", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
-      names: [],
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: [],
       total: 0,
     });
 
@@ -165,7 +169,7 @@ describe("/portal/custom/metrics", () => {
   });
 
   it("shows a retryable error when the list fails to load", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockRejectedValue(
+    vi.mocked(customClient.fetchMetrics).mockRejectedValue(
       new Error("network down")
     );
 
@@ -177,13 +181,14 @@ describe("/portal/custom/metrics", () => {
   });
 
   it("keeps the rest of the page when one metric fails to load", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
-      names: ["broken", "fine"],
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: [{ id: "broken", name: "broken" }, { id: "fine", name: "fine" }],
       total: 2,
     });
     vi.mocked(customClient.fetchMetric).mockImplementation(async (name) => {
       if (name === "broken") throw new Error("that metric is gone");
       return {
+        name: "fine",
         definition: {
           dataset: "commits",
           fields: [{ field: "lines", type: "int", as_name: "lines" }],
@@ -198,18 +203,44 @@ describe("/portal/custom/metrics", () => {
     );
     expect(await screen.findByText("fine")).toBeInTheDocument();
   });
-  it("says how many metrics there are, and reads the next page at the end", async () => {
+  it("names each metric and opens it by its id", async () => {
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: [{ id: "m-1", name: "Lines per day" }],
+      total: 1,
+    });
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "Lines per day",
       definition: {
         dataset: "commits",
         fields: [{ field: "lines", type: "int", as_name: "lines" }],
       },
     });
-    vi.mocked(customClient.fetchMetricNames).mockImplementation(
+
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByText("Lines per day")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Edit Lines per day" })
+    ).toHaveAttribute("href", "/portal/custom/edit/metrics/m-1");
+    expect(
+      screen.getByRole("link", { name: "Preview Lines per day" })
+    ).toHaveAttribute("href", "/portal/custom/metrics/m-1");
+    expect(customClient.fetchMetric).toHaveBeenCalledWith("m-1");
+  });
+
+  it("says how many metrics there are, and reads the next page at the end", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "stored",
+      definition: {
+        dataset: "commits",
+        fields: [{ field: "lines", type: "int", as_name: "lines" }],
+      },
+    });
+    vi.mocked(customClient.fetchMetrics).mockImplementation(
       async ({ offset = 0 } = {}) =>
         offset === 0
-          ? { names: ["first_page"], total: 2 }
-          : { names: ["second_page"], total: 2 }
+          ? { items: [{ id: "first_page", name: "first_page" }], total: 2 }
+          : { items: [{ id: "second_page", name: "second_page" }], total: 2 }
     );
 
     render(<Component />, { wrapper });
@@ -224,11 +255,12 @@ describe("/portal/custom/metrics", () => {
   });
 
   it("counts what a search matched rather than the whole catalogue", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
-      names: ["only_one"],
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: [{ id: "only_one", name: "only_one" }],
       total: 1,
     });
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "stored",
       definition: {
         dataset: "commits",
         fields: [{ field: "lines", type: "int", as_name: "lines" }],
@@ -244,7 +276,7 @@ describe("/portal/custom/metrics", () => {
     );
 
     expect(await screen.findByText("1 matching")).toBeInTheDocument();
-    expect(customClient.fetchMetricNames).toHaveBeenCalledWith({
+    expect(customClient.fetchMetrics).toHaveBeenCalledWith({
       search: "only",
       limit: 50,
       offset: 0,

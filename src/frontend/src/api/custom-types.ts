@@ -8,8 +8,9 @@ import type {
 
 /** What every widget carries, whatever it draws. */
 interface WidgetBase {
+  /** The id of the metric it draws. */
   metric: string;
-  /** The heading a reader sees. Without it the card shows the identifier. */
+  /** The heading a reader sees. Without it the card shows the widget's name. */
   title?: string;
   /**
    * A metric for the drilldown to run instead of this widget's own.
@@ -108,20 +109,67 @@ export interface EffectiveClock {
   from: "metric" | "dataset";
 }
 
+/** One definition as a catalogue lists it: the id it is kept under, and what it is called. */
+export interface Listed {
+  id: string;
+  name: string;
+}
+
+/** What the caller may do with a dashboard, as the service decides it. */
+export type DashboardAccess = "owner" | "viewer" | "ownerless";
+
+export interface DashboardListed extends Listed {
+  /** Null for a dashboard nobody owns. */
+  owner_person_id: string | null;
+  access: DashboardAccess;
+}
+
+/** One page of a catalogue, and how many definitions it is a page of. */
+export interface ListedPage<T extends Listed = Listed> {
+  items: T[];
+  total: number;
+}
+
 /** A stored definition as the service hands it back. */
 export interface DefinitionResponse<T> {
+  id: string;
+  name: string;
   body: T;
   /** Only a metric has one, and only when a window has a date to select by. */
   clock?: EffectiveClock;
   folder?: Folder | null;
   tags?: string[];
   updated_at?: string;
+  /** Only a dashboard has one. */
+  access?: DashboardAccess;
+}
+
+/** A dashboard as the service hands it back, with who owns it and what the caller may do. */
+export interface DashboardResponse extends DefinitionResponse<Dashboard> {
+  owner_person_id: string | null;
+  access: DashboardAccess;
 }
 
 export interface DashboardRead {
+  name: string;
   body: Dashboard;
   tags: string[];
   updatedAt?: string;
+  ownerPersonId: string | null;
+  access: DashboardAccess;
+}
+
+/** One person a dashboard is shared with, for viewing. */
+export interface DashboardShare {
+  person_id: string;
+  granted_by: string;
+  created_at: string;
+}
+
+/** A dashboard whose owner no longer holds the administrator role. */
+export interface OrphanedDashboard extends Listed {
+  owner_person_id: string;
+  updated_at: string;
 }
 
 export interface TagSummary {
@@ -139,6 +187,8 @@ export interface Folder {
 }
 
 export interface FolderSummary extends Folder {
+  /** Null for a folder nobody owns, which only ownerless dashboards are filed in. */
+  owner_person_id: string | null;
   dashboards: number;
 }
 
@@ -148,7 +198,7 @@ export interface FolderList {
 }
 
 export interface PinList {
-  pins: string[];
+  pins: Listed[];
 }
 
 /** A folder id, or `"unfiled"` for the dashboards in none. */
@@ -156,8 +206,14 @@ export type FolderFilter = string;
 
 /** A metric as it is stored, with the clock a window over it would use. */
 export interface StoredMetric {
+  name: string;
   definition: MetricDefinition;
   clock?: EffectiveClock;
+}
+
+export interface StoredWidget {
+  name: string;
+  widget: Widget;
 }
 
 /** What a value is read as, which decides what a metric may do with it. */
@@ -232,10 +288,15 @@ export interface DatasetRecord {
 }
 
 /** One definition that names another: what a removal would break. */
-export interface Holder {
+export interface Holder extends Listed {
   /** The kind it is, as the API path spells it. */
   kind: "metrics" | "widgets" | "dashboards";
-  name: string;
+}
+
+export interface Dependents {
+  holders: Holder[];
+  /** Dashboards that name it which the caller cannot see. */
+  hidden: number;
 }
 
 /** What one page of a dataset's records is asked for. */
@@ -327,9 +388,9 @@ export interface Dashboard {
 }
 
 export interface ChatCreated {
-  metric?: string;
-  widgets: string[];
-  dashboard?: string;
+  metric?: Listed | null;
+  widgets: Listed[];
+  dashboard?: Listed | null;
 }
 
 /** One turn already in the thread, sent back so the model can read it. */
@@ -342,6 +403,6 @@ export interface ChatReply {
   reply: string;
   result?: MetricResult;
   created?: ChatCreated;
-  /** Names that already existed and now hold something else. */
+  /** Definitions that already existed and now hold something else. */
   updated?: ChatCreated;
 }

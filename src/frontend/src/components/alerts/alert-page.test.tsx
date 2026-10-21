@@ -3,6 +3,10 @@ vi.mock("@tanstack/react-router", async () => {
   return portalRouterMock();
 });
 vi.mock("@/api/alerts-client");
+vi.mock("@/api/custom-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/custom-client")>();
+  return { ...actual, fetchMetric: vi.fn() };
+});
 
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -10,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as alertsClient from "@/api/alerts-client";
 import type { Alert, AlertNotification } from "@/api/alerts-types";
+import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import { ALERT, NOTIFICATION, wrapper } from "@/test/alerts";
 import { portalRouter } from "@/test/portal-router";
@@ -30,9 +35,28 @@ function neverLands<T>(): Promise<T> {
 beforeEach(() => {
   vi.resetAllMocks();
   portalRouter.reset("/portal/custom/alerts/a1");
+  vi.mocked(customClient.fetchMetric).mockRejectedValue(
+    new CustomApiError(404, null)
+  );
 });
 
 describe("AlertPage", () => {
+  it("names the rule's metric and links it by its id", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue(ALERT);
+    vi.mocked(alertsClient.fetchAlertNotifications).mockResolvedValue(page([]));
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "Open pull requests",
+      definition: { dataset: "pull_requests", fields: [] },
+    });
+
+    render(<AlertPage id="a1" />, { wrapper });
+
+    expect(
+      await screen.findByRole("link", { name: "Open pull requests" })
+    ).toHaveAttribute("href", `/portal/custom/metrics/${ALERT.metric}`);
+    expect(customClient.fetchMetric).toHaveBeenCalledWith(ALERT.metric);
+  });
+
   it("shows the rule, the latest check and what it owed", async () => {
     vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
       ...ALERT,

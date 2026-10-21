@@ -1,4 +1,4 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 
 import {
@@ -15,13 +15,13 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import type { Describing } from "@/lib/custom/editor/aria";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
-import { definitionPagesQuery } from "@/queries/custom";
+import { definitionPagesQuery, metricQuery } from "@/queries/custom";
 
 /** Long enough that a word is typed before the service is asked. */
 const SEARCH_DEBOUNCE_MS = 300;
 
 /**
- * Picks one stored metric.
+ * Picks one stored metric, by id, shown by its name.
  *
  * The service does the searching — it matches the stored body as well as the
  * name, so a table name finds every metric that reads it — and the list reads
@@ -41,11 +41,17 @@ export function MetricPicker({
   const [typed, setTyped] = useState("");
   const searching = useDebouncedValue(typed, SEARCH_DEBOUNCE_MS).trim();
   const found = useInfiniteQuery(definitionPagesQuery("metrics", searching));
+  const chosen = useQuery({ ...metricQuery(value), enabled: value !== "" });
   // INVARIANT: pages are read by offset, so a metric saved between two reads
-  // shifts the next page and repeats a name; each name is one option.
-  const names = Array.from(
-    new Set(found.data?.pages.flatMap((page) => page.names))
+  // shifts the next page and repeats one; each id is one option.
+  const labels = new Map(
+    found.data?.pages.flatMap((page) =>
+      page.items.map((item) => [item.id, item.name] as const)
+    )
   );
+  const ids = [...labels.keys()];
+  const labelOf = (id: string) =>
+    labels.get(id) ?? (id === value ? chosen.data?.name : undefined) ?? id;
   const list = useRef<HTMLDivElement>(null);
   const marker = useAutoLoadOnScroll({
     hasNextPage: found.hasNextPage,
@@ -56,7 +62,8 @@ export function MetricPicker({
 
   return (
     <Combobox<string>
-      items={names}
+      items={ids}
+      itemToStringLabel={labelOf}
       filter={null}
       value={value === "" ? null : value}
       onValueChange={(next) => onChange(next ?? "")}
@@ -66,12 +73,12 @@ export function MetricPicker({
         id={id}
         {...describe}
         placeholder="Search metrics"
-        className="h-9 w-full font-mono"
+        className="h-9 w-full"
       />
       <ComboboxContent>
         {/* WORKAROUND: the kit pads the empty part even while it hides its
             text, which leaves a gap above a full list. */}
-        {names.length === 0 ? (
+        {ids.length === 0 ? (
           <ComboboxEmpty>
             {found.isError ? (
               <>
@@ -92,9 +99,9 @@ export function MetricPicker({
           </ComboboxEmpty>
         ) : null}
         <ComboboxList ref={list}>
-          {names.map((name) => (
-            <ComboboxItem key={name} value={name} className="font-mono">
-              {name}
+          {ids.map((id) => (
+            <ComboboxItem key={id} value={id}>
+              {labelOf(id)}
             </ComboboxItem>
           ))}
           {found.isFetchNextPageError ? (

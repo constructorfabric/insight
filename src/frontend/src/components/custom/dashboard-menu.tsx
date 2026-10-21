@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import type { DashboardAccess } from "@/api/custom-client";
 import {
   DeleteDashboard,
   DuplicateDashboard,
@@ -28,27 +29,29 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { usePinToggle } from "@/hooks/use-pin-toggle";
+import { dashboardAllows } from "@/lib/custom/dashboard-access";
 
 type Asked = "rename" | "duplicate" | "delete" | "folder" | "tags";
 
 export function DashboardMenu({
+  id,
   name,
   title,
-  filing = true,
-  onRenamed,
+  access,
   onDuplicated,
   onDeleted,
 }: {
+  id: string;
   name: string;
   title?: string;
-  filing?: boolean;
-  onRenamed?: (to: string) => void;
-  onDuplicated?: (to: string) => void;
+  access: DashboardAccess;
+  onDuplicated?: (id: string) => void;
   onDeleted?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [asked, setAsked] = useState<Asked | null>(null);
-  const pin = usePinToggle(name, open);
+  const pin = usePinToggle(id, open);
+  const allows = dashboardAllows(access);
 
   const done = () => setAsked(null);
 
@@ -72,66 +75,78 @@ export function DashboardMenu({
             {pin.pinned ? <PinOff /> : <Pin />}
             {pin.pinned ? "Unpin" : "Pin"}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setAsked("rename")}>
-            <TextCursorInput />
-            Rename…
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setAsked("duplicate")}>
-            <Copy />
-            Duplicate…
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          {filing ? (
+          {allows.change ? (
             <>
-              <MoveToFolderItems
-                name={name}
-                open={open}
-                onNewFolder={() => setAsked("folder")}
-              />
+              <DropdownMenuItem onClick={() => setAsked("rename")}>
+                <TextCursorInput />
+                Rename…
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setAsked("duplicate")}>
+                <Copy />
+                Duplicate…
+              </DropdownMenuItem>
+            </>
+          ) : null}
+          <DropdownMenuSeparator />
+          <MoveToFolderItems
+            id={id}
+            access={access}
+            open={open}
+            onNewFolder={() => setAsked("folder")}
+          />
+          {allows.change ? (
+            <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setAsked("tags")}>
                 <Tags />
                 Edit tags…
               </DropdownMenuItem>
               <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => setAsked("delete")}
+              >
+                <Trash2 />
+                Delete…
+              </DropdownMenuItem>
             </>
           ) : null}
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={() => setAsked("delete")}
-          >
-            <Trash2 />
-            Delete…
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <RenameDashboard
+      <NewFolderAndMove
+        id={id}
         name={name}
-        open={asked === "rename"}
+        open={asked === "folder"}
         onClose={done}
-        onRenamed={onRenamed}
       />
-      <DuplicateDashboard
-        name={name}
-        open={asked === "duplicate"}
-        onClose={done}
-        onDuplicated={onDuplicated}
-      />
-      <DeleteDashboard
-        name={name}
-        title={title || name}
-        open={asked === "delete"}
-        onClose={done}
-        onDeleted={onDeleted}
-      />
-      {filing ? (
+      {allows.change ? (
         <>
-          <NewFolderAndMove
+          <RenameDashboard
+            id={id}
             name={name}
-            open={asked === "folder"}
+            open={asked === "rename"}
             onClose={done}
           />
-          <EditTags name={name} open={asked === "tags"} onClose={done} />
+          <DuplicateDashboard
+            id={id}
+            name={name}
+            open={asked === "duplicate"}
+            onClose={done}
+            onDuplicated={onDuplicated}
+          />
+          <DeleteDashboard
+            id={id}
+            title={title || name}
+            open={asked === "delete"}
+            onClose={done}
+            onDeleted={onDeleted}
+          />
+          <EditTags
+            id={id}
+            name={name}
+            open={asked === "tags"}
+            onClose={done}
+          />
         </>
       ) : null}
     </>

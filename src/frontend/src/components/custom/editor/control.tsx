@@ -71,16 +71,20 @@ export function Control({
           onChange={onChange}
         />
       );
-    case "reference":
+    case "reference": {
+      const listed = editing.listed(shape.to);
+
       return (
         <ReferenceControl
           id={id}
           describe={describe}
           value={written}
-          names={editing.names(shape.to)}
+          names={listed.map((item) => item.id)}
+          labels={new Map(listed.map((item) => [item.id, item.name]))}
           onChange={(next) => onChange(next === "" ? emptied : next)}
         />
       );
+    }
     case "pick":
       return (
         <ReferenceControl

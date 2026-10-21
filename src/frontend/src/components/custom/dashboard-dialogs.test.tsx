@@ -5,7 +5,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchPins: vi.fn(),
     fetchFolders: vi.fn(),
     fetchTags: vi.fn(),
-    fetchDashboardNames: vi.fn(),
+    fetchDashboards: vi.fn(),
     fetchDashboardFolder: vi.fn(),
     renameDefinition: vi.fn(),
     duplicateDashboard: vi.fn(),
@@ -38,14 +38,23 @@ const { CustomApiError } = customClient;
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(customClient.fetchPins).mockResolvedValue(["delivery"]);
+  vi.mocked(customClient.fetchPins).mockResolvedValue([
+    { id: "dash-1", name: "delivery" },
+  ]);
   vi.mocked(customClient.fetchFolders).mockResolvedValue({
     folders: [],
     unfiled: 1,
   });
   vi.mocked(customClient.fetchTags).mockResolvedValue({ tags: [] });
-  vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-    names: ["delivery"],
+  vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+    items: [
+      {
+        id: "dash-1",
+        name: "delivery",
+        owner_person_id: null,
+        access: "ownerless",
+      },
+    ],
     total: 1,
   });
   vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
@@ -60,7 +69,7 @@ function Lists() {
 }
 
 const reads = () => ({
-  names: vi.mocked(customClient.fetchDashboardNames).mock.calls.length,
+  names: vi.mocked(customClient.fetchDashboards).mock.calls.length,
   folders: vi.mocked(customClient.fetchFolders).mock.calls.length,
   tags: vi.mocked(customClient.fetchTags).mock.calls.length,
   pins: vi.mocked(customClient.fetchPins).mock.calls.length,
@@ -84,7 +93,12 @@ async function openCardMenu() {
   render(
     <QueryClientProvider client={queryClient}>
       <Lists />
-      <DashboardMenu name="delivery" title="Delivery" />
+      <DashboardMenu
+        id="dash-1"
+        name="delivery"
+        title="Delivery"
+        access="owner"
+      />
     </QueryClientProvider>
   );
   await waitFor(() => expect(reads().pins).toBe(1));
@@ -122,11 +136,8 @@ describe("the card's ··· menu", () => {
 });
 
 describe("renaming from the card", () => {
-  it("renames under the new name, closes, and reads the lists again", async () => {
-    vi.mocked(customClient.renameDefinition).mockResolvedValue({
-      name: "shipping",
-      rewritten: [],
-    });
+  it("renames the dashboard by its id, closes, and reads the lists again", async () => {
+    vi.mocked(customClient.renameDefinition).mockResolvedValue(undefined);
     const user = await openCardMenu();
 
     const dialog = await choose(user, "Rename…");
@@ -141,7 +152,7 @@ describe("renaming from the card", () => {
 
     expect(customClient.renameDefinition).toHaveBeenCalledWith(
       "dashboards",
-      "delivery",
+      "dash-1",
       "shipping"
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -160,7 +171,7 @@ describe("renaming from the card", () => {
 
   it("says why a name was refused, keeps the field, and reads the lists again", async () => {
     vi.mocked(customClient.renameDefinition).mockRejectedValue(
-      new CustomApiError(409, { detail: "a dashboard named hiring exists" })
+      new CustomApiError(400, { detail: "name must be 1 to 128 characters" })
     );
     const user = await openCardMenu();
 
@@ -174,7 +185,7 @@ describe("renaming from the card", () => {
     await user.keyboard("{Enter}");
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "a dashboard named hiring exists"
+      "name must be 1 to 128 characters"
     );
     expect(field).toHaveValue("hiring");
     await expectListsReadAgain(before);
@@ -202,22 +213,20 @@ describe("renaming from the card", () => {
 });
 
 describe("duplicating from the card", () => {
-  it("offers the name with -copy, duplicates, closes, and reads the lists again", async () => {
-    vi.mocked(customClient.duplicateDashboard).mockResolvedValue(
-      "delivery-copy"
-    );
+  it("offers the name with copy, duplicates by id, closes, and reads the lists again", async () => {
+    vi.mocked(customClient.duplicateDashboard).mockResolvedValue("dash-2");
     const user = await openCardMenu();
 
     const dialog = await choose(user, "Duplicate…");
     expect(
       within(dialog).getByRole("textbox", { name: "Dashboard name" })
-    ).toHaveValue("delivery-copy");
+    ).toHaveValue("delivery copy");
     const before = reads();
     await user.click(within(dialog).getByRole("button", { name: "Duplicate" }));
 
     expect(customClient.duplicateDashboard).toHaveBeenCalledWith(
-      "delivery",
-      "delivery-copy"
+      "dash-1",
+      "delivery copy"
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await expectListsReadAgain(before);
@@ -238,7 +247,7 @@ describe("duplicating from the card", () => {
 
   it("says why a copy was refused, and reads the lists again", async () => {
     vi.mocked(customClient.duplicateDashboard).mockRejectedValue(
-      new CustomApiError(409, { detail: "delivery-copy is taken" })
+      new CustomApiError(403, { detail: "only the owner may change it" })
     );
     const user = await openCardMenu();
 
@@ -247,7 +256,7 @@ describe("duplicating from the card", () => {
     await user.click(within(dialog).getByRole("button", { name: "Duplicate" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "delivery-copy is taken"
+      "only the owner may change it"
     );
     await expectListsReadAgain(before);
   });
@@ -268,7 +277,7 @@ describe("deleting from the card", () => {
 
     expect(customClient.deleteDefinition).toHaveBeenCalledWith(
       "dashboards",
-      "delivery"
+      "dash-1"
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await expectListsReadAgain(before);

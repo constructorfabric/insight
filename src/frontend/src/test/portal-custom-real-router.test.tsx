@@ -35,6 +35,24 @@ import { ADMIN_ROLE_ID } from "@/queries/identity-me";
 vi.mock("@/api/custom-client");
 vi.mock("@/api/identity-client");
 
+const LISTING = {
+  items: [
+    {
+      id: "engineering",
+      name: "engineering",
+      owner_person_id: null,
+      access: "ownerless" as const,
+    },
+  ],
+  total: 1,
+};
+
+const READ = {
+  name: "engineering",
+  ownerPersonId: null,
+  access: "ownerless" as const,
+};
+
 /** The caller `GET /v1/me` describes, which is what the zone gates on. */
 function signedInAs({ admin }: { admin: boolean }) {
   vi.mocked(identityClient.getMe).mockResolvedValue({
@@ -90,9 +108,7 @@ afterEach(() => {
 
 describe("the /portal/custom routes, through the real router", { timeout: 20_000 }, () => {
   it("renders the dashboard list at /portal/custom, inside the portal shell", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "engineering",
-    ], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
 
     renderAt("/portal/custom");
 
@@ -112,10 +128,9 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
   });
 
   it("renders a dashboard at /portal/custom/$name, inside the portal shell", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "engineering",
-    ], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
       body: { title: "Engineering", widgets: [] },
       tags: [],
     });
@@ -131,16 +146,19 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
   });
 
   it("keeps the thread when creating a dashboard navigates to it", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "engineering",
-    ], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
       body: { title: "Delivery", widgets: [] },
       tags: [],
     });
     vi.mocked(customClient.sendChat).mockResolvedValue({
       reply: "Built it",
-      created: { widgets: [], dashboard: "delivery" },
+      created: {
+        metric: null,
+        widgets: [],
+        dashboard: { id: "delivery", name: "Delivery" },
+      },
     });
 
     renderAt("/portal/custom");
@@ -167,22 +185,25 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
   });
 
   it("shows a widget the chat adds to the open dashboard, without a reload", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "engineering",
-    ], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
     vi.mocked(customClient.fetchDashboardRead)
       .mockResolvedValueOnce({
+        ...READ,
         body: { title: "Engineering", widgets: [] },
         tags: [],
       })
       .mockResolvedValue({
+        ...READ,
         body: { title: "Engineering", widgets: ["revenue_table"] },
         tags: [],
       });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
-      type: "table",
-      metric: "revenue_per_day",
-      columns: ["day", "revenue"],
+      name: "Revenue",
+      widget: {
+        type: "table",
+        metric: "revenue_per_day",
+        columns: ["day", "revenue"],
+      },
     });
     vi.mocked(customClient.runMetric).mockResolvedValue({
       columns: ["day", "revenue"],
@@ -190,7 +211,11 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     });
     vi.mocked(customClient.sendChat).mockResolvedValue({
       reply: "Added a revenue widget",
-      created: { widgets: ["revenue_table"] },
+      created: {
+        metric: null,
+        widgets: [{ id: "revenue_table", name: "Revenue" }],
+        dashboard: null,
+      },
     });
 
     renderAt("/portal/custom/engineering");
@@ -207,11 +232,28 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     ).toBeInTheDocument();
   });
 
+  it("renders the orphaned page at /portal/custom/orphaned, not a dashboard of that id", async () => {
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
+    vi.mocked(customClient.fetchOrphanedDashboards).mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+
+    renderAt("/portal/custom/orphaned");
+
+    expect(
+      await screen.findByRole(
+        "heading",
+        { name: "Orphaned dashboards" },
+        { timeout: 10000 },
+      )
+    ).toBeInTheDocument();
+    expect(customClient.fetchDashboardRead).not.toHaveBeenCalled();
+  });
+
   it("refuses the zone to a caller without the admin role", async () => {
     signedInAs({ admin: false });
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "engineering",
-    ], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
 
     renderAt("/portal/custom");
 

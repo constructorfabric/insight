@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
+import type { DashboardListed, OwnedFilter } from "@/api/custom-client";
 import {
   DefinitionCount,
   MoreDefinitions,
@@ -26,7 +27,17 @@ export const Route = createFileRoute("/portal/custom/")({
 
 const UNFILED = "unfiled";
 
-function emptyLabel(folder: string | undefined): string {
+const OWNED_HEADING: Record<OwnedFilter, string> = {
+  me: "Owned by me",
+  shared: "Shared with me",
+};
+
+function emptyLabel(
+  folder: string | undefined,
+  owned: OwnedFilter | undefined
+): string {
+  if (owned === "shared") return "Nothing is shared with you yet.";
+  if (owned === "me") return "You own no dashboards yet.";
   if (folder === UNFILED) return "Every dashboard is in a folder.";
   if (folder) {
     return "No dashboards in this folder yet. Move one here from its ··· menu.";
@@ -42,13 +53,13 @@ interface Shown {
 }
 
 function useShownFolder(): Shown {
-  const { folder: asked } = usePortalSearch();
+  const { folder: asked, owned } = usePortalSearch();
   const folders = useQuery({
     ...foldersQuery(),
     enabled: asked != null && asked !== UNFILED,
   });
 
-  if (!asked) return { heading: "Custom" };
+  if (!asked) return { heading: owned ? OWNED_HEADING[owned] : "Custom" };
   if (asked === UNFILED) return { folder: UNFILED, heading: "Unfiled" };
   if (folders.isError) return { folder: asked, heading: "Custom" };
   if (!folders.data) return { heading: "Custom", pending: true };
@@ -60,11 +71,13 @@ function useShownFolder(): Shown {
 }
 
 function CustomDashboardIndex() {
+  const { owned } = usePortalSearch();
   const shown = useShownFolder();
   const tags = useTagPicks();
   const catalogue = useDefinitionCatalogue("dashboards", {
     folder: shown.folder,
     tags: tags.picked,
+    owned,
     enabled: !shown.pending && !tags.pending,
   });
 
@@ -102,7 +115,7 @@ function CustomDashboardIndex() {
         />
       </div>
       <CustomDashboardList
-        names={catalogue.names}
+        dashboards={catalogue.items}
         isLoading={catalogue.isLoading}
         isError={catalogue.isError}
         onRetry={catalogue.refetch}
@@ -114,7 +127,7 @@ function CustomDashboardIndex() {
             <ComingSoon
               variant="card"
               state="empty"
-              label={emptyLabel(shown.folder)}
+              label={emptyLabel(shown.folder, owned)}
             />
           )
         }
@@ -124,14 +137,14 @@ function CustomDashboardIndex() {
 }
 
 function CustomDashboardList({
-  names,
+  dashboards,
   isLoading,
   isError,
   onRetry,
   paging,
   empty,
 }: {
-  names: string[] | undefined;
+  dashboards: DashboardListed[] | undefined;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
@@ -150,16 +163,16 @@ function CustomDashboardList({
     );
   }
 
-  if (!names) return null;
+  if (!dashboards) return null;
 
-  if (names.length === 0) return empty;
+  if (dashboards.length === 0) return empty;
 
   return (
     <>
       <ul className="grid gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">
-        {names.map((name) => (
-          <li key={name}>
-            <DashboardCard name={name} />
+        {dashboards.map((dashboard) => (
+          <li key={dashboard.id}>
+            <DashboardCard dashboard={dashboard} />
           </li>
         ))}
       </ul>
