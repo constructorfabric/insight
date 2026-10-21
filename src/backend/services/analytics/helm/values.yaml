@@ -42,7 +42,6 @@ resources:
 
 metricCatalog:
   tenantMetricsEnabled: false
-  enforceTenantScope: true
 
 reports:
   tempDir: /app/data/reports

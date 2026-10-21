@@ -180,13 +180,6 @@ pub struct MetricCatalogConfig {
     /// Env: `APP__gears__analytics__config__metric_catalog__tenant_metrics_enabled`.
     pub tenant_metrics_enabled: bool,
 
-    /// Enforce the per-tenant observation filter on metric reads. Every layer
-    /// carries the canonical tenant UUID the session tenant names; a warm
-    /// install reads empty until its tenant migration has run.
-    ///
-    /// Env: `APP__gears__analytics__config__metric_catalog__enforce_tenant_scope`.
-    pub enforce_tenant_scope: bool,
-
     /// Revalidate managed metric definitions every five minutes after the startup pass.
     ///
     /// Env: `APP__gears__analytics__config__metric_catalog__periodic_validation_enabled`.
@@ -197,7 +190,6 @@ impl Default for MetricCatalogConfig {
     fn default() -> Self {
         Self {
             tenant_metrics_enabled: false,
-            enforce_tenant_scope: true,
             periodic_validation_enabled: true,
         }
     }
@@ -390,20 +382,11 @@ mod tests {
     }
 
     #[test]
-    fn metric_reads_are_scoped_to_the_session_tenant_unless_an_install_opts_out()
-    -> anyhow::Result<()> {
-        let omitted: GearConfig = serde_json::from_value(serde_json::json!({}))?;
-        assert!(omitted.metric_catalog.enforce_tenant_scope);
-
-        let partial: GearConfig = serde_json::from_value(serde_json::json!({
-            "metric_catalog": { "tenant_metrics_enabled": true }
-        }))?;
-        assert!(partial.metric_catalog.enforce_tenant_scope);
-
-        let opted_out: GearConfig = serde_json::from_value(serde_json::json!({
+    fn a_retired_tenant_scope_key_is_ignored() -> anyhow::Result<()> {
+        let config: GearConfig = serde_json::from_value(serde_json::json!({
             "metric_catalog": { "enforce_tenant_scope": false }
         }))?;
-        assert!(!opted_out.metric_catalog.enforce_tenant_scope);
+        assert!(config.metric_catalog.periodic_validation_enabled);
         Ok(())
     }
 

@@ -69,12 +69,7 @@ fn compile(request: &ValidatedMetricResultsRequest) -> Option<CompiledQuery> {
         .compare_to
         .map_or(request.to, |window| request.to.max(window.to));
     params.extend([latest.to_string(), earliest.to_string()]);
-    let tenant_filter = if request.enforce_tenant_scope {
-        params.push(request.tenant_id.to_string());
-        "AND a.insight_tenant_id = ?"
-    } else {
-        ""
-    };
+    params.push(request.tenant_id.to_string());
     let source_id = account_source_uuid_expr("a");
     let account_id = account_id_expr("a");
     let sql = format!(
@@ -89,7 +84,7 @@ fn compile(request: &ValidatedMetricResultsRequest) -> Option<CompiledQuery> {
             AND binding.account_id = {account_id}
          WHERE toString(binding.person_id) IN splitByChar(',', ?)
            AND a.start_date <= toDate(?) AND a.end_date >= toDate(?)
-           {tenant_filter}
+           AND a.insight_tenant_id = ?
          GROUP BY binding.person_id
          HAVING period_overlap OR coalesce(compare_to_overlap, false)
          ORDER BY person_id
@@ -108,6 +103,7 @@ mod tests {
     use super::{PersonAbsenceContext, compile};
     use crate::domain::metric_results::ValidatedEntitySelection;
     use crate::domain::metric_results::ValidatedMetricResultsRequest;
+    use crate::domain::metric_results::compiler::values_bound_by;
 
     type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -161,7 +157,6 @@ mod tests {
             to: NaiveDate::parse_from_str("2025-05-31", "%Y-%m-%d")?,
             compare_to: None,
             metrics: Vec::new(),
-            enforce_tenant_scope: true,
         })
     }
 
@@ -169,7 +164,10 @@ mod tests {
     fn only_authorized_person_ids_and_bound_dates_enter_the_query() -> R {
         let query = compile(&request()?).ok_or("missing query")?;
         assert!(query.sql.contains("FINAL"));
-        assert!(query.sql.contains("a.insight_tenant_id = ?"));
+        assert_eq!(
+            values_bound_by(&query.sql, &query.params, "a.insight_tenant_id = ?"),
+            [Uuid::from_u128(1).to_string()]
+        );
         assert!(query.sql.contains("CAST(NULL AS Nullable(Bool))"));
         assert_eq!(query.sql.matches('?').count(), query.params.len());
         assert_eq!(query.params[0], "2025-05-31");
