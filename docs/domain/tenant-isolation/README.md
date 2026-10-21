@@ -74,30 +74,53 @@ How it works: ClickHouse has row policies, rules like "show this user only these
 
 ```sql
 CREATE ROW POLICY OR REPLACE tenant_scope ON silver.*
-  USING has(currentRoles(), concat('tenant_', tenant_id))
-  TO tenant_reader;
+  USING tenant_id = splitByChar(':', initialQueryID())[1]
+  TO insight_service;
 ```
 
-The tenant is a **role**, not a user:
+The tenant travels in the **`query_id`** of every query:
 - **system user** — dbt, migrations, jobs, Grafana and the install-wide admin screens run as it. RLS doesn't apply to it.
-- **service user** — one for analytics, insight-v3-core and identity-resolution. It has no default role and holds a role `tenant_<uuid>` for every tenant. Each role includes `tenant_reader`, which carries the `SELECT` grants.
-- **per request** the service turns on exactly one role, the session tenant's: over HTTP that's the `role=tenant_<uuid>` parameter. The policy lets through only rows whose `tenant_id` matches the active role. No role means no grants at all, so the query fails instead of returning everything.
+- **service user** `insight_service` — one for analytics, insight-v3-core and identity-resolution, and it's under the policy.
+- **every query** gets `query_id = <tenant uuid>:<random uuid>`, built from the session tenant. The policy reads the tenant back with `initialQueryID()`.
+- **no `query_id`, or one without a tenant,** returns no rows instead of everything.
 
-The policy lives next to the existing roles in `src/ingestion/scripts/bootstrap-db/`, where `presentation-role.sql` and `v3-role.sql` already are. `create-databases.sh` applies them on every deploy. It's not a migration: the file is declarative and `OR REPLACE` overwrites everything. To change the rule, edit the file and deploy. The role of the install's tenant is created there too.
+`query_id` is not part of the SQL text. The client sends it next to the query: over HTTP as the `query_id` URL parameter, over the native protocol as a field of the query packet. Nothing is stored on the connection, so all tenants share one connection pool, over HTTP or the native protocol.
 
-**Why the tenant comes from a role and not from a query setting.** The first idea was that analytics passes the tenant as `SETTINGS SQL_tenant_id=...`. We tested it on ClickHouse 25.7.5, and it can be bypassed. If a query contains a subquery with its own `SETTINGS`, the subquery's value wins, and you can read another tenant. Even pinning the setting in the user profile as `CONST` doesn't help: a nested `SETTINGS` still goes through. The active role can't be changed from inside a `SELECT`; a `SETTINGS role=...` in a subquery is simply ignored.
+The policy lives next to the existing roles in `src/ingestion/scripts/bootstrap-db/`, where `presentation-role.sql` and `v3-role.sql` already are. `create-databases.sh` applies them on every deploy. It's not a migration: the file is declarative and `OR REPLACE` overwrites everything. To change the rule, edit the file and deploy.
 
-**Why a role and not a user per tenant.** A user per tenant means a password per tenant and a connection per tenant in every service. A role has no credentials. That matters most for tests: the data-path suite seeds every scenario under its own tenant in one shared setup, so it just creates a role per scenario tenant. Measured on ClickHouse 25.7.5:
-- 100 tenant roles with their grants are created in 0.4 s;
-- a query with an active role out of 100 granted costs well under a millisecond more than without one.
+**Why `query_id` and not a query setting.** The first idea was to pass the tenant as `SETTINGS SQL_tenant_id=...`. We tested it on ClickHouse 25.7.5, and it can be bypassed. A setting is part of the SQL text, so a subquery with its own `SETTINGS` overrides the outer value and reads another tenant. Even pinning the setting as `CONST` in the user profile doesn't help: the nested `SETTINGS` still goes through.
 
-**One shared policy, not one per tenant.** A separate policy per tenant would let the primary index prune by tenant, but creating 100 of them took 82 s. So it's one policy per database. It doesn't use the index by itself, which is fine because the application's own `WHERE tenant_id = …` still does.
+`query_id` is not a setting at all. `SETTINGS query_id=...` is an error in the outer query and has no effect inside a subquery. Whoever writes the SQL can't pick the tenant; only the service sending the query can.
 
-What else we checked on a live ClickHouse:
-- plain `SELECT`, `FINAL`, `JOIN` and regular views are filtered;
+**Why not a role or a user per tenant.**
+- **A user per tenant** means a password and a connection per tenant in every service.
+- **A role per request** only works over HTTP. Over the native protocol a role is set with `SET ROLE` and becomes connection state, so a pooled connection could carry one tenant's role into another tenant's query.
+
+With `query_id` the data-path tests need no database objects per tenant at all: each scenario's requests carry their tenant, and the service puts it into `query_id`.
+
+**Query cache has to be locked.** The query cache looks results up by query text and ignores `query_id`. In our test, tenant B running the same query as tenant A got A's cached result. Insight doesn't use the query cache, so it's switched off for the service user with a settings profile in the same provisioning file:
+
+```sql
+CREATE SETTINGS PROFILE OR REPLACE no_query_cache SETTINGS
+  use_query_cache = 0 CONST,
+  enable_reads_from_query_cache = 0 CONST,
+  enable_writes_to_query_cache = 0 CONST
+TO insight_service;
+```
+
+With the profile in place:
+- `SETTINGS use_query_cache=1` in the query fails;
+- inside a subquery the setting is accepted but caches nothing.
+
+Operators are also advised to turn the cache off on the server (`query_cache.max_size_in_bytes = 0`). ClickHouse is external to the chart, though, so Insight can't enforce that.
+
+What we checked on a live ClickHouse 25.7.5, over the native protocol:
+- plain `SELECT` and `JOIN` are filtered;
+- a nested `SETTINGS` changes neither the tenant nor the cache;
 - a policy on `db.*` also applies to tables created later;
 - rows with an empty `tenant_id` are hidden;
-- the query cache doesn't hand one tenant's result to another.
+- the primary index on `tenant_id` is still used;
+- the tenant shows up in `system.query_log` as part of `query_id`.
 
 ### 5. The column is `tenant_id` everywhere
 
@@ -111,7 +134,7 @@ The best move now is to bring everything to `tenant_id`, so we don't have to rew
 - **insight-v3-core** has to learn about tenants:
   - take the tenant from the token;
   - split definitions and datasets by tenant;
-  - read through the tenant's role.
+  - send the session tenant in every `query_id`.
 
   Background alert checks run without a user, so they take the tenant from whoever owns the rule.
 - **Raw SQL** (the MCP SQL explorer, v3 queries) goes through `EXPLAIN AST` before running. We accept only a single `SELECT`:
@@ -125,10 +148,10 @@ The best move now is to bring everything to `tenant_id`, so we don't have to rew
 - **RLS doesn't fix what dbt has already written.** If a gold model has a broken join, a row with another tenant's data gets written as "ours", and RLS will happily serve it. That's why point 3 is mandatory: RLS doesn't replace it.
 - **Order matters.** A policy on `tenant_id` fails on any table that lacks the column. So the column rename and the user split come first, the policy after.
 - **RLS bypasses.** DEFINER views and dictionaries read data with their creator's rights, around the policy. There are none today, but they need to be banned by a check in databases under the policy.
-- **A new database doesn't fall under the policy by itself.** The list of databases must be explicit, and CI should fail if `tenant_reader` has access to a database with no policy.
+- **A new database doesn't fall under the policy by itself.** The list of databases must be explicit, and CI should fail if the service user has access to a database with no policy.
 - **An error looks like "no data".** A wrong tenant returns an empty answer, not an error, so the tenant needs to be logged.
-- **Exactly one role per request.** The service user holds every tenant's role, so a request that turns on two roles sees both tenants. The client must always pass exactly one.
-- **No HTTP sessions.** Inside an HTTP session a `SET ROLE` sticks for the following requests. Services don't use sessions, and raw SQL is limited to a single `SELECT`.
+- **The service always sets `query_id` itself.** It's unique per query and has the form `<tenant>:<uuid>`. A client library that picks its own `query_id` (for example on retries) has to be checked, or the query reads nothing.
+- **The query cache stays locked.** If the profile that forbids it is lost, the same query text from two tenants can share a cached result. A provisioning test in CI must catch that.
 - **MariaDB.** It has no RLS. Metric definitions, roles and the like are isolated only by filters in code. Parked for now.
 - **Cutover in one window.** Every merge to `main` is a release. So the PRs that change the tenant or the keys stay drafts and merge together, following the runbook from [#3844](https://github.com/constructorfabric/insight/pull/3844).
 
@@ -149,7 +172,7 @@ The [#3661](https://github.com/constructorfabric/insight/issues/3661) PR series,
 Still to do:
 - boundary per (tenant, source) in ~50 staging models, and Zoom dedups with the tenant ([#752](https://github.com/constructorfabric/insight/issues/752));
 - rename `insight_tenant_id` to `tenant_id`, one type for the column, non-nullable;
-- system and service users, a role per tenant, the RLS policy, analytics, v3-core and identity-resolution reading through the tenant's role; the data-path suite creates a role per scenario tenant;
+- system and service users, the RLS policy on `query_id`, the query cache locked for the service user, analytics, v3-core and identity-resolution sending the session tenant in every `query_id`;
 - drop the flag in analytics;
 - tenant in insight-v3-core;
 - raw SQL check;
