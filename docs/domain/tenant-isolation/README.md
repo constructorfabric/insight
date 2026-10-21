@@ -185,7 +185,7 @@ Still to do:
 - system and service users, the RLS policy on `query_id`, the query cache locked for the service user, analytics, v3-core and identity-resolution sending the session tenant in every `query_id`;
 - drop the flag in analytics;
 - tenant in insight-v3-core;
-- raw SQL check;
+- the raw-SQL gate in v3-core, and service-user grants without table functions or `dictGet`;
 - CI checks ([#3874](https://github.com/constructorfabric/insight/issues/3874));
 - leftovers from the series: drop the fallback tenant sources in reconcile, and keep the tenant pinned by the Keycloak mapper rather than taken from an upstream IdP claim.
 
