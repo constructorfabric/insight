@@ -24,7 +24,7 @@ TENANT = "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab"
 # identity-resolution harness, plus the tenant the seed guard demands).
 UMBRELLA_BASE = [
     "--set",
-    f"global.tenantDefaultId={TENANT}",
+    f"authenticator.oidc.defaultTenantId={TENANT}",
     "--set",
     "clickhouse.host=ch",
     "--set",
@@ -47,8 +47,6 @@ UMBRELLA_BASE = [
     "redis.password=rp",
     "--set",
     "redpanda.brokers=rp:9092",
-    "--set",
-    "ingestion.reconcile.tenantId=default",
     "--set",
     "authenticator.oidc.issuerUrl=https://idp",
     "--set",
