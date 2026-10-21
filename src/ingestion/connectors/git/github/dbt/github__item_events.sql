@@ -22,7 +22,7 @@
 -- reports the new state alone.
 WITH pull_request_events AS (
     SELECT
-        e.tenant_id AS tenant_id,
+        CAST(e.tenant_id AS String) AS tenant_id,
         e.source_id AS source_id,
         e.unique_key AS unique_key,
         e.repo_full_name AS repo_full_name,
