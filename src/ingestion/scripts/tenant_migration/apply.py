@@ -177,7 +177,23 @@ def apply(
     dump(ch, plan, dump_dir)
     for step in before_rewrite:
         step()
-    return [(t.table.relation, migrate_table(ch, t, plan.tenants)) for t in plan.changing]
+    moved: list[tuple[str, Measure]] = []
+    for table_plan in plan.changing:
+        try:
+            moved.append((table_plan.table.relation, migrate_table(ch, table_plan, plan.tenants)))
+        except MigrationError as error:
+            raise _with_earlier_swaps(error, [relation for relation, _ in moved]) from error
+    return moved
+
+
+def _with_earlier_swaps(error: MigrationError, done: list[str]) -> MigrationError:
+    """The failed table's own message hides the tables already swapped before it."""
+    if not done:
+        return error
+    return MigrationError(
+        f"{error} Already migrated before it: {', '.join(done)} — the warehouse now holds both tenants; "
+        "run `rollback` to undo them or `finalize` to keep them before restarting any writer."
+    )
 
 
 def rollback_relation(ch: ClickHouse, rel: Relation) -> bool:

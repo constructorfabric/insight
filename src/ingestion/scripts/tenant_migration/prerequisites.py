@@ -6,6 +6,7 @@ written with.
 
 from __future__ import annotations
 
+from tenant_migration import ddl
 from tenant_migration.clickhouse import ClickHouse
 from tenant_migration.keys import Tenants
 
@@ -37,7 +38,7 @@ def _comment_id_from_key(tenants: Tenants) -> tuple[str, str]:
     """(the key starts with a known tenant and the row's source, the comment id after them)."""
     conditions, ids = [], []
     for tenant in (*tenants.moving, tenants.new):
-        prefix = f"concat('{tenant}', '-', ifNull(source_id, ''), '-')"
+        prefix = f"concat({ddl.literal(tenant)}, '-', ifNull(source_id, ''), '-')"
         conditions.append(f"startsWith(unique_key, {prefix})")
         ids += [conditions[-1], f"substring(unique_key, length({prefix}) + 1)"]
     return " OR ".join(conditions), f"multiIf({', '.join(ids)}, NULL)"
