@@ -562,6 +562,15 @@
             }
           },
           {
+            "description": "An author whose newest readable commit predates this instant (RFC 3339, or YYYY-MM-DD as midnight UTC) is omitted",
+            "in": "query",
+            "name": "committed_since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "description": "1..=1000, default 1000; larger values are clamped",
             "in": "query",
             "name": "page_size",
