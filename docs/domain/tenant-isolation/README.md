@@ -4,7 +4,7 @@ In plain words: what's wrong, what needs doing, and where the traps are. Trackin
 
 ## TL;DR
 
-- Data from every tenant lives in the same tables. The only thing keeping tenants apart is the `tenant_id` column on each row.
+- Data from every tenant lives in the same tables. The only thing keeping tenants apart is the tenant column on each row: `insight_tenant_id` (in Bronze it's still `tenant_id`).
 - Right now that holds on trust. The tenant is set in several places, gets hashed in some of them, some joins forget it, and analytics can return rows without a tenant filter.
 - The plan:
   - one tenant value all the way from config to the row;
@@ -14,7 +14,7 @@ In plain words: what's wrong, what needs doing, and where the traps are. Trackin
 
 ## How data is stored
 
-There is no separate database per tenant. Commits, tasks and metrics of all tenants sit in shared tables, and every row has a `tenant_id` saying which tenant it belongs to. On top of that, Bronze bakes the tenant into the start of the record key: `unique_key = {tenant}-{source}-{id}`.
+There is no separate database per tenant. Commits, tasks and metrics of all tenants sit in shared tables, and every row has a tenant column saying which tenant it belongs to: `insight_tenant_id` from staging up, `tenant_id` in Bronze. On top of that, Bronze bakes the tenant into the start of the record key: `unique_key = {tenant}-{source}-{id}`.
 
 That gives one simple rule: **wherever we match, group or filter anything, the tenant has to be part of it**. Otherwise two tenants with the same `source_id` or the same issue ids start seeing or merging each other's data. `source_id` and the ids from Jira, GitHub and friends are unique only within their own tenant.
 
@@ -33,9 +33,13 @@ That gives one simple rule: **wherever we match, group or filter anything, the t
 
 ### 1. One tenant, one value
 
-The tenant is a lowercase UUID, set in exactly one place: `authenticator.oidc.defaultTenantId`. This is the tenant that ends up in the JWT, so isolation is built on it.
+The tenant is a lowercase UUID, set in exactly one place: `authenticator.oidc.defaultTenantId`.
 
-The old keys go away. If one is left in the values, the deploy fails and tells you where to move it. No hashes and no conversions anywhere: the same value from config down to the row in the table. Done in [#3796](https://github.com/constructorfabric/insight/pull/3796).
+How it reaches the token: the `tenant_id` in every JWT is stamped by **Keycloak**, not taken from the upstream IdP. The realm's identity-provider mapper sets it from the `INSIGHT_TENANT_ID` env of the Keycloak config job, with `syncMode: FORCE`, on every login. Today that env comes from `global.tenantDefaultId`; [#3796](https://github.com/constructorfabric/insight/pull/3796) feeds it from the one key instead, so the token, ingestion and every other consumer read the same value.
+
+Why a single install-wide value at all: without connector management nobody can tell which tenant created a connector, so ingestion needs a constant tenant. That's a stopgap until tenants manage their own connectors.
+
+The old keys go away. If one is left in the values, the deploy fails and tells you where to move it. No hashes and no conversions anywhere: the same value from config down to the row in the table.
 
 ### 2. Migration for installs with data
 
@@ -64,7 +68,7 @@ We audited all silver+ models (git, HR, collaboration, AI and the rest) and the 
 
 So a sync of one tenant raises the boundary for everyone, and rows of another tenant that arrive a bit later are lost for good. The same happens between two connections inside one tenant, so this is a bug today, even without multi-tenancy. The fix is a shared macro that computes the boundary per (tenant, source); the pattern already exists in the code. Task: [#752](https://github.com/constructorfabric/insight/issues/752).
 
-To keep all this from creeping back, we need CI checks: a model without `tenant_id`, a boundary over the whole table, or a dedup without the tenant fails the build. Task: [#3874](https://github.com/constructorfabric/insight/issues/3874).
+To keep all this from creeping back, we need CI checks: a model without `insight_tenant_id`, a boundary over the whole table, or a dedup without the tenant fails the build. Task: [#3874](https://github.com/constructorfabric/insight/issues/3874).
 
 ### 4. RLS in ClickHouse
 
@@ -74,7 +78,7 @@ How it works: ClickHouse has row policies, rules like "show this user only these
 
 ```sql
 CREATE ROW POLICY OR REPLACE tenant_scope ON silver.*
-  USING tenant_id = splitByChar(':', initialQueryID())[1]
+  USING insight_tenant_id = splitByChar(':', initialQueryID())[1]
   TO insight_service;
 ```
 
@@ -118,15 +122,18 @@ What we checked on a live ClickHouse 25.7.5, over the native protocol:
 - plain `SELECT` and `JOIN` are filtered;
 - a nested `SETTINGS` changes neither the tenant nor the cache;
 - a policy on `db.*` also applies to tables created later;
-- rows with an empty `tenant_id` are hidden;
-- the primary index on `tenant_id` is still used;
+- rows with an empty tenant are hidden;
+- the primary index on the tenant column is still used;
 - the tenant shows up in `system.query_log` as part of `query_id`.
 
-### 5. The column is `tenant_id` everywhere
+### 5. The column is `insight_tenant_id`
 
-Most tables call it `tenant_id`, but some (the AI and HR classes, identity inputs, a couple of gold tables) call it `insight_tenant_id`. One policy per database needs one name.
+Most models call it `tenant_id`, some (the AI and HR classes, identity inputs, a couple of gold tables) call it `insight_tenant_id`. One policy per database needs one name.
 
-The best move now is to bring everything to `tenant_id`, so we don't have to rework every connector: that's what Airbyte calls the column in Bronze. Only the minority gets renamed. While at it, the column becomes non-nullable and gets one type in every table. The old glossary decision (ADR-0003, `insight_tenant_id`) goes away.
+The name is `insight_tenant_id`, as agreed in the glossary (ADR-0003). The reason: a source's own data may already carry a field called `tenant_id` (an Azure AD tenant, say), and a bare `tenant_id` would collide with it.
+
+- **From staging up** every relation carries `insight_tenant_id`: staging projects the connector's field under that name, and the models still on `tenant_id` get renamed. While at it, the column becomes non-nullable and gets one type in every table.
+- **Bronze keeps `tenant_id`** for now: the connectors write it, and we don't rework every connector for this. The service user doesn't read Bronze, so the policy doesn't need it there.
 
 ### 6. analytics, v3-core and raw SQL
 
@@ -137,20 +144,21 @@ The best move now is to bring everything to `tenant_id`, so we don't have to rew
   - send the session tenant in every `query_id`.
 
   Background alert checks run without a user, so they take the tenant from whoever owns the rule.
-- **Raw SQL** (the MCP SQL explorer, v3 queries) goes through `EXPLAIN AST` before running. We accept only a single `SELECT`:
-  - without `SETTINGS` — in the AST that's a `Set` node, visible at any nesting depth;
-  - without table functions like `remote()` or `url()`.
+- **Raw SQL** (the MCP SQL explorer, v3 queries). The tenant itself is safe here: it rides in `query_id`, which no SQL text can change. What the raw SQL can still try is reading data around the policy, and that is closed in layers:
+  - **the query gate** in analytics ([`query_gate.rs`](../../../src/backend/services/analytics/src/domain/query_gate.rs)) already exists. It parses the SQL and accepts exactly one `SELECT`/`WITH`; on the MCP path it refuses query-level `SETTINGS` at any nesting depth; on custom SQL it refuses the table functions in its `DENIED_TABLE_FUNCTIONS` list (`remote`, `cluster`, `url`, `file`, `s3`, `merge`, `dictionary` and the rest). v3-core needs the same gate;
+  - **grants**: the service user gets no grants for table functions (`REMOTE`, `URL` and the like) and no `dictGet`, so a query the gate missed is still refused by ClickHouse;
+  - **no definer views or dictionaries** in databases under the policy: they read with their creator's rights and skip the policy. A CI check holds this.
 
-  Anything else is refused with a clear error.
+  The gate makes refusals clear; the grants and the CI check are what actually hold.
 
 ## Where the traps are
 
 - **RLS doesn't fix what dbt has already written.** If a gold model has a broken join, a row with another tenant's data gets written as "ours", and RLS will happily serve it. That's why point 3 is mandatory: RLS doesn't replace it.
-- **Order matters.** A policy on `tenant_id` fails on any table that lacks the column. So the column rename and the user split come first, the policy after.
-- **RLS bypasses.** DEFINER views and dictionaries read data with their creator's rights, around the policy. There are none today, but they need to be banned by a check in databases under the policy.
+- **Order matters.** A policy on `insight_tenant_id` fails on any table that lacks the column. So the column rename and the user split come first, the policy after.
+- **RLS bypasses.** DEFINER views and dictionaries (including `dictGet`) read data with their creator's rights, around the policy. There are none today, but they need to be banned by a check in databases under the policy and by the service user's grants.
 - **A new database doesn't fall under the policy by itself.** The list of databases must be explicit, and CI should fail if the service user has access to a database with no policy.
 - **An error looks like "no data".** A wrong tenant returns an empty answer, not an error, so the tenant needs to be logged.
-- **The service always sets `query_id` itself.** It's unique per query and has the form `<tenant>:<uuid>`. A client library that picks its own `query_id` (for example on retries) has to be checked, or the query reads nothing.
+- **The service must set `query_id` itself.** It generates a unique `<tenant>:<uuid>` from the session tenant on every query and ignores any value a client or a retry library supplies. This isn't built yet: until every HTTP, native and retry path does it, the RLS boundary is not in force.
 - **The query cache stays locked.** If the profile that forbids it is lost, the same query text from two tenants can share a cached result. A provisioning test in CI must catch that.
 - **MariaDB.** It has no RLS. Metric definitions, roles and the like are isolated only by filters in code. Parked for now.
 - **Cutover in one window.** Every merge to `main` is a release. So the PRs that change the tenant or the keys stay drafts and merge together, following the runbook from [#3844](https://github.com/constructorfabric/insight/pull/3844).
@@ -171,13 +179,13 @@ The [#3661](https://github.com/constructorfabric/insight/issues/3661) PR series:
 
 Still to do:
 - boundary per (tenant, source) in ~50 staging models, and Zoom dedups with the tenant ([#752](https://github.com/constructorfabric/insight/issues/752));
-- rename `insight_tenant_id` to `tenant_id`, one type for the column, non-nullable;
+- rename `tenant_id` to `insight_tenant_id` from staging up, one type for the column, non-nullable;
 - system and service users, the RLS policy on `query_id`, the query cache locked for the service user, analytics, v3-core and identity-resolution sending the session tenant in every `query_id`;
 - drop the flag in analytics;
 - tenant in insight-v3-core;
 - raw SQL check;
 - CI checks ([#3874](https://github.com/constructorfabric/insight/issues/3874));
-- leftovers from the series: drop the fallback tenant sources in reconcile, and check that the tenant from the IdP matches the install's tenant.
+- leftovers from the series: drop the fallback tenant sources in reconcile, and keep the tenant pinned by the Keycloak mapper rather than taken from an upstream IdP claim.
 
 ## Open questions
 
