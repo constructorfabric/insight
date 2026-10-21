@@ -315,7 +315,7 @@ The picker searches `GET /v1/persons?q=` and offers only current administrators,
 | [Chat storage](../../../../../src/backend/services/insight-v3-core/src/api/chat.rs) | `store_proposed` | Gains the caller and the access rule |
 | [In-use refusal](../../../../../src/backend/services/insight-v3-core/src/domain/surfaces.rs) | `CustomError::InUse` | Holder names filtered to visible ones |
 | [Definition store](../../../../../src/backend/services/insight-v3-core/src/store/definitions/sql/) | Migration ledger and scripts | New columns and tables |
-| [Alerts](../alerts/DESIGN.md) | `alert_rules.metric`, `alert_notifications.metric` | Move from metric names to ids |
+| [Alerts](../alerts/DESIGN.md) | `alert_rules`, `alert_notifications` | A `metric_id` replaces the metric name |
 | [Usage telemetry](../../../../../src/frontend/src/telemetry.ts) | `screenPath` masks UUID segments | Dashboard names stop reaching usage |
 
 ### 3.5 External Dependencies
@@ -423,16 +423,17 @@ MariaDB commits each DDL statement on its own, so the upgrade cannot be one tran
 1. **Ids.** Add a nullable `id` to metrics, widgets, dashboards and datasets, fill it in batches with service-generated UUIDv7s, and add a unique key on it.
 2. **References.** Build a name-to-id map per kind, then:
    - Rewrite each body: a dashboard's `items[].widget` and older `widgets` shorthand, a widget's `metric` and `detail`, a metric's `dataset`. A value already an id in the map, or matching no name, is left as is; the latter reads as missing.
-   - Rewrite `alert_rules.metric` and `alert_notifications.metric` the same way; add `alert_notifications.metric_name`, filled from the old name, so sent messages read as before.
+   - Add a nullable `metric_id` to `alert_rules` and `alert_notifications`, filled from the map; a name that matches nothing is copied as written and reads as missing.
    - Add `dashboard_id` to `dashboard_pins` and `dashboard_tags`, filled by joining on name.
 3. **Keys.**
    - Refuse to start unless both session and global `sql_mode` include `STRICT_TRANS_TABLES`.
-   - Write-lock the definition, pin and tag-link tables. Under the lock, give an id to any row the previous build inserted since step 1, rewrite any body, alert, pin or tag link it wrote since step 2, and compare every table's counts before and after. Stop without changing keys if any row lacks an id or holds a reference that resolved by name but not by id.
+   - Write-lock the definition, pin, tag-link, `alert_rules` and `alert_notifications` tables. Under the lock, give an id to any row the previous build inserted since step 1, rewrite any body, alert, pin or tag link it wrote since step 2, and compare every table's counts before and after. Stop without changing keys if any row lacks an id or holds a reference that resolved by name but not by id.
    - Then, in this order:
      1. Make `id` `NOT NULL` without a default, and the primary key.
      2. On `dashboard_pins` and `dashboard_tags`: make `dashboard_id` `NOT NULL`; move each primary key from `dashboard` to `dashboard_id` in one `ALTER`; drop the foreign keys on `dashboards (name)`; add them on `dashboard_id`; only then drop the `dashboard` columns.
      3. Replace the unique name keys on metrics, widgets and dashboards with plain indexes.
-   - From here strict mode refuses the previous build's inserts, which supply no `id`, visibly until that build is replaced.
+     4. Make `metric_id` `NOT NULL` without a default on both alert tables; drop `alert_rules.metric`; rename `alert_notifications.metric` to `metric_name`, so a sent message still shows the name it had.
+   - From here strict mode refuses the previous build's definition and alert inserts, which supply no `id` or `metric_id`, visibly until that build is replaced. A check that build's alert worker cannot record runs again on the new build.
 4. **Ownership.** Add `owner_person_id` to dashboards, folders and tags, and `owner_scope` and its key to tags; create `dashboard_shares` and `dashboard_placements`. Every existing row stays ownerless.
 
 #### Assigning an Owner by Hand

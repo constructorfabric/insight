@@ -143,7 +143,7 @@ One installation holds one tenant's definitions. People and the administrator ro
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-fr-identity`
 
-Every metric, widget, dashboard, dataset, folder and tag **MUST** get a generated identity, used by every operation and reference, alerts and portal addresses included. Names are labels: a rename rewrites no reference, and only tag names (`cpt-insightspec-v3-sharing-fr-tags`) and dataset names (D6) are unique.
+Every metric, widget, dashboard, dataset, folder and tag **MUST** get a generated identity, used by every operation and every stored reference, alerts and portal addresses included. Names are labels: a rename rewrites no reference. Two inputs still take a name and resolve it to an identity before anything is stored: a tag name resolves to the dashboard owner's tag of that name, created if absent (`cpt-insightspec-v3-sharing-fr-tags`), and a producer's dataset name resolves to the one dataset of that name (D6). Only these two kinds of name are unique.
 
 **Actors**: `cpt-insightspec-v3-sharing-actor-owner`, `cpt-insightspec-v3-sharing-actor-admin`, `cpt-insightspec-v3-sharing-actor-assistant`
 

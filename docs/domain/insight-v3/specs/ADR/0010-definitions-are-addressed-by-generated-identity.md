@@ -29,7 +29,7 @@ Metrics, widgets, dashboards and datasets are keyed by an installation-wide uniq
 
 ## Decision Drivers
 
-* A private dashboard discloses nothing, not even its existence, to anyone who may not see it.
+* A private dashboard discloses nothing, not even its existence, to anyone who may not see it, beyond the two disclosures the [sharing PRD](../sharing/PRD.md)'s isolation requirement allows: a count of hidden dashboards that use a widget or metric, and the orphaned list.
 * Two people can use the same name.
 * A rename rewrites no reference.
 * One identifier per entity everywhere, per the [UUIDv7 primary key ADR](../../../../shared/glossary/ADR/0001-uuidv7-primary-key.md).
