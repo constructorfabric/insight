@@ -29,7 +29,7 @@
 WITH census AS (
     SELECT
         unique_key,
-        tenant_id,
+        CAST(tenant_id AS String)                            AS tenant_id,
         source_id,
         jira_id,
         project_key,
@@ -51,12 +51,12 @@ known AS (
 
     UNION ALL
 
-    -- COALESCE keeps the key well-defined when a stamp column is NULL;
-    -- otherwise every unstamped row would collapse into one NULL-key group.
+    -- COALESCE keeps the key well-defined when a source or issue id is NULL;
+    -- otherwise every such row would collapse into one NULL-key group.
     SELECT
-        concat(COALESCE(tenant_id, ''), '-', COALESCE(source_id, ''), '-',
+        concat(CAST(tenant_id AS String), '-', COALESCE(source_id, ''), '-',
                COALESCE(jira_id, ''))                        AS unique_key,
-        tenant_id,
+        CAST(tenant_id AS String)                            AS tenant_id,
         source_id,
         jira_id,
         project_key,
@@ -69,9 +69,9 @@ known AS (
 
     -- Jira project keys cannot contain '-', so the key prefix is the project.
     SELECT
-        concat(COALESCE(tenant_id, ''), '-', COALESCE(source_id, ''), '-',
+        concat(CAST(tenant_id AS String), '-', COALESCE(source_id, ''), '-',
                COALESCE(jira_id, ''))                        AS unique_key,
-        tenant_id,
+        CAST(tenant_id AS String)                            AS tenant_id,
         source_id,
         jira_id,
         splitByChar('-', assumeNotNull(id_readable))[1]      AS project_key,

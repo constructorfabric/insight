@@ -68,7 +68,7 @@ from_snapshot AS (
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
     ARRAY JOIN JSONExtractKeysAndValuesRaw(COALESCE(i.custom_fields_json, '{}')) AS kv
     INNER JOIN long_text_fields AS f
-        ON f.tenant_id = COALESCE(i.tenant_id, '')
+        ON f.tenant_id = CAST(i.tenant_id AS String)
        AND f.insight_source_id = COALESCE(i.source_id, '')
        AND f.field_id = kv.1
     WHERE kv.2 NOT IN ('', 'null', '""', '{}')

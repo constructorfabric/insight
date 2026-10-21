@@ -22,7 +22,7 @@
 WITH transitions AS (
     SELECT
         entity_id                                               AS worklog_id,
-        COALESCE(tenant_id, '')                                 AS tenant_id,
+        CAST(tenant_id AS String)                               AS tenant_id,
         source_id,
         multiIf(
             field_name = 'is_deleted' AND new_value = '1',          'remove',
@@ -42,7 +42,7 @@ WITH transitions AS (
 -- issue; `assert_jira_substream_rows_without_issue_id` reports those.
 worklog_issue AS (
     SELECT
-        COALESCE(tenant_id, '')                                 AS tenant_id,
+        CAST(tenant_id AS String)                               AS tenant_id,
         source_id,
         toString(worklog_id)                                    AS worklog_id,
         any(COALESCE(jira_id, issueId))                         AS jira_id
@@ -78,7 +78,7 @@ resolved AS (
         )                                                       AS event_at
     FROM transitions AS t
     LEFT JOIN {{ ref('jira__worklog_state') }} AS st FINAL
-        ON COALESCE(st.tenant_id, '') = t.tenant_id
+        ON st.tenant_id = t.tenant_id
         AND st.source_id = t.source_id
         AND st.worklog_id = t.worklog_id
     LEFT JOIN worklog_issue AS own
@@ -86,7 +86,7 @@ resolved AS (
         AND own.source_id = t.source_id
         AND own.worklog_id = t.worklog_id
     LEFT JOIN {{ ref('jira__issue_availability_state') }} AS av FINAL
-        ON COALESCE(av.tenant_id, '') = t.tenant_id
+        ON av.tenant_id = t.tenant_id
         AND av.source_id = t.source_id
         AND av.jira_id = own.jira_id
     WHERE t.action != ''

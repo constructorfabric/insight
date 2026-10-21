@@ -364,7 +364,7 @@ occurrence_operations AS (
 -- An add while present and a remove while absent repeat what is already true.
 occurrences AS (
     SELECT
-        COALESCE(o.tenant_id, h.tenant_id)                            AS tenant_id,
+        CAST(COALESCE(o.tenant_id, h.tenant_id) AS String)            AS tenant_id,
         COALESCE(o.insight_source_id, h.insight_source_id)            AS insight_source_id,
         COALESCE(o.issue_id, h.issue_id)                              AS issue_id,
         COALESCE(o.kind, h.kind)                                      AS kind,
