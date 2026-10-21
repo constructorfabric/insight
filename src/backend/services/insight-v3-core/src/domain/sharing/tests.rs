@@ -124,3 +124,128 @@ async fn a_transferred_dashboard_takes_its_tags_from_the_new_owners_scope() {
         "the new owner's spelling should win once the tag is in their scope"
     );
 }
+
+/// Identity that fails every look at who holds the role.
+struct Unreachable;
+
+#[async_trait]
+impl Administrators for Unreachable {
+    async fn holds_admin(&self, _person: PersonId) -> Result<bool, AdministratorsError> {
+        Err(AdministratorsError::Unavailable(
+            "identity is down".to_owned(),
+        ))
+    }
+
+    async fn current(&self) -> Result<Vec<PersonId>, AdministratorsError> {
+        Err(AdministratorsError::Unavailable(
+            "identity is down".to_owned(),
+        ))
+    }
+}
+
+async fn left_by_former(store: &MemoryDefinitions, id: &str) -> DefinitionId {
+    let dashboard = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{error}"));
+    store
+        .seed_owned(&dashboard, &json!({ "title": id, "widgets": [] }), FORMER)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    dashboard
+}
+
+#[tokio::test]
+async fn an_identity_failure_is_answered_as_missing_only_where_the_caller_cannot_see_it() {
+    let store = MemoryDefinitions::new();
+    let unseen = left_by_former(&store, "unseen").await;
+    let seen = left_by_former(&store, "seen").await;
+    store
+        .share(&seen, CALLER, FORMER)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let shares = DashboardShares::new(&store, &Unreachable, CALLER);
+
+    let hidden = shares.transfer(&unseen, CALLER).await;
+    let failed = shares.transfer(&seen, CALLER).await;
+
+    assert!(
+        matches!(&hidden, Err(SharingError::NotFound(id)) if id == "unseen"),
+        "{hidden:?}"
+    );
+    assert!(
+        matches!(failed, Err(SharingError::Administrators(_))),
+        "{failed:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_identity_failure_refuses_a_share_and_the_orphaned_listing() {
+    let store = MemoryDefinitions::new();
+    let mine = DefinitionId::parse("mine").unwrap_or_else(|error| panic!("{error}"));
+    store
+        .seed_owned(&mine, &json!({ "title": "Mine", "widgets": [] }), CALLER)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let shares = DashboardShares::new(&store, &Unreachable, CALLER);
+
+    let granted = shares.grant(&mine, RACER).await;
+    let page = Page::parse(None, None).unwrap_or_else(|error| panic!("{error}"));
+    let orphaned = shares.orphaned(page).await;
+
+    assert!(
+        matches!(granted, Err(SharingError::Administrators(_))),
+        "{granted:?}"
+    );
+    assert!(
+        matches!(orphaned, Err(SharingError::Administrators(_))),
+        "{orphaned:?}"
+    );
+    let held = store
+        .shares_of(&mine)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(held.is_empty(), "{held:?}");
+}
+
+#[tokio::test]
+async fn a_transfer_overfilling_the_new_owners_tags_is_refused_and_leaves_the_owner() {
+    use crate::domain::tags::{MAX_TAGS_PER_DASHBOARD, TagSet, Tags as _};
+
+    let store = MemoryDefinitions::new();
+    let body = json!({ "title": "Board", "widgets": [] });
+    for board in 0..MAX_TAGS / MAX_TAGS_PER_DASHBOARD {
+        let id =
+            DefinitionId::parse(&format!("full_{board}")).unwrap_or_else(|error| panic!("{error}"));
+        store
+            .seed_owned(&id, &body, CALLER)
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        let names: Vec<String> = (0..MAX_TAGS_PER_DASHBOARD)
+            .map(|tag| format!("tag {board} {tag}"))
+            .collect();
+        let tags = TagSet::parse(&names).unwrap_or_else(|error| panic!("{error}"));
+        store
+            .set_tags(&id, Owner::Person(CALLER), &tags)
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+    let handed = left_by_former(&store, "handed").await;
+    let extra = TagSet::parse(&["one more".to_owned()]).unwrap_or_else(|error| panic!("{error}"));
+    store
+        .set_tags(&handed, Owner::Person(FORMER), &extra)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let refused = DashboardShares::new(&store, &Listed(vec![CALLER]), CALLER)
+        .transfer(&handed, CALLER)
+        .await;
+
+    assert!(
+        matches!(refused, Err(SharingError::RecipientTagsFull)),
+        "{refused:?}"
+    );
+    let standing = store
+        .standing(&handed, CALLER)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(standing.map(|held| held.owner), Some(Owner::Person(FORMER)));
+}

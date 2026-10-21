@@ -3,10 +3,10 @@ use chrono::NaiveDateTime;
 use sea_orm::{ConnectionTrait as _, FromQueryResult, Statement, TransactionTrait as _, Value};
 
 use super::folders::statement;
-use super::{MariaDefinitions, TotalRow};
-use crate::domain::access::PersonId;
+use super::{MariaDefinitions, TotalRow, tags};
+use crate::domain::access::{Owner, PersonId};
 use crate::domain::definition::{DefinitionId, DefinitionStoreError, Page};
-use crate::domain::sharing::{Orphan, OrphanPage, Share, Sharing};
+use crate::domain::sharing::{Handover, Orphan, OrphanPage, Share, Sharing};
 
 const SHARES_OF: &str = "SELECT person, granted_by, created_at FROM dashboard_shares
 WHERE dashboard = ?
@@ -160,8 +160,9 @@ impl Sharing for MariaDefinitions {
         dashboard: &DefinitionId,
         from: PersonId,
         to: PersonId,
-    ) -> Result<bool, DefinitionStoreError> {
+    ) -> Result<Handover, DefinitionStoreError> {
         let transaction = self.db.begin().await?;
+        tags::lock_tags(&transaction).await?;
         let moved = transaction
             .execute_raw(statement(
                 HAND_OVER,
@@ -173,15 +174,20 @@ impl Sharing for MariaDefinitions {
             ))
             .await?;
         if moved.rows_affected() == 0 {
-            return Ok(false);
+            return Ok(Handover::OwnerChanged);
         }
 
         transaction
             .execute_raw(statement(UNSHARE, pair(dashboard, to)))
             .await?;
+        match tags::rescope_tags(&transaction, dashboard, Owner::Person(to)).await {
+            Ok(()) => {}
+            Err(DefinitionStoreError::TagsFull) => return Ok(Handover::RecipientTagsFull),
+            Err(error) => return Err(error),
+        }
         transaction.commit().await?;
 
-        Ok(true)
+        Ok(Handover::Handed)
     }
 
     async fn page_orphaned(

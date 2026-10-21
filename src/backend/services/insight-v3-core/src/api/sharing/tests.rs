@@ -531,3 +531,96 @@ async fn an_administrator_listing_that_leaves_out_the_caller_is_refused_not_read
         refused.body
     );
 }
+
+#[tokio::test]
+async fn an_unreachable_identity_refuses_a_share_a_seen_transfer_and_the_orphaned_listing() {
+    let harness = Harness::build(IdentityClient::fixed(true).with_administrators_unreachable());
+    let board = harness.dashboard_of(OWNER, "Board").await;
+    harness.held_by(FORMER, "left_behind").await;
+    let parsed = DefinitionId::parse("left_behind").unwrap_or_else(|error| panic!("{error}"));
+    crate::domain::sharing::Sharing::share(
+        harness.definitions.as_ref(),
+        &parsed,
+        person(STRANGER),
+        person(FORMER),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    let shared = harness.share(OWNER, &board, VIEWER).await;
+    let handed = harness.transfer(STRANGER, "left_behind", VIEWER).await;
+    let orphaned = harness.orphaned(STRANGER).await;
+
+    for answer in [&shared, &handed, &orphaned] {
+        assert_eq!(
+            answer.status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{}",
+            answer.body
+        );
+    }
+    assert_eq!(harness.shares(OWNER, &board).await.body["items"], json!([]));
+    assert_eq!(
+        harness.read(STRANGER, "left_behind").await.body["owner_person_id"],
+        json!(FORMER)
+    );
+}
+
+#[tokio::test]
+async fn an_unreachable_identity_answers_a_transfer_of_an_unseen_dashboard_as_missing() {
+    let harness = Harness::build(IdentityClient::fixed(true).with_administrators_unreachable());
+    harness.held_by(FORMER, "left_behind").await;
+
+    let unseen = harness.transfer(STRANGER, "left_behind", VIEWER).await;
+    let missing = harness.transfer(STRANGER, "nowhere", VIEWER).await;
+
+    assert_eq!(unseen.status, StatusCode::NOT_FOUND, "{}", unseen.body);
+    assert_eq!(
+        unseen.body.to_string().replace("left_behind", "nowhere"),
+        missing.body.to_string(),
+        "a private dashboard answers as a missing one"
+    );
+}
+
+#[tokio::test]
+async fn a_transfer_whose_tags_would_overfill_the_new_owners_scope_is_refused_and_moves_nothing() {
+    use crate::domain::access::Owner;
+    use crate::domain::tags::{MAX_TAGS, MAX_TAGS_PER_DASHBOARD, TagSet, Tags as _};
+
+    let harness = Harness::new();
+    let store = harness.definitions.as_ref();
+    for board in 0..MAX_TAGS / MAX_TAGS_PER_DASHBOARD {
+        let id = harness.dashboard_of(VIEWER, &format!("Full {board}")).await;
+        let names: Vec<String> = (0..MAX_TAGS_PER_DASHBOARD)
+            .map(|tag| format!("tag {board} {tag}"))
+            .collect();
+        let tags = TagSet::parse(&names).unwrap_or_else(|error| panic!("{error}"));
+        let parsed = DefinitionId::parse(&id).unwrap_or_else(|error| panic!("{error}"));
+        store
+            .set_tags(&parsed, Owner::Person(person(VIEWER)), &tags)
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+    harness.held_by(FORMER, "left_behind").await;
+    let parsed = DefinitionId::parse("left_behind").unwrap_or_else(|error| panic!("{error}"));
+    let extra = TagSet::parse(&["one more".to_owned()]).unwrap_or_else(|error| panic!("{error}"));
+    store
+        .set_tags(&parsed, Owner::Person(person(FORMER)), &extra)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let refused = harness.transfer(STRANGER, "left_behind", VIEWER).await;
+
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert!(
+        refused.body.to_string().contains("too many tags"),
+        "{}",
+        refused.body
+    );
+    assert_eq!(harness.orphaned(STRANGER).await.body["total"], 1);
+    let kept = store
+        .tags_of(&parsed)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(kept.len(), 1, "{kept:?}");
+}

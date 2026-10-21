@@ -560,6 +560,9 @@ impl Folders for MemoryDefinitions {
                 stored.filed.remove(&key);
             }
             (Owner::Person(person), Some(id)) => {
+                if !stored.visible(&key, person) {
+                    return Err(FolderError::DashboardNotFound(key));
+                }
                 stored.placed.insert((person, key), id);
             }
             (Owner::Person(person), None) => {

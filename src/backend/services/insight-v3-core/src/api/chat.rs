@@ -15,15 +15,11 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use crate::chat::{Ask, ChatError, Proposal, Proposed, Turn};
-use crate::domain::access::PersonId;
+use crate::chat::{Ask, ChatError, Proposal, Turn};
 use crate::domain::assistant::DatasetSchemas;
-use crate::domain::definition::{
-    Change, Definition, DefinitionId, DefinitionKind, DefinitionLabel,
-};
-use crate::domain::kinds;
+use crate::domain::definition::DefinitionKind;
 use crate::domain::query::metric_query::{MetricQuery, RunResult};
-use crate::domain::surfaces::{Surfaces, creating};
+use crate::domain::surfaces::{Arrival, ProposalError, StoredItem};
 
 #[resource_error("gts.cf.insight.insight_v3_core.chat.v1~")]
 struct ChatApiError;
@@ -165,164 +161,33 @@ async fn handle_chat(
             metric,
             widgets,
             dashboard,
-        } => store_proposed(&state, caller, reply, metric, widgets, dashboard).await,
-    }
-}
+        } => {
+            let stored = state
+                .surfaces(caller)
+                .store_proposal(metric, widgets, dashboard)
+                .await
+                .map_err(proposal_error)?;
+            let (created, updated) = reported(&stored);
 
-/// One proposed item, once its name and id are known good.
-#[derive(Debug)]
-struct Landing {
-    kind: DefinitionKind,
-    id: DefinitionId,
-    /// Also what the other items of the proposal call it by.
-    name: DefinitionLabel,
-    replaces: bool,
-    body: serde_json::Value,
-}
-
-/// Stores what the assistant proposed, as `caller`, or none of it.
-///
-/// Every name and id is parsed and every body checked before anything is
-/// written, so one refusal leaves the reader what they had rather than half a
-/// dashboard. A dashboard it creates is the caller's; one it replaces must be
-/// one the caller may change.
-async fn store_proposed(
-    state: &AppState,
-    caller: PersonId,
-    reply: String,
-    metric: Option<Proposed>,
-    widgets: Vec<Proposed>,
-    dashboard: Option<Proposed>,
-) -> Result<Response, CanonicalError> {
-    let mut asked = Vec::new();
-    if let Some(proposed) = metric {
-        asked.push((DefinitionKind::Metric, proposed));
-    }
-    for proposed in widgets {
-        asked.push((DefinitionKind::Widget, proposed));
-    }
-    if let Some(proposed) = dashboard {
-        asked.push((DefinitionKind::Dashboard, proposed));
-    }
-
-    let mut landing = Vec::with_capacity(asked.len());
-    for (kind, proposed) in asked {
-        landing.push(landed(kind, proposed)?);
-    }
-    let landing = pointed_at_ids(landing);
-
-    let surfaces = state.surfaces(caller);
-    replaceable(&surfaces, &landing).await?;
-
-    let batch: Vec<Definition> = landing
-        .iter()
-        .map(|item| Definition::new(item.kind, item.id.clone(), item.body.clone()))
-        .collect();
-    surfaces
-        .check_batch(&batch)
-        .await
-        .map_err(crate::api::definitions::custom_error)?;
-
-    let (created, updated) = reported(&landing);
-    let changes: Vec<Change> = landing
-        .into_iter()
-        .flat_map(|item| changes_of(item, caller))
-        .collect();
-    state
-        .definitions()
-        .apply(&changes)
-        .await
-        .map_err(ChatApiError::definition_store_error)?;
-
-    Ok(Json(ChatCreatedResponse {
-        reply,
-        created,
-        updated,
-    })
-    .into_response())
-}
-
-/// Refuses a proposal replacing a dashboard the caller may not change, as
-/// missing when they cannot see it.
-async fn replaceable(surfaces: &Surfaces<'_>, landing: &[Landing]) -> Result<(), CanonicalError> {
-    let replaced = landing
-        .iter()
-        .filter(|item| item.replaces && item.kind == DefinitionKind::Dashboard);
-
-    for item in replaced {
-        surfaces
-            .changeable(&item.id)
-            .await
-            .map_err(crate::api::definitions::custom_error)?;
-    }
-
-    Ok(())
-}
-
-/// The id an item is stored under: the one it replaces, or a fresh one.
-fn landed(kind: DefinitionKind, proposed: Proposed) -> Result<Landing, CanonicalError> {
-    let name = DefinitionLabel::parse(&proposed.name).map_err(ChatApiError::definition_error)?;
-    let (id, replaces) = match proposed.id.as_deref() {
-        Some(raw) => {
-            let id = DefinitionId::parse(raw).map_err(|_| ChatApiError::malformed_id(kind, raw))?;
-            (id, true)
+            Ok(Json(ChatCreatedResponse {
+                reply,
+                created,
+                updated,
+            })
+            .into_response())
         }
-        None => (DefinitionId::generate(), false),
-    };
-
-    Ok(Landing {
-        kind,
-        id,
-        name,
-        replaces,
-        body: proposed.body,
-    })
-}
-
-/// Every body, with each reference to another item of the proposal by its
-/// name now naming that item's id. A reference to anything else is an id of
-/// something built already, and is left as it is.
-fn pointed_at_ids(landing: Vec<Landing>) -> Vec<Landing> {
-    let keys: Vec<(DefinitionKind, String, String)> = landing
-        .iter()
-        .map(|item| {
-            let key = item.name.as_str().to_owned();
-            (item.kind, key, item.id.as_str().to_owned())
-        })
-        .collect();
-
-    landing
-        .into_iter()
-        .map(|mut item| {
-            let pairs: Vec<(&str, &str)> = keys
-                .iter()
-                .filter(|(kind, _, _)| kinds::referred_to_by(*kind).contains(&item.kind))
-                .map(|(_, key, id)| (key.as_str(), id.as_str()))
-                .collect();
-            item.body = kinds::rename_references(item.kind, item.body, &pairs);
-            item
-        })
-        .collect()
-}
-
-fn changes_of(item: Landing, caller: PersonId) -> Vec<Change> {
-    if item.replaces {
-        return vec![Change::Replace(item.kind, item.id, item.name, item.body)];
     }
-
-    creating(item.kind, &item.id, &item.name, item.body, caller)
 }
 
 /// What was created and what was replaced, by id and name.
-fn reported(landing: &[Landing]) -> (Written, Written) {
+fn reported(stored: &[StoredItem]) -> (Written, Written) {
     let mut created = Written::default();
     let mut updated = Written::default();
 
-    for item in landing {
-        let reported = if item.replaces {
-            &mut updated
-        } else {
-            &mut created
+    for item in stored {
+        let reported = match item.arrival {
+            Arrival::Created => &mut created,
+            Arrival::Replaced => &mut updated,
         };
         let one = WrittenOne {
             id: item.id.as_str().to_owned(),
@@ -369,6 +234,15 @@ async fn answered_with(
         .map_err(crate::api::definitions::custom_error)?;
 
     Ok(Some(answered))
+}
+
+fn proposal_error(error: ProposalError) -> CanonicalError {
+    match error {
+        ProposalError::Name(source) => ChatApiError::definition_error(source),
+        ProposalError::MalformedId { kind, raw } => ChatApiError::malformed_id(kind, &raw),
+        ProposalError::Refused(source) => crate::api::definitions::custom_error(source),
+        ProposalError::Store(source) => ChatApiError::definition_store_error(source),
+    }
 }
 
 fn chat_error(error: ChatError) -> CanonicalError {

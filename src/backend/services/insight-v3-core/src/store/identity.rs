@@ -78,13 +78,16 @@ enum Roster {
     Whole(Vec<Uuid>),
     /// Listed as a full page, so possibly cut short.
     CutShort(Vec<Uuid>),
+    /// Every look at who holds the role fails.
+    Unreachable,
 }
 
 #[cfg(test)]
 impl Roster {
-    fn people(&self) -> &[Uuid] {
+    fn holds(&self, person: PersonId) -> Result<bool, IdentityError> {
         match self {
-            Self::Whole(people) | Self::CutShort(people) => people,
+            Self::Whole(people) | Self::CutShort(people) => Ok(people.contains(&person.uuid())),
+            Self::Unreachable => Err(IdentityError::Refused(503)),
         }
     }
 }
@@ -133,6 +136,12 @@ impl IdentityClient {
     #[cfg(test)]
     pub(crate) fn with_administrators_cut_short(self, people: &[Uuid]) -> Self {
         self.with_roster(Roster::CutShort(people.to_vec()))
+    }
+
+    /// The same fixed answer, failing every look at who holds the role.
+    #[cfg(test)]
+    pub(crate) fn with_administrators_unreachable(self) -> Self {
+        self.with_roster(Roster::Unreachable)
     }
 
     #[cfg(test)]
@@ -189,7 +198,7 @@ impl IdentityClient {
         let (http, base_url) = match &self.mode {
             Mode::Live { http, base_url } => (http, base_url),
             #[cfg(test)]
-            Mode::Fixed(fixed) => return Ok(fixed.roster.people().contains(&person.uuid())),
+            Mode::Fixed(fixed) => return fixed.roster.holds(person),
         };
 
         let url =
@@ -220,6 +229,7 @@ impl IdentityClient {
                         Ok(people.iter().copied().map(PersonId::new).collect())
                     }
                     Roster::CutShort(_) => Err(IdentityError::Truncated),
+                    Roster::Unreachable => Err(IdentityError::Refused(503)),
                 };
             }
         };

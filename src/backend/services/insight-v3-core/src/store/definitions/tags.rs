@@ -184,6 +184,30 @@ pub(super) async fn carry_tags(
     Ok(())
 }
 
+/// Moves the dashboard's tags into `scope` under the same names, taking the
+/// spelling `scope` already holds of a name, and prunes what the scope they
+/// leave no longer uses.
+pub(super) async fn rescope_tags(
+    transaction: &DatabaseTransaction,
+    dashboard: &DefinitionId,
+    scope: Owner,
+) -> Result<(), DefinitionStoreError> {
+    let names = names_on(transaction, dashboard).await?;
+    if names.is_empty() {
+        return Ok(());
+    }
+
+    let ids = resolved_all(transaction, scope, &names).await?;
+    relink(transaction, dashboard, ids).await?;
+    prune_tags(transaction).await?;
+
+    if scope_is_full(transaction, scope).await? {
+        return Err(DefinitionStoreError::TagsFull);
+    }
+
+    Ok(())
+}
+
 async fn relink(
     transaction: &DatabaseTransaction,
     dashboard: &DefinitionId,

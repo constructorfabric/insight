@@ -8,10 +8,10 @@ use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use crate::domain::access::{Owner, PersonId, Refused};
-use crate::domain::dashboards::{Seen, sight};
+use crate::domain::dashboards::{Seen, Standing, sight};
 use crate::domain::definition::{DefinitionId, DefinitionStoreError, Page};
 use crate::domain::folders::DefinitionStore;
-use crate::domain::tags::TagSet;
+use crate::domain::tags::MAX_TAGS;
 
 /// One person a dashboard is shared with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +28,16 @@ pub(crate) struct Orphan {
     pub(crate) name: String,
     pub(crate) owner: PersonId,
     pub(crate) updated_at: DateTime<Utc>,
+}
+
+/// What a hand-over came to; only [`Handover::Handed`] changed anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Handover {
+    Handed,
+    /// The owner read before the hand-over no longer owned it.
+    OwnerChanged,
+    /// Its tags would take the new owner's scope past [`MAX_TAGS`].
+    RecipientTagsFull,
 }
 
 #[derive(Debug)]
@@ -58,13 +68,14 @@ pub(crate) trait Sharing: Send + Sync + fmt::Debug {
     ) -> Result<(), DefinitionStoreError>;
 
     /// Makes `to` the owner if `from` still is, dropping any share `to`
-    /// held; false when `from` no longer owned it.
+    /// held and moving the dashboard's tags into `to`'s scope under the same
+    /// names, all or nothing.
     async fn transfer(
         &self,
         dashboard: &DefinitionId,
         from: PersonId,
         to: PersonId,
-    ) -> Result<bool, DefinitionStoreError>;
+    ) -> Result<Handover, DefinitionStoreError>;
 
     /// One page of the owned dashboards whose owner is none of
     /// `administrators`, ordered by name, then id.
@@ -110,6 +121,10 @@ pub(crate) enum SharingError {
     OwnerIsAdministrator,
     #[error("the dashboard changed owner meanwhile")]
     Moved,
+    #[error(
+        "the new owner has too many tags to take this dashboard's; at most {MAX_TAGS} tags can exist per owner"
+    )]
+    RecipientTagsFull,
     #[error(transparent)]
     Administrators(AdministratorsError),
     #[error(transparent)]
@@ -236,30 +251,25 @@ impl<'a> DashboardShares<'a> {
         dashboard: &DefinitionId,
         to: PersonId,
     ) -> Result<(), SharingError> {
-        let missing = || SharingError::NotFound(dashboard.as_str().to_owned());
         let standing = self
             .store
             .standing(dashboard, self.caller)
             .await?
-            .ok_or_else(missing)?;
+            .ok_or_else(|| SharingError::NotFound(dashboard.as_str().to_owned()))?;
         let Owner::Person(owner) = standing.owner else {
             return Err(SharingError::Ownerless);
         };
 
-        if self.administrators.holds_admin(owner).await? {
-            return match standing.seen_by(self.caller) {
-                Some(_) => Err(SharingError::OwnerIsAdministrator),
-                None => Err(missing()),
-            };
-        }
+        self.owner_left(dashboard, standing, owner).await?;
         if !self.administrators.holds_admin(to).await? {
             return Err(SharingError::RecipientNotAdministrator);
         }
 
-        if !self.store.transfer(dashboard, owner, to).await? {
-            return Err(SharingError::Moved);
+        match self.store.transfer(dashboard, owner, to).await? {
+            Handover::Handed => {}
+            Handover::OwnerChanged => return Err(SharingError::Moved),
+            Handover::RecipientTagsFull => return Err(SharingError::RecipientTagsFull),
         }
-        self.retag_for(dashboard, to).await;
         tracing::info!(
             actor_person_id = %self.caller,
             dashboard_id = dashboard.as_str(),
@@ -271,26 +281,32 @@ impl<'a> DashboardShares<'a> {
         Ok(())
     }
 
-    /// Moves the dashboard's tags into its new owner's scope under the same
-    /// names. The transfer has already landed, so a failure here leaves the
-    /// tags where they were and is logged, not answered.
-    async fn retag_for(&self, dashboard: &DefinitionId, owner: PersonId) {
-        let moved = async {
-            let held = self.store.tags_of(dashboard).await?;
-            let names: Vec<String> = held.iter().map(|tag| tag.as_str().to_owned()).collect();
-            let tags = TagSet::parse(&names)?;
+    /// Whether `owner` no longer holds the administrator role. Where the
+    /// caller cannot see the dashboard, any other answer is that it is
+    /// missing, so neither the role nor an identity failure tells a private
+    /// dashboard from an absent one.
+    async fn owner_left(
+        &self,
+        dashboard: &DefinitionId,
+        standing: Standing,
+        owner: PersonId,
+    ) -> Result<(), SharingError> {
+        let missing = || SharingError::NotFound(dashboard.as_str().to_owned());
+        let seen = standing.seen_by(self.caller).is_some();
 
-            self.store
-                .set_tags(dashboard, Owner::Person(owner), &tags)
-                .await
-        };
-
-        if let Err(error) = moved.await {
-            tracing::error!(
-                error = %error,
-                dashboard_id = dashboard.as_str(),
-                "transferred dashboard kept its previous owner's tags"
-            );
+        match (seen, self.administrators.holds_admin(owner).await) {
+            (_, Ok(false)) => Ok(()),
+            (true, Ok(true)) => Err(SharingError::OwnerIsAdministrator),
+            (true, Err(error)) => Err(error.into()),
+            (false, Ok(true)) => Err(missing()),
+            (false, Err(error)) => {
+                tracing::warn!(
+                    error = %error,
+                    dashboard_id = dashboard.as_str(),
+                    "a transfer of a dashboard the caller cannot see met an identity failure"
+                );
+                Err(missing())
+            }
         }
     }
 

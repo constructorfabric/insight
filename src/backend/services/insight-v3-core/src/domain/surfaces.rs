@@ -22,8 +22,11 @@ use crate::domain::query::time_window::WindowError;
 use crate::domain::violation::Violation;
 
 mod duplicate;
+mod proposal;
 #[cfg(test)]
 mod tests;
+
+pub(crate) use proposal::{Arrival, ProposalError, StoredItem};
 
 #[derive(Debug, Error)]
 pub(crate) enum CustomError {

@@ -9,8 +9,8 @@ use crate::domain::definition::{
 };
 use crate::domain::folders::{FolderName, Folders};
 use crate::domain::pins::Pins;
-use crate::domain::sharing::Sharing;
-use crate::domain::tags::{TagSet, Tags};
+use crate::domain::sharing::{Handover, Sharing};
+use crate::domain::tags::{TagName, TagSet, Tags};
 use crate::live_mariadb::{database_or_skip, store_or_skip, unique};
 use crate::store::definitions::MariaDefinitions;
 use crate::tags_live_tests::ONE_AT_A_TIME;
@@ -22,6 +22,13 @@ struct TotalRow {
 
 fn a_person() -> PersonId {
     PersonId::new(Uuid::now_v7())
+}
+
+/// A tag name no other run holds, within the tag name length.
+fn unique_tag(prefix: &str) -> String {
+    let id = Uuid::now_v7().simple().to_string();
+
+    format!("{prefix} {}", &id[id.len() - 12..])
 }
 
 fn dashboard(name: &str) -> DefinitionId {
@@ -241,9 +248,10 @@ async fn a_withdrawal_takes_the_share_pin_and_placement_and_a_transfer_moves_onl
     assert_eq!(shares_before.len(), 1);
     assert!(pins.is_empty(), "{pins:?}");
     assert_eq!(placed, None);
-    assert!(moved);
-    assert!(
-        !moved_again,
+    assert_eq!(moved, Handover::Handed);
+    assert_eq!(
+        moved_again,
+        Handover::OwnerChanged,
         "the second transfer read an owner who no longer is"
     );
     assert_eq!(now.map(|held| held.owner), Some(Owner::Person(other)));
@@ -259,7 +267,7 @@ async fn a_tag_name_is_unique_within_an_owner_and_shared_between_owners() {
     let (mine, theirs) = (dashboard(&unique("mine")), dashboard(&unique("theirs")));
     owned(&store, &mine, Owner::Person(me)).await;
     owned(&store, &theirs, Owner::Person(them)).await;
-    let name = format!("Scoped {}", Uuid::now_v7().simple());
+    let name = unique_tag("Scoped");
     let wanted =
         TagSet::parse(std::slice::from_ref(&name)).unwrap_or_else(|error| panic!("{error}"));
 
@@ -271,4 +279,57 @@ async fn a_tag_name_is_unique_within_an_owner_and_shared_between_owners() {
     for answer in [&first, &second, &again] {
         assert!(answer.is_ok(), "{answer:?}");
     }
+}
+
+#[tokio::test]
+async fn a_transfer_moves_the_tags_into_the_new_owners_scope_under_their_spelling() {
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let Some(db) = database_or_skip().await else {
+        return;
+    };
+    let _serial = ONE_AT_A_TIME.lock().await;
+    let (former, heir) = (a_person(), a_person());
+    let (handed, kept) = (dashboard(&unique("handed")), dashboard(&unique("kept")));
+    owned(&store, &handed, Owner::Person(former)).await;
+    owned(&store, &kept, Owner::Person(heir)).await;
+    let name = unique_tag("Moved");
+    for (board, owner, spelling) in [
+        (&handed, former, name.to_lowercase()),
+        (&kept, heir, name.clone()),
+    ] {
+        let wanted = TagSet::parse(&[spelling]).unwrap_or_else(|error| panic!("{error}"));
+        store
+            .set_tags(board, Owner::Person(owner), &wanted)
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    let moved = store
+        .transfer(&handed, former, heir)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let carried = store
+        .tags_of(&handed)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let left_in_former_scope = TotalRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::MySql,
+        "SELECT COUNT(*) AS total FROM tags WHERE owner_scope = ?",
+        [former.to_string().into()],
+    ))
+    .one(&db)
+    .await
+    .unwrap_or_else(|error| panic!("{error}"))
+    .map_or(-1, |row| row.total);
+
+    remove(&store, &[&handed, &kept]).await;
+    assert_eq!(moved, Handover::Handed);
+    assert_eq!(
+        carried.iter().map(TagName::as_str).collect::<Vec<_>>(),
+        [name.as_str()],
+        "the new owner's spelling should win once the tag is in their scope"
+    );
+    assert_eq!(left_in_former_scope, 0, "the former owner's tag is pruned");
 }

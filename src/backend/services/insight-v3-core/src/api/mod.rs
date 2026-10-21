@@ -29,7 +29,6 @@ use crate::domain::alerts::delivery::{Deliveries, Provider};
 use crate::domain::alerts::rule::AlertStore;
 use crate::domain::alerts::schedule::AlertSchedule;
 use crate::domain::alerts::{Destinations, Limits};
-use crate::domain::definition::Definitions;
 use crate::domain::folders::{DefinitionStore, Folders};
 use crate::domain::pins::Pins;
 use crate::domain::query::metric_query::MetricRunner;
@@ -287,7 +286,8 @@ impl AppState {
         &self.drilldown_slots
     }
 
-    pub(crate) fn definitions(&self) -> &dyn Definitions {
+    #[cfg(test)]
+    pub(crate) fn definitions(&self) -> &dyn crate::domain::definition::Definitions {
         self.definitions.as_ref()
     }
 

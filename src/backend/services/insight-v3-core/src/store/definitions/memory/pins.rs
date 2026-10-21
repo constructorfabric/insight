@@ -33,7 +33,7 @@ impl Pins for MemoryDefinitions {
     async fn pin(&self, person: PersonId, dashboard: &DefinitionId) -> Result<(), PinError> {
         self.writable()?;
         let mut stored = self.lock();
-        if !stored.has_dashboard(dashboard) {
+        if !stored.visible(dashboard.as_str(), person) {
             return Err(PinError::DashboardNotFound(dashboard.as_str().to_owned()));
         }
 

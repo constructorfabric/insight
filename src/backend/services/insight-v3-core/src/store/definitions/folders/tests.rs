@@ -85,7 +85,7 @@ fn filing_writes_the_ownerless_folder_or_the_persons_own_placement() {
             Owner::Person(caller()),
             Some(an_id()),
             "INSERT INTO dashboard_placements",
-            vec![CALLER, "'delivery'", folder],
+            vec![CALLER, folder, "'delivery'", CALLER, CALLER, folder],
         ),
         (
             Owner::Person(caller()),

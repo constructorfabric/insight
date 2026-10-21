@@ -7,7 +7,7 @@ use crate::domain::dashboards::{
     DashboardCatalogue, DashboardPage, DashboardQuery, ListedDashboard, Owned, Standing,
 };
 use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionStoreError, Page};
-use crate::domain::sharing::{Orphan, OrphanPage, Share, Sharing};
+use crate::domain::sharing::{Handover, Orphan, OrphanPage, Share, Sharing};
 
 impl Stored {
     fn keeps(&self, dashboard: &str, caller: PersonId, query: &DashboardQuery) -> bool {
@@ -142,17 +142,26 @@ impl Sharing for MemoryDefinitions {
         dashboard: &DefinitionId,
         from: PersonId,
         to: PersonId,
-    ) -> Result<bool, DefinitionStoreError> {
+    ) -> Result<Handover, DefinitionStoreError> {
         self.writable()?;
         let mut stored = self.lock();
         if stored.owners.get(dashboard.as_str()) != Some(&from) {
-            return Ok(false);
+            return Ok(Handover::OwnerChanged);
         }
 
-        stored.owners.insert(dashboard.as_str().to_owned(), to);
-        stored.shares.remove(&(dashboard.as_str().to_owned(), to));
+        // INVARIANT: all or nothing, as the real transaction is.
+        let mut applied = stored.clone();
+        let key = dashboard.as_str().to_owned();
+        applied.owners.insert(key.clone(), to);
+        applied.shares.remove(&(key.clone(), to));
+        match applied.carry_tags(&key, &key, Owner::Person(to)) {
+            Ok(()) => {}
+            Err(DefinitionStoreError::TagsFull) => return Ok(Handover::RecipientTagsFull),
+            Err(error) => return Err(error),
+        }
+        *stored = applied;
 
-        Ok(true)
+        Ok(Handover::Handed)
     }
 
     async fn page_orphaned(

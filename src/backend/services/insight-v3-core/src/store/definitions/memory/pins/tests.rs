@@ -212,3 +212,41 @@ async fn a_pin_of_a_dashboard_the_person_no_longer_sees_is_neither_listed_nor_co
     assert!(!pinned(&store, ANNA).await.contains(&boards[0]));
     Ok(())
 }
+
+#[tokio::test]
+async fn a_withdrawn_viewer_can_neither_pin_nor_file_the_dashboard() -> R {
+    use crate::domain::folders::{FolderError, FolderName, Folders as _};
+    use crate::domain::sharing::Sharing as _;
+
+    let store = MemoryDefinitions::new();
+    let board = name("delivery");
+    store
+        .seed_owned(&board, &json!({ "title": "delivery" }), ANNA)
+        .await?;
+    let folder = store
+        .create_folder(BORIS, FolderName::parse("Mine")?)
+        .await?;
+    store.share(&board, BORIS, ANNA).await?;
+    store.withdraw(&board, BORIS).await?;
+
+    let pinned_after = store.pin(BORIS, &board).await;
+    let filed_after = store
+        .file(
+            &board,
+            crate::domain::access::Owner::Person(BORIS),
+            Some(folder.id),
+        )
+        .await;
+
+    assert!(
+        matches!(pinned_after, Err(PinError::DashboardNotFound(_))),
+        "{pinned_after:?}"
+    );
+    assert!(
+        matches!(filed_after, Err(FolderError::DashboardNotFound(_))),
+        "{filed_after:?}"
+    );
+    assert_eq!(pinned(&store, BORIS).await, Vec::<String>::new());
+    assert_eq!(store.folder_of(&board, BORIS).await?, None);
+    Ok(())
+}

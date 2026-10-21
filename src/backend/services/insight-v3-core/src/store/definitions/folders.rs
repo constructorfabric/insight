@@ -53,9 +53,15 @@ pub(super) const COUNT_DASHBOARD: &str = "SELECT COUNT(*) AS total FROM dashboar
 
 const FILE_DASHBOARD: &str = "UPDATE dashboards SET folder_id = ? WHERE id = ?";
 
+/// Places nothing unless the person sees the dashboard as the row lands, so a
+/// placement cannot outlive the share it relied on being withdrawn meanwhile.
+///
+/// INVARIANT: the driver reports found rows, so re-filing into the same
+/// folder still counts one and only an unseen dashboard counts none.
 const PLACE: &str = "INSERT INTO dashboard_placements (person, dashboard, folder_id)
-VALUES (?, ?, ?)
-ON DUPLICATE KEY UPDATE folder_id = VALUES(folder_id)";
+SELECT ?, dashboards.id, ? FROM dashboards
+WHERE dashboards.id = ? AND {visible}
+ON DUPLICATE KEY UPDATE dashboard_placements.folder_id = ?";
 
 const UNPLACE: &str = "DELETE FROM dashboard_placements WHERE person = ? AND dashboard = ?";
 
@@ -125,14 +131,24 @@ pub(super) fn file_statement(
             let folder: Value = folder.map(|id| id.to_string()).into();
             statement(FILE_DASHBOARD, vec![folder, dashboard])
         }
-        (Owner::Person(person), Some(id)) => statement(
-            PLACE,
-            vec![person.to_string().into(), dashboard, id.to_string().into()],
-        ),
+        (Owner::Person(person), Some(id)) => {
+            let folder: Value = id.to_string().into();
+            let mut values = vec![person.to_string().into(), folder.clone(), dashboard];
+            values.extend(visible_values(person));
+            values.push(folder);
+
+            statement(&PLACE.replace("{visible}", VISIBLE), values)
+        }
         (Owner::Person(person), None) => {
             statement(UNPLACE, vec![person.to_string().into(), dashboard])
         }
     }
+}
+
+/// Whether filing writes the person's own placement, which lands only on a
+/// dashboard they see.
+fn places(folders_of: Owner, folder: Option<FolderId>) -> bool {
+    matches!((folders_of, folder), (Owner::Person(_), Some(_)))
 }
 
 fn reachable(template: &str) -> String {
@@ -293,7 +309,7 @@ impl Folders for MariaDefinitions {
             ));
         }
 
-        transaction
+        let filed = transaction
             .execute_raw(file_statement(dashboard, folders_of, folder))
             .await
             .map_err(|error| match (error.sql_err(), folder) {
@@ -302,6 +318,11 @@ impl Folders for MariaDefinitions {
                 }
                 _ => error.into(),
             })?;
+        if places(folders_of, folder) && filed.rows_affected() == 0 {
+            return Err(FolderError::DashboardNotFound(
+                dashboard.as_str().to_owned(),
+            ));
+        }
         transaction.commit().await?;
 
         Ok(())

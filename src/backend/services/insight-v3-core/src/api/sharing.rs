@@ -94,6 +94,7 @@ fn sharing_error(error: SharingError) -> CanonicalError {
         SharingError::Ownerless => conflict("owner", detail, "ownerless"),
         SharingError::OwnerIsAdministrator => conflict("owner", detail, "owner_is_administrator"),
         SharingError::Moved => conflict("owner", detail, "owner_changed"),
+        SharingError::RecipientTagsFull => conflict("to", detail, "too_many_tags"),
         SharingError::SharedWithOwner | SharingError::TargetNotAdministrator => {
             DefinitionApiError::invalid_field("person_id", detail)
         }

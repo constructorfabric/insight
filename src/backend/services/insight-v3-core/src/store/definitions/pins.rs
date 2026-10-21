@@ -4,7 +4,7 @@ use sea_orm::{
 };
 
 use super::dashboards::{VISIBLE, visible_values};
-use super::folders::{COUNT_DASHBOARD, statement};
+use super::folders::statement;
 use super::{ListedRow, MariaDefinitions, TotalRow};
 use crate::domain::access::PersonId;
 use crate::domain::definition::{DefinitionId, Listed};
@@ -26,8 +26,11 @@ const COUNT_PINS: &str = "SELECT COUNT(*) AS total
 FROM dashboard_pins JOIN dashboards ON dashboards.id = dashboard_pins.dashboard
 WHERE dashboard_pins.person = ? AND {visible}";
 
+/// Inserts nothing unless the person sees the dashboard as the row lands, so a
+/// pin cannot outlive the share it relied on being withdrawn meanwhile.
 const INSERT_PIN: &str = "INSERT INTO dashboard_pins (person, dashboard, pinned_at)
-VALUES (?, ?, UTC_TIMESTAMP(6))";
+SELECT ?, dashboards.id, UTC_TIMESTAMP(6) FROM dashboards
+WHERE dashboards.id = ? AND {visible}";
 
 const DELETE_PIN: &str = "DELETE FROM dashboard_pins WHERE person = ? AND dashboard = ?";
 
@@ -54,6 +57,14 @@ pub(super) fn visible_pins(template: &str, person: PersonId) -> Statement {
     statement(&template.replace("{visible}", VISIBLE), values)
 }
 
+pub(super) fn insert_pin(person: PersonId, dashboard: &DefinitionId) -> Statement {
+    let mut values: Vec<sea_orm::Value> =
+        vec![person.to_string().into(), dashboard.as_str().into()];
+    values.extend(visible_values(person));
+
+    statement(&INSERT_PIN.replace("{visible}", VISIBLE), values)
+}
+
 #[async_trait]
 impl Pins for MariaDefinitions {
     async fn pins_of(&self, person: PersonId) -> Result<Vec<Listed>, PinError> {
@@ -70,17 +81,7 @@ impl Pins for MariaDefinitions {
             .query_all_raw(statement(LOCK_PINS, Vec::new()))
             .await?;
         let pinning = vec![person.to_string().into(), dashboard.as_str().into()];
-
-        let held = counted(
-            &transaction,
-            COUNT_DASHBOARD,
-            vec![dashboard.as_str().into()],
-        )
-        .await?;
-        if held == 0 {
-            return Err(not_found(dashboard));
-        }
-        if counted(&transaction, IS_PINNED, pinning.clone()).await? > 0 {
+        if counted(&transaction, IS_PINNED, pinning).await? > 0 {
             return Ok(());
         }
 
@@ -91,13 +92,17 @@ impl Pins for MariaDefinitions {
         if usize::try_from(pins).unwrap_or(usize::MAX) >= MAX_PINS {
             return Err(PinError::TooMany);
         }
-        transaction
-            .execute_raw(statement(INSERT_PIN, pinning))
+
+        let inserted = transaction
+            .execute_raw(insert_pin(person, dashboard))
             .await
             .map_err(|error| match error.sql_err() {
                 Some(sea_orm::SqlErr::ForeignKeyConstraintViolation(_)) => not_found(dashboard),
                 _ => error.into(),
             })?;
+        if inserted.rows_affected() == 0 {
+            return Err(not_found(dashboard));
+        }
         transaction.commit().await?;
 
         Ok(())
