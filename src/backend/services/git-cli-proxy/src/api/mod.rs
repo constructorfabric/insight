@@ -348,6 +348,41 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(data::list_authors)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/v1/authors/changes")
+        .operation_id("git_cli_proxy.authors.changes")
+        .summary("Commit authors changed since a point, across the source's repositories")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed(
+            "changed_since",
+            false,
+            "Exclusive lower bound on changed_at (RFC 3339); absent reads from the beginning",
+            "string",
+        )
+        .query_param_typed(
+            "page_size",
+            false,
+            "1..=1000, default 1000; larger values are clamped",
+            "integer",
+        )
+        .query_param_typed(
+            "page_token",
+            false,
+            "Cursor from a previous page; fixes the walk's high-water mark",
+            "string",
+        )
+        .json_response_with_schema::<data::AuthorChangesPage>(
+            openapi,
+            StatusCode::OK,
+            "One page of changed authors",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_429(openapi)
+        .error_500(openapi)
+        .handler(data::list_author_changes)
+        .register(router, openapi);
+
     OperationBuilder::get("/v1/branches")
         .operation_id("git_cli_proxy.branches.list")
         .summary("Branch heads, ascending by name")
@@ -487,6 +522,7 @@ mod tests {
             "git_cli_proxy.commits.list",
             "git_cli_proxy.file_changes.list",
             "git_cli_proxy.branches.list",
+            "git_cli_proxy.authors.changes",
         ] {
             assert!(
                 ids.iter().any(|id| id == expected),
@@ -501,6 +537,7 @@ mod tests {
             "/v1/commits?repo=x",
             "/v1/file-changes?repo=x",
             "/v1/branches?repo=x",
+            "/v1/authors/changes",
         ] {
             assert_eq!(
                 status_of(uri, None, true).await,
@@ -521,6 +558,7 @@ mod tests {
             "/v1/commits?repo=x",
             "/v1/file-changes?repo=x",
             "/v1/branches?repo=x",
+            "/v1/authors/changes",
         ] {
             assert_eq!(
                 status_of(uri, Some("t0ken"), false).await,
@@ -543,6 +581,40 @@ mod tests {
         assert_eq!(
             status_of("/v1/commits?repo=x&page_token=!!!", Some("t0ken"), true).await,
             StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn the_change_feed_refuses_a_malformed_instant_or_cursor() {
+        for uri in [
+            "/v1/authors/changes?changed_since=yesterday",
+            "/v1/authors/changes?page_token=!!!",
+        ] {
+            assert_eq!(
+                status_of(uri, Some("t0ken"), true).await,
+                StatusCode::BAD_REQUEST,
+                "must refuse: {uri}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_change_feed_of_a_source_nobody_fetched_is_an_empty_page() {
+        let response = response_for(
+            "/v1/authors/changes?changed_since=2026-01-01T00:00:00Z",
+            Some("t0ken"),
+            true,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let Ok(body) = axum::body::to_bytes(response.into_body(), usize::MAX).await else {
+            panic!("body must be readable")
+        };
+        let page: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        assert_eq!(
+            page,
+            serde_json::json!({"items": [], "next_page_token": null}),
+            "an empty index answers an empty page, not an error"
         );
     }
 
