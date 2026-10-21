@@ -74,17 +74,24 @@ How it works: ClickHouse has row policies, rules like "show this user only these
 
 ```sql
 CREATE ROW POLICY OR REPLACE tenant_scope ON silver.*
-  USING toString(tenant_id) = replaceOne(currentUser(), 'tenant_', '')
+  USING has(currentRoles(), concat('tenant_', tenant_id))
   TO tenant_reader;
 ```
 
-There are two kinds of ClickHouse users:
-- **system** — dbt, migrations, jobs, Grafana and the install-wide admin screens run as this user. RLS doesn't apply to it.
-- **tenant user** — named `tenant_<uuid>`, with the `tenant_reader` role. analytics, insight-v3-core and identity-resolution all read data as this same tenant user. The policy compares the row's `tenant_id` with the user's name.
+The tenant is a **role**, not a user:
+- **system user** — dbt, migrations, jobs, Grafana and the install-wide admin screens run as it. RLS doesn't apply to it.
+- **service user** — one for analytics, insight-v3-core and identity-resolution. It has no default role and holds a role `tenant_<uuid>` for every tenant. Each role includes `tenant_reader`, which carries the `SELECT` grants.
+- **per request** the service turns on exactly one role, the session tenant's: over HTTP that's the `role=tenant_<uuid>` parameter. The policy lets through only rows whose `tenant_id` matches the active role. No role means no grants at all, so the query fails instead of returning everything.
 
-The policy lives next to the existing roles in `src/ingestion/scripts/bootstrap-db/`, where `presentation-role.sql` and `v3-role.sql` already are. `create-databases.sh` applies them on every deploy. It's not a migration: the file is declarative and `OR REPLACE` overwrites everything. To change the rule, edit the file and deploy.
+The policy lives next to the existing roles in `src/ingestion/scripts/bootstrap-db/`, where `presentation-role.sql` and `v3-role.sql` already are. `create-databases.sh` applies them on every deploy. It's not a migration: the file is declarative and `OR REPLACE` overwrites everything. To change the rule, edit the file and deploy. The role of the install's tenant is created there too.
 
-**Why the tenant comes from the user name and not from a query setting.** The first idea was that analytics passes the tenant as `SETTINGS SQL_tenant_id=...`. We tested it on ClickHouse 25.7.5, and it can be bypassed. If a query contains a subquery with its own `SETTINGS`, the subquery's value wins, and you can read another tenant. Even pinning the setting in the user profile as `CONST` doesn't help: a nested `SETTINGS` still goes through. The user name, on the other hand, can't be changed from inside a query.
+**Why the tenant comes from a role and not from a query setting.** The first idea was that analytics passes the tenant as `SETTINGS SQL_tenant_id=...`. We tested it on ClickHouse 25.7.5, and it can be bypassed. If a query contains a subquery with its own `SETTINGS`, the subquery's value wins, and you can read another tenant. Even pinning the setting in the user profile as `CONST` doesn't help: a nested `SETTINGS` still goes through. The active role can't be changed from inside a `SELECT`; a `SETTINGS role=...` in a subquery is simply ignored.
+
+**Why a role and not a user per tenant.** A user per tenant means a password per tenant and a connection per tenant in every service. A role has no credentials. That matters most for tests: the data-path suite seeds every scenario under its own tenant in one shared setup, so it just creates a role per scenario tenant. Measured on ClickHouse 25.7.5:
+- 100 tenant roles with their grants are created in 0.4 s;
+- a query with an active role out of 100 granted costs well under a millisecond more than without one.
+
+**One shared policy, not one per tenant.** A separate policy per tenant would let the primary index prune by tenant, but creating 100 of them took 82 s. So it's one policy per database. It doesn't use the index by itself, which is fine because the application's own `WHERE tenant_id = …` still does.
 
 What else we checked on a live ClickHouse:
 - plain `SELECT`, `FINAL`, `JOIN` and regular views are filtered;
@@ -104,7 +111,7 @@ The best move now is to bring everything to `tenant_id`, so we don't have to rew
 - **insight-v3-core** has to learn about tenants:
   - take the tenant from the token;
   - split definitions and datasets by tenant;
-  - read as the tenant user.
+  - read through the tenant's role.
 
   Background alert checks run without a user, so they take the tenant from whoever owns the rule.
 - **Raw SQL** (the MCP SQL explorer, v3 queries) goes through `EXPLAIN AST` before running. We accept only a single `SELECT`:
@@ -120,7 +127,8 @@ The best move now is to bring everything to `tenant_id`, so we don't have to rew
 - **RLS bypasses.** DEFINER views and dictionaries read data with their creator's rights, around the policy. There are none today, but they need to be banned by a check in databases under the policy.
 - **A new database doesn't fall under the policy by itself.** The list of databases must be explicit, and CI should fail if `tenant_reader` has access to a database with no policy.
 - **An error looks like "no data".** A wrong tenant returns an empty answer, not an error, so the tenant needs to be logged.
-- **Credentials per tenant.** The tenant user has its own password. With one tenant that's one user, but with several tenants we'll have to figure out where to store and how to rotate them.
+- **Exactly one role per request.** The service user holds every tenant's role, so a request that turns on two roles sees both tenants. The client must always pass exactly one.
+- **No HTTP sessions.** Inside an HTTP session a `SET ROLE` sticks for the following requests. Services don't use sessions, and raw SQL is limited to a single `SELECT`.
 - **MariaDB.** It has no RLS. Metric definitions, roles and the like are isolated only by filters in code. Parked for now.
 - **Cutover in one window.** Every merge to `main` is a release. So the PRs that change the tenant or the keys stay drafts and merge together, following the runbook from [#3844](https://github.com/constructorfabric/insight/pull/3844).
 
@@ -141,7 +149,7 @@ The [#3661](https://github.com/constructorfabric/insight/issues/3661) PR series,
 Still to do:
 - boundary per (tenant, source) in ~50 staging models, and Zoom dedups with the tenant ([#752](https://github.com/constructorfabric/insight/issues/752));
 - rename `insight_tenant_id` to `tenant_id`, one type for the column, non-nullable;
-- system user and tenant user, the RLS policy, analytics moved to the tenant user;
+- system and service users, a role per tenant, the RLS policy, analytics, v3-core and identity-resolution reading through the tenant's role; the data-path suite creates a role per scenario tenant;
 - drop the flag in analytics;
 - tenant in insight-v3-core;
 - raw SQL check;
@@ -150,7 +158,6 @@ Still to do:
 
 ## Open questions
 
-- Where do we store tenant user passwords, and how do we rotate them?
 - Should each tenant get its own database user with access only to its own data, and not just for reads?
   - **Upside:** it could make isolation simpler. A tenant could plug in stock Airbyte connectors, or fill the database with their own scripts, and still never see anyone else's data.
   - **Cost:** managing tenant users at the database level — creation, grants, password rotation, removal together with the tenant.
