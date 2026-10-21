@@ -55,7 +55,11 @@ name: bitbucket-cloud
 #   MINOR per ADR-0015: staging reads only the account, the e-mail, the
 #   tenant and the source, so its grain does not change; earlier per-repository
 #   rows stay in bronze, deduplicated on their own key.
-version: "7.2.0"
+# 7.3.0: the author change feed is bounded by the start date: an author whose
+#   newest commit predates it is not looked up at the vendor. MINOR per
+#   ADR-0015: the catalog is unchanged in shape and nothing stored changes
+#   meaning; republished so the request carries the bound.
+version: "7.3.0"
 # Every four hours, off the hours other connectors use: replication pods sharing
 # a slot with other connector syncs can be starved of workers, which surfaces as
 # startup and activity timeouts rather than as a connector error.
