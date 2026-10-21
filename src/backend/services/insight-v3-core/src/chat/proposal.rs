@@ -33,10 +33,22 @@ pub(crate) enum Proposal {
     /// A metric/widget/dashboard to store. Any of the three may be absent.
     Create {
         reply: String,
-        metric: Option<(String, Value)>,
-        widgets: Vec<(String, Value)>,
-        dashboard: Option<(String, Value)>,
+        metric: Option<Proposed>,
+        widgets: Vec<Proposed>,
+        dashboard: Option<Proposed>,
     },
+}
+
+/// One definition a create carries.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct Proposed {
+    /// The stored definition this replaces; none creates one.
+    #[serde(default)]
+    pub(crate) id: Option<String>,
+    /// What a reader calls it, and what the other items of the same create
+    /// name it by.
+    pub(crate) name: String,
+    pub(crate) body: Value,
 }
 
 impl Proposal {
@@ -86,10 +98,10 @@ impl Proposal {
                 };
             }
             Self::Create { metric, .. } => {
-                let Some((_, body)) = metric.as_ref() else {
+                let Some(proposed) = metric.as_ref() else {
                     return Reads::Nothing;
                 };
-                body
+                &proposed.body
             }
         };
 
@@ -122,14 +134,15 @@ impl Proposal {
                 if metric.is_none() && widgets.is_empty() && dashboard.is_none() {
                     return Err(ChatError::EmptyCreate);
                 }
+                refuse_shared_names(&widgets)?;
 
                 Self::Create {
                     reply: as_prose(reply),
                     metric: metric
-                        .map(|named| readable_metric(named, people))
+                        .map(|proposed| readable_metric(proposed, people))
                         .transpose()?,
-                    widgets: widgets.into_iter().map(NamedBody::into_pair).collect(),
-                    dashboard: dashboard.map(NamedBody::into_pair),
+                    widgets,
+                    dashboard,
                 }
             }
         })
@@ -138,10 +151,28 @@ impl Proposal {
 
 /// A proposed metric that can at least be read as one, so the repair round
 /// hears about a malformed body rather than the write path.
-fn readable_metric(named: NamedBody, _people: &People) -> Result<(String, Value), ChatError> {
-    let _: MetricQuery = serde_json::from_value(named.body.clone())?;
+fn readable_metric(proposed: Proposed, _people: &People) -> Result<Proposed, ChatError> {
+    let _: MetricQuery = serde_json::from_value(proposed.body.clone())?;
 
-    Ok(named.into_pair())
+    Ok(proposed)
+}
+
+/// Items of one create name each other by name, so two widgets sharing one
+/// would leave a board drawing either.
+fn refuse_shared_names(widgets: &[Proposed]) -> Result<(), ChatError> {
+    for (place, widget) in widgets.iter().enumerate() {
+        let shared = widgets[..place]
+            .iter()
+            .any(|earlier| earlier.name.trim() == widget.name.trim());
+        if shared {
+            return Err(ChatError::SharedName {
+                kind: "widgets",
+                name: widget.name.clone(),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 /// The reply as prose, unwrapped when the model encoded it a second time.
@@ -175,22 +206,10 @@ enum ProposalWire {
     Create {
         reply: String,
         #[serde(default)]
-        metric: Option<NamedBody>,
+        metric: Option<Proposed>,
         #[serde(default)]
-        widgets: Vec<NamedBody>,
+        widgets: Vec<Proposed>,
         #[serde(default)]
-        dashboard: Option<NamedBody>,
+        dashboard: Option<Proposed>,
     },
-}
-
-#[derive(Debug, Deserialize)]
-struct NamedBody {
-    name: String,
-    body: Value,
-}
-
-impl NamedBody {
-    fn into_pair(self) -> (String, Value) {
-        (self.name, self.body)
-    }
 }

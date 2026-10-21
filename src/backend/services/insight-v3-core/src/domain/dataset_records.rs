@@ -2,7 +2,7 @@
 //! the instant they arrived or by a field the dataset declares.
 
 use super::datasets::{self, Datasets};
-use super::definition::DefinitionName;
+use super::definition::DefinitionId;
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::dataset::read::{Form, PAYLOAD_COLUMN, read};
 use crate::store::dataset_tables::{DatasetTableError, DatasetTables, Page, Record};
@@ -35,7 +35,7 @@ impl<'a> DatasetRecords<'a> {
     /// to look in, or there is about to be none.
     pub(crate) async fn page(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         look: &Look,
     ) -> Result<Preview, PreviewError> {
         let ready = datasets::ready(self.datasets, name.as_str())

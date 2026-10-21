@@ -10,7 +10,7 @@ use tower::ServiceExt as _;
 
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::domain::folders::DefinitionStore;
+use crate::domain::definition::{DefinitionId, DefinitionKind};
 use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::domain::tags::MAX_TAGS;
 use crate::store::definitions::memory::MemoryDefinitions;
@@ -25,6 +25,16 @@ fn commits() -> Value {
 struct Harness {
     _clickhouse: Mock,
     router: Router,
+    definitions: Arc<MemoryDefinitions>,
+}
+
+/// The ids a listing answers, in its order.
+fn ids(listed: &Value) -> Value {
+    let Some(items) = listed["items"].as_array() else {
+        panic!("a listing answers items: {listed}");
+    };
+
+    items.iter().map(|item| item["id"].clone()).collect()
 }
 
 struct Answer {
@@ -37,7 +47,7 @@ impl Harness {
         Self::build(true, Arc::new(MemoryDefinitions::new()))
     }
 
-    fn build(is_admin: bool, store: Arc<dyn DefinitionStore>) -> Self {
+    fn build(is_admin: bool, store: Arc<MemoryDefinitions>) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
         let url = mock.url();
@@ -47,7 +57,7 @@ impl Harness {
                 insight_clickhouse::Client::new(insight_clickhouse::Config::new(url, "insight")),
                 People::new("identity"),
             ),
-            store,
+            store.clone(),
             ChatClient::keyless(),
             crate::store::identity::IdentityClient::fixed(is_admin),
             crate::api::Datasets::holding(url, &[("commits", commits())]),
@@ -61,6 +71,7 @@ impl Harness {
         Self {
             _clickhouse: mock,
             router,
+            definitions: store,
         }
     }
 
@@ -94,13 +105,22 @@ impl Harness {
         Answer { status, body }
     }
 
-    async fn dashboard(&self, name: &str) {
+    /// Stores a dashboard under an id the case chooses, or writes its body
+    /// again through the route when it is already there.
+    async fn dashboard(&self, id: &str) {
+        let path = format!("/v1/dashboards/{id}");
+        let body = json!({ "title": id, "widgets": [] });
+        if self.send("GET", &path, None).await.status == StatusCode::NOT_FOUND {
+            let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{id}: {error}"));
+            self.definitions
+                .seed(DefinitionKind::Dashboard, &parsed, &body)
+                .await
+                .unwrap_or_else(|error| panic!("`{id}` must store: {error}"));
+            return;
+        }
+
         let answer = self
-            .send(
-                "PUT",
-                &format!("/v1/dashboards/{name}"),
-                Some(json!({ "title": name, "widgets": [] })),
-            )
+            .send("PUT", &path, Some(json!({ "name": id, "body": body })))
             .await;
         assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.body);
     }
@@ -319,25 +339,13 @@ async fn a_rewritten_dashboard_keeps_its_tags() {
 }
 
 #[tokio::test]
-async fn a_renamed_dashboard_keeps_its_tags() {
+async fn tagging_an_id_that_cannot_be_one_is_not_found() {
     let harness = Harness::new();
-    harness.dashboard("delivery").await;
-    harness.tagged("delivery", json!(["Delivery"])).await;
 
-    let renamed = harness
-        .send(
-            "POST",
-            "/v1/dashboards/delivery/rename",
-            Some(json!({ "to": "shipping" })),
-        )
-        .await;
+    let refused = harness.tag("not%20an%20id", json!(["Delivery"])).await;
 
-    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.body);
-    assert_eq!(harness.read("shipping").await["tags"], json!(["Delivery"]));
-    assert_eq!(
-        harness.tags().await,
-        json!({ "tags": [{ "name": "Delivery", "dashboards": 1 }] })
-    );
+    assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.body);
+    assert_eq!(harness.tags().await, json!({ "tags": [] }));
 }
 
 #[tokio::test]
@@ -378,7 +386,7 @@ async fn a_dashboard_list_narrows_to_those_carrying_any_of_the_tags() {
 
     assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
     assert_eq!(
-        listed.body["names"],
+        ids(&listed.body),
         json!(["delivery", "delivery_ai", "hiring"])
     );
     assert_eq!(listed.body["total"], 3);
@@ -412,10 +420,10 @@ async fn a_list_by_tag_keeps_to_its_folder_and_its_search() {
         .listed(&format!("tag=Alpha&folder={folder}&q=hir"))
         .await;
 
-    assert_eq!(filed.body["names"], json!(["delivery", "hiring"]));
-    assert_eq!(unfiled.body["names"], json!(["delivery_ai"]));
-    assert_eq!(searched.body["names"], json!(["delivery", "delivery_ai"]));
-    assert_eq!(both.body["names"], json!(["hiring"]));
+    assert_eq!(ids(&filed.body), json!(["delivery", "hiring"]));
+    assert_eq!(ids(&unfiled.body), json!(["delivery_ai"]));
+    assert_eq!(ids(&searched.body), json!(["delivery", "delivery_ai"]));
+    assert_eq!(ids(&both.body), json!(["hiring"]));
 }
 
 #[tokio::test]
@@ -427,7 +435,7 @@ async fn a_list_by_a_tag_nobody_carries_is_empty() {
     let listed = harness.listed("tag=Omega").await;
 
     assert_eq!(listed.status, StatusCode::OK);
-    assert_eq!(listed.body["names"], json!([]));
+    assert_eq!(ids(&listed.body), json!([]));
     assert_eq!(listed.body["total"], 0);
 }
 
@@ -456,18 +464,24 @@ async fn a_list_by_a_blank_tag_is_refused() {
 #[tokio::test]
 async fn a_read_of_another_kind_names_no_tags() {
     let harness = Harness::new();
-    harness
+    let made = harness
         .send(
-            "PUT",
-            "/v1/metrics/commit_count",
+            "POST",
+            "/v1/metrics",
             Some(json!({
-                "dataset": "commits",
-                "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
+                "name": "Commit count",
+                "body": {
+                    "dataset": "commits",
+                    "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
+                }
             })),
         )
         .await;
+    let id = made.body["id"].as_str().unwrap_or_default();
 
-    let read = harness.send("GET", "/v1/metrics/commit_count", None).await;
+    let read = harness
+        .send("GET", &format!("/v1/metrics/{id}"), None)
+        .await;
 
     assert_eq!(read.status, StatusCode::OK, "{}", read.body);
     assert!(read.body.get("tags").is_none(), "{}", read.body);

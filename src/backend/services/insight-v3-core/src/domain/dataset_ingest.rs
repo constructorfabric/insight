@@ -7,7 +7,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::datasets::{DatasetStoreError, Datasets};
-use super::definition::DefinitionName;
+use super::definition::DefinitionId;
 use super::kinds::dataset::state::DatasetState;
 use crate::store::dataset_tables::{DatasetTableError, DatasetTables};
 
@@ -31,7 +31,7 @@ impl<'a> DatasetIngest<'a> {
     /// a record that reached no table was not stored.
     pub(crate) async fn receive(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         raw_data: &Value,
     ) -> Result<(), IngestError> {
         let Some(dataset) = self.datasets.get(name).await? else {

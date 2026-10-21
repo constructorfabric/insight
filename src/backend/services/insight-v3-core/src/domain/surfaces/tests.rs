@@ -8,6 +8,24 @@ use crate::store::definitions::memory::MemoryDefinitions;
 
 type R = Result<(), Box<dyn Error>>;
 
+impl Surfaces<'_> {
+    /// Stores a body under an id the test chooses, checked as a create checks
+    /// it, so the other bodies of a case can name it.
+    async fn stored_as(
+        &self,
+        kind: DefinitionKind,
+        id: &DefinitionId,
+        body: &serde_json::Value,
+    ) -> Result<(), CustomError> {
+        kinds::check(kind, body, self.definitions, self.datasets, self.over).await?;
+
+        self.definitions
+            .create(kind, id, &DefinitionLabel::of_id(id), body)
+            .await
+            .map_err(CustomError::Store)
+    }
+}
+
 struct Fixture {
     definitions: MemoryDefinitions,
     datasets: crate::store::datasets::memory::MemoryDatasets,
@@ -93,8 +111,8 @@ fn ranged(token: &str) -> crate::domain::query::time_window::WindowRequest {
         .unwrap_or_else(|error| panic!("`{token}` parses: {error}"))
 }
 
-fn name(value: &str) -> DefinitionName {
-    let Ok(parsed) = DefinitionName::parse(value) else {
+fn name(value: &str) -> DefinitionId {
+    let Ok(parsed) = DefinitionId::parse(value) else {
         panic!("should be a valid definition name: {value}");
     };
 
@@ -150,7 +168,7 @@ mod what_the_dataset_answers {
         let fixture = Fixture::new().await;
         let Err(error) = fixture
             .surfaces()
-            .put(DefinitionKind::Metric, &name("asked"), body)
+            .stored_as(DefinitionKind::Metric, &name("asked"), body)
             .await
         else {
             panic!("the dataset cannot answer this: {body}");
@@ -340,7 +358,7 @@ mod what_the_dataset_answers {
             let fixture = Fixture::new().await;
             let Err(error) = fixture
                 .surfaces()
-                .put(DefinitionKind::Metric, &name("asked"), &body)
+                .stored_as(DefinitionKind::Metric, &name("asked"), &body)
                 .await
             else {
                 panic!("the compiler would refuse this: {body}");
@@ -360,7 +378,7 @@ mod what_the_dataset_answers {
         let fixture = Fixture::new().await;
         fixture
             .surfaces()
-            .put(
+            .stored_as(
                 DefinitionKind::Metric,
                 &name("per_day"),
                 &json!({
@@ -415,11 +433,11 @@ async fn a_widget_naming_a_column_its_metric_does_not_produce_is_refused() -> R 
     let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
-        .put(DefinitionKind::Metric, &name("per-actor"), &metric_body())
+        .stored_as(DefinitionKind::Metric, &name("per-actor"), &metric_body())
         .await?;
 
     let Err(error) = surfaces
-        .put(
+        .stored_as(
             DefinitionKind::Widget,
             &name("chart"),
             &line_widget("per-actor", "lines"),
@@ -441,7 +459,7 @@ async fn a_widget_naming_a_metric_that_is_not_stored_is_refused() {
 
     let Err(error) = fixture
         .surfaces()
-        .put(
+        .stored_as(
             DefinitionKind::Widget,
             &name("chart"),
             &json!({"type": "table", "metric": "absent", "columns": []}),
@@ -459,10 +477,10 @@ async fn a_metric_a_widget_still_draws_is_kept_and_its_dependents_named() -> R {
     let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
-        .put(DefinitionKind::Metric, &name("per-actor"), &metric_body())
+        .stored_as(DefinitionKind::Metric, &name("per-actor"), &metric_body())
         .await?;
     surfaces
-        .put(
+        .stored_as(
             DefinitionKind::Widget,
             &name("chart"),
             &line_widget("per-actor", "total"),
@@ -489,17 +507,17 @@ async fn a_widget_a_dashboard_still_holds_is_kept_and_its_dependents_named() -> 
     let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
-        .put(DefinitionKind::Metric, &name("per-actor"), &metric_body())
+        .stored_as(DefinitionKind::Metric, &name("per-actor"), &metric_body())
         .await?;
     surfaces
-        .put(
+        .stored_as(
             DefinitionKind::Widget,
             &name("chart"),
             &line_widget("per-actor", "total"),
         )
         .await?;
     surfaces
-        .put(
+        .stored_as(
             DefinitionKind::Dashboard,
             &name("board"),
             &json!({"title": "Example board", "widgets": ["chart"]}),
@@ -526,7 +544,7 @@ async fn a_dashboard_holds_widgets_so_nothing_reports_it_as_a_dependent() -> R {
     let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
-        .put(
+        .stored_as(
             DefinitionKind::Dashboard,
             &name("board"),
             &json!({"title": "Example board", "widgets": []}),
@@ -563,7 +581,7 @@ async fn a_body_that_cannot_be_read_as_a_metric_is_refused_before_it_is_stored()
 
     let refusal = fixture
         .surfaces()
-        .put(
+        .stored_as(
             DefinitionKind::Metric,
             &name("broken"),
             &json!({"dataset": "commits"}),
@@ -580,7 +598,7 @@ async fn running_a_metric_whose_stored_body_is_not_a_query_reports_the_body() ->
     let fixture = Fixture::new().await;
     fixture
         .definitions
-        .put(
+        .seed(
             DefinitionKind::Metric,
             &name("broken"),
             &json!({"dataset": "commits"}),
@@ -612,10 +630,10 @@ async fn listing_names_them_in_the_order_the_store_gives() -> R {
     let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
-        .put(DefinitionKind::Metric, &name("alpha"), &metric_body())
+        .stored_as(DefinitionKind::Metric, &name("alpha"), &metric_body())
         .await?;
     surfaces
-        .put(DefinitionKind::Metric, &name("beta"), &metric_body())
+        .stored_as(DefinitionKind::Metric, &name("beta"), &metric_body())
         .await?;
 
     assert_eq!(
@@ -631,7 +649,7 @@ async fn a_stored_metric_reads_back_as_it_was_written() -> R {
     let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
-        .put(DefinitionKind::Metric, &name("per-actor"), &metric_body())
+        .stored_as(DefinitionKind::Metric, &name("per-actor"), &metric_body())
         .await?;
 
     assert_eq!(
@@ -649,7 +667,7 @@ async fn a_range_asked_of_a_metric_with_no_clock_is_refused_before_any_read() ->
     let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
-        .put(DefinitionKind::Metric, &name("clockless"), &metric_body())
+        .stored_as(DefinitionKind::Metric, &name("clockless"), &metric_body())
         .await?;
     let Err(error) = fixture
         .metric_runs()
@@ -704,10 +722,10 @@ mod the_demo_definitions {
         let surfaces = fixture.surfaces();
 
         surfaces
-            .put(DefinitionKind::Metric, &name("prs_opened"), &opened())
+            .stored_as(DefinitionKind::Metric, &name("prs_opened"), &opened())
             .await?;
         surfaces
-            .put(DefinitionKind::Metric, &name("prs_merged"), &merged())
+            .stored_as(DefinitionKind::Metric, &name("prs_merged"), &merged())
             .await?;
 
         Ok(())
@@ -718,11 +736,11 @@ mod the_demo_definitions {
         let fixture = Fixture::new().await;
         let surfaces = fixture.surfaces();
         surfaces
-            .put(DefinitionKind::Metric, &name("prs_opened"), &opened())
+            .stored_as(DefinitionKind::Metric, &name("prs_opened"), &opened())
             .await?;
 
         surfaces
-            .put(
+            .stored_as(
                 DefinitionKind::Widget,
                 &name("prs_opened_line"),
                 &json!({
@@ -742,10 +760,10 @@ mod the_demo_definitions {
         let fixture = Fixture::new().await;
         let surfaces = fixture.surfaces();
         surfaces
-            .put(DefinitionKind::Metric, &name("prs_all"), &all_time())
+            .stored_as(DefinitionKind::Metric, &name("prs_all"), &all_time())
             .await?;
         surfaces
-            .put(
+            .stored_as(
                 DefinitionKind::Widget,
                 &name("prs_all_stat"),
                 &json!({"type": "stat", "metric": "prs_all", "value": "total", "label": "Total"}),
@@ -759,7 +777,7 @@ mod the_demo_definitions {
             "items": [{"widget": "prs_all_stat"}]
         });
         surfaces
-            .put(DefinitionKind::Dashboard, &name("pull_requests"), &board)
+            .stored_as(DefinitionKind::Dashboard, &name("pull_requests"), &board)
             .await?;
 
         let stored = surfaces
@@ -784,7 +802,7 @@ async fn a_board_offering_a_window_the_server_cannot_resolve_is_not_stored() -> 
         json!({"title": "Board", "time_ranges": [30], "items": []}),
     ] {
         let refused = surfaces
-            .put(DefinitionKind::Dashboard, &name("board"), &board)
+            .stored_as(DefinitionKind::Dashboard, &name("board"), &board)
             .await;
 
         assert!(matches!(refused, Err(CustomError::Range(_))), "{board}");
@@ -799,7 +817,7 @@ async fn a_board_that_offers_no_windows_is_stored_as_it_always_was() -> R {
 
     fixture
         .surfaces()
-        .put(
+        .stored_as(
             DefinitionKind::Dashboard,
             &name("board"),
             &json!({"title": "Board", "items": []}),
@@ -850,138 +868,158 @@ async fn one_refused_body_refuses_the_whole_batch() -> R {
     Ok(())
 }
 
-#[tokio::test]
-async fn renaming_points_every_widget_that_drew_the_old_name_at_the_new_one() -> R {
-    let fixture = Fixture::new().await;
-    let surfaces = fixture.surfaces();
-    surfaces
-        .put(DefinitionKind::Metric, &name("per_actor"), &metric_body())
-        .await?;
-    surfaces
-        .put(
-            DefinitionKind::Widget,
-            &name("chart"),
-            &line_widget("per_actor", "total"),
-        )
-        .await?;
+mod creating_and_replacing {
+    use super::*;
 
-    let rewritten = surfaces
-        .rename(
-            DefinitionKind::Metric,
-            &name("per_actor"),
-            &name("by_actor"),
-        )
-        .await?;
+    fn label(value: &str) -> DefinitionLabel {
+        DefinitionLabel::parse(value).unwrap_or_else(|error| panic!("{value}: {error}"))
+    }
 
-    assert_eq!(rewritten, vec!["chart".to_owned()]);
-    let widget = surfaces.get(DefinitionKind::Widget, &name("chart")).await?;
-    assert_eq!(widget["metric"], "by_actor");
+    #[tokio::test]
+    async fn a_create_answers_a_fresh_id_and_two_of_one_name_stand_side_by_side() -> R {
+        let fixture = Fixture::new().await;
+        let surfaces = fixture.surfaces();
 
-    Ok(())
-}
+        let first = surfaces
+            .create(DefinitionKind::Metric, &label("Per actor"), &metric_body())
+            .await?;
+        let second = surfaces
+            .create(DefinitionKind::Metric, &label("Per actor"), &metric_body())
+            .await?;
 
-#[tokio::test]
-async fn a_renamed_dashboard_stays_in_its_folder() -> R {
-    use crate::domain::folders::{FolderName, Folders};
+        assert_ne!(first, second);
+        for id in [&first, &second] {
+            let stored = surfaces.read(DefinitionKind::Metric, id).await?;
+            assert_eq!(stored.name, "Per actor", "{id:?}");
+            assert_eq!(stored.body, metric_body(), "{id:?}");
+        }
+        assert_eq!(surfaces.list(DefinitionKind::Metric).await?.len(), 2);
 
-    let fixture = Fixture::new().await;
-    let surfaces = fixture.surfaces();
-    surfaces
-        .put(
-            DefinitionKind::Dashboard,
-            &name("board"),
-            &json!({"title": "Example board", "widgets": []}),
-        )
-        .await?;
-    let platform = fixture
-        .definitions
-        .create_folder(FolderName::parse("Platform")?)
-        .await?;
-    fixture
-        .definitions
-        .file(&name("board"), Some(platform.id))
-        .await?;
+        Ok(())
+    }
 
-    surfaces
-        .rename(DefinitionKind::Dashboard, &name("board"), &name("renamed"))
-        .await?;
+    #[tokio::test]
+    async fn a_create_whose_body_is_refused_stores_nothing() -> R {
+        let fixture = Fixture::new().await;
+        let surfaces = fixture.surfaces();
 
-    let placed = fixture.definitions.folder_of(&name("renamed")).await?;
-    assert_eq!(placed.map(|folder| folder.id), Some(platform.id));
+        let refused = surfaces
+            .create(
+                DefinitionKind::Widget,
+                &label("Chart"),
+                &json!({"type": "table", "metric": "absent", "columns": []}),
+            )
+            .await;
 
-    Ok(())
-}
+        assert!(
+            matches!(refused, Err(CustomError::Widget(_))),
+            "{refused:?}"
+        );
+        assert!(surfaces.list(DefinitionKind::Widget).await?.is_empty());
 
-#[tokio::test]
-async fn a_renamed_dashboard_keeps_its_tags() -> R {
-    use crate::domain::tags::{TagSet, Tags};
+        Ok(())
+    }
 
-    let fixture = Fixture::new().await;
-    let surfaces = fixture.surfaces();
-    surfaces
-        .put(
-            DefinitionKind::Dashboard,
-            &name("board"),
-            &json!({"title": "Example board", "widgets": []}),
-        )
-        .await?;
-    fixture
-        .definitions
-        .set_tags(
-            &name("board"),
-            &TagSet::parse(&["Delivery".to_owned(), "Platform".to_owned()])?,
-        )
-        .await?;
+    #[tokio::test]
+    async fn a_replace_changes_the_name_and_the_body_under_the_same_id() -> R {
+        let fixture = Fixture::new().await;
+        let surfaces = fixture.surfaces();
+        let id = surfaces
+            .create(DefinitionKind::Metric, &label("Before"), &metric_body())
+            .await?;
+        let narrower = json!({
+            "dataset": "commits",
+            "fields": [{"field": "actor", "type": "string", "as_name": "actor"}]
+        });
 
-    surfaces
-        .rename(DefinitionKind::Dashboard, &name("board"), &name("renamed"))
-        .await?;
-
-    let carried: Vec<String> = fixture
-        .definitions
-        .tags_of(&name("renamed"))
-        .await?
-        .into_iter()
-        .map(|tag| tag.as_str().to_owned())
-        .collect();
-    assert_eq!(carried, ["Delivery", "Platform"]);
-    assert_eq!(fixture.definitions.list_tags().await?.len(), 2);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_renamed_dashboard_keeps_its_place_on_every_pinned_list() -> R {
-    use crate::domain::pins::Pins;
-
-    let fixture = Fixture::new().await;
-    let surfaces = fixture.surfaces();
-    let people = [uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2)];
-    for board in ["alpha", "board", "gamma"] {
         surfaces
-            .put(
-                DefinitionKind::Dashboard,
-                &name(board),
-                &json!({"title": "Example board", "widgets": []}),
+            .replace(DefinitionKind::Metric, &id, &label("After"), &narrower)
+            .await?;
+
+        let stored = surfaces.read(DefinitionKind::Metric, &id).await?;
+        assert_eq!((stored.name.as_str(), stored.body), ("After", narrower));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_replace_of_an_id_nobody_holds_is_not_found_and_stores_nothing() -> R {
+        let fixture = Fixture::new().await;
+        let surfaces = fixture.surfaces();
+
+        let refused = surfaces
+            .replace(
+                DefinitionKind::Metric,
+                &name("nowhere"),
+                &label("Nowhere"),
+                &metric_body(),
+            )
+            .await;
+
+        assert!(
+            matches!(
+                &refused,
+                Err(CustomError::NotFound { kind: DefinitionKind::Metric, id }) if id == "nowhere"
+            ),
+            "{refused:?}"
+        );
+        assert!(surfaces.list(DefinitionKind::Metric).await?.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_dependent_is_reported_by_kind_id_and_name() -> R {
+        let fixture = Fixture::new().await;
+        let surfaces = fixture.surfaces();
+        let metric = surfaces
+            .create(DefinitionKind::Metric, &label("Per actor"), &metric_body())
+            .await?;
+        let widget = surfaces
+            .create(
+                DefinitionKind::Widget,
+                &label("Actor chart"),
+                &line_widget(metric.as_str(), "total"),
             )
             .await?;
-        for person in people {
-            fixture.definitions.pin(person, &name(board)).await?;
-        }
-    }
 
-    surfaces
-        .rename(DefinitionKind::Dashboard, &name("board"), &name("renamed"))
-        .await?;
+        let holders = surfaces
+            .dependents_of(DefinitionKind::Metric, &metric)
+            .await?;
 
-    for person in people {
         assert_eq!(
-            fixture.definitions.pins_of(person).await?,
-            ["alpha", "renamed", "gamma"]
+            holders,
+            [Holder {
+                kind: DefinitionKind::Widget,
+                id: widget.into_string(),
+                name: "Actor chart".to_owned(),
+            }]
         );
+
+        Ok(())
     }
 
-    Ok(())
+    #[tokio::test]
+    async fn laying_a_board_out_keeps_its_name() -> R {
+        let fixture = Fixture::new().await;
+        let surfaces = fixture.surfaces();
+        let board = surfaces
+            .create(
+                DefinitionKind::Dashboard,
+                &label("Team board"),
+                &json!({"title": "Team", "widgets": []}),
+            )
+            .await?;
+        let items: Vec<Item> = serde_json::from_value(json!([{ "heading": "Top" }]))?;
+
+        surfaces.arrange(&board, &items).await?;
+
+        let stored = surfaces.read(DefinitionKind::Dashboard, &board).await?;
+        assert_eq!(stored.name, "Team board");
+        assert_eq!(stored.body["items"], json!([{ "heading": "Top" }]));
+
+        Ok(())
+    }
 }
 
 mod duplicating_a_dashboard {
@@ -999,7 +1037,7 @@ mod duplicating_a_dashboard {
     async fn filed_tagged_and_pinned(fixture: &Fixture) -> Result<FolderName, Box<dyn Error>> {
         fixture
             .surfaces()
-            .put(DefinitionKind::Dashboard, &name("board"), &board())
+            .stored_as(DefinitionKind::Dashboard, &name("board"), &board())
             .await?;
         let platform = fixture
             .definitions
@@ -1039,17 +1077,22 @@ mod duplicating_a_dashboard {
             .collect())
     }
 
+    fn copy_name() -> DefinitionLabel {
+        DefinitionLabel::parse("Board copy").unwrap_or_else(|error| panic!("{error}"))
+    }
+
     #[tokio::test]
     async fn the_copy_holds_the_body_the_folder_and_the_tags_and_the_source_keeps_them() -> R {
         let fixture = Fixture::new().await;
         let folder = filed_tagged_and_pinned(&fixture).await?;
 
-        fixture
+        let copy = fixture
             .surfaces()
-            .duplicate(&name("board"), &name("board-copy"))
+            .duplicate(&name("board"), &copy_name())
             .await?;
 
-        for held in ["board", "board-copy"] {
+        assert_ne!(copy, name("board"), "the copy is given an id of its own");
+        for held in ["board", copy.as_str()] {
             let body = fixture
                 .surfaces()
                 .get(DefinitionKind::Dashboard, &name(held))
@@ -1062,6 +1105,12 @@ mod duplicating_a_dashboard {
             );
             assert_eq!(carried(&fixture, held).await?, ["Delivery", "Platform"]);
         }
+        let named = fixture
+            .surfaces()
+            .read(DefinitionKind::Dashboard, &copy)
+            .await?
+            .name;
+        assert_eq!(named, "Board copy");
         Ok(())
     }
 
@@ -1070,55 +1119,23 @@ mod duplicating_a_dashboard {
         let fixture = Fixture::new().await;
         filed_tagged_and_pinned(&fixture).await?;
 
-        fixture
+        let copy = fixture
             .surfaces()
-            .duplicate(&name("board"), &name("board-copy"))
+            .duplicate(&name("board"), &copy_name())
             .await?;
 
         fixture
             .surfaces()
-            .get(DefinitionKind::Dashboard, &name("board-copy"))
+            .get(DefinitionKind::Dashboard, &copy)
             .await?;
-        assert_eq!(fixture.definitions.pins_of(ANNA).await?, ["board"]);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn a_name_already_held_is_refused_and_nothing_is_written() -> R {
-        let fixture = Fixture::new().await;
-        filed_tagged_and_pinned(&fixture).await?;
-        fixture
-            .surfaces()
-            .put(
-                DefinitionKind::Dashboard,
-                &name("taken"),
-                &json!({"title": "Taken", "widgets": []}),
-            )
-            .await?;
-
-        for onto in ["taken", "board"] {
-            let refused = fixture
-                .surfaces()
-                .duplicate(&name("board"), &name(onto))
-                .await;
-
-            assert!(
-                matches!(
-                    &refused,
-                    Err(CustomError::Store(DefinitionStoreError::NameTaken(held))) if held == onto
-                ),
-                "{onto}: {refused:?}"
-            );
-        }
-        assert_eq!(
-            fixture
-                .surfaces()
-                .get(DefinitionKind::Dashboard, &name("taken"))
-                .await?,
-            json!({"title": "Taken", "widgets": []})
-        );
-        assert_eq!(placed(&fixture, "taken").await?, None);
-        assert!(carried(&fixture, "taken").await?.is_empty());
+        let pinned: Vec<String> = fixture
+            .definitions
+            .pins_of(ANNA)
+            .await?
+            .into_iter()
+            .map(|listed| listed.id)
+            .collect();
+        assert_eq!(pinned, ["board"]);
         Ok(())
     }
 
@@ -1128,13 +1145,13 @@ mod duplicating_a_dashboard {
 
         let refused = fixture
             .surfaces()
-            .duplicate(&name("nowhere"), &name("nowhere-copy"))
+            .duplicate(&name("nowhere"), &copy_name())
             .await;
 
         assert!(
             matches!(
                 &refused,
-                Err(CustomError::NotFound { kind: DefinitionKind::Dashboard, name }) if name == "nowhere"
+                Err(CustomError::NotFound { kind: DefinitionKind::Dashboard, id }) if id == "nowhere"
             ),
             "{refused:?}"
         );
@@ -1147,123 +1164,6 @@ mod duplicating_a_dashboard {
         );
         Ok(())
     }
-}
-
-#[tokio::test]
-async fn a_rename_onto_a_name_someone_holds_is_refused_and_writes_nothing() -> R {
-    let fixture = Fixture::new().await;
-    let surfaces = fixture.surfaces();
-    for held in ["per_actor", "by_actor"] {
-        surfaces
-            .put(DefinitionKind::Metric, &name(held), &metric_body())
-            .await?;
-    }
-
-    let refusal = surfaces
-        .rename(
-            DefinitionKind::Metric,
-            &name("per_actor"),
-            &name("by_actor"),
-        )
-        .await;
-
-    assert!(
-        matches!(
-            refusal,
-            Err(CustomError::Store(DefinitionStoreError::NameTaken(_)))
-        ),
-        "{refusal:?}"
-    );
-    surfaces
-        .get(DefinitionKind::Metric, &name("per_actor"))
-        .await?;
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn renaming_a_definition_to_the_name_it_already_has_changes_nothing() -> R {
-    let fixture = Fixture::new().await;
-    let surfaces = fixture.surfaces();
-    surfaces
-        .put(DefinitionKind::Metric, &name("per_actor"), &metric_body())
-        .await?;
-    surfaces
-        .put(
-            DefinitionKind::Widget,
-            &name("chart"),
-            &line_widget("per_actor", "total"),
-        )
-        .await?;
-
-    let rewritten = surfaces
-        .rename(
-            DefinitionKind::Metric,
-            &name("per_actor"),
-            &name("per_actor"),
-        )
-        .await?;
-
-    assert!(rewritten.is_empty(), "{rewritten:?}");
-    assert_eq!(
-        surfaces
-            .get(DefinitionKind::Metric, &name("per_actor"))
-            .await?,
-        metric_body()
-    );
-    let widget = surfaces.get(DefinitionKind::Widget, &name("chart")).await?;
-    assert_eq!(widget["metric"], "per_actor");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn renaming_a_widget_points_every_board_that_held_it_at_the_new_name() -> R {
-    let fixture = Fixture::new().await;
-    let surfaces = fixture.surfaces();
-    surfaces
-        .put(DefinitionKind::Metric, &name("per_actor"), &metric_body())
-        .await?;
-    for held in ["old", "kept"] {
-        surfaces
-            .put(
-                DefinitionKind::Widget,
-                &name(held),
-                &line_widget("per_actor", "total"),
-            )
-            .await?;
-    }
-    surfaces
-        .put(
-            DefinitionKind::Dashboard,
-            &name("listed"),
-            &json!({ "title": "b", "items": [{ "heading": "h" }, { "widget": "old" }] }),
-        )
-        .await?;
-    surfaces
-        .put(
-            DefinitionKind::Dashboard,
-            &name("shorthand"),
-            &json!({ "title": "b", "widgets": ["old", "kept"] }),
-        )
-        .await?;
-
-    let mut rewritten = surfaces
-        .rename(DefinitionKind::Widget, &name("old"), &name("new"))
-        .await?;
-    rewritten.sort();
-
-    assert_eq!(rewritten, vec!["listed".to_owned(), "shorthand".to_owned()]);
-    let listed = surfaces
-        .get(DefinitionKind::Dashboard, &name("listed"))
-        .await?;
-    assert_eq!(listed["items"][1]["widget"], "new");
-    let shorthand = surfaces
-        .get(DefinitionKind::Dashboard, &name("shorthand"))
-        .await?;
-    assert_eq!(shorthand["widgets"], json!(["new", "kept"]));
-
-    Ok(())
 }
 
 /// A metric reading a dataset this stand never declared.
@@ -1288,7 +1188,7 @@ async fn running_a_metric_over_a_dataset_nobody_declared_says_so() -> R {
     let fixture = Fixture::new().await;
     fixture
         .definitions
-        .put(DefinitionKind::Metric, &name("lines"), &over_a_dataset())
+        .seed(DefinitionKind::Metric, &name("lines"), &over_a_dataset())
         .await?;
 
     let Err(error) = fixture.metric_runs().run(&name("lines"), &legacy()).await else {
@@ -1308,7 +1208,7 @@ async fn running_a_metric_over_a_dataset_still_being_made_says_so() -> R {
     let fixture = Fixture::new().await;
     fixture
         .definitions
-        .put(DefinitionKind::Metric, &name("lines"), &over_a_dataset())
+        .seed(DefinitionKind::Metric, &name("lines"), &over_a_dataset())
         .await?;
     fixture
         .datasets

@@ -16,12 +16,16 @@ fn the_document_covers_every_route_this_service_serves() {
         "/v1/datasets/{name}/records",
         "/v1/datasets/{name}/dependents",
         "/v1/metrics",
-        "/v1/metrics/{name}",
-        "/v1/metrics/{name}/run",
-        "/v1/metrics/{name}/drilldown",
-        "/v1/metrics/{name}/rename",
+        "/v1/metrics/{id}",
+        "/v1/metrics/{id}/run",
+        "/v1/metrics/{id}/drilldown",
+        "/v1/metrics/{id}/dependents",
         "/v1/widgets",
         "/v1/dashboards",
+        "/v1/dashboards/{id}/duplicate",
+        "/v1/dashboards/{id}/folder",
+        "/v1/dashboards/{id}/tags",
+        "/v1/pins/{dashboard_id}",
         "/v1/chat",
     ] {
         assert!(
@@ -30,5 +34,9 @@ fn the_document_covers_every_route_this_service_serves() {
         );
     }
 
+    assert!(
+        !paths.iter().any(|path| path.ends_with("/rename")),
+        "no definition is renamed by route: {paths:?}"
+    );
     assert_eq!(document.info.title, "Insight v3 Core API");
 }

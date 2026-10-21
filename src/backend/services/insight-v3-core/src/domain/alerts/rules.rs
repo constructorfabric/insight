@@ -16,7 +16,7 @@ use super::rule::{
 };
 use super::scalar::Outcome;
 use super::schedule::{AlertSchedule, Scheduled};
-use crate::domain::definition::{DefinitionName, Page};
+use crate::domain::definition::{DefinitionId, Page};
 use crate::domain::metric_run::{Columns, MetricRuns};
 use crate::domain::query::time_window::WindowRequest;
 use crate::domain::surfaces::CustomError;
@@ -26,7 +26,7 @@ use crate::domain::surfaces::CustomError;
 #[derive(Debug, Deserialize, JsonSchema, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PreviewDraft {
-    /// The stored metric to check.
+    /// The id of the stored metric to check.
     pub(crate) metric: String,
     /// The window the metric is run over, as a rule names it. Omit it to
     /// run the metric unbounded.
@@ -127,7 +127,7 @@ impl<'a> AlertRules<'a> {
     /// The draft as a rule, its condition typed against the columns its
     /// metric answers.
     async fn checked(&self, draft: &RuleDraft) -> Result<RuleSpec, AlertsError> {
-        let metric = DefinitionName::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
+        let metric = DefinitionId::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
         let columns = self.columns_of(&metric).await?;
 
         Ok(RuleSpec::parse(
@@ -141,7 +141,7 @@ impl<'a> AlertRules<'a> {
     /// What a check of the draft would find if it ran now: the metric run as
     /// a check runs it and the condition judged as a check judges it.
     pub(crate) async fn preview(&self, draft: &PreviewDraft) -> Result<Outcome, AlertsError> {
-        let metric = DefinitionName::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
+        let metric = DefinitionId::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
         let columns = self.columns_of(&metric).await?;
         let condition =
             Condition::parse(&draft.condition, &columns.kinds).map_err(RuleError::from)?;
@@ -161,7 +161,7 @@ impl<'a> AlertRules<'a> {
         .await)
     }
 
-    async fn columns_of(&self, metric: &DefinitionName) -> Result<Columns, AlertsError> {
+    async fn columns_of(&self, metric: &DefinitionId) -> Result<Columns, AlertsError> {
         self.runs
             .columns(metric)
             .await

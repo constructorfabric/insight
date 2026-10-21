@@ -1,11 +1,11 @@
 //! Metric, widget and dashboard definitions.
 //!
 //! These live in `MariaDB`, not in `ClickHouse` with the data they describe.
-//! They are a few hundred rows read by name and edited in place by whoever is
+//! They are a few hundred rows read by id and edited in place by whoever is
 //! asking the assistant for a change — which is what a row store is for, and
 //! what a column store is not. On `ClickHouse` a change meant inserting a new
 //! version and reading with `FINAL`, nothing stopped two rows claiming one
-//! name, and a create that failed halfway left what it had already written
+//! key, and a create that failed halfway left what it had already written
 //! behind with nothing to roll it back with.
 
 pub(crate) mod arriving;
@@ -17,8 +17,10 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use thiserror::Error;
+use uuid::Uuid;
 
-const MAX_NAME_CHARS: usize = 128;
+const MAX_ID_CHARS: usize = 128;
+const MAX_LABEL_CHARS: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -64,30 +66,70 @@ impl DefinitionKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DefinitionName(String);
+pub(crate) struct DefinitionId(String);
 
-impl DefinitionName {
-    /// The same rule as [`DefinitionName::parse`], for a caller that can only
+impl DefinitionId {
+    /// The same rule as [`DefinitionId::parse`], for a caller that can only
     /// be given a pattern - the chat tool schema the model answers in.
     pub(crate) const PATTERN: &'static str = "^[A-Za-z0-9_-]{1,128}$";
 
     pub(crate) fn parse(value: &str) -> Result<Self, DefinitionError> {
-        if value.is_empty() || value.chars().count() > MAX_NAME_CHARS {
-            return Err(DefinitionError::Name);
+        if value.is_empty() || value.chars().count() > MAX_ID_CHARS {
+            return Err(DefinitionError::Id);
         }
 
         if !value
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
         {
-            return Err(DefinitionError::Name);
+            return Err(DefinitionError::Id);
         }
 
         Ok(Self(value.to_owned()))
     }
 
+    /// A fresh id for a definition being created.
+    ///
+    /// INVARIANT: a hyphenated UUID satisfies [`DefinitionId::PATTERN`], so a
+    /// generated id and an id carried over from an older name share one rule.
+    pub(crate) fn generate() -> Self {
+        Self(Uuid::now_v7().hyphenated().to_string())
+    }
+
     pub(crate) fn into_string(self) -> String {
         self.0
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// What a reader calls a definition. Two definitions may share one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DefinitionLabel(String);
+
+impl DefinitionLabel {
+    pub(crate) fn parse(value: &str) -> Result<Self, DefinitionError> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.chars().count() > MAX_LABEL_CHARS {
+            return Err(DefinitionError::Label);
+        }
+        if trimmed.chars().any(char::is_control) {
+            return Err(DefinitionError::Label);
+        }
+
+        Ok(Self(trimmed.to_owned()))
+    }
+
+    /// An id read as a name, which is what a definition stored before names
+    /// were labels is called.
+    ///
+    /// INVARIANT: every id satisfies the label rule - at most as long, never
+    /// blank, no control characters - so this cannot make a label `parse`
+    /// would refuse.
+    pub(crate) fn of_id(id: &DefinitionId) -> Self {
+        Self(id.as_str().to_owned())
     }
 
     pub(crate) fn as_str(&self) -> &str {
@@ -128,7 +170,9 @@ impl Page {
     }
 }
 
-/// One page of a catalogue, and how many definitions it is a page of.
+/// One page of dataset names, and how many datasets it is a page of.
+///
+/// A dataset's name is its identity, so its catalogue is names alone.
 #[derive(Debug)]
 pub(crate) struct NamePage {
     pub(crate) names: Vec<String>,
@@ -136,51 +180,72 @@ pub(crate) struct NamePage {
     pub(crate) total: u64,
 }
 
+/// One definition in a catalogue: what addresses it and what it is called.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Listed {
+    pub(crate) id: String,
+    pub(crate) name: String,
+}
+
+/// One page of a catalogue, and how many definitions it is a page of.
+#[derive(Debug)]
+pub(crate) struct ListedPage {
+    pub(crate) items: Vec<Listed>,
+    /// Every match, not the page — so a reader can say what is behind it.
+    pub(crate) total: u64,
+}
+
+/// A stored definition as a reader is given it.
+#[derive(Debug, Clone)]
+pub(crate) struct StoredDefinition {
+    pub(crate) name: String,
+    pub(crate) body: serde_json::Value,
+    pub(crate) updated_at: DateTime<Utc>,
+}
+
 /// One write in a batch.
-///
-/// A rename is a put under the new name, a delete of the old one, and a put
-/// per dependent that pointed at it - which is only a rename if all of them
-/// land together.
 #[derive(Debug)]
 pub(crate) enum Change {
-    Put(DefinitionKind, DefinitionName, serde_json::Value),
     /// A write that refuses to replace anything.
-    ///
-    /// A rename gives a definition a name nobody else holds. Asking first and
-    /// upserting after leaves a window where another writer takes that name in
-    /// between and the rename overwrites them; the store refuses instead.
-    Create(DefinitionKind, DefinitionName, serde_json::Value),
-    Delete(DefinitionKind, DefinitionName),
+    Create(
+        DefinitionKind,
+        DefinitionId,
+        DefinitionLabel,
+        serde_json::Value,
+    ),
+    /// A write that refuses to create anything.
+    Replace(
+        DefinitionKind,
+        DefinitionId,
+        DefinitionLabel,
+        serde_json::Value,
+    ),
     CarryFolder {
-        from: DefinitionName,
-        to: DefinitionName,
+        from: DefinitionId,
+        to: DefinitionId,
     },
     CarryTags {
-        from: DefinitionName,
-        to: DefinitionName,
-    },
-    CarryPins {
-        from: DefinitionName,
-        to: DefinitionName,
+        from: DefinitionId,
+        to: DefinitionId,
     },
 }
 
-/// A definition as it stands: what kind it is, what it is called, and what it
+/// A definition as it stands: what kind it is, what addresses it, and what it
 /// holds.
 #[derive(Debug, Clone)]
 pub(crate) struct Definition {
     pub(crate) kind: DefinitionKind,
-    pub(crate) name: DefinitionName,
+    pub(crate) id: DefinitionId,
     pub(crate) body: serde_json::Value,
 }
 
 impl Definition {
-    pub(crate) fn new(kind: DefinitionKind, name: DefinitionName, body: serde_json::Value) -> Self {
-        Self { kind, name, body }
+    pub(crate) fn new(kind: DefinitionKind, id: DefinitionId, body: serde_json::Value) -> Self {
+        Self { kind, id, body }
     }
 }
 
-/// Reading one definition by name, which is all a kind's own rules may do.
+/// Reading one definition by id, which is all a kind's own rules may do.
 ///
 /// A rule that could write would write mid-check, before the batch it belongs
 /// to has been accepted.
@@ -189,7 +254,7 @@ pub(crate) trait Lookup: Send + Sync + fmt::Debug {
     async fn get(
         &self,
         kind: DefinitionKind,
-        name: &DefinitionName,
+        id: &DefinitionId,
     ) -> Result<Option<serde_json::Value>, DefinitionStoreError>;
 }
 
@@ -198,21 +263,39 @@ pub(crate) trait Lookup: Send + Sync + fmt::Debug {
 /// answer a database's wire protocol.
 #[async_trait]
 pub(crate) trait Definitions: Lookup {
-    /// Stores `body` under `name`, replacing whatever that name held.
-    async fn put(
+    async fn read(
         &self,
         kind: DefinitionKind,
-        name: &DefinitionName,
+        id: &DefinitionId,
+    ) -> Result<Option<StoredDefinition>, DefinitionStoreError>;
+
+    /// Stores a new definition; an id already held is
+    /// [`DefinitionStoreError::IdTaken`].
+    async fn create(
+        &self,
+        kind: DefinitionKind,
+        id: &DefinitionId,
+        name: &DefinitionLabel,
         body: &serde_json::Value,
     ) -> Result<(), DefinitionStoreError>;
 
-    /// Every name of this kind.
+    /// Replaces what an id holds, reporting whether there was one.
+    async fn replace(
+        &self,
+        kind: DefinitionKind,
+        id: &DefinitionId,
+        name: &DefinitionLabel,
+        body: &serde_json::Value,
+    ) -> Result<bool, DefinitionStoreError>;
+
+    /// Every id of this kind.
     ///
     /// For the dependency scans, which have to see the definitions a page
     /// would leave out.
     async fn list(&self, kind: DefinitionKind) -> Result<Vec<String>, DefinitionStoreError>;
 
-    /// One page of the names of this kind whose name or body holds `needle`.
+    /// One page of the definitions of this kind whose name or body holds
+    /// `needle`, ordered by name.
     ///
     /// The body too, because "which metrics read `class_git_commits`" is the
     /// question a catalogue of a few hundred definitions is actually asked,
@@ -223,19 +306,13 @@ pub(crate) trait Definitions: Lookup {
         kind: DefinitionKind,
         needle: &str,
         page: Page,
-    ) -> Result<NamePage, DefinitionStoreError>;
-
-    async fn updated_at(
-        &self,
-        kind: DefinitionKind,
-        name: &DefinitionName,
-    ) -> Result<Option<DateTime<Utc>>, DefinitionStoreError>;
+    ) -> Result<ListedPage, DefinitionStoreError>;
 
     /// Removes the definition, reporting whether there was one.
     async fn delete(
         &self,
         kind: DefinitionKind,
-        name: &DefinitionName,
+        id: &DefinitionId,
     ) -> Result<bool, DefinitionStoreError>;
 
     /// Applies every change or none of them.
@@ -248,8 +325,12 @@ pub(crate) trait Definitions: Lookup {
 
 #[derive(Clone, Copy, Debug, Error)]
 pub(crate) enum DefinitionError {
-    #[error("definition names use letters, digits, underscore and dash, up to 128 characters")]
-    Name,
+    #[error("identifiers use letters, digits, underscore and dash, up to 128 characters")]
+    Id,
+    #[error(
+        "a name is 1 to 128 characters with no control characters, not counting the spaces around it"
+    )]
+    Label,
 }
 
 #[derive(Clone, Copy, Debug, Error)]
@@ -263,7 +344,9 @@ pub(crate) enum DefinitionStoreError {
     #[error("definition store operation failed")]
     Database(#[from] sea_orm::DbErr),
     #[error("`{0}` is already taken")]
-    NameTaken(String),
+    IdTaken(String),
+    #[error("`{0}` does not exist")]
+    Missing(String),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }

@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::condition::{Condition, evaluate};
 use super::rule::{AlertRule, AlertStore, AlertStoreError, Recorded, Recording};
 use super::scalar::{Outcome, UnknownReason};
-use crate::domain::definition::DefinitionName;
+use crate::domain::definition::DefinitionId;
 use crate::domain::metric_run::MetricRuns;
 use crate::domain::query::metric_query::MetricRunError;
 use crate::domain::query::time_window::WindowRequest;
@@ -118,7 +118,7 @@ impl<'a> Evaluator<'a> {
 pub(crate) async fn observe(
     runs: &MetricRuns<'_>,
     label: &str,
-    metric: &DefinitionName,
+    metric: &DefinitionId,
     window: &WindowRequest,
     condition: &Condition,
     context: &[String],

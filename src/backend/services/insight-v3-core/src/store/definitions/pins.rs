@@ -3,15 +3,16 @@ use sea_orm::{ConnectionTrait as _, DatabaseTransaction, FromQueryResult, Transa
 use uuid::Uuid;
 
 use super::folders::{COUNT_DASHBOARD, statement};
-use super::{MariaDefinitions, TotalRow};
-use crate::domain::definition::DefinitionName;
+use super::{ListedRow, MariaDefinitions, TotalRow};
+use crate::domain::definition::{DefinitionId, Listed};
 use crate::domain::pins::{MAX_PINS, PinError, Pins};
 
 const LOCK_PINS: &str = "SELECT id FROM pins_lock WHERE id = 1 FOR UPDATE";
 
-const PINS_OF: &str = "SELECT dashboard FROM dashboard_pins
-WHERE person = ?
-ORDER BY pinned_at, dashboard";
+const PINS_OF: &str = "SELECT dashboard_pins.dashboard AS id, dashboards.name
+FROM dashboard_pins JOIN dashboards ON dashboards.id = dashboard_pins.dashboard
+WHERE dashboard_pins.person = ?
+ORDER BY dashboard_pins.pinned_at, dashboard_pins.dashboard";
 
 const IS_PINNED: &str =
     "SELECT COUNT(*) AS total FROM dashboard_pins WHERE person = ? AND dashboard = ?";
@@ -22,11 +23,6 @@ const INSERT_PIN: &str = "INSERT INTO dashboard_pins (person, dashboard, pinned_
 VALUES (?, ?, UTC_TIMESTAMP(6))";
 
 const DELETE_PIN: &str = "DELETE FROM dashboard_pins WHERE person = ? AND dashboard = ?";
-
-#[derive(Debug, FromQueryResult)]
-struct PinRow {
-    dashboard: String,
-}
 
 async fn counted(
     transaction: &DatabaseTransaction,
@@ -39,21 +35,22 @@ async fn counted(
         .map_or(0, |row| row.total))
 }
 
-fn not_found(dashboard: &DefinitionName) -> PinError {
+fn not_found(dashboard: &DefinitionId) -> PinError {
     PinError::DashboardNotFound(dashboard.as_str().to_owned())
 }
 
 #[async_trait]
 impl Pins for MariaDefinitions {
-    async fn pins_of(&self, person: Uuid) -> Result<Vec<String>, PinError> {
-        let rows = PinRow::find_by_statement(statement(PINS_OF, vec![person.to_string().into()]))
-            .all(&self.db)
-            .await?;
+    async fn pins_of(&self, person: Uuid) -> Result<Vec<Listed>, PinError> {
+        let rows =
+            ListedRow::find_by_statement(statement(PINS_OF, vec![person.to_string().into()]))
+                .all(&self.db)
+                .await?;
 
-        Ok(rows.into_iter().map(|row| row.dashboard).collect())
+        Ok(rows.into_iter().map(ListedRow::into_listed).collect())
     }
 
-    async fn pin(&self, person: Uuid, dashboard: &DefinitionName) -> Result<(), PinError> {
+    async fn pin(&self, person: Uuid, dashboard: &DefinitionId) -> Result<(), PinError> {
         let transaction = self.db.begin().await?;
         transaction
             .query_all_raw(statement(LOCK_PINS, Vec::new()))
@@ -89,7 +86,7 @@ impl Pins for MariaDefinitions {
         Ok(())
     }
 
-    async fn unpin(&self, person: Uuid, dashboard: &DefinitionName) -> Result<(), PinError> {
+    async fn unpin(&self, person: Uuid, dashboard: &DefinitionId) -> Result<(), PinError> {
         let removed = self
             .db
             .execute_raw(statement(

@@ -279,7 +279,7 @@ mod tests {
     use super::*;
     use crate::domain::alerts::condition::Condition;
     use crate::domain::alerts::rule::{AlertName, NotificationStatus};
-    use crate::domain::definition::DefinitionName;
+    use crate::domain::definition::DefinitionId;
     use crate::domain::query::metric_query::ColumnKind;
 
     fn notification(condition: &Value, witness: Witness) -> Notification {
@@ -295,7 +295,7 @@ mod tests {
             rule_revision: 3,
             rule_name: AlertName::parse("Too many open PRs")
                 .unwrap_or_else(|error| panic!("{error}")),
-            metric: DefinitionName::parse("prs-open").unwrap_or_else(|error| panic!("{error}")),
+            metric: DefinitionId::parse("prs-open").unwrap_or_else(|error| panic!("{error}")),
             condition: Condition::parse(condition, &columns)
                 .unwrap_or_else(|error| panic!("{error}")),
             context_columns: Vec::new(),

@@ -20,7 +20,7 @@ use crate::domain::alerts::rule::{
     EvaluationState, Notification, NotificationStatus, Recorded, Recording, RuleSpec, Write,
 };
 use crate::domain::alerts::{Outcome, UnknownReason, last_valid_breached, transition};
-use crate::domain::definition::{DefinitionName, Page};
+use crate::domain::definition::{DefinitionId, Page};
 use crate::store::like_escaped;
 
 /// The most of a provider's words a row keeps: the width of the columns.
@@ -777,8 +777,7 @@ impl RuleRow {
             id: parse_id(&self.id)?,
             spec: RuleSpec {
                 name: AlertName::from_row(self.name),
-                metric: DefinitionName::parse(&self.metric)
-                    .map_err(|_| unreadable(&self.metric))?,
+                metric: DefinitionId::parse(&self.metric).map_err(|_| unreadable(&self.metric))?,
                 condition,
                 context_columns: parse_context_columns(self.context_columns.as_deref())?,
                 range: self.range_code,
@@ -826,7 +825,7 @@ impl NotificationRow {
             rule_id: parse_id(&self.rule_id)?,
             rule_revision: self.rule_revision,
             rule_name: AlertName::from_row(self.rule_name),
-            metric: DefinitionName::parse(&self.metric).map_err(|_| unreadable(&self.metric))?,
+            metric: DefinitionId::parse(&self.metric).map_err(|_| unreadable(&self.metric))?,
             condition: parse_condition(&self.rule_condition)?,
             context_columns: parse_context_columns(self.context_columns.as_deref())?,
             witness: parse_witness(&self.witness)?,
@@ -855,7 +854,7 @@ impl SummaryRow {
         Ok(AlertSummary {
             id: parse_id(&self.id)?,
             name: AlertName::from_row(self.name),
-            metric: DefinitionName::parse(&self.metric).map_err(|_| unreadable(&self.metric))?,
+            metric: DefinitionId::parse(&self.metric).map_err(|_| unreadable(&self.metric))?,
             enabled: self.enabled,
         })
     }

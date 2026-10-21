@@ -3,7 +3,7 @@
 use chrono::Utc;
 
 use super::datasets::{self, Datasets};
-use super::definition::{DefinitionKind, DefinitionName, Lookup};
+use super::definition::{DefinitionId, DefinitionKind, Lookup};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::metric::answerable::{self, EffectiveClock};
 use super::query::metric_query::over::Over;
@@ -94,20 +94,20 @@ impl<'a> MetricRuns<'a> {
     }
 
     /// The stored body of a metric, or the refusal that there is none.
-    async fn body_of(&self, name: &DefinitionName) -> Result<serde_json::Value, CustomError> {
+    async fn body_of(&self, id: &DefinitionId) -> Result<serde_json::Value, CustomError> {
         self.definitions
-            .get(DefinitionKind::Metric, name)
+            .get(DefinitionKind::Metric, id)
             .await
             .map_err(CustomError::Store)?
             .ok_or_else(|| CustomError::NotFound {
                 kind: DefinitionKind::Metric,
-                name: name.as_str().to_owned(),
+                id: id.as_str().to_owned(),
             })
     }
 
     /// The columns a stored metric answers, from its definition and its
     /// dataset's declaration. Nothing is run.
-    pub(crate) async fn columns(&self, name: &DefinitionName) -> Result<Columns, CustomError> {
+    pub(crate) async fn columns(&self, name: &DefinitionId) -> Result<Columns, CustomError> {
         let body = self.body_of(name).await?;
         let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
 
@@ -124,7 +124,7 @@ impl<'a> MetricRuns<'a> {
     /// columns of the same definition the rows came from.
     pub(crate) async fn run_with_columns(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         request: &WindowRequest,
     ) -> Result<(RunResult, Columns), CustomError> {
         let body = self.body_of(name).await?;
@@ -147,7 +147,7 @@ impl<'a> MetricRuns<'a> {
     /// after whether or not the data reaches that far.
     pub(crate) async fn run(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         request: &WindowRequest,
     ) -> Result<RunResult, CustomError> {
         let body = self.body_of(name).await?;
@@ -166,7 +166,7 @@ impl<'a> MetricRuns<'a> {
     /// Nothing is run.
     pub(crate) async fn prepare(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         window: &Window,
     ) -> Result<Prepared, CustomError> {
         let body = self.body_of(name).await?;

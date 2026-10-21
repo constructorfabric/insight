@@ -44,6 +44,12 @@ fn deploys() -> serde_json::Value {
     })
 }
 
+struct Chain {
+    metric: String,
+    widget: String,
+    dashboard: String,
+}
+
 struct TestHarness {
     /// Held, not read: the stores this harness does not exercise are built
     /// against its address, so it has to outlive them.
@@ -146,27 +152,70 @@ impl TestHarness {
         TestResponse::from_response(response).await
     }
 
-    /// A metric, a widget drawing it, and a dashboard holding that widget -
-    /// the chain a rename has to keep intact.
-    async fn seed_chain(&self) {
+    /// Creates a definition and answers the id it was given.
+    async fn created(&self, segment: &str, name: &str, body: serde_json::Value) -> String {
+        let made = self
+            .post_json(
+                &format!("/v1/{segment}"),
+                json!({ "name": name, "body": body }),
+            )
+            .await;
+        assert_eq!(made.status(), StatusCode::CREATED, "{segment} {name}");
+        let answered = made.json().await;
+
+        answered["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a create answers its id: {answered}"))
+            .to_owned()
+    }
+
+    async fn replaced(
+        &self,
+        segment: &str,
+        id: &str,
+        name: &str,
+        body: serde_json::Value,
+    ) -> TestResponse {
         self.put_json(
-            "/v1/metrics/commits_per_day",
-            json!({
-                "dataset": "commits",
-                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
-            }),
+            &format!("/v1/{segment}/{id}"),
+            json!({ "name": name, "body": body }),
         )
-        .await;
-        self.put_json(
-            "/v1/widgets/commits_table",
-            json!({ "type": "table", "metric": "commits_per_day", "columns": ["day"] }),
-        )
-        .await;
-        self.put_json(
-            "/v1/dashboards/engineering",
-            json!({ "title": "Engineering", "widgets": ["commits_table"] }),
-        )
-        .await;
+        .await
+    }
+
+    /// A metric, a widget drawing it, and a dashboard holding that widget,
+    /// by the ids they were given.
+    async fn seed_chain(&self) -> Chain {
+        let metric = self
+            .created(
+                "metrics",
+                "Commits per day",
+                json!({
+                    "dataset": "commits",
+                    "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
+                }),
+            )
+            .await;
+        let widget = self
+            .created(
+                "widgets",
+                "Commits table",
+                json!({ "type": "table", "metric": metric, "columns": ["day"] }),
+            )
+            .await;
+        let dashboard = self
+            .created(
+                "dashboards",
+                "Engineering",
+                json!({ "title": "Engineering", "widgets": [widget] }),
+            )
+            .await;
+
+        Chain {
+            metric,
+            widget,
+            dashboard,
+        }
     }
 
     async fn get_json(&self, path: &str) -> TestResponse {
@@ -260,45 +309,58 @@ fn metric_body() -> serde_json::Value {
     })
 }
 
+fn day_metric() -> serde_json::Value {
+    json!({
+        "dataset": "commits",
+        "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
+    })
+}
+
+/// The names a listing answers, in its order.
+fn names(listed: &serde_json::Value) -> Vec<String> {
+    listed["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a listing answers items: {listed}"))
+        .iter()
+        .map(|item| item["name"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
 /// A reader is shown what a removal would break before they ask for one.
 #[tokio::test]
 async fn a_definition_names_what_holds_it() {
     let harness = TestHarness::new().await;
-    harness
-        .put_json("/v1/metrics/commits_per_day", metric_body())
+    let metric = harness
+        .created("metrics", "Commits per day", metric_body())
         .await;
-    let drawn = harness
-        .put_json(
-            "/v1/widgets/commits_table",
-            json!({
-                "type": "table",
-                "metric": "commits_per_day",
-                "columns": ["total"]
-            }),
+    let widget = harness
+        .created(
+            "widgets",
+            "Commits table",
+            json!({ "type": "table", "metric": metric, "columns": ["total"] }),
         )
         .await;
-    assert_eq!(drawn.status(), StatusCode::NO_CONTENT);
 
     let held = harness
-        .get_json("/v1/metrics/commits_per_day/dependents")
+        .get_json(&format!("/v1/metrics/{metric}/dependents"))
         .await;
 
     assert_eq!(held.status(), StatusCode::OK);
     assert_eq!(
         held.json().await["holders"],
-        json!([{ "kind": "widgets", "name": "commits_table" }])
+        json!([{ "kind": "widgets", "id": widget, "name": "Commits table" }])
     );
 }
 
 #[tokio::test]
 async fn a_definition_nothing_holds_names_nothing() {
     let harness = TestHarness::new().await;
-    harness
-        .put_json("/v1/metrics/commits_per_day", metric_body())
+    let metric = harness
+        .created("metrics", "Commits per day", metric_body())
         .await;
 
     let held = harness
-        .get_json("/v1/metrics/commits_per_day/dependents")
+        .get_json(&format!("/v1/metrics/{metric}/dependents"))
         .await;
 
     assert_eq!(held.json().await["holders"], json!([]));
@@ -314,17 +376,109 @@ async fn the_dependents_of_a_definition_that_is_not_there_are_not_found() {
 }
 
 #[tokio::test]
-async fn put_then_get_returns_the_stored_body() {
+async fn a_create_answers_an_id_that_reads_back_with_its_name_and_body() {
     let harness = TestHarness::new().await;
 
-    let put = harness
-        .put_json("/v1/metrics/commits_per_day", metric_body())
+    let id = harness
+        .created("metrics", "Commits per day", metric_body())
         .await;
-    assert_eq!(put.status(), StatusCode::NO_CONTENT);
 
-    let got = harness.get_json("/v1/metrics/commits_per_day").await;
+    let got = harness.get_json(&format!("/v1/metrics/{id}")).await;
     assert_eq!(got.status(), StatusCode::OK);
-    assert_eq!(got.json().await["body"], metric_body());
+    let read = got.json().await;
+    assert_eq!(read["id"], json!(id));
+    assert_eq!(read["name"], "Commits per day");
+    assert_eq!(read["body"], metric_body());
+}
+
+#[tokio::test]
+async fn two_definitions_may_share_a_name_and_each_keeps_its_own_id() {
+    let harness = TestHarness::new().await;
+
+    let first = harness.created("metrics", "Lines", metric_body()).await;
+    let second = harness.created("metrics", "Lines", metric_body()).await;
+
+    assert_ne!(first, second);
+    let listed = harness.list_json("/v1/metrics").await.json().await;
+    assert_eq!(listed["total"], json!(2));
+    assert_eq!(names(&listed), ["Lines", "Lines"]);
+}
+
+#[tokio::test]
+async fn a_replace_changes_the_name_and_the_body_under_the_same_id() {
+    let harness = TestHarness::new().await;
+    let id = harness.created("metrics", "Before", metric_body()).await;
+
+    let replaced = harness
+        .replaced("metrics", &id, "After", day_metric())
+        .await;
+
+    assert_eq!(replaced.status(), StatusCode::NO_CONTENT);
+    let read = harness
+        .get_json(&format!("/v1/metrics/{id}"))
+        .await
+        .json()
+        .await;
+    assert_eq!(
+        (&read["name"], &read["body"]),
+        (&json!("After"), &day_metric())
+    );
+}
+
+#[tokio::test]
+async fn a_replace_of_an_id_nobody_holds_is_not_found_and_stores_nothing() {
+    let harness = TestHarness::new().await;
+
+    let refused = harness
+        .replaced("metrics", "nowhere", "Lines", metric_body())
+        .await;
+
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+    let listed = harness.list_json("/v1/metrics").await.json().await;
+    assert_eq!(listed["total"], json!(0));
+}
+
+#[tokio::test]
+async fn a_name_that_is_blank_or_too_long_is_refused() {
+    let harness = TestHarness::new().await;
+    let too_long = "n".repeat(129);
+
+    for name in ["", "   ", too_long.as_str()] {
+        let refused = harness
+            .post_json(
+                "/v1/metrics",
+                json!({ "name": name, "body": metric_body() }),
+            )
+            .await;
+
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "for {name:?}");
+    }
+}
+
+/// An id that cannot be one names nothing, so every route answers it as it
+/// answers an id nobody holds.
+#[tokio::test]
+async fn a_malformed_id_in_a_path_is_not_found() {
+    let harness = TestHarness::new().await;
+    let malformed = "/v1/metrics/drop%20table";
+
+    let read = harness.get_json(malformed).await;
+    let replaced = harness
+        .put_json(malformed, json!({ "name": "Lines", "body": metric_body() }))
+        .await;
+    let removed = harness.delete_json(malformed).await;
+    let held = harness
+        .get_json("/v1/metrics/drop%20table/dependents")
+        .await;
+
+    for (what, answered) in [
+        ("read", read),
+        ("replace", replaced),
+        ("delete", removed),
+        ("dependents", held),
+    ] {
+        assert_eq!(answered.status(), StatusCode::NOT_FOUND, "{what}");
+    }
 }
 
 /// A card is windowed or not by what the read says, never by whether the
@@ -332,18 +486,18 @@ async fn put_then_get_returns_the_stored_body() {
 #[tokio::test]
 async fn a_metric_inheriting_its_dataset_s_clock_reads_back_saying_so() {
     let harness = TestHarness::new().await;
-    let put = harness
-        .put_json(
-            "/v1/metrics/deploys_per_day",
+    let id = harness
+        .created(
+            "metrics",
+            "Deploys per day",
             json!({
                 "dataset": "deploys",
                 "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
             }),
         )
         .await;
-    assert_eq!(put.status(), StatusCode::NO_CONTENT);
 
-    let got = harness.get_json("/v1/metrics/deploys_per_day").await;
+    let got = harness.get_json(&format!("/v1/metrics/{id}")).await;
 
     assert_eq!(
         got.json().await["clock"],
@@ -354,9 +508,10 @@ async fn a_metric_inheriting_its_dataset_s_clock_reads_back_saying_so() {
 #[tokio::test]
 async fn a_metric_naming_its_own_clock_reads_back_saying_it_named_it() {
     let harness = TestHarness::new().await;
-    harness
-        .put_json(
-            "/v1/metrics/commits_per_day",
+    let id = harness
+        .created(
+            "metrics",
+            "Commits per day",
             json!({
                 "dataset": "commits",
                 "time": {"field": "committed_at", "type": "datetime"},
@@ -365,7 +520,7 @@ async fn a_metric_naming_its_own_clock_reads_back_saying_it_named_it() {
         )
         .await;
 
-    let got = harness.get_json("/v1/metrics/commits_per_day").await;
+    let got = harness.get_json(&format!("/v1/metrics/{id}")).await;
 
     assert_eq!(
         got.json().await["clock"],
@@ -378,11 +533,11 @@ async fn a_metric_naming_its_own_clock_reads_back_saying_it_named_it() {
 #[tokio::test]
 async fn a_metric_with_no_clock_anywhere_reads_back_without_one() {
     let harness = TestHarness::new().await;
-    harness
-        .put_json("/v1/metrics/all_commits", metric_body())
+    let id = harness
+        .created("metrics", "All commits", metric_body())
         .await;
 
-    let got = harness.get_json("/v1/metrics/all_commits").await;
+    let got = harness.get_json(&format!("/v1/metrics/{id}")).await;
 
     assert_eq!(got.json().await["clock"], json!(null));
 }
@@ -396,26 +551,16 @@ async fn get_missing_definition_is_not_found() {
 }
 
 #[tokio::test]
-async fn a_name_outside_the_charset_is_rejected() {
-    let harness = TestHarness::new().await;
-
-    let put = harness
-        .put_json("/v1/metrics/drop%20table", json!({}))
-        .await;
-    assert_eq!(put.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn list_returns_the_stored_names_in_order() {
+async fn list_answers_each_definition_by_id_and_name_in_name_order() {
     let harness = TestHarness::new().await;
 
     // Stored out of order, listed in it.
-    for name in ["lines_per_day", "commits_per_day"] {
-        let put = harness
-            .put_json(&format!("/v1/metrics/{name}"), metric_body())
-            .await;
-        assert_eq!(put.status(), StatusCode::NO_CONTENT);
-    }
+    let lines = harness
+        .created("metrics", "Lines per day", metric_body())
+        .await;
+    let commits = harness
+        .created("metrics", "Commits per day", metric_body())
+        .await;
 
     let got = harness.list_json("/v1/metrics").await;
 
@@ -423,7 +568,10 @@ async fn list_returns_the_stored_names_in_order() {
     assert_eq!(
         got.json().await,
         json!({
-            "names": ["commits_per_day", "lines_per_day"],
+            "items": [
+                { "id": commits, "name": "Commits per day" },
+                { "id": lines, "name": "Lines per day" }
+            ],
             "total": 2,
             "limit": 50,
             "offset": 0
@@ -432,60 +580,53 @@ async fn list_returns_the_stored_names_in_order() {
 }
 
 #[tokio::test]
-async fn put_then_get_a_widget_definition_round_trips() {
+async fn a_widget_definition_round_trips() {
     let harness = TestHarness::new().await;
 
     // The widget draws this metric's columns, so it has to be there first.
     let metric = harness
-        .put_json(
-            "/v1/metrics/commits_per_day",
-            json!({
-                "dataset": "commits",
-                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
-            }),
-        )
+        .created("metrics", "Commits per day", day_metric())
         .await;
-    assert_eq!(metric.status(), StatusCode::NO_CONTENT);
-
-    let put = harness
-        .put_json(
-            "/v1/widgets/commits_table",
-            json!({ "type": "table", "metric": "commits_per_day", "columns": ["day"] }),
-        )
+    let drawn = json!({ "type": "table", "metric": metric, "columns": ["day"] });
+    let widget = harness
+        .created("widgets", "Commits table", drawn.clone())
         .await;
-    assert_eq!(put.status(), StatusCode::NO_CONTENT);
 
-    let got = harness.get_json("/v1/widgets/commits_table").await;
+    let got = harness.get_json(&format!("/v1/widgets/{widget}")).await;
     assert_eq!(got.status(), StatusCode::OK);
-    assert_eq!(
-        got.json().await["body"],
-        json!({ "type": "table", "metric": "commits_per_day", "columns": ["day"] })
-    );
+    assert_eq!(got.json().await["body"], drawn);
 }
 
 #[tokio::test]
 async fn a_caller_without_the_admin_role_reaches_nothing() {
     let harness = TestHarness::with_caller(false).await;
+    let write = json!({ "name": "Chart", "body": { "type": "table", "metric": "m" } });
 
-    // Every custom surface: the catalogues, one definition, and a write.
-    for (method, path) in [
-        ("GET", "/v1/metrics"),
-        ("GET", "/v1/metrics/commits_per_day"),
-        ("PUT", "/v1/widgets/commits_table"),
-    ] {
-        let response = match method {
-            "PUT" => {
-                harness
-                    .put_json(path, json!({ "type": "table", "metric": "m" }))
-                    .await
-            }
-            _ => harness.list_json(path).await,
-        };
+    let refused = [
+        ("GET /v1/metrics", harness.list_json("/v1/metrics").await),
+        (
+            "GET /v1/metrics/commits_per_day",
+            harness.get_json("/v1/metrics/commits_per_day").await,
+        ),
+        (
+            "POST /v1/widgets",
+            harness.post_json("/v1/widgets", write.clone()).await,
+        ),
+        (
+            "PUT /v1/widgets/commits_table",
+            harness.put_json("/v1/widgets/commits_table", write).await,
+        ),
+        (
+            "DELETE /v1/metrics/anything",
+            harness.delete_json("/v1/metrics/anything").await,
+        ),
+    ];
 
+    for (asked, response) in refused {
         assert_eq!(
             response.status(),
             StatusCode::FORBIDDEN,
-            "{method} {path} must refuse a caller without the role"
+            "{asked} must refuse a caller without the role"
         );
     }
 }
@@ -493,23 +634,15 @@ async fn a_caller_without_the_admin_role_reaches_nothing() {
 #[tokio::test]
 async fn a_definition_nothing_uses_is_removed() {
     let harness = TestHarness::new().await;
-    harness
-        .put_json(
-            "/v1/metrics/spare",
-            json!({
-                "dataset": "commits",
-                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
-            }),
-        )
-        .await;
+    let id = harness.created("metrics", "Spare", day_metric()).await;
 
-    let removed = harness.delete_json("/v1/metrics/spare").await;
+    let removed = harness.delete_json(&format!("/v1/metrics/{id}")).await;
     assert_eq!(removed.status(), StatusCode::NO_CONTENT);
 
     let listed = harness.list_json("/v1/metrics").await;
     assert_eq!(
         listed.json().await,
-        json!({ "names": [], "total": 0, "limit": 50, "offset": 0 })
+        json!({ "items": [], "total": 0, "limit": 50, "offset": 0 })
     );
 }
 
@@ -525,23 +658,18 @@ async fn removing_what_is_not_there_says_so() {
 #[tokio::test]
 async fn a_metric_a_widget_draws_is_kept_and_the_widget_named() {
     let harness = TestHarness::new().await;
-    harness
-        .put_json(
-            "/v1/metrics/lines_per_day",
-            json!({
-                "dataset": "commits",
-                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
-            }),
-        )
+    let metric = harness
+        .created("metrics", "Lines per day", day_metric())
         .await;
     harness
-        .put_json(
-            "/v1/widgets/lines_table",
-            json!({ "type": "table", "metric": "lines_per_day", "columns": ["day"] }),
+        .created(
+            "widgets",
+            "Lines table",
+            json!({ "type": "table", "metric": metric, "columns": ["day"] }),
         )
         .await;
 
-    let refused = harness.delete_json("/v1/metrics/lines_per_day").await;
+    let refused = harness.delete_json(&format!("/v1/metrics/{metric}")).await;
 
     // A widget whose metric is gone renders an error where a chart should be.
     // Something still holding it is a conflict, the same answer a dataset
@@ -549,12 +677,15 @@ async fn a_metric_a_widget_draws_is_kept_and_the_widget_named() {
     assert_eq!(refused.status(), StatusCode::CONFLICT);
     let body = refused.json().await;
     assert!(
-        body.to_string().contains("lines_table"),
+        body.to_string().contains("Lines table"),
         "the refusal must name what still uses it: {body}"
     );
     // And it really is still there.
     assert_eq!(
-        harness.get_json("/v1/metrics/lines_per_day").await.status(),
+        harness
+            .get_json(&format!("/v1/metrics/{metric}"))
+            .await
+            .status(),
         StatusCode::OK
     );
 }
@@ -562,32 +693,14 @@ async fn a_metric_a_widget_draws_is_kept_and_the_widget_named() {
 #[tokio::test]
 async fn a_widget_a_dashboard_holds_is_kept_and_the_dashboard_named() {
     let harness = TestHarness::new().await;
-    harness
-        .put_json(
-            "/v1/metrics/m",
-            json!({
-                "dataset": "commits",
-                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
-            }),
-        )
-        .await;
-    harness
-        .put_json(
-            "/v1/widgets/held",
-            json!({ "type": "table", "metric": "m", "columns": ["day"] }),
-        )
-        .await;
-    harness
-        .put_json(
-            "/v1/dashboards/holder",
-            json!({ "title": "Holder", "widgets": ["held"] }),
-        )
-        .await;
+    let ids = harness.seed_chain().await;
 
-    let refused = harness.delete_json("/v1/widgets/held").await;
+    let refused = harness
+        .delete_json(&format!("/v1/widgets/{}", ids.widget))
+        .await;
 
     assert_eq!(refused.status(), StatusCode::CONFLICT);
-    assert!(refused.json().await.to_string().contains("holder"));
+    assert!(refused.json().await.to_string().contains("Engineering"));
 }
 
 #[tokio::test]
@@ -595,175 +708,20 @@ async fn a_dashboard_is_removed_even_though_widgets_point_into_it() {
     // Nothing holds a dashboard, so it is always free to remove - and its
     // widgets and metrics stay for the next one.
     let harness = TestHarness::new().await;
-    harness
-        .put_json(
-            "/v1/dashboards/spare",
-            json!({ "title": "Spare", "widgets": [] }),
-        )
-        .await;
+    let ids = harness.seed_chain().await;
 
-    let removed = harness.delete_json("/v1/dashboards/spare").await;
+    let removed = harness
+        .delete_json(&format!("/v1/dashboards/{}", ids.dashboard))
+        .await;
 
     assert_eq!(removed.status(), StatusCode::NO_CONTENT);
-}
-
-#[tokio::test]
-async fn a_caller_without_the_admin_role_cannot_remove_anything() {
-    let harness = TestHarness::with_caller(false).await;
-
-    let refused = harness.delete_json("/v1/metrics/anything").await;
-
-    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
-}
-
-#[tokio::test]
-async fn renaming_a_metric_rewrites_the_widgets_that_draw_it() {
-    // A name is the only handle a widget has on its metric, so renaming the
-    // metric alone would leave the widget drawing something that is gone.
-    let harness = TestHarness::new().await;
-    harness.seed_chain().await;
-
-    let renamed = harness
-        .post_json(
-            "/v1/metrics/commits_per_day/rename",
-            json!({ "to": "commits_daily" }),
-        )
-        .await;
-
-    assert_eq!(renamed.status(), StatusCode::OK);
-    let body = renamed.json().await;
-    assert_eq!(body["name"], "commits_daily");
-    assert_eq!(body["rewritten"], json!(["commits_table"]));
-
     assert_eq!(
         harness
-            .get_json("/v1/metrics/commits_per_day")
-            .await
-            .status(),
-        StatusCode::NOT_FOUND
-    );
-    let widget = harness.get_json("/v1/widgets/commits_table").await;
-    assert_eq!(widget.json().await["body"]["metric"], "commits_daily");
-}
-
-#[tokio::test]
-async fn renaming_a_widget_rewrites_the_dashboards_holding_it() {
-    let harness = TestHarness::new().await;
-    harness.seed_chain().await;
-
-    let renamed = harness
-        .post_json(
-            "/v1/widgets/commits_table/rename",
-            json!({ "to": "daily_table" }),
-        )
-        .await;
-
-    assert_eq!(renamed.status(), StatusCode::OK);
-    assert_eq!(renamed.json().await["rewritten"], json!(["engineering"]));
-
-    let dashboard = harness.get_json("/v1/dashboards/engineering").await;
-    assert_eq!(
-        dashboard.json().await["body"]["widgets"],
-        json!(["daily_table"])
-    );
-}
-
-#[tokio::test]
-async fn a_dashboard_renames_with_nothing_to_rewrite() {
-    let harness = TestHarness::new().await;
-    harness.seed_chain().await;
-
-    let renamed = harness
-        .post_json(
-            "/v1/dashboards/engineering/rename",
-            json!({ "to": "delivery" }),
-        )
-        .await;
-
-    assert_eq!(renamed.status(), StatusCode::OK);
-    assert_eq!(renamed.json().await["rewritten"], json!([]));
-    assert_eq!(
-        harness.get_json("/v1/dashboards/delivery").await.status(),
-        StatusCode::OK
-    );
-}
-
-#[tokio::test]
-async fn renaming_onto_a_name_in_use_changes_nothing() {
-    let harness = TestHarness::new().await;
-    harness.seed_chain().await;
-    harness
-        .put_json(
-            "/v1/metrics/already_here",
-            json!({
-                "dataset": "commits",
-                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
-            }),
-        )
-        .await;
-
-    let refused = harness
-        .post_json(
-            "/v1/metrics/commits_per_day/rename",
-            json!({ "to": "already_here" }),
-        )
-        .await;
-
-    assert_eq!(refused.status(), StatusCode::CONFLICT);
-    assert!(
-        String::from_utf8_lossy(&refused.body).contains("already_here"),
-        "the refusal must name the name that is taken"
-    );
-    // Neither name moved, and the widget still draws the one it did.
-    assert_eq!(
-        harness
-            .get_json("/v1/metrics/commits_per_day")
+            .get_json(&format!("/v1/metrics/{}", ids.metric))
             .await
             .status(),
         StatusCode::OK
     );
-    let widget = harness.get_json("/v1/widgets/commits_table").await;
-    assert_eq!(widget.json().await["body"]["metric"], "commits_per_day");
-}
-
-#[tokio::test]
-async fn renaming_something_that_is_not_there_is_not_found() {
-    let harness = TestHarness::new().await;
-
-    let missing = harness
-        .post_json(
-            "/v1/metrics/nothing_here/rename",
-            json!({ "to": "something" }),
-        )
-        .await;
-
-    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn a_new_name_outside_the_charset_is_refused() {
-    let harness = TestHarness::new().await;
-    harness.seed_chain().await;
-
-    let refused = harness
-        .post_json(
-            "/v1/metrics/commits_per_day/rename",
-            json!({ "to": "drop table metrics" }),
-        )
-        .await;
-
-    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn renaming_needs_the_admin_role() {
-    let harness = TestHarness::with_caller(false).await;
-
-    let refused = harness
-        .post_json("/v1/metrics/anything/rename", json!({ "to": "other" }))
-        .await;
-
-    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -771,10 +729,10 @@ async fn a_search_matches_a_name() {
     let harness = TestHarness::new().await;
     harness.seed_chain().await;
 
-    let found = harness.get_json("/v1/metrics?q=per_day").await;
+    let found = harness.get_json("/v1/metrics?q=per%20day").await;
 
     assert_eq!(found.status(), StatusCode::OK);
-    assert_eq!(found.json().await["names"], json!(["commits_per_day"]));
+    assert_eq!(names(&found.json().await), ["Commits per day"]);
 }
 
 #[tokio::test]
@@ -784,8 +742,9 @@ async fn a_search_matches_what_the_body_says() {
     let harness = TestHarness::new().await;
     harness.seed_chain().await;
     harness
-        .put_json(
-            "/v1/metrics/lines_per_day",
+        .created(
+            "metrics",
+            "Lines per day",
             json!({
                 "dataset": "commits",
                 "fields": [{ "field": "lines_added", "type": "int", "as_name": "lines" }]
@@ -795,7 +754,7 @@ async fn a_search_matches_what_the_body_says() {
 
     let found = harness.get_json("/v1/metrics?q=lines_added").await;
 
-    assert_eq!(found.json().await["names"], json!(["lines_per_day"]));
+    assert_eq!(names(&found.json().await), ["Lines per day"]);
 }
 
 #[tokio::test]
@@ -805,7 +764,7 @@ async fn an_empty_search_is_not_a_search_for_nothing() {
 
     let all = harness.get_json("/v1/widgets?q=").await;
 
-    assert_eq!(all.json().await["names"], json!(["commits_table"]));
+    assert_eq!(names(&all.json().await), ["Commits table"]);
 }
 
 #[tokio::test]
@@ -816,29 +775,24 @@ async fn a_search_that_matches_nothing_is_an_empty_list() {
     let none = harness.get_json("/v1/dashboards?q=nothing_like_this").await;
 
     assert_eq!(none.status(), StatusCode::OK);
-    assert_eq!(none.json().await["names"], json!([]));
+    assert_eq!(none.json().await["items"], json!([]));
 }
 
 #[tokio::test]
 async fn a_list_answers_one_page_and_how_many_there_are() {
     let harness = TestHarness::new().await;
-    for name in ["a_one", "b_two", "c_three"] {
-        harness
-            .put_json(&format!("/v1/metrics/{name}"), metric_body())
-            .await;
+    for name in ["a one", "b two", "c three"] {
+        harness.created("metrics", name, metric_body()).await;
     }
 
     let page = harness.list_json("/v1/metrics?limit=2&offset=1").await;
 
     assert_eq!(page.status(), StatusCode::OK);
+    let listed = page.json().await;
+    assert_eq!(names(&listed), ["b two", "c three"]);
     assert_eq!(
-        page.json().await,
-        json!({
-            "names": ["b_two", "c_three"],
-            "total": 3,
-            "limit": 2,
-            "offset": 1
-        })
+        (&listed["total"], &listed["limit"], &listed["offset"]),
+        (&json!(3), &json!(2), &json!(1))
     );
 }
 
@@ -856,16 +810,17 @@ async fn a_metric_body_that_cannot_be_read_as_a_query_is_refused_on_write() {
     let harness = TestHarness::new().await;
 
     let refusal = harness
-        .put_json(
-            "/v1/metrics/commits_per_day",
-            json!({ "dataset": "commits" }),
+        .post_json(
+            "/v1/metrics",
+            json!({ "name": "Commits", "body": { "dataset": "commits" } }),
         )
         .await;
 
     assert_eq!(refusal.status, StatusCode::BAD_REQUEST);
+    let listed = harness.list_json("/v1/metrics").await.json().await;
     assert_eq!(
-        harness.get_json("/v1/metrics/commits_per_day").await.status,
-        StatusCode::NOT_FOUND,
+        listed["total"],
+        json!(0),
         "a refused body must not be stored"
     );
 }
@@ -873,42 +828,29 @@ async fn a_metric_body_that_cannot_be_read_as_a_query_is_refused_on_write() {
 #[tokio::test]
 async fn a_metric_offering_a_window_the_server_cannot_resolve_is_refused_on_write() {
     let harness = TestHarness::new().await;
-
-    let refusal = harness
-        .put_json(
-            "/v1/metrics/commits_per_day",
-            json!({
+    let windowed = |max_range: &str| {
+        json!({
+            "name": "Commits",
+            "body": {
                 "dataset": "commits",
                 "fields": [{ "field": "day", "type": "string", "as_name": "day" }],
                 "time": { "field": "committed_at" },
-                "max_range": "for ever",
-            }),
-        )
-        .await;
+                "max_range": max_range,
+            }
+        })
+    };
+
+    let refusal = harness.post_json("/v1/metrics", windowed("for ever")).await;
+    let sound = harness.post_json("/v1/metrics", windowed("P6M")).await;
 
     assert_eq!(refusal.status, StatusCode::BAD_REQUEST);
     assert_eq!(
-        harness.get_json("/v1/metrics/commits_per_day").await.status,
-        StatusCode::NOT_FOUND
-    );
-
-    let sound = harness
-        .put_json(
-            "/v1/metrics/commits_per_day",
-            json!({
-                "dataset": "commits",
-                "fields": [{ "field": "day", "type": "string", "as_name": "day" }],
-                "time": { "field": "committed_at" },
-                "max_range": "P6M",
-            }),
-        )
-        .await;
-
-    assert_eq!(
         sound.status,
-        StatusCode::NO_CONTENT,
+        StatusCode::CREATED,
         "only the window the server cannot resolve is the caller's mistake"
     );
+    let listed = harness.list_json("/v1/metrics").await.json().await;
+    assert_eq!(listed["total"], json!(1));
 }
 
 #[tokio::test]
@@ -916,12 +858,9 @@ async fn a_store_that_is_down_is_ours_to_fix_and_says_nothing_about_itself() {
     let harness = TestHarness::with_a_store_that_is_down().await;
 
     let failed = harness
-        .put_json(
-            "/v1/metrics/commits_per_day",
-            json!({
-                "dataset": "commits",
-                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
-            }),
+        .post_json(
+            "/v1/metrics",
+            json!({ "name": "Commits", "body": day_metric() }),
         )
         .await;
 
@@ -946,22 +885,26 @@ async fn last_written(harness: &TestHarness, path: &str) -> chrono::DateTime<chr
 async fn a_dashboard_read_says_when_it_was_last_written_and_a_write_moves_it() {
     let harness = TestHarness::new().await;
     let before = chrono::SubsecRound::trunc_subsecs(chrono::Utc::now(), 3);
-    harness
-        .put_json(
-            "/v1/dashboards/board",
+    let id = harness
+        .created(
+            "dashboards",
+            "Board",
             json!({ "title": "Board", "widgets": [] }),
         )
         .await;
+    let path = format!("/v1/dashboards/{id}");
 
-    let first = last_written(&harness, "/v1/dashboards/board").await;
+    let first = last_written(&harness, &path).await;
     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     harness
-        .put_json(
-            "/v1/dashboards/board",
+        .replaced(
+            "dashboards",
+            &id,
+            "Board",
             json!({ "title": "Board, again", "widgets": [] }),
         )
         .await;
-    let second = last_written(&harness, "/v1/dashboards/board").await;
+    let second = last_written(&harness, &path).await;
 
     assert!(first >= before, "{first} should not precede {before}");
     assert!(second > first, "{second} should follow {first}");
@@ -970,14 +913,19 @@ async fn a_dashboard_read_says_when_it_was_last_written_and_a_write_moves_it() {
 #[tokio::test]
 async fn a_dashboard_stamp_is_utc_to_the_millisecond() {
     let harness = TestHarness::new().await;
-    harness
-        .put_json(
-            "/v1/dashboards/board",
+    let id = harness
+        .created(
+            "dashboards",
+            "Board",
             json!({ "title": "Board", "widgets": [] }),
         )
         .await;
 
-    let read = harness.get_json("/v1/dashboards/board").await.json().await;
+    let read = harness
+        .get_json(&format!("/v1/dashboards/{id}"))
+        .await
+        .json()
+        .await;
     let stamp = read["updated_at"].as_str().unwrap_or_default();
 
     let shape = chrono::NaiveDateTime::parse_from_str(stamp, "%Y-%m-%dT%H:%M:%S%.3fZ");

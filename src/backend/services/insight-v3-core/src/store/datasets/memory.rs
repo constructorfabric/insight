@@ -15,7 +15,7 @@ use crate::domain::datasets::{
     Attempt, Dataset, DatasetStoreError, Datasets, Finish, Held, Lease, OperationToken, Owning,
     Refused, Taken, Taking, finishing, taking,
 };
-use crate::domain::definition::{DefinitionName, NamePage, Page};
+use crate::domain::definition::{DefinitionId, NamePage, Page};
 use crate::domain::kinds::dataset::state::{DatasetState, Operation};
 
 #[cfg(test)]
@@ -54,7 +54,7 @@ impl MemoryDatasets {
 
     fn take(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         operation: Operation,
         declaration: Option<&Value>,
     ) -> Result<Taken, DatasetStoreError> {
@@ -111,7 +111,7 @@ impl MemoryDatasets {
 
 #[async_trait]
 impl Datasets for MemoryDatasets {
-    async fn get(&self, name: &DefinitionName) -> Result<Option<Dataset>, DatasetStoreError> {
+    async fn get(&self, name: &DefinitionId) -> Result<Option<Dataset>, DatasetStoreError> {
         Ok(self.lock().get(name.as_str()).cloned())
     }
 
@@ -141,13 +141,13 @@ impl Datasets for MemoryDatasets {
 
     async fn take_create(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<Taken, DatasetStoreError> {
         self.take(name, Operation::Create, Some(declaration))
     }
 
-    async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
+    async fn take_remove(&self, name: &DefinitionId) -> Result<Attempt, DatasetStoreError> {
         match self.take(name, Operation::Remove, None)? {
             Taken::Attempt(attempt) => Ok(attempt),
             // Only a create is answered with a dataset that stands.
@@ -157,7 +157,7 @@ impl Datasets for MemoryDatasets {
 
     async fn replace(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<bool, DatasetStoreError> {
         let mut stored = self.lock();
@@ -174,7 +174,7 @@ impl Datasets for MemoryDatasets {
 
     async fn finish(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         token: &OperationToken,
         finish: Finish,
     ) -> Result<Owning, DatasetStoreError> {

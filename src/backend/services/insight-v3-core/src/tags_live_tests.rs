@@ -2,7 +2,9 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::domain::definition::{Change, DefinitionKind, DefinitionName, Definitions, Page};
+use crate::domain::definition::{
+    Change, DefinitionId, DefinitionKind, DefinitionLabel, Definitions, Page,
+};
 use crate::domain::folders::{FolderFilter, FolderName, Folders};
 use crate::domain::tags::{MAX_TAGS, TagError, TagFilter, TagSet, Tags};
 use crate::live_mariadb::{store_or_skip, unique};
@@ -10,8 +12,8 @@ use crate::store::definitions::MariaDefinitions;
 
 pub(crate) static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
 
-fn dashboard(name: &str) -> DefinitionName {
-    DefinitionName::parse(name).unwrap_or_else(|error| panic!("{error}"))
+fn dashboard(name: &str) -> DefinitionId {
+    DefinitionId::parse(name).unwrap_or_else(|error| panic!("{error}"))
 }
 
 fn short() -> String {
@@ -30,31 +32,56 @@ fn any_of(values: &[String]) -> TagFilter {
         .unwrap_or_else(|| panic!("a filter naming tags is one"))
 }
 
-async fn board(store: &MariaDefinitions, name: &DefinitionName) {
-    store
-        .put(
-            DefinitionKind::Dashboard,
-            name,
-            &json!({ "title": "Board", "items": [] }),
-        )
+/// Stores the board, or writes its body again when it is already there.
+async fn board(store: &MariaDefinitions, name: &DefinitionId) {
+    let label = DefinitionLabel::of_id(name);
+    let body = json!({ "title": "Board", "items": [] });
+
+    let replaced = store
+        .replace(DefinitionKind::Dashboard, name, &label, &body)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
+    if !replaced {
+        store
+            .create(DefinitionKind::Dashboard, name, &label, &body)
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
 }
 
-async fn remove(store: &MariaDefinitions, name: &DefinitionName) {
+fn copied(from: &DefinitionId, to: &DefinitionId) -> [Change; 3] {
+    [
+        Change::Create(
+            DefinitionKind::Dashboard,
+            to.clone(),
+            DefinitionLabel::of_id(to),
+            json!({ "title": "Board", "items": [] }),
+        ),
+        Change::CarryFolder {
+            from: from.clone(),
+            to: to.clone(),
+        },
+        Change::CarryTags {
+            from: from.clone(),
+            to: to.clone(),
+        },
+    ]
+}
+
+async fn remove(store: &MariaDefinitions, name: &DefinitionId) {
     Definitions::delete(store, DefinitionKind::Dashboard, name)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
 }
 
-async fn set(store: &MariaDefinitions, name: &DefinitionName, values: &[String]) {
+async fn set(store: &MariaDefinitions, name: &DefinitionId, values: &[String]) {
     store
         .set_tags(name, &tags(values))
         .await
         .unwrap_or_else(|error| panic!("{error}"));
 }
 
-async fn carried(store: &MariaDefinitions, name: &DefinitionName) -> Vec<String> {
+async fn carried(store: &MariaDefinitions, name: &DefinitionId) -> Vec<String> {
     store
         .tags_of(name)
         .await
@@ -111,7 +138,7 @@ async fn a_tag_is_reused_under_its_spelling_and_goes_when_no_dashboard_carries_i
 }
 
 #[tokio::test]
-async fn tags_survive_a_body_write_follow_a_rename_and_go_with_the_dashboard() {
+async fn tags_survive_a_body_write_follow_a_copy_and_go_with_the_dashboard() {
     let Some(store) = store_or_skip().await else {
         return;
     };
@@ -132,24 +159,11 @@ async fn tags_survive_a_body_write_follow_a_rename_and_go_with_the_dashboard() {
     );
 
     store
-        .apply(&[
-            Change::Create(
-                DefinitionKind::Dashboard,
-                after.clone(),
-                json!({ "title": "Board", "items": [] }),
-            ),
-            Change::CarryFolder {
-                from: before.clone(),
-                to: after.clone(),
-            },
-            Change::CarryTags {
-                from: before.clone(),
-                to: after.clone(),
-            },
-            Change::Delete(DefinitionKind::Dashboard, before.clone()),
-        ])
+        .apply(&copied(&before, &after))
         .await
         .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(count_of(&store, &alpha).await, Some(2));
+    remove(&store, &before).await;
     assert_eq!(carried(&store, &after).await, [alpha.clone(), beta.clone()]);
     assert!(carried(&store, &before).await.is_empty());
     assert_eq!(count_of(&store, &alpha).await, Some(1));
@@ -174,9 +188,9 @@ async fn paged(
         .unwrap_or_else(|error| panic!("{error}"));
 
     let names = found
-        .names
+        .items
         .iter()
-        .map(|name| name.trim_start_matches(prefix).to_owned())
+        .map(|listed| listed.id.trim_start_matches(prefix).to_owned())
         .collect();
     (names, found.total)
 }
@@ -323,40 +337,26 @@ async fn tag_names_differing_by_accent_or_emoji_are_different_tags() {
     assert_eq!(held.len(), 4, "{held:?}");
 }
 
-async fn tag_set_renamed_and_removed(
+async fn tag_set_copied_and_removed(
     store: &MariaDefinitions,
-    from: &DefinitionName,
+    from: &DefinitionId,
     wanted: &TagSet,
 ) -> Result<(), String> {
     let to = dashboard(&unique("raced"));
-    let renamed = [
-        Change::Create(
-            DefinitionKind::Dashboard,
-            to.clone(),
-            json!({ "title": "Board", "items": [] }),
-        ),
-        Change::CarryFolder {
-            from: from.clone(),
-            to: to.clone(),
-        },
-        Change::CarryTags {
-            from: from.clone(),
-            to: to.clone(),
-        },
-        Change::Delete(DefinitionKind::Dashboard, from.clone()),
-    ];
 
     store
         .set_tags(from, wanted)
         .await
         .map_err(|error| format!("set: {error:?}"))?;
     store
-        .apply(&renamed)
+        .apply(&copied(from, &to))
         .await
-        .map_err(|error| format!("rename: {error:?}"))?;
-    Definitions::delete(store, DefinitionKind::Dashboard, &to)
-        .await
-        .map_err(|error| format!("delete: {error:?}"))?;
+        .map_err(|error| format!("copy: {error:?}"))?;
+    for held in [from, &to] {
+        Definitions::delete(store, DefinitionKind::Dashboard, held)
+            .await
+            .map_err(|error| format!("delete: {error:?}"))?;
+    }
 
     Ok(())
 }
@@ -369,7 +369,7 @@ async fn tag_writers_running_at_once_all_land() {
     let _serial = ONE_AT_A_TIME.lock().await;
     let store = std::sync::Arc::new(store);
     let suffix = short();
-    let boards: Vec<DefinitionName> = (0..16)
+    let boards: Vec<DefinitionId> = (0..16)
         .map(|index| dashboard(&unique(&format!("racing{index}"))))
         .collect();
     for name in &boards {
@@ -383,7 +383,7 @@ async fn tag_writers_running_at_once_all_land() {
             let store = std::sync::Arc::clone(&store);
             let name = name.clone();
             let wanted = tags(&[format!("race {index} {suffix}"), format!("shared {suffix}")]);
-            tokio::spawn(async move { tag_set_renamed_and_removed(&store, &name, &wanted).await })
+            tokio::spawn(async move { tag_set_copied_and_removed(&store, &name, &wanted).await })
         })
         .collect();
     let mut failures = Vec::new();

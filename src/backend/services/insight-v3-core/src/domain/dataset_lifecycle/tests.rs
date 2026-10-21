@@ -32,8 +32,8 @@ fn created_table(ddl: &str) -> String {
         .to_owned()
 }
 
-fn name(value: &str) -> DefinitionName {
-    DefinitionName::parse(value).unwrap_or_else(|error| panic!("the name parses: {error}"))
+fn name(value: &str) -> DefinitionId {
+    DefinitionId::parse(value).unwrap_or_else(|error| panic!("the name parses: {error}"))
 }
 
 fn declaration() -> Value {
@@ -239,7 +239,7 @@ struct LosesTheDataset(MemoryDatasets);
 impl Datasets for LosesTheDataset {
     async fn get(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
     ) -> Result<Option<crate::domain::datasets::Dataset>, DatasetStoreError> {
         self.0.get(name).await
     }
@@ -258,19 +258,19 @@ impl Datasets for LosesTheDataset {
 
     async fn take_create(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<crate::domain::datasets::Taken, DatasetStoreError> {
         self.0.take_create(name, declaration).await
     }
 
-    async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
+    async fn take_remove(&self, name: &DefinitionId) -> Result<Attempt, DatasetStoreError> {
         self.0.take_remove(name).await
     }
 
     async fn replace(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<bool, DatasetStoreError> {
         self.0.replace(name, declaration).await
@@ -278,7 +278,7 @@ impl Datasets for LosesTheDataset {
 
     async fn finish(
         &self,
-        _name: &DefinitionName,
+        _name: &DefinitionId,
         _token: &OperationToken,
         _finish: Finish,
     ) -> Result<Owning, DatasetStoreError> {
@@ -295,7 +295,7 @@ struct StopsAnswering(MemoryDatasets);
 impl Datasets for StopsAnswering {
     async fn get(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
     ) -> Result<Option<crate::domain::datasets::Dataset>, DatasetStoreError> {
         self.0.get(name).await
     }
@@ -314,19 +314,19 @@ impl Datasets for StopsAnswering {
 
     async fn take_create(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<crate::domain::datasets::Taken, DatasetStoreError> {
         self.0.take_create(name, declaration).await
     }
 
-    async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
+    async fn take_remove(&self, name: &DefinitionId) -> Result<Attempt, DatasetStoreError> {
         self.0.take_remove(name).await
     }
 
     async fn replace(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<bool, DatasetStoreError> {
         self.0.replace(name, declaration).await
@@ -334,7 +334,7 @@ impl Datasets for StopsAnswering {
 
     async fn finish(
         &self,
-        _name: &DefinitionName,
+        _name: &DefinitionId,
         _token: &OperationToken,
         _finish: Finish,
     ) -> Result<Owning, DatasetStoreError> {
@@ -554,10 +554,10 @@ async fn a_table_that_is_no_longer_ours_is_left_where_it_is() -> R {
 
 /// A metric reading the fixture dataset, stored as a reader of it.
 async fn a_metric_reading_commits(fixture: &Fixture, named: &str, body: Value) -> R {
-    let stored = DefinitionName::parse(named)?;
+    let stored = DefinitionId::parse(named)?;
     fixture
         .definitions
-        .put(DefinitionKind::Metric, &stored, &body)
+        .seed(DefinitionKind::Metric, &stored, &body)
         .await?;
 
     Ok(())

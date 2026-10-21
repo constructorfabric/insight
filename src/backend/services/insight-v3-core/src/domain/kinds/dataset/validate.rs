@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use super::declaration::{BUCKET_COLUMN, Declaration, FieldType, MAX_PATH_SEGMENTS};
-use crate::domain::definition::DefinitionName;
+use crate::domain::definition::DefinitionId;
 use crate::domain::violation::{Reason, Violation};
 
 /// Catalogue paths a dataset may not take, because a static segment of the
@@ -28,7 +28,7 @@ pub(crate) fn validate(name: &str, declaration: &Declaration) -> Vec<Violation> 
 }
 
 fn check_name(name: &str, violations: &mut Vec<Violation>) {
-    if DefinitionName::parse(name).is_err() {
+    if DefinitionId::parse(name).is_err() {
         violations.push(Violation::new(
             "name",
             Reason::Malformed,
@@ -70,7 +70,7 @@ fn check_fields(declaration: &Declaration, violations: &mut Vec<Violation>) {
     for (index, field) in declaration.fields.iter().enumerate() {
         let at = |part: &str| format!("fields[{index}].{part}");
 
-        if DefinitionName::parse(&field.name).is_err() {
+        if DefinitionId::parse(&field.name).is_err() {
             violations.push(Violation::new(
                 at("name"),
                 Reason::Malformed,

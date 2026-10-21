@@ -1,20 +1,19 @@
-//! Storing, reading and renaming definitions, whatever kind they are.
+//! Storing, reading and removing definitions, whatever kind they are.
 
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::domain::datasets::{self, Datasets};
 use crate::domain::definition::arriving::Arriving;
 use crate::domain::definition::{
-    Change, Definition, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions,
-    NamePage, Page,
+    Definition, DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Definitions,
+    ListedPage, Page, StoredDefinition,
 };
 use crate::domain::kinds::dashboard::Item;
 use crate::domain::kinds::metric::CompileAgainst;
 use crate::domain::kinds::metric::answerable::EffectiveClock;
 use crate::domain::kinds::widget::WidgetError;
-use crate::domain::kinds::{self, KindError, Reference};
+use crate::domain::kinds::{self, KindError};
 use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, MetricRunError, People};
 use crate::domain::query::time_window::WindowError;
 use crate::domain::violation::Violation;
@@ -25,8 +24,8 @@ mod tests;
 
 #[derive(Debug, Error)]
 pub(crate) enum CustomError {
-    #[error("{} `{name}` was not found", kind.singular())]
-    NotFound { kind: DefinitionKind, name: String },
+    #[error("{} `{id}` was not found", kind.singular())]
+    NotFound { kind: DefinitionKind, id: String },
     #[error("still in use by {}", used_by.join(", "))]
     InUse { used_by: Vec<String> },
     #[error(transparent)]
@@ -107,15 +106,15 @@ impl<'a> Surfaces<'a> {
         }
     }
 
-    /// One page of the names of this kind matching `needle`, or of all of
-    /// them when it is blank — a search box that is empty is not a search for
-    /// nothing.
+    /// One page of the definitions of this kind matching `needle`, or of all
+    /// of them when it is blank — a search box that is empty is not a search
+    /// for nothing.
     pub(crate) async fn page(
         &self,
         kind: DefinitionKind,
         needle: &str,
         page: Page,
-    ) -> Result<NamePage, CustomError> {
+    ) -> Result<ListedPage, CustomError> {
         self.definitions
             .page(kind, needle.trim(), page)
             .await
@@ -132,50 +131,45 @@ impl<'a> Surfaces<'a> {
     pub(crate) async fn get(
         &self,
         kind: DefinitionKind,
-        name: &DefinitionName,
+        id: &DefinitionId,
     ) -> Result<Value, CustomError> {
         self.definitions
-            .get(kind, name)
+            .get(kind, id)
             .await
             .map_err(CustomError::Store)?
-            .ok_or_else(|| CustomError::NotFound {
-                kind,
-                name: name.as_str().to_owned(),
-            })
+            .ok_or_else(|| not_found(kind, id))
     }
 
-    pub(crate) async fn updated_at(
+    pub(crate) async fn read(
         &self,
         kind: DefinitionKind,
-        name: &DefinitionName,
-    ) -> Result<DateTime<Utc>, CustomError> {
+        id: &DefinitionId,
+    ) -> Result<StoredDefinition, CustomError> {
         self.definitions
-            .updated_at(kind, name)
+            .read(kind, id)
             .await
             .map_err(CustomError::Store)?
-            .ok_or_else(|| CustomError::NotFound {
-                kind,
-                name: name.as_str().to_owned(),
-            })
+            .ok_or_else(|| not_found(kind, id))
     }
 
-    /// Replaces what a dashboard draws, keeping its title.
+    /// Replaces what a dashboard draws, keeping its title and its name.
     ///
     /// The order of the widgets, and the headings and prose between them, are
     /// one list - so laying a board out is sending that list, not editing a
     /// body around it.
     pub(crate) async fn arrange(
         &self,
-        name: &DefinitionName,
+        id: &DefinitionId,
         items: &[Item],
     ) -> Result<Value, CustomError> {
-        let previous = self.get(DefinitionKind::Dashboard, name).await?;
+        let previous = self.read(DefinitionKind::Dashboard, id).await?;
 
         for drawn in items.iter().filter_map(Item::widget) {
-            let widget = DefinitionName::parse(drawn).map_err(|_| CustomError::NotFound {
+            let missing = || CustomError::NotFound {
                 kind: DefinitionKind::Widget,
-                name: drawn.to_owned(),
-            })?;
+                id: drawn.to_owned(),
+            };
+            let widget = DefinitionId::parse(drawn).map_err(|_| missing())?;
             if self
                 .definitions
                 .get(DefinitionKind::Widget, &widget)
@@ -183,34 +177,69 @@ impl<'a> Surfaces<'a> {
                 .map_err(CustomError::Store)?
                 .is_none()
             {
-                return Err(CustomError::NotFound {
-                    kind: DefinitionKind::Widget,
-                    name: drawn.to_owned(),
-                });
+                return Err(missing());
             }
         }
 
-        let body = kinds::dashboard::laid_out(&previous, items).map_err(CustomError::Body)?;
-        self.definitions
-            .put(DefinitionKind::Dashboard, name, &body)
-            .await
-            .map_err(CustomError::Store)?;
+        let body = kinds::dashboard::laid_out(&previous.body, items).map_err(CustomError::Body)?;
+        let label =
+            DefinitionLabel::parse(&previous.name).unwrap_or_else(|_| DefinitionLabel::of_id(id));
+        self.store_replacing(DefinitionKind::Dashboard, id, &label, &body)
+            .await?;
 
         Ok(body)
     }
 
-    pub(crate) async fn put(
+    /// Stores a new definition under a fresh id, after checking its body.
+    pub(crate) async fn create(
         &self,
         kind: DefinitionKind,
-        name: &DefinitionName,
+        name: &DefinitionLabel,
+        body: &Value,
+    ) -> Result<DefinitionId, CustomError> {
+        kinds::check(kind, body, self.definitions, self.datasets, self.over).await?;
+
+        let id = DefinitionId::generate();
+        self.definitions
+            .create(kind, &id, name, body)
+            .await
+            .map_err(CustomError::Store)?;
+
+        Ok(id)
+    }
+
+    /// Replaces what an existing definition is called and holds, after
+    /// checking its body.
+    pub(crate) async fn replace(
+        &self,
+        kind: DefinitionKind,
+        id: &DefinitionId,
+        name: &DefinitionLabel,
         body: &Value,
     ) -> Result<(), CustomError> {
         kinds::check(kind, body, self.definitions, self.datasets, self.over).await?;
 
-        self.definitions
-            .put(kind, name, body)
+        self.store_replacing(kind, id, name, body).await
+    }
+
+    async fn store_replacing(
+        &self,
+        kind: DefinitionKind,
+        id: &DefinitionId,
+        name: &DefinitionLabel,
+        body: &Value,
+    ) -> Result<(), CustomError> {
+        let replaced = self
+            .definitions
+            .replace(kind, id, name, body)
             .await
-            .map_err(CustomError::Store)
+            .map_err(CustomError::Store)?;
+
+        if replaced {
+            return Ok(());
+        }
+
+        Err(not_found(kind, id))
     }
 
     /// The clock a window over this definition selects by, when it has one.
@@ -247,9 +276,9 @@ impl<'a> Surfaces<'a> {
     pub(crate) async fn delete(
         &self,
         kind: DefinitionKind,
-        name: &DefinitionName,
+        id: &DefinitionId,
     ) -> Result<(), CustomError> {
-        let used_by = self.dependents_of(kind, name).await?;
+        let used_by = self.dependents_of(kind, id).await?;
         if !used_by.is_empty() {
             return Err(CustomError::InUse {
                 used_by: used_by.into_iter().map(|holder| holder.name).collect(),
@@ -258,7 +287,7 @@ impl<'a> Surfaces<'a> {
 
         let removed = self
             .definitions
-            .delete(kind, name)
+            .delete(kind, id)
             .await
             .map_err(CustomError::Store)?;
 
@@ -266,10 +295,7 @@ impl<'a> Surfaces<'a> {
             return Ok(());
         }
 
-        Err(CustomError::NotFound {
-            kind,
-            name: name.as_str().to_owned(),
-        })
+        Err(not_found(kind, id))
     }
 
     /// Whether every body in a batch can be stored, before any of it is.
@@ -294,117 +320,50 @@ impl<'a> Surfaces<'a> {
         Ok(())
     }
 
-    /// Every definition that names this one: what a removal would break, and
-    /// what a rename would rewrite.
+    /// Every stored definition that names this one: what a removal would
+    /// break.
     pub(crate) async fn dependents_of(
         &self,
         kind: DefinitionKind,
-        name: &DefinitionName,
-    ) -> Result<Vec<Reference>, CustomError> {
-        let holders = self.holders_of(kind, name).await?;
-
-        Ok(holders
-            .into_iter()
-            .map(|holder| Reference::new(holder.kind, holder.name.into_string()))
-            .collect())
-    }
-
-    /// Gives a definition a name nobody holds, and points everything that drew
-    /// it at the new one.
-    ///
-    /// A name is the only handle a widget has on its metric, and a board on
-    /// its widgets, so the new name, the removal of the old, and every
-    /// rewritten dependent are one transaction. Taking the new name is a write
-    /// that refuses to replace anything, so a name another writer takes while
-    /// this one runs refuses the rename rather than overwriting them.
-    pub(crate) async fn rename(
-        &self,
-        kind: DefinitionKind,
-        from: &DefinitionName,
-        to: &DefinitionName,
-    ) -> Result<Vec<String>, CustomError> {
-        let body = self.get(kind, from).await?;
-
-        if to == from {
-            return Ok(Vec::new());
-        }
-
-        let mut changes = vec![Change::Create(kind, to.clone(), body)];
-        if kind == DefinitionKind::Dashboard {
-            changes.push(Change::CarryFolder {
-                from: from.clone(),
-                to: to.clone(),
-            });
-            changes.push(Change::CarryTags {
-                from: from.clone(),
-                to: to.clone(),
-            });
-            changes.push(Change::CarryPins {
-                from: from.clone(),
-                to: to.clone(),
-            });
-        }
-        changes.push(Change::Delete(kind, from.clone()));
-        let mut rewritten = Vec::new();
-
-        for holder in self.holders_of(kind, from).await? {
-            let pointed_at =
-                kinds::rename_reference(holder.kind, holder.body, from.as_str(), to.as_str());
-
-            rewritten.push(holder.name.as_str().to_owned());
-            changes.push(Change::Put(holder.kind, holder.name, pointed_at));
-        }
-
-        self.definitions
-            .apply(&changes)
-            .await
-            .map_err(CustomError::Store)?;
-
-        Ok(rewritten)
-    }
-
-    /// Every stored definition naming this one, with the body that names it.
-    ///
-    /// The body comes back because both callers need it: one to say what is
-    /// still in use, the other to rewrite it.
-    async fn holders_of(
-        &self,
-        kind: DefinitionKind,
-        name: &DefinitionName,
-    ) -> Result<Vec<Definition>, CustomError> {
+        id: &DefinitionId,
+    ) -> Result<Vec<Holder>, CustomError> {
         let mut holders = Vec::new();
 
         for holder in kinds::referred_to_by(kind) {
-            holders.extend(self.holders_among(*holder, kind, name).await?);
+            holders.extend(self.holders_among(*holder, kind, id).await?);
         }
 
         Ok(holders)
     }
 
-    /// The definitions of one kind that name `name`, with their bodies.
+    /// The definitions of one kind that name `id`.
     async fn holders_among(
         &self,
         holder: DefinitionKind,
         kind: DefinitionKind,
-        name: &DefinitionName,
-    ) -> Result<Vec<Definition>, CustomError> {
+        id: &DefinitionId,
+    ) -> Result<Vec<Holder>, CustomError> {
         let mut found = Vec::new();
 
-        for holder_name in self.list(holder).await? {
-            let Ok(parsed) = DefinitionName::parse(&holder_name) else {
+        for holder_id in self.list(holder).await? {
+            let Ok(parsed) = DefinitionId::parse(&holder_id) else {
                 continue;
             };
-            let Some(body) = self
+            let Some(stored) = self
                 .definitions
-                .get(holder, &parsed)
+                .read(holder, &parsed)
                 .await
                 .map_err(CustomError::Store)?
             else {
                 continue;
             };
 
-            if names(holder, &body, kind, name) {
-                found.push(Definition::new(holder, parsed, body));
+            if names(holder, &stored.body, kind, id) {
+                found.push(Holder {
+                    kind: holder,
+                    id: holder_id,
+                    name: stored.name,
+                });
             }
         }
 
@@ -412,14 +371,24 @@ impl<'a> Surfaces<'a> {
     }
 }
 
+/// A stored definition that names another.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Holder {
+    pub(crate) kind: DefinitionKind,
+    pub(crate) id: String,
+    pub(crate) name: String,
+}
+
+fn not_found(kind: DefinitionKind, id: &DefinitionId) -> CustomError {
+    CustomError::NotFound {
+        kind,
+        id: id.as_str().to_owned(),
+    }
+}
+
 /// Whether this body names that definition.
-fn names(
-    holder: DefinitionKind,
-    body: &Value,
-    kind: DefinitionKind,
-    name: &DefinitionName,
-) -> bool {
+fn names(holder: DefinitionKind, body: &Value, kind: DefinitionKind, id: &DefinitionId) -> bool {
     kinds::refers_to(holder, body)
         .into_iter()
-        .any(|reference| reference.kind == kind && reference.name == name.as_str())
+        .any(|reference| reference.kind == kind && reference.id == id.as_str())
 }
