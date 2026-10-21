@@ -136,3 +136,30 @@ def test_the_saved_ddl_names_the_restore_table_and_no_uuid(saved: str) -> None:
 def test_saved_ddl_that_is_not_a_create_table_is_refused() -> None:
     with pytest.raises(MigrationError):
         retarget("ATTACH TABLE bronze_example.items", Relation("bronze_example", "items"), RESTORE)
+
+
+@pytest.mark.parametrize(
+    ("engine_full", "fit"),
+    [
+        ("ReplicatedMergeTree('/clickhouse/tables/x/items', '{replica}') ORDER BY unique_key", False),
+        ("ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', _version) ORDER BY k", True),
+        ("ReplicatedMergeTree('/clickhouse/{database}/{table}', '{replica}') ORDER BY unique_key", True),
+        ("ReplicatedReplacingMergeTree(_version) ORDER BY unique_key", True),
+        ("ReplicatedMergeTree ORDER BY unique_key", True),
+        ("ReplacingMergeTree(_version) ORDER BY unique_key", True),
+    ],
+    ids=[
+        "fixed Keeper path",
+        "path per uuid",
+        "path per table",
+        "no arguments",
+        "no arguments, unversioned",
+        "not replicated",
+    ],
+)
+def test_a_replicated_table_whose_keeper_path_names_no_table_is_unfit(engine_full: str, fit: bool) -> None:
+    types = {"unique_key": "String", "tenant_id": "String", "source_id": "String"}
+
+    table = classify("bronze_example", "items", engine_full.split("(")[0].split(" ")[0], types, engine_full)
+
+    assert isinstance(table, Table) is fit, f"should be {'fit' if fit else 'unfit'}: {engine_full!r}"

@@ -18,6 +18,8 @@ from tenant_migration.keys import Columns
 
 HISTORY_TABLES = "history-tables.txt"
 IDENTIFIER = re.compile(r"^[A-Za-z0-9_]+$")
+REPLICA_PATH = re.compile(r"^Replicated\w*MergeTree\s*\(\s*\\?'([^'\\]*)")
+PER_TABLE_MACROS = ("{uuid}", "{table}")
 COPY, BACKUP, REJECTED, RESTORE = "__tenant_copy", "__tenant_backup", "__tenant_rejected", "__tenant_restore"
 DUMP_CHECK = "__tenant_dumpcheck"
 WORK_SUFFIXES = (COPY, BACKUP, REJECTED, RESTORE, DUMP_CHECK)
@@ -100,10 +102,18 @@ def _scope_sql(history: list[tuple[str, str]]) -> str:
     )
 
 
-def classify(database: str, name: str, engine: str, types: dict[str, str]) -> Table | Unfit:
+def _shares_keeper_path(engine_full: str) -> bool:
+    path = REPLICA_PATH.match(engine_full)
+    return path is not None and not any(macro in path.group(1) for macro in PER_TABLE_MACROS)
+
+
+def classify(database: str, name: str, engine: str, types: dict[str, str], engine_full: str = "") -> Table | Unfit:
     relation = f"{database}.{name}"
     if not (IDENTIFIER.match(database) and IDENTIFIER.match(name)):
         return Unfit(relation, "a name that is not a plain identifier")
+    if _shares_keeper_path(engine_full):
+        # SAFETY: a CREATE ... AS copy of a fixed Keeper path claims the original's replica.
+        return Unfit(relation, "a replicated engine whose Keeper path names no {uuid} or {table}")
     tenant = next((c for c in TENANT_COLUMNS if c in types), None)
     source = next((c for c in SOURCE_COLUMNS if c in types), None)
     key = KEY_COLUMN if KEY_COLUMN in types else None
@@ -120,14 +130,17 @@ def classify(database: str, name: str, engine: str, types: dict[str, str]) -> Ta
 def discover(ch: ClickHouse, history: list[tuple[str, str]]) -> list[Table | Unfit]:
     rows = ch.rows(
         f"""
-        SELECT t.database, t.name, t.engine, c.name, c.type
+        SELECT t.database, t.name, t.engine, t.engine_full, c.name, c.type
         FROM system.tables AS t
         INNER JOIN system.columns AS c ON c.database = t.database AND c.table = t.name
         WHERE {_scope_sql(history)}
         ORDER BY t.database, t.name, c.position
         """
     )
-    tables: dict[tuple[str, str, str], dict[str, str]] = {}
-    for database, name, engine, column, column_type in rows:
-        tables.setdefault((database, name, engine), {})[column] = column_type
-    return [classify(database, name, engine, types) for (database, name, engine), types in tables.items()]
+    tables: dict[tuple[str, str, str, str], dict[str, str]] = {}
+    for database, name, engine, engine_full, column, column_type in rows:
+        tables.setdefault((database, name, engine, engine_full), {})[column] = column_type
+    return [
+        classify(database, name, engine, types, engine_full)
+        for (database, name, engine, engine_full), types in tables.items()
+    ]
