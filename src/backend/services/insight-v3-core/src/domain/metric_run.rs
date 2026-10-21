@@ -3,7 +3,7 @@
 use chrono::Utc;
 
 use super::datasets::{self, Datasets};
-use super::definition::{DefinitionId, DefinitionKind, Lookup};
+use super::definition::{DefinitionId, DefinitionKind, Definitions, StoredDefinition};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::metric::answerable::{self, EffectiveClock};
 use super::query::metric_query::over::Over;
@@ -36,6 +36,15 @@ pub(crate) struct Columns {
     pub(crate) imposed_limit: Option<usize>,
 }
 
+/// A stored metric's rows, the columns of the definition they came from,
+/// and what that definition is called.
+#[derive(Debug)]
+pub(crate) struct NamedRun {
+    pub(crate) result: RunResult,
+    pub(crate) columns: Columns,
+    pub(crate) name: String,
+}
+
 /// Where a metric's rows come from, as far as a reader paging through them
 /// needs to know.
 #[derive(Debug)]
@@ -54,7 +63,7 @@ pub(crate) enum Source {
 /// dataset it reads, and the warehouse the records are kept in.
 #[derive(Debug)]
 pub(crate) struct MetricRuns<'a> {
-    definitions: &'a dyn Lookup,
+    definitions: &'a dyn Definitions,
     metrics: &'a MetricRunner,
     datasets: &'a dyn Datasets,
     /// The database every dataset's records are kept in.
@@ -63,7 +72,7 @@ pub(crate) struct MetricRuns<'a> {
 
 impl<'a> MetricRuns<'a> {
     pub(crate) fn new(
-        definitions: &'a dyn Lookup,
+        definitions: &'a dyn Definitions,
         metrics: &'a MetricRunner,
         datasets: &'a dyn Datasets,
         datasets_database: &'a str,
@@ -99,10 +108,17 @@ impl<'a> MetricRuns<'a> {
             .get(DefinitionKind::Metric, id)
             .await
             .map_err(CustomError::Store)?
-            .ok_or_else(|| CustomError::NotFound {
-                kind: DefinitionKind::Metric,
-                id: id.as_str().to_owned(),
-            })
+            .ok_or_else(|| missing_metric(id))
+    }
+
+    /// The stored metric with what it is called, or the refusal that there
+    /// is none.
+    async fn stored_of(&self, id: &DefinitionId) -> Result<StoredDefinition, CustomError> {
+        self.definitions
+            .read(DefinitionKind::Metric, id)
+            .await
+            .map_err(CustomError::Store)?
+            .ok_or_else(|| missing_metric(id))
     }
 
     /// The columns a stored metric answers, from its definition and its
@@ -121,25 +137,33 @@ impl<'a> MetricRuns<'a> {
     }
 
     /// Runs a stored metric as [`MetricRuns::run`] does, and answers the
-    /// columns of the same definition the rows came from.
-    pub(crate) async fn run_with_columns(
+    /// columns and the name of the same definition the rows came from.
+    pub(crate) async fn run_named(
         &self,
-        name: &DefinitionId,
+        id: &DefinitionId,
         request: &WindowRequest,
-    ) -> Result<(RunResult, Columns), CustomError> {
-        let body = self.body_of(name).await?;
-        let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
+    ) -> Result<NamedRun, CustomError> {
+        let stored = self.stored_of(id).await?;
+        let metric: MetricQuery = serde_json::from_value(stored.body).map_err(CustomError::Body)?;
 
         let Some(named) = metric.dataset() else {
             let result = self.run_over_table(&metric, request).await?;
-            return Ok((result, columns_of(&metric, None)));
+            return Ok(NamedRun {
+                result,
+                columns: columns_of(&metric, None),
+                name: stored.name,
+            });
         };
         let (declaration, table) = self.ready_dataset(named).await?;
         let result = self
             .run_over_ready_dataset(&metric, &declaration, &table, request)
             .await?;
 
-        Ok((result, columns_of(&metric, Some(&declaration))))
+        Ok(NamedRun {
+            result,
+            columns: columns_of(&metric, Some(&declaration)),
+            name: stored.name,
+        })
     }
 
     /// Runs a stored metric over the window the caller asked for, resolved
@@ -377,6 +401,13 @@ impl<'a> MetricRuns<'a> {
         };
 
         self.metrics.undated(&query).await.map_err(CustomError::Run)
+    }
+}
+
+fn missing_metric(id: &DefinitionId) -> CustomError {
+    CustomError::NotFound {
+        kind: DefinitionKind::Metric,
+        id: id.as_str().to_owned(),
     }
 }
 

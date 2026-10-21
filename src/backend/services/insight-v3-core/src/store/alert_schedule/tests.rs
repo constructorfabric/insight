@@ -382,6 +382,7 @@ mod delivery {
                     breached: true,
                     witness: Witness::one_value("total", serde_json::json!(42), true),
                 },
+                metric_name: None,
                 evaluated_at: Utc::now(),
             })
             .await

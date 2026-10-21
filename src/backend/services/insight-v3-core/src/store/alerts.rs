@@ -61,11 +61,11 @@ const CANCEL_PENDING: &str =
 
 /// A check lands only on the revision it was scheduled for.
 const RECORD_CHECK: &str = "UPDATE alert_rules SET last_evaluated_at = ?, last_outcome = ?, last_reason = ?, last_witness = ?, last_valid_breached = ?, breached_since = ? WHERE id = ? AND revision = ? AND enabled = 1";
-const INSERT_NOTIFICATION: &str = "INSERT INTO alert_notifications (id, rule_id, rule_revision, rule_name, metric, rule_condition, context_columns, witness, evaluated_at, destination, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)";
+const INSERT_NOTIFICATION: &str = "INSERT INTO alert_notifications (id, rule_id, rule_revision, rule_name, metric, metric_name, rule_condition, context_columns, witness, evaluated_at, destination, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)";
 /// Notifications past the kept count go, oldest first; one still owed stays.
 const TRIM_NOTIFICATIONS: &str = "DELETE FROM alert_notifications WHERE rule_id = ? AND status <> ? AND id NOT IN (SELECT id FROM (SELECT id FROM alert_notifications WHERE rule_id = ? ORDER BY created_at DESC, id DESC LIMIT ?) AS kept)";
 
-const NOTIFICATION_COLUMNS: &str = "id, rule_id, rule_revision, rule_name, metric, rule_condition, context_columns, witness, evaluated_at, destination, status, attempts, last_error, provider_receipt, created_at";
+const NOTIFICATION_COLUMNS: &str = "id, rule_id, rule_revision, rule_name, metric, metric_name, rule_condition, context_columns, witness, evaluated_at, destination, status, attempts, last_error, provider_receipt, created_at";
 const SELECT_NOTIFICATION: &str = "SELECT {columns} FROM alert_notifications WHERE id = ?";
 const SELECT_NOTIFICATION_HELD: &str =
     "SELECT {columns} FROM alert_notifications WHERE id = ? FOR UPDATE";
@@ -295,8 +295,8 @@ impl MariaAlerts {
         &self,
         transaction: &sea_orm::DatabaseTransaction,
         current: &AlertRule,
+        recording: &Recording,
         witness: &Witness,
-        evaluated_at: DateTime<Utc>,
         now: DateTime<Utc>,
     ) -> Result<Notification, AlertStoreError> {
         let notification = Notification {
@@ -305,10 +305,11 @@ impl MariaAlerts {
             rule_revision: current.revision,
             rule_name: current.spec.name.clone(),
             metric: current.spec.metric.clone(),
+            metric_name: recording.metric_name.clone(),
             condition: current.spec.condition.clone(),
             context_columns: current.spec.context_columns.clone(),
             witness: witness.clone(),
-            evaluated_at,
+            evaluated_at: recording.evaluated_at,
             destination: current.spec.destination.clone(),
             status: NotificationStatus::Pending,
             attempts: 0,
@@ -325,6 +326,7 @@ impl MariaAlerts {
                     notification.rule_revision.into(),
                     notification.rule_name.as_str().into(),
                     notification.metric.as_str().into(),
+                    notification.metric_name.as_deref().into(),
                     notification.condition.to_stored().into(),
                     context_columns_stored(&notification.context_columns).into(),
                     notification.witness.to_json().to_string().into(),
@@ -570,7 +572,7 @@ impl AlertStore for MariaAlerts {
 
         let notification = match (owed, outcome.witness()) {
             (true, Some(witness)) => Some(
-                self.owe_notification(&transaction, &current, witness, recording.evaluated_at, now)
+                self.owe_notification(&transaction, &current, &recording, witness, now)
                     .await?,
             ),
             _ => None,
@@ -806,6 +808,7 @@ struct NotificationRow {
     rule_revision: u32,
     rule_name: String,
     metric: String,
+    metric_name: Option<String>,
     rule_condition: String,
     context_columns: Option<String>,
     witness: String,
@@ -826,6 +829,7 @@ impl NotificationRow {
             rule_revision: self.rule_revision,
             rule_name: AlertName::from_row(self.rule_name),
             metric: DefinitionId::parse(&self.metric).map_err(|_| unreadable(&self.metric))?,
+            metric_name: self.metric_name,
             condition: parse_condition(&self.rule_condition)?,
             context_columns: parse_context_columns(self.context_columns.as_deref())?,
             witness: parse_witness(&self.witness)?,

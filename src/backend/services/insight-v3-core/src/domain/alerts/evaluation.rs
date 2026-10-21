@@ -73,13 +73,14 @@ impl<'a> Evaluator<'a> {
         }
 
         let evaluated_at = Utc::now();
-        let outcome = self.observe(&rule, evaluated_at).await;
+        let observed = self.observe(&rule, evaluated_at).await;
         let recorded = self
             .store
             .record(Recording {
                 rule_id: rule.id,
                 revision: rule.revision,
-                outcome,
+                outcome: observed.outcome,
+                metric_name: observed.metric_name,
                 evaluated_at,
             })
             .await?;
@@ -87,13 +88,16 @@ impl<'a> Evaluator<'a> {
         Ok(Evaluated::Recorded(recorded))
     }
 
-    async fn observe(&self, rule: &AlertRule, evaluated_at: DateTime<Utc>) -> Outcome {
+    async fn observe(&self, rule: &AlertRule, evaluated_at: DateTime<Utc>) -> Observed {
         let label = rule.spec.name.as_str();
         let window = match rule.spec.window() {
             Ok(window) => window,
             Err(error) => {
                 tracing::warn!(rule = %label, %error, "an alert's range no longer parses");
-                return Outcome::Unknown(UnknownReason::CompileFailed);
+                return Observed {
+                    outcome: Outcome::Unknown(UnknownReason::CompileFailed),
+                    metric_name: None,
+                };
             }
         };
 
@@ -110,11 +114,19 @@ impl<'a> Evaluator<'a> {
     }
 }
 
+/// What one check found, and what the metric was called when it was read.
+#[derive(Debug)]
+pub(crate) struct Observed {
+    pub(crate) outcome: Outcome,
+    /// None when the metric could not be run.
+    pub(crate) metric_name: Option<String>,
+}
+
 /// What a check of `metric` over `window` finds now: the run judged by the
-/// condition, or the unknown a run that did not answer is. The groups and
-/// the row bound come from the same definition the rows did. `label` names
-/// the rule, or what asked, in the log; `context` the columns the witness
-/// keeps beside the condition's.
+/// condition, or the unknown a run that did not answer is. The groups, the
+/// row bound and the name come from the same definition the rows did.
+/// `label` names the rule, or what asked, in the log; `context` the columns
+/// the witness keeps beside the condition's.
 pub(crate) async fn observe(
     runs: &MetricRuns<'_>,
     label: &str,
@@ -123,17 +135,23 @@ pub(crate) async fn observe(
     condition: &Condition,
     context: &[String],
     evaluated_at: DateTime<Utc>,
-) -> Outcome {
-    match runs.run_with_columns(metric, window).await {
-        Ok((result, columns)) => evaluate(
-            &result,
-            condition,
-            &columns.groups,
-            context,
-            columns.imposed_limit,
-            evaluated_at,
-        ),
-        Err(error) => Outcome::Unknown(unknown_because(label, &error)),
+) -> Observed {
+    match runs.run_named(metric, window).await {
+        Ok(run) => Observed {
+            outcome: evaluate(
+                &run.result,
+                condition,
+                &run.columns.groups,
+                context,
+                run.columns.imposed_limit,
+                evaluated_at,
+            ),
+            metric_name: Some(run.name),
+        },
+        Err(error) => Observed {
+            outcome: Outcome::Unknown(unknown_because(label, &error)),
+            metric_name: None,
+        },
     }
 }
 
