@@ -4,5 +4,5 @@
   under a tenant nobody signs in to.
 -#}
 {% macro tenant_uuid(tenant_col) -%}
-    toUUID(CAST({{ tenant_col }} AS String))
+    toUUID(ifNull({{ tenant_col }}, ''))
 {%- endmacro %}
