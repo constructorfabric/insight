@@ -1,0 +1,2 @@
+FROM alpine:3.22@sha256:d406446bc05b82480756ce8f1287964d28768c23955fa9480d2a74a2eae7a654
+RUN sleep 20 && date > /built

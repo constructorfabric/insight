@@ -1,0 +1,60 @@
+name: cache-check
+
+on:
+  push:
+    branches: [ci/cache-check, ci/cache-check-other]
+  pull_request:
+    branches: [ci/cache-check]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cache-check-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'test-large' }}
+    timeout-minutes: 30
+    environment: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/ci/cache-check') && 'ci-trusted' || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Runner key
+        run: |
+          if [ -n "${CI_CACHE_RO_KEY_ID:-}" ]; then echo "runner key: present"; else echo "runner key: absent"; fi
+          echo "vars visible: ${{ toJSON(vars) != '{}' }}"
+
+      - id: cache
+        uses: ./.github/actions/ci-cache
+        with:
+          rw-key-id: ${{ secrets.CI_CACHE_RW_KEY_ID }}
+          rw-secret: ${{ secrets.CI_CACHE_RW_SECRET }}
+          trusted: ${{ github.event_name == 'push' && github.ref == 'refs/heads/ci/cache-check' }}
+          project: insight
+          key-prefix: sandbox/
+          rust: true
+          downloads: |
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          downloads-key: cargo-${{ hashFiles('check/Cargo.lock') }}
+          downloads-restore-keys: cargo-
+          buildkit: true
+
+      - name: Build crate
+        working-directory: check
+        run: |
+          start=$(date +%s)
+          cargo build --locked --release
+          echo "cargo build: $(( $(date +%s) - start ))s, mode ${{ steps.cache.outputs.mode }}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Build image
+        working-directory: check
+        run: |
+          if ! docker info >/dev/null 2>&1; then echo "no docker"; exit 0; fi
+          start=$(date +%s)
+          # shellcheck disable=SC2046
+          docker buildx build $(ci-cache-buildx-args cache-check) -t cache-check:ci .
+          echo "image build: $(( $(date +%s) - start ))s" | tee -a "$GITHUB_STEP_SUMMARY"
