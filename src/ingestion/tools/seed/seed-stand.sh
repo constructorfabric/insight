@@ -247,6 +247,11 @@ CLICKHOUSE_HOST="$(cm_value CLICKHOUSE_HOST)"
 CLICKHOUSE_HTTP_PORT="$(cm_value CLICKHOUSE_PORT)"
 CLICKHOUSE_USER="$(cm_value CLICKHOUSE_USER)"
 CLICKHOUSE_DATABASE="$(cm_value CLICKHOUSE_DATABASE)"
+# The topology the bronze tables are created for. Not in the missing-values
+# report: a chart that predates the pair is a standalone stand, which is what
+# empty means to every reader of it.
+CLICKHOUSE_CLUSTER_MODE="$(cm_value CLICKHOUSE_CLUSTER_MODE)"
+CLICKHOUSE_CLUSTER_NAME="$(cm_value CLICKHOUSE_CLUSTER_NAME)"
 
 # Where analytics migrations created the catalogue tables; the Job's own
 # preflight verifies it.
@@ -508,6 +513,7 @@ fi
 
 echo "==> tenant:    $TENANT"
 echo "==> databases: identity=$IDENTITY_DB analytics=$ANALYTICS_DB clickhouse=$CLICKHOUSE_DATABASE"
+echo "==> topology:  cluster_mode=${CLICKHOUSE_CLUSTER_MODE:-false} cluster_name=${CLICKHOUSE_CLUSTER_NAME:-}"
 echo "==> image:     $IMAGE"
 # Origin printed, not just the value: shows whether the seed follows the
 # realm or overrides it, before anything is written.
@@ -528,6 +534,8 @@ export SEED_CLICKHOUSE_HOST="$CLICKHOUSE_HOST"
 export SEED_CLICKHOUSE_HTTP_PORT="$CLICKHOUSE_HTTP_PORT"
 export SEED_CLICKHOUSE_USER="$CLICKHOUSE_USER"
 export SEED_CLICKHOUSE_DATABASE="$CLICKHOUSE_DATABASE"
+export SEED_CLICKHOUSE_CLUSTER_MODE="$CLICKHOUSE_CLUSTER_MODE"
+export SEED_CLICKHOUSE_CLUSTER_NAME="$CLICKHOUSE_CLUSTER_NAME"
 export SEED_TENANT_ID="$TENANT"
 export SEED_DEV_USER_EMAIL="$DEV_EMAIL"
 export SEED_IDP_SOURCE_TYPE="$IDP_SOURCE_TYPE"
@@ -795,6 +803,7 @@ render_bronze_manifest() {
     ${SEED_NAMESPACE} ${SEED_IMAGE} ${SEED_DEADLINE_SECONDS} ${SEED_DB_SECRET}
     ${SEED_CLICKHOUSE_HOST} ${SEED_CLICKHOUSE_HTTP_PORT} ${SEED_CLICKHOUSE_USER}
     ${SEED_CLICKHOUSE_DATABASE}
+    ${SEED_CLICKHOUSE_CLUSTER_MODE} ${SEED_CLICKHOUSE_CLUSTER_NAME}
     ${SEED_PULL_SECRETS}
   ' < "$BRONZE_JOB_TEMPLATE"
 }

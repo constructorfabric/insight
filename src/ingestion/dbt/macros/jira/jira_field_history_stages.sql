@@ -65,13 +65,16 @@
 
 
 {#- One stage, replaced. `ORDER BY tuple()`: a stage is read whole, by joins.
-    `marker` is a comment the statement carries for the log to name it by. -#}
+    `marker` is a comment the statement carries for the log to name it by.
+    Created EMPTY and then filled: a Replicated database rejects CREATE ... AS
+    SELECT. -#}
 {% macro jira_journal_write_stage(name, select_sql, marker='') %}
     {%- set stage = jira_journal_stage(name) -%}
     {%- set settings = adapter.get_model_query_settings(model) -%}
     {%- do run_query('DROP TABLE IF EXISTS ' ~ stage) -%}
-    {%- do run_query('CREATE TABLE ' ~ stage ~ ' ENGINE = MergeTree ORDER BY tuple() AS '
-                     ~ marker ~ select_sql ~ settings) -%}
+    {%- do run_query('CREATE TABLE ' ~ stage ~ ' ENGINE = ' ~ insight_engine('MergeTree')
+                     ~ ' ORDER BY tuple() EMPTY AS ' ~ select_sql) -%}
+    {%- do run_query('INSERT INTO ' ~ stage ~ ' ' ~ marker ~ select_sql ~ settings) -%}
 {% endmacro %}
 
 

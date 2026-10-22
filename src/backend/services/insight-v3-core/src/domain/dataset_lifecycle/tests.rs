@@ -68,8 +68,11 @@ impl Fixture {
         }
     }
 
-    /// The datasets database answers that nothing holds the name.
+    /// The datasets database stands as a plain one and answers that nothing
+    /// holds the name.
     fn nothing_holds_the_name(&self) {
+        self.mock
+            .add(handlers::provide(vec![String::from("Atomic")]));
         self.mock.add(handlers::provide(Vec::<NoTable>::new()));
     }
 

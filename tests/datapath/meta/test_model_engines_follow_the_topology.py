@@ -30,8 +30,14 @@ MODEL_SOURCES = (
     DBT_PROJECT,
 )
 
+#: The macros, whose hand-written DDL the adapter never sees.
+MACROS = DBT_PROJECT / "macros"
+
 #: dbt's own clean-targets, which hold compiled copies of everything above.
 BUILD_DIRS = frozenset({"target", "dbt_packages"})
+
+#: Any member of the MergeTree family spelled straight into an ENGINE clause.
+ENGINE_LITERAL_IN_DDL = re.compile(r"ENGINE\s*=\s*\w*MergeTree", re.IGNORECASE)
 
 #: A `config(engine=...)` that is not a call to the macro. The trailing `\S` is load
 #: bearing: without something to match after it, `\s*` backtracks to zero width and the
@@ -82,6 +88,21 @@ def test_a_model_states_its_engine_through_the_macro_rather_than_as_a_literal() 
     ]
 
     assert not literals, f"engine configured without insight_engine(): {literals}"
+
+
+def test_a_macro_states_its_engine_through_the_macro_rather_than_as_a_literal() -> None:
+    """A macro's DDL goes through `run_query`, so the adapter's prefix never reaches
+    it either; the family has to come from `insight_engine`."""
+    literals = [
+        f"{path.relative_to(REPO_ROOT)}:{number}"
+        for path in sorted(MACROS.rglob("*.sql"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if ENGINE_LITERAL_IN_DDL.search(line)
+    ]
+
+    assert not literals, (
+        f"engine spelled into DDL rather than rendered by insight_engine(): {literals}"
+    )
 
 
 def test_a_single_node_is_created_with_the_plain_merge_tree_family(

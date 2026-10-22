@@ -29,10 +29,13 @@
 //!
 //! Any failure before the swap leaves the live table untouched.
 //!
-//! On a replicated warehouse the verify and the guard are read behind a load
-//! balancer, so they can reach a replica that has not merged the parts this
-//! run just wrote; the insert and those reads go through the shared client's
-//! read-after-write pair.
+//! On a replicated warehouse the staging is a `ReplicatedMergeTree` (the
+//! shared client renders the engine from its topology), and the verify and
+//! the guard are read behind a load balancer, so they can reach a replica that
+//! has not merged the parts this run just wrote; the insert and those reads go
+//! through the shared client's read-after-write pair. The database itself is
+//! `create-databases.sh`'s to make; a run refuses one whose engine contradicts
+//! the topology.
 
 use std::time::Duration;
 
@@ -170,11 +173,6 @@ impl ClickHouseIdentityPersonsWriter {
             config = config.with_auth(user, password);
         }
         Self::new(Client::new(config))
-    }
-
-    async fn execute(&self, sql: &str) -> anyhow::Result<()> {
-        self.client.query(sql).execute().await?;
-        Ok(())
     }
 
     /// Whether the live table exists. Read fresh for every swap: the hook that
@@ -336,10 +334,10 @@ impl IdentityPersonsWriter for ClickHouseIdentityPersonsWriter {
         // Unique per run: concurrent syncs never touch each other's staging.
         let staging = format!("{STAGING_PREFIX}{}", Uuid::now_v7().simple());
 
-        // The database normally pre-exists (the deploy's create-databases.sh),
-        // but a fresh environment may not have run it yet — idempotent and cheap.
-        self.execute(&format!("CREATE DATABASE IF NOT EXISTS {DATABASE}"))
-            .await?;
+        // Checked once per run: the database is create-databases.sh's to
+        // make, and a staging in one of the wrong engine would publish a
+        // table only one replica holds.
+        self.client.assert_database_topology(DATABASE).await?;
         self.drop_stale_stagings().await;
 
         self.client.execute_ddl(&staging_spec(&staging)).await?;
@@ -448,11 +446,11 @@ mod tests {
         ClickHouseIdentityPersonsWriter::connect("http://ch:8123", "", "", topology)
     }
 
-    /// The `Replicated` database engine replays the statement on every replica
-    /// and converts the engine on the way in, so the staging a clustered
-    /// install creates is the one a single-node install creates.
+    /// A `Replicated` database replays the create on every replica but the
+    /// rows follow the engine, so a clustered install stages into a
+    /// `ReplicatedMergeTree` the swap then publishes.
     #[test]
-    fn a_clustered_install_stages_through_the_same_statement() -> anyhow::Result<()> {
+    fn a_clustered_install_stages_into_a_replicated_table() -> anyhow::Result<()> {
         let clustered = writer(Topology::new(true, "insight_cluster"))
             .client
             .ddl_sql(&staging_spec("identity_persons_staging_abc"))?;
@@ -460,7 +458,15 @@ mod tests {
             .client
             .ddl_sql(&staging_spec("identity_persons_staging_abc"))?;
 
-        assert_eq!(clustered, standalone);
+        assert!(
+            clustered.ends_with(") ENGINE = ReplicatedMergeTree ORDER BY id"),
+            "{clustered}"
+        );
+        assert!(
+            standalone.ends_with(") ENGINE = MergeTree ORDER BY id"),
+            "{standalone}"
+        );
+        assert!(!clustered.contains("ON CLUSTER"), "{clustered}");
         Ok(())
     }
 
