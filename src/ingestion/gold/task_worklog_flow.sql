@@ -1,7 +1,7 @@
 {{ config(
     materialized='table',
     engine=insight_engine('MergeTree'),
-    order_by=['tenant_id', 'entity_id', 'metric_date'],
+    order_by=['tenant_id', 'entity_id', 'account_source_type', 'account_source_id', 'account_id', 'metric_date'],
     schema=var('gold_database'),
     alias='task_worklog_flow',
     tags=['gold'],
@@ -14,21 +14,28 @@
     }
 ) }}
 
+-- Keyed by the tracker account and its email, the same pair task_issue_state
+-- carries, so a day's in-progress time and the worklogs on it meet on one row
+-- whichever of the two keys identity resolves.
 
 WITH
+-- INVARIANT: no email filter, as in task_issue_state: an author with no email
+-- still owns the worklog through the account.
 task_users AS (
     SELECT
         tenant_id,
         insight_source_id,
         user_id,
-        lower(email) AS email
+        if(email LIKE '%@%', {{ normalized_email('email') }}, '') AS email
     FROM {{ ref('class_task_users') }} FINAL
-    WHERE email LIKE '%@%'
 ),
 in_progress_per_day AS (
     SELECT
         s.tenant_id                                                          AS tenant_id,
         s.entity_id                                                          AS entity_id,
+        s.account_source_type                                                AS account_source_type,
+        s.account_source_id                                                  AS account_source_id,
+        s.account_id                                                         AS account_id,
         day                                                                  AS metric_date,
         sum(toFloat64(greatest(toInt64(0),
             dateDiff('second',
@@ -44,7 +51,7 @@ in_progress_per_day AS (
                      dateDiff('day', toDate(i.interval_start), toDate(i.interval_end)) + 1
                  )))) AS day
     WHERE i.status_category = 'in_progress'
-    GROUP BY s.tenant_id, s.entity_id, day
+    GROUP BY s.tenant_id, s.entity_id, s.account_source_type, s.account_source_id, s.account_id, day
 ),
 -- in_progress_per_day inherits the availability filter through its
 -- task_issue_state join; worklogs aggregate per person without touching
@@ -54,6 +61,9 @@ worklog_per_day AS (
     SELECT
         u.tenant_id                                                          AS tenant_id,
         u.email                                                              AS entity_id,
+        {{ task_account_source_type('w.data_source') }}                      AS account_source_type,
+        w.insight_source_id                                                  AS account_source_id,
+        w.author_id                                                          AS account_id,
         toDate(w.work_date)                                                  AS metric_date,
         sum(ifNull(w.duration_seconds, 0))                                   AS worklog_seconds
     FROM {{ ref('class_task_worklogs') }} AS w FINAL
@@ -61,11 +71,15 @@ worklog_per_day AS (
         ON u.insight_source_id = w.insight_source_id AND u.user_id = w.author_id
     WHERE w.work_date IS NOT NULL
       AND ifNull(w.is_deleted, 0) = 0
-    GROUP BY u.tenant_id, u.email, toDate(w.work_date)
+      AND coalesce(w.author_id, '') != ''
+    GROUP BY u.tenant_id, entity_id, account_source_type, account_source_id, account_id, metric_date
 )
 SELECT
     assumeNotNull(coalesce(ip.tenant_id, wl.tenant_id))                      AS tenant_id,
     assumeNotNull(coalesce(ip.entity_id, wl.entity_id))                      AS entity_id,
+    assumeNotNull(coalesce(ip.account_source_type, wl.account_source_type))  AS account_source_type,
+    assumeNotNull(coalesce(ip.account_source_id, wl.account_source_id))      AS account_source_id,
+    assumeNotNull(coalesce(ip.account_id, wl.account_id))                    AS account_id,
     assumeNotNull(coalesce(ip.metric_date, wl.metric_date))                  AS metric_date,
     ifNull(ip.in_progress_seconds, 0)                                        AS in_progress_seconds,
     ifNull(wl.worklog_seconds, 0)                                            AS worklog_seconds
@@ -73,4 +87,7 @@ FROM in_progress_per_day AS ip
 FULL OUTER JOIN worklog_per_day AS wl
     ON wl.tenant_id = ip.tenant_id
     AND wl.entity_id = ip.entity_id
+    AND wl.account_source_type = ip.account_source_type
+    AND wl.account_source_id = ip.account_source_id
+    AND wl.account_id = ip.account_id
     AND wl.metric_date = ip.metric_date

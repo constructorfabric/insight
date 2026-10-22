@@ -308,8 +308,10 @@ until someone is assigned again. Folding the real assignee set is phase 2 work.
 `github__task_users` maps account to e-mail from
 `staging.github__account_emails`, emitting `user_id` as the numeric account
 identifier — which is what that model keys on. Gold joins this with an **inner**
-join and an `email LIKE '%@%'` filter, so an issue whose assignee has no known
-e-mail disappears from every measure.
+join and carries the assignee's account beside its e-mail, so the analytics
+runtime resolves the issue account-first through identity. An account that
+`github__account_emails` never observed has no `class_task_users` row at all,
+so its issues still disappear from every measure.
 
 Measure that coverage before shipping. It is the single largest determinant of
 how much of the tracker reaches a dashboard.

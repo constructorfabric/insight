@@ -34,9 +34,11 @@
 -- for the type names.
 -- Fields are matched by ROLE, not by vendor field id: `field_id` is documented
 -- as vendor-specific, so a literal here would only ever be Jira's name for the
--- thing. `task_field_roles_current` carries the binding. Attribution:
--- assignee account id → lowercased email via class_task_users; only
--- email-shaped keys pass (unresolvable accounts are excluded, not carried).
+-- thing. `task_field_roles_current` carries the binding. Attribution is the
+-- assignee's account, carried with its email when the tracker states one: the
+-- analytics runtime resolves account-first through identity, so an assignee
+-- with no email still reaches a person once identity binds the account.
+-- Unassigned issues have no row.
 -- Class reads keep FINAL: RMT parts are not duplicate-immune and argMax over
 -- a stale version would skew the pivot.
 
@@ -135,14 +137,15 @@ resolution_default AS (
     WHERE is_deleted = 0
       AND default_value IN ('fixed', 'duplicate', 'wontfix', 'unknown')
 ),
+-- INVARIANT: no email filter. A deleted, deactivated or app account carries
+-- none, and dropping it here takes its issues out of every task measure.
 task_users AS (
     SELECT
         tenant_id,
         insight_source_id,
         user_id,
-        lower(email) AS email
+        if(email LIKE '%@%', {{ normalized_email('email') }}, '') AS email
     FROM {{ ref('class_task_users') }} FINAL
-    WHERE email LIKE '%@%'
 ),
 -- Per-issue scalar pivot; created = first synthetic_initial event.
 history AS (
@@ -255,6 +258,9 @@ issue_close AS (
 SELECT
     u.tenant_id                                                              AS tenant_id,
     u.email                                                                  AS entity_id,
+    {{ task_account_source_type('p.data_source') }}                          AS account_source_type,
+    p.insight_source_id                                                      AS account_source_id,
+    p.assignee_account_id                                                    AS account_id,
     p.insight_source_id                                                      AS insight_source_id,
     p.data_source                                                            AS data_source,
     p.issue_id                                                               AS issue_id,
@@ -323,3 +329,4 @@ LEFT JOIN resolution_default AS rd
 -- unobserved issues stay in — the entity still exists, its data is merely
 -- stale. Issues with no availability events default to present ('').
 WHERE p.availability NOT IN ('deleted', 'trashed')
+  AND p.assignee_account_id != ''
