@@ -126,6 +126,8 @@ deduped_participants AS (
         parseDateTimeBestEffortOrNull(leave_time) AS left_at
     FROM {{ participants }}
     WHERE parseDateTimeBestEffortOrNull(join_time) IS NOT NULL
+      -- INVARIANT: time spent waiting to be admitted is not time in the meeting.
+      AND coalesce(status, '') != 'in_waiting_room'
     {%- if is_incremental() %}
       AND (
           (SELECT count() FROM {{ this }}) = 0

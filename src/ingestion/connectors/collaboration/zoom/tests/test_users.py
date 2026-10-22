@@ -1,6 +1,7 @@
 """Mock-server tests for the `users` stream.
 
-Plain paginated stream: GET /v2/users behind a Server-to-Server OAuth token
+Paginated stream, read once per account status (`active`, then `inactive`,
+since /v2/users omits deactivated accounts unless asked): GET /v2/users behind a Server-to-Server OAuth token
 exchange (SessionTokenAuthenticator), CursorPagination on `next_page_token`,
 `users` extract field, AddFields stamping tenant_id / source_id /
 unique_key = "{tenant}-{source}-{id}".
@@ -34,16 +35,21 @@ def _page(users: list[dict], next_token: str | None = None) -> HttpResponse:
     return HttpResponse(body=json.dumps(body), status_code=200)
 
 
-def _params(page_token: str | None = None) -> dict:
-    params = {"page_size": "100"}
+def _params(page_token: str | None = None, status: str = "active") -> dict:
+    params = {"page_size": "100", "status": status}
     if page_token:
         params["next_page_token"] = page_token
     return params
 
 
+def _no_inactive_users(http_mocker: HttpMocker) -> None:
+    http_mocker.get(HttpRequest(_USERS_URL, query_params=_params(status="inactive")), _page([]))
+
+
 def test_full_refresh_single_page(http_mocker: HttpMocker) -> None:
     config = ZoomConfigBuilder().build()
     mock_token(http_mocker)
+    _no_inactive_users(http_mocker)
     http_mocker.get(
         HttpRequest(_USERS_URL, query_params=_params()),
         _page([_user("usr-1", "alice@example.com"), _user("usr-2", "bob@example.com")]),
@@ -59,6 +65,7 @@ def test_full_refresh_single_page(http_mocker: HttpMocker) -> None:
 def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
     config = ZoomConfigBuilder().build()
     mock_token(http_mocker)
+    _no_inactive_users(http_mocker)
     http_mocker.get(HttpRequest(_USERS_URL, query_params=_params()), _page([_user("usr-1", "alice@example.com")]))
 
     output = read_stream(_CONNECTOR, _STREAM, config)
@@ -72,6 +79,7 @@ def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
 def test_schema_conformance(http_mocker: HttpMocker) -> None:
     config = ZoomConfigBuilder().build()
     mock_token(http_mocker)
+    _no_inactive_users(http_mocker)
     http_mocker.get(HttpRequest(_USERS_URL, query_params=_params()), _page([_user("usr-1", "alice@example.com")]))
 
     output = read_stream(_CONNECTOR, _STREAM, config)
@@ -84,6 +92,7 @@ def test_pagination_multi_page(http_mocker: HttpMocker) -> None:
     request carrying it; a response without the token stops."""
     config = ZoomConfigBuilder().build()
     mock_token(http_mocker)
+    _no_inactive_users(http_mocker)
     http_mocker.get(
         HttpRequest(_USERS_URL, query_params=_params()),
         _page([_user("usr-1", "alice@example.com")], next_token="tok-2"),
@@ -101,6 +110,7 @@ def test_pagination_multi_page(http_mocker: HttpMocker) -> None:
 def test_empty_page(http_mocker: HttpMocker) -> None:
     config = ZoomConfigBuilder().build()
     mock_token(http_mocker)
+    _no_inactive_users(http_mocker)
     http_mocker.get(HttpRequest(_USERS_URL, query_params=_params()), _page([]))
 
     output = read_stream(_CONNECTOR, _STREAM, config)
@@ -114,6 +124,7 @@ def test_error_retry_429(http_mocker: HttpMocker) -> None:
     the read must succeed once the source recovers, without losing records."""
     config = ZoomConfigBuilder().build()
     mock_token(http_mocker)
+    _no_inactive_users(http_mocker)
     http_mocker.get(
         HttpRequest(_USERS_URL, query_params=_params()),
         [
@@ -128,3 +139,17 @@ def test_error_retry_429(http_mocker: HttpMocker) -> None:
 
     assert len(output.records) == 1
     assert not output.errors
+
+
+def test_deactivated_accounts_are_read_with_their_status(http_mocker: HttpMocker) -> None:
+    """A deactivated account still arrives, so identity can see it leave."""
+    config = ZoomConfigBuilder().build()
+    mock_token(http_mocker)
+    http_mocker.get(HttpRequest(_USERS_URL, query_params=_params()), _page([_user("usr-1", "alice@example.com")]))
+    gone = {**_user("usr-2", "bob@example.com"), "status": "inactive"}
+    http_mocker.get(HttpRequest(_USERS_URL, query_params=_params(status="inactive")), _page([gone]))
+
+    output = read_stream(_CONNECTOR, _STREAM, config)
+
+    statuses = {r.record.data["id"]: r.record.data["status"] for r in output.records}
+    assert statuses == {"usr-1": "active", "usr-2": "inactive"}, statuses
