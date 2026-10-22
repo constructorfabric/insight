@@ -36,7 +36,7 @@ WITH events AS (
         events, [initial_pairs]) AS states
     FROM initial
 )
-SELECT concat(tenant_id, '-', insight_source_id, '-youtrack-', issue_id, '-', field_id, '-', event_id) AS unique_key,
+SELECT concat(ifNull(tenant_id, ''), '-', insight_source_id, '-youtrack-', issue_id, '-', field_id, '-', event_id) AS unique_key,
     tenant_id, insight_source_id, issue_id, field_id, event_id, pairs,
     toUInt64(toUnixTimestamp64Milli(now64(3))) AS _version
 FROM replay ARRAY JOIN

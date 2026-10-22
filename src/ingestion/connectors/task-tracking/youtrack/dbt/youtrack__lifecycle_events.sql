@@ -14,7 +14,7 @@ SELECT tenant_id, insight_source_id, issue_id,
     [(comment_id, comment_id)] AS pairs,
     first_seen AS collected_at
 FROM (
-    SELECT CAST(tenant_id AS String) AS tenant_id, coalesce(source_id, '') AS insight_source_id,
+    SELECT tenant_id, coalesce(source_id, '') AS insight_source_id,
         coalesce(issue_id, '') AS issue_id,
         coalesce(id, '') AS comment_id, ifNull(deleted, false) AS is_deleted,
         coalesce({{ youtrack_timestamp('updated') }}, fromUnixTimestamp64Milli(toInt64(created))) AS changed_at,
@@ -29,7 +29,7 @@ SELECT tenant_id, insight_source_id, issue_id,
     coalesce(changed_at, first_seen),
     author_id, 'worklog', 'set', [(work_item_id, work_item_id)], first_seen
 FROM (
-    SELECT CAST(tenant_id AS String) AS tenant_id, coalesce(source_id, '') AS insight_source_id,
+    SELECT tenant_id, coalesce(source_id, '') AS insight_source_id,
         coalesce(issue_id, '') AS issue_id,
         coalesce(id, '') AS work_item_id,
         coalesce({{ youtrack_timestamp('updated') }}, fromUnixTimestamp64Milli(toInt64(created))) AS changed_at,
