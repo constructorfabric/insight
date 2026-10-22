@@ -254,7 +254,7 @@ keycloakConfig:
 # ═══════════════════════════════════════════════════════════════════════════
 #  Global
 # ═══════════════════════════════════════════════════════════════════════════
-global:
+global: {}
   # Not set, and worth knowing why: `global.observability.otlp.endpoint` is left at
   # the chart's empty default, which means every service emits structured
   # JSON to stdout and exports no OTLP. There is no collector on this stand

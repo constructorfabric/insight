@@ -334,7 +334,7 @@ Implemented behaviour (groups accounts by normalized current e-mail, then resolv
 - Branch 2 — `LinkedByEmail`: an unbound group whose e-mail already maps to an existing person is linked to that person automatically.
 - Branch 3 — mint: a new person for a group with a new e-mail (at least one active profile); groups with no e-mail, or wholly closed, are skipped.
 - Writes observations via `INSERT IGNORE` (idempotent for re-emitted observations under the natural key, which includes `created_at` taken from `_synced_at`); rebuilds `org_chart` atomically.
-- Guards destructive/suspicious runs (empty input, foreign tenant) with an explicit `--force` override; journals every run in `operations` (queued → running → completed/failed with summary counters).
+- Guards destructive/suspicious runs (no evidence for the configured tenant) with an explicit `--force` override; journals every run in `operations` (queued → running → completed/failed with summary counters).
 
 Hardening shipped with the manual-resolution feature (required by ADR-0003; not yet implemented):
 
@@ -760,7 +760,7 @@ Row 120 supersedes row 5 as the current `display_name` for person `p-1001` (late
 |---|---|
 | Invocation | `identity-resolution seed` — one run (resolve + publish), then exit. Run by every connector ingestion pipeline and by the umbrella chart's 15-minute backstop CronJob; manually runnable for ad-hoc reseeds. `--busy-ok` / `--guard-ok` let the pipeline step and the backstop CronJob tolerate a held lock and an input-guard refusal; refusals surface in the operations journal |
 | Concurrency | A run-lock guarantees a single active run; a concurrent invocation exits with a warning |
-| Guards | Suspicious inputs (empty `identity_inputs`, foreign-tenant universe) are refused unless the operator passes an explicit `--force`; the scheduled job itself never forces |
+| Guards | Suspicious inputs (no `identity_inputs` rows for the configured tenant) are refused unless the operator passes an explicit `--force`; the scheduled job itself never forces |
 | Audit | Every run is journaled in `operations` (queued → running → completed/failed) with summary counters per mode, including `known_binding_conflicts` |
 | History | A one-shot Python seed performed the initial bootstrap and has since been removed; the Rust subcommand is the operative mechanism |
 
@@ -778,7 +778,7 @@ transactional apply is the tenant-scoped rebuild of the derived
 
 **Process** (data flow executed by each seed run):
 
-1. Read `identity.identity_inputs` (ClickHouse): UPSERT observation rows plus DELETE closure signals (never persisted). **Known gap**: DELETE rows carry an empty `value` by contract while the reader filters non-empty values only, so closure signals are currently dropped before the fold — the reader fix ships with the manual-resolution feature. **The full set each run** — no incremental watermark yet (REC-IR-02) — and currently without a tenant predicate (single-tenant deployments; multi-tenant prerequisite). Order by `_synced_at DESC` within each source-account so that the latest email observation is picked deterministically in step 5.
+1. Read `identity.identity_inputs` (ClickHouse): UPSERT observation rows plus DELETE closure signals (never persisted). **Known gap**: DELETE rows carry an empty `value` by contract while the reader filters non-empty values only, so closure signals are currently dropped before the fold — the reader fix ships with the manual-resolution feature. **The full set each run** — no incremental watermark yet (REC-IR-02) — and only for the configured tenant (`insight_tenant_id = toUUID(?)`). Order by `_synced_at DESC` within each source-account so that the latest email observation is picked deterministically in step 5.
 2. Group observations by `(insight_tenant_id, insight_source_type, insight_source_id, source_account_id)` — a "source account" = one user in one connector instance.
 3. Connect to MariaDB. Load known bindings: for each source-account key, find the latest `value_type='id'` observation in `persons` and capture its `person_id`. This becomes the **known-account** set.
 4. Load the current e-mail map: for each normalized e-mail (lowercased, not trimmed — ADR-0011), take the **latest** `value_type='email'` observation (`created_at DESC, id DESC`) and its `person_id`, producing `normalized_email → person_id`. Latest-wins over the append-only journal; the map is empty on the very first run (initial bootstrap) and non-empty afterwards — the same code path handles both, there is no mode flag. (Contested-claim detection on this map ships with the manual-resolution hardening; see §3.2.)
