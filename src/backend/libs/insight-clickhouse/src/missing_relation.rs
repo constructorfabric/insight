@@ -47,7 +47,7 @@ impl MissingRelation {
 /// The two shapes a code arrives in are the full `Code: 60. DB::Exception: …`
 /// and, from a reply carrying its exception in a header with an empty body,
 /// the code alone at the end of the message.
-fn reported_code(message: &str) -> Option<u32> {
+pub(crate) fn reported_code(message: &str) -> Option<u32> {
     const MARKER: &str = "Code: ";
 
     let at = message.find(MARKER)? + MARKER.len();
