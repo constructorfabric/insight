@@ -315,6 +315,15 @@ clickhouse:
   # still converges them later (clickhouse-migrate -> apply-ch-migrations.sh),
   # so the service user needs CREATE DATABASE either way.
   createDatabases: true
+  # When true (default), create-databases.sh also provisions the roles and
+  # grant-less users that read those databases (presentation, grafana, the
+  # MCP explorer and the custom assistant's reader), from both Jobs that run
+  # it. Set false where access is the operator's: a cluster whose ClickHouse
+  # stores access entities locally (no `<replicated>` user directory) cannot
+  # take them from one deploy, so the operator creates them on every replica
+  # and this release creates, grants and revokes nothing. The topology guard
+  # then only notes the missing replicated directory instead of refusing.
+  provisionAccess: true
   # When true (default), a post-install/post-upgrade Hook Job
   # (clickhouse-migrate-job) applies the schema migrations
   # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against

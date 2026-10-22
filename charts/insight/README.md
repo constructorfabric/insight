@@ -177,7 +177,10 @@ later DDL is logged in Keeper and replayed on every replica, which is what lets
 a creator state a table without naming a cluster. The
 `clickhouse-databases` pre-install Hook and the `clickhouse-migrate`
 post-install Hook both run that script; `clickhouse.createDatabases: false`
-turns the pre-install one off for a warehouse provisioned out of band.
+turns the pre-install one off for a warehouse provisioned out of band. The
+roles and grant-less users ride along in the same script, from both Hooks;
+`clickhouse.provisionAccess: false` leaves those to the operator while the
+databases are still created and checked.
 
 Replaying the DDL is not replicating the rows, though. A table still declares
 its own `Replicated*` engine, or it stands on every replica holding whatever
@@ -195,7 +198,7 @@ carries its own remedy:
 | `clusterName` is set and exists | `system.clusters` | every `ON CLUSTER` statement names it; the flag without a name would create a node-local `Replicated` database |
 | Keeper is reachable | `system.zookeeper` | the `Replicated` database engine and the DDL queue coordinate through it |
 | `{shard}` and `{replica}` are defined | `system.macros` | the database and table engines name them in their Keeper paths |
-| access storage is replicated | `system.user_directories` | SQL-created roles and users are otherwise node-local, and authentication through the load balancer succeeds or fails by which replica answers |
+| access storage is replicated | `system.user_directories` | SQL-created roles and users are otherwise node-local, and authentication through the load balancer succeeds or fails by which replica answers. A warehouse that stores access locally takes no role from this release: create them on every replica yourself and set `clickhouse.provisionAccess: false`, which turns this guard into a note and skips every provisioning script |
 | an existing database carries the right engine | `system.databases` | the flag never converts a database that already stands; a standalone deploy is checked in the opposite direction, since it would emit standalone DDL into a `Replicated` database |
 | every `Replicated` database has joined every replica | `system.zookeeper` (`<database keeper path>/replicas`, against the host count of `clusterName` in `system.clusters`), `system.distributed_ddl_queue` | a replica that never ran the `CREATE DATABASE` answers empty; one whose `CREATE` is still queued because it was down is a note, not a refusal, and replays it on return |
 
@@ -237,6 +240,7 @@ Key groups:
 - `keycloak.deploy` + `keycloakConfig.*` — the in-stack identity broker and its realms-as-code hook
 - `clickhouse.clusterMode` / `clickhouse.clusterName` — warehouse topology, see [ClickHouse topology](#clickhouse-topology)
 - `clickhouse.createDatabases` — whether the release creates its own ClickHouse databases (see below)
+- `clickhouse.provisionAccess` — whether the release provisions the ClickHouse roles and grant-less users beside them; `false` leaves access to the operator (a cluster without a replicated user directory)
 - `clickhouse.fieldValueMap.*` — insert-only seed of operator-authored `config.field_value_map` / `config.field_value_defaults` rows from a TSV ConfigMap (post-upgrade hook, weight 300)
 - `previews.*`, `gitCliProxy.*`, `frontend.*` — optional services, on by default
 - `ingestion.templates.enabled` — whether to ship Argo WorkflowTemplates; requires Argo CRDs to be present in the cluster

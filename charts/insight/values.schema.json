@@ -117,7 +117,8 @@
             "protocol":    { "enum": ["http", "https"] },
             "clusterMode": { "type": "boolean" },
             "clusterName": { "type": "string" },
-            "createDatabases": { "type": "boolean" }
+            "createDatabases": { "type": "boolean" },
+            "provisionAccess": { "type": "boolean" }
           }
         }
       ]
