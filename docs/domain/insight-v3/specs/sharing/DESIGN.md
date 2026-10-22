@@ -406,7 +406,7 @@ Datasets are unchanged: their unique `name` stays the key.
 #### Table: folders and tags
 
 - `folders` gains `owner_person_id` (null while ownerless) and drops its unique name key.
-- `tags` gains `owner_person_id` and a stored generated `owner_scope` (`COALESCE(owner_person_id, '')`); its unique key becomes `(owner_scope, name)` under the existing case-insensitive collation.
+- `tags` gains `owner_person_id` and a stored generated `owner_scope` (`COALESCE(RTRIM(owner_person_id), '')`); its unique key becomes `(owner_scope, name)` under the existing case-insensitive collation.
 - `dashboard_tags.dashboard` and `dashboard_pins.dashboard` keep their names and hold dashboard ids.
 - The `tags_lock` and `pins_lock` serialization is unchanged.
 

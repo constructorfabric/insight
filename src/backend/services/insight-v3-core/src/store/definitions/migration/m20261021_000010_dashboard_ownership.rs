@@ -19,7 +19,9 @@ const STEPS: [&str; 11] = [
     "CREATE INDEX IF NOT EXISTS folders_owner ON folders (owner_person_id)",
     "DROP INDEX IF EXISTS folders_name ON folders",
     "ALTER TABLE tags ADD COLUMN IF NOT EXISTS owner_person_id CHAR(36) NULL",
-    "ALTER TABLE tags ADD COLUMN IF NOT EXISTS owner_scope CHAR(36) AS (COALESCE(owner_person_id, '')) STORED",
+    // WORKAROUND: MariaDB refuses a generated column over a bare CHAR, whose
+    // padding depends on sql_mode (error 1901); RTRIM makes it deterministic.
+    "ALTER TABLE tags ADD COLUMN IF NOT EXISTS owner_scope CHAR(36) AS (COALESCE(RTRIM(owner_person_id), '')) STORED",
     "CREATE UNIQUE INDEX IF NOT EXISTS tags_owner_name ON tags (owner_scope, name)",
     "DROP INDEX IF EXISTS tags_name ON tags",
     "CREATE TABLE IF NOT EXISTS dashboard_shares (
@@ -99,7 +101,7 @@ mod tests {
             "the scoped key must be in place before the global one goes"
         );
         assert!(
-            step("owner_scope CHAR(36) AS (COALESCE(owner_person_id, '')) STORED")
+            step("owner_scope CHAR(36) AS (COALESCE(RTRIM(owner_person_id), '')) STORED")
                 < step("tags_owner_name"),
             "the key reads the generated scope"
         );
