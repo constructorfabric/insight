@@ -1087,4 +1087,27 @@ heal_task_class_tenants
 echo "=== Healing task class producer tenants ==="
 heal_task_producer_tenants
 
+echo "=== Removing Zoom participant device identifiers ==="
+# Connector 3.0.0 stops collecting these; rows already stored still hold them.
+# Dropping a column removes no row. Idempotent: a converged table, or one
+# created after 3.0.0, has none of them.
+heal_zoom_participant_device_columns() {
+  ch_table_exists bronze_zoom participants || return 0
+  echo "  bronze_zoom.participants"
+  run_ch <<SQL
+ALTER TABLE bronze_zoom.participants
+    DROP COLUMN IF EXISTS ip_address,
+    DROP COLUMN IF EXISTS internal_ip_addresses,
+    DROP COLUMN IF EXISTS location,
+    DROP COLUMN IF EXISTS pc_name,
+    DROP COLUMN IF EXISTS domain,
+    DROP COLUMN IF EXISTS mac_addr,
+    DROP COLUMN IF EXISTS harddisk_id,
+    DROP COLUMN IF EXISTS leave_reason,
+    DROP COLUMN IF EXISTS device_name;
+SQL
+}
+
+heal_zoom_participant_device_columns
+
 echo "=== ClickHouse migrations complete ==="
