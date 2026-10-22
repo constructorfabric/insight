@@ -74,12 +74,14 @@ export function DefinitionEditor({
   // database, so long as exactly one database has one.
   const overTables = kind === "metrics";
   const catalogue = useQuery({ ...tablesQuery(), enabled: overTables });
-  const listed = catalogue.data?.tables ?? [];
+  const tablesListed = catalogue.data?.tables ?? [];
   const named = tableAddress(held.document, {
     table: "table",
     database: "database",
   });
-  const holders = named ? listed.filter((each) => each.table === named.table) : [];
+  const holders = named
+    ? tablesListed.filter((each) => each.table === named.table)
+    : [];
   const address =
     named === undefined
       ? undefined
@@ -92,7 +94,7 @@ export function DefinitionEditor({
     ...tableQuery(address?.database ?? "", address?.table ?? ""),
     enabled: overTables && address !== undefined,
   });
-  const tables = () => listed.map(spelled);
+  const tables = () => tablesListed.map(spelled);
   const columns = () =>
     table.data?.columns.map((column) => column.name) ?? [];
 

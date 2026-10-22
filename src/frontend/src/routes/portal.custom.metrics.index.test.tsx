@@ -220,10 +220,10 @@ describe("/portal/custom/metrics", () => {
 
     expect(await screen.findByText("Lines per day")).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Edit Lines per day" })
+      screen.getByRole("button", { name: "Edit Lines per day" })
     ).toHaveAttribute("href", "/portal/custom/edit/metrics/m-1");
     expect(
-      screen.getByRole("link", { name: "Preview Lines per day" })
+      screen.getByRole("button", { name: "Preview Lines per day" })
     ).toHaveAttribute("href", "/portal/custom/metrics/m-1");
     expect(customClient.fetchMetric).toHaveBeenCalledWith("m-1");
   });

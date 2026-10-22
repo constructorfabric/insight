@@ -163,7 +163,7 @@ describe("/portal/custom/widgets/$name", () => {
       await screen.findByRole("heading", { name: "Lines table" })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Edit Lines table" })
+      screen.getByRole("button", { name: "Edit Lines table" })
     ).toHaveAttribute("href", "/portal/custom/edit/widgets/w-5");
     expect(
       await screen.findByRole("link", { name: "Lines summed" })

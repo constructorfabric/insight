@@ -78,8 +78,13 @@ function renderAt(path: string) {
   );
 }
 
+async function openAssistant() {
+  await userEvent.click(screen.getByRole("button", { name: "Open assistant" }));
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
+  window.localStorage.clear();
   // The shell measures the viewport to decide whether the context pane is in
   // flow or off-canvas; jsdom implements no media queries.
   vi.stubGlobal(
@@ -163,6 +168,7 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
 
     renderAt("/portal/custom");
     await screen.findByRole("heading", { name: "Custom" }, { timeout: 10000 });
+    await openAssistant();
 
     await userEvent.type(
       screen.getByTestId("chat-input"),
@@ -220,6 +226,7 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
 
     renderAt("/portal/custom/engineering");
     await screen.findByRole("heading", { name: "Engineering" }, { timeout: 10000 });
+    await openAssistant();
 
     await userEvent.type(
       screen.getByTestId("chat-input"),

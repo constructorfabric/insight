@@ -70,7 +70,7 @@ const ORPHANED = {
   id: "dash-1",
   name: "Release notes",
   owner_person_id: LEAVER,
-  updated_at: "2026-09-01T12:00:00.000Z",
+  updated_at: "2026-09-01T00:00:00.000Z",
 };
 
 function renderPage() {

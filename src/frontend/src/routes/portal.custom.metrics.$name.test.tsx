@@ -170,7 +170,7 @@ describe("/portal/custom/metrics/$name", () => {
       await screen.findByRole("heading", { name: "Lines by author" })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Edit Lines by author" })
+      screen.getByRole("button", { name: "Edit Lines by author" })
     ).toHaveAttribute("href", "/portal/custom/edit/metrics/m-7");
   });
 

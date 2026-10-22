@@ -127,7 +127,7 @@ function drawable(
   return (
     <Alert variant="destructive">
       <AlertDescription>
-        This widget draws {missing.join(", ")}, which <MetricName id={metric} />
+        This widget draws {missing.join(", ")}, which <MetricName id={metric} />{" "}
         does not return. Its columns are {result.columns.join(", ")}.
       </AlertDescription>
     </Alert>

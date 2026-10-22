@@ -587,7 +587,7 @@ describe("/portal/custom narrowed by ownership", () => {
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
+    expect(await screen.findByText("Owner: Jane Doe")).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Open delivery" })
     ).toHaveAttribute(
