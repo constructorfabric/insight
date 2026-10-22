@@ -37,11 +37,10 @@
 -#}
 
 {% macro create_identity_persons() %}
-    {% set on_cluster = insight_on_cluster() %}
     {% set engine = insight_engine('MergeTree') %}
 
     {% do run_query("
-        CREATE TABLE IF NOT EXISTS identity.identity_persons " ~ on_cluster ~ "
+        CREATE TABLE IF NOT EXISTS identity.identity_persons
         (
             id                  UInt64,
             value_type          String,

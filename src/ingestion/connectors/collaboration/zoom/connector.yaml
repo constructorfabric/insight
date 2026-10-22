@@ -171,6 +171,18 @@ streams:
           type: DpathExtractor
           field_path:
             - users
+      # WORKAROUND: /users lists active users only unless asked for a status, so a
+      # deactivated account would vanish instead of reaching identity as inactive.
+      partition_router:
+        type: ListPartitionRouter
+        cursor_field: user_status
+        values:
+          - active
+          - inactive
+        request_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: status
     primary_key: unique_key
     schema_loader:
       type: InlineSchemaLoader
@@ -874,22 +886,6 @@ streams:
             type:
               - string
               - "null"
-          ip_address:
-            type:
-              - string
-              - "null"
-          internal_ip_addresses:
-            type:
-              - array
-              - "null"
-            items:
-              type:
-                - string
-                - "null"
-          location:
-            type:
-              - string
-              - "null"
           network_type:
             type:
               - string
@@ -950,26 +946,6 @@ streams:
             type:
               - boolean
               - "null"
-          pc_name:
-            type:
-              - string
-              - "null"
-          domain:
-            type:
-              - string
-              - "null"
-          mac_addr:
-            type:
-              - string
-              - "null"
-          harddisk_id:
-            type:
-              - string
-              - "null"
-          leave_reason:
-            type:
-              - string
-              - "null"
           email:
             type:
               - string
@@ -995,10 +971,6 @@ streams:
               - string
               - "null"
           browser_version:
-            type:
-              - string
-              - "null"
-          device_name:
             type:
               - string
               - "null"
@@ -1072,6 +1044,19 @@ streams:
           - unique_key
         additionalProperties: true
     transformations:
+      # SAFETY: device and network identifiers, and a leave reason that can carry the
+      # person's name, are never stored — no metric reads them.
+      - type: RemoveFields
+        field_pointers:
+          - [ip_address]
+          - [internal_ip_addresses]
+          - [location]
+          - [pc_name]
+          - [domain]
+          - [mac_addr]
+          - [harddisk_id]
+          - [leave_reason]
+          - [device_name]
       - type: AddFields
         fields:
           - type: AddedFieldDefinition

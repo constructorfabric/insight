@@ -1,0 +1,35 @@
+spec_version: 1
+description: >
+  Metric: collab.messages_sent — Zulip guest accounts never reach chat metrics.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: the proxy's daily message total per sender, and the Zulip user
+      directory carrying each account's role
+    • silver: a guest (role 600) is dropped; any other role, or an unknown one,
+      keeps the row
+    • gold:   messages sent = the day's message total, summed over the period
+
+  Cases, each with one Zulip total dated 2026-12-25:
+    • alice — member (role 400), 3 messages → kept, 3 (control)
+    • bob   — owner (role 100), 5 messages → kept, 5
+    • frank — guest (role 600), 99 messages → excluded
+    • judy  — role unknown, 55 messages → kept, 55
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - {$ref: ../templates/people.yaml#/templates/bamboohr_employee, id: e101, unique_key: bamboohr-test-e101, firstName: Frank, lastName: Guest, displayName: Frank Guest, workEmail: frank@example.com}
+    - {$ref: ../templates/people.yaml#/templates/bamboohr_employee, id: e104, unique_key: bamboohr-test-e104, firstName: Judy, lastName: Unknown, displayName: Judy Unknown, workEmail: judy@example.com}
+
+  bronze_zulip_proxy.users:
+    - {$ref: ../templates/zulip.yaml#/templates/zulip_user, id: 1, email: alice@example.com, full_name: Alice, unique_key: zg-user-1}
+    - {$ref: ../templates/zulip.yaml#/templates/zulip_user, id: 2, email: bob@example.com,   full_name: Bob,   unique_key: zg-user-2, role: 100}
+    - {$ref: ../templates/zulip.yaml#/templates/zulip_user, id: 3, email: frank@example.com, full_name: Frank, unique_key: zg-user-3, role: 600}
+    - {$ref: ../templates/zulip.yaml#/templates/zulip_user, id: 4, email: judy@example.com,  full_name: Judy,  unique_key: zg-user-4, role: null}
+
+  bronze_zulip_proxy.messages:
+    - {$ref: ../templates/zulip.yaml#/templates/zulip_message_day, uniq: zg-1-20261225, unique_key: zg-msg-1, sender_id: 1, count: 3,  created_at: "2026-12-25T00:00:00.000Z"}
+    - {$ref: ../templates/zulip.yaml#/templates/zulip_message_day, uniq: zg-2-20261225, unique_key: zg-msg-2, sender_id: 2, count: 5,  created_at: "2026-12-25T00:00:00.000Z"}
+    - {$ref: ../templates/zulip.yaml#/templates/zulip_message_day, uniq: zg-3-20261225, unique_key: zg-msg-3, sender_id: 3, count: 99, created_at: "2026-12-25T00:00:00.000Z"}
+    - {$ref: ../templates/zulip.yaml#/templates/zulip_message_day, uniq: zg-4-20261225, unique_key: zg-msg-4, sender_id: 4, count: 55, created_at: "2026-12-25T00:00:00.000Z"}
