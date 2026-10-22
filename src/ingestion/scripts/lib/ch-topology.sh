@@ -155,12 +155,16 @@ MSG
   return 1
 }
 
+# A Replicated database registers itself in system.clusters under its own name,
+# one row per replica with `database_replica_name` set. A cluster that shares a
+# name with an Insight database (the product database is `insight`) would count
+# those rows as hosts; `database_replica_name = ''` keeps only <remote_servers>.
 _ch_require_cluster_name() {
   local name joined
   name="$(ch_cluster_name)"
   [[ -n "${name}" ]] || { _ch_cluster_name_missing; return 1; }
 
-  if ! joined="$(ch_scalar "SELECT count() FROM system.clusters WHERE cluster = '${name}'")"; then
+  if ! joined="$(ch_scalar "SELECT count() FROM system.clusters WHERE cluster = '${name}' AND database_replica_name = ''")"; then
     _ch_probe_unreadable system.clusters
     return 1
   fi
@@ -173,7 +177,8 @@ ERROR: clickhouse.clusterName is '${name}', but this server lists no such
        Every ON CLUSTER statement this deploy emits would be refused. The name
        is the <remote_servers> entry every replica carries in its server
        config; read the candidates with
-       \`SELECT DISTINCT cluster FROM system.clusters\` and set
+       \`SELECT DISTINCT cluster FROM system.clusters WHERE database_replica_name = ''\`
+       and set
        clickhouse.clusterName to the one whose hosts are this warehouse.
 MSG
   return 1
@@ -220,7 +225,7 @@ _ch_database_keeper_path() {
 _ch_require_complete_databases() {
   local name target database path joined queued
   name="$(ch_cluster_name)"
-  if ! target="$(ch_scalar "SELECT count() FROM system.clusters WHERE cluster = '${name}'")"; then
+  if ! target="$(ch_scalar "SELECT count() FROM system.clusters WHERE cluster = '${name}' AND database_replica_name = ''")"; then
     _ch_probe_unreadable system.clusters
     return 1
   fi

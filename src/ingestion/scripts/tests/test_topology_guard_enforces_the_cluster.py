@@ -167,3 +167,16 @@ def test_the_cluster_clause_marker_renders_per_topology() -> None:
     assert "ENGINE = ReplicatedMergeTree" in clustered.stdout, clustered
     assert "bronze_jira._boards ;" in standalone.stdout, standalone
     assert "ENGINE = MergeTree" in standalone.stdout, standalone
+
+
+def test_a_database_named_like_the_cluster_is_not_counted_as_hosts(tmp_path: Path) -> None:
+    """A Replicated database lists itself in system.clusters under its own
+    name, one row per replica with `database_replica_name` set. The product
+    database is `insight`; a cluster called `insight` would count those rows
+    as hosts and refuse every database as incomplete."""
+    log = tmp_path / "sql.log"
+    result = run("_ch_require_cluster_name && _ch_require_complete_databases lonely", log=log)
+    assert result.returncode == 0, result.stderr
+    host_counts = [line for line in log.read_text().splitlines() if "system.clusters" in line]
+    assert host_counts, log.read_text()
+    assert all("database_replica_name = ''" in line for line in host_counts), host_counts
