@@ -33,6 +33,9 @@
 # Optional env:
 #   CLICKHOUSE_CLUSTER_MODE  true -> the DDL emitted here replicates
 #   CLICKHOUSE_CLUSTER_NAME  the cluster the ON CLUSTER clause names
+#   CLICKHOUSE_PROVISION_ACCESS  false -> no role or user is created or
+#                            revoked here; the operator provisions them
+#                            (clickhouse.provisionAccess)
 #   MCP_ENABLED / SQL_API_ENABLED  provision the MCP SQL-explorer reader
 #   INSIGHT_V3_CORE_ENABLED  provision the custom assistant's reader
 set -euo pipefail
@@ -78,26 +81,36 @@ for database in "${DATABASES[@]}"; do
     "${database}" "${ON_CLUSTER}" "$(ch_database_engine "${database}")" | run_ch
 done
 
-echo "=== Provisioning presentation access (role + grant-less user) (#1963/#1964) ==="
-bash "$SCRIPT_DIR/bootstrap-db/provision-presentation-access.sh"
+# INVARIANT: skipped as one block when access is the operator's — a deploy
+# that creates no role must revoke none either.
+provision_access() {
+  echo "=== Provisioning presentation access (role + grant-less user) (#1963/#1964) ==="
+  bash "$SCRIPT_DIR/bootstrap-db/provision-presentation-access.sh"
 
-# Gated like the MCP reader below (#3558): `insight_v3_ro` reads every table,
-# and an installation that never runs the custom assistant has no use for a
-# role that can.
-if [[ "${INSIGHT_V3_CORE_ENABLED:-false}" == "true" ]]; then
-  echo "=== Provisioning insight-v3-core query access (grant-less reader) ==="
-  bash "$SCRIPT_DIR/bootstrap-db/provision-v3-access.sh"
+  # Gated like the MCP reader below (#3558): `insight_v3_ro` reads every table,
+  # and an installation that never runs the custom assistant has no use for a
+  # role that can.
+  if [[ "${INSIGHT_V3_CORE_ENABLED:-false}" == "true" ]]; then
+    echo "=== Provisioning insight-v3-core query access (grant-less reader) ==="
+    bash "$SCRIPT_DIR/bootstrap-db/provision-v3-access.sh"
+  else
+    echo "=== insight-v3-core disabled; stripping the assistant's read ==="
+    bash "$SCRIPT_DIR/bootstrap-db/revoke-v3-access.sh"
+  fi
+
+  if [[ "${MCP_ENABLED:-false}" == "true" || "${SQL_API_ENABLED:-false}" == "true" ]]; then
+    echo "=== Provisioning MCP SQL explorer access ==="
+    bash "$SCRIPT_DIR/bootstrap-db/provision-mcp-access.sh"
+  else
+    echo "=== MCP SQL explorer disabled; skipping access provisioning ==="
+  fi
+
+  echo "=== Provisioning grafana access (SELECT-only role + grant-less user) (#2888) ==="
+  bash "$SCRIPT_DIR/bootstrap-db/provision-grafana-access.sh"
+}
+
+if ch_provision_access; then
+  provision_access
 else
-  echo "=== insight-v3-core disabled; stripping the assistant's read ==="
-  bash "$SCRIPT_DIR/bootstrap-db/revoke-v3-access.sh"
+  echo "=== Access provisioning is off (clickhouse.provisionAccess: false); roles and users are the operator's ==="
 fi
-
-if [[ "${MCP_ENABLED:-false}" == "true" || "${SQL_API_ENABLED:-false}" == "true" ]]; then
-  echo "=== Provisioning MCP SQL explorer access ==="
-  bash "$SCRIPT_DIR/bootstrap-db/provision-mcp-access.sh"
-else
-  echo "=== MCP SQL explorer disabled; skipping access provisioning ==="
-fi
-
-echo "=== Provisioning grafana access (SELECT-only role + grant-less user) (#2888) ==="
-bash "$SCRIPT_DIR/bootstrap-db/provision-grafana-access.sh"

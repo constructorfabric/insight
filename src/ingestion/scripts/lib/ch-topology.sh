@@ -9,15 +9,23 @@
 # shares. The spellings accepted for the flag are the ones every other reader
 # accepts (charts/insight/README.md, "ClickHouse topology").
 #
+# A second decision, CLICKHOUSE_PROVISION_ACCESS, says whether this deploy
+# provisions the roles and users at all: a clustered warehouse without a
+# replicated access backend cannot take them from here, and an operator who
+# creates them on every replica by hand turns the provisioning off.
+#
 # Sourced by create-databases.sh and apply-ch-migrations.sh. Exposes:
 #   ch_cluster_mode     — succeeds where the install declared itself clustered
 #                         (lib/ch-exec.sh, which the transport reads too)
+#   ch_provision_access — succeeds unless the install left access to the operator
 #   ch_on_cluster       — `ON CLUSTER <name>`, or nothing
 #   ch_database_engine  — the `ENGINE =` clause a CREATE DATABASE carries
 #   ch_render_topology  — expand the topology markers in SQL read from stdin
 #   ch_assert_topology  — refuse a deploy this server cannot serve
 #
-# Required env: whatever lib/ch-exec.sh requires, plus the optional pair above.
+# Required env: whatever lib/ch-exec.sh requires, plus the optional pair above
+# and CLICKHOUSE_PROVISION_ACCESS (unset or true -> roles and users are
+# provisioned here).
 
 # Idempotent source guard.
 [[ -n "${__CH_TOPOLOGY_SH:-}" ]] && return 0
@@ -32,6 +40,19 @@ CH_DATABASE_KEEPER_ROOT="/clickhouse/databases"
 
 ch_cluster_name() {
   printf '%s' "${CLICKHOUSE_CLUSTER_NAME:-}" | tr -d '[:space:]'
+}
+
+# Whether this deploy creates the roles and users beside the databases they
+# read. Off (clickhouse.provisionAccess: false) means the operator owns them —
+# no provisioning script runs, and the warehouse is not asked for a replicated
+# access backend. The spellings mirror ch_cluster_mode's.
+ch_provision_access() {
+  local flag
+  flag="$(printf '%s' "${CLICKHOUSE_PROVISION_ACCESS:-true}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  case "${flag}" in
+    0 | false | no | off) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 # A name without the flag names no cluster: the flag is what turns on the
@@ -259,6 +280,8 @@ MSG
   done
 }
 
+# With provisioning left to the operator the missing backend is a note, not
+# a refusal: nothing this deploy creates would land on one replica.
 _ch_require_replicated_access_storage() {
   local replicated
   if ! replicated="$(ch_scalar "SELECT count() FROM system.user_directories WHERE type = 'replicated'")"; then
@@ -266,6 +289,16 @@ _ch_require_replicated_access_storage() {
     return 1
   fi
   [[ "${replicated}" -gt 0 ]] && return 0
+
+  if ! ch_provision_access; then
+    cat >&2 <<MSG
+WARN: this server stores access entities locally — no replicated user
+      directory is configured. clickhouse.provisionAccess is false, so this
+      deploy creates no role or user; the ones the warehouse holds must exist
+      on every replica.
+MSG
+    return 0
+  fi
 
   cat >&2 <<MSG
 ERROR: clickhouse.clusterMode is on, but this server stores access entities
@@ -285,7 +318,7 @@ ERROR: clickhouse.clusterMode is on, but this server stores access entities
            </user_directories>
 
        Or provision access out of band — create the roles and users on each
-       replica yourself, and set clickhouse.createDatabases to false so this
+       replica yourself, and set clickhouse.provisionAccess to false so this
        deploy stops provisioning them.
 MSG
   return 1
