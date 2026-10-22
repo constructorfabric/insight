@@ -2,17 +2,19 @@
 # Cut a warm installation over to the canonical tenant UUID, the way
 # deploy/TENANT_IDENTITY_UPGRADE.md tells an operator to, and check every step.
 #
-#   1. Deploy this tree (apply-ch-migrations.sh) onto a ClickHouse holding the
-#      identity map views the previous release built, without a tenant column.
-#      The deploy builds no model and drops those views, so analytics answers
-#      not-ready instead of failing on the column until the rebuild recreates
-#      them.
+#   1. Install BASE_SHA the way warm-upgrade-sim.sh does: its deploy hook, the
+#      zoom Bronze its connector creates, and its sync of the identity map
+#      views, which carry no tenant column. Then deploy this tree
+#      (apply-ch-migrations.sh): it builds no model and drops those views, so
+#      analytics answers not-ready instead of failing on the column until the
+#      rebuild recreates them.
 #   2. Hold the state a warm installation holds at that point: Bronze, a
 #      history relation, operator config and the sync ledger written under a
 #      legacy tenant that is not a UUID, and identity inputs the previous
 #      release stamped with a hashed tenant. The history relation is built by
 #      this tree's own dbt from that Bronze; the identity inputs model refuses
-#      to build over it, which is why dbt stays stopped until the migration.
+#      to build over it, because tenant_uuid() refuses a tenant that is not a
+#      UUID, which is why dbt stays stopped until the migration.
 #   3. `tenant_migration plan` and `apply`: nothing lost, tenant and keys moved.
 #   4. `rollback`, then `restore` from the dump: each gives back the warm state
 #      exactly.
@@ -24,9 +26,15 @@
 #
 # Required env (same contract as apply-ch-migrations.sh):
 #   CLICKHOUSE_URL, CLICKHOUSE_USER, CLICKHOUSE_PASSWORD, CLICKHOUSE_DATABASE
-# Needs python3 (3.11+) and network access to PyPI for the pinned dbt.
+#   BASE_SHA  — commit whose tree plays the already-installed release
+# Optional env, for the destination-clickhouse container that creates bronze:
+#   BRONZE_CLICKHOUSE_URL — the URL that container reaches ClickHouse at
+#                           (default CLICKHOUSE_URL; 127.0.0.1 is not it)
+# Needs python3 (3.11+), docker, jq, yq v4 and network access to PyPI; each
+# phase gets its own venv pinned from its tree's pins.env.
 set -euo pipefail
 
+: "${BASE_SHA:?BASE_SHA must be set (the commit playing the installed release)}"
 : "${CLICKHOUSE_URL:?}" "${CLICKHOUSE_USER:?}" "${CLICKHOUSE_PASSWORD:?}" "${CLICKHOUSE_DATABASE:?}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -56,10 +64,55 @@ migration() {
 }
 
 PYTHON_BIN="$(command -v python3.12 || command -v python3.11 || command -v python3)"
-"$PYTHON_BIN" -m venv "$WORKDIR/venv"
-"$WORKDIR/venv/bin/pip" install --quiet \
-  "dbt-core==$(grep '^DBT_CORE_VERSION=' "$SCRIPTS/bootstrap-db/pins.env" | cut -d= -f2)" \
-  "dbt-clickhouse==$(grep '^DBT_CLICKHOUSE_VERSION=' "$SCRIPTS/bootstrap-db/pins.env" | cut -d= -f2)" pyyaml
+
+dbt_venv_for() {
+  local pins="$1" venv="$2"
+  "$PYTHON_BIN" -m venv "$venv"
+  "$venv/bin/pip" install --quiet \
+    "dbt-core==$(grep '^DBT_CORE_VERSION=' "$pins" | cut -d= -f2)" \
+    "dbt-clickhouse==$(grep '^DBT_CLICKHOUSE_VERSION=' "$pins" | cut -d= -f2)" pyyaml
+}
+
+# The zoom Bronze a first sync leaves: destination-clickhouse applying the
+# connector's discovered catalogue, from the given tree's connector and pins.
+create_zoom_bronze() {
+  local tree="$1" url="${BRONZE_CLICKHOUSE_URL:-$CLICKHOUSE_URL}" protocol hostport port
+  protocol="${url%%://*}"
+  hostport="${url#*://}"; hostport="${hostport%%/*}"
+  if [[ "$hostport" == *:* ]]; then
+    port="${hostport##*:}"
+  elif [[ "$protocol" == https ]]; then
+    port=443
+  else
+    port=80
+  fi
+  local pins="$tree/src/ingestion/scripts/bootstrap-db/pins.env"
+  CLICKHOUSE_PROTOCOL="$protocol" \
+  CLICKHOUSE_HOST="${hostport%%:*}" \
+  CLICKHOUSE_PORT="$port" \
+  DESTINATION_CLICKHOUSE_IMAGE="$(grep '^DESTINATION_CLICKHOUSE_IMAGE=' "$pins" | cut -d= -f2)" \
+  SOURCE_DECLARATIVE_MANIFEST_IMAGE="$(grep '^SOURCE_DECLARATIVE_MANIFEST_IMAGE=' "$pins" | cut -d= -f2)" \
+    bash "$tree/src/ingestion/scripts/bootstrap-db/seed-connectors.sh" \
+      "$tree/src/ingestion/scripts/bootstrap-db/connectors-config.yaml" zoom
+}
+
+# The previous release's sync of the identity map views and their buildable
+# ancestors, with the base tree's dbt and profile.
+build_base_identity_maps() {
+  local tree="$1" path="$WORKDIR/base-venv/bin:$PATH" profiles="$WORKDIR/base-profiles" target="$WORKDIR/base-target"
+  local project="$tree/src/ingestion/dbt" unbuildable excluded=()
+  mkdir -p "$profiles"
+  PATH="$path" python3 "$tree/src/ingestion/scripts/dbt_profiles.py" --target migrate \
+    --profiles-dir "$profiles" --correlated-subqueries
+  unbuildable="$(cd "$project" && PATH="$path" dbt --quiet run-operation list_unbuildable_models \
+    --profiles-dir "$profiles" --target-path "$target" --log-path "$target/logs")"
+  read -r -a excluded <<< "$unbuildable"
+  (cd "$project" && PATH="$path" dbt --no-use-colors run --profiles-dir "$profiles" \
+    --target-path "$target" --log-path "$target/logs" --select +account_assignment +person_map \
+    ${excluded[@]+--exclude "${excluded[@]}"})
+}
+
+dbt_venv_for "$SCRIPTS/bootstrap-db/pins.env" "$WORKDIR/venv"
 export PATH="$WORKDIR/venv/bin:$PATH"
 
 DBT_PROFILES_DIR="$WORKDIR/profiles"
@@ -87,37 +140,31 @@ map_views() {
     ON c.table = t.name"
 }
 
-echo "=== Step 1: deploy this tree over the previous release's identity map views ==="
-run_ch <<SQL
-CREATE DATABASE IF NOT EXISTS identity;
-CREATE VIEW identity.account_assignment AS
-    SELECT 'zoom' AS source_type, toUUID('00000000-0000-0000-0000-000000000001') AS source_id,
-           'u1' AS account_id, toUUID('00000000-0000-0000-0000-000000000002') AS person_id;
-CREATE VIEW identity.person_map AS
-    SELECT 'ada@example.com' AS email, person_id FROM identity.account_assignment;
-SQL
+echo "=== Step 1: install base $(git -C "$REPO_ROOT" rev-parse --short "$BASE_SHA"), then deploy this tree over its identity map views ==="
+BASE="$WORKDIR/base"
+mkdir -p "$BASE"
+git -C "$REPO_ROOT" archive "$BASE_SHA" src/ingestion | tar -x -C "$BASE"
+dbt_venv_for "$BASE/src/ingestion/scripts/bootstrap-db/pins.env" "$WORKDIR/base-venv"
+PATH="$WORKDIR/base-venv/bin:$PATH" bash "$BASE/src/ingestion/scripts/apply-ch-migrations.sh"
+create_zoom_bronze "$BASE"
+build_base_identity_maps "$BASE"
+
+[[ "$(map_views)" == "account_assignment:0,person_map:0" ]] \
+  || fail "the base sync must leave identity map views without a tenant column — got '$(map_views)'"
+
 bash "$SCRIPTS/apply-ch-migrations.sh"
 
 [[ "$(map_views)" == "" ]] \
   || fail "the deploy must drop identity map views without a tenant column, so analytics answers not-ready until a sync rebuilds them — got '$(map_views)'"
 
 echo "=== Step 2: the warm state, under the legacy tenant '$OLD_TENANT' ==="
-# Bronze as destination-clickhouse leaves it for the zoom users stream, with
-# the columns the snapshot tracks; keys follow the connector's formula.
+# Rows of the zoom users stream in the Bronze its connector created, with the
+# columns the snapshot tracks; keys follow the connector's formula.
+USER_COLUMNS="unique_key, tenant_id, source_id, id, first_name, last_name, display_name, email, dept, status,
+    role_id, timezone, language, phone_number, employee_unique_id, type,
+    _airbyte_raw_id, _airbyte_extracted_at, _airbyte_meta, _airbyte_generation_id"
 run_ch <<SQL
-CREATE DATABASE IF NOT EXISTS bronze_zoom;
-CREATE TABLE bronze_zoom.users
-(
-    unique_key String, tenant_id Nullable(String), source_id Nullable(String), id Nullable(String),
-    first_name Nullable(String), last_name Nullable(String), display_name Nullable(String),
-    email Nullable(String), dept Nullable(String), status Nullable(String), role_id Nullable(String),
-    timezone Nullable(String), language Nullable(String), phone_number Nullable(String),
-    employee_unique_id Nullable(String), type Nullable(String),
-    _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3), _airbyte_meta String,
-    _airbyte_generation_id UInt32
-)
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
-INSERT INTO bronze_zoom.users VALUES
+INSERT INTO bronze_zoom.users ($USER_COLUMNS) VALUES
     ('$OLD_TENANT-$SOURCE-u1', '$OLD_TENANT', '$SOURCE', 'u1', 'Ada', 'Example', 'Ada Example',
      'ada@example.com', 'Eng', 'active', '1', 'UTC', 'en', '', 'E-1', '1', 'raw-1', '2026-01-01 00:00:00', '{}', 0),
     ('$OLD_TENANT-$SOURCE-u2', '$OLD_TENANT', '$SOURCE', 'u2', 'Bo', 'Example', 'Bo Example',
@@ -138,7 +185,7 @@ SQL
 
 # A second observation of u1, so the history relation holds two versions.
 run_ch <<SQL
-INSERT INTO bronze_zoom.users VALUES
+INSERT INTO bronze_zoom.users ($USER_COLUMNS) VALUES
     ('$OLD_TENANT-$SOURCE-u1', '$OLD_TENANT', '$SOURCE', 'u1', 'Ada', 'Example', 'Ada Example',
      'ada@example.com', 'Research', 'active', '1', 'UTC', 'en', '', 'E-1', '1', 'raw-4', '2026-01-02 00:00:00', '{}', 0);
 SQL
@@ -147,12 +194,13 @@ dbt_run --select zoom__users_snapshot
 if dbt_run --select zoom__identity_inputs >"$WORKDIR/refused.log" 2>&1; then
   fail "zoom__identity_inputs built over Bronze stamped '$OLD_TENANT': tenant_uuid() must refuse a tenant that is not a UUID"
 fi
-grep -q -E "CANNOT_PARSE_UUID|Cannot convert NULL value to non-Nullable type" "$WORKDIR/refused.log" \
+grep -q "CANNOT_PARSE_UUID" "$WORKDIR/refused.log" \
   || fail "zoom__identity_inputs failed over Bronze stamped '$OLD_TENANT', but not on its tenant: $(tail -c 2000 "$WORKDIR/refused.log")"
 
-# What the previous release left in the identity inputs: the tenant hashed. No
-# deploy creates the relation, and this tree's producer refuses the legacy
-# tenant, so it is built empty — this tree's shape — and given that row.
+# What the previous release left in the identity inputs: the tenant hashed. The
+# base sync built the relation; this tree's producer refuses the legacy tenant,
+# so both are run empty — this tree's shape where it differs — and the relation
+# is given that row.
 dbt_run --empty --select zoom__identity_inputs identity_inputs
 run_ch <<SQL
 INSERT INTO identity.identity_inputs (unique_key, insight_tenant_id, insight_source_id, insight_source_type,

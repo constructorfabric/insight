@@ -157,6 +157,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
+          # The sim installs the base commit's tree first, so that commit's
+          # objects must be present.
+          fetch-depth: 0
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -167,9 +170,30 @@ jobs:
           set -euo pipefail
           cat src/ingestion/scripts/bootstrap-db/pins.env >> "$GITHUB_ENV"
           source src/ingestion/scripts/bootstrap-db/pins.env
-          echo "CLICKHOUSE_URL=http://127.0.0.1:8123" >> "$GITHUB_ENV"
+          # The bridge gateway: one address for dbt on the host and for the
+          # destination-clickhouse container that creates the zoom bronze.
+          host="$(docker network inspect bridge -f '{{ (index .IPAM.Config 0).Gateway }}')"
+          echo "CLICKHOUSE_URL=http://${host}:8123" >> "$GITHUB_ENV"
           CLICKHOUSE_SERVER_IMAGE="$CLICKHOUSE_SERVER_IMAGE" \
             .github/workflows/scripts/start-clickhouse.sh "${CLICKHOUSE_CONTAINER}"
+
+      - name: Resolve the installed-release commit
+        run: |
+          set -euo pipefail
+          if [ -n "${PR_BASE_SHA}" ]; then
+            echo "BASE_SHA=${PR_BASE_SHA}" >> "$GITHUB_ENV"
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ] \
+              && [ "${PUSH_BEFORE_SHA}" != "0000000000000000000000000000000000000000" ] \
+              && git cat-file -e "${PUSH_BEFORE_SHA}^{commit}" 2>/dev/null; then
+            echo "BASE_SHA=${PUSH_BEFORE_SHA}" >> "$GITHUB_ENV"
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            echo "BASE_SHA=$(git rev-parse HEAD^)" >> "$GITHUB_ENV"
+          else
+            echo "BASE_SHA=$(git rev-parse origin/main)" >> "$GITHUB_ENV"
+          fi
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
 
       - name: Migrate a warm warehouse to the canonical tenant
         run: .github/workflows/scripts/tenant-cutover-sim.sh
