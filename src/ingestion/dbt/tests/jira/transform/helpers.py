@@ -76,6 +76,7 @@ def issue(
     reporter_id: str = "reporter-acct",
     extracted_at: str = OBSERVED_AT,
     jira_id: str | None = None,
+    updated: str | None = None,
 ) -> dict[str, Any]:
     """The issue's current state. `fields` becomes `custom_fields_json`.
 
@@ -99,7 +100,7 @@ def issue(
         "project_key": key.split("-")[0],
         "reporter_id": reporter_id,
         "created": created,
-        "updated": created,
+        "updated": updated or created,
         "custom_fields_json": json.dumps(fields if fields is not None else {}, sort_keys=True),
         "collected_at": extracted_at,
     }
