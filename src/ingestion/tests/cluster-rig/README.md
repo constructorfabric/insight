@@ -50,7 +50,11 @@ Both topologies run the same sequence, every statement through the proxy:
    excluded;
 4. a snapshot of every table's row count on every node;
 5. the deploy hook and the dbt run once more;
-6. the assertions.
+6. the assertions;
+7. on `replicated` only: a plain `ReplacingMergeTree` table is created in a
+   bronze database on `ch1` directly, as a table from before `clusterMode` was
+   turned on; the deploy hook must refuse it by name before creating anything,
+   and deploy again once it is dropped (#3899).
 
 ## Assertions
 
