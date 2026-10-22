@@ -19,7 +19,12 @@ name: youtrack
 #   lost. An activitiesPage response without `hasAfter` now fails the read.
 #   PATCH per ADR-0015: a manifest fix; already-synced slices need a re-read of
 #   youtrack_activities to recover the skipped events.
-version: "2.0.1"
+# 3.0.0: the description and multi-line text custom fields are text references
+#   in class_task_field_history — `value_ids[1]` is the body's content hash,
+#   `value_displays[1]` its first characters, `value_id_type = 'text_ref'` —
+#   and the bodies reach silver.class_task_field_text (#3895). MAJOR per
+#   ADR-0015: the meaning of history rows already written changes.
+version: "3.0.0"
 schedule: 0 2 * * *
 workflow: sync
 dbt_select: tag:youtrack+

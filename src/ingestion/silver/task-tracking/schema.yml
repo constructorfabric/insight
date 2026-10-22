@@ -63,6 +63,63 @@ models:
           without truncation.
       - name: _seq
         description: "Superseded by `event_order`, which readers sort by. A `synthetic_initial` row's field index (0 for the creation marker) and a changelog row's rank within its instant; 0 elsewhere."
+      - name: value_ids
+        description: "Identifiers of the field's value at this event, parallel to `value_displays`. On a `text_ref` row, the one element is the `text_id` of the body in `class_task_field_text`."
+      - name: value_displays
+        description: "Readable values, parallel to `value_ids`. On a `text_ref` row, the one element is only the first characters of the body (`task_long_text_prefix_chars`, default 200), never the full text: join `class_task_field_text` on (`insight_source_id`, `data_source`, `text_id = value_ids[1]`) for it. An empty long-text value has no element and no body."
+      - name: value_id_type
+        description: >
+          What `value_ids` hold: `opaque_id` = a source-native identifier;
+          `account_id` = a user's account id; `string_literal` = the value
+          itself; `none` = no identifier separate from the display (or no
+          value); `text_ref` = a reference to a long-text body in
+          `class_task_field_text`. A field is long text by its type, never by
+          the length of one value: for Jira `description`, `environment` and
+          multi-line text custom fields; for YouTrack `description` and
+          multi-line text custom fields.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['opaque_id', 'account_id', 'string_literal', 'none', 'text_ref']
+
+  - name: class_task_field_text
+    description: >
+      Bodies of long-text field values, one row per distinct body of a source,
+      addressed by `text_id`. `class_task_field_history` refers to a body by a
+      `text_ref` value; this table is the only place its full text lives.
+      Every producer contributes an arm through the `silver:class_task_field_text` tag.
+    columns:
+      - name: unique_key
+        description: "Source and `text_id`."
+        tests:
+          - not_null
+          - unique
+      - name: insight_source_id
+        description: "Source instance identifier."
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source system discriminator (e.g. 'jira', 'youtrack')."
+        tests:
+          - not_null
+      - name: text_id
+        description: "Content address of the body: `lower(hex(sipHash128(content)))` (`task_text_id`), the same rule for every source, so identical bodies of one source share a row."
+        tests:
+          - not_null
+      - name: content_form
+        description: >
+          How `content` is encoded: `adf_json` = an Atlassian Document Format
+          document, as the Jira issue holds the current body; `rendered_text` =
+          plain text, as the Jira changelog renders a body at that point in time
+          (formatting, links and media flattened); `markdown` = the Markdown
+          source the tracker stores, as YouTrack does. Consumers render the
+          structured forms themselves.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['adf_json', 'rendered_text', 'markdown']
+      - name: content
+        description: "The full body, never truncated."
 
   - name: class_task_field_metadata
     description: "Unified task-tracker field catalog. Declares cardinality (`is_multi`) and whether the field has an opaque ID vs a string literal (`has_id`)."
