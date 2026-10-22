@@ -7,7 +7,9 @@
 # carries a cluster clause and a `Replicated` engine, a table engine carries a
 # `Replicated` prefix, and roles need an access backend the whole cluster
 # shares. The spellings accepted for the flag are the ones every other reader
-# accepts (charts/insight/README.md, "ClickHouse topology").
+# accepts (charts/insight/README.md, "ClickHouse topology"). The flag converts
+# nothing that already stands, so the guard also refuses a database or a bronze
+# table left with the engine of the other topology.
 #
 # A second decision, CLICKHOUSE_PROVISION_ACCESS, says whether this deploy
 # provisions the roles and users at all: a clustered warehouse without a
@@ -351,6 +353,47 @@ MSG
   done
 }
 
+# `bronze_*` stays Atomic and the destination creates its tables with IF NOT
+# EXISTS, so a table from before the flip keeps its plain engine on the one
+# replica that created it. INVARIANT: read on every replica, and only when
+# every replica answers — a probe through the load balancer sees such a table
+# or not by which replica answers, and a replica that is down may be the one
+# holding it (no other guard notices a down replica whose databases already
+# joined). Needs REMOTE on the deploy user and the cluster's interserver secret.
+_ch_require_replicated_bronze_tables() {
+  local name plain
+  name="$(ch_cluster_name)"
+  if ! plain="$(printf "SELECT concat(database, '.', name, '  ', engine, '  on ', hostName())
+        FROM clusterAllReplicas('%s', system.tables)
+        WHERE startsWith(database, 'bronze_') AND endsWith(engine, 'MergeTree')
+          AND NOT startsWith(engine, 'Replicated')
+        ORDER BY database, name, hostName()
+        SETTINGS skip_unavailable_shards = 0" "${name}" | _ch_http_query)"; then
+    [[ -n "${plain}" ]] && printf '%s\n' "${plain}" >&2
+    _ch_probe_unreadable "system.tables on every replica (clusterAllReplicas('${name}', system.tables): every replica must answer, and the deploy user needs the REMOTE grant)"
+    return 1
+  fi
+  [[ "${plain}" =~ [^[:space:]] ]] || return 0
+
+  cat >&2 <<MSG
+ERROR: clickhouse.clusterMode is on, but these bronze tables carry a plain
+       MergeTree-family engine, so each stands on the one replica named:
+
+$(printf '%s\n' "${plain}" | sed 's/^/         /')
+
+       The destination creates its tables with IF NOT EXISTS, so turning the
+       flag on converted none of them: a read through the load balancer
+       answers their rows or none by which replica takes it, and every ALTER
+       or rebuild this deploy issues on them reaches that replica only.
+
+       Drop each listed database ON CLUSTER ${name} and let the connector's
+       next sync recreate it with the replicated engines, or convert the
+       tables in place along the standalone-to-cluster runbook (#3902). Then
+       re-run the deploy.
+MSG
+  return 1
+}
+
 _ch_refuse_replicated_databases() {
   local database engine
   for database in "$@"; do
@@ -386,4 +429,5 @@ ch_assert_topology() {
   _ch_require_replicated_access_storage
   _ch_require_replicated_databases "$@"
   _ch_require_complete_databases "$@"
+  _ch_require_replicated_bronze_tables
 }

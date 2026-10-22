@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Deploy onto the rig's warehouse twice, build a connector's models through it
-# twice, and assert what every node holds.
+# twice, and assert what every node holds. On a cluster, then plant one plain
+# bronze table on one replica and assert the deploy hook refuses it by name.
 #
 #   RIG_TOPOLOGY=standalone|replicated  run.sh
 #   RIG_DBT_VENV=<venv>                 reuse a venv with the pinned dbt
@@ -161,6 +162,43 @@ check() {
   "${VENV}/bin/python" "${RIG_DIR}/check.py" "$@"
 }
 
+# One statement against one node directly, bypassing the proxy.
+ch_on_node() {
+  local node="$1" sql="$2"
+  curl -sS --fail-with-body \
+    -H "X-ClickHouse-User: ${CLICKHOUSE_USER}" \
+    -H @<(printf 'X-ClickHouse-Key: %s' "${CLICKHOUSE_PASSWORD}") \
+    --data-binary "${sql}" "${node%/}/"
+}
+
+# A bronze table from before clusterMode was turned on: plain engine, on one
+# replica, which the destination's IF NOT EXISTS never converts (#3899). The
+# deploy hook must refuse it by name before it creates anything, whichever
+# replica the proxy hands its probe to; with the table gone it deploys again.
+refuse_plain_bronze_table() {
+  local node="${RIG_NODES%%,*}" table="bronze_cluster_rig.pre_flip" log="${WORKDIR}/refused.log"
+  ch_on_node "${node}" "CREATE TABLE ${table} (id UInt8) ENGINE = ReplacingMergeTree ORDER BY id"
+
+  if deploy_hook > "${log}" 2>&1; then
+    echo "  the deploy hook ran over the plain ${table}" >&2
+    return 1
+  fi
+  if ! grep -q "${table}  ReplacingMergeTree" "${log}"; then
+    echo "  the deploy hook failed without naming ${table}:" >&2
+    tail -n 30 "${log}" >&2
+    return 1
+  fi
+  if grep -q "=== Creating databases" "${log}"; then
+    echo "  the deploy hook created databases before refusing ${table}" >&2
+    return 1
+  fi
+  echo "  refused: $(grep -m1 "${table}" "${log}" | sed 's/^ *//')"
+
+  ch_on_node "${node}" "DROP TABLE ${table}"
+  deploy_hook > "${log}" 2>&1 || { tail -n 30 "${log}" >&2; return 1; }
+  echo "  deployed again once the table was gone"
+}
+
 step "starting the warehouse"
 "${COMPOSE[@]}" down -v -t 5 >/dev/null 2>&1 || true
 if ! "${COMPOSE[@]}" up -d --wait --quiet-pull > "${WORKDIR}/up.log" 2>&1; then
@@ -185,4 +223,8 @@ dbt_build "${WORKDIR}/dbt-run-2"
 step "asserting every node"
 check assert --baseline "${WORKDIR}/counts.json" --probe-rows "${PROBE_ROWS}" --users presentation \
   --run-results "${WORKDIR}/dbt-run-2/run_results.json"
+if [[ "${TOPOLOGY}" == replicated ]]; then
+  step "a plain bronze table from before the flip is refused"
+  refuse_plain_bronze_table
+fi
 step "OK"
