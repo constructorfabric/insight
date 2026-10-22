@@ -1,0 +1,54 @@
+name: Runner check
+
+on:
+  push:
+    branches: [ci/runner-check]
+  workflow_dispatch:
+
+permissions: {}
+
+# A commit message containing "[only <job>]" runs just that job.
+
+jobs:
+  pod:
+    if: ${{ !contains(github.event.head_commit.message, '[only ') || contains(github.event.head_commit.message, '[only pod]') }}
+    runs-on: test-small
+    timeout-minutes: 10
+    steps:
+      - name: Describe the runner
+        run: &describe |
+          echo "RUNNER_NAME=$RUNNER_NAME"
+          nproc
+          free -g
+          cat /etc/os-release
+          id
+          if docker info >/dev/null 2>&1; then echo "docker: yes"; else echo "docker: no"; fi
+
+  vm-small:
+    if: ${{ !contains(github.event.head_commit.message, '[only ') || contains(github.event.head_commit.message, '[only vm-small]') }}
+    runs-on: test-small-vm
+    timeout-minutes: 15
+    steps:
+      - name: Describe the runner
+        run: *describe
+
+  vm-large:
+    if: ${{ !contains(github.event.head_commit.message, '[only ') || contains(github.event.head_commit.message, '[only vm-large]') }}
+    runs-on: test-large
+    timeout-minutes: 15
+    steps:
+      - name: Describe the runner
+        run: *describe
+
+  burst:
+    if: ${{ !contains(github.event.head_commit.message, '[only ') || contains(github.event.head_commit.message, '[only burst]') }}
+    runs-on: test-small
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        n: [1, 2, 3, 4, 5, 6]
+    steps:
+      - name: Hold the runner
+        run: |
+          echo "RUNNER_NAME=$RUNNER_NAME"
+          sleep 60
