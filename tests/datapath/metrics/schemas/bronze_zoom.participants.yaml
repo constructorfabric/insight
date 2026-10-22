@@ -16,9 +16,6 @@ schemas:
       user_name: {type: [string, "null"]}
       device: {type: [string, "null"]}
       client: {type: [string, "null"]}
-      ip_address: {type: [string, "null"]}
-      internal_ip_addresses: {type: [string, "null"]}
-      location: {type: [string, "null"]}
       network_type: {type: [string, "null"]}
       microphone: {type: [string, "null"]}
       speaker: {type: [string, "null"]}
@@ -34,11 +31,6 @@ schemas:
       share_desktop: {type: [boolean, "null"]}
       share_whiteboard: {type: [boolean, "null"]}
       recording: {type: [boolean, "null"]}
-      pc_name: {type: [string, "null"]}
-      domain: {type: [string, "null"]}
-      mac_addr: {type: [string, "null"]}
-      harddisk_id: {type: [string, "null"]}
-      leave_reason: {type: [string, "null"]}
       email: {type: [string, "null"]}
       registrant_id: {type: [string, "null"]}
       status: {type: [string, "null"]}
@@ -46,7 +38,6 @@ schemas:
       os_version: {type: [string, "null"]}
       browser_name: {type: [string, "null"]}
       browser_version: {type: [string, "null"]}
-      device_name: {type: [string, "null"]}
       groupId: {type: [string, "null"]}
       health: {type: [string, "null"]}
       customer_key: {type: [string, "null"]}
