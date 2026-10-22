@@ -1,7 +1,13 @@
 //! The tables a dataset's records live in.
 //!
 //! Every one of them is in the datasets database and nowhere else, so nothing
-//! this service creates or drops can reach a table the warehouse owns.
+//! this service creates or drops can reach a table the warehouse owns. The
+//! database itself is `create-databases.sh`'s to make; a create first refuses
+//! one whose engine contradicts the configured topology.
+//!
+//! A reader that follows its own write can reach a replica behind the load
+//! balancer that has not merged it yet, so the insert and the reads go through
+//! the shared client's read-after-write pair.
 
 use std::fmt;
 use std::time::Duration;
@@ -106,8 +112,7 @@ impl DatasetTables {
     async fn write(&self, table: &str, row: &RecordRow) -> Result<(), DatasetTableError> {
         let mut insert = self
             .client
-            .inner()
-            .insert::<RecordRow>(table)
+            .consistent_insert::<RecordRow>(table)
             .await?
             .with_timeouts(Some(self.insert.send), Some(self.insert.end));
         insert.write(row).await?;
@@ -135,8 +140,7 @@ impl DatasetTables {
         let statement = READ_PAGE.replace("{order}", page.order);
         let rows = self
             .client
-            .inner()
-            .query(&statement)
+            .consistent_query(&statement)
             .bind(Identifier(table))
             .bind(page.limit)
             .bind(page.offset)
@@ -153,8 +157,7 @@ impl DatasetTables {
     pub(crate) async fn count(&self, table: &str) -> Result<u64, DatasetTableError> {
         let rows = self
             .client
-            .inner()
-            .query(COUNT_ROWS)
+            .consistent_query(COUNT_ROWS)
             .bind(Identifier(table))
             .fetch_all::<CountRow>();
         let found = tokio::time::timeout(self.read_timeout, rows)
@@ -194,6 +197,14 @@ impl DatasetTables {
     /// nothing else to ask. A table of the ingest shape already there is this
     /// attempt repeating itself.
     pub(crate) async fn provision(&self, table: &str) -> Result<(), DatasetTableError> {
+        let database = &self.client.config().database;
+        tokio::time::timeout(
+            self.read_timeout,
+            self.client.assert_database_topology(database),
+        )
+        .await
+        .map_err(|_| DatasetTableError::Timeout)??;
+
         match self.shape_of(table).await? {
             Shape::Foreign => return Err(DatasetTableError::NotOurs(table.to_owned())),
             Shape::Absent | Shape::Ingest => {}
@@ -255,6 +266,10 @@ pub(crate) enum DatasetTableError {
     /// the pair at the point it refuses the spec.
     #[error("the dataset's table was aimed at a database this service does not own")]
     NotOurDatabase,
+    /// The datasets database is missing or its engine contradicts the
+    /// configured topology; the message carries the remedy.
+    #[error("the datasets database is not ready: {0}")]
+    DatabaseTopology(String),
 }
 
 #[derive(Debug, Deserialize, Serialize, clickhouse::Row)]
@@ -338,6 +353,7 @@ impl From<insight_clickhouse::Error> for DatasetTableError {
             insight_clickhouse::Error::Clickhouse(reported) => Self::from(reported),
             insight_clickhouse::Error::Timeout => Self::Timeout,
             insight_clickhouse::Error::InvalidQuery(_) => Self::NotOurDatabase,
+            insight_clickhouse::Error::Topology(remedy) => Self::DatabaseTopology(remedy),
         }
     }
 }

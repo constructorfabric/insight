@@ -649,7 +649,6 @@ Per the connector skill:
 - [x] `descriptor.yaml` with strict semver, `type: nocode`, namespace, schedule, secret fields, `dbt_select`
 - [x] `connector.yaml` — declarative manifest; named operations; `errors[]` response filters; per-stream traversal per [Traversal](#4-traversal-contracts)
 - [x] `connectors-config.yaml` entry (bootstrap-db) — without it the bronze database is never created
-- [x] connectors-ddl snapshot regenerated per the bootstrap-db README
 - [x] per-stream mock tests — 100% stream coverage, including a `QueryError`-in-200 case and a `hasNextPage`-lies case per [Traversal](#4-traversal-contracts)
 - [x] `scripts/ci/connector_wiring.py` green
 - [x] bronze dbt conventions (RMT engine, `order_by=['unique_key']`) — `compass__components`

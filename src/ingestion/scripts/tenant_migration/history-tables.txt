@@ -1,0 +1,32 @@
+# Relations whose rows a dbt full refresh cannot reproduce: the models tagged
+# `history`. Kept equal to that tag by tests/datapath/meta/test_history_tables.py.
+silver.class_git_ci_runs
+silver.class_git_deployment_events
+silver.class_git_deployments
+staging.active_directory__users_snapshot
+staging.bamboohr__employees_snapshot
+staging.chatgpt_team__seats_snapshot
+staging.claude_team__ai_overage
+staging.claude_team__ai_overage_daily
+staging.claude_team__members_snapshot
+staging.cursor__members_snapshot
+staging.github__issue_links_snapshot
+staging.github__project_fields_snapshot
+staging.github__project_items_snapshot
+staging.github_directory__org_members_snapshot
+staging.jira__catalogue_first_seen
+staging.jira__comment_snapshot
+staging.jira__issue_availability_snapshot
+staging.jira__project_visibility_snapshot
+staging.jira__users_snapshot
+staging.jira__worklog_snapshot
+staging.ms_entra__users_snapshot
+staging.outline__users_snapshot
+staging.slack__users_snapshot
+staging.youtrack__comment_observations
+staging.youtrack__field_observations
+staging.youtrack__issue_observations
+staging.youtrack__users_snapshot
+staging.youtrack__work_item_observations
+staging.zoom__users_snapshot
+staging.zulip_proxy__users_snapshot

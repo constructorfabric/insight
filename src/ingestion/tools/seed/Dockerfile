@@ -24,8 +24,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     HOME=/tmp
 
-# curl + bash: scripts/create-warehouse-placeholders.sh and
-# scripts/apply-ch-migrations.sh use both, and slim ships dash and no curl.
+# curl + bash: scripts/apply-ch-migrations.sh uses both, and slim ships dash
+# and no curl.
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends curl bash \
@@ -40,13 +40,16 @@ WORKDIR /ingestion
 
 # Only what the seed actually runs. `dbt_project.yml` reads its models from
 # ../silver, ../gold and ../connectors, so those come along; the connector
-# runtimes, reconcile tooling, tests and secrets do not.
+# runtimes, the rest of the reconcile tooling, tests and secrets do not.
 COPY scripts ./scripts/
 COPY dbt ./dbt/
 COPY silver ./silver/
 COPY gold ./gold/
 COPY connectors ./connectors/
 COPY tools/seed ./tools/seed/
+# The bronze Job renders the destination's config with the same composer
+# reconcile hands Airbyte, so both build bronze for the same topology.
+COPY reconcile-connectors/python/compose_destination_config.py ./reconcile-connectors/python/
 
 # Editable, so the compose service can mount the working tree over /ingestion
 # and have its edits take effect without a rebuild. The console script it

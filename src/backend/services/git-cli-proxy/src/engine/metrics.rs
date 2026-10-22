@@ -37,6 +37,27 @@ impl EvictionTier {
     }
 }
 
+/// Where the author index failed, for `git_proxy_author_index_failures{stage=…}`.
+#[derive(Debug, Clone, Copy)]
+pub enum AuthorIndexFailure {
+    /// A mirror's authors could not be listed; its next refresh retries.
+    Fold,
+    /// What a refresh changed could not be written.
+    Persist,
+    /// Part of a book on disk was unreadable and is rebuilt from fetches.
+    Load,
+}
+
+impl AuthorIndexFailure {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fold => "fold",
+            Self::Persist => "persist",
+            Self::Load => "load",
+        }
+    }
+}
+
 /// Outcome of a fetch, for `git_proxy_fetches_total{result=…}`.
 #[derive(Debug, Clone, Copy)]
 pub enum FetchResult {
@@ -97,6 +118,7 @@ struct Instruments {
     purge_escalations: Counter<u64>,
     cold_clones: Counter<u64>,
     fetches: Counter<u64>,
+    author_index_failures: Counter<u64>,
     request_duration: Histogram<f64>,
     response_bytes: Histogram<u64>,
 }
@@ -151,6 +173,14 @@ fn instruments() -> &'static Instruments {
                 .u64_counter("git_proxy.fetches")
                 .with_description("Fetches against an existing entry, by outcome.")
                 .build(),
+            author_index_failures: meter
+                .u64_counter("git_proxy.author_index_failures")
+                .with_description(
+                    "Author index failures, by stage. A fold or persist failure delays an \
+                     author to the repository's next refresh; a load failure re-reports \
+                     every author of the damaged part as its repositories are fetched again.",
+                )
+                .build(),
             request_duration: meter
                 .f64_histogram("git_proxy.request.duration")
                 .with_unit("s")
@@ -191,6 +221,12 @@ pub fn record_purge_escalation() {
 
 pub fn record_cold_clone() {
     instruments().cold_clones.add(1, &[]);
+}
+
+pub fn record_author_index_failure(stage: AuthorIndexFailure) {
+    instruments()
+        .author_index_failures
+        .add(1, &[KeyValue::new("stage", stage.as_str())]);
 }
 
 pub fn record_fetch(result: FetchResult) {

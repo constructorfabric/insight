@@ -51,7 +51,8 @@ pub struct GearConfig {
     /// `ClickHouse` password.
     pub clickhouse_password: String,
     /// Topology of the warehouse: whether the relations this service creates
-    /// must replicate, and the cluster its DDL is qualified with.
+    /// must replicate. The name is the chart's shared contract; nothing here
+    /// emits `ON CLUSTER`.
     pub clickhouse_cluster_mode: bool,
     pub clickhouse_cluster_name: String,
     /// Default tenant for the bootstrap-admin seed. Empty = bootstrap skipped
@@ -177,8 +178,7 @@ mod tests {
     fn an_install_that_says_nothing_is_a_standalone_single_node() -> anyhow::Result<()> {
         let config = config(serde_json::json!({}))?;
 
-        assert!(!config.topology().is_replicated());
-        assert!(config.topology().on_cluster().is_none());
+        assert_eq!(config.topology(), insight_clickhouse::Topology::Standalone);
         Ok(())
     }
 
@@ -189,8 +189,7 @@ mod tests {
             "clickhouse_cluster_name": "insight_cluster",
         }))?;
 
-        assert!(config.topology().is_replicated());
-        assert_eq!(config.topology().on_cluster(), Some("insight_cluster"));
+        assert_eq!(config.topology(), insight_clickhouse::Topology::Replicated);
         Ok(())
     }
 }

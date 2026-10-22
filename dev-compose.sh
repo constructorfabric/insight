@@ -418,6 +418,33 @@ YML
   esac
 }
 
+# What the chart's pre-install Job does for a compose stand: every warehouse
+# database and reader role, from the one creation site, before any backend
+# asks for them. Passwords default to the values the compose init SQL used.
+create_warehouse_databases() {
+  local url
+  if [[ "${CLICKHOUSE_EXTERNAL:-false}" != "true" ]]; then
+    "$@" up -d --wait clickhouse || return 1
+    url="http://localhost:${CLICKHOUSE_HTTP_PORT:-8123}"
+  else
+    url="http://${CLICKHOUSE_HOST:?CLICKHOUSE_HOST must be set}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
+  fi
+
+  echo "=== ClickHouse databases and reader roles (create-databases.sh) ==="
+  CLICKHOUSE_URL="$url" \
+  CLICKHOUSE_USER="${CLICKHOUSE_USER:-insight}" \
+  CLICKHOUSE_PASSWORD="${CLICKHOUSE_PASSWORD:-insight-local}" \
+  CLICKHOUSE_DATABASE="${CLICKHOUSE_DATABASE:-insight}" \
+  CLICKHOUSE_CLUSTER_MODE=false CLICKHOUSE_CLUSTER_NAME='' \
+  CLICKHOUSE_PRESENTATION_PASSWORD="${CLICKHOUSE_PRESENTATION_PASSWORD:-presentation-local}" \
+  INSIGHT_V3_CORE_ENABLED=true \
+  CLICKHOUSE_V3_READER_USER="${CLICKHOUSE_V3_READER_USER:-insight_v3_reader}" \
+  CLICKHOUSE_V3_READER_PASSWORD="${CLICKHOUSE_V3_READER_PASSWORD:-insight-v3-reader-local}" \
+  MCP_ENABLED="${MCP_ENABLED:-false}" SQL_API_ENABLED="${SQL_API_ENABLED:-false}" \
+  CLICKHOUSE_MCP_PASSWORD="${CLICKHOUSE_MCP_PASSWORD:-}" \
+    bash "$ROOT_DIR/src/ingestion/scripts/create-databases.sh"
+}
+
 cmd_up() {
   local env_file=".env.compose"
   local seed_target_override=""
@@ -845,6 +872,8 @@ YML
   with_retries "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} pull --quiet --ignore-buildable ||
     echo "WARNING: pulling images failed three times; up will try once more." >&2
 
+  create_warehouse_databases "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} || return 1
+
   echo "=== docker compose up ==="
   if ! "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} up -d --remove-orphans; then
     "${compose_cmd[@]}" ps -a >&2 || true
@@ -1246,10 +1275,9 @@ seed_identity_projection() {
 }
 
 # Every connector's bronze, created the way a first sync does: its own `discover`
-# into destination-clickhouse. The DDL snapshot used to pre-create all of it; it
-# no longer carries bronze, and the seed needs the lot — not just the relations
-# its generators write, because the dbt run that follows builds EVERY connector's
-# staging model and each reads its own `bronze_<connector>` database.
+# into destination-clickhouse. The seed needs the lot — not just the relations
+# its generators write — because the dbt run that follows builds EVERY
+# connector's staging model and each reads its own `bronze_<connector>` database.
 #
 # The destination runs in a container, so it joins the stand's network and is
 # handed ClickHouse's address on it: a published port is the host's, not the

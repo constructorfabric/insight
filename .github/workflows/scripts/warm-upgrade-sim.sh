@@ -2,26 +2,25 @@
 # Simulate deploying this branch onto a WARM installation.
 #
 # A warm installation's ClickHouse relations were created by an earlier
-# release: `CREATE TABLE IF NOT EXISTS` never widens them, so a gold model
-# that references a new silver/staging column builds fine on a fresh install
-# (the snapshot already carries the new shape) and fails with
-# UNKNOWN_IDENTIFIER on every installation that already holds data — unless
-# the change ships a numbered migration or a guarded heal. Since #3561 that
-# failure lands on the first connector sync after the upgrade rather than on
-# the deploy, so this script reproduces both halves:
+# release and nothing widens them in place, so a gold model that references a
+# new silver/staging column builds fine on a fresh install — where the
+# relation is created by the run that first builds it — and fails with
+# UNKNOWN_IDENTIFIER on every installation that already holds data, unless the
+# change ships a guarded heal. Since #3561 that failure lands on the first
+# connector sync after the upgrade rather than on the deploy, so this script
+# reproduces both halves:
 #
-#   1. Install BASE_SHA: run the base tree's own deploy hook
-#      (create-warehouse-placeholders + migrations + heals, with dbt pinned
-#      from the base tree's pins.env) — what an existing installation's last
-#      deploy left behind, plus the bronze a connector would have synced into
-#      it (seed_warm_bronze below).
+#   1. Install BASE_SHA: run the base tree's own deploy hook (migrations and
+#      heals, with dbt pinned from the base tree's pins.env), let the base
+#      tree's connectors create their bronze through destination-clickhouse,
+#      and play the base's last sync — its whole buildable dbt graph. That is
+#      what an existing installation's last deploy and last sync left behind;
+#      the fixtures below then add the rows a connector would have synced into
+#      it.
 #   2. Deploy the working tree: run this branch's apply-ch-migrations.sh end
 #      to end — exactly what the Helm clickhouse-migrate hook runs — and then
-#      its build-gold.sh over the warm silver, with dbt pinned from this tree's
-#      pins.env. That is the gold half of the first sync, not a whole one: a
-#      real sync rebuilds staging and silver in the same dbt run, so a silver
-#      model that widens itself through `on_schema_change` widens there and not
-#      here. The lane is therefore stricter than the field, never laxer.
+#      the first sync after it: this tree's whole buildable graph over the
+#      warm bronze and silver, with dbt pinned from this tree's pins.env.
 #
 # Both phases run against the branch's CLICKHOUSE_SERVER_IMAGE: real
 # installations upgrade the server before or after the app on their own
@@ -34,8 +33,15 @@
 # Required env (same contract as apply-ch-migrations.sh):
 #   CLICKHOUSE_URL, CLICKHOUSE_USER, CLICKHOUSE_PASSWORD, CLICKHOUSE_DATABASE
 #   BASE_SHA  — commit whose tree plays the already-installed release
-# Needs python3 (3.11+) and network access to PyPI; each phase gets its own
-# venv pinned from its tree's pins.env.
+# Optional env, for the destination-clickhouse container that creates bronze:
+#   BRONZE_CLICKHOUSE_URL — the URL that container reaches ClickHouse at
+#                           (default CLICKHOUSE_URL; 127.0.0.1 is not it)
+#   DOCKER_NETWORK        — the network it joins to get there
+#   RUNNER_TEMP           — where its bind-mounted inputs live (default /tmp)
+#   PYTHON_BIN            — interpreter for the per-phase venvs (default: the
+#                           first of python3.12, python3.11, python3)
+# Needs python3 (3.11+), docker, jq, yq v4 and network access to PyPI; each
+# phase gets its own venv pinned from its tree's pins.env.
 set -euo pipefail
 
 : "${BASE_SHA:?BASE_SHA must be set (the commit playing the installed release)}"
@@ -52,7 +58,7 @@ fi
 
 # Same interpreter preference as bootstrap-db/run-dbt.sh — the pinned dbt
 # does not run on newer interpreters.
-PYTHON_BIN="$(command -v python3.12 || command -v python3.11 || command -v python3)"
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3.12 || command -v python3.11 || command -v python3)}"
 
 # One venv per phase, pinned from that phase's own pins.env — the base
 # deploy ran the base toolbox, the branch deploy runs the branch toolbox.
@@ -66,6 +72,61 @@ dbt_venv_for() {
     "dbt-core==${core}" "dbt-clickhouse==${clickhouse}" pyyaml
 }
 
+# Whether a tree syncs the way the product does since #3834: the whole graph
+# less the models whose bronze no connector has written. Such a tree creates
+# no silver at deploy time either, so bronze has to be real for it.
+syncs_the_buildable_graph() {
+  [[ -f "$1/src/ingestion/dbt/macros/unbuildable_models.sql" ]]
+}
+
+# Bronze as a connector's first sync creates it — destination-clickhouse
+# applying the connector's discovered catalogue — for the connectors the
+# fixtures below cover, using the tree's own connectors and image pins.
+create_connector_bronze() {
+  local tree="$1" url="${BRONZE_CLICKHOUSE_URL:-$CLICKHOUSE_URL}" protocol hostport port
+  protocol="${url%%://*}"
+  hostport="${url#*://}"; hostport="${hostport%%/*}"
+  if [[ "$hostport" == *:* ]]; then
+    port="${hostport##*:}"
+  elif [[ "$protocol" == https ]]; then
+    port=443
+  else
+    port=80
+  fi
+  local pins="$tree/src/ingestion/scripts/bootstrap-db/pins.env"
+  echo "=== Creating bronze for github, gitlab and jira through destination-clickhouse ==="
+  CLICKHOUSE_PROTOCOL="$protocol" \
+  CLICKHOUSE_HOST="${hostport%%:*}" \
+  CLICKHOUSE_PORT="$port" \
+  DESTINATION_CLICKHOUSE_IMAGE="$(grep '^DESTINATION_CLICKHOUSE_IMAGE=' "$pins" | cut -d= -f2)" \
+  SOURCE_DECLARATIVE_MANIFEST_IMAGE="$(grep '^SOURCE_DECLARATIVE_MANIFEST_IMAGE=' "$pins" | cut -d= -f2)" \
+    bash "$tree/src/ingestion/scripts/bootstrap-db/seed-connectors.sh" \
+      "$tree/src/ingestion/scripts/bootstrap-db/connectors-config.yaml" github gitlab jira
+}
+
+# A sync as the Argo dbt-run step runs it (the shape of the cluster rig's
+# dbt_build): the tree's profile, the whole graph, the unbuildable models
+# excluded. A tree from before #3834 built gold alone over a snapshot-created
+# silver; its own build-gold.sh still plays that.
+build_graph() {
+  local tree="$1" venv="$2" label="$3"
+  local profiles="$WORKDIR/profiles-$label" target="$WORKDIR/dbt-$label"
+  local path="$venv/bin:$PATH" project="$tree/src/ingestion/dbt" unbuildable excluded=()
+  if ! syncs_the_buildable_graph "$tree"; then
+    PATH="$path" bash "$tree/src/ingestion/scripts/build-gold.sh"
+    return
+  fi
+  mkdir -p "$profiles"
+  PATH="$path" python3 "$tree/src/ingestion/scripts/dbt_profiles.py" --target migrate \
+    --profiles-dir "$profiles" --correlated-subqueries
+  unbuildable="$(cd "$project" && PATH="$path" dbt --quiet run-operation list_unbuildable_models \
+    --profiles-dir "$profiles" --target-path "$target" --log-path "$target/logs")"
+  read -r -a excluded <<< "$unbuildable"
+  echo "=== dbt run over the buildable graph, excluding ${#excluded[@]} unbuildable model(s) ==="
+  (cd "$project" && PATH="$path" dbt --no-use-colors run --profiles-dir "$profiles" \
+    --target-path "$target" --log-path "$target/logs" ${excluded[@]+--exclude "${excluded[@]}"})
+}
+
 echo "=== Step 1: install base $(git -C "$REPO_ROOT" rev-parse --short "$BASE_SHA") (warm state) ==="
 git -C "$REPO_ROOT" archive "$BASE_SHA" src/ingestion | tar -x -C "$WORKDIR"
 dbt_venv_for "$WORKDIR/src/ingestion/scripts/bootstrap-db/pins.env" "$WORKDIR/base-venv"
@@ -75,12 +136,17 @@ if ! PATH="$WORKDIR/base-venv/bin:$PATH" \
   exit 1
 fi
 
+if syncs_the_buildable_graph "$WORKDIR" && ! create_connector_bronze "$WORKDIR"; then
+  echo "::error title=warm-upgrade base install failed::The BASE connectors (${BASE_SHA}) did not create their bronze — not this PR's fault. Check whether the base tree's seed-connectors.sh is broken against a fresh ClickHouse."
+  exit 1
+fi
+
 # A base tree from before #3561 built gold inside the hook above; a later one
-# leaves it to the sync. Either way the warm state needs the base's gold.
+# leaves it to the sync. Either way the warm state needs the base's silver and
+# gold, built under the base contract.
 if [[ -f "$WORKDIR/src/ingestion/scripts/build-gold.sh" ]] &&
-    ! PATH="$WORKDIR/base-venv/bin:$PATH" \
-      bash "$WORKDIR/src/ingestion/scripts/build-gold.sh"; then
-  echo "::error title=warm-upgrade base install failed::The BASE gold build (${BASE_SHA}) did not converge — not this PR's fault. Check whether the base tree's build-gold.sh is broken on a fresh ClickHouse."
+    ! build_graph "$WORKDIR" "$WORKDIR/base-venv" base; then
+  echo "::error title=warm-upgrade base install failed::The BASE sync (${BASE_SHA}) — dbt run over its buildable graph, or build-gold.sh on an older tree — did not converge — not this PR's fault. Check whether the base tree's dbt project is broken on a fresh ClickHouse."
   exit 1
 fi
 
@@ -91,11 +157,11 @@ fi
 # reported close from the SOURCE rather than copying the settled one — the
 # difference between a 10-hour merge and a 2-hour one, on data no resync has
 # touched. #3362
-# No deploy creates bronze — destination-clickhouse does, on a connector's first
-# sync — so the warm state a connector would have left is a fixture here. Shape
-# follows the destination's append_dedup output (ReplacingMergeTree versioned by
-# the extraction stamp, sorted by a non-nullable unique_key); columns are the
-# ones the backfill reads, not the connector's full stream.
+# The bronze tables are real above where the base syncs the buildable graph,
+# and these CREATEs are no-ops on them; a base from before that built silver
+# from a snapshot and gets the destination's append_dedup shape here
+# (ReplacingMergeTree versioned by the extraction stamp, sorted by a
+# non-nullable unique_key), with the columns the backfill reads.
 seed_warm_bronze() {
   echo "=== Creating the bronze a synced warm installation would hold ==="
   source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
@@ -219,7 +285,7 @@ CREATE DATABASE IF NOT EXISTS bronze_jira;
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue
 (
     unique_key String, tenant_id Nullable(String), source_id Nullable(String),
-    id_readable Nullable(String), jira_id Nullable(String), summary Nullable(String),
+    id_readable Nullable(String), jira_id Nullable(String),
     _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
@@ -250,14 +316,14 @@ ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
 -- moved away from. Only the old-key row maps WARM-OLD-7 to an id, and it is
 -- keyed by that old key — which is what the second heal rebuilds.
 INSERT INTO bronze_jira.jira_issue
-    (unique_key, tenant_id, source_id, id_readable, jira_id, summary, _airbyte_raw_id, _airbyte_extracted_at)
+    (unique_key, tenant_id, source_id, id_readable, jira_id, _airbyte_raw_id, _airbyte_extracted_at)
 VALUES
-    ('warm-jira-WARM-1', 'warm', 'jira-1', 'WARM-1', '101', 'moved issue', 'raw-i1', '2026-01-02 00:00:00'),
-    ('warm-jira-WARM-OLD-7', 'warm', 'jira-1', 'WARM-OLD-7', '101', 'moved issue', 'raw-i0', '2026-01-01 00:00:00');
+    ('warm-jira-WARM-1', 'warm', 'jira-1', 'WARM-1', '101', 'raw-i1', '2026-01-02 00:00:00'),
+    ('warm-jira-WARM-OLD-7', 'warm', 'jira-1', 'WARM-OLD-7', '101', 'raw-i0', '2026-01-01 00:00:00');
 INSERT INTO bronze_jira.jira_issue_keys
-    (unique_key, tenant_id, source_id, id_readable, jira_id, summary, _airbyte_raw_id, _airbyte_extracted_at)
+    (unique_key, tenant_id, source_id, id_readable, jira_id, _airbyte_raw_id, _airbyte_extracted_at)
 VALUES
-    ('warm-jira-WARM-2', 'warm', 'jira-1', 'WARM-2', '102', 'other issue', 'raw-k1', '2026-01-02 00:00:00');
+    ('warm-jira-WARM-2', 'warm', 'jira-1', 'WARM-2', '102', 'raw-k1', '2026-01-02 00:00:00');
 
 INSERT INTO bronze_jira.jira_issue_history
     (unique_key, tenant_id, source_id, id_readable, jira_id, items, _airbyte_raw_id, _airbyte_extracted_at)
@@ -316,9 +382,63 @@ assert_jira_issue_identity_recovered() {
   echo "=== Jira issue id recovered and the moved issue collapsed onto it ==="
 }
 
+# Before the catalogue first-sync record kept its history, it was a plain
+# MergeTree keyed by source. Bronze has already forgotten the first extraction —
+# what it holds now is younger — so the upgrade must carry the recorded instant
+# over rather than re-derive it. One source still has bronze rows to name its
+# tenant; the other does not, and keeps an empty one.
+seed_jira_catalogue_first_seen_warm_state() {
+  echo "=== Seeding the pre-history Jira catalogue first-sync record ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  run_ch <<'SQL'
+CREATE DATABASE IF NOT EXISTS bronze_jira;
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields
+(
+    unique_key String, tenant_id Nullable(String), source_id Nullable(String),
+    _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+INSERT INTO bronze_jira.jira_fields (unique_key, tenant_id, source_id, _airbyte_raw_id, _airbyte_extracted_at)
+VALUES ('warm-jira-1-summary', 'warm', 'jira-1', 'raw-f1', '2026-03-01 00:00:00');
+
+DROP TABLE IF EXISTS staging.jira__catalogue_first_seen;
+CREATE TABLE staging.jira__catalogue_first_seen
+(
+    insight_source_id String, catalogue_first_sync DateTime64(3), recorded_at DateTime64(3)
+)
+ENGINE = MergeTree ORDER BY insight_source_id;
+INSERT INTO staging.jira__catalogue_first_seen (insight_source_id, catalogue_first_sync, recorded_at)
+VALUES
+    ('jira-1', '2026-01-01 00:00:00', '2026-01-01 00:05:00'),
+    ('jira-gone', '2026-01-02 00:00:00', '2026-01-02 00:05:00');
+SQL
+}
+
+assert_jira_catalogue_first_seen_kept() {
+  echo "=== Asserting the catalogue first sync survived the upgrade ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  local got
+  local expected="ReplacingMergeTree|-jira-gone,,jira-gone,2026-01-02 00:00:00.000;warm-jira-1,warm,jira-1,2026-01-01 00:00:00.000"
+  got="$(printf "SELECT concat(
+      (SELECT engine FROM system.tables WHERE database = 'staging' AND name = 'jira__catalogue_first_seen'), '|',
+      arrayStringConcat(groupArray(row), ';'))
+    FROM
+    (
+        SELECT concat(unique_key, ',', tenant_id, ',', insight_source_id, ',', toString(catalogue_first_sync)) AS row
+        FROM staging.jira__catalogue_first_seen FINAL
+        ORDER BY unique_key
+    )" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=warm upgrade lost the Jira catalogue first sync::Expected '${expected}' — the record rebuilt as a ReplacingMergeTree keyed by tenant and source, each source keeping the instant it was first recorded with, and the tenant taken from bronze where bronze still names one — but got '${got}'."
+    exit 1
+  fi
+  echo "=== Jira catalogue first sync kept through the upgrade ==="
+}
+
 seed_warm_bronze
 seed_git_close_time_warm_state
 seed_jira_issue_identity_warm_state
+seed_jira_catalogue_first_seen_warm_state
 
 echo "=== Step 2: deploy the working tree onto the warm state ==="
 dbt_venv_for "$REPO_ROOT/src/ingestion/scripts/bootstrap-db/pins.env" "$WORKDIR/branch-venv"
@@ -330,12 +450,12 @@ fi
 
 assert_git_close_time_recovered
 assert_jira_issue_identity_recovered
+assert_jira_catalogue_first_seen_kept
 
-echo "=== Step 3: build gold over the warm silver, as the first sync would ==="
-if ! PATH="$WORKDIR/branch-venv/bin:$PATH" \
-    bash "$REPO_ROOT/src/ingestion/scripts/build-gold.sh"; then
-  echo "::error title=first sync after the upgrade fails — forgotten migration or heal::A gold model reads a silver/staging column that only exists in the new snapshot, so the first connector sync after this release fails on every installation that already holds data. Ship the companion ALTER — a numbered migration in src/ingestion/scripts/migrations/ for silver.class_*, a guarded heal in src/ingestion/scripts/apply-ch-migrations.sh for staging.* — per the Warehouse contract changes rules in AGENTS.md."
+echo "=== Step 3: the first sync after the upgrade — this tree's buildable graph over the warm warehouse ==="
+if ! build_graph "$REPO_ROOT" "$WORKDIR/branch-venv" branch; then
+  echo "::error title=first sync after the upgrade fails — forgotten heal::A model reads a bronze/silver/staging column this branch adds but no heal widens an existing relation with, so the first connector sync after this release fails on every installation that already holds data. Ship the companion ALTER — a ch_table_exists-guarded heal in src/ingestion/scripts/apply-ch-migrations.sh, for silver.class_* as for staging.* — per the Warehouse contract changes rules in AGENTS.md."
   exit 1
 fi
 
-echo "=== Warm upgrade OK: every relation the gold build reads is covered by a migration or heal ==="
+echo "=== Warm upgrade OK: every relation the first sync reads is covered by a migration or heal ==="

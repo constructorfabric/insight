@@ -64,8 +64,10 @@ class _SendSecureOverHttp(http.cookiejar.DefaultCookiePolicy):
         return True
 
 
-# Must match the authenticator's authz_cache_max_age_seconds in the compose file.
-AUTHZ_CACHE_MAX_AGE = 3
+# The authenticator's authz_cache_max_age_seconds, via the compose
+# `${AUTHZ_CACHE_MAX_AGE}`. It must cover warm -> kill -> confirm-down -> request
+# in TestAuthenticatorDown, or the cached hit misses and 503s.
+AUTHZ_CACHE_MAX_AGE = int(os.environ.setdefault("AUTHZ_CACHE_MAX_AGE", "10"))
 
 
 def _compose(*args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -276,14 +278,8 @@ def client():
 
 @pytest.fixture(scope="session")
 def session_sid():
-    """Log in once and warm the exchange cache; return the session cookie value.
-
-    Created before any fixture that kills the authenticator (those depend on it),
-    so the cache is populated while the authenticator is still up.
-    """
-    sid = GatewayClient().login()
-    GatewayClient().request(f"{GW}/api/analytics/warm", headers={"Cookie": f"__Host-sid={sid}"})
-    return sid
+    """Log in once; return the session cookie value."""
+    return GatewayClient().login()
 
 
 def _wait_status(url, cookie, expected, timeout_s=30):
@@ -292,13 +288,15 @@ def _wait_status(url, cookie, expected, timeout_s=30):
         status, _, _ = GatewayClient().request(url, headers={"Cookie": cookie})
         if status == expected:
             return
-        time.sleep(1)
+        time.sleep(0.2)
     raise TimeoutError(f"{url} never returned {expected}")
 
 
 @pytest.fixture
 def authenticator_down(session_sid):
-    """Kill the authenticator (session already warmed), restore on teardown."""
+    """Kill the authenticator right after re-warming the session, restore on teardown."""
+    status, _, _ = GatewayClient().request(f"{GW}/api/analytics/warm", headers={"Cookie": f"__Host-sid={session_sid}"})
+    assert status == 200, f"warm got {status}"
     _compose("kill", "authenticator")
     # Wait until the fail-closed state is actually reached before yielding.
     _wait_status(f"{GW}/api/analytics/x", "__Host-sid=cold-poll", 503)

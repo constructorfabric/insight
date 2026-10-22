@@ -128,12 +128,19 @@ name: jira
 # `opaque_id`. `jira__task_links` adds Jira rows to `class_task_links`. MAJOR
 # because rows already written change, and only the full refresh a major
 # dispatches (ADR-0015) re-derives them.
-# 14.1.0: `jira_issue_census` keeps each issue's current key beside its id, so
+# 15.0.0 (major): a comment is deleted only when a later read of its own
+# issue's comment list left it out, or its issue is deleted or trashed. The
+# issue-key list is a stream of its own whose extraction time says nothing
+# about when an issue's comments were read, so comparing the two flagged
+# comments that still exist as deleted (#3708). MAJOR because the false
+# `remove` lifecycle events already written stay until the full refresh a
+# major dispatches (ADR-0015) rebuilds the journal.
+# 15.1.0: `jira_issue_census` keeps each issue's current key beside its id, so
 # `jira__issue_key_ids` resolves a linked issue's key to its immutable id even
 # when the issue was never updated inside the sync window. MINOR per ADR-0015:
 # reconcile republishes the manifest and refreshes the catalog, the destination
 # adds the column on the next sync, and nothing already stored changes meaning.
-version: "14.1.0"
+version: "15.1.0"
 schedule: "0 3 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer

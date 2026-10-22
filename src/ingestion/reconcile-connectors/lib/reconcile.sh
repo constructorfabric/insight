@@ -77,15 +77,14 @@ reconcile__log() {
 # Resolves (or creates) the Airbyte destination Bronze sink owned by
 # reconcile. Strategy:
 #   1. If RECONCILE_DESTINATION_ID env is set (legacy / explicit override),
-#      use it verbatim.
-#   2. Otherwise, look up an existing destination by name
-#      RECONCILE_DESTINATION_NAME (default `clickhouse-bronze`); if absent,
-#      create one with definition Clickhouse and config from
-#      RECONCILE_DEST_CLICKHOUSE_* env (host/port/db/user/password).
-# The Clickhouse definition is resolved by name, so this path also refuses a
-# destination older than python/check_destination_version.py's minimum. The
-# explicit-id override skips both the lookup and the check: that destination's
-# configuration belongs to whoever set the id, not to reconcile.
+#      use it verbatim: that destination's configuration belongs to whoever
+#      set the id, not to reconcile.
+#   2. Otherwise, converge the destination named RECONCILE_DESTINATION_NAME
+#      (default `clickhouse-bronze`) on the configuration composed from
+#      RECONCILE_DEST_CLICKHOUSE_* env — created when absent, updated when
+#      its stored configuration differs (ab_ensure_destination).
+# Both paths refuse a destination older than python/check_destination_version.py's
+# minimum: it is reconcile's catalogues the destination runs either way.
 # Caches the resolved id in _RECONCILE_DESTINATION_ID for the run.
 # Echoes the destinationId on stdout; returns non-zero on failure.
 # ---------------------------------------------------------------------------
@@ -95,21 +94,24 @@ reconcile_resolve_destination_id() {
     printf '%s' "${_RECONCILE_DESTINATION_ID}"
     return 0
   fi
-  if [[ -n "${RECONCILE_DESTINATION_ID:-}" ]]; then
-    _RECONCILE_DESTINATION_ID="${RECONCILE_DESTINATION_ID}"
-    printf '%s' "${_RECONCILE_DESTINATION_ID}"
-    return 0
-  fi
-  local dest_name="${RECONCILE_DESTINATION_NAME:-clickhouse-bronze}"  # RULE-DEFAULTS-OK: project-fixed name, not operator-tunable
-  local definition
-  if ! definition="$(ab_destination_definition_by_name Clickhouse 2>/dev/null)"; then
-    reconcile__log ERROR "${subject}" \
-      "Airbyte does not register a Clickhouse destination definition in this workspace — cannot bootstrap Bronze sink"
-    return 1
-  fi
 
-  local def_id def_version
-  IFS=$'\t' read -r def_id def_version <<<"${definition}"
+  local dest_id="" def_id="" def_version
+  if [[ -n "${RECONCILE_DESTINATION_ID:-}" ]]; then
+    dest_id="${RECONCILE_DESTINATION_ID}"
+    if ! def_version="$(ab_destination_version "${dest_id}" 2>/dev/null)"; then
+      reconcile__log ERROR "${subject}" \
+        "RECONCILE_DESTINATION_ID=${dest_id} names no destination this Airbyte can describe"
+      return 1
+    fi
+  else
+    local definition
+    if ! definition="$(ab_destination_definition_by_name Clickhouse 2>/dev/null)"; then
+      reconcile__log ERROR "${subject}" \
+        "Airbyte does not register a Clickhouse destination definition in this workspace — cannot bootstrap Bronze sink"
+      return 1
+    fi
+    IFS=$'\t' read -r def_id def_version <<<"${definition}"
+  fi
 
   local refusal
   if ! refusal="$(python3 "${_RECONCILE_PY_DIR}/check_destination_version.py" "${def_version}")"; then
@@ -117,32 +119,33 @@ reconcile_resolve_destination_id() {
     return 1
   fi
 
-  # Build connection config from env. Required for fresh-cluster bootstrap;
-  # caller (Helm chart reconcile-cron.yaml) injects them from chart values
-  # + insight-db-creds secret.
-  : "${RECONCILE_DEST_CLICKHOUSE_HOST:?RECONCILE_DEST_CLICKHOUSE_HOST must be set (the in-cluster ClickHouse host for the Bronze destination)}"
-  : "${RECONCILE_DEST_CLICKHOUSE_PORT:?RECONCILE_DEST_CLICKHOUSE_PORT must be set}"
-  : "${RECONCILE_DEST_CLICKHOUSE_DATABASE:?RECONCILE_DEST_CLICKHOUSE_DATABASE must be set}"
-  : "${RECONCILE_DEST_CLICKHOUSE_USERNAME:?RECONCILE_DEST_CLICKHOUSE_USERNAME must be set}"
-  : "${RECONCILE_DEST_CLICKHOUSE_PASSWORD:?RECONCILE_DEST_CLICKHOUSE_PASSWORD must be set}"
-  # connectionConfiguration for airbyte/destination-clickhouse 2.x — the shape
-  # and the topology keys both live in python/compose_destination_config.py.
-  # RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE / _CLUSTER_NAME are optional and
-  # default to a standalone install (epic #2010).
-  local config_json
-  if ! config_json="$(python3 "${_RECONCILE_PY_DIR}/compose_destination_config.py")"; then
-    reconcile__log ERROR "${subject}" "could not compose the Bronze destination configuration"
-    return 1
-  fi
-
-  local dest_id
-  if ! dest_id="$(ab_ensure_destination "${dest_name}" "${def_id}" "${config_json}")"; then
-    reconcile__log ERROR "${subject}" "ab_ensure_destination failed for ${dest_name}"
-    return 1
-  fi
   if [[ -z "${dest_id}" ]]; then
-    reconcile__log ERROR "${subject}" "ab_ensure_destination returned empty id for ${dest_name}"
-    return 1
+    local dest_name="${RECONCILE_DESTINATION_NAME:-clickhouse-bronze}"  # RULE-DEFAULTS-OK: project-fixed name, not operator-tunable
+    # Required for fresh-cluster bootstrap; caller (Helm chart reconcile-cron.yaml)
+    # injects them from chart values + insight-db-creds secret.
+    : "${RECONCILE_DEST_CLICKHOUSE_HOST:?RECONCILE_DEST_CLICKHOUSE_HOST must be set (the in-cluster ClickHouse host for the Bronze destination)}"
+    : "${RECONCILE_DEST_CLICKHOUSE_PORT:?RECONCILE_DEST_CLICKHOUSE_PORT must be set}"
+    : "${RECONCILE_DEST_CLICKHOUSE_DATABASE:?RECONCILE_DEST_CLICKHOUSE_DATABASE must be set}"
+    : "${RECONCILE_DEST_CLICKHOUSE_USERNAME:?RECONCILE_DEST_CLICKHOUSE_USERNAME must be set}"
+    : "${RECONCILE_DEST_CLICKHOUSE_PASSWORD:?RECONCILE_DEST_CLICKHOUSE_PASSWORD must be set}"
+    # connectionConfiguration for airbyte/destination-clickhouse 2.x — the shape
+    # and the topology keys both live in python/compose_destination_config.py.
+    # RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE / _CLUSTER_NAME are optional and
+    # default to a standalone install (epic #2010).
+    local config_json
+    if ! config_json="$(python3 "${_RECONCILE_PY_DIR}/compose_destination_config.py")"; then
+      reconcile__log ERROR "${subject}" "could not compose the Bronze destination configuration"
+      return 1
+    fi
+
+    if ! dest_id="$(ab_ensure_destination "${dest_name}" "${def_id}" "${config_json}")"; then
+      reconcile__log ERROR "${subject}" "ab_ensure_destination failed for ${dest_name}"
+      return 1
+    fi
+    if [[ -z "${dest_id}" ]]; then
+      reconcile__log ERROR "${subject}" "ab_ensure_destination returned empty id for ${dest_name}"
+      return 1
+    fi
   fi
   _RECONCILE_DESTINATION_ID="${dest_id}"
   printf '%s' "${dest_id}"
@@ -739,6 +742,39 @@ reconcile_definitions() {
 }
 
 # ---------------------------------------------------------------------------
+# reconcile_rename_former_tenant <connector_name> <definition_id> <source_id>
+#                                <tenant> <expected_source_name> <target_cfg_json>
+# Renames the instance's source from the tenant it was created under to
+# `tenant` in one update, keeping its id — and so its connection and the
+# connection's sync state. The connection's name and the former tenant's
+# schedule are converged on every pass from the objects themselves, so a pass
+# cut off after this update leaves nothing the next one cannot finish.
+# Fails when the rename would have to choose between sources.
+# ---------------------------------------------------------------------------
+reconcile_rename_former_tenant() {
+  local connector_name="$1" definition_id="$2" source_id_label="$3"
+  local tenant_id="$4" expected_source_name="$5" target_cfg_json="$6"
+  local workspace_id sources_json found former_src_id former_tenant former_name
+
+  workspace_id="$(ab_workspace_id)"
+  sources_json="$(ab_list_sources "${workspace_id}")" || return 1
+  found="$(printf '%s' "${sources_json}" | python3 "${_RECONCILE_PY_DIR}/find_former_tenant_source.py" \
+    "${definition_id}" "${connector_name}" "${source_id_label}" "${tenant_id}")" || return 1
+  [[ -n "${found}" ]] || return 0
+  IFS=$'\t' read -r former_src_id former_tenant former_name <<<"${found}"
+
+  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+    reconcile__log CHANGE "${connector_name}" "would rename source ${former_name} to ${expected_source_name}"
+    return 0
+  fi
+
+  ab_update_source "${former_src_id}" "${target_cfg_json}" "${expected_source_name}" >/dev/null || return 1
+  reconcile__log CHANGE "${connector_name}" \
+    "renamed source ${former_name} (tenant ${former_tenant}) to ${expected_source_name}, keeping its id and sync state"
+  _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+}
+
+# ---------------------------------------------------------------------------
 # reconcile_sources <connector_name> <target_cfg_json> <secret_cfg_hash> \
 #                   <definition_id> <expected_source_name>
 # diff-source-config algorithm. Returns TSV "action\tsource_id" on stdout.
@@ -847,9 +883,17 @@ reconcile_connections() {
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-find-tag
   workspace_id="$(ab_workspace_id)"
-  connections_json="$(ab_list_connections "${workspace_id}")"
-  filtered="$(printf '%s' "${connections_json}" \
-    | python3 "${_RECONCILE_PY_DIR}/select_connections_by_source.py" "${source_id}")"
+  # SAFETY: an unread listing must stop here — read as empty, it would bootstrap
+  # a second connection beside the one holding the sync state.
+  if ! connections_json="$(ab_list_connections "${workspace_id}")"; then
+    reconcile__log ERROR "${connector_name}" "ab_list_connections failed for source ${source_id}"
+    return 1
+  fi
+  if ! filtered="$(printf '%s' "${connections_json}" \
+        | python3 "${_RECONCILE_PY_DIR}/select_connections_by_source.py" "${source_id}")"; then
+    reconcile__log ERROR "${connector_name}" "unreadable connection listing for source ${source_id}"
+    return 1
+  fi
   if [[ -z "${filtered}" ]]; then
     # Bootstrap path: source exists but has no connection yet (clean cluster
     # / first run). Create one with discovered schema, append_dedup sync mode,
@@ -987,6 +1031,11 @@ print("\n".join(sorted(i for i in ids if i)))')"
     local connection_id existing_tags_json desired_action
     connection_id="$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["connectionId"])')"
     existing_tags_json="$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin).get("tags",[])))')"
+    if [[ -n "${source_name}" ]]; then
+      reconcile_converge_connection_name "${connector_name}" "${connection_id}" \
+        "$(printf '%s' "${conn_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("name") or "")')" \
+        "${source_name}-conn" || return 1
+    fi
 
     # @cpt-begin:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-if-drift
     desired_action="$(python3 "${_RECONCILE_PY_DIR}/tag_drift_check.py" \
@@ -1010,6 +1059,27 @@ print("\n".join(sorted(i for i in ids if i)))')"
     fi
     # @cpt-end:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-if-drift
   done <<<"${filtered}"
+}
+
+# ---------------------------------------------------------------------------
+# reconcile_converge_connection_name <connector_name> <connection_id>
+#                                    <current_name> <expected_name>
+# The schedule finds its connection by name, so a connection still named for
+# a former tenant is renamed in place — its id and sync state stay.
+# ---------------------------------------------------------------------------
+reconcile_converge_connection_name() {
+  local connector_name="$1" connection_id="$2" current_name="$3" expected_name="$4"
+  [[ "${current_name}" != "${expected_name}" ]] || return 0
+  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+    reconcile__log CHANGE "${connector_name}" "would rename connection ${current_name} to ${expected_name}" >&2
+    return 0
+  fi
+  if ! ab_rename_connection "${connection_id}" "${expected_name}" >/dev/null; then
+    reconcile__log ERROR "${connector_name}" "failed to rename connection ${connection_id} to ${expected_name}" >&2
+    return 1
+  fi
+  reconcile__log CHANGE "${connector_name}" "renamed connection ${current_name} to ${expected_name}" >&2
+  _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
 }
 
 # ---------------------------------------------------------------------------
@@ -1389,6 +1459,12 @@ _reconcile_one_connector() {
     return 1
   fi
 
+  if ! reconcile_rename_former_tenant "${name}" "${def_id}" "${source_id_label}" \
+        "${tenant_id}" "${expected_source_name}" "${source_cfg_json}" >&2; then
+    log_line ERROR "${name}: cannot carry the source over from its former tenant — leaving it for an operator"
+    return 1
+  fi
+
   local src_result src_id src_action
   if ! src_result="$(reconcile_sources "${name}" "${source_cfg_json}" "${cfg_hash}" \
                 "${def_id}" "${expected_source_name}" "${ns_format}")"; then
@@ -1490,6 +1566,9 @@ _reconcile_one_connector() {
       rc=1
     elif [[ "${apply_rc}" -ne 0 ]]; then
       log_line ERROR "${name}: failed to create/update Argo CronWorkflow"
+      rc=1
+    elif ! argo_delete_former_tenant_cronworkflows "${name}" "${tenant}" "${source_id_label}" >/dev/null; then
+      log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove the ones named for a former tenant"
       rc=1
     fi
   fi

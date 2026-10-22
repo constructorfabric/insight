@@ -11,13 +11,12 @@
 # Steps (same order and contract as init.sh):
 #   1. Run create-databases.sh — every database this release owns, plus the
 #      role/user provisioning that reads them. It is the only creation site:
-#      the migrations below, the dbt hooks and the connectors-ddl snapshot all
-#      assume their database already stands.
-#   2. Run create-warehouse-placeholders.sh — minimum-viable identity/
-#      staging/silver/insight stubs so a gold CREATE VIEW type-checks on a
-#      fresh cluster (CH validates referenced tables at parse time). Bronze is
-#      not among them: the Airbyte destination is its only creator.
-#   3. Apply migrations/*.sql in lexicographic order.
+#      the migrations below and the dbt hooks assume their database stands.
+#   2. Apply migrations/*.sql in lexicographic order.
+#
+# No relation is pre-created. Every staging, silver and gold relation is dbt's,
+# built by the sync that feeds it; one no sync has built yet does not exist,
+# and analytics answers it as not-ready (#3559).
 #
 # No dbt: a connector sync rebuilds its own models, gold included, because
 # every descriptor's selector ends in `+` (#3561). A deploy therefore leaves
@@ -70,10 +69,8 @@ bash "$SCRIPT_DIR/create-databases.sh"
 # The cohort and coverage relations are dbt VIEWs (identity resolves at query
 # time). A cluster that predates that holds them as MergeTree TABLEs, and dbt's
 # view materialization replaces via CREATE OR REPLACE VIEW, which is not
-# guaranteed to replace a table. It runs BEFORE the snapshot below, whose own
-# CREATE OR REPLACE VIEW would otherwise meet that table and abort the deploy;
-# the snapshot then stands the view up in the same run, and the next sync
-# rebuilds its body from the model.
+# guaranteed to replace a table. Getting the table out of the way here leaves
+# the next sync's dbt run to create the view from its model.
 #
 # SAFETY: renamed, never dropped. The backup outlives this deploy — an operator
 # can rename it back — and a later deploy drops it once the live relation is a
@@ -100,7 +97,7 @@ SQL
   # supersedes it.
   [[ -n "$engine" ]] || return 0
 
-  echo "  ${db}.${table} (${engine}, renamed to ${backup}; the snapshot stands the view up)"
+  echo "  ${db}.${table} (${engine}, renamed to ${backup}; the next sync builds the view)"
   run_ch <<SQL
 DROP TABLE IF EXISTS ${db}.${backup};
 RENAME TABLE ${db}.${table} TO ${db}.${backup};
@@ -110,9 +107,6 @@ SQL
 echo "=== Healing gold identity relations still held as tables ==="
 heal_gold_view_relation insight metric_entity_cohorts_current
 heal_gold_view_relation insight identity_resolution_coverage
-
-echo "=== Creating warehouse placeholders (ADR-0007) ==="
-bash "$SCRIPT_DIR/create-warehouse-placeholders.sh"
 
 echo "=== Applying ClickHouse migrations ==="
 # A migration that creates a relation spells its engine family behind the
@@ -195,6 +189,12 @@ SQL
 # the render JSON-encoded a second time, and JSONExtractArrayRaw reads such a
 # value as a scalar — the field-history journal silently skips the row.
 # Idempotent: after one pass no value starts with a quote.
+#
+# INVARIANT: every mutation here runs `mutations_sync = 2` — it returns once
+# EVERY replica applied it (on one node, the same as 1). With a replica down
+# it blocks until the transport ceiling fails the deploy, which is the
+# intended outcome: a replica still holding the old rows is not a healed
+# warehouse.
 heal_jira_history_items_escaping() {
   ch_table_exists bronze_jira jira_issue_history || return 0
   echo "  bronze_jira.jira_issue_history items"
@@ -202,7 +202,7 @@ heal_jira_history_items_escaping() {
 ALTER TABLE bronze_jira.jira_issue_history
     UPDATE items = JSONExtractString(items)
     WHERE startsWith(items, '"')
-    SETTINGS mutations_sync = 1;
+    SETTINGS mutations_sync = 2;
 SQL
 }
 
@@ -250,9 +250,14 @@ _jira_key_count() {
 
 # The original is under the `__rebuild` name after an EXCHANGE; put it back and
 # leave the rejected copy there for inspection (the next run drops it first).
+#
+# INVARIANT: `bronze_*` is an Atomic database (the destination creates it), so
+# its table DDL carries the cluster clause: the database replays nothing.
+# `CREATE TABLE ... AS` copies the engine, Replicated* included, and the
+# clause gives every replica the same table uuid, so the copy replicates.
 _jira_swap_back() {
   run_ch <<SQL
-EXCHANGE TABLES bronze_jira.$1 AND bronze_jira.$1__rebuild;
+EXCHANGE TABLES bronze_jira.$1 AND bronze_jira.$1__rebuild $(ch_on_cluster);
 SQL
 }
 
@@ -280,8 +285,8 @@ _jira_swap_in_rebuilt() {
   copy_start_ms="$(ch_scalar "SELECT toUnixTimestamp64Milli(now64(3))")"
 
   run_ch <<SQL
-DROP TABLE IF EXISTS ${copy};
-CREATE TABLE ${copy} AS bronze_jira.${table};
+DROP TABLE IF EXISTS ${copy} $(ch_on_cluster);
+CREATE TABLE ${copy} $(ch_on_cluster) AS bronze_jira.${table};
 INSERT INTO ${copy}
 ${select_sql};
 SQL
@@ -298,13 +303,13 @@ SQL
   if [[ -n "${fault}" ]]; then
     echo "  bronze_jira.${table}: copy holds ${copied} key(s), ${fault} — leaving the table as it is" >&2
     run_ch <<SQL
-DROP TABLE IF EXISTS ${copy};
+DROP TABLE IF EXISTS ${copy} $(ch_on_cluster);
 SQL
     return 1
   fi
 
   run_ch <<SQL
-EXCHANGE TABLES bronze_jira.${table} AND ${copy};
+EXCHANGE TABLES bronze_jira.${table} AND ${copy} $(ch_on_cluster);
 SQL
   # From here on the rebuilt table is live and the original sits under the
   # `__rebuild` name. Every step until the DROP is checked explicitly, and any
@@ -339,7 +344,7 @@ SQL
   fi
 
   run_ch <<SQL
-DROP TABLE IF EXISTS ${copy};
+DROP TABLE IF EXISTS ${copy} $(ch_on_cluster);
 SQL
 }
 
@@ -483,6 +488,10 @@ heal_jira_substream_issue_id
 heal_jira_issue_key jira_issue
 heal_jira_issue_key jira_issue_keys
 
+echo "=== Healing the Jira catalogue first-sync record ==="
+source "$SCRIPT_DIR/lib/heal-jira-catalogue-first-seen.sh"
+heal_jira_catalogue_first_seen
+
 echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional
 # incremental inserts, positional union). Labels left the contract (they
@@ -621,7 +630,7 @@ ALTER TABLE staging.${table}
       AND toUnixTimestamp64Milli(event_at) * 1000000
           + multiIf(event_kind = 'synthetic_initial', 0, event_kind = 'changelog', 1, 2) * 100000
           + _seq != 0
-    SETTINGS mutations_sync = 1;
+    SETTINGS mutations_sync = 2;
 SQL
 }
 
@@ -652,25 +661,10 @@ done
 
 echo "=== Healing collab-chat contract schema ==="
 # Same positional invariant: collab chat's direct_and_group_messages
-# (#266) was added mid-SELECT without a rebuild. Healed here rather than
-# in migrations/*.sql because the AFTER anchors do not exist on the
-# minimal gold-view placeholders — heals run only on real tables
-# (placeholders are replaced with the real schema at first build).
-ch_table_is_real() {
-  local db="$1" table="$2"
-  ch_table_exists "$db" "$table" || return 1
-  local placeholder_count
-  placeholder_count="$(
-    printf "SELECT count() FROM system.tables WHERE database='%s' AND name='%s' AND comment='INSIGHT_PLACEHOLDER_v1'" "$db" "$table" |
-      _ch_http_query |
-      tr -d '[:space:]'
-  )"
-  [[ "$placeholder_count" == "0" ]]
-}
-
+# (#266) was added mid-SELECT without a rebuild.
 heal_collab_chat_table() {
   local db="$1" table="$2"
-  ch_table_is_real "$db" "$table" || return 0
+  ch_table_exists "$db" "$table" || return 0
   echo "  ${db}.${table}"
   run_ch <<SQL
 ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS direct_and_group_messages Nullable(Int64) AFTER group_chat_messages;
@@ -692,7 +686,7 @@ heal_collab_chat_table silver class_collab_chat_activity
 # views, recreated on every run.
 heal_task_users_table() {
   local db="$1" table="$2"
-  ch_table_is_real "$db" "$table" || return 0
+  ch_table_exists "$db" "$table" || return 0
   echo "  ${db}.${table}"
   run_ch <<SQL
 ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS tenant_id Nullable(String) AFTER unique_key;
@@ -726,7 +720,7 @@ echo "=== Healing git file-change object id columns ==="
 # re-collects them. Idempotent.
 heal_git_file_change_oids() {
   local db="$1" table="$2" anchor="$3"
-  ch_table_is_real "${db}" "${table}" || return 0
+  ch_table_exists "${db}" "${table}" || return 0
   echo "  ${db}.${table}"
   run_ch <<SQL
 ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS pre_image_oid Nullable(String) AFTER ${anchor};
@@ -753,7 +747,7 @@ echo "=== Healing git commit patch id column ==="
 # re-collects them. Idempotent.
 heal_git_commit_patch_id() {
   local table="$1"
-  ch_table_is_real staging "${table}" || return 0
+  ch_table_exists staging "${table}" || return 0
   echo "  staging.${table}"
   run_ch <<SQL
 ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS patch_id Nullable(String) AFTER _airbyte_extracted_at;
@@ -775,7 +769,7 @@ echo "=== Healing git commit committer date column ==="
 # date from the first sync that re-collects them. Idempotent.
 heal_git_commit_committer_date() {
   local table="$1"
-  ch_table_is_real staging "${table}" || return 0
+  ch_table_exists staging "${table}" || return 0
   echo "  staging.${table}"
   run_ch <<SQL
 ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS committer_date Nullable(DateTime) AFTER patch_id;
@@ -796,7 +790,7 @@ echo "=== Healing git pull-request author account column ==="
 # re-collects them — the rollout's full refresh backfills the rest. Idempotent.
 heal_git_pr_author_account() {
   local table="$1"
-  ch_table_is_real staging "${table}" || return 0
+  ch_table_exists staging "${table}" || return 0
   echo "  staging.${table}"
   run_ch <<SQL
 ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS author_account_id String AFTER author_email;
@@ -817,7 +811,7 @@ echo "=== Healing git pull-request reported close-time column ==="
 # Idempotent.
 heal_git_pr_close_time_reported() {
   local table="$1"
-  ch_table_is_real staging "${table}" || return 0
+  ch_table_exists staging "${table}" || return 0
   echo "  staging.${table}"
   run_ch <<SQL
 ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS closed_on_reported Nullable(DateTime) AFTER closed_on;
@@ -930,7 +924,7 @@ backfill_git_pr_reported_close() {
   for source in "bronze_github.pull_requests 1" "bronze_gitlab.pull_requests 1" \
                 "bronze_gitlab.merge_requests 0"; do
     relation="${source%% *}"
-    ch_table_is_real "${relation%%.*}" "${relation##*.}" && sources+=("${source}")
+    ch_table_exists "${relation%%.*}" "${relation##*.}" && sources+=("${source}")
   done
   [[ "${#sources[@]}" -gt 0 ]] || { echo "  no git pull-request bronze to read — skipping"; return 0; }
 
@@ -958,7 +952,7 @@ SQL
 
   for spec in "${_GIT_PR_REPORTED_CLOSE_TARGETS[@]}"; do
     IFS='|' read -r db table eligible <<<"${spec}"
-    ch_table_is_real "${db}" "${table}" || continue
+    ch_table_exists "${db}" "${table}" || continue
     rows="$(_git_pr_rows_needing_reported_close "${db}" "${table}" "${eligible}" "${lookup}")"
     n="$(ch_scalar "SELECT count() ${rows}")"
     [[ "${n}" -gt 0 ]] || continue
@@ -989,7 +983,7 @@ echo "=== Healing git repository default-branch column ==="
 # NULL and carry a branch from the next repositories sync. Idempotent.
 heal_git_repository_default_branch() {
   local db="$1" table="$2"
-  ch_table_is_real "${db}" "${table}" || return 0
+  ch_table_exists "${db}" "${table}" || return 0
   echo "  ${db}.${table}"
   run_ch <<SQL
 ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS default_branch Nullable(String) AFTER _airbyte_extracted_at;
@@ -1054,7 +1048,7 @@ heal_task_id_column silver class_task_comments comment_id
 echo "=== Healing task relationship ID columns ==="
 heal_task_parent_id() {
   local table="$1"
-  ch_table_is_real staging "${table}" || return 0
+  ch_table_exists staging "${table}" || return 0
   echo "  staging.${table}"
   run_ch <<SQL
 ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS issue_id Nullable(String) AFTER _version;
@@ -1064,7 +1058,7 @@ SQL
 
 heal_task_link_ids() {
   local table="$1"
-  ch_table_is_real staging "${table}" || return 0
+  ch_table_exists staging "${table}" || return 0
   echo "  staging.${table}"
   run_ch <<SQL
 ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS issue_id Nullable(String) AFTER _version;

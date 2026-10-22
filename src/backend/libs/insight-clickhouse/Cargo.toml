@@ -19,3 +19,7 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 time = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+clickhouse = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true }

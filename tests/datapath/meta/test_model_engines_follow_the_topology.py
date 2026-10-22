@@ -11,29 +11,16 @@ repository rather than a stand.
 
 from __future__ import annotations
 
-import json
 import re
-import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-import yaml
-
-# dbt cannot share an environment with mypy — see the `datapath` dependency group.
-from dbt.cli.main import dbtRunner  # type: ignore[import-not-found]
+from insight_datapath.dbt_parse import DBT_PROJECT, REPO_ROOT, parse_project
 from insight_datapath.topology import CLUSTER_MODE_VARIABLE
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DBT_PROJECT = REPO_ROOT / "src/ingestion/dbt"
-
-# The deploy's own profile writer — a top-level module in the toolbox image.
-sys.path.insert(0, str(REPO_ROOT / "src/ingestion/scripts"))
-
-from dbt_profiles import Connection, build_profile  # type: ignore[import-not-found] # noqa: E402
+    from pathlib import Path
 
 #: The model roots dbt_project.yml lists, plus the macros a model takes its config from.
 MODEL_SOURCES = (
@@ -43,8 +30,14 @@ MODEL_SOURCES = (
     DBT_PROJECT,
 )
 
+#: The macros, whose hand-written DDL the adapter never sees.
+MACROS = DBT_PROJECT / "macros"
+
 #: dbt's own clean-targets, which hold compiled copies of everything above.
 BUILD_DIRS = frozenset({"target", "dbt_packages"})
+
+#: Any member of the MergeTree family spelled straight into an ENGINE clause.
+ENGINE_LITERAL_IN_DDL = re.compile(r"ENGINE\s*=\s*\w*MergeTree", re.IGNORECASE)
 
 #: A `config(engine=...)` that is not a call to the macro. The trailing `\S` is load
 #: bearing: without something to match after it, `\s*` backtracks to zero width and the
@@ -61,49 +54,15 @@ def _model_sql() -> Iterator[Path]:
                 yield path
 
 
-def _write_profile(directory: Path) -> Path:
-    """A profile dbt can load and will never connect with.
-
-    Written by the deploy's own writer, so a body dbt would reject fails here
-    rather than on the install that first runs it.
-    """
-    directory.mkdir(parents=True)
-    profile = build_profile(
-        "parse",
-        Connection(host="parse.invalid", port=8123, user="parse", password="parse", schema="parse"),
-        correlated_subqueries=False,
-    )
-    (directory / "profiles.yml").write_text(yaml.safe_dump(profile), encoding="utf-8")
-    return directory
-
-
 def _engines(root: Path, *, clustered: bool) -> Engines:
     """What each model that configures an engine would be created with."""
     workspace = root / ("clustered" if clustered else "standalone")
-    profiles_dir = _write_profile(workspace / "profiles")
-    target_dir = workspace / "target"
-
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv(CLUSTER_MODE_VARIABLE, "true" if clustered else "false")
-        result = dbtRunner().invoke(
-            [
-                "parse",
-                # The flag reaches dbt through `env_var`, so a cache warmed under
-                # the other topology would answer with the other topology's engines.
-                "--no-partial-parse",
-                "--project-dir",
-                str(DBT_PROJECT),
-                "--profiles-dir",
-                str(profiles_dir),
-                "--target-path",
-                str(target_dir),
-            ]
-        )
+        # The flag reaches dbt through `env_var`, so a cache warmed under the other
+        # topology would answer with the other topology's engines.
+        manifest = parse_project(workspace)
 
-    if not result.success:
-        raise AssertionError(f"dbt parse failed under clustered={clustered}: {result.exception}")
-
-    manifest = json.loads((target_dir / "manifest.json").read_text(encoding="utf-8"))
     return {
         node["name"]: node["config"]["engine"]
         for node in manifest["nodes"].values()
@@ -129,6 +88,21 @@ def test_a_model_states_its_engine_through_the_macro_rather_than_as_a_literal() 
     ]
 
     assert not literals, f"engine configured without insight_engine(): {literals}"
+
+
+def test_a_macro_states_its_engine_through_the_macro_rather_than_as_a_literal() -> None:
+    """A macro's DDL goes through `run_query`, so the adapter's prefix never reaches
+    it either; the family has to come from `insight_engine`."""
+    literals = [
+        f"{path.relative_to(REPO_ROOT)}:{number}"
+        for path in sorted(MACROS.rglob("*.sql"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if ENGINE_LITERAL_IN_DDL.search(line)
+    ]
+
+    assert not literals, (
+        f"engine spelled into DDL rather than rendered by insight_engine(): {literals}"
+    )
 
 
 def test_a_single_node_is_created_with_the_plain_merge_tree_family(

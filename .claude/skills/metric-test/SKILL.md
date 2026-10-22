@@ -272,8 +272,8 @@ with a dedicated spec (see `collab/collab_emails_read.test.yaml`):
    least five people WITH DATA FOR THE METRIC in the effective cohort: one department
    under `org_chart`, anywhere in the tenant under `flat`.
 2. **Ensure a schema file per table.** If `schemas/<db>.<table>.yaml` is missing, write it
-   from the table's `CREATE TABLE` in `src/ingestion/scripts/connectors-ddl/<connector>.sql`
-   — the snapshot the suite applies to the instance, so the two cannot disagree. Do not
+   from the table the destination creates — `SHOW CREATE bronze_<snake>.<stream>` on a
+   warehouse the suite has bootstrapped, or the connector's own stream schema. Do not
    invent columns. Map CH types → JSON-schema: `Nullable(String)`→`[string,"null"]`,
    `Decimal/Float/Int`→`[number,"null"]` (`UInt*` non-null →`integer`), `Bool`→`[boolean,"null"]`,
    `DateTime*`→`{string, format: date-time}`, `JSON`→`[object,"null"]`. Set
@@ -402,28 +402,18 @@ and `<class>/test_<name>.py` as above.
 
 ## New bronze table for a not-yet-seeded connector
 
-At session start the suite gives the instance the schema a deployment has: it applies the
-`src/ingestion/scripts/connectors-ddl/*.sql` snapshot and `scripts/migrations/*.sql`. The
-seeder then requires every column a fixture declares to exist in the real table with a
-compatible type, and fails on drift. A table the snapshot lacks is created from the schema
-YAML as a bare `MergeTree` — enough to seed, but not the shape a connector leaves, so a
-spec green on that table proves nothing about a deployment. The snapshot is generated, not
-hand-edited; a table added by hand to `connectors-ddl/*.sql` does not survive the next
-regeneration. To seed a connector whose bronze tables aren't in the snapshot yet:
+At session start the suite gives the instance the schema a deployment has: it creates every
+database, runs the real connectors through the real `destination-clickhouse` to create
+bronze, and applies `scripts/migrations/*.sql`. Nothing pre-creates staging, silver or
+gold — a spec runs dbt for the models it asserts over. The seeder then requires every
+column a fixture declares to exist in the real table with a compatible type, and fails on
+drift. A table no connector created is made from the schema YAML as a bare `MergeTree` —
+enough to seed, but not the shape a connector leaves, so a spec green on that table proves
+nothing about a deployment. To seed a connector whose bronze tables aren't created yet:
 
-1. Make sure the connector is listed in `bootstrap-db/connectors-config.yaml`,
-   then regenerate and commit the snapshot (see
-   `src/ingestion/scripts/bootstrap-db/README.md`):
-
-   ```bash
-   cd src/ingestion/scripts/bootstrap-db
-   set -a; source pins.env; [ -f .env ] && source .env; set +a
-   ./bootstrap-db.sh connectors-config.yaml
-   ./dump-ddl.sh                              # writes ../connectors-ddl/*.sql
-   ```
-
-   Commit the resulting `connectors-ddl/*.sql` diff so the new
-   `bronze_<snake>.<stream>` tables ship in the snapshot the suite applies.
+1. Make sure the connector is listed in `bootstrap-db/connectors-config.yaml`. That file
+   is what the suite runs through the destination, so an entry there is the whole fix —
+   the connector's `discover` supplies the stream and the destination creates the table.
 2. Add a matching `schemas/bronze_<snake>.<stream>.yaml` (every column;
    `additionalProperties: false`) and a base template covering all of them.
 

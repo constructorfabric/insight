@@ -33,8 +33,20 @@ tick refuses rather than creating the destination, and the log line says which
 version was found. Pinning the definition instead would fight the operator's
 own Airbyte upgrades.
 
-`RECONCILE_DESTINATION_ID` hands that destination's configuration — including
-its version — to whoever set it, and skips both the lookup and the check.
+`RECONCILE_DESTINATION_ID` hands that destination's configuration to whoever
+set it and skips the lookup; the version floor still applies, because the
+catalogues reconcile hands over run on that destination either way.
+
+## A tenant change
+
+Sources, connections and CronWorkflows are named `{connector}-{source_id}-{tenant}`
+(`-conn`, and a bounded `-sync` form for the schedule). When the install's tenant
+changes, reconcile renames each instance's source and connection in place —
+same ids, so the connection keeps its sync state — and removes the schedule named
+for the former tenant. The former tenant is read from the source's own
+`insight_tenant_id`; an instance with two candidates, or with its new name
+already taken, is left for an operator. `tests/live` proves it against a real
+Airbyte.
 
 ## The sync-history sweep
 

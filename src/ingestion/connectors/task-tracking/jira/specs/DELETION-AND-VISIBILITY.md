@@ -226,10 +226,16 @@ Consumption policy (implemented):
   `unobserved` issues stay **in**: the entity still exists at the source;
   its data is merely stale — excluding it would silently shrink history.
 - `jira__task_comments.sql` — the class contract's `is_deleted` column
-  (previously a constant 0) is now real. A comment is deleted when its issue
-  was re-fetched but the comment was not re-emitted (deleting a comment bumps
-  the issue's `updated`, which re-syncs the issue's full comment list), or
-  when its parent issue is `deleted`/`trashed`.
+  (previously a constant 0) is now real. A comment is deleted when a later
+  read of its issue's comment list did not re-emit it (deleting a comment
+  bumps the issue's `updated`, which re-reads the issue's full comment list,
+  and `jira_comments` re-emits every comment on a read, unfiltered by its
+  cursor), or when its parent issue is `deleted`/`trashed`. The evidence is
+  that list's own read: the newest extraction among the issue's other
+  comments. `jira_issue_keys` is a stream of its own, and its extraction time
+  says nothing about when the comments were read. Deleting an issue's only
+  remaining comment leaves no later read to compare against, so that comment
+  stays live — a miss, never a false deletion.
 - `class_task_worklogs.is_deleted` — real, from two OR-ed signals in
   `jira__worklog_state`: an authoritative tombstone from the
   `jira_worklog_deleted` stream (`GET /rest/api/3/worklog/deleted` — the one
@@ -239,7 +245,7 @@ Consumption policy (implemented):
   (`GET /rest/api/3/worklog/updated`, then `POST /rest/api/3/worklog/list`),
   not per issue, so absence from a re-read list is never evidence: nothing
   re-reads an issue's worklogs as a whole. Comments have no such feed and
-  keep the re-fetch generation diff above.
+  keep the comment-list comparison above.
 - `gold/task_worklog_flow.sql` — the in-progress side inherits the filter
   through its `task_issue_state` join; the worklog side filters
   `ifNull(is_deleted, 0) = 0` from the class contract.

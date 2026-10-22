@@ -14,6 +14,11 @@ pub enum Error {
     /// Invalid query parameters.
     #[error("invalid query: {0}")]
     InvalidQuery(String),
+
+    /// The database this connection is configured for is missing, or its
+    /// engine contradicts the configured topology. Carries its remedy.
+    #[error("warehouse topology: {0}")]
+    Topology(String),
 }
 
 #[cfg(test)]

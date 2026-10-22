@@ -29,7 +29,6 @@ vars:
   # agrees without each one growing a flag. Jinja in dbt_project.yml renders to
   # text, so `cluster_mode` is the STRING "true"/"false", never a boolean.
   cluster_mode: "{{ env_var('CLICKHOUSE_CLUSTER_MODE', 'false') }}"
-  cluster_name: "{{ env_var('CLICKHOUSE_CLUSTER_NAME', '') }}"
 
   # Minimum age before drop_orphaned_incremental_intermediates treats a
   # `__dbt_new_data_*` relation as abandoned. Must exceed the longest dbt run
@@ -151,18 +150,5 @@ on-run-start:
   # so builds don't fail before the first sync — see the macro's schema
   # contract with infra/identity_persons.rs.
   - "{{ create_identity_persons() }}"
-  # Drop the silver placeholders (created by create-warehouse-placeholders.sh,
-  # run from the clickhouse-migrate Hook Job) BEFORE any model
-  # materialization starts. Two-factor detection (placeholder marker +
-  # at least one staging model materialised for the matching
-  # `silver:<id>` tag) — see drop_silver_placeholders_at_start macro for
-  # rationale. Lives in on-run-start, NOT a per-model pre-hook, because
-  # dbt-clickhouse captures the target's existence at materialization
-  # start (before pre_hooks run) for `is_incremental()`. A pre-hook drop
-  # leaves is_incremental=True so the compiled SQL still references the
-  # (now-dropped) target → ClickHouse SYNTAX_ERROR. on-run-start runs
-  # before the materialization framework, so existing_relation is
-  # captured as nil and the model takes the create-from-scratch branch.
-  - "{{ drop_silver_placeholders_at_start() }}"
   # Staging relations an interrupted incremental run left behind.
   - "{{ drop_orphaned_incremental_intermediates() }}"
