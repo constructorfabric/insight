@@ -28,6 +28,7 @@ MINIMUM = "2.1.29"
 STUBS = """
 reconcile__log() {{ printf '%s\\n' "$*" >&2; }}
 ab_destination_definition_by_name() {{ printf '%s\\t%s\\n' 'def-11111111' '{version}'; }}
+ab_destination_version() {{ printf '%s\\n' '{version}'; }}
 ab_ensure_destination() {{ printf 'dest-22222222'; }}
 """
 
@@ -49,10 +50,11 @@ def _check(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _resolve(version: str) -> subprocess.CompletedProcess[str]:
+def _resolve(version: str, override: str = "") -> subprocess.CompletedProcess[str]:
     script = f"""
     set -uo pipefail
     {RECONCILE_ENV}
+    export RECONCILE_DESTINATION_ID='{override}'
     source "{ROOT}/lib/reconcile.sh"
     {STUBS.format(version=version)}
     reconcile_resolve_destination_id bronze
@@ -140,3 +142,22 @@ class TestTheGateStopsReconcileAndNotOnlyTheHelper:
 
         assert done.returncode == 0, done.stderr
         assert done.stdout == "dest-22222222"
+
+
+class TestTheGateAppliesToAnOperatorPinnedDestinationToo:
+    """RECONCILE_DESTINATION_ID hands the configuration to whoever set it, not
+    the version: it is still reconcile's catalogues that destination runs."""
+
+    def test_a_pinned_destination_below_the_minimum_is_refused(self) -> None:
+        done = _resolve("2.1.28", override="dest-99999999")
+
+        assert done.returncode == 1
+        assert done.stdout == ""
+        assert "2.1.28" in done.stderr
+        assert MINIMUM in done.stderr
+
+    def test_a_pinned_destination_at_the_minimum_is_used_verbatim(self) -> None:
+        done = _resolve(MINIMUM, override="dest-99999999")
+
+        assert done.returncode == 0, done.stderr
+        assert done.stdout == "dest-99999999"

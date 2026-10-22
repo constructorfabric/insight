@@ -31,11 +31,10 @@
 -#}
 
 {% macro create_ai_config_tables() %}
-    {% set on_cluster = insight_on_cluster() %}
     {% set engine = insight_engine('ReplacingMergeTree', '_version') %}
 
     {% do run_query("
-        CREATE TABLE IF NOT EXISTS config.ai_seat_tier_map " ~ on_cluster ~ "
+        CREATE TABLE IF NOT EXISTS config.ai_seat_tier_map
         (
             tenant_id         String,
             insight_source_id String,
@@ -79,7 +78,7 @@
       all — never a zero, which would read as "this cost nothing".
     -#}
     {% do run_query("
-        CREATE TABLE IF NOT EXISTS config.ai_credit_pricing " ~ on_cluster ~ "
+        CREATE TABLE IF NOT EXISTS config.ai_credit_pricing
         (
             tenant_id               String,
             insight_source_id       String,

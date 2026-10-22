@@ -1,9 +1,10 @@
 """Zoom meeting time counts only while someone else was in the meeting.
 
 Bronze: the daily Teams activity report and Zoom participant sessions. Staging
-collapses Zoom rows re-sent by a sync, counts a person's session only while at
-least one other attendee is in it, and treats a session with nobody else as no
-meeting. Gold sums meeting hours across Teams and Zoom.
+collapses Zoom rows re-sent by a sync, ignores time in the waiting room, counts a
+person's session only while at least one other attendee is in it, and treats a
+session with nobody else as no meeting. Gold sums meeting hours across Teams and
+Zoom.
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ HEIDI = "heidi@example.com"
 DECEMBER = ("2026-12-01", "2026-12-31")
 PAUSE_DAY = ("2026-12-14", "2026-12-14")
 NO_OVERLAP_DAY = ("2026-12-15", "2026-12-15")
+WAITED_DAY = ("2026-12-16", "2026-12-16")
+GUEST_LEFT_WAITING_DAY = ("2026-12-17", "2026-12-17")
 
 
 def _period(person: str, metric_key: str, day_from: str, day_to: str) -> dict[str, object]:
@@ -81,6 +84,23 @@ def _period(person: str, metric_key: str, day_from: str, day_to: str) -> dict[st
             "collab.meetings_count",
             0,
             id="no-overlap-with-anyone-is-no-meeting",
+        ),
+        pytest.param(
+            HEIDI, WAITED_DAY, "collab.meeting_hours", 1, id="waiting-room-time-is-not-meeting-time"
+        ),
+        pytest.param(
+            ERIN,
+            GUEST_LEFT_WAITING_DAY,
+            "collab.meeting_hours",
+            0,
+            id="guest-left-waiting-is-no-company",
+        ),
+        pytest.param(
+            ERIN,
+            GUEST_LEFT_WAITING_DAY,
+            "collab.meetings_count",
+            0,
+            id="guest-left-waiting-makes-no-meeting",
         ),
     ],
 )

@@ -29,7 +29,6 @@ vars:
   # agrees without each one growing a flag. Jinja in dbt_project.yml renders to
   # text, so `cluster_mode` is the STRING "true"/"false", never a boolean.
   cluster_mode: "{{ env_var('CLICKHOUSE_CLUSTER_MODE', 'false') }}"
-  cluster_name: "{{ env_var('CLICKHOUSE_CLUSTER_NAME', '') }}"
 
   # Minimum age before drop_orphaned_incremental_intermediates treats a
   # `__dbt_new_data_*` relation as abandoned. Must exceed the longest dbt run
