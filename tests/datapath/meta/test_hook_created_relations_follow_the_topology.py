@@ -2,15 +2,16 @@
 
 Three hooks registered in `dbt_project.yml` create the operator-authored `config`
 relations and `identity.identity_persons` by handing raw DDL to `run_query`. That
-bypasses the adapter, so neither of the two things the adapter does for a model
-reaches them: the engine never gains its `Replicated` prefix, and the profile's
-`cluster:` key never appends an `ON CLUSTER` clause. A hand-spelled engine here
-would create a local table on one replica of a cluster -- the failure epic #2010
-exists to remove -- while every model around it replicated correctly.
+bypasses the adapter, so the one thing the adapter does for a model's engine never
+reaches them: the `Replicated` prefix. A hand-spelled engine here would create a
+local table on one replica of a cluster -- the failure epic #2010 exists to remove
+-- while every model around it replicated correctly.
 
-Both renderers live in `dbt/macros/insight_engine.sql`, and the source rules below
-are what keeps the hooks using them. The warehouse rules then read what a dbt run
-actually created, which is what a broken interpolation would show up in.
+The renderer lives in `dbt/macros/insight_engine.sql`, and the source rules below
+are what keeps the hooks using it. No hook names a cluster: the relations live in
+`Replicated` databases, which replay DDL on every replica and reject `ON CLUSTER`
+on table DDL. The warehouse rules then read what a dbt run actually created, which
+is what a broken interpolation would show up in.
 """
 
 from __future__ import annotations
@@ -35,11 +36,12 @@ MERGE_TREE_FAMILY = re.compile(r"\b\w*MergeTree\b")
 #: The DDL keyword a table's engine follows.
 ENGINE_CLAUSE = re.compile(r"\bENGINE\s*=")
 
-CREATES_A_RELATION = re.compile(r"\bCREATE (?:TABLE|DATABASE)\b")
+#: The clause a Replicated database rejects on table DDL, however it is spelled or
+#: interpolated.
+CLUSTER_CLAUSE = re.compile(r"ON\s+CLUSTER|on_cluster", re.IGNORECASE)
 
-#: The names a macro interpolates into its DDL, and the renderer each is bound to.
-RENDERERS = {"engine": "insight_engine(", "on_cluster": "insight_on_cluster()"}
-CLUSTER_CLAUSE_NAME = "on_cluster"
+#: The name a macro interpolates its engine under, and the renderer it is bound to.
+ENGINE_NAME, ENGINE_RENDERER = "engine", "insight_engine("
 
 #: Every relation the hooks alone create, and the family each is created with.
 HOOK_RELATIONS = {
@@ -103,26 +105,27 @@ def test_a_hook_never_spells_a_merge_tree_family_in_its_ddl(macro: Path) -> None
 
 
 @pytest.mark.parametrize("macro", RAW_DDL_MACROS, ids=lambda macro: macro.name)
-def test_every_relation_a_hook_creates_is_qualified_by_the_cluster_clause(macro: Path) -> None:
-    """Unqualified DDL reaches only the node that answered the connection, so the
-    replicas a cluster-mode engine expects never learn the relation exists."""
-    unqualified = [
+def test_a_hook_never_names_a_cluster(macro: Path) -> None:
+    """Inside a Replicated database the server rejects ON CLUSTER on table DDL, and
+    with one replica down the clause waits out the distributed DDL timeout first."""
+    qualified = [
         f"{macro.relative_to(REPO_ROOT)}:{number}"
         for number, line in _lines(macro)
-        if CREATES_A_RELATION.search(line) and CLUSTER_CLAUSE_NAME not in line
+        if CLUSTER_CLAUSE.search(line)
     ]
 
-    assert not unqualified, f"created without the ON CLUSTER clause: {unqualified}"
+    assert not qualified, f"DDL names a cluster: {qualified}"
 
 
 @pytest.mark.parametrize("macro", RAW_DDL_MACROS, ids=lambda macro: macro.name)
-def test_what_a_hook_interpolates_comes_from_the_shared_renderers(macro: Path) -> None:
-    """The two rules above only check that a name is interpolated; this is what makes
-    the name mean what the rest of the release renders for the same topology."""
+def test_what_a_hook_interpolates_comes_from_the_shared_renderer(macro: Path) -> None:
+    """The rule above only checks that a name is interpolated; this is what makes the
+    name mean what the rest of the release renders for the same topology."""
     source = macro.read_text(encoding="utf-8")
-    rebound = [name for name, renderer in RENDERERS.items() if f"{name} = {renderer}" not in source]
 
-    assert not rebound, f"{macro.name} binds {rebound} to something other than its renderer"
+    assert f"{ENGINE_NAME} = {ENGINE_RENDERER}" in source, (
+        f"{macro.name} binds engine to something else"
+    )
 
 
 def test_a_dbt_run_creates_every_operator_authored_relation(hook_engines: dict[str, str]) -> None:

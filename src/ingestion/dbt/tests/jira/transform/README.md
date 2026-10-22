@@ -28,7 +28,8 @@ pipeline's own `tag:jira,tag:staging` but read none of the three tables these
 tests seed, so building them per scenario costs about thirty seconds and proves
 nothing. `test_invariants.py` pays for the full pipeline selector once — that
 is what would catch a field-history model which works alone but breaks the
-chain.
+chain. `test_comment_state.py` is the one module that seeds comments: it builds
+`+jira__comment_state` over `jira_comments` and `jira_issue_keys` alone.
 
 `test_two_tenants_lifecycle.py` is the one module that seeds the comment and
 worklog streams — `scenario.seed(comments=..., worklogs=...)`, with rows from

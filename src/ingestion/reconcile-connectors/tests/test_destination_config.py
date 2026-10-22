@@ -81,14 +81,21 @@ def test_an_unset_or_disabled_flag_leaves_both_topology_keys_out(flag: str) -> N
     assert done.stdout.rstrip("\n") == STANDALONE_JSON, f"should stay standalone: {flag!r}"
 
 
-def test_the_flag_alone_names_no_cluster() -> None:
-    """The chart refuses that pair, so this records only that the composer never
-    invents a cluster name if it is ever reached."""
-    done = _compose(STANDALONE_ENV | {"RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE": "true"})
+@pytest.mark.parametrize("name", ["", "   "])
+def test_the_flag_without_a_cluster_name_is_refused_with_the_reason(name: str) -> None:
+    """bronze_* are Atomic databases, so `use_replicated_engines` without
+    `cluster_name` builds Replicated tables on one replica only. The chart
+    refuses the pair too; this is the floor for every other caller."""
+    done = _compose(
+        STANDALONE_ENV
+        | {"RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE": "true", "RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME": name}
+    )
 
-    config = json.loads(done.stdout)
-    assert config["use_replicated_engines"] is True
-    assert "cluster_name" not in config
+    assert done.returncode == 1
+    assert done.stdout == ""
+    assert "RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME" in done.stderr
+    assert "ON CLUSTER" in done.stderr
+    assert "Atomic" in done.stderr
 
 
 def test_a_named_cluster_travels_with_the_replication_flag() -> None:
@@ -108,7 +115,10 @@ def test_a_named_cluster_travels_with_the_replication_flag() -> None:
 def test_the_credentials_stay_where_the_topology_keys_were_appended() -> None:
     """Key order decides the payload bytes, and the destination is recreated
     when the payload changes — the new keys go last, never in the middle."""
-    done = _compose(STANDALONE_ENV | {"RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE": "1"})
+    done = _compose(
+        STANDALONE_ENV
+        | {"RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE": "1", "RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME": "insight_cluster"}
+    )
 
     keys = list(json.loads(done.stdout))
     assert keys == [
@@ -120,6 +130,7 @@ def test_the_credentials_stay_where_the_topology_keys_were_appended() -> None:
         "password",
         "enable_json",
         "use_replicated_engines",
+        "cluster_name",
     ]
 
 
