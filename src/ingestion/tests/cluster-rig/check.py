@@ -4,7 +4,11 @@
 Usage:
   check.py snapshot --out counts.json
   check.py assert   --baseline counts.json --probe-rows N --run-results run_results.json
-                    [--users presentation]
+                    [--users presentation] [--columns db.table:column ...]
+  check.py relation --name db.table --rows N     a service's table on every node
+  check.py absent   --name db.table              a service's table gone from every node
+  check.py quorum-boundary --out boundary.json    where every node's query log ends now
+  check.py quorum --after boundary.json           the persons sync since then wrote and read with quorum
 
 Runs in the dbt venv, whose dbt-clickhouse brings clickhouse-connect.
 
@@ -63,6 +67,23 @@ REQUIRED_RELATIONS = (
     "bronze_github.commits",
     "bronze_github_directory.org_members",
 )
+# What the seeded github sync must put rows into, layer by layer: the staging
+# projection, the silver class and fact, the identity inputs, and gold.
+POPULATED_RELATIONS = (
+    "staging.github__commits",
+    "staging.github__file_changes",
+    "staging.github__pull_requests",
+    "staging.github__account_emails",
+    "silver.class_git_commits",
+    "silver.class_git_file_changes",
+    "silver.class_git_pull_requests",
+    "silver.fct_git_commit",
+    "identity.identity_inputs",
+    "{gold}.git_authored_commits",
+    "{gold}.git_metric_observations",
+)
+# identity-resolution stages a persons snapshot here before swapping it live.
+PERSONS_STAGING_PREFIX = "identity.identity_persons_staging_"
 # A dbt-clickhouse intermediate the run should have dropped behind itself.
 DBT_LEFTOVER = r"__dbt_(exchange_test|new_data|tmp|backup|distributed)"
 
@@ -143,8 +164,15 @@ def tables(url: str) -> dict[str, str]:
     return dict(found)
 
 
-def merge_tree_tables(url: str) -> list[str]:
-    return sorted(name for name, engine in tables(url).items() if engine.endswith("MergeTree"))
+def columns(url: str) -> dict[str, str]:
+    """Every column of every relation, as database.table.column -> type."""
+    return dict(
+        rows(
+            url,
+            f"SELECT database || '.' || table || '.' || name, type FROM system.columns "
+            f"WHERE {database_filter()} ORDER BY 1",
+        )
+    )
 
 
 def sync_replicas() -> None:
@@ -162,7 +190,16 @@ def sync_replicas() -> None:
 
 
 def counts(url: str) -> dict[str, int]:
-    return {table: int(query(url, f"SELECT count() FROM {table}").strip()) for table in merge_tree_tables(url)}
+    """Row counts as a reader sees them: FINAL on a replacing table, where a
+    record a later sync re-delivered supersedes the row it had rather than
+    joining it."""
+    found = {}
+    for table, engine in tables(url).items():
+        if not engine.endswith("MergeTree"):
+            continue
+        final = " FINAL" if "Replacing" in engine else ""
+        found[table] = int(query(url, f"SELECT count() FROM {table}{final}").strip())
+    return found
 
 
 def snapshot(out: str) -> None:
@@ -195,12 +232,14 @@ def differences(per_node: dict[str, dict[str, str]], what: str) -> list[str]:
     return problems
 
 
-def check_databases_and_tables(run_results: str) -> None:
-    """1. Every database and relation exists on every node with the same engine,
-    including everything the deploy and the dbt run created."""
+def check_databases_and_tables(run_results: str, required_columns: list[str]) -> None:
+    """1. Every database and relation exists on every node with the same engine
+    and the same columns, including everything the deploy and the dbt run
+    created and every column a later sync added."""
     required = sorted({*REQUIRED_RELATIONS, *built_relations(run_results)})
     db_per_node = {url: databases(url) for url in nodes()}
     per_node = {url: tables(url) for url in nodes()}
+    columns_per_node = {url: columns(url) for url in nodes()}
     for url in nodes():
         missing = sorted(owned_databases() - set(db_per_node[url]))
         if missing:
@@ -208,15 +247,22 @@ def check_databases_and_tables(run_results: str) -> None:
         absent = sorted(set(required) - set(per_node[url]))
         if absent:
             raise Failure(f"{url}: relations the deploy or the dbt run creates are missing: {', '.join(absent)}")
+        absent = sorted(column for column in required_columns if column not in columns_per_node[url])
+        if absent:
+            raise Failure(f"{url}: columns a sync added are missing: {', '.join(absent)}")
 
-    problems = differences(db_per_node, "database engine") + differences(per_node, "relation")
+    problems = (
+        differences(db_per_node, "database engine")
+        + differences(per_node, "relation")
+        + differences(columns_per_node, "column")
+    )
     if problems:
         raise Failure("nodes differ:\n  " + "\n  ".join(problems))
     first = nodes()[0]
     emit(
-        f"ok  1. {len(db_per_node[first])} database(s) and {len(per_node[first])} relation(s) "
-        f"identical on {len(per_node)} node(s); {len(required)} required, "
-        f"{len(required) - len(REQUIRED_RELATIONS)} of them built by dbt"
+        f"ok  1. {len(db_per_node[first])} database(s), {len(per_node[first])} relation(s) and "
+        f"{len(columns_per_node[first])} column(s) identical on {len(per_node)} node(s); {len(required)} required, "
+        f"{len(required) - len(REQUIRED_RELATIONS)} of them built by dbt; {len(required_columns)} added column(s)"
     )
 
 
@@ -292,6 +338,20 @@ def check_counts_agree() -> dict[str, dict[str, int]]:
     return {url: {table: int(count) for table, count in found.items()} for url, found in per_node.items()}
 
 
+def check_populated(now: dict[str, dict[str, int]]) -> None:
+    """8. The seeded sync reached every layer: each relation holds rows on every node."""
+    gold = os.environ["CLICKHOUSE_DATABASE"]
+    empty = [
+        f"{url}: {name}: {now[url].get(name, 'missing')}"
+        for url in nodes()
+        for name in (relation.format(gold=gold) for relation in POPULATED_RELATIONS)
+        if not now[url].get(name)
+    ]
+    if empty:
+        raise Failure("relations the seeded sync should have filled are empty:\n  " + "\n  ".join(empty))
+    emit(f"ok  8. {len(POPULATED_RELATIONS)} relation(s) from staging to gold hold rows on {len(nodes())} node(s)")
+
+
 def check_no_leftovers() -> None:
     """6. dbt dropped every intermediate relation it staged."""
     leftovers = []
@@ -306,7 +366,7 @@ def check_no_leftovers() -> None:
 
 
 def check_rerun(baseline: str, now: dict[str, dict[str, int]]) -> None:
-    """7. The second deploy and dbt build changed no table's row count."""
+    """7. The second sync, deploy, dbt build and service run changed no table's row count."""
     before = json.loads(Path(baseline).read_text())
     changed = [
         f"{url} {table}: {count} -> {now[url].get(table, 'gone')}"
@@ -319,6 +379,94 @@ def check_rerun(baseline: str, now: dict[str, dict[str, int]]) -> None:
     emit(f"ok  7. the re-run left every row count as it was ({sum(len(c) for c in before.values())} checked)")
 
 
+def engine_follows_topology(engine: str) -> bool:
+    return not engine.endswith("MergeTree") or engine.startswith("Replicated") == replicated()
+
+
+def check_relation(name: str, expected_rows: int) -> None:
+    """A table a service created and filled stands on every node, with the
+    engine the topology calls for, holding every row the service wrote."""
+    sync_replicas()
+    for url in nodes():
+        engine = tables(url).get(name)
+        if engine is None:
+            raise Failure(f"{url}: {name} is missing")
+        if not engine_follows_topology(engine):
+            raise Failure(f"{url}: {name} is {engine}, expected {'a' if replicated() else 'no'} Replicated* engine")
+        found = int(query(url, f"SELECT count() FROM {name}").strip())
+        if found != expected_rows:
+            raise Failure(f"{url}: {name} holds {found} row(s), expected {expected_rows}")
+    emit(f"ok  {name} ({tables(nodes()[0])[name]}) holds {expected_rows} row(s) on {len(nodes())} node(s)")
+
+
+def check_absent(name: str) -> None:
+    """A table a service dropped is gone from every node."""
+    for url in nodes():
+        if name in tables(url):
+            raise Failure(f"{url}: {name} still stands")
+    emit(f"ok  {name} is gone from {len(nodes())} node(s)")
+
+
+def quorum_boundary(out: str) -> None:
+    """Each node's clock, flushed logs and all: a later quorum check reads only
+    what the log gained after this instant."""
+    boundary = {}
+    for url in nodes():
+        query(url, "SYSTEM FLUSH LOGS")
+        boundary[url] = int(query(url, "SELECT toUnixTimestamp64Micro(now64(6))").strip())
+    Path(out).write_text(json.dumps(boundary))
+
+
+def check_quorum(after: str) -> None:
+    """On a cluster, the persons sync run since the boundary confirmed its
+    staging insert on a quorum and read its count back sequentially consistent
+    — the pair that makes the count it judges the batch by mean something
+    (insight-clickhouse's consistency.rs). Read from the query log of whichever
+    replica served each statement; the proxy spreads them."""
+    if not replicated():
+        emit("ok  quorum settings are not expected on a standalone warehouse")
+        return
+    boundary = json.loads(Path(after).read_text())
+    inserts: list[list[str]] = []
+    reads: list[list[str]] = []
+    for url in nodes():
+        query(url, "SYSTEM FLUSH LOGS")
+        found = rows(
+            url,
+            "SELECT query_kind, Settings['insert_quorum'], Settings['insert_quorum_parallel'], "
+            "Settings['select_sequential_consistency'] FROM system.query_log "
+            f"WHERE event_time_microseconds > fromUnixTimestamp64Micro({boundary[url]}) "
+            # SAFETY: by the statement text, not `tables`: a bare count() names no table there.
+            f"AND type = 'QueryFinish' AND is_initial_query AND query LIKE '%{PERSONS_STAGING_PREFIX.split('.')[1]}%' "
+            "AND (query_kind = 'Insert' OR query LIKE 'SELECT count() FROM %') ORDER BY event_time_microseconds",
+        )
+        inserts += [row for row in found if row[0] == "Insert"]
+        reads += [row for row in found if row[0] == "Select"]
+    if not inserts:
+        raise Failure(f"no insert into {PERSONS_STAGING_PREFIX}* in any node's query log since the boundary")
+    if not reads:
+        raise Failure(f"no read of {PERSONS_STAGING_PREFIX}* in any node's query log since the boundary")
+    unconfirmed = [row for row in inserts if (row[1], row[2]) != ("auto", "0")]
+    if unconfirmed:
+        raise Failure(
+            f"{len(unconfirmed)}/{len(inserts)} persons staging insert(s) ran without insert_quorum=auto, insert_quorum_parallel=0"
+        )
+    stale = [row for row in reads if row[3] != "1"]
+    if stale:
+        raise Failure(f"{len(stale)}/{len(reads)} persons staging read(s) ran without select_sequential_consistency=1")
+    emit(
+        f"ok  {len(inserts)} persons staging insert(s) confirmed on a quorum, {len(reads)} read(s) sequentially consistent"
+    )
+
+
+def report(failure: Failure) -> None:
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        escaped = str(failure).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        emit(f"::error title=cluster rig::{escaped}", sys.stderr)
+    else:
+        emit(f"FAIL {failure}", sys.stderr)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -329,26 +477,41 @@ def main() -> int:
     check.add_argument("--probe-rows", type=int, required=True)
     check.add_argument("--run-results", required=True, help="the dbt run's run_results.json")
     check.add_argument("--users", default="", help="comma-separated provisioned users to sign in as")
+    check.add_argument("--columns", nargs="*", default=[], help="db.table:column a sync added, expected on every node")
+    relation = sub.add_parser("relation")
+    relation.add_argument("--name", required=True)
+    relation.add_argument("--rows", type=int, required=True)
+    absent = sub.add_parser("absent")
+    absent.add_argument("--name", required=True)
+    boundary = sub.add_parser("quorum-boundary")
+    boundary.add_argument("--out", required=True)
+    quorum = sub.add_parser("quorum")
+    quorum.add_argument("--after", required=True, help="the boundary.json quorum-boundary wrote")
     args = parser.parse_args()
 
     try:
         if args.command == "snapshot":
             snapshot(args.out)
+        elif args.command == "relation":
+            check_relation(args.name, args.rows)
+        elif args.command == "absent":
+            check_absent(args.name)
+        elif args.command == "quorum-boundary":
+            quorum_boundary(args.out)
+        elif args.command == "quorum":
+            check_quorum(args.after)
         else:
             sync_replicas()
-            check_databases_and_tables(args.run_results)
+            check_databases_and_tables(args.run_results, [column.replace(":", ".") for column in args.columns])
             check_reads_complete(args.probe_rows)
             check_users([user for user in args.users.split(",") if user])
             check_engines()
             now = check_counts_agree()
             check_no_leftovers()
             check_rerun(args.baseline, now)
+            check_populated(now)
     except Failure as failure:
-        if os.environ.get("GITHUB_ACTIONS") == "true":
-            escaped = str(failure).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-            emit(f"::error title=cluster rig::{escaped}", sys.stderr)
-        else:
-            emit(f"FAIL {failure}", sys.stderr)
+        report(failure)
         return 1
     return 0
 

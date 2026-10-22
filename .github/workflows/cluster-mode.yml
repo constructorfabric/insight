@@ -1,9 +1,11 @@
 name: Cluster mode
 
-# Deploys twice onto a two-replica ClickHouse behind a round-robin proxy with
-# CLICKHOUSE_CLUSTER_MODE on, and onto a single node with it off, builds a
-# connector's dbt models through it twice, then asserts what every node holds:
-# src/ingestion/tests/cluster-rig/README.md. Both legs are required.
+# Deploys onto a two-replica ClickHouse behind a round-robin proxy with
+# CLICKHOUSE_CLUSTER_MODE on, and onto a single node with it off: two syncs of
+# a connector's bronze, the heals a warm install needs, a connector's dbt
+# models built twice, the persons sync and the dataset lifecycle of the two
+# services that write the warehouse themselves — then asserts what every node
+# holds: src/ingestion/tests/cluster-rig/README.md. Both legs are required.
 
 on:
   pull_request:
@@ -44,7 +46,7 @@ jobs:
   rig:
     name: Deploy onto a ${{ matrix.topology }} warehouse
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +63,25 @@ jobs:
         with:
           # INVARIANT: same major as the toolbox image that runs the deploy hook.
           python-version: "3.12"
+
+      - name: Install protoc + curl headers
+        # The same build inputs as ci.yml's rust job: grpc-hub's generated code
+        # needs protoc.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev libcurl4-openssl-dev
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.98.1"
+
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: src/backend -> target
+          key: cluster-rig
+          save-if: ${{ github.event_name == 'push' }}
+
+      - name: Build the services the rig runs
+        working-directory: src/backend
+        run: cargo build -p identity-resolution -p insight-v3-core
 
       - name: Deploy and assert
         run: src/ingestion/tests/cluster-rig/run.sh
