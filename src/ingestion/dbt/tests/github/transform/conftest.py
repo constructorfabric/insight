@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -56,6 +56,17 @@ class Warehouse:
             [*args, *(["--full-refresh"] if full_refresh else [])]
         )
         assert result.success, "\n".join(messages)[-10000:]
+
+    def failing_tests(self, names: Sequence[str]) -> set[str]:
+        result = dbtRunner().invoke(
+            ["test", "--project-dir", str(DBT), "--profiles-dir", str(self.profile), "--quiet", "--select", *names]
+        )
+        assert result.result is not None, f"dbt test did not run: {result.exception}"
+        return {
+            outcome.node.name
+            for outcome in result.result.results
+            if outcome.node.resource_type == "test" and outcome.status in {"fail", "error"}
+        }
 
     def insert(self, table: str, tenant: str | None, row: Mapping[str, object], extracted: str) -> None:
         qualified = "bronze_github." + table

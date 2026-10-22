@@ -22,4 +22,5 @@ The scenarios cover cardinality changes, opaque event IDs, same-instant chains,
 partial history, nulls and empty sets, late events, replacement in Silver,
 removed/re-added links, retired fields, identity observations, time units,
 two tenants sharing one source's ids and field types, and a bronze row without
-a tenant failing the build instead of landing under an empty one.
+a tenant that still builds and is reported by the `not_null` and `not_empty`
+tests on the tenant of the models that read it.

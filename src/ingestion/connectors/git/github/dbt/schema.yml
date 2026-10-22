@@ -38,6 +38,12 @@ models:
 
   - name: github__item_events
     description: "GitHub issue and pull-request lifecycle events -> staging, feeds class_git_item_events"
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
 
   - name: github__repositories
     description: "GitHub repositories -> staging, feeds class_git_repositories"
@@ -103,6 +109,11 @@ models:
         description: "Name from the author's most recent commit, so an operator can recognise them"
       - name: last_committed_at
         description: "Most recent commit authored under this address"
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
 
   - name: github__identity_inputs
     description: "E-mail claims against GitHub accounts -> staging, feeds silver.identity_inputs"
@@ -163,6 +174,8 @@ models:
           - not_empty
   - name: github__task_statuses
     description: "Per-source staging projection unioned into silver.class_task_statuses."
+  - name: github__issue_link_events
+    description: "Every link between work items that appeared or disappeared, as a delta."
     columns:
       - name: tenant_id
         description: "Canonical tenant the row belongs to; never NULL or empty."

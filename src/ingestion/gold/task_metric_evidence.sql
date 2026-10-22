@@ -273,7 +273,7 @@ value_measures AS (
     {{ sum_measure('stale_in_progress', 'stale', 'stale_count', 'no_dimensions') }}
 )
 SELECT
-    CAST(tenant_id AS String) AS tenant_id,
+    ifNull(tenant_id, '') AS tenant_id,
     'task' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
@@ -302,7 +302,7 @@ WHERE tenant_id IS NOT NULL
 UNION ALL
 
 SELECT
-    CAST(tenant_id AS String) AS tenant_id,
+    ifNull(tenant_id, '') AS tenant_id,
     'task' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
@@ -330,7 +330,7 @@ WHERE tenant_id IS NOT NULL
 UNION ALL
 
 SELECT
-    CAST(tenant_id AS String) AS tenant_id,
+    ifNull(tenant_id, '') AS tenant_id,
     'task' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,

@@ -16,7 +16,7 @@
 -- issue streams know its issue, so their project scope bounds the worklogs too.
 
 WITH worklogs AS (
-    SELECT * REPLACE (CAST(tenant_id AS String) AS tenant_id)
+    SELECT *
     FROM {{ source('bronze_jira', 'jira_worklogs') }}
     ORDER BY _airbyte_extracted_at DESC
     LIMIT 1 BY unique_key
@@ -24,7 +24,7 @@ WITH worklogs AS (
 
 tombstones AS (
     SELECT
-        CAST(tenant_id AS String)                       AS tenant_id,
+        tenant_id,
         source_id,
         toString(toInt64(worklog_id))                   AS worklog_id,
         max(toInt64(deleted_at_ms))                     AS deleted_at_ms

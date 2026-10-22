@@ -11,5 +11,5 @@
   every row.
 #}
 {% macro jira_history_key(tenant_id, source_id, issue_id, field_id, event_id) -%}
-concat({{ tenant_id }}, '-', {{ source_id }}, '-jira-', {{ issue_id }}, '-', {{ field_id }}, '-', {{ event_id }})
+concat(ifNull({{ tenant_id }}, ''), '-', {{ source_id }}, '-jira-', {{ issue_id }}, '-', {{ field_id }}, '-', {{ event_id }})
 {%- endmacro %}

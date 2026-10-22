@@ -32,7 +32,7 @@
     {%- endif -%}
     {%- set current = run_query(
         "SELECT hex(cityHash64(arrayStringConcat(arraySort(groupArray("
-        ~ "    concat(tenant_id, '\\x1f', insight_source_id, '\\x1f', field_id, '\\x1f', field_kind, '\\x1f', field_name)"
+        ~ "    concat(ifNull(tenant_id, ''), '\\x1f', insight_source_id, '\\x1f', field_id, '\\x1f', field_kind, '\\x1f', field_name)"
         ~ ")), '\\x1e'))) AS fingerprint,"
         ~ " (SELECT toUnixTimestamp64Milli(toDateTime64("
         ~ "      COALESCE(max(_airbyte_extracted_at), toDateTime64(0, 3)), 3))"
@@ -149,7 +149,7 @@
             sources is absent from their union. -#}
         DELETE FROM {{ this }}
         WHERE (tenant_id, insight_source_id, issue_id) NOT IN (
-                  SELECT CAST(tenant_id AS String), COALESCE(source_id, ''), COALESCE(toString(jira_id), '')
+                  SELECT ifNull(tenant_id, ''), COALESCE(source_id, ''), COALESCE(toString(jira_id), '')
                   FROM {{ source('bronze_jira', 'jira_issue') }}
                   WHERE jira_id IS NOT NULL
               )

@@ -16,7 +16,7 @@
 
 SELECT
     s.unique_key                                        AS unique_key,
-    s.tenant_id                                         AS tenant_id,
+    ifNull(s.tenant_id, '')                             AS tenant_id,
     s.source_id                                         AS insight_source_id,
     CAST('jira' AS String)                              AS data_source,
     s.comment_id                                        AS comment_id,

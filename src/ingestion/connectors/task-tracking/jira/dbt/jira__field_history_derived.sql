@@ -81,7 +81,7 @@ issue_winner AS (
     SELECT tenant_id, source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
     WHERE jira_id IS NOT NULL
-      AND {{ jira_journal_in_batch("CAST(tenant_id AS String)", "COALESCE(source_id, '')", "COALESCE(toString(jira_id), '')") }}
+      AND {{ jira_journal_in_batch("ifNull(tenant_id, '')", "COALESCE(source_id, '')", "COALESCE(toString(jira_id), '')") }}
     GROUP BY tenant_id, source_id, jira_id
 ),
 
@@ -90,7 +90,7 @@ issue_winner AS (
 -- issues this run does not recompute.
 issues AS (
     SELECT
-        CAST(i.tenant_id AS String)                       AS tenant_id,
+        ifNull(i.tenant_id, '')                           AS tenant_id,
         COALESCE(i.source_id, '')                         AS insight_source_id,
         COALESCE(toString(i.jira_id), '')                 AS issue_id,
         COALESCE(toString(i.id_readable), '')             AS id_readable,
@@ -100,7 +100,7 @@ issues AS (
         toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
-    WHERE {{ jira_journal_in_batch("CAST(i.tenant_id AS String)", "COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
+    WHERE {{ jira_journal_in_batch("ifNull(i.tenant_id, '')", "COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
 ),
 
 -- The same winning bronze row, carrying the payload and the moment it was
@@ -108,7 +108,7 @@ issues AS (
 -- that needs it.
 issue_json AS (
     SELECT
-        CAST(i.tenant_id AS String)                       AS tenant_id,
+        ifNull(i.tenant_id, '')                           AS tenant_id,
         COALESCE(i.source_id, '')                         AS insight_source_id,
         COALESCE(toString(i.jira_id), '')                 AS issue_id,
         COALESCE(i.custom_fields_json, '{}')              AS custom_fields_json,
@@ -118,7 +118,7 @@ issue_json AS (
                                                           AS resolved_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
-    WHERE {{ jira_journal_in_batch("CAST(i.tenant_id AS String)", "COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
+    WHERE {{ jira_journal_in_batch("ifNull(i.tenant_id, '')", "COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
 ),
 
 changelog_items AS (
@@ -414,7 +414,7 @@ snapshot_diff_pairs AS (
                 p.observed_at,
             m.field_id = 'status'
                 AND (m.tenant_id, m.insight_source_id, m.snapshot_ids[1]) IN (
-                        SELECT CAST(tenant_id AS String), insight_source_id, status_id
+                        SELECT ifNull(tenant_id, ''), insight_source_id, status_id
                         FROM {{ ref('jira__task_statuses') }}
                         WHERE status_category = 'done'
                     )
@@ -463,7 +463,7 @@ snapshot_diff_pairs AS (
            AND ev.issue_id = s.issue_id
         WHERE s.field_id = 'status'
           AND (s.tenant_id, s.insight_source_id, s.value_ids[1]) IN (
-                  SELECT CAST(tenant_id AS String), insight_source_id, status_id
+                  SELECT ifNull(tenant_id, ''), insight_source_id, status_id
                   FROM {{ ref('jira__task_statuses') }}
                   WHERE status_category = 'done'
               )
@@ -843,7 +843,7 @@ LEFT JOIN issues AS i
 -- full refresh, which a major descriptor bump dispatches.
 SELECT
     j.unique_key,
-    j.tenant_id,
+    ifNull(j.tenant_id, '') AS tenant_id,
     j.insight_source_id,
     j.data_source,
     j.issue_id,

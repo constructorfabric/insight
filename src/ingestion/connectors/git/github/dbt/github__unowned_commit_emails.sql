@@ -25,7 +25,7 @@ WITH walked_commits AS (
     SELECT
         lower(trimBoth(COALESCE(author_email, ''))) AS email,
         COALESCE(author_name, '') AS author_name,
-        CAST(tenant_id AS String) AS tenant_id,
+        tenant_id,
         source_id,
         max(parseDateTimeBestEffortOrNull(authored_date)) AS seen_at
     FROM {{ source('bronze_github', 'commits') }} FINAL
@@ -39,7 +39,7 @@ pull_request_commits AS (
     SELECT
         lower(trimBoth(COALESCE(author_email, ''))) AS email,
         COALESCE(author_name, '') AS author_name,
-        CAST(tenant_id AS String) AS tenant_id,
+        tenant_id,
         source_id,
         max(parseDateTimeBestEffortOrNull(authored_date)) AS seen_at
     FROM {{ source('bronze_github', 'pull_request_commits') }} FINAL

@@ -391,7 +391,7 @@ occurrences AS (
 
 SELECT
     CAST(concat(
-        tenant_id, '-', insight_source_id, '-', issue_id, '-', kind, '-', occurrence_key, '-', target_ident
+        ifNull(tenant_id, ''), '-', insight_source_id, '-', issue_id, '-', kind, '-', occurrence_key, '-', target_ident
     ) AS String)                                                      AS unique_key,
     tenant_id,
     insight_source_id,

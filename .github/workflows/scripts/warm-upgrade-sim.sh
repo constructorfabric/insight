@@ -94,14 +94,14 @@ create_connector_bronze() {
     port=80
   fi
   local pins="$tree/src/ingestion/scripts/bootstrap-db/pins.env"
-  echo "=== Creating bronze for github, gitlab and jira through destination-clickhouse ==="
+  echo "=== Creating bronze for github, gitlab, jira and youtrack through destination-clickhouse ==="
   CLICKHOUSE_PROTOCOL="$protocol" \
   CLICKHOUSE_HOST="${hostport%%:*}" \
   CLICKHOUSE_PORT="$port" \
   DESTINATION_CLICKHOUSE_IMAGE="$(grep '^DESTINATION_CLICKHOUSE_IMAGE=' "$pins" | cut -d= -f2)" \
   SOURCE_DECLARATIVE_MANIFEST_IMAGE="$(grep '^SOURCE_DECLARATIVE_MANIFEST_IMAGE=' "$pins" | cut -d= -f2)" \
     bash "$tree/src/ingestion/scripts/bootstrap-db/seed-connectors.sh" \
-      "$tree/src/ingestion/scripts/bootstrap-db/connectors-config.yaml" github gitlab jira
+      "$tree/src/ingestion/scripts/bootstrap-db/connectors-config.yaml" github gitlab jira youtrack
 }
 
 # A sync as the Argo dbt-run step runs it (the shape of the cluster rig's
@@ -435,31 +435,18 @@ assert_jira_catalogue_first_seen_kept() {
   echo "=== Jira catalogue first sync kept through the upgrade ==="
 }
 
-# The YouTrack field observations predate their tenant column. The upgrade adds
-# it beside the key and reads each old row's tenant back from its key, against
-# the tenants bronze holds; a row whose key names none keeps NULL for the tenant
-# migration. Same fixture rules as above: only the columns the heal reads.
+# The base sync built the YouTrack field observations without a tenant column.
+# The upgrade adds it beside the key and reads each old row's tenant back from
+# its key, against the tenants bronze holds; a row whose key names none keeps
+# NULL for the tenant migration.
 seed_youtrack_field_observation_warm_state() {
   echo "=== Seeding the pre-tenant YouTrack field observations ==="
   source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
   run_ch <<'SQL'
-CREATE DATABASE IF NOT EXISTS bronze_youtrack;
-CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_custom_fields
-(
-    unique_key String, tenant_id Nullable(String), source_id Nullable(String),
-    _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3)
-)
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
 INSERT INTO bronze_youtrack.youtrack_custom_fields (unique_key, tenant_id, source_id, _airbyte_raw_id, _airbyte_extracted_at)
 VALUES ('warm-yt-1-field-1', 'warm', 'yt-1', 'raw-y1', '2026-01-01 00:00:00');
-
-CREATE TABLE IF NOT EXISTS staging.youtrack__field_observations
-(
-    unique_key String, insight_source_id String, field_id String, field_name String,
-    field_type String, observed_at DateTime64(3), _version UInt64
-)
-ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key;
 INSERT INTO staging.youtrack__field_observations
+    (unique_key, insight_source_id, field_id, field_name, field_type, observed_at, _version)
 VALUES
     ('warm-yt-1-field-1-2026-01-01 00:00:00', 'yt-1', 'field-1', 'Priority', 'enum', '2026-01-01 00:00:00', 1),
     ('stray-yt-1-field-2-2026-01-01 00:00:00', 'yt-1', 'field-2', 'State', 'state', '2026-01-01 00:00:00', 1);
@@ -482,36 +469,19 @@ assert_youtrack_field_observation_tenants() {
   echo "=== YouTrack field observations carry their tenant ==="
 }
 
-# The task class producers predate their tenant column. A producer table gains
-# it right after unique_key: String when it holds no row, Nullable while rows
-# without a tenant wait for the rebuild; a producer view cannot be altered, so
-# one without the column is dropped for its own connector's run to recreate, and
-# one that already has it is left alone.
+# The base sync built the task class producers without a tenant column. A
+# producer table gains it right after unique_key: String when it holds no row,
+# Nullable while rows without a tenant wait for the rebuild. A producer view
+# cannot be altered, so one without the column is dropped for its own
+# connector's run to recreate; a redeploy after that run keeps the recreated one.
 seed_task_producer_tenant_warm_state() {
   echo "=== Seeding the pre-tenant task class producers ==="
   source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
   run_ch <<'SQL'
-CREATE TABLE IF NOT EXISTS staging.jira__task_comments
-(
-    unique_key String, insight_source_id Nullable(String), comment_id Nullable(String), _version UInt64
-)
-ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key;
-INSERT INTO staging.jira__task_comments VALUES ('jira-1-comment-1', 'jira-1', '1', 1);
-CREATE TABLE IF NOT EXISTS staging.youtrack__task_issuetypes
-(
-    unique_key Nullable(String), insight_source_id Nullable(String), issue_type_id Nullable(String), _version UInt64
-)
-ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key SETTINGS allow_nullable_key = 1;
-INSERT INTO staging.youtrack__task_issuetypes VALUES ('yt-1-youtrack-type-1', 'yt-1', '1', 1);
-CREATE TABLE IF NOT EXISTS staging.youtrack__task_links
-(
-    unique_key String, insight_source_id Nullable(String), _version UInt64
-)
-ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key;
-CREATE VIEW IF NOT EXISTS staging.github__task_projects AS
-    SELECT 'gh-1-project-1' AS unique_key, 'gh-1' AS insight_source_id;
-CREATE VIEW IF NOT EXISTS staging.jira__task_projects AS
-    SELECT 'warm-jira-1-project-1' AS unique_key, 'warm' AS tenant_id, 'jira-1' AS insight_source_id;
+INSERT INTO staging.jira__task_comments (unique_key, insight_source_id, comment_id, _version)
+VALUES ('jira-1-comment-1', 'jira-1', '1', 1);
+INSERT INTO staging.youtrack__task_issuetypes (unique_key, insight_source_id, issue_type_id, _version)
+VALUES ('yt-1-youtrack-type-1', 'yt-1', '1', 1);
 SQL
 }
 
@@ -519,7 +489,7 @@ assert_task_producer_tenants() {
   echo "=== Asserting the task class producers carry their tenant ==="
   source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
   local got
-  local expected="jira__task_comments:2:Nullable(String);youtrack__task_issuetypes:2:Nullable(String);youtrack__task_links:2:String|jira__task_projects"
+  local expected="jira__task_comments:2:Nullable(String);youtrack__task_issuetypes:2:Nullable(String);youtrack__task_links:2:String|"
   got="$(printf "SELECT concat(
       (SELECT arrayStringConcat(groupArray(concat(table, ':', toString(position), ':', type)), ';')
        FROM (SELECT table, position, type FROM system.columns
@@ -529,26 +499,41 @@ assert_task_producer_tenants() {
        FROM (SELECT name FROM system.tables
              WHERE database = 'staging' AND name IN ('github__task_projects', 'jira__task_projects') ORDER BY name)))" | _ch_http_query | tr -d '\n')"
   if [[ "${got}" != "${expected}" ]]; then
-    echo "::error title=warm upgrade left a task class producer without a tenant::Expected '${expected}' — tenant_id right after unique_key, String only where no row lacks a tenant, the producer view without the column dropped and the one with it kept — but got '${got}'."
+    echo "::error title=warm upgrade left a task class producer without a tenant::Expected '${expected}' — tenant_id right after unique_key, String only where no row lacks a tenant, and the producer views without the column dropped — but got '${got}'."
     exit 1
   fi
   echo "=== Task class producers carry their tenant ==="
 }
 
-# A task class built before the tenant column gains it right after unique_key,
-# where every producer's rebuilt SELECT now puts it. The fixture holds only the
-# columns the heal reads and is dropped once asserted, so the gold build below
-# meets only relations a build created.
+assert_task_producer_views_kept_on_redeploy() {
+  echo "=== Redeploying over the first sync: the recreated producer views stay ==="
+  if ! PATH="$WORKDIR/branch-venv/bin:$PATH" \
+      bash "$REPO_ROOT/src/ingestion/scripts/apply-ch-migrations.sh"; then
+    echo "::error title=a redeploy after the first sync fails::This tree's deploy hook does not converge when run again over the relations its own first sync built."
+    exit 1
+  fi
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  local got
+  local expected="github__task_projects;jira__task_projects"
+  got="$(printf "SELECT arrayStringConcat(groupArray(name), ';')
+    FROM (SELECT name FROM system.tables
+          WHERE database = 'staging' AND name IN ('github__task_projects', 'jira__task_projects') ORDER BY name)" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=a redeploy dropped a producer view that carries its tenant::Expected '${expected}' — every producer view the first sync recreated with tenant_id kept — but got '${got}'."
+    exit 1
+  fi
+  echo "=== Producer views that carry their tenant are kept ==="
+}
+
+# The base sync built the task classes without a tenant column. A class gains
+# it right after unique_key, where every producer's rebuilt SELECT now puts it,
+# and stays Nullable while a row lacks a tenant.
 seed_task_class_tenant_warm_state() {
   echo "=== Seeding a pre-tenant task class ==="
   source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
   run_ch <<'SQL'
-CREATE TABLE IF NOT EXISTS silver.class_task_comments
-(
-    unique_key String, insight_source_id String, comment_id String, _version UInt64
-)
-ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key;
-INSERT INTO silver.class_task_comments VALUES ('jira-1-comment-1', 'jira-1', '1', 1);
+INSERT INTO silver.class_task_comments (unique_key, insight_source_id, comment_id, _version)
+VALUES ('jira-1-comment-1', 'jira-1', '1', 1);
 SQL
 }
 
@@ -565,9 +550,6 @@ assert_task_class_tenant() {
     echo "::error title=warm upgrade left a task class without a tenant::Expected '${expected}' — a Nullable(String) tenant_id right after unique_key, never narrowed while a row lacks a tenant, and the class row kept — but got '${got}'."
     exit 1
   fi
-  run_ch <<'SQL'
-DROP TABLE silver.class_task_comments;
-SQL
   echo "=== Task class carries its tenant ==="
 }
 
@@ -599,5 +581,7 @@ if ! build_graph "$REPO_ROOT" "$WORKDIR/branch-venv" branch; then
   echo "::error title=first sync after the upgrade fails — forgotten heal::A model reads a bronze/silver/staging column this branch adds but no heal widens an existing relation with, so the first connector sync after this release fails on every installation that already holds data. Ship the companion ALTER — a ch_table_exists-guarded heal in src/ingestion/scripts/apply-ch-migrations.sh, for silver.class_* as for staging.* — per the Warehouse contract changes rules in AGENTS.md."
   exit 1
 fi
+
+assert_task_producer_views_kept_on_redeploy
 
 echo "=== Warm upgrade OK: every relation the first sync reads is covered by a migration or heal ==="
