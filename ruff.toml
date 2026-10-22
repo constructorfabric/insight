@@ -19,3 +19,5 @@ split-on-trailing-comma = false
 # `python3 <script>`: printing the result IS the interface, and the shebang is
 # documentation — the files are never executed directly.
 "src/ingestion/reconcile-connectors/python/*" = ["T201", "EXE001"]
+# The tenant migration is an operator CLI: its plan and its results are printed.
+"src/ingestion/scripts/tenant_migration/__main__.py" = ["T201"]

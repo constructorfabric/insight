@@ -33,8 +33,9 @@ tick refuses rather than creating the destination, and the log line says which
 version was found. Pinning the definition instead would fight the operator's
 own Airbyte upgrades.
 
-`RECONCILE_DESTINATION_ID` hands that destination's configuration — including
-its version — to whoever set it, and skips both the lookup and the check.
+`RECONCILE_DESTINATION_ID` hands that destination's configuration to whoever
+set it and skips the lookup; the version floor still applies, because the
+catalogues reconcile hands over run on that destination either way.
 
 ## A tenant change
 

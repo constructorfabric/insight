@@ -21,7 +21,7 @@ const QUORUM_WRITE: [(&str, &str); 2] =
 /// Pins a read to the quorum-confirmed parts.
 const CONSISTENT_READ: [(&str, &str); 1] = [("select_sequential_consistency", "1")];
 
-pub(crate) fn write_settings(topology: &Topology) -> &'static [(&'static str, &'static str)] {
+pub(crate) fn write_settings(topology: Topology) -> &'static [(&'static str, &'static str)] {
     if topology.is_replicated() {
         &QUORUM_WRITE
     } else {
@@ -29,7 +29,7 @@ pub(crate) fn write_settings(topology: &Topology) -> &'static [(&'static str, &'
     }
 }
 
-pub(crate) fn read_settings(topology: &Topology) -> &'static [(&'static str, &'static str)] {
+pub(crate) fn read_settings(topology: Topology) -> &'static [(&'static str, &'static str)] {
     if topology.is_replicated() {
         &CONSISTENT_READ
     } else {
@@ -43,8 +43,8 @@ mod tests {
 
     #[test]
     fn a_single_node_waits_for_nothing() {
-        assert!(write_settings(&Topology::Standalone).is_empty());
-        assert!(read_settings(&Topology::Standalone).is_empty());
+        assert!(write_settings(Topology::Standalone).is_empty());
+        assert!(read_settings(Topology::Standalone).is_empty());
     }
 
     #[test]
@@ -52,18 +52,18 @@ mod tests {
         let topology = Topology::new(true, "insight_cluster");
 
         assert_eq!(
-            write_settings(&topology),
+            write_settings(topology),
             [("insert_quorum", "auto"), ("insert_quorum_parallel", "0")]
         );
         assert_eq!(
-            read_settings(&topology),
+            read_settings(topology),
             [("select_sequential_consistency", "1")]
         );
     }
 
     #[test]
     fn a_parallel_quorum_would_void_the_read_it_is_paired_with() {
-        let parallel = write_settings(&Topology::new(true, "insight_cluster"))
+        let parallel = write_settings(Topology::new(true, "insight_cluster"))
             .iter()
             .find(|(name, _)| *name == "insert_quorum_parallel");
 

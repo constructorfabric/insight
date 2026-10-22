@@ -715,8 +715,8 @@ fn a_clustered_warehouse_carries_its_cluster_into_every_client() {
         validated.datasets_client(),
     ] {
         assert_eq!(
-            client.config().topology.on_cluster(),
-            Some("insight_cluster")
+            client.config().topology,
+            insight_clickhouse::Topology::Replicated
         );
     }
 }

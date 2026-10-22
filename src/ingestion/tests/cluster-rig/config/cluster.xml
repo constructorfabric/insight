@@ -1,0 +1,45 @@
+<!--
+  What a BYO clustered ClickHouse must provide before Insight installs onto it
+  (charts/insight/README.md, "ClickHouse topology"): Keeper, a named cluster,
+  and SQL-created access stored in Keeper. Shared by both replicas.
+-->
+<clickhouse>
+    <zookeeper>
+        <node>
+            <host>keeper</host>
+            <port>9181</port>
+        </node>
+    </zookeeper>
+
+    <!-- The cluster CLICKHOUSE_CLUSTER_NAME names. ON CLUSTER DDL reaches both
+         replicas through Keeper's distributed-DDL queue; the shared secret lets
+         a distributed query run on the peer as the user who sent it. -->
+    <remote_servers>
+        <rig>
+            <secret>cluster-rig-interserver</secret>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host>ch1</host>
+                    <port>9000</port>
+                </replica>
+                <replica>
+                    <host>ch2</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </rig>
+    </remote_servers>
+
+    <!-- users.xml first keeps the bootstrap admin; `replicated` is the first
+         writable directory, so CREATE USER / ROLE / GRANT land in Keeper and
+         every replica sees them. -->
+    <user_directories replace="replace">
+        <users_xml>
+            <path>users.xml</path>
+        </users_xml>
+        <replicated>
+            <zookeeper_path>/clickhouse/access</zookeeper_path>
+        </replicated>
+    </user_directories>
+</clickhouse>

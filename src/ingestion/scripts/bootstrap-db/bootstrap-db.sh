@@ -35,6 +35,11 @@ fi
 # Every step below talks to ClickHouse through lib/ch-exec.sh, which selects
 # its backend from CLICKHOUSE_URL.
 export CLICKHOUSE_URL="${CLICKHOUSE_PROTOCOL}://${CLICKHOUSE_HOST}:${CLICKHOUSE_PORT}"
+# The topology every step reads: create-databases.sh and the migrations through
+# lib/ch-topology.sh, the bronze destination through compose_destination_config.py.
+# Unset is a standalone server.
+export CLICKHOUSE_CLUSTER_MODE="${CLICKHOUSE_CLUSTER_MODE:-false}"
+export CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}"
 
 echo "=== 1. Databases + access ==="
 bash "${SCRIPT_DIR}/../create-databases.sh"

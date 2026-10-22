@@ -3,7 +3,7 @@
 A snapshot, a `full_refresh=false` model or a model that writes a value once and
 keeps it holds rows that exist nowhere else: rebuilding it from what Bronze holds
 today loses them. The tag is what keeps such a model out of a rebuild, and
-`tenant-history-tables.txt` is how tooling outside dbt finds the same relations.
+`tenant_migration/history-tables.txt` is how tooling outside dbt finds the same relations.
 
 An append-only model is where such rows hide, and nothing in its SQL tells the two
 kinds apart — so each one is decided by name: tagged `history`, or listed below as
@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from insight_datapath.dbt_parse import REPO_ROOT, Manifest, parse_project
 
-HISTORY_TABLES = REPO_ROOT / "src/ingestion/scripts/tenant-history-tables.txt"
+HISTORY_TABLES = REPO_ROOT / "src/ingestion/scripts/tenant_migration/history-tables.txt"
 TAG = "history"
 
 #: Append-only models whose every row a rebuild derives again from Bronze or from a

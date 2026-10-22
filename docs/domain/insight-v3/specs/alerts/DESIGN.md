@@ -1,16 +1,16 @@
 ---
 status: draft
-version: "0.8"
-date: 2026-10-15
+version: "0.9"
+date: 2026-10-16
 ---
 
 # Technical Design — Insight v3 Metric Alerts
 
-**Approved:** Insight v3 custom metrics, administrator API and MCP, a condition over the rows of one metric run, per-rule interval checks, one current check after downtime, first-breach notifications without reminders or recovery messages, provider-neutral delivery, and BullMQ on the deployment's Redis as the job library ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)).
+**Approved:** Insight v3 custom metrics, administrator API and MCP, a condition over the rows of one metric run, per-rule interval checks, one current check after downtime, first-breach notifications without reminders or recovery messages, provider-neutral delivery, personal destinations beside the operator's shared ones, and BullMQ on the deployment's Redis as the job library ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)).
 
-**Flow:** an enabled rule is one repeating job; each run loads the rule, runs the stored metric as an on-demand run would, evaluates the rule's condition over the rows, records the outcome and its witness on the rule and, on the first breach, writes the notification it owes and queues it. A second queue hands each owed notification to its provider and records what the provider said.
+**Flow:** an enabled rule is one repeating job; each run loads the rule, runs the stored metric as an on-demand run would, evaluates the rule's condition over the rows, records the outcome and its witness on the rule and, on the first breach, writes the notification it owes and queues it. A second queue hands each owed notification to its provider and records what the provider said; the destination is resolved by name when the send runs, from configuration or from the store.
 
-**Version 0.8:** Context columns: a rule names up to five result columns the witness keeps beside the condition's, stored on the rule and copied onto each notification it owes. Version 0.7: conditions over every row a metric run answers: a row quantifier, nested groups, and number, text and date tests typed against the metric's columns when a rule is written; the witness on checks and notifications; a preview route the form reads. Version 0.6 added the portal screens: four routes in the Custom zone over the administrator API, with no behaviour of their own. Version 0.5 added delivery: a second queue, one adapter per provider, and the send outcome on the notification.
+**Version 0.9:** Destinations an administrator adds at runtime: a store beside the configuration entries, one namespace over both, credentials sealed under an installation key, an egress guard on every address an administrator supplies, destination routes and MCP tools, a test send, and a Destinations page in the Custom zone. Version 0.8: context columns: a rule names up to five result columns the witness keeps beside the condition's, stored on the rule and copied onto each notification it owes. Version 0.7: conditions over every row a metric run answers: a row quantifier, nested groups, and number, text and date tests typed against the metric's columns when a rule is written; the witness on checks and notifications; a preview route the form reads. Version 0.6 added the portal screens: four routes in the Custom zone over the administrator API, with no behaviour of their own. Version 0.5 added delivery: a second queue, one adapter per provider, and the send outcome on the notification.
 
 <!-- toc -->
 
@@ -57,11 +57,12 @@ The parent [separate-service ADR](../ADR/0001-separate-service.md) still applies
 | Requirement | Design Response |
 |-------------|-----------------|
 | `cpt-insightspec-v3-alerts-fr-manage` | One set of rule operations behind the existing API and MCP authorization; the condition parsed against the metric's column kinds at write time; every write bumps a revision, and an update names the revision it replaces; a preview route evaluates a draft as a check would and records nothing |
-| `cpt-insightspec-v3-alerts-fr-authorize` | Existing administrator guards; workers hold no user session and read only the rule |
+| `cpt-insightspec-v3-alerts-fr-authorize` | Existing administrator guards; a personal destination is read, listed, tested, written and removed only with its owner as the actor, and answers as absent to anyone else; workers hold no user session and read only the rule and the destination it names |
+| `cpt-insightspec-v3-alerts-fr-destinations` | A destination store beside the configuration entries, both behind one `Destinations` interface; per-provider validation shared with configuration; secrets sealed on write and opened only for a send; a test send through the delivery path; removal refused while a rule names the destination |
 | `cpt-insightspec-v3-alerts-fr-evaluate` | The existing metric run, unbucketed, read through a typed condition: three-valued tests per row, folded by the row quantifier |
 | `cpt-insightspec-v3-alerts-fr-schedule` | One BullMQ job scheduler per enabled rule, repeating every rule interval; a missed iteration is skipped, not queued |
 | `cpt-insightspec-v3-alerts-fr-episodes` | The last valid finding on the rule row, one per rule whichever rows breach; a breach owes a notification only when the last valid finding was not a breach |
-| `cpt-insightspec-v3-alerts-fr-deliver` | A notification row written in the same transaction as the check that owes it, then one delivery job keyed by the notification; unconfirmed sends fail the job so BullMQ retries with backoff, rejections and exhausted attempts are final |
+| `cpt-insightspec-v3-alerts-fr-deliver` | A notification row written in the same transaction as the check that owes it, then one delivery job keyed by the notification; the destination resolved by name when the send runs and its adapter built for that send; unconfirmed sends fail the job so BullMQ retries with backoff, rejections and exhausted attempts are final |
 | `cpt-insightspec-v3-alerts-fr-inspect` | The latest check and its witness on the rule; notifications listed per rule with their condition, witness, status, attempts, last error and provider receipt |
 
 #### NFR Allocation
@@ -70,7 +71,8 @@ The parent [separate-service ADR](../ADR/0001-separate-service.md) still applies
 |--------|--------------|-----------------|-----------------------|
 | `cpt-insightspec-v3-alerts-nfr-durability` | Store and schedule | Check and notification in one transaction, revision fence, startup reconcile, BullMQ locks and stalled recovery | Live tests against MariaDB and Redis in CI |
 | `cpt-insightspec-v3-alerts-nfr-timeliness` | Worker | Bounded concurrency; a check that outlives its lock on a dead worker is taken over; scheduling and check duration logged with the rule | Log fields per check; targets await synthetic load |
-| `cpt-insightspec-v3-alerts-nfr-confidentiality` | Configuration, API and adapters | Destinations and their credentials in configuration as secrets, rules reference a name, reads answer name and provider only; credentials and the Redis URL are redacted from debug output; a provider's words are stored, never the request | Handler, configuration and adapter tests |
+| `cpt-insightspec-v3-alerts-nfr-confidentiality` | Configuration, store, API and adapters | Shared credentials in configuration as secrets; personal credentials sealed with AES-256-GCM under `alerts.credential_key`, the destination's name and owner as associated data, opened only inside the send that needs them; rules reference a name; reads answer name, provider, non-secret fields and a hint; credentials and the Redis URL are redacted from debug output; a provider's words are stored, never the request | Handler, store, configuration, sealing and seeded-leak tests |
+| `cpt-insightspec-v3-alerts-nfr-egress` | Destination validation, adapters and the chart | `https` only; Discord, Telegram and Slack hosts fixed; a Zulip host resolved at write and at send to globally routable addresses only, with the send pinned to those addresses; no redirects; bounded answers; a test answers an outcome class; an optional egress NetworkPolicy in the chart | Validation tests over address classes; adapter tests against a resolver that answers a private address; chart tests |
 | `cpt-insightspec-v3-nfr-efficiency` | Worker | Bounded concurrency; notifications kept per rule capped | Compare synthetic resource use against the parent baseline |
 | `cpt-insightspec-v3-nfr-reliability` | Service lifecycle | Worker stops on the gear's cancellation token; unfinished checks are recovered by the next worker | Existing service availability evidence plus the live tests |
 | `cpt-insightspec-v3-nfr-performance` | Metric execution | Checks share the metric runner's timeouts and result bounds | Parent dashboard latency measurements under alert load |
@@ -93,6 +95,8 @@ flowchart LR
     Worker --> Deliveries[(Redis: BullMQ delivery queue)]
     Deliveries --> Sender[Delivery worker]
     Sender --> Store
+    Sender --> Destinations[(Configuration and MariaDB destinations)]
+    API --> Destinations
     Sender --> Provider[Discord, Telegram, Slack or Zulip]
 ```
 
@@ -100,7 +104,7 @@ flowchart LR
 |-------|----------------|------------|
 | Interface | Administrator operations and safe result presentation | Existing Rust REST and MCP integration; the portal's Custom zone screens over the REST routes |
 | Application/domain | Rule lifecycle, condition parsing and evaluation, breach transition | Typed Rust operations in Insight v3 |
-| Infrastructure | Durable state, schedule, metric execution, outbound messages | MariaDB, BullMQ on Redis, existing ClickHouse client, HTTP client per provider |
+| Infrastructure | Durable state, schedule, metric execution, sealed credentials, outbound messages | MariaDB, BullMQ on Redis, existing ClickHouse client, AES-256-GCM, HTTP client per send |
 
 ## 2. Principles & Constraints
 
@@ -130,7 +134,7 @@ BullMQ through its official Rust port, on the deployment's Redis. Redis must per
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-constraint-boundary`
 
-Only Insight v3 custom metrics are checked. Rules do not depend on a specific provider. API and MCP keep their current administrator authorization. Destinations and their credentials are provisioned by the operator in configuration; a rule references one by name, a read answers the name and the provider, and only a provider adapter ever holds a credential. A credential travels in a request address or header, so a destination address must be `https` (loopback excepted, for a stand's mock).
+Only Insight v3 custom metrics are checked. Rules do not depend on a specific provider. API and MCP keep their current administrator authorization. A destination is provisioned by the operator in configuration, shared, or added by an administrator at runtime, personal and theirs alone; both are reached through one interface, a rule references either by name, a read answers the name, the provider, the non-secret fields and a hint, and only a provider adapter, for the length of one send, ever holds a credential. A credential travels in a request address or header, so a destination address must be `https`; loopback over `http` is allowed for configuration entries only, for a stand's mock. An address an administrator supplies is an outbound request the administrator shapes, so it is held to the provider's own host, or for a self-hosted Zulip to a host name resolving to globally routable addresses, and never followed through a redirect. Telegram and Slack take no address at all.
 
 ## 3. Technical Architecture
 
@@ -141,7 +145,7 @@ Only Insight v3 custom metrics are checked. Rules do not depend on a specific pr
 | Rule | A generated id, the handle every operation takes; a name people read, not unique; a revision bumped by every configuration write | One metric, one condition, up to five context columns, one interval, one destination; every test in the condition fits the kind of the column it reads, and every context column is one the metric answers and does not group by, as the metric defined it when the rule was written; the latest check's finding and witness live on the row |
 | Check | Rule id plus revision, carried by the job | Recorded only while the rule is enabled at that revision; date tests measure back from the check's own time |
 | Notification | Its own id; references the rule and the revision that owed it | Carries the condition, context columns, witness and time the check saw; a later edit to the rule rewrites nothing it says. Status is pending, cancelled, sent or failed; a send is recorded only while pending |
-| Destination | A name in configuration | Names a provider and holds its credentials; the domain sees the name and provider |
+| Destination | A name, unique across configuration and the store | Names a provider and holds its fields; shared when configuration holds it, personal when the store does, with its owner; the domain sees the name, the provider, the owner and the non-secret fields, and opens the secret ones only to send |
 
 A condition is a row quantifier and a tree of tests, parsed at the boundary into typed leaves: a number, text or date test on one named column. Each test on each row is true, false or unknown. `all` is false when a child is false, unknown when a child is unknown and none is false, otherwise true; `any` is the dual; `not` swaps true and false and keeps unknown. The quantifier folds the rows the same way: `one` takes the only row, `any`, `all` and `none` combine every row, and `count` counts true rows and is unknown when an unknown row could change its comparison. Over zero rows `any` is a valid non-breach, `count` compares zero, and `one`, `all` and `none` are unknown `no_rows`; `one` over several rows is unknown `many_rows`.
 
@@ -152,6 +156,12 @@ A valid check answers a witness: `matched`, the rows the test passed on; `answer
 A notification is owed when a valid check finds the condition met and the last valid finding was not a breach. It is owed again only after a valid check has seen the condition clear. The finding belongs to the rule, so which rows breach does not start or end an episode.
 
 A send ends one of three ways: the provider confirmed it and gave it an identity, the receipt; the provider rejected it and will keep rejecting it; or the outcome is unknown — a timeout, a rate limit, a server error, an answer not understood. Unknown is retried until the attempts run out; the message may therefore land twice. Rejection is final at once.
+
+A personal destination's fields split by provider into the ones a read may answer and the ones it may not: Discord's `webhook_url` is secret; Telegram's `bot_token` is secret and `chat_id` is not; Slack's `bot_token` is secret and `channel` is not; Zulip's `api_key` is secret and `site_url`, `bot_email`, `stream` and `topic` are not. The secret fields are sealed together as one JSON document with AES-256-GCM under the installation's `alerts.credential_key`, a fresh nonce per write, and the destination's name and owner as associated data, so a ciphertext lifted onto another row fails to open. A read answers the last four characters of the secret as a hint. The plaintext exists only inside the send or the test that opened it and is zeroed after.
+
+Who may use a destination: a shared one, anyone; a personal one, its owner. The owner is the administrator identity resolved for the API, and on MCP the person the token's subject names, which the authenticator mints for an administrator only and never for an impersonated session. A rule write names a destination the actor may use, or, on a replace, the one the rule already names, so an administrator can edit another's rule without taking over its destination. Enabling checks only that the destination exists.
+
+A name that configuration and the store both hold is a conflict, never a precedence: no new rule may name it, and every send to it is rejected until the operator renames the configured one or the owner removes the personal one. Only the owner sees the personal destination listed as conflicting; every other administrator sees the shared entry as unavailable, with no reason, since the reason would disclose a row that answers as absent to them; the operator reads the reason in the log. A personal write under a configured name is refused as taken.
 
 ### 3.2 Component Model
 
@@ -165,7 +175,7 @@ API and MCP need identical rule behaviour.
 
 ##### Responsibility scope
 
-Typed validation against the installation's bounds and destinations, and of the condition against the column kinds the metric answers over the rule's window; create, replace at an expected revision, enable, disable, delete; list rules and their notifications; preview a draft. Every write lands in the store first and on the schedule second; the store's answer is the write's answer, and a schedule write that fails is logged and left to reconciling.
+Typed validation against the installation's bounds, against the destinations the actor may use, and of the condition against the column kinds the metric answers over the rule's window; create, replace at an expected revision, enable, disable, delete; list rules and their notifications; preview a draft. Every write lands in the store first and on the schedule second; the store's answer is the write's answer, and a schedule write that fails is logged and left to reconciling.
 
 ##### Responsibility boundaries
 
@@ -173,7 +183,27 @@ A write reads the metric's definition, and its dataset's declaration, for the ki
 
 ##### Related components (by ID)
 
-`cpt-insightspec-v3-alerts-component-store`, `cpt-insightspec-v3-alerts-component-schedule`.
+`cpt-insightspec-v3-alerts-component-store`, `cpt-insightspec-v3-alerts-component-destinations`, `cpt-insightspec-v3-alerts-component-schedule`.
+
+#### Destinations
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-component-destinations`
+
+##### Why this component exists
+
+An administrator must be able to add a place to notify without a release, without ever reading a credential back, and without handing the service an address it should not call.
+
+##### Responsibility scope
+
+One `Destinations` interface over two sources: the configuration entries, read once at boot and shared, and the store rows, personal. For an actor it lists what they may use, name, provider, non-secret fields, hint and whether shared, personal, unavailable or, to its owner alone, conflicting; it adds, replaces and removes the actor's own rows; it answers, for a name, the provider and the fields a send needs, opening the seal for that send only. Validation per provider is the one `DestinationConfig::validate` configuration already runs, moved below both: `https`, the provider's host for Discord, with Telegram and Slack taking no address, and for Zulip a host name whose every resolved address is globally routable. A write refuses a name configuration holds, a name another row holds, and the actor's count past the bound. Removal is refused while any rule names the destination; the refusal lists the rule ids. A removal and a rule write that names a personal destination serialize on the destination's row: the rule write reads the row under a shared lock inside the transaction that inserts or replaces the rule, and the removal takes it under an exclusive lock before counting the rules that name it and deleting it, so neither can commit between the other's check and its write. A test builds the adapter as a send would, sends one fixed message under the delivery concurrency cap and timeout, is refused as busy when none is free, and answers the outcome as a notification would carry it.
+
+##### Responsibility boundaries
+
+Seals and opens only with the configured key; without one, every personal write and every personal read answers that the installation has no credential key, and shared destinations work as before. Never logs a field a provider treats as a credential, and names a destination in logs by name, provider and actor only. The resolver it asks is the system's; it does not cache answers, so a send resolves again.
+
+##### Related components (by ID)
+
+`cpt-insightspec-v3-alerts-component-rules`, `cpt-insightspec-v3-alerts-component-delivery`.
 
 #### Store
 
@@ -249,7 +279,7 @@ One BullMQ queue, one job per notification keyed by its id, with the configured 
 
 ##### Responsibility boundaries
 
-Never reruns the metric. A destination removed from configuration rejects the send. The message has a markdown form, which Discord, Slack and Zulip send, and an HTML form, which Telegram sends: in both the witness rows, the only text the warehouse writes, are code, where no provider reads a mention or a link; control characters in that text become spaces. Adapters: Discord posts to the webhook with `wait=true` and no mentions, and reads the created message id; Telegram calls `sendMessage` with HTML parsing and reads `result.message_id`; Slack calls `chat.postMessage` with the bot token and the markdown with `&`, `<` and `>` escaped, and reads `ts`, treating an error in a successful answer that a later attempt may get past (rate limits, a failure on Slack's side, a truncated request, a workspace mid-migration) as unknown and any other error as rejection; Zulip posts to a stream topic with basic authentication and reads `id`. Each treats 429 and 5xx as unknown, other 4xx as rejection, and a body it does not understand as unknown.
+Never reruns the metric. The destination is resolved by name when the send runs, and its adapter is built for that send with the one bounded HTTP client policy: a timeout, no redirects, an answer read up to a bound, and for a self-hosted Zulip the connection pinned to the addresses resolution answered just now, so a name that changed since the write cannot steer the send elsewhere. A destination that is gone, from configuration or the store, or whose name is in conflict, rejects the send. The message has a markdown form, which Discord, Slack and Zulip send, and an HTML form, which Telegram sends: in both the witness rows, the only text the warehouse writes, are code, where no provider reads a mention or a link; control characters in that text become spaces. Adapters: Discord posts to the webhook with `wait=true` and no mentions, and reads the created message id; Telegram calls `sendMessage` with HTML parsing and reads `result.message_id`; Slack calls `chat.postMessage` with the bot token and the markdown with `&`, `<` and `>` escaped, and reads `ts`, treating an error in a successful answer that a later attempt may get past (rate limits, a failure on Slack's side, a truncated request, a workspace mid-migration) as unknown and any other error as rejection; Zulip posts to a stream topic with basic authentication and reads `id`. Each treats 429 and 5xx as unknown, other 4xx as rejection, and a body it does not understand as unknown.
 
 ##### Related components (by ID)
 
@@ -271,11 +301,15 @@ Administration follows `cpt-insightspec-v3-alerts-interface-administration`. The
 | `DELETE /v1/alerts/{id}` | — | No content | Administrator |
 | `POST /v1/alerts/{id}/enable`, `/disable` | `expected_revision` | The rule | Administrator |
 | `GET /v1/alerts/{id}/notifications` | Page | Notifications, newest first, with condition, context columns, witness, status, attempts, last error and provider receipt | Administrator |
-| `GET /v1/alert-destinations` | — | Names and providers | Administrator |
+| `GET /v1/alert-destinations` | — | The destinations the caller may use: name, provider, non-secret fields, hint, and whether shared, personal, unavailable or, to its owner, conflicting | Administrator |
+| `POST /v1/alert-destinations` | Name, provider and the provider's fields | The destination as a read answers it | Administrator |
+| `PUT /v1/alert-destinations/{name}` | Provider and every field again | The destination as a read answers it | Owner |
+| `DELETE /v1/alert-destinations/{name}` | — | No content; refused with the rule ids while a rule names it | Owner |
+| `POST /v1/alert-destinations/{name}/test` | — | `outcome` (`sent`, `rejected` or `unconfirmed`), the receipt or the provider's words, as a notification carries them; nothing is recorded | Owner, or any administrator for a shared destination |
 
 A condition travels as `{"rows": ..., "where": ...}`: `rows` is `one`, `any`, `all`, `none` or `{"count": {"op": ">", "value": 3}}`; `where` is a test `{"column", "op", "value"}` or a group `{"all": [...]}`, `{"any": [...]}`, `{"not": ...}`. Wide integers travel as digit strings, and timestamps read back in UTC with a `Z` suffix. `context_columns` is a list of result column names, empty when none. A witness is `{"matched", "answered", "columns", "rows"}`, and `null` when the check is unknown.
 
-Refusals distinguish an invalid rule, a missing metric or alert, a revision conflict, the rule limit, and an installation with alerts off. A condition refusal names `condition` followed by the path of the part concerned, as `condition.where.all[1].value` or `condition.rows.count.op`; a metric whose definition cannot be read is refused on `metric`. A preview is refused field by field as a write is. An id that is malformed names no alert and answers the same as one that is absent. No login, SSO or MFA mechanism is added.
+Refusals distinguish an invalid rule, a missing metric or alert, a revision conflict, the rule limit, and an installation with alerts off. A destination refusal names the field concerned; a name that is taken, a destination still named by rules, and a count past the bound are conflicts; a personal destination that is not the caller's answers as absent, the same as a name nobody holds; an installation without a credential key refuses personal writes and says so. A rule that names a destination the caller may not use, or one that is unavailable, is refused on `destination` as a missing destination is. A condition refusal names `condition` followed by the path of the part concerned, as `condition.where.all[1].value` or `condition.rows.count.op`; a metric whose definition cannot be read is refused on `metric`. A preview is refused field by field as a write is. An id that is malformed names no alert and answers the same as one that is absent. No login, SSO or MFA mechanism is added.
 
 #### Portal Screens
 
@@ -289,8 +323,13 @@ The portal reaches the same routes from four pages under the Custom zone's catal
 | New | `/portal/custom/alerts/new` | metrics catalogue, the picked metric's definition for its columns and their kinds, `GET /v1/alert-destinations`, `POST /v1/alerts/preview` for the current draft | `POST /v1/alerts` |
 | Alert | `/portal/custom/alerts/{id}` | `GET /v1/alerts/{id}`, `GET /v1/alerts/{id}/notifications` | enable, disable, delete |
 | Edit | `/portal/custom/alerts/{id}/edit` | the rule, read after the page mounts, then what New reads | `PUT /v1/alerts/{id}` with `expected_revision` |
+| Destinations | `/portal/custom/destinations` | `GET /v1/alert-destinations` | test, delete |
+| New destination | `/portal/custom/destinations/new` | — | `POST /v1/alert-destinations` |
+| Edit destination | `/portal/custom/destinations/{name}/edit` | the destination, for its non-secret fields and hint | `PUT /v1/alert-destinations/{name}` with every field entered again |
 
 New and Edit draw the condition as a tree: a quantifier, shown only when the metric answers many rows, and groups with their own `all`, `any` or `not` switch, nested by indentation to the depth the API allows. Below it, the metric's columns other than its group-by ones are offered as the context columns to show in a notification, at most five; a column the rule names that the metric no longer answers stays offered, and picking another metric clears the picks. An Editor / JSON switch shows the whole rule draft as text, the body the API and MCP take; both views edit one document, and a draft that does not parse leaves the rule as it stood. A save or toggle that lost a race keeps the input and offers the latest version instead of overwriting it. The list carries no check status because the list route carries none; the latest check is on the alert's page.
+
+The rule form's destination picker lists shared destinations and the caller's own in two groups, and an unavailable or conflicting name disabled. The Destinations page lists each destination with its provider, hint and kind; a shared one offers test only; a personal one offers test, edit and delete, and a delete refused for rules names them. The destination form shows the provider's fields, the secret ones as password inputs that read back empty beside the hint, and asks for them again on every save.
 
 ### 3.4 Internal Dependencies
 
@@ -299,7 +338,7 @@ New and Edit draw the condition as a tree: a quantifier, shown only when the met
 | [Metric runs](../../../../../src/backend/services/insight-v3-core/src/domain/metric_run.rs) | The stored-metric run over a window request | The same execution an on-demand run has |
 | [Metric query](../../../../../src/backend/services/insight-v3-core/src/domain/query/metric_query.rs) | Compiler and runner | Existing fetch timeout and result bound |
 | [API authorization](../../../../../src/backend/services/insight-v3-core/src/api/mod.rs) | Administrator identity check | REST authority |
-| [MCP authorization](../../../../../src/backend/services/insight-v3-core/src/mcp/auth.rs) | Validated token and administrator role | MCP authority |
+| [MCP authorization](../../../../../src/backend/services/insight-v3-core/src/mcp/auth.rs) | Validated token, administrator role and the person its subject names | MCP authority; the owner of a personal destination written over MCP |
 | [Definition storage](../../../../../src/backend/services/insight-v3-core/src/store/definitions/sql/001_definitions.sql) | Stored metric body by name | A rule names a metric that exists; a check runs the metric as stored at check time |
 
 A metric edit takes effect at the next check without resetting the rule; only a rule edit resets what its checks found. Definitions carry no revision, and versioning them is a feature of its own.
@@ -314,7 +353,8 @@ A metric edit takes effect at the next check without resetting the rule; only a 
 | Discord | Incoming webhook, `POST {webhook_url}?wait=true` | Rate limits answered as 429; the webhook's channel membership is Discord's |
 | Telegram | Bot API `sendMessage` | The bot must be a member of the chat; rate limits answered as 429 |
 | Slack | Web API `chat.postMessage` with a bot token (`chat:write`) | The bot must be a member of the channel, or hold `chat:write.public` for a public one; most errors are answered inside a 200 |
-| Zulip | `POST /api/v1/messages` with bot credentials | The bot must be subscribed to the stream |
+| Zulip | `POST /api/v1/messages` with bot credentials | The bot must be subscribed to the stream; a self-hosted site is reached only at the addresses its name resolves to |
+| System resolver | Host resolution for a self-hosted Zulip at write and at send | Answers are not cached by the service |
 
 ### 3.6 Interactions & Sequences
 
@@ -347,7 +387,8 @@ sequenceDiagram
     participant P as Provider
     Q->>S: Send {notification id}
     S->>DB: Load notification, skip unless pending
-    S->>P: One message
+    S->>DB: Resolve destination by name; open its seal
+    S->>P: One message, pinned to the addresses resolved now
     P-->>S: Receipt, rejection or nothing usable
     S->>DB: Record sent, pending with error, or failed
 ```
@@ -359,11 +400,38 @@ Recovery rules:
 - After downtime, the scheduler runs the next iteration once; the iterations missed are skipped.
 - At startup and every five minutes, the schedule is reconciled from the rules: enabled rules are upserted at their revision, schedulers without a rule are removed. A reconcile that fails is logged; the service starts and the next one tries again.
 
+#### Add and Test a Destination
+
+**ID**: `cpt-insightspec-v3-alerts-seq-destination`
+
+**Use cases**: `cpt-insightspec-v3-alerts-usecase-monitor`
+**Actors**: `cpt-insightspec-v3-alerts-actor-admin`
+
+```mermaid
+sequenceDiagram
+    participant A as Administrator
+    participant D as Destinations
+    participant N as Resolver
+    participant DB as MariaDB
+    participant P as Provider
+    A->>D: Add {name, provider, fields}
+    D->>D: Validate per provider; refuse a configured or taken name
+    D->>N: Resolve a self-hosted host
+    N-->>D: Addresses, all globally routable or refused
+    D->>DB: Insert name, provider, owner, non-secret fields, sealed secret, hint
+    D-->>A: Name, provider, non-secret fields, hint
+    A->>D: Test {name}
+    D->>DB: Load row as owner; open seal
+    D->>P: One fixed message, pinned to the addresses resolved now
+    P-->>D: Receipt, rejection or nothing usable
+    D-->>A: Outcome; nothing recorded
+```
+
 ### 3.7 Database Schemas & Tables
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-db-state`
 
-Both tables live in the service's existing MariaDB database and migration ledger. Column lists are in the migration scripts. The condition and the witness are stored as JSON text, so a wide integer stays exact as digits. The stored condition is the shape the API carries beside the kind of each column it reads, so a row is read back without the metric at hand.
+The tables live in the service's existing MariaDB database and migration ledger. Column lists are in the migration scripts. The condition and the witness are stored as JSON text, so a wide integer stays exact as digits. The stored condition is the shape the API carries beside the kind of each column it reads, so a row is read back without the metric at hand.
 
 #### Table: alert rules
 
@@ -373,6 +441,10 @@ Rule id, name, metric, condition, context columns as a JSON list (null is none),
 
 Notification id, rule id and revision, the rule name, metric, condition, context columns and witness the check saw, when it was evaluated, the destination, status (`pending`, `cancelled`, `sent`, `failed`), attempts, the last error in the provider's words, and the provider receipt. Indexed by rule and time; the newest N per rule are kept, and a pending notification is never dropped.
 
+#### Table: alert destinations
+
+Name as the primary key, provider, owner, the non-secret fields as JSON text, the sealed secret fields as a nonce and a ciphertext, the hint, and when the row was created and last replaced. Indexed by owner. A replace rewrites the fields, the seal and the hint in one statement; a removal locks the destination's row, counts the rules that name it and deletes it in one transaction, and a rule write that names a personal destination holds a shared lock on that row while it inserts or replaces the rule, so a rule cannot commit between the removal's check and its delete.
+
 BullMQ owns its keys in Redis under its own prefix. A finished check is kept there for inspection only up to a fixed count per outcome; a finished delivery job is removed at once, so that queuing a notification again after reconciling is never swallowed by the job it had before.
 
 ### 3.8 Deployment Topology
@@ -381,9 +453,13 @@ BullMQ owns its keys in Redis under its own prefix. A finished check is kept the
 
 The worker runs inside every `insight-v3-core` replica, started after the state is built and stopped on the gear's cancellation token. Replicas coordinate through BullMQ's locks; a check runs on one of them. Alerts are off unless the configuration names a Redis; with them off, the routes answer that the installation has none.
 
-Configuration: `alerts.enabled`, `alerts.redis_url`, `alerts.redis_password` (joined into the URL by the service, percent-encoded, so a password may hold any character), `alerts.destinations.<name>` with `provider` and its fields (Discord `webhook_url`; Telegram `bot_token`, `chat_id`; Slack `bot_token`, `channel`; Zulip `site_url`, `bot_email`, `api_key`, `stream`, `topic`), and the bounds `min_interval_secs`, `max_interval_secs`, `max_rules`, `evaluation_concurrency`, `evaluation_lock_secs`, `notifications_kept_per_rule`, `delivery_attempts`, `delivery_backoff_secs`, `delivery_timeout_secs`, `delivery_concurrency`.
+Configuration: `alerts.enabled`, `alerts.redis_url`, `alerts.redis_password` (joined into the URL by the service, percent-encoded, so a password may hold any character), `alerts.destinations.<name>` with `provider` and its fields (Discord `webhook_url`; Telegram `bot_token`, `chat_id`; Slack `bot_token`, `channel`; Zulip `site_url`, `bot_email`, `api_key`, `stream`, `topic`), `alerts.credential_key` (32 bytes, base64; absent means personal destinations are unavailable and shared ones work), and the bounds `min_interval_secs`, `max_interval_secs`, `max_rules`, `max_destinations_per_administrator`, `evaluation_concurrency`, `evaluation_lock_secs`, `notifications_kept_per_rule`, `delivery_attempts`, `delivery_backoff_secs`, `delivery_timeout_secs`, `delivery_concurrency`.
 
 In the Helm chart, `insightV3Core.alerts.enabled` and `insightV3Core.alerts.redis` turn alerts on and point them at Redis; the chart renders the URL from the host and port and hands the password as its own setting read from the password Secret, so the password stays in the one Secret it is sealed in and never has to be URL-safe. Destination names are lowercase: the environment lowercases every key before the service reads it, and the chart refuses a name that is not already lowercase. Destinations come either from `insightV3Core.alerts.destinations` in values, rendered into the config Secret when the chart generates credentials, or from a Secret the operator seals and names in `insightV3Core.alerts.existingSecret`, which is how a gitops environment supplies them.
+
+The credential key follows the same two paths: when the chart generates credentials it draws the key once and keeps it across upgrades through the same `lookup` the other generated credentials use; a gitops environment adds `APP__gears__insight_v3_core__config__alerts__credential_key` to the Secret it seals. An environment that adds neither keeps shared destinations and gains no personal ones. The key is backed up with that Secret: a lost key makes every personal credential unreadable, and the recovery is re-entering them.
+
+The service's own chart gains an optional egress NetworkPolicy, off by default like the authenticator's: DNS, the service's MariaDB, Redis, ClickHouse and identity by pod selector, and the internet minus loopback, private, link-local, carrier-grade NAT and unique-local ranges. It is defence in depth behind the in-process guard, and holds only where the cluster's network plugin enforces policies.
 
 ## 4. Additional Context
 
@@ -397,10 +473,14 @@ The alternatives were run, not read, against a local MariaDB and Redis before Bu
 - Live MariaDB tests for revisions, conflicts, one notification per breach, stale checks, withdrawal on disable and the kept count.
 - Live Redis tests for one scheduler per rule, for a worker taking a scheduled check through the metric runner to a recorded and queued notification, and for delivery: sent once with a receipt, retried after an unconfirmed answer, failed after the last attempt.
 - Adapter tests against a local server playing each provider: acceptance, rate limit, rejection, server error, an answer not understood, and no answer in time.
+- Sealing tests: open after seal, refuse a lifted ciphertext, refuse a wrong key, refuse a cut nonce; seeded-leak tests with a webhook URL, a bot token and an API key that no log line, read, listing, notification or error carries.
+- Destination validation tests, table-driven over address classes: `http`, an IP literal, a Discord address off the provider's host, and a Zulip host whose resolver answers loopback, private, link-local, carrier-grade NAT, unique-local, multicast or unspecified addresses; adapter tests where the resolver changes its answer between write and send.
+- Live MariaDB tests for destination ownership: another administrator finds a personal destination absent on every operation, a rule against it is refused, a removal while a rule names it is refused with the rule id, a configured name is refused as taken, and a conflict rejects sends.
+- Handler and MCP tests for the destination routes and tools, a test send through the delivery path, and the busy refusal.
 - Handler tests for every route's authorization, validation and revision handling, the preview's outcome shape and refusal paths included; an MCP tool-list test.
 - Component and story tests for the portal screens: draft validation, the condition builder with nested groups, the Editor / JSON switch, the preview readout and the witness, the conflict flow, list and notification paging, the switch's optimistic state, and phone-width layout.
 
-Every check logs the rule, revision, outcome, reason, whether a notification was owed, and its duration. Every send logs the notification, attempt, and receipt or reason. Redis persistence, worker health and failed notifications are operator signals.
+Every check logs the rule, revision, outcome, reason, whether a notification was owed, and its duration. Every send logs the notification, attempt, and receipt or reason. Every destination write, removal and test logs the name, provider and actor; a conflict between configuration and the store is logged at boot and at every send it rejects. Redis persistence, worker health and failed notifications are operator signals.
 
 ### Resolved Decisions
 
@@ -412,8 +492,9 @@ Every check logs the rule, revision, outcome, reason, whether a notification was
 | D5 unknown | Keeps the last valid finding; records time and reason; no freshness condition |
 | D6 edits | Revision per write, `expected_revision` on update; edit or enable resets the finding; disable withdraws pending notifications; delete removes everything |
 | D7 limits | Interval 60 s to 7 d, 200 rules, concurrency 4, check lock 60 s, 200 notifications kept per rule, 5 delivery attempts from 30 s doubling, 10 s provider call, 4 concurrent sends; all configurable |
-| D8 destinations | Operator-provisioned names with a provider and its credentials in configuration; a message of rule, metric, condition in words, witness and check time, within a fixed length; the witness carries the context columns the rule names; per-administrator destinations later behind the same interface |
+| D8 destinations | Names with a provider and its fields, shared from configuration or personal from the store, behind one interface; a message of rule, metric, condition in words, witness and check time, within a fixed length; the witness carries the context columns the rule names |
 | D9 quantifier and witness | `one`, `any`, `all`, `none` or a count; over zero rows `any` is no breach, a count compares zero, the rest are unknown `no_rows`; rows past an imposed row bound count as unknown (`row_limit`); a witness of at most 5 rows holding the group-by, condition and context columns, with matched and answered counts; episodes per rule |
+| D10 personal destinations | Owned by the administrator who added them, on the API as identity names them and on MCP as the token's subject does; owner-only; one namespace with configuration, a configured name refused and a later collision a conflict that rejects sends, shown as such to the owner only and as unavailable to everyone else; secrets sealed with AES-256-GCM under `alerts.credential_key` with name and owner as associated data; a hint of four characters; replace takes every field; removal refused while a rule names it and serialized with rule writes on the destination's row; a test send through the delivery path under its cap; at most 20 per administrator, configurable |
 | Evaluation history | Latest check on the rule only; history is the notifications |
 | Metric snapshot | None; a metric edit applies at the next check |
 
@@ -423,4 +504,4 @@ Every check logs the rule, revision, outcome, reason, whether a notification was
 - **Parent PRD**: [Insight v3](../PRD.md), specifically `cpt-insightspec-v3-fr-create-alerts` and the inherited quality requirements.
 - **Parent DESIGN**: [Insight v3](../DESIGN.md).
 - **Applicable ADRs**: [Separate service](../ADR/0001-separate-service.md), [BullMQ schedules the alert checks](../ADR/0009-bullmq-schedules-alert-checks.md).
-- **Implementation**: `src/backend/services/insight-v3-core/src/domain/alerts`, `store/alerts.rs`, `store/alert_schedule.rs`, `store/providers`, `api/alerts.rs`, `mcp/alerts.rs`; portal screens in `src/frontend/src/components/alerts`, `src/frontend/src/lib/alerts`, `src/frontend/src/queries/alerts.ts` and the `portal.custom.alerts.*` routes.
+- **Implementation**: `src/backend/services/insight-v3-core/src/domain/alerts`, `store/alerts.rs`, `store/alert_schedule.rs`, `store/destinations.rs`, `store/providers`, `api/alerts.rs`, `api/alert_destinations.rs`, `mcp/alerts.rs`; the egress NetworkPolicy in `src/backend/services/insight-v3-core/helm`; portal screens in `src/frontend/src/components/alerts`, `src/frontend/src/lib/alerts`, `src/frontend/src/queries/alerts.ts`, the `portal.custom.alerts.*` and `portal.custom.destinations.*` routes.

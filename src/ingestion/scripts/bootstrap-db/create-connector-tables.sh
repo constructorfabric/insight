@@ -29,21 +29,25 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/connector-catalog.sh"
+# The one composer of the destination's connectionConfiguration: reconcile's
+# Airbyte destination, the seed Job and this script hand the destination the
+# same topology keys, or a cluster gets a plain bronze from one of them.
+COMPOSE_DESTINATION_CONFIG="${SCRIPT_DIR}/../../reconcile-connectors/python/compose_destination_config.py"
 
 WORKDIR="$(allocate_connector_workdir)"
 trap 'rm -rf "${WORKDIR}"' EXIT
 
 NAMESPACE="$(build_configured_catalog "${CONNECTOR_DIR}" "${CONFIG_JSON}" "${WORKDIR}")"
 
-jq -n '{
-    host: env.CLICKHOUSE_HOST,
-    port: env.CLICKHOUSE_PORT,
-    protocol: env.CLICKHOUSE_PROTOCOL,
-    database: env.CLICKHOUSE_DATABASE,
-    username: env.CLICKHOUSE_USER,
-    password: env.CLICKHOUSE_PASSWORD,
-    enable_json: false
-  }' > "${WORKDIR}/destination_config.json"
+RECONCILE_DEST_CLICKHOUSE_HOST="${CLICKHOUSE_HOST}" \
+RECONCILE_DEST_CLICKHOUSE_PORT="${CLICKHOUSE_PORT}" \
+RECONCILE_DEST_CLICKHOUSE_PROTOCOL="${CLICKHOUSE_PROTOCOL}" \
+RECONCILE_DEST_CLICKHOUSE_DATABASE="${CLICKHOUSE_DATABASE}" \
+RECONCILE_DEST_CLICKHOUSE_USERNAME="${CLICKHOUSE_USER}" \
+RECONCILE_DEST_CLICKHOUSE_PASSWORD="${CLICKHOUSE_PASSWORD}" \
+RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE="${CLICKHOUSE_CLUSTER_MODE:-false}" \
+RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}" \
+  python3 "${COMPOSE_DESTINATION_CONFIG}" > "${WORKDIR}/destination_config.json"
 
 echo "create tables in ${NAMESPACE}"
 # World-readable is deliberate: destination-clickhouse does NOT start under a
