@@ -30,7 +30,7 @@ WITH winner AS (
 
 issues AS (
     SELECT
-        CAST(i.tenant_id AS String)                                   AS tenant_id,
+        i.tenant_id                                                   AS tenant_id,
         COALESCE(i.source_id, '')                                     AS insight_source_id,
         COALESCE(toString(i.jira_id), '')                             AS issue_id,
         COALESCE(toString(i.id_readable), '')                         AS id_readable,
@@ -93,7 +93,7 @@ held AS (
 )
 
 SELECT
-    CAST(concat(tenant_id, '-', insight_source_id, '-', issue_id, '-', kind, '-', link_id, '-', target_id, '-', target_key) AS String) AS unique_key,
+    CAST(concat(ifNull(tenant_id, ''), '-', insight_source_id, '-', issue_id, '-', kind, '-', link_id, '-', target_id, '-', target_key) AS String) AS unique_key,
     tenant_id,
     insight_source_id,
     issue_id,

@@ -61,7 +61,7 @@ WITH winner AS (
 -- One row per (issue, field key present in the issue JSON).
 unpivoted AS (
     SELECT
-        CAST(i.tenant_id AS String)                                   AS tenant_id,
+        i.tenant_id                                                   AS tenant_id,
         COALESCE(i.source_id, '')                                     AS insight_source_id,
         COALESCE(toString(i.jira_id), '')                             AS issue_id,
         COALESCE(toString(i.id_readable), '')                         AS id_readable,
@@ -108,7 +108,7 @@ classified AS (
 
 SELECT
     CAST(concat(
-        tenant_id, '-',
+        ifNull(tenant_id, ''), '-',
         insight_source_id, '-',
         issue_id, '-',
         field_id

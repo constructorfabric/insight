@@ -16,7 +16,7 @@
 -- and the lifecycle snapshot chain.
 
 WITH comments AS (
-    SELECT * REPLACE (CAST(tenant_id AS String) AS tenant_id)
+    SELECT *
     FROM {{ source('bronze_jira', 'jira_comments') }}
     ORDER BY _airbyte_extracted_at DESC
     LIMIT 1 BY unique_key
@@ -26,7 +26,7 @@ WITH comments AS (
 -- jira_comments re-emits the whole list (no client-side cursor filter).
 issue_comment_reads AS (
     SELECT
-        CAST(tenant_id AS String)                       AS tenant_id,
+        tenant_id,
         source_id,
         jira_id,
         max(_airbyte_extracted_at)                      AS last_read_at

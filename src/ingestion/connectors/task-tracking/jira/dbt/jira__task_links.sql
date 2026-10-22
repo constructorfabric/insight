@@ -33,7 +33,7 @@ WITH held_now AS (
 -- The issue's current key and its creation, from its newest bronze row.
 issues AS (
     SELECT
-        CAST(tenant_id AS String)                                     AS tenant_id,
+        tenant_id,
         COALESCE(source_id, '')                                       AS insight_source_id,
         COALESCE(toString(jira_id), '')                               AS issue_id,
         argMax(COALESCE(toString(id_readable), ''), _airbyte_extracted_at) AS current_key,
@@ -191,10 +191,10 @@ every_interval AS (
 
 SELECT
     CAST(concat(
-        tenant_id, '-', insight_source_id, '-jira-', issue_id, '-', link_type, '-', occurrence_key, '-',
+        ifNull(tenant_id, ''), '-', insight_source_id, '-jira-', issue_id, '-', link_type, '-', occurrence_key, '-',
         target_ident, '-', toString(toUnixTimestamp64Milli(valid_from))
     ) AS String)                                                      AS unique_key,
-    CAST(tenant_id AS String)                                         AS tenant_id,
+    ifNull(tenant_id, '')                                             AS tenant_id,
     CAST(insight_source_id AS String)                                 AS insight_source_id,
     CAST('jira' AS String)                                            AS data_source,
     CAST(id_readable AS String)                                       AS id_readable,

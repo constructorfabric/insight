@@ -183,7 +183,7 @@ entry_ranks AS (
 )
 
 SELECT
-    CAST(concat(tenant_id, '-', insight_source_id, '-', issue_id, '-', changelog_id) AS String) AS unique_key,
+    CAST(concat(ifNull(tenant_id, ''), '-', insight_source_id, '-', issue_id, '-', changelog_id) AS String) AS unique_key,
     tenant_id,
     insight_source_id,
     issue_id,

@@ -28,6 +28,7 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -87,6 +88,7 @@ class Invocation:
 
     success: bool
     statuses: tuple[str, ...]
+    failed_tests: frozenset[str]
     log: str
 
 
@@ -116,11 +118,17 @@ class Dbt:
         self._log.clear()
         runner = dbtRunner(callbacks=[lambda event: self._log.append(event.info.msg)])
         result = runner.invoke([*args, *self._base])
-        statuses = tuple(str(node.status) for node in getattr(result.result, "results", ()))
+        results = getattr(result.result, "results", ())
+        statuses = tuple(str(node.status) for node in results)
+        failed_tests = frozenset(
+            outcome.node.name
+            for outcome in results
+            if outcome.node.resource_type == "test" and outcome.status in {"fail", "error"}
+        )
         log = "\n".join(self._log)
         if result.exception is not None:
             log = f"{log}\n{result.exception}"
-        return Invocation(success=result.success, statuses=statuses, log=log[-8000:])
+        return Invocation(success=result.success, statuses=statuses, failed_tests=failed_tests, log=log[-8000:])
 
     def invoke(self, *args: str) -> Invocation:
         return self._invoke(*args)
@@ -173,6 +181,9 @@ class Warehouse:
     def dbt_status(self, *args: str) -> Invocation:
         """Run dbt and hand back what it did, judging nothing."""
         return self.dbt_project.invoke(*args)
+
+    def failing_tests(self, names: Iterable[str]) -> frozenset[str]:
+        return self.dbt_status("test", "--select", *names).failed_tests
 
     def dbt(self, *args: str) -> None:
         """Run dbt and fail the test with its output when it errors."""
