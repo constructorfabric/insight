@@ -20,6 +20,12 @@
 -- read and that no synced issue's snapshot links to, one deleted before it was
 -- ever read, or an earlier key of an issue whose own changelog is not synced.
 
+-- INVARIANT: the destination adds `id_readable` to the census on the first sync
+-- after reconcile publishes the manifest that declares it; a sync that runs
+-- before that must still build, so the census arm waits for the column.
+{%- set census_columns = adapter.get_columns_in_relation(source('bronze_jira', 'jira_issue_census')) if execute else [] %}
+{%- set census_has_keys = 'id_readable' in (census_columns | map(attribute='name') | list) %}
+
 WITH issue_rows AS (
     -- Every row, not the newest: bronze keeps one per key the connector saw.
     SELECT
@@ -37,6 +43,7 @@ WITH issue_rows AS (
         COALESCE(toString(jira_id), '')                               AS issue_id,
         toUInt8(1)                                                    AS precedence
     FROM {{ source('bronze_jira', 'jira_issue_keys') }}
+{%- if census_has_keys %}
 
     UNION ALL
 
@@ -48,6 +55,7 @@ WITH issue_rows AS (
         COALESCE(toString(jira_id), '')                               AS issue_id,
         toUInt8(1)                                                    AS precedence
     FROM {{ source('bronze_jira', 'jira_issue_census') }}
+{%- endif %}
 ),
 
 -- A move is a `Key` item on the moved issue's own changelog, with no field id,
