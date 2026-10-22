@@ -3826,6 +3826,7 @@ dependencies = [
 name = "insight-clickhouse"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "clickhouse",
  "serde",
  "serde_json",
