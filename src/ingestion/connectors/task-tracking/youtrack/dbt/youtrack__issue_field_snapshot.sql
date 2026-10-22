@@ -4,7 +4,7 @@ WITH custom AS (
     SELECT i.*, arrayJoin(JSONExtractArrayRaw(custom_fields)) AS f
     FROM {{ ref('youtrack__issue_observations') }} AS i FINAL
 ), field_types AS (
-    SELECT CAST(tenant_id AS String) AS tenant_id, insight_source_id, field_id, observed_at, field_type
+    SELECT tenant_id, insight_source_id, field_id, observed_at, field_type
     FROM {{ ref('youtrack__field_observations') }} FINAL
 ), first_field_types AS (
     SELECT tenant_id, insight_source_id, field_id, argMin(field_type, observed_at) AS field_type
@@ -54,4 +54,4 @@ WITH custom AS (
         'project', 'Project', 'single', {{ youtrack_values("JSONExtractRaw(payload, 'project')") }}, ['opaque_id'], toUInt8(0)
     FROM {{ ref('youtrack__issue_observations') }} FINAL
 )
-SELECT * FROM fields WHERE field_id != ''
+SELECT * REPLACE (ifNull(tenant_id, '') AS tenant_id) FROM fields WHERE field_id != ''

@@ -15,7 +15,7 @@ SELECT c.unique_key AS unique_key, c.source_id AS insight_source_id, 'youtrack' 
     CAST(coalesce(c.issue_id, nullIf(m.issue_id, '')) AS Nullable(String)) AS issue_id
 FROM comments AS c
 LEFT JOIN {{ ref('youtrack__comment_issues') }} AS m
-    ON m.tenant_id = CAST(c.tenant_id AS String) AND m.insight_source_id = c.source_id AND m.comment_id = c.resolved_comment_id
+    ON m.tenant_id = c.tenant_id AND m.insight_source_id = c.source_id AND m.comment_id = c.resolved_comment_id
 LEFT JOIN {{ ref('youtrack__issues') }} AS i
-    ON i.tenant_id = CAST(c.tenant_id AS String) AND i.insight_source_id = c.source_id
+    ON i.tenant_id = c.tenant_id AND i.insight_source_id = c.source_id
     AND i.issue_id = coalesce(c.issue_id, nullIf(m.issue_id, ''))

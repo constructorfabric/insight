@@ -1,15 +1,18 @@
-"""A bronze row without a tenant stops the build instead of landing under an empty one.
+"""A bronze row without a tenant builds, and the tenant tests on its models report it.
 
-The GitHub models that read a bronze tenant convert it with
-`CAST(tenant_id AS String)`, which raises on NULL.
+A key reads the tenant through `ifNull(tenant_id, '')`, so a missing one never makes
+a key Nullable; `not_null` and `not_empty` on each model's tenant are the guard.
 """
 
 from __future__ import annotations
 
 import pytest
-from conftest import SOURCE, Warehouse
+from conftest import SOURCE, TENANT, Warehouse
 
-NULL_TO_STRING = "Cannot convert NULL value to non-Nullable type"
+
+def tenant_tests(model: str) -> tuple[str, str]:
+    return f"not_null_{model}_tenant_id", f"not_empty_{model}_tenant_id"
+
 
 LINK_EVENT = {
     "unique_key": f"no-tenant-{SOURCE}-link-1",
@@ -24,11 +27,15 @@ LINK_EVENT = {
     "link_target_number": 2,
 }
 
-# model -> (bronze table, a row of it)
 CASES: dict[str, tuple[str, dict[str, object]]] = {
     "github__item_events": (
         "pull_request_timeline_events",
-        {**LINK_EVENT, "unique_key": f"no-tenant-{SOURCE}-closed-1", "event_id": "closed-1", "event_type": "ClosedEvent"},
+        {
+            **LINK_EVENT,
+            "unique_key": f"no-tenant-{SOURCE}-closed-1",
+            "event_id": "closed-1",
+            "event_type": "ClosedEvent",
+        },
     ),
     "+github__task_links": ("issue_timeline_events", LINK_EVENT),
     "+github__unowned_commit_emails": (
@@ -45,10 +52,32 @@ CASES: dict[str, tuple[str, dict[str, object]]] = {
 }
 
 
-@pytest.mark.parametrize("selector", sorted(CASES))
-def test_a_bronze_row_without_a_tenant_fails_the_build(case: Warehouse, selector: str) -> None:
-    table, row = CASES[selector]
-    case.insert(table, None, row, "2026-01-10T00:00:00")
+REPORTED_BY: dict[str, tuple[str, str]] = {
+    "github__item_events": ("github__item_events", "not_empty_github__item_events_tenant_id"),
+    "+github__task_links": ("github__issue_link_events", "not_null_github__issue_link_events_tenant_id"),
+    "+github__unowned_commit_emails": (
+        "github__unowned_commit_emails",
+        "not_null_github__unowned_commit_emails_tenant_id",
+    ),
+}
 
-    with pytest.raises(AssertionError, match=NULL_TO_STRING):
+
+def test_the_tenant_tests_pass_over_rows_that_carry_a_tenant(case: Warehouse) -> None:
+    for table, row in CASES.values():
+        case.insert(table, TENANT, row, "2026-01-10T00:00:00")
+    for selector in CASES:
         case.build(selector)
+
+    every_test = [name for model, _ in REPORTED_BY.values() for name in tenant_tests(model)]
+    assert case.failing_tests(every_test) == set(), "no tenant test should fail while every row carries a tenant"
+
+
+@pytest.mark.parametrize("selector", sorted(CASES))
+def test_a_bronze_row_without_a_tenant_builds_and_the_tenant_tests_report_it(case: Warehouse, selector: str) -> None:
+    table, row = CASES[selector]
+    model, reported = REPORTED_BY[selector]
+    case.insert(table, None, row, "2026-01-10T00:00:00")
+    case.build(selector)
+
+    failing = case.failing_tests(tenant_tests(model))
+    assert reported in failing, f"{model} should report the {table} row without a tenant: {sorted(failing)}"

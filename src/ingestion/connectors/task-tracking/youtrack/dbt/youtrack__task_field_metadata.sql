@@ -1,7 +1,7 @@
 {{ config(materialized='table', engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_field_metadata']) }}
 
 WITH catalogue AS (
-    SELECT CAST(tenant_id AS String) AS tenant_id, insight_source_id, field_id, field_name, field_type,
+    SELECT tenant_id, insight_source_id, field_id, field_name, field_type,
         toUInt8(endsWith(field_type, '[*]')) AS is_multi,
         toUInt8(match(field_type, '^(enum|state|version|build|ownedField|user|group)')) AS has_id,
         observed_at
