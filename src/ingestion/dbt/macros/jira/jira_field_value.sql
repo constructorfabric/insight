@@ -242,46 +242,15 @@
 {% endmacro %}
 
 
-{#- Content address for a long-text body (§8). A pure function of the text, so
-    the same body always resolves to the same `jira__task_field_text` row.
-    `sipHash128` is not cryptographic; it is a fast, well-distributed 128-bit
-    digest, which is what content addressing needs. -#}
-{% macro jira_text_id(content) %}
-    lower(hex(sipHash128({{ content }})))
-{% endmacro %}
-
-
-{#- The readable prefix of a long-text body.
-
-    `substringUTF8`, never `substring`: ClickHouse's `substring` counts BYTES,
-    so cutting a body at 200 bytes splits whatever multi-byte character spans
-    that boundary and the row carries invalid UTF-8. Nothing in the dbt chain
-    notices — ClickHouse stores the bytes happily and every array-shape test
-    passes — but a consumer that decodes strings strictly rejects the row. The
-    Rust reader does exactly that, and dying on "incomplete utf-8 byte sequence
-    from index 198" is how this was found.
-
-    The prefix is therefore measured in CHARACTERS, which is also what the
-    variable has always been named. -#}
-{% macro jira_text_prefix(v) %}
-    substringUTF8({{ v }}, 1, {{ var('jira_long_text_prefix_chars', 200) }})
-{% endmacro %}
-
-
-{#- kind = long_text: the journal carries the body's content address plus a short
-    prefix, never the body itself — see `jira__task_field_text`. The prefix keeps
-    a row readable in a drilldown without pulling kilobytes through the array
-    columns on every read of any field.
-
-    `value_id_type` stays `string_literal` rather than gaining a `text_ref` enum
-    value: the enum is a shared cross-source contract, and widening it for one
-    Jira kind is disproportionate while nothing outside the tests reads it. A
-    consumer that needs to tell them apart reads `field_kind`. -#}
+{#- kind = long_text: the journal carries a text reference (`task_field_text`),
+    never the body itself — the body goes to `jira__task_field_text`. The prefix
+    keeps a row readable in a drilldown without pulling kilobytes through the
+    array columns on every read of any field. -#}
 {% macro jira_norm_long_text(v) %}
     (
         if({{ v }} IN ('', 'null', '""', '{}'), [],
-           [CAST({{ jira_text_id(v) }} AS String)]),
+           [CAST({{ task_text_id(v) }} AS String)]),
         if({{ v }} IN ('', 'null', '""', '{}'), [],
-           [CAST({{ jira_text_prefix(v) }} AS String)])
+           [CAST({{ task_text_prefix(v) }} AS String)])
     )
 {% endmacro %}

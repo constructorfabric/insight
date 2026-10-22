@@ -6,17 +6,18 @@
     alias='jira__task_field_text',
     schema='staging',
     engine='ReplacingMergeTree(_version)',
-    order_by=['text_id'],
+    order_by=['unique_key'],
     query_settings={
         'max_bytes_before_external_group_by': 2000000000,
         'max_bytes_before_external_sort': 2000000000,
     },
-    tags=['staging', 'jira']
+    tags=['staging', 'jira', 'silver:class_task_field_text']
 ) }}
 
--- Bodies of long-text fields, addressed by a hash of their content. The journal
--- stores the hash in `value_ids` and a short prefix in `value_displays`; the
--- full body lives here. See
+-- Bodies of long-text fields, addressed by a hash of their content within one
+-- source. The journal stores the hash in `value_ids` and a short prefix in
+-- `value_displays`; the full body lives here and reaches
+-- `silver.class_task_field_text`. See
 -- `connectors/task-tracking/jira/specs/FIELD-HISTORY-IN-DBT.md` §8.
 --
 -- WHY a side table rather than the body inline. ClickHouse is column-oriented,
@@ -27,8 +28,8 @@
 -- re-saved unchanged, or shared across events, stores once.
 --
 -- INVARIANT: `text_id` is a pure function of `content`, so the same body always
--- resolves to the same row and ReplacingMergeTree collapses duplicates without
--- a version race.
+-- resolves to the same row of its source and ReplacingMergeTree collapses
+-- duplicates without a version race.
 --
 -- The two sides of the pipeline carry long text in DIFFERENT representations and
 -- both are kept, distinguished by `content_form`:
@@ -63,6 +64,7 @@ issue_winner AS (
 
 from_snapshot AS (
     SELECT
+        COALESCE(i.source_id, '')                         AS insight_source_id,
         kv.2                                              AS content,
         CAST('adf_json' AS String)                        AS content_form
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
@@ -77,16 +79,17 @@ from_snapshot AS (
 -- Historical bodies, from both sides of every changelog item.
 from_changelog AS (
     SELECT
+        insight_source_id,
         content,
         CAST('rendered_text' AS String)                   AS content_form
     FROM (
-        SELECT ci.value_from_string AS content
+        SELECT ci.insight_source_id AS insight_source_id, ci.value_from_string AS content
         FROM {{ ref('jira__changelog_items') }} AS ci
         INNER JOIN long_text_fields AS f
             ON f.insight_source_id = ci.insight_source_id
            AND f.field_id = ci.field_id
         UNION ALL
-        SELECT ci.value_to_string AS content
+        SELECT ci.insight_source_id AS insight_source_id, ci.value_to_string AS content
         FROM {{ ref('jira__changelog_items') }} AS ci
         INNER JOIN long_text_fields AS f
             ON f.insight_source_id = ci.insight_source_id
@@ -99,10 +102,10 @@ all_text AS (
     -- Non-Nullable on purpose: the changelog columns are Nullable, and a
     -- Nullable content makes `text_id` Nullable too — which cannot be a sorting
     -- key. Both arms already exclude NULL, so the cast asserts what is true.
-    SELECT CAST(assumeNotNull(content) AS String) AS content, content_form
+    SELECT insight_source_id, CAST(assumeNotNull(content) AS String) AS content, content_form
     FROM from_snapshot
     UNION ALL
-    SELECT CAST(assumeNotNull(content) AS String) AS content, content_form
+    SELECT insight_source_id, CAST(assumeNotNull(content) AS String) AS content, content_form
     FROM from_changelog
 )
 
@@ -113,15 +116,19 @@ all_text AS (
 -- named `content` shadows the input column, so any expression wrapping it here
 -- parses as nesting one aggregate inside another.
 SELECT
+    concat(insight_source_id, '-jira-', text_id)          AS unique_key,
+    insight_source_id,
+    CAST('jira' AS String)                                AS data_source,
     text_id,
     any(content_form)                                     AS content_form,
     any(content)                                          AS content,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    toUInt64(toUnixTimestamp64Milli(now64(3)))            AS _version
 FROM (
     SELECT
-        {{ jira_text_id('content') }} AS text_id,
+        insight_source_id,
+        {{ task_text_id('content') }} AS text_id,
         content_form,
         content
     FROM all_text
 )
-GROUP BY text_id
+GROUP BY insight_source_id, text_id

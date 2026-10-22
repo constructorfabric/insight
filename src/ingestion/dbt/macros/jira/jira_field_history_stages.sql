@@ -27,7 +27,7 @@
 
 
 {#- The modelled fields. `long_text` IS modelled: its body is content-addressed
-    into `jira__task_field_text` and the journal carries the hash plus a prefix.
+    into `jira__task_field_text` and the journal carries a text reference.
 
     The catalogue contains a real `created` field, but `created` is also the
     contract's creation-marker sentinel (§10). Emitting both produces two rows
