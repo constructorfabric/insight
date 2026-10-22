@@ -1099,7 +1099,9 @@ for a long-text field is Jira's rendering, so a reconstructed historical body
 is "as Jira rendered it", not the source text. The history references the
 `adf_json` row only where the field never changed — the initial value comes
 from the issue JSON then; after a change, the newest reference is Jira's
-rendering, and no silver row ties the current `adf_json` body to its issue.
+rendering. The exact current body is `jira__task_field_current_text`
+(`silver.class_task_field_current_text`): one `text_id` per issue and field,
+keyed by the issue's immutable `jira_id`.
 
 ## 9. Failure policy
 

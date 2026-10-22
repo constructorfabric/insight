@@ -1,8 +1,9 @@
--- A text reference in the history must name a stored body of its own source,
--- and its display must be a prefix of that body. An unresolved reference leaves
--- a long-text value with only its first characters readable.
+-- A text reference — in the history, or a current body — must name a stored
+-- body of its own source, and a history display must be a prefix of that body.
+-- An unresolved reference leaves a long-text value with only its first
+-- characters readable, or none.
 
-WITH text_refs AS (
+WITH history_refs AS (
     SELECT
         insight_source_id,
         data_source,
@@ -16,6 +17,24 @@ WITH text_refs AS (
         value_ids AS text_id,
         value_displays AS display
     WHERE value_id_type = {{ task_text_ref_type() }}
+),
+
+current_refs AS (
+    SELECT
+        insight_source_id,
+        data_source,
+        issue_id,
+        field_id,
+        'current' AS event_id,
+        text_id,
+        '' AS display
+    FROM {{ ref('class_task_field_current_text') }} FINAL
+),
+
+text_refs AS (
+    SELECT * FROM history_refs
+    UNION ALL
+    SELECT * FROM current_refs
 )
 
 SELECT

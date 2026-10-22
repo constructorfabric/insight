@@ -8,7 +8,7 @@ import json
 from collections.abc import Iterator
 
 import pytest
-from conftest import Scenario
+from conftest import FIELD_HISTORY_SELECTOR, Scenario
 from helpers import event, field, issue, item
 
 DESCRIPTION_ADF = {
@@ -18,13 +18,15 @@ DESCRIPTION_ADF = {
 }
 OLD_BODY = "Old synthetic body " * 20
 NEW_BODY = "New synthetic body " * 20
+ISSUE_ID = "10001"
 
-CLASSES = ("class_task_field_history", "class_task_field_text")
+CLASSES = ("class_task_field_history", "class_task_field_text", "class_task_field_current_text")
 
 
 CLEAR_CLASSES = (
     "DELETE FROM silver.class_task_field_history WHERE insight_source_id = {src:String} SETTINGS mutations_sync = 2",
     "DELETE FROM silver.class_task_field_text WHERE insight_source_id = {src:String} SETTINGS mutations_sync = 2",
+    "DELETE FROM silver.class_task_field_current_text WHERE insight_source_id = {src:String} SETTINGS mutations_sync = 2",
 )
 
 
@@ -37,10 +39,18 @@ def _clear_classes(scenario: Scenario) -> None:
 def silver(scenario: Scenario) -> Iterator[Scenario]:
     scenario.seed(
         fields=[field("description", name="Description", schema_type="string")],
-        issues=[issue("TST-1", fields={"description": DESCRIPTION_ADF})],
-        events=[event("TST-1", 101, "2026-01-06T10:00:00", [item("description", frm_str=OLD_BODY, to_str=NEW_BODY)])],
+        issues=[issue("TST-1", fields={"description": DESCRIPTION_ADF}, jira_id=ISSUE_ID)],
+        events=[
+            event(
+                "TST-1",
+                101,
+                "2026-01-06T10:00:00",
+                [item("description", frm_str=OLD_BODY, to_str=NEW_BODY)],
+                jira_id=ISSUE_ID,
+            )
+        ],
     )
-    scenario.build()
+    scenario.build(f"{FIELD_HISTORY_SELECTOR} +jira__task_field_current_text")
     # Incremental on purpose: a full refresh would drop rows other modules seed.
     scenario.warehouse.dbt("run", "--select", *CLASSES)
     yield scenario
@@ -96,7 +106,32 @@ def test_every_text_reference_resolves(silver: Scenario) -> None:
         "       AND t.data_source = h.data_source"
         "       AND t.text_id = ref"
         " WHERE h.insight_source_id = {src:String} AND h.value_id_type = 'text_ref'"
-        "   AND ifNull(t.text_id, '') = ''",
+        "   AND ifNull(t.text_id, '') = ''"
+        " UNION ALL"
+        " SELECT 'current' AS event_id, c.text_id AS text_id"
+        " FROM silver.class_task_field_current_text AS c FINAL"
+        " LEFT JOIN silver.class_task_field_text AS t FINAL"
+        "        ON t.insight_source_id = c.insight_source_id"
+        "       AND t.data_source = c.data_source"
+        "       AND t.text_id = c.text_id"
+        " WHERE c.insight_source_id = {src:String} AND ifNull(t.text_id, '') = ''",
         {"src": silver.source},
     )
     assert unresolved == []
+
+
+def test_the_current_document_is_found_by_the_issue_id(silver: Scenario) -> None:
+    """After a change the history's newest body is Jira's rendering; the issue's
+    own document is reached through its immutable id, never its key."""
+    rows = silver.warehouse.rows(
+        "SELECT c.issue_id AS issue_id, t.content_form AS content_form, t.content AS content"
+        " FROM silver.class_task_field_current_text AS c FINAL"
+        " INNER JOIN silver.class_task_field_text AS t FINAL"
+        "         ON t.insight_source_id = c.insight_source_id"
+        "        AND t.data_source = c.data_source"
+        "        AND t.text_id = c.text_id"
+        " WHERE c.insight_source_id = {src:String} AND c.field_id = 'description'",
+        {"src": silver.source},
+    )
+    assert [(r["issue_id"], r["content_form"]) for r in rows] == [(ISSUE_ID, "adf_json")]
+    assert json.loads(rows[0]["content"]) == DESCRIPTION_ADF

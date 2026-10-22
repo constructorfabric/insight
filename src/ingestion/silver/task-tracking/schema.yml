@@ -121,6 +121,37 @@ models:
       - name: content
         description: "The full body, never truncated."
 
+  - name: class_task_field_current_text
+    description: >
+      The current body of each long-text field of an issue: one row per
+      (source, issue, field) whose value is not empty, naming the body in
+      `class_task_field_text` by `text_id`. The history's newest reference can be
+      a changelog rendering (Jira `rendered_text`); this row is the body the
+      issue holds now (Jira `adf_json`, YouTrack `markdown`).
+    columns:
+      - name: unique_key
+        description: "Source, issue and field."
+        tests:
+          - not_null
+          - unique
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: data_source
+        tests:
+          - not_null
+      - name: issue_id
+        description: "Immutable source-native issue ID, the same `issue_id` as `class_task_field_history`. Never the readable key."
+        tests:
+          - not_null
+      - name: field_id
+        tests:
+          - not_null
+      - name: text_id
+        description: "The body in `class_task_field_text`, joined on (`insight_source_id`, `data_source`, `text_id`)."
+        tests:
+          - not_null
+
   - name: class_task_field_metadata
     description: "Unified task-tracker field catalog. Declares cardinality (`is_multi`) and whether the field has an opaque ID vs a string literal (`has_id`)."
     columns:
