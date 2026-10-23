@@ -6,7 +6,7 @@ date: 2026-10-23
 
 # Technical Design — Insight v3 Dashboard Ownership and Sharing
 
-Every definition, folder and tag gets a generated id ([ADR-0010](../ADR/0010-definitions-are-addressed-by-generated-identity.md)); dashboards, folders and tags get a nullable owner. One access rule, read per dashboard and applied in list `WHERE` clauses, decides what each caller sees and may do, so pages and totals count only visible rows. Every signed-in person reaches the dashboard routes; the caller's role decides whether the library, authoring, chat and MCP are reachable too.
+Every definition, folder and tag has an id, a new one a generated UUIDv7 and an older one its former name ([ADR-0010](../ADR/0010-definitions-are-addressed-by-generated-identity.md)); dashboards, folders and tags get a nullable owner. One access rule, read per dashboard and applied in list `WHERE` clauses, decides what each caller sees and may do, so pages and totals count only visible rows. Every signed-in person reaches the dashboard routes; the caller's role decides whether the library, authoring, chat and MCP are reachable too.
 
 <!-- toc -->
 
@@ -130,7 +130,7 @@ A dashboard the caller may not see gets the same error, timing path and fields a
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-constraint-admin-gate`
 
-The gateway already admits any browser session to `/api/v3`; the service decides. Every route resolves the caller through identity `GET /v1/me` into `Caller { person_id, role }`, `role` being `Administrator` or `Member`. Library reads and writes, creation, dependents, direct metric runs, drilldowns of either kind, datasets, tables, chat, alerts, the orphaned listing and transfer keep `require_admin`, checked before any lookup, so a member's refusal there says only that the role is required. Dashboard reads, dashboard-scoped widget reads and runs, pins, folders and tag listings take any caller. MCP keeps its own gate, reading the role and subject off the token, so a person whose role is withdrawn keeps MCP access until the token expires, as today.
+The gateway already admits any browser session to `/api/v3`; the service decides. Every route resolves the caller through identity `GET /v1/me` into `Caller { person_id, role }`, `role` being `Administrator` or `Member`. Library reads and writes, creation, dependents, direct metric runs, drilldowns of either kind, datasets, tables, chat, alerts, the orphaned listing and transfer keep `require_admin`, checked before any lookup, so a member's refusal there says only that the role is required. Dashboard reads, dashboard-scoped widget reads and runs, pins, folders and tag listings take any caller. MCP keeps its own gate, reading the role and subject off the token: an MCP access token lives at most `access_token_ttl_seconds` (600 by default) and a refresh re-reads the person's active roles, so a withdrawn role outlives its last token by at most that long. The window is accepted; MCP tokens cannot be forwarded to identity.
 
 #### No Identity Writes
 
@@ -300,12 +300,12 @@ Routes by name, including `POST /v1/{kind}/{name}/rename`, are removed; a rename
 | A member on an administrator route | `permission_denied`: administrator role required, as today |
 | A widget run or drilldown naming a widget the dashboard does not hold | `not_found`, as a missing dashboard |
 | A widget run that fails for a member | The status the metric route answers, with a generic message; the cause logged |
-
-The administrator gate is checked first, so a member on an administrator route hears only that the role is required, whatever the dashboard.
 | A transfer of a dashboard that is not orphaned | `failed_precondition` |
 | A transfer to a person who is not a current administrator | `invalid_argument` on `to` |
 | A folder or tag that does not fit the dashboard's ownership | `invalid_argument` on `folder` or `tags` |
 | Identity unreachable | `internal`, never a permit |
+
+The administrator gate is checked first, so a member on an administrator route hears only that the role is required, whatever the dashboard.
 
 #### MCP Tools
 
@@ -355,7 +355,7 @@ The picker searches `GET /v1/persons?q=` and offers every person it returns exce
 | [In-use refusal](../../../../../src/backend/services/insight-v3-core/src/domain/surfaces.rs) | `CustomError::InUse` | Holder names filtered to visible ones |
 | [Definition store](../../../../../src/backend/services/insight-v3-core/src/store/definitions/sql/) | Migration ledger and scripts | New columns and tables |
 | [Alerts](../alerts/DESIGN.md) | `alert_rules.metric`, `alert_notifications.metric` and `metric_name` | `metric` holds the metric id; a notification also records the metric's name |
-| [Usage telemetry](../../../../../src/frontend/src/telemetry.ts) | `screenPath` masks UUID segments | Dashboard names stop reaching usage |
+| [Usage telemetry](../../../../../src/frontend/src/telemetry.ts) | `screenPath` masks the segment after `/portal/custom` | An older dashboard's id is its former name, so masking UUIDs alone would let it reach usage |
 
 ### 3.5 External Dependencies
 
@@ -467,7 +467,7 @@ No new process, service or configuration.
 
 MariaDB commits each DDL statement on its own, so the upgrade cannot be one transaction. Ledger migrations run in the pre-upgrade hook while the previous build still serves. Each does only what is left, so a run stopped at any statement and restarted ends in the same state.
 
-1. **Ids.** Refuse to start unless the global `sql_mode` includes `STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`. On metrics, widgets and dashboards, rename the `name` column to `id` (InnoDB keeps the primary key and the foreign keys that point at it), add a `name` label column filled from `id`, and index it. An old name already satisfies the id rule, so every reference to one — in a body, `dashboard_pins.dashboard`, `dashboard_tags.dashboard`, `alert_rules.metric` and `alert_notifications.metric` — is already a valid id, and nothing is rewritten. From here an insert by the previous build names no `id`, and strict mode refuses it until that build is replaced.
+1. **Ids.** Refuse to start unless the global `sql_mode` includes `STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`. On metrics, widgets and dashboards, rename the `name` column to `id` (InnoDB keeps the primary key and the foreign keys that point at it), add a `name` label column filled from `id`, and index it. An old name already satisfies the id rule, so every reference to one — in a body, `dashboard_pins.dashboard`, `dashboard_tags.dashboard`, `alert_rules.metric` and `alert_notifications.metric` — is already a valid id, and nothing is rewritten. From here every write of the previous build fails until that build is replaced: its writes are all inserts (`INSERT ... ON DUPLICATE KEY UPDATE`), which name no `id`, and strict mode refuses them; its rename is one transaction of such writes, so a refusal rolls the whole rename back and no reference is rewritten.
 2. **Ownership.** Add `owner_person_id` to dashboards, folders and tags, and `owner_scope` with its unique key `(owner_scope, name)` to tags; drop the unique name keys on folders and tags; create `dashboard_shares` and `dashboard_placements`. Every existing row stays ownerless.
 3. **Metric names on notifications.** Add a nullable `alert_notifications.metric_name`, recorded from the metric's label when a check owes a notification; a row without one shows its metric id, which for an older metric is its former name.
 

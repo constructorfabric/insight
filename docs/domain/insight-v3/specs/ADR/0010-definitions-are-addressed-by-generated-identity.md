@@ -49,7 +49,7 @@ Two names stay unique:
 * A tag's, per owner: tags are applied by name and created on first use, so a name must resolve to one tag.
 * A dataset's, installation-wide: outside producers send records to a dataset by name, and its physical table is named after it, so the name stays its identity. Datasets have no owner, so their names disclose nothing private.
 
-A definition that predates the change keeps its former name as its id. A name already satisfies the id rule, so every stored reference stays valid and the upgrade rewrites nothing; new definitions get UUIDv7 ids.
+This narrows the platform's [UUIDv7 primary key ADR](../../../../shared/glossary/ADR/0001-uuidv7-primary-key.md) for these tables: the primary key and the API identifier stay one value with no translation, as that ADR asks, but the column is `VARCHAR(128)` and holds a former name on older rows. A definition that predates the change keeps its former name as its id. A name already satisfies the id rule, so every stored reference stays valid and the upgrade rewrites nothing; new definitions get UUIDv7 ids.
 
 ### Consequences
 

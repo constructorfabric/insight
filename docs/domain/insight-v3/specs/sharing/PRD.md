@@ -207,7 +207,7 @@ Metrics, widgets and datasets **MUST** stay visible to and editable by administr
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-fr-share`
 
-An owner **MUST** be able to share a dashboard for viewing with one person picked by name, and list its shares. Any person identity knows is offered and accepted; the administrator role is not required, and there is no cap. Sharing twice changes nothing. Viewers see the owner, not each other.
+An owner **MUST** be able to share a dashboard for viewing with one person picked by name and bound by identity's person id, and list its shares. Any person identity knows is offered and accepted; the administrator role is not required, and there is no cap. Sharing twice changes nothing. Viewers see the owner, not each other.
 
 **Actors**: `cpt-insightspec-v3-sharing-actor-owner`
 
@@ -315,7 +315,7 @@ Nothing about an invisible dashboard (existence, name, owner, tags, folder, cont
 
 A member **MUST** reach nothing in the Custom zone but the dashboards shared with them, what those dashboards draw, and their own pins and folders.
 
-**Threshold**: every library, creation, metric-run, drilldown, chat, MCP, orphaned, alert, dataset and ownerless surface refuses a member as not permitted; a widget drawn through a dashboard is one that dashboard holds; no message to a member names a warehouse table or column, or a dataset. A member does read the widgets a shared dashboard holds, which name their metric and detail metric and the result columns they draw.
+**Threshold**: every library, creation, direct metric-run, drilldown, chat, MCP, orphaned, alert, dataset and ownerless surface refuses a member as not permitted; a widget drawn through a dashboard, the one way a member runs a metric, is one that dashboard holds; no message to a member names a warehouse table or column, or a dataset. A member does read the widgets a shared dashboard holds, which name their metric and detail metric and the result columns they draw.
 
 **Rationale**: A shared page is a window onto chosen data, not a key to the warehouse.
 
@@ -390,7 +390,7 @@ None.
 
 **Direction**: Outbound to the identity service.
 
-**Protocol/Format**: The caller, their administrator role, current administrators, whether a person exists, display names.
+**Protocol/Format**: The caller, their administrator role, current administrators, whether a person exists, person ids, display names.
 
 **Compatibility**: Only what identity already offers administrators.
 
@@ -432,7 +432,7 @@ None.
 ## 9. Acceptance Criteria
 
 - [ ] Tests prove every requirement in §5 and §6.2 on each surface it names, `cpt-insightspec-v3-sharing-nfr-isolation` as an administrator and as a member who is neither owner nor viewer.
-- [ ] `cpt-insightspec-v3-sharing-fr-render` and `cpt-insightspec-v3-sharing-nfr-reach`: a member opens a shared dashboard and its widgets draw; the same member is refused on every library, creation, metric-run, drilldown, chat, MCP, orphaned, alert, dataset and ownerless surface; a widget the dashboard does not hold answers as missing; a failing widget tells the member nothing of its warehouse table or columns, or its dataset.
+- [ ] `cpt-insightspec-v3-sharing-fr-render` and `cpt-insightspec-v3-sharing-nfr-reach`: a member opens a shared dashboard and its widgets draw; the same member is refused on every library, creation, direct metric-run, drilldown, chat, MCP, orphaned, alert, dataset and ownerless surface; a widget the dashboard does not hold answers as missing; a failing widget tells the member nothing of its warehouse table or columns, or its dataset.
 - [ ] `cpt-insightspec-v3-sharing-fr-owner`: a duplicate of an ownerless dashboard carries its tag names as the duplicator's and sits in no folder.
 - [ ] `cpt-insightspec-v3-sharing-fr-identity`: same-named dashboards, folders, widgets or metrics coexist; same-named tags only under different owners; same-named datasets never.
 - [ ] Parent quality gates hold, including coverage and non-degradation.
