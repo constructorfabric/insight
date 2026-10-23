@@ -73,13 +73,16 @@ SQL
 TASK_CLASSES=(
   class_task_comments class_task_field_history class_task_field_metadata class_task_issuetypes class_task_links
   class_task_projects class_task_sprints class_task_statuses class_task_worklogs
+  class_task_field_text class_task_field_current_text
 )
 
 TASK_PRODUCERS=(
   jira__field_history_derived jira__comment_lifecycle_events jira__worklog_lifecycle_events jira__availability_events
   jira__task_comments jira__task_worklogs jira__task_field_metadata jira__task_links
+  jira__task_field_text jira__task_field_current_text
   youtrack__task_field_history youtrack__task_field_metadata youtrack__task_issuetypes youtrack__task_links
   youtrack__task_comments youtrack__task_projects youtrack__task_sprints youtrack__task_statuses youtrack__task_worklogs
+  youtrack__task_field_text youtrack__task_field_current_text
   github__task_field_history github__task_links
 )
 TASK_PRODUCER_VIEWS=(

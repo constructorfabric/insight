@@ -133,6 +133,8 @@ PRODUCERS = (
     "youtrack__task_sprints",
     "youtrack__task_statuses",
     "youtrack__task_worklogs",
+    "youtrack__task_field_text",
+    "youtrack__task_field_current_text",
 )
 
 

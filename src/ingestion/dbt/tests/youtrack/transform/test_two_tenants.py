@@ -264,3 +264,78 @@ def test_another_tenants_value_of_the_same_field_is_never_stored_as_a_body(case:
 
     assert "Synthetic notes body" in bodies, bodies
     assert THEIR_ENUM not in bodies, bodies
+
+
+SHARED_NOTES = "Shared synthetic notes " * 20
+DESCRIPTIONS = {
+    TENANT: "Synthetic description of this tenant " * 10,
+    OTHER_TENANT: "Synthetic description of theirs " * 10,
+}
+TEXT_CLASSES = "class_task_field_history class_task_field_text class_task_field_current_text"
+
+
+def _seed_text_classes(case: Warehouse) -> None:
+    for tenant, description in DESCRIPTIONS.items():
+        _field_type(case, tenant, "text[1]", "2026-01-10T00:00:00")
+        notes = {
+            "id": "issue-field",
+            "name": "Synthetic field",
+            "$type": "TextIssueCustomField",
+            "projectCustomField": {"id": "project-field", "field": {"id": "field-1"}},
+            "value": {"id": "text-value", "text": SHARED_NOTES, "$type": "TextFieldValue"},
+        }
+        case.insert(
+            "youtrack_issues",
+            {
+                "tenant_id": tenant,
+                "id": "issue-1",
+                "idReadable": "EX-1",
+                "created": 1767225600000,
+                "unique_key": f"{tenant}-{SOURCE}-issue-1",
+                "reporter_id": "user-1",
+                "project_id": "project-1",
+                "custom_fields_json": json.dumps([notes]),
+                "issue_json": json.dumps({"summary": "Synthetic issue", "description": description, "links": []}),
+            },
+        )
+    case.build()
+    case.build(TEXT_CLASSES)
+
+
+def test_the_same_body_is_stored_once_per_tenant_in_the_class(case: Warehouse) -> None:
+    _seed_text_classes(case)
+
+    rows = list(
+        case.rows(
+            "SELECT tenant_id, text_id, unique_key FROM silver.class_task_field_text FINAL"
+            f" WHERE data_source = 'youtrack' AND insight_source_id = '{SOURCE}'"
+            f" AND startsWith(content, 'Shared synthetic notes') ORDER BY tenant_id"
+        )
+    )
+
+    assert [r["tenant_id"] for r in rows] == sorted(DESCRIPTIONS), rows
+    assert len({r["text_id"] for r in rows}) == 1, f"one body should hash to one text_id: {rows}"
+    assert all(str(r["unique_key"]).startswith(f"{r['tenant_id']}-{SOURCE}-youtrack-") for r in rows), rows
+
+
+def test_each_tenants_current_description_resolves_to_its_own_body(case: Warehouse) -> None:
+    _seed_text_classes(case)
+
+    found = _per_tenant(
+        case,
+        "SELECT c.tenant_id AS tenant_id, t.content AS value"
+        " FROM silver.class_task_field_current_text AS c FINAL"
+        " INNER JOIN silver.class_task_field_text AS t FINAL"
+        "     ON t.tenant_id = c.tenant_id AND t.insight_source_id = c.insight_source_id"
+        "    AND t.data_source = c.data_source AND t.text_id = c.text_id"
+        f" WHERE c.data_source = 'youtrack' AND c.insight_source_id = '{SOURCE}'"
+        " AND c.issue_id = 'issue-1' AND c.field_id = 'description'",
+    )
+
+    assert found == DESCRIPTIONS
+
+
+def test_every_text_reference_of_two_tenants_resolves(case: Warehouse) -> None:
+    _seed_text_classes(case)
+
+    case.dbt("test", "--select", "assert_text_refs_resolve")
