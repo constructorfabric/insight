@@ -82,6 +82,7 @@ def issue(
     reporter_id: str = "reporter-acct",
     extracted_at: str = OBSERVED_AT,
     jira_id: str | None = None,
+    updated: str | None = None,
 ) -> dict[str, Any]:
     """The issue's current state. `fields` becomes `custom_fields_json`.
 
@@ -92,6 +93,10 @@ def issue(
     `jira_id` defaults to the key. Pass it explicitly to seed the same issue
     under two keys — the shape a move between projects leaves in bronze, whose
     rows are keyed by whatever key the connector saw at the time.
+
+    `updated` defaults to `created`. Pass a later time to seed an issue edited
+    after its last changelog event: a link its read no longer holds then closes
+    at that `updated`, not at the read.
     """
     return {
         **_airbyte(extracted_at),
@@ -105,7 +110,7 @@ def issue(
         "project_key": key.split("-")[0],
         "reporter_id": reporter_id,
         "created": created,
-        "updated": created,
+        "updated": updated or created,
         "custom_fields_json": json.dumps(fields if fields is not None else {}, sort_keys=True),
         "collected_at": extracted_at,
     }

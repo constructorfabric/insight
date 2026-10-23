@@ -5,6 +5,7 @@ Usage:
   check.py snapshot --out counts.json
   check.py assert   --baseline counts.json --probe-rows N --run-results run_results.json
                     [--users presentation] [--columns db.table:column ...]
+  check.py nodes                                  every node holds the same warehouse
   check.py relation --name db.table --rows N     a service's table on every node
   check.py absent   --name db.table              a service's table gone from every node
   check.py quorum-boundary --out boundary.json    where every node's query log ends now
@@ -303,10 +304,11 @@ def check_users(users: list[str]) -> None:
         emit(f"ok  3. {user} signs in on {len(grants)} node(s) with {', '.join(grants[nodes()[0]][0])}")
 
 
-def check_engines() -> None:
+def check_engines(bronze_replacing: bool = True) -> None:
     """4. Owned databases are Replicated and bronze is Atomic on a cluster; Bronze
-    tables are (Replicated)ReplacingMergeTree; every other MergeTree table follows
-    the topology."""
+    tables are (Replicated)ReplacingMergeTree, unless the warehouse carries the
+    legacy bronze shapes a warm installation does; every other MergeTree table
+    follows the topology."""
     url = nodes()[0]
     wrong = []
     owned_engine = "Replicated" if replicated() else "Atomic"
@@ -318,7 +320,7 @@ def check_engines() -> None:
     for table, engine in tables(url).items():
         if not engine.endswith("MergeTree"):
             continue
-        if table.startswith(BRONZE_PREFIX):
+        if table.startswith(BRONZE_PREFIX) and bronze_replacing:
             if engine != bronze_engine:
                 wrong.append(f"{table}: {engine}, expected {bronze_engine}")
         elif engine.startswith("Replicated") != replicated():
@@ -381,6 +383,32 @@ def check_rerun(baseline: str, now: dict[str, dict[str, int]]) -> None:
 
 def engine_follows_topology(engine: str) -> bool:
     return not engine.endswith("MergeTree") or engine.startswith("Replicated") == replicated()
+
+
+def check_nodes_agree() -> None:
+    """Every node holds the same warehouse: the same databases, relations and
+    columns, engines that follow the topology, the same row count in every
+    table, and nothing dbt staged left behind. What an upgrade onto a warm
+    warehouse is held to, where no run of this rig built the relations."""
+    sync_replicas()
+    db_per_node = {url: databases(url) for url in nodes()}
+    per_node = {url: tables(url) for url in nodes()}
+    columns_per_node = {url: columns(url) for url in nodes()}
+    problems = (
+        differences(db_per_node, "database engine")
+        + differences(per_node, "relation")
+        + differences(columns_per_node, "column")
+    )
+    if problems:
+        raise Failure("nodes differ:\n  " + "\n  ".join(problems))
+    first = nodes()[0]
+    emit(
+        f"ok  {len(db_per_node[first])} database(s), {len(per_node[first])} relation(s) and "
+        f"{len(columns_per_node[first])} column(s) identical on {len(per_node)} node(s)"
+    )
+    check_engines(bronze_replacing=False)
+    check_counts_agree()
+    check_no_leftovers()
 
 
 def check_relation(name: str, expected_rows: int) -> None:
@@ -478,6 +506,7 @@ def main() -> int:
     check.add_argument("--run-results", required=True, help="the dbt run's run_results.json")
     check.add_argument("--users", default="", help="comma-separated provisioned users to sign in as")
     check.add_argument("--columns", nargs="*", default=[], help="db.table:column a sync added, expected on every node")
+    sub.add_parser("nodes")
     relation = sub.add_parser("relation")
     relation.add_argument("--name", required=True)
     relation.add_argument("--rows", type=int, required=True)
@@ -492,6 +521,8 @@ def main() -> int:
     try:
         if args.command == "snapshot":
             snapshot(args.out)
+        elif args.command == "nodes":
+            check_nodes_agree()
         elif args.command == "relation":
             check_relation(args.name, args.rows)
         elif args.command == "absent":

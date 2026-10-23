@@ -6,13 +6,32 @@ assertions it runs on every node afterwards (#3555, epic #2010).
 ```sh
 RIG_TOPOLOGY=standalone src/ingestion/tests/cluster-rig/run.sh
 RIG_TOPOLOGY=replicated src/ingestion/tests/cluster-rig/run.sh
+RIG_TOPOLOGY=replicated BASE_SHA=<commit> src/ingestion/tests/cluster-rig/warm-upgrade.sh
 ```
 
-Needs Docker, `jq`, `yq`, `curl`, a `python3.12` and `cargo`.
+Needs Docker, `helm`, `jq`, `yq`, `curl`, a `python3.12` and `cargo`.
 `RIG_DBT_VENV=<venv>` reuses a venv with the pinned dbt instead of building
 one; `RIG_SERVICES_BIN=<dir>` reuses built `identity-resolution` and
 `insight-v3-core` binaries instead of building them. `RIG_KEEP=1` leaves the
 containers up.
+
+The lane runs in the merge queue, not on the pull request: its `Cluster rig`
+check is required on `main`, every leg is skipped on a pull request, and a
+`changes` job decides from the merge base whether the diff touched a creator
+of a warehouse relation. Three legs, each on a machine of its own: `run.sh`
+on the standalone and on the replicated warehouse, and `warm-upgrade.sh` on
+the replicated one.
+
+## The deploy hook
+
+Every deploy hook the rig runs is the chart's `clickhouse-migrate` Job as
+`charts/insight` renders it for the warehouse — `clickhouse.clusterMode` and
+`clickhouse.clusterName` set the way an operator sets them — reduced to the
+Job's command and env: the command runs with this tree's scripts in place of
+the toolbox image's, under that env and nothing else of the rig's shell, with
+the rig standing in for the Secret the Job reads. A value the chart spells
+differently from what the script reads fails here, not on an install. A leg
+that deploys the wrong topology overrides the chart values the same way.
 
 ## Topologies
 
@@ -75,11 +94,23 @@ A MariaDB beside the warehouse holds the two services' definitions.
 9. the deploy hook and the dbt run once more;
 10. the services, second run: the persons sync swaps behind the live table's
     watermark; another dataset lives and dies;
-11. the assertions;
-12. on `replicated` only: a plain `ReplacingMergeTree` table is created in a
-    bronze database on `ch1` directly, as a table from before `clusterMode` was
-    turned on; the deploy hook must refuse it by name before creating anything,
-    and deploy again once it is dropped (#3899).
+11. the deploys the warehouse must refuse — each fails on its guard, in the
+    words the guard documents (`lib/ch-topology.sh`), and before anything is
+    created:
+    - on `standalone`: the chart rendered with `clusterMode: true` and a
+      cluster name, which the lone node does not list;
+    - on `replicated`: the chart rendered with `clusterMode: false` over the
+      Replicated databases;
+    - on `replicated`: a plain `ReplacingMergeTree` table created in a bronze
+      database on `ch1` directly, as a table from before `clusterMode` was
+      turned on; refused by name, and the hook deploys again once it is dropped
+      (#3899);
+    - on `replicated`: `ch2` stopped. The bronze sweep reads every replica and
+      a missing one fails it closed, so the hook refuses in well under the
+      ceiling a coordinated statement waits (`CH_DDL_TASK_TIMEOUT_S`) and `ch1`'s
+      relations are exactly what they were. With `ch2` back, the hook deploys
+      again;
+12. the assertions.
 
 After each service run, [`check.py`](check.py) reads every node directly:
 `identity.identity_persons` and the dataset's table stand there with the
@@ -89,6 +120,22 @@ replica served the persons sync shows, past a boundary taken on every node
 just before that sync, its staging insert confirmed on a quorum and its count
 read sequentially consistent (`insight-clickhouse`'s
 `consistency.rs`).
+
+## The warm upgrade
+
+[`warm-upgrade.sh`](warm-upgrade.sh) raises the same warehouse and runs the
+warm-upgrade simulation on it (`.github/workflows/scripts/warm-upgrade-sim.sh`,
+the one `warm-upgrade.yml` runs on a single node): the base commit's deploy
+hook, its connectors' bronze through the destination and its last sync, then
+the older relation shapes an installation carries — git pull requests settled
+under the previous close contract, jira bronze from before 6.1.0, the
+catalogue first-sync record as a plain table — then this tree's deploy hook,
+the simulation's own assertions on what the heals left, and this tree's first
+sync. The fixtures spell their engines behind the topology markers the hook
+renders, so on the replicated warehouse they stand as `Replicated*` tables on
+both nodes. Afterwards `check.py nodes` holds every node to the same
+databases, relations, columns, engines and row counts, with nothing dbt
+staged left behind. The base commit must itself be cluster-aware.
 
 ## Assertions
 

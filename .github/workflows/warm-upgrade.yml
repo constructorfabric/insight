@@ -23,7 +23,9 @@ name: Warm upgrade
 # buildable graph, standing in for that first sync.
 #
 # Not a required check: on pull requests an `on: paths` filter scopes it to
-# the warehouse path, so an unrelated change gets no run at all.
+# the warehouse path, so an unrelated change gets no run at all. This lane
+# upgrades a single node; the same simulation on a two-replica warehouse is
+# a required leg of cluster-mode.yml, run in the merge queue.
 #
 # The push run is not redundant: a PR is validated against its own base, so
 # two PRs green apart can still leave main uncovered, and only a run on the
