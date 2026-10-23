@@ -11,11 +11,21 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
+[features]
+test-support = ["dep:axum", "dep:tokio", "clickhouse/test-util"]
+
 [dependencies]
 clickhouse = { workspace = true }
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 time = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+clickhouse = { workspace = true, features = ["test-util"] }
+axum = { workspace = true }
+tokio = { workspace = true }

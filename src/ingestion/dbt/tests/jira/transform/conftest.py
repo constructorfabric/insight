@@ -391,17 +391,14 @@ class Scenario:
         return self.invariants_hold("assert_jira_field_history_round_trip")
 
     def text_rows(self, text_id: str | None = None) -> list[dict[str, Any]]:
-        """The long-text side table, addressed by content hash (§8).
-
-        The table is content-addressed and carries no source, so scenarios
-        sharing a build share it: ask for the address the journal gave you.
-        """
+        """This scenario's rows of the long-text side table (§8)."""
         return self.warehouse.rows(
-            "SELECT text_id, content_form, content"
+            "SELECT insight_source_id, data_source, text_id, content_form, content"
             " FROM staging.jira__task_field_text FINAL"
-            " WHERE ({text:String} = '' OR text_id = {text:String})"
+            " WHERE insight_source_id = {src:String}"
+            "   AND ({text:String} = '' OR text_id = {text:String})"
             " ORDER BY content_form, content",
-            {"text": text_id or ""},
+            {"src": self.source, "text": text_id or ""},
         )
 
     def links(self, *, issue_id: str | None = None) -> list[dict[str, Any]]:
@@ -442,6 +439,8 @@ def _truncate_bronze(warehouse: Warehouse) -> None:
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_history")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_statuses")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_comments")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_keys")
     warehouse.generation += 1
 
 

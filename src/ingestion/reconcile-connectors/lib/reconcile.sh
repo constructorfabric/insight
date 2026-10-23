@@ -77,15 +77,14 @@ reconcile__log() {
 # Resolves (or creates) the Airbyte destination Bronze sink owned by
 # reconcile. Strategy:
 #   1. If RECONCILE_DESTINATION_ID env is set (legacy / explicit override),
-#      use it verbatim.
-#   2. Otherwise, look up an existing destination by name
-#      RECONCILE_DESTINATION_NAME (default `clickhouse-bronze`); if absent,
-#      create one with definition Clickhouse and config from
-#      RECONCILE_DEST_CLICKHOUSE_* env (host/port/db/user/password).
-# The Clickhouse definition is resolved by name, so this path also refuses a
-# destination older than python/check_destination_version.py's minimum. The
-# explicit-id override skips both the lookup and the check: that destination's
-# configuration belongs to whoever set the id, not to reconcile.
+#      use it verbatim: that destination's configuration belongs to whoever
+#      set the id, not to reconcile.
+#   2. Otherwise, converge the destination named RECONCILE_DESTINATION_NAME
+#      (default `clickhouse-bronze`) on the configuration composed from
+#      RECONCILE_DEST_CLICKHOUSE_* env — created when absent, updated when
+#      its stored configuration differs (ab_ensure_destination).
+# Both paths refuse a destination older than python/check_destination_version.py's
+# minimum: it is reconcile's catalogues the destination runs either way.
 # Caches the resolved id in _RECONCILE_DESTINATION_ID for the run.
 # Echoes the destinationId on stdout; returns non-zero on failure.
 # ---------------------------------------------------------------------------
@@ -95,21 +94,24 @@ reconcile_resolve_destination_id() {
     printf '%s' "${_RECONCILE_DESTINATION_ID}"
     return 0
   fi
-  if [[ -n "${RECONCILE_DESTINATION_ID:-}" ]]; then
-    _RECONCILE_DESTINATION_ID="${RECONCILE_DESTINATION_ID}"
-    printf '%s' "${_RECONCILE_DESTINATION_ID}"
-    return 0
-  fi
-  local dest_name="${RECONCILE_DESTINATION_NAME:-clickhouse-bronze}"  # RULE-DEFAULTS-OK: project-fixed name, not operator-tunable
-  local definition
-  if ! definition="$(ab_destination_definition_by_name Clickhouse 2>/dev/null)"; then
-    reconcile__log ERROR "${subject}" \
-      "Airbyte does not register a Clickhouse destination definition in this workspace — cannot bootstrap Bronze sink"
-    return 1
-  fi
 
-  local def_id def_version
-  IFS=$'\t' read -r def_id def_version <<<"${definition}"
+  local dest_id="" def_id="" def_version
+  if [[ -n "${RECONCILE_DESTINATION_ID:-}" ]]; then
+    dest_id="${RECONCILE_DESTINATION_ID}"
+    if ! def_version="$(ab_destination_version "${dest_id}" 2>/dev/null)"; then
+      reconcile__log ERROR "${subject}" \
+        "RECONCILE_DESTINATION_ID=${dest_id} names no destination this Airbyte can describe"
+      return 1
+    fi
+  else
+    local definition
+    if ! definition="$(ab_destination_definition_by_name Clickhouse 2>/dev/null)"; then
+      reconcile__log ERROR "${subject}" \
+        "Airbyte does not register a Clickhouse destination definition in this workspace — cannot bootstrap Bronze sink"
+      return 1
+    fi
+    IFS=$'\t' read -r def_id def_version <<<"${definition}"
+  fi
 
   local refusal
   if ! refusal="$(python3 "${_RECONCILE_PY_DIR}/check_destination_version.py" "${def_version}")"; then
@@ -117,32 +119,33 @@ reconcile_resolve_destination_id() {
     return 1
   fi
 
-  # Build connection config from env. Required for fresh-cluster bootstrap;
-  # caller (Helm chart reconcile-cron.yaml) injects them from chart values
-  # + insight-db-creds secret.
-  : "${RECONCILE_DEST_CLICKHOUSE_HOST:?RECONCILE_DEST_CLICKHOUSE_HOST must be set (the in-cluster ClickHouse host for the Bronze destination)}"
-  : "${RECONCILE_DEST_CLICKHOUSE_PORT:?RECONCILE_DEST_CLICKHOUSE_PORT must be set}"
-  : "${RECONCILE_DEST_CLICKHOUSE_DATABASE:?RECONCILE_DEST_CLICKHOUSE_DATABASE must be set}"
-  : "${RECONCILE_DEST_CLICKHOUSE_USERNAME:?RECONCILE_DEST_CLICKHOUSE_USERNAME must be set}"
-  : "${RECONCILE_DEST_CLICKHOUSE_PASSWORD:?RECONCILE_DEST_CLICKHOUSE_PASSWORD must be set}"
-  # connectionConfiguration for airbyte/destination-clickhouse 2.x — the shape
-  # and the topology keys both live in python/compose_destination_config.py.
-  # RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE / _CLUSTER_NAME are optional and
-  # default to a standalone install (epic #2010).
-  local config_json
-  if ! config_json="$(python3 "${_RECONCILE_PY_DIR}/compose_destination_config.py")"; then
-    reconcile__log ERROR "${subject}" "could not compose the Bronze destination configuration"
-    return 1
-  fi
-
-  local dest_id
-  if ! dest_id="$(ab_ensure_destination "${dest_name}" "${def_id}" "${config_json}")"; then
-    reconcile__log ERROR "${subject}" "ab_ensure_destination failed for ${dest_name}"
-    return 1
-  fi
   if [[ -z "${dest_id}" ]]; then
-    reconcile__log ERROR "${subject}" "ab_ensure_destination returned empty id for ${dest_name}"
-    return 1
+    local dest_name="${RECONCILE_DESTINATION_NAME:-clickhouse-bronze}"  # RULE-DEFAULTS-OK: project-fixed name, not operator-tunable
+    # Required for fresh-cluster bootstrap; caller (Helm chart reconcile-cron.yaml)
+    # injects them from chart values + insight-db-creds secret.
+    : "${RECONCILE_DEST_CLICKHOUSE_HOST:?RECONCILE_DEST_CLICKHOUSE_HOST must be set (the in-cluster ClickHouse host for the Bronze destination)}"
+    : "${RECONCILE_DEST_CLICKHOUSE_PORT:?RECONCILE_DEST_CLICKHOUSE_PORT must be set}"
+    : "${RECONCILE_DEST_CLICKHOUSE_DATABASE:?RECONCILE_DEST_CLICKHOUSE_DATABASE must be set}"
+    : "${RECONCILE_DEST_CLICKHOUSE_USERNAME:?RECONCILE_DEST_CLICKHOUSE_USERNAME must be set}"
+    : "${RECONCILE_DEST_CLICKHOUSE_PASSWORD:?RECONCILE_DEST_CLICKHOUSE_PASSWORD must be set}"
+    # connectionConfiguration for airbyte/destination-clickhouse 2.x — the shape
+    # and the topology keys both live in python/compose_destination_config.py.
+    # RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE / _CLUSTER_NAME are optional and
+    # default to a standalone install (epic #2010).
+    local config_json
+    if ! config_json="$(python3 "${_RECONCILE_PY_DIR}/compose_destination_config.py")"; then
+      reconcile__log ERROR "${subject}" "could not compose the Bronze destination configuration"
+      return 1
+    fi
+
+    if ! dest_id="$(ab_ensure_destination "${dest_name}" "${def_id}" "${config_json}")"; then
+      reconcile__log ERROR "${subject}" "ab_ensure_destination failed for ${dest_name}"
+      return 1
+    fi
+    if [[ -z "${dest_id}" ]]; then
+      reconcile__log ERROR "${subject}" "ab_ensure_destination returned empty id for ${dest_name}"
+      return 1
+    fi
   fi
   _RECONCILE_DESTINATION_ID="${dest_id}"
   printf '%s' "${dest_id}"

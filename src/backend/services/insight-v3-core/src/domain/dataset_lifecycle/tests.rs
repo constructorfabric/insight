@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use chrono::{TimeZone as _, Utc};
 use clickhouse::test::{Mock, handlers};
 use serde::Serialize;
@@ -68,8 +70,11 @@ impl Fixture {
         }
     }
 
-    /// The datasets database answers that nothing holds the name.
+    /// The datasets database stands as a plain one and answers that nothing
+    /// holds the name.
     fn nothing_holds_the_name(&self) {
+        self.mock
+            .add(handlers::provide(vec![String::from("Atomic")]));
         self.mock.add(handlers::provide(Vec::<NoTable>::new()));
     }
 
@@ -359,6 +364,39 @@ async fn a_publication_the_store_never_answered_for_keeps_its_table() -> R {
         !issued.contains("DROP TABLE"),
         "an unanswered publication must leave its table alone: {issued}"
     );
+
+    Ok(())
+}
+
+/// The warehouse may still be making a table whose create this service gave
+/// up waiting for; a drop sent now could land first and leave it standing.
+#[tokio::test]
+async fn a_create_the_warehouse_did_not_answer_in_time_is_left_where_it_is() -> R {
+    let fixture = Fixture::new();
+    fixture.nothing_holds_the_name();
+    let recording = fixture.mock.add(handlers::record_ddl());
+    let tables = DatasetTables::new(insight_clickhouse::Client::new(
+        insight_clickhouse::Config::new(fixture.mock.url(), "insight_datasets"),
+    ))
+    .with_ddl_timeout(Duration::ZERO);
+
+    let refused = DatasetLifecycle::new(&fixture.datasets, &tables, &fixture.definitions)
+        .declare(&name("commits"), &declaration())
+        .await;
+
+    assert!(
+        matches!(
+            refused,
+            Err(DatasetChangeError::Table(DatasetTableError::Timeout))
+        ),
+        "{refused:?}"
+    );
+    if let Ok(issued) = tokio::time::timeout(Duration::from_millis(200), recording.query()).await {
+        assert!(
+            !issued.contains("DROP TABLE"),
+            "a create that may still land must not be followed by a drop: {issued}"
+        );
+    }
 
     Ok(())
 }

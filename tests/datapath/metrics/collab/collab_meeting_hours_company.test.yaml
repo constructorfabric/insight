@@ -23,9 +23,14 @@ description: >
             2 h, not the 3 h between the first arrival and the last departure.
             Dec 15: in z5 10:00–11:00, right after dave (09:00–10:00) and right
             before a guest (11:00–12:00) → no time, no meeting.
+            Dec 16: waits in z6's waiting room 13:30–14:00, then in it 14:00–15:00
+            with dave → 1 h, not 1.5 h.
+    erin  — also Dec 17: alone in z7 09:00–10:00 while a guest waits 09:00–09:30 and
+            is never admitted → no time, no meeting.
   Cases: only time with company counts · a room left open adds nothing beyond the
   company · a pause with nobody else adds nothing · a solo session is no meeting ·
-  a re-sent session is not counted twice · Teams and Zoom hours add up.
+  a re-sent session is not counted twice · Teams and Zoom hours add up · time in
+  the waiting room is not time in the meeting · a guest left waiting is no company.
 
 bronze:
   bronze_bamboohr.employees:
@@ -53,3 +58,8 @@ bronze:
     - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: heidi@example.com, user_name: Heidi, unique_key: zh-heidi-z5, meeting_uuid: z5, participant_uuid: hh5, join_time: "2026-12-15T10:00:00Z", leave_time: "2026-12-15T11:00:00Z" }
     - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: dave@example.com, user_name: Dave, unique_key: zh-dave-z5, meeting_uuid: z5, participant_uuid: hd5, join_time: "2026-12-15T09:00:00Z", leave_time: "2026-12-15T10:00:00Z" }
     - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Guest, unique_key: zh-guest-z5, meeting_uuid: z5, participant_uuid: hg5, join_time: "2026-12-15T11:00:00Z", leave_time: "2026-12-15T12:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: heidi@example.com, user_name: Heidi, status: in_waiting_room, unique_key: zh-heidi-z6-waiting, meeting_uuid: z6, participant_uuid: hh6, join_time: "2026-12-16T13:30:00Z", leave_time: "2026-12-16T14:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: heidi@example.com, user_name: Heidi, status: in_meeting, unique_key: zh-heidi-z6, meeting_uuid: z6, participant_uuid: hh6, join_time: "2026-12-16T14:00:00Z", leave_time: "2026-12-16T15:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: dave@example.com, user_name: Dave, status: in_meeting, unique_key: zh-dave-z6, meeting_uuid: z6, participant_uuid: hd6, join_time: "2026-12-16T13:30:00Z", leave_time: "2026-12-16T15:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: erin@example.com, user_name: Erin, status: in_meeting, unique_key: zh-erin-z7, meeting_uuid: z7, participant_uuid: he7, join_time: "2026-12-17T09:00:00Z", leave_time: "2026-12-17T10:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Guest, status: in_waiting_room, unique_key: zh-guest-z7-waiting, meeting_uuid: z7, participant_uuid: hg7, join_time: "2026-12-17T09:00:00Z", leave_time: "2026-12-17T09:30:00Z" }

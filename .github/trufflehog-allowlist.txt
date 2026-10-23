@@ -141,3 +141,4 @@ c6f108c3d2b0717f  JiraToken          src/ingestion/tests/e2e/metrics/team_bullet
 f74e89258c6ae15e  JiraToken          src/ingestion/tests/e2e/metrics/team_bullet_task_delivery_tasks_completed.test.yaml  # synthetic e2e metric fixture value
 3fdd46f911f50d69  JiraToken          src/ingestion/tests/e2e/metrics/templates/confluence_wiki_pages.yaml  # synthetic e2e metric fixture value
 a32d11c0e57c50f7  JiraToken          src/ingestion/tests/e2e/specs/templates/jira_task.yaml  # synthetic e2e metric fixture value
+3649036529d52dd6  Gitlab             .github/workflows/scripts/warm-upgrade-sim.sh  # the destination image name next to the connector list, not a token

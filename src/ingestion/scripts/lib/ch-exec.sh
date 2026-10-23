@@ -12,11 +12,18 @@
 # Exposes:
 #   run_ch           — execute a (multi-statement) SQL block read from stdin.
 #   ch_table_exists  — `ch_table_exists <db> <table>`; exit 0 if present.
+#   ch_table_engine  — `ch_table_engine <db> <table>`; the engine, empty if
+#                      absent, failure if the probe did not run.
 #   ch_scalar        — one numeric answer of a SELECT, or failure.
+#   ch_cluster_mode  — succeeds where the install declared itself clustered.
 #
 # Required env:
 #   CLICKHOUSE_URL       e.g. http://ch-host:8123
 #   CLICKHOUSE_USER, CLICKHOUSE_PASSWORD
+# Optional env:
+#   CLICKHOUSE_CLUSTER_MODE  true -> every request carries the cluster session
+#                            settings below; unset or false -> the request is
+#                            exactly the standalone one.
 
 # Idempotent source guard.
 [[ -n "${__CH_EXEC_SH:-}" ]] && return 0
@@ -26,6 +33,40 @@ __CH_EXEC_SH=1
 : "${CLICKHOUSE_USER:?CLICKHOUSE_USER must be set}"
 : "${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}"
 
+ch_cluster_mode() {
+  local mode
+  mode="$(printf '%s' "${CLICKHOUSE_CLUSTER_MODE:-false}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  case "${mode}" in
+    1 | true | yes | on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Per-statement ceiling for coordinated DDL in cluster mode. Only ACTIVE
+# replicas are waited for: an inactive one replays its Keeper queue entry when
+# it returns, and ch-topology.sh's completeness guard reports the lag until then.
+CH_DDL_TASK_TIMEOUT_S=60
+# Transport ceiling per request in cluster mode; only a hung connection reaches
+# it, a statement that moves rows is allowed the rest.
+CH_HTTP_MAX_TIME_S=900
+
+# The session a clustered deploy runs under, as URL parameters so no `.sql`
+# statement has to spell them.
+# WORKAROUND: parallel_distributed_insert_select=0 — CH 25.7 (fixed by 26.9)
+# fails `INSERT INTO <Replicated*> WITH c AS (...) SELECT ... FROM c` otherwise.
+# INVARIANT: insert_quorum=auto + insert_quorum_parallel=0 +
+# select_sequential_consistency=1 is what lets a count taken through the load
+# balancer judge a rebuild; with a replica down an INSERT fails loudly instead.
+# allow_nondeterministic_mutations=1: a Replicated table rejects `ALTER ...
+# UPDATE/DELETE` with a subquery without it. mutations_sync/alter_sync=2 wait
+# for every replica (3 is accepted by 25.7.5 but waits for one replica only).
+CH_CLUSTER_SESSION_SETTINGS="distributed_ddl_output_mode=throw_only_active"
+CH_CLUSTER_SESSION_SETTINGS+="&distributed_ddl_task_timeout=${CH_DDL_TASK_TIMEOUT_S}"
+CH_CLUSTER_SESSION_SETTINGS+="&parallel_distributed_insert_select=0"
+CH_CLUSTER_SESSION_SETTINGS+="&insert_quorum=auto&insert_quorum_parallel=0&select_sequential_consistency=1"
+CH_CLUSTER_SESSION_SETTINGS+="&allow_nondeterministic_mutations=1"
+CH_CLUSTER_SESSION_SETTINGS+="&mutations_sync=2&alter_sync=2"
+
 # Execute the SQL piped on stdin as one statement over the HTTP interface.
 # The body is sent verbatim as the POST payload (--data-binary) — form
 # encoding would mangle the SQL into `query=CREATE+...` (Code 62).
@@ -34,12 +75,20 @@ __CH_EXEC_SH=1
 # username header is harmless in argv, but the password is fed through a
 # header file (process substitution) so it never lands in curl's argv (and
 # thus /proc/<pid>/cmdline, visible to any process in the pod).
+#
+# INVARIANT: a standalone install sends exactly this request; cluster mode adds
+# the session settings above and the transport ceiling.
 _ch_http_query() {
-  curl -sS --fail-with-body \
+  local url="${CLICKHOUSE_URL%/}/" max_time=()
+  if ch_cluster_mode; then
+    url+="?${CH_CLUSTER_SESSION_SETTINGS}"
+    max_time=(--max-time "${CH_HTTP_MAX_TIME_S}")
+  fi
+  curl -sS --fail-with-body ${max_time[@]+"${max_time[@]}"} \
     -H "X-ClickHouse-User: ${CLICKHOUSE_USER}" \
     -H @<(printf 'X-ClickHouse-Key: %s' "${CLICKHOUSE_PASSWORD}") \
     --data-binary @- \
-    "${CLICKHOUSE_URL%/}/"
+    "${url}"
 }
 
 # The HTTP interface runs one statement per request, so a multi-statement
@@ -85,4 +134,14 @@ ch_table_exists() {
   result="$(printf "SELECT count() FROM system.tables WHERE database='%s' AND name='%s'" \
     "$db" "$tbl" | _ch_http_query | tr -d '[:space:]')"
   [[ "$result" == "1" ]]
+}
+
+# The engine of one table, empty when there is none. Fails when the lookup did
+# not run: a caller that acts on the engine (a rebuild copies it) must not read
+# a failed probe as an absent table.
+ch_table_engine() {
+  local db="$1" tbl="$2" engine
+  engine="$(printf "SELECT engine FROM system.tables WHERE database='%s' AND name='%s'" \
+    "$db" "$tbl" | _ch_http_query)" || return 1
+  printf '%s' "${engine}" | tr -d '[:space:]'
 }

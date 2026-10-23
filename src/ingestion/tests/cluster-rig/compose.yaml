@@ -1,0 +1,106 @@
+# The warehouse topologies the cluster-mode lane deploys onto. Driven by
+# run.sh, which names the project per topology; see README.md.
+#
+# profile `replicated` — two replicas, one Keeper and a round-robin proxy: the
+# smallest clustered warehouse that shows the failure modes of one.
+#   proxy   http://127.0.0.1:18123   round-robin, per request
+#   ch1     http://127.0.0.1:18124
+#   ch2     http://127.0.0.1:18125
+#
+# profile `standalone` — one node, no Keeper: every install that is not
+# clustered.
+#   single  http://127.0.0.1:18126
+#
+# both profiles — the MariaDB the two services keep their definitions in:
+#   mariadb 127.0.0.1:18306   insight/insight, databases identity + insight_v3
+
+x-server: &server
+  image: ${CLICKHOUSE_SERVER_IMAGE:?CLICKHOUSE_SERVER_IMAGE must be set (from pins.env)}
+  mem_limit: ${CLICKHOUSE_MEM_LIMIT:-2g}
+  environment:
+    CLICKHOUSE_USER: ${CLICKHOUSE_USER:-insight}
+    CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-insight}
+    CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
+    interval: 2s
+    timeout: 2s
+    retries: 60
+
+x-replica: &replica
+  <<: *server
+  profiles: [replicated]
+  depends_on:
+    keeper:
+      condition: service_healthy
+
+services:
+  keeper:
+    profiles: [replicated]
+    image: ${CLICKHOUSE_KEEPER_IMAGE:?CLICKHOUSE_KEEPER_IMAGE must be set (run.sh derives it)}
+    volumes:
+      - ./config/keeper.xml:/etc/clickhouse-keeper/keeper_config.xml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-keeper-client -p 9181 -q ruok 2>/dev/null | grep -q imok"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
+  ch1:
+    <<: *replica
+    hostname: ch1
+    volumes:
+      - ./config/cluster.xml:/etc/clickhouse-server/config.d/cluster.xml:ro
+      - ./config/macros-ch1.xml:/etc/clickhouse-server/config.d/macros.xml:ro
+      - ../../../../deploy/compose/clickhouse-memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro
+    ports:
+      - "127.0.0.1:18124:8123"
+
+  ch2:
+    <<: *replica
+    hostname: ch2
+    volumes:
+      - ./config/cluster.xml:/etc/clickhouse-server/config.d/cluster.xml:ro
+      - ./config/macros-ch2.xml:/etc/clickhouse-server/config.d/macros.xml:ro
+      - ../../../../deploy/compose/clickhouse-memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro
+    ports:
+      - "127.0.0.1:18125:8123"
+
+  proxy:
+    profiles: [replicated]
+    image: haproxy:2.9@sha256:81506628494800519f82caf4128cb693df21ee5f38fca467224fcff508d537de
+    volumes:
+      - ./config/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "127.0.0.1:18123:8123"
+    depends_on:
+      ch1:
+        condition: service_healthy
+      ch2:
+        condition: service_healthy
+
+  mariadb:
+    profiles: [replicated, standalone]
+    image: mariadb:11.4
+    environment:
+      MARIADB_USER: insight
+      MARIADB_PASSWORD: insight
+      MARIADB_ROOT_PASSWORD: root
+    volumes:
+      - ../../../../deploy/compose/mariadb-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    ports:
+      - "127.0.0.1:18306:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
+  single:
+    <<: *server
+    profiles: [standalone]
+    hostname: single
+    volumes:
+      - ../../../../deploy/compose/clickhouse-memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro
+    ports:
+      - "127.0.0.1:18126:8123"

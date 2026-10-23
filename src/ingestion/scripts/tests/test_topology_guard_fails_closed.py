@@ -76,8 +76,12 @@ def test_each_probe_names_the_question_it_could_not_answer() -> None:
     """`set -e` on a bare assignment stops the deploy with no output at all,
     which tells an operator nothing about which check failed or why."""
     for probe, table in (
+        ("_ch_require_cluster_name", "system.clusters"),
+        ("_ch_require_macros", "system.macros"),
         ("_ch_require_replicated_access_storage", "system.user_directories"),
         ("_ch_require_replicated_databases insight", "system.databases"),
+        ("_ch_require_complete_databases insight", "system.clusters"),
+        ("_ch_require_replicated_bronze_tables", "system.tables"),
     ):
         result = run(probe)
 
