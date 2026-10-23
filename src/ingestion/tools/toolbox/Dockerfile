@@ -22,8 +22,11 @@ RUN curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linu
 RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/$(dpkg --print-architecture)/kubectl" \
     -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl
 
-# dbt-clickhouse
-RUN pip install --no-cache-dir dbt-clickhouse
+# dbt pinned to the seed image's versions (tools/seed/Dockerfile) so both run
+# the same engine. certifi is pinned beside it: this layer is served from the
+# registry build cache until the line changes, so a certifi advisory
+# (GHSA-6q48-6c7w-9gw2) only reaches the image through an explicit pin.
+RUN pip install --no-cache-dir "dbt-clickhouse==1.10.2" "dbt-core==1.11.14" "certifi==2026.10.19"
 
 # Copy the ingestion project, minus the sample-data seeder: this image runs
 # migrations against real stands, and a demo-data generator does not belong on

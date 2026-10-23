@@ -176,10 +176,10 @@
             the round-trip invariant. -#}
         {{ kind }} = 'long_text',
         (
-            if(COALESCE({{ from_str }}, '') = '', [], [CAST({{ jira_text_id(from_str) }} AS String)]),
-            if(COALESCE({{ from_str }}, '') = '', [], [CAST({{ jira_text_prefix(from_str) }} AS String)]),
-            if(COALESCE({{ to_str }},   '') = '', [], [CAST({{ jira_text_id(to_str) }} AS String)]),
-            if(COALESCE({{ to_str }},   '') = '', [], [CAST({{ jira_text_prefix(to_str) }} AS String)])
+            if(COALESCE({{ from_str }}, '') = '', [], [CAST({{ task_text_id(from_str) }} AS String)]),
+            if(COALESCE({{ from_str }}, '') = '', [], [CAST({{ task_text_prefix(from_str) }} AS String)]),
+            if(COALESCE({{ to_str }},   '') = '', [], [CAST({{ task_text_id(to_str) }} AS String)]),
+            if(COALESCE({{ to_str }},   '') = '', [], [CAST({{ task_text_prefix(to_str) }} AS String)])
         ),
 
         {#- The display side stands in whenever the id side names no element: it
