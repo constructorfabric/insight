@@ -134,6 +134,13 @@ jobs:
             script: warm-upgrade.sh
             services: false
             memory: 3g
+          # A standalone installation on the first replica, converted along
+          # the runbook, then deployed, synced and asserted as a cluster.
+          - name: Convert a standalone warehouse to a cluster
+            topology: replicated
+            script: convert.sh
+            services: true
+            memory: 2g
     env:
       RIG_TOPOLOGY: ${{ matrix.topology }}
       CLICKHOUSE_MEM_LIMIT: ${{ matrix.memory }}
@@ -144,7 +151,7 @@ jobs:
           # The warm leg replays the base commit's tree as the installed
           # release, so that commit's objects must be present. (`&& 1 || 0`:
           # a 0 on the left of `||` is falsy and would always yield the right.)
-          fetch-depth: ${{ matrix.script == 'run.sh' && 1 || 0 }}
+          fetch-depth: ${{ matrix.script != 'warm-upgrade.sh' && 1 || 0 }}
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:

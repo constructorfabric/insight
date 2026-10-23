@@ -7,6 +7,7 @@ assertions it runs on every node afterwards (#3555, epic #2010).
 RIG_TOPOLOGY=standalone src/ingestion/tests/cluster-rig/run.sh
 RIG_TOPOLOGY=replicated src/ingestion/tests/cluster-rig/run.sh
 RIG_TOPOLOGY=replicated BASE_SHA=<commit> src/ingestion/tests/cluster-rig/warm-upgrade.sh
+RIG_TOPOLOGY=replicated src/ingestion/tests/cluster-rig/convert.sh
 ```
 
 Needs Docker, `helm`, `jq`, `yq`, `curl`, a `python3.12` and `cargo`.
@@ -18,9 +19,11 @@ containers up.
 The lane runs in the merge queue, not on the pull request: its `Cluster rig`
 check is required on `main`, every leg is skipped on a pull request, and a
 `changes` job decides from the merge base whether the diff touched a creator
-of a warehouse relation. Three legs, each on a machine of its own: `run.sh`
-on the standalone and on the replicated warehouse, and `warm-upgrade.sh` on
-the replicated one.
+of a warehouse relation. Four legs, each on a machine of its own: `run.sh`
+on the standalone and on the replicated warehouse, and `warm-upgrade.sh` and
+`convert.sh` on the replicated one. The creators every leg drives — the
+deploy hook, the destination, dbt — are [`creators.sh`](creators.sh); the
+two services are [`services.sh`](services.sh).
 
 ## The deploy hook
 
@@ -136,6 +139,35 @@ renders, so on the replicated warehouse they stand as `Replicated*` tables on
 both nodes. Afterwards `check.py nodes` holds every node to the same
 databases, relations, columns, engines and row counts, with nothing dbt
 staged left behind. The base commit must itself be cluster-aware.
+
+## The conversion
+
+[`convert.sh`](convert.sh) executes the standalone-to-cluster runbook
+([`docs/operations/CLICKHOUSE-CLUSTER-CONVERSION.md`](../../../../docs/operations/CLICKHOUSE-CLUSTER-CONVERSION.md))
+on the replicated warehouse. It first makes a standalone installation on
+`ch1` alone — every creator reaches that node directly with `clusterMode`
+off: the deploy hook, the first sync's bronze, a dbt build, the persons sync,
+and a dataset declared and filled — and snapshots the row counts. Then, in
+order:
+
+1. the deploy hook rendered with `clusterMode: true` through the proxy is
+   refused over the standalone databases, before any DDL;
+2. `convert-database-to-cluster.sh` converts the nine owned databases on
+   `ch1`, in the order the views between them read, then every `bronze_*`
+   database; each is renamed to `standalone_<name>`, recreated `ON CLUSTER`
+   (`Replicated`, or `Atomic` for bronze), its tables recreated with the
+   replicated engines and copied, its views recreated;
+3. the script runs again over all of them and must find nothing to do;
+4. `check.py nodes`: both nodes hold the same databases, relations, columns,
+   engines and row counts;
+5. the cluster-mode deploy hook, the second sync (the added column reaches
+   the converted bronze through the destination's `ALTER ... ON CLUSTER`), a
+   dbt build and the services through the proxy: the persons sync swaps
+   behind the watermark the converted table carries, the dataset declared
+   standalone is read whole from its converted table on every node and
+   dropped, another lives and dies;
+6. the `standalone_*` copies are dropped on `ch1`, and the assertions below
+   hold both nodes to the standalone installation's row counts.
 
 ## Assertions
 

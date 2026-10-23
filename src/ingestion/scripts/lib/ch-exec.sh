@@ -47,8 +47,9 @@ ch_cluster_mode() {
 # it returns, and ch-topology.sh's completeness guard reports the lag until then.
 CH_DDL_TASK_TIMEOUT_S=60
 # Transport ceiling per request in cluster mode; only a hung connection reaches
-# it, a statement that moves rows is allowed the rest.
-CH_HTTP_MAX_TIME_S=900
+# it, a statement that moves rows is allowed the rest. A caller that copies
+# whole tables (convert-database-to-cluster.sh) raises it before sourcing.
+CH_HTTP_MAX_TIME_S="${CH_HTTP_MAX_TIME_S:-900}"
 
 # The session a clustered deploy runs under, as URL parameters so no `.sql`
 # statement has to spell them.

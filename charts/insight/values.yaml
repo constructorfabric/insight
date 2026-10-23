@@ -287,14 +287,29 @@ clickhouse:
   protocol: http # http|https for the Bronze airbyte/destination-clickhouse 2.x connection
   # Topology of the target ClickHouse (epic #2010). The single pair of values
   # every creator in this release reads to decide the DDL it emits.
-  #   clusterMode: true  -> `Replicated*` table engines instead of the plain
-  #                         MergeTree family, so DDL and data reach every
-  #                         replica. Requires ClickHouse Keeper.
-  #   clusterName:       -> the cluster the `ON CLUSTER <name>` clause names.
+  #   clusterMode: true  -> `Replicated` database engines and `Replicated*`
+  #                         table engines, so DDL and data reach every replica.
+  #   clusterName:       -> the cluster the `ON CLUSTER <name>` clause names,
+  #                         where one is emitted (the CREATE DATABASEs, the
+  #                         bronze heals, the destination); a bare identifier.
   # The two travel together: clusterMode without a clusterName is refused at
   # template time, because replicated DDL that reaches one node leaves every
   # other replica without the relation.
-  # Defaults are a standalone single node, which is the DDL shipped today.
+  # What the cluster must provide, each checked by the deploy before any DDL
+  # (README "ClickHouse topology"): Keeper; the named cluster in every node's
+  # <remote_servers>, with an interserver secret; {shard} / {replica} macros;
+  # SQL-created access stored in Keeper (<user_directories> <replicated>), or
+  # provisionAccess: false below; `host` at a load-balancer endpoint, and the
+  # deploy user holding REMOTE ON *.*. createDatabases: false changes none of
+  # it: the post-install Hook creates and checks the databases either way.
+  # The dbt builds, the hook's heals and the persons sync write with a
+  # quorum: with two replicas, a replica restart stops those until it is
+  # back (the destination's, dataset and usage-event writes carry no quorum
+  # and keep landing); three replicas tolerate one down.
+  # Flipping the pair converts nothing that already stands: an existing
+  # install converts its databases first (docs/operations/
+  # CLICKHOUSE-CLUSTER-CONVERSION.md), and the deploy refuses until it has.
+  # Defaults are a standalone single node.
   clusterMode: false
   clusterName: ""
   database: "" # MUST be set
@@ -326,7 +341,7 @@ clickhouse:
   provisionAccess: true
   # When true (default), a post-install/post-upgrade Hook Job
   # (clickhouse-migrate-job) applies the schema migrations
-  # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against
+  # (src/ingestion/scripts/migrations/*.sql) and the guarded heals against
   # the external ClickHouse, using ingestion.toolboxImage. Set false to own
   # CH migrations out-of-band (e.g. a managed-warehouse change process).
   # The Job also no-ops if an overlay explicitly clears ingestion.toolboxImage.
