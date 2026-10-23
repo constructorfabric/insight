@@ -183,6 +183,35 @@ jobs:
           MERGE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: echo "BASE_SHA=${MERGE_BASE_SHA:-$(git rev-parse origin/main)}" >> "$GITHUB_ENV"
 
+      - name: Ensure yq can run the rig's expressions
+        # run.sh reads the chart's Job with `if … then … else … end`, which
+        # mikefarah's yq parses from 4.54.1. The persistent machines and the
+        # hosted image both carry older builds, and neither is this job's to
+        # upgrade (ARC pods have no sudo; a shared machine must not carry what one
+        # job installed), so a sufficient yq on PATH is kept and an older one is
+        # shadowed by the pinned release under RUNNER_TEMP. INVARIANT: version
+        # and digest are one pin — bump both together, from the release's own
+        # checksums file.
+        env:
+          YQ_VERSION: 4.54.1
+          YQ_SHA256: 8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
+        run: |
+          set -euo pipefail
+          have="$(yq --version 2>/dev/null | sed -nE 's/.*v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' || true)"
+          if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$have" "$YQ_VERSION" | sort -V | head -1)" = "$YQ_VERSION" ]; then
+            echo "yq $have on PATH is at least $YQ_VERSION"
+            exit 0
+          fi
+          echo "yq ${have:-missing} on PATH is older than $YQ_VERSION; installing the pinned release"
+          bin="${RUNNER_TEMP}/yq-bin"
+          mkdir -p "$bin"
+          curl -fsSL --retry 3 --retry-delay 2 -o "$bin/yq" \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          printf '%s  %s\n' "$YQ_SHA256" "$bin/yq" | sha256sum -c -
+          chmod 0755 "$bin/yq"
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/yq" --version
+
       - name: Deploy and assert
         run: src/ingestion/tests/cluster-rig/${{ matrix.script }}
 
