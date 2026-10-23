@@ -2,21 +2,24 @@
 # Create every ClickHouse database this release owns, and provision the access
 # that reads them.
 #
-# THE creation site. Several places used to issue `CREATE DATABASE` — the deploy
-# hook, three numbered migrations, three dbt on-run-start hooks, the chart's
-# pre-install Job and the compose bootstrap. They all route here now, and every
-# one of them may assume its database already stands.
+# THE creation site: the deploy hook, the chart's pre-install Job and the
+# compose bootstrap all run this, and every migration and dbt hook may assume
+# its database already stands.
 #
 # Epic #2010 puts the cluster fork on this one statement: inside a `Replicated`
 # database every later DDL is logged in Keeper and replayed on every replica,
-# so no `ON CLUSTER` clause is needed anywhere else. That holds only while this
-# stays the only site. Replaying the DDL is not replicating the rows, though —
-# a table still states its own `Replicated*` engine, which is why the dbt
-# models and the numbered migrations render a prefix from the same flag.
+# so no relation in one of these databases carries an `ON CLUSTER` clause.
+# That holds only while this stays the only site. Replaying the DDL is not
+# replicating the rows, though — a table still states its own `Replicated*`
+# engine, which is why the dbt models and the numbered migrations render a
+# prefix from the same flag.
 #
 # Bronze is not here and will not be. `bronze_*` is created by
 # destination-clickhouse at sync time from the connector's own catalogue, and
-# its topology travels with the destination config.
+# its topology travels with the destination config. It stays an Atomic
+# database that replays nothing, so a heal or migration that touches a bronze
+# relation is the one place a clause is emitted (apply-ch-migrations.sh,
+# `/*@@ON_CLUSTER@@*/`).
 #
 # The grants run from here on purpose: a role is granted on a database by name
 # long before that database exists (see bootstrap-db/presentation-role.sql), so

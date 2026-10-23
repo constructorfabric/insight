@@ -24,6 +24,9 @@
 #   ch_database_engine  — the `ENGINE =` clause a CREATE DATABASE carries
 #   ch_render_topology  — expand the topology markers in SQL read from stdin
 #   ch_assert_topology  — refuse a deploy this server cannot serve
+#   ch_assert_cluster_server — the server-side prerequisites of cluster mode
+#                         alone, for a conversion that creates the first
+#                         Replicated database itself
 #
 # Required env: whatever lib/ch-exec.sh requires, plus the optional pair above
 # and CLICKHOUSE_PROVISION_ACCESS (unset or true -> roles and users are
@@ -39,6 +42,10 @@ source "${_CH_TOPOLOGY_DIR}/ch-exec.sh"
 # The Keeper path a Replicated database coordinates through. Deterministic per
 # database, so a re-run rejoins its path rather than minting a second one.
 CH_DATABASE_KEEPER_ROOT="/clickhouse/databases"
+
+# The procedure that converts an install from one topology to the other; the
+# guards that refuse the wrong one point at it.
+CH_CONVERSION_RUNBOOK="docs/operations/CLICKHOUSE-CLUSTER-CONVERSION.md"
 
 ch_cluster_name() {
   printf '%s' "${CLICKHOUSE_CLUSTER_NAME:-}" | tr -d '[:space:]'
@@ -345,9 +352,11 @@ ERROR: clickhouse.clusterMode is on, but the database '${database}' already
        exists with engine '${engine}'.
 
        Turning the flag on does not convert it, and every table created in it
-       from now on would reach one replica only. Convert the database first —
-       create a Replicated one beside it, move the tables over, rename — then
-       re-run the deploy.
+       from now on would reach one replica only. Convert the database first,
+       along the standalone-to-cluster runbook
+       (${CH_CONVERSION_RUNBOOK}: convert-database-to-cluster.sh moves
+       the tables into a Replicated one of the same name), then re-run the
+       deploy.
 MSG
     return 1
   done
@@ -388,7 +397,8 @@ $(printf '%s\n' "${plain}" | sed 's/^/         /')
 
        Drop each listed database ON CLUSTER ${name} and let the connector's
        next sync recreate it with the replicated engines, or convert the
-       tables in place along the standalone-to-cluster runbook (#3902). Then
+       tables in place along the standalone-to-cluster runbook
+       (${CH_CONVERSION_RUNBOOK}: convert-database-to-cluster.sh). Then
        re-run the deploy.
 MSG
   return 1
@@ -407,10 +417,24 @@ ERROR: the database '${database}' is Replicated, but clickhouse.clusterMode is
        Every creator in this release would now emit standalone DDL into a
        replicated database, and the engines would disagree table by table. Turn
        clickhouse.clusterMode back on (with clickhouse.clusterName), or convert
-       the database to a plain one before deploying standalone.
+       the database back to a plain one first (${CH_CONVERSION_RUNBOOK},
+       "Rollback").
 MSG
     return 1
   done
+}
+
+# What the server must provide before the first Replicated database is created
+# on it: the named cluster, Keeper and the macros. The conversion runs this
+# before it renames anything; a deploy runs it as part of ch_assert_topology.
+ch_assert_cluster_server() {
+  if ! ch_cluster_mode; then
+    echo "ERROR: CLICKHOUSE_CLUSTER_MODE is off; a conversion emits cluster-mode DDL and needs the flag on, with CLICKHOUSE_CLUSTER_NAME." >&2
+    return 1
+  fi
+  _ch_require_cluster_name
+  _ch_require_keeper
+  _ch_require_macros
 }
 
 # Refuse a deploy this warehouse cannot serve, BEFORE anything is created or
@@ -423,9 +447,7 @@ ch_assert_topology() {
   fi
 
   echo "=== Verifying the warehouse can serve a clustered install ==="
-  _ch_require_cluster_name
-  _ch_require_keeper
-  _ch_require_macros
+  ch_assert_cluster_server
   _ch_require_replicated_access_storage
   _ch_require_replicated_databases "$@"
   _ch_require_complete_databases "$@"

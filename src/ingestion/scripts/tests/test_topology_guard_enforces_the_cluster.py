@@ -186,7 +186,8 @@ def test_a_bronze_table_with_a_plain_engine_is_refused_by_name(tmp_path: Path) -
     assert REACHED_THE_END not in result.stdout
     assert "bronze_jira.jira_issue  ReplacingMergeTree  on ch1" in result.stderr, result.stderr
     assert "bronze_jira.jira_comments" in result.stderr, result.stderr
-    assert f"ON CLUSTER {CLUSTER}" in result.stderr and "#3902" in result.stderr, result.stderr
+    assert f"ON CLUSTER {CLUSTER}" in result.stderr, result.stderr
+    assert "docs/operations/CLICKHOUSE-CLUSTER-CONVERSION.md" in result.stderr, result.stderr
     assert "CREATE DATABASE" not in log.read_text(), "DDL was sent over a bronze table that replicates nothing"
 
 
