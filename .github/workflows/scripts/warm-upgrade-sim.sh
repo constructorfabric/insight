@@ -94,14 +94,14 @@ create_connector_bronze() {
     port=80
   fi
   local pins="$tree/src/ingestion/scripts/bootstrap-db/pins.env"
-  echo "=== Creating bronze for github, gitlab and jira through destination-clickhouse ==="
+  echo "=== Creating bronze for github, gitlab, jira and youtrack through destination-clickhouse ==="
   CLICKHOUSE_PROTOCOL="$protocol" \
   CLICKHOUSE_HOST="${hostport%%:*}" \
   CLICKHOUSE_PORT="$port" \
   DESTINATION_CLICKHOUSE_IMAGE="$(grep '^DESTINATION_CLICKHOUSE_IMAGE=' "$pins" | cut -d= -f2)" \
   SOURCE_DECLARATIVE_MANIFEST_IMAGE="$(grep '^SOURCE_DECLARATIVE_MANIFEST_IMAGE=' "$pins" | cut -d= -f2)" \
     bash "$tree/src/ingestion/scripts/bootstrap-db/seed-connectors.sh" \
-      "$tree/src/ingestion/scripts/bootstrap-db/connectors-config.yaml" github gitlab jira
+      "$tree/src/ingestion/scripts/bootstrap-db/connectors-config.yaml" github gitlab jira youtrack
 }
 
 # A sync as the Argo dbt-run step runs it (the shape of the cluster rig's
@@ -435,10 +435,45 @@ assert_jira_catalogue_first_seen_kept() {
   echo "=== Jira catalogue first sync kept through the upgrade ==="
 }
 
+# The base sync built the YouTrack field observations without a tenant column.
+# The upgrade adds it beside the key and reads each old row's tenant back from
+# its key, against the tenants bronze holds; a row whose key names none keeps
+# NULL for the tenant migration.
+seed_youtrack_field_observation_warm_state() {
+  echo "=== Seeding the pre-tenant YouTrack field observations ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  run_ch <<'SQL'
+INSERT INTO bronze_youtrack.youtrack_custom_fields (unique_key, tenant_id, source_id, _airbyte_raw_id, _airbyte_extracted_at)
+VALUES ('warm-yt-1-field-1', 'warm', 'yt-1', 'raw-y1', '2026-01-01 00:00:00');
+INSERT INTO staging.youtrack__field_observations
+    (unique_key, insight_source_id, field_id, field_name, field_type, observed_at, _version)
+VALUES
+    ('warm-yt-1-field-1-2026-01-01 00:00:00', 'yt-1', 'field-1', 'Priority', 'enum', '2026-01-01 00:00:00', 1),
+    ('stray-yt-1-field-2-2026-01-01 00:00:00', 'yt-1', 'field-2', 'State', 'state', '2026-01-01 00:00:00', 1);
+SQL
+}
+
+assert_youtrack_field_observation_tenants() {
+  echo "=== Asserting the field observations carry their tenant ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  local got
+  local expected="2|field-1:warm;field-2:NULL"
+  got="$(printf "SELECT concat(
+      toString((SELECT position FROM system.columns WHERE database = 'staging' AND table = 'youtrack__field_observations' AND name = 'tenant_id')), '|',
+      arrayStringConcat(groupArray(concat(field_id, ':', ifNull(tenant_id, 'NULL'))), ';'))
+    FROM (SELECT field_id, tenant_id FROM staging.youtrack__field_observations FINAL ORDER BY field_id)" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=warm upgrade left YouTrack field observations without a tenant::Expected '${expected}' — the tenant column right after unique_key, the row keyed by a bronze tenant carrying it, the row keyed by none left NULL — but got '${got}'."
+    exit 1
+  fi
+  echo "=== YouTrack field observations carry their tenant ==="
+}
+
 seed_warm_bronze
 seed_git_close_time_warm_state
 seed_jira_issue_identity_warm_state
 seed_jira_catalogue_first_seen_warm_state
+seed_youtrack_field_observation_warm_state
 
 echo "=== Step 2: deploy the working tree onto the warm state ==="
 dbt_venv_for "$REPO_ROOT/src/ingestion/scripts/bootstrap-db/pins.env" "$WORKDIR/branch-venv"
@@ -451,6 +486,7 @@ fi
 assert_git_close_time_recovered
 assert_jira_issue_identity_recovered
 assert_jira_catalogue_first_seen_kept
+assert_youtrack_field_observation_tenants
 
 echo "=== Step 3: the first sync after the upgrade — this tree's buildable graph over the warm warehouse ==="
 if ! build_graph "$REPO_ROOT" "$WORKDIR/branch-venv" branch; then

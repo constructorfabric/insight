@@ -12,6 +12,6 @@ INNER JOIN (
         SELECT * FROM {{ source('config', 'task_field_roles') }} FINAL
         WHERE data_source = 'youtrack' AND valid_from <= now64(3)
         ORDER BY valid_from DESC, recorded_at DESC
-        LIMIT 1 BY insight_source_id, field_id
+        LIMIT 1 BY tenant_id, insight_source_id, field_id
     ) WHERE is_deleted = 0 AND role = 'issuetype'
-) AS r ON r.insight_source_id = v.insight_source_id AND r.field_id = v.field_id
+) AS r ON r.tenant_id = v.tenant_id AND r.insight_source_id = v.insight_source_id AND r.field_id = v.field_id
