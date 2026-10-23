@@ -278,6 +278,8 @@ COMPONENTS = [
         "cov_package": "connector_tests",
         "pytest_args": "--suites-only",
         "cover": False,
+        # 20-40 minutes, unlike every other Python suite (under a minute).
+        "runner": "large",
         "triggered_by": ["connector-tests-harness"],
         # Every nocode connector that ships a tests/ suite belongs here, or a
         # change to that connector does not re-run its own mock tests. CDK
