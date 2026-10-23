@@ -140,14 +140,19 @@ name: jira
 # carries `value_id_type = 'text_ref'` instead of `string_literal` (#3895).
 # MAJOR because rows already written change, and only the full refresh a major
 # dispatches (ADR-0015) re-derives them.
-# 16.1.0: every stream declares `tenant_id` and `source_id` required, and the
+# 17.0.0 (major): Jira links close and reopen where the issue's newest read
+# disagrees with its changelog (`evidence = observation`), an Epic Link change
+# is a parent change, and a removal sorts before an addition within one
+# changelog entry (#3889). MAJOR because rows already written change, and only
+# the full refresh a major dispatches (ADR-0015) re-derives them.
+# 17.1.0: every stream declares `tenant_id` and `source_id` required, and the
 # issue-level streams (`jira_issue`, `jira_issue_keys`, `jira_issue_census`)
 # also `jira_id`: the connector stamps them on every record, so the schema no
 # longer says they can be absent. The bronze columns stay `Nullable(String)` —
 # destination-clickhouse makes every column outside the sort key nullable.
 # MINOR per ADR-0015: reconcile republishes the manifest and nothing stored
 # changes meaning.
-version: "16.1.0"
+version: "17.1.0"
 schedule: "0 3 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer

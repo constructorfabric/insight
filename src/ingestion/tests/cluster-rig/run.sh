@@ -2,23 +2,32 @@
 # Deploy onto the rig's warehouse, sync a connector's bronze into it, heal
 # what a warm install carries, build the connector's models, run the two
 # services that write the warehouse themselves — then sync, deploy, build and
-# run once more, and assert what every node holds. On a cluster, then
-# plant one plain bronze table on one replica and assert the deploy hook
-# refuses it by name.
+# run once more. Then the deploys the warehouse must refuse: the topology
+# declared the wrong way round, a bronze table from before the flip and, on a
+# cluster, a replica that is down. Last, assert what every node holds.
+#
+# Every deploy hook runs as the chart's clickhouse-migrate Job renders it for
+# this warehouse: the Job's command under the Job's env, so `clusterMode` is
+# exercised from the chart value down, not by calling the script with the
+# right variables.
 #
 #   RIG_TOPOLOGY=standalone|replicated  run.sh
 #   RIG_DBT_VENV=<venv>                 reuse a venv with the pinned dbt
 #   RIG_SERVICES_BIN=<dir>              reuse built identity-resolution + insight-v3-core
 #   RIG_KEEP=1                          leave the containers up
 #
-# Needs Docker, jq, yq, curl, a python3.12 (or the venv) and cargo (or the
-# binaries). Topologies and assertions: README.md.
+# Needs Docker, helm, jq, yq, curl, a python3.12 (or the venv) and cargo (or
+# the binaries). Topologies and assertions: README.md.
 set -euo pipefail
 
 RIG_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPTS="$(cd -- "${RIG_DIR}/../../scripts" && pwd)"
+# shellcheck source=SCRIPTDIR/warehouse.sh
+source "${RIG_DIR}/warehouse.sh"
 CONNECTORS="$(cd -- "${RIG_DIR}/../../connectors" && pwd)"
-TOPOLOGY="${RIG_TOPOLOGY:-replicated}"
+CHART="$(cd -- "${RIG_DIR}/../../../../charts/insight" && pwd)"
+# The scripts root the chart's Job names, which is the toolbox image's; this
+# tree's scripts stand in for it.
+TOOLBOX_SCRIPTS=/ingestion/scripts
 PROBE_ROWS=200
 # The connector whose models the leg builds and whose streams carry rows, plus
 # the one whose bronze that chain crosses into (github__account_emails reads
@@ -31,86 +40,92 @@ DBT_SELECT="tag:github+ tag:sync:always"
 # The column the second sync adds to bronze_github.commits.
 ADDED_COLUMN="$(python3 -c "import sys; sys.path.insert(0, '${RIG_DIR}'); import github_records; print(github_records.ADDED_COLUMN)")"
 
-# shellcheck source=SCRIPTDIR/../../scripts/bootstrap-db/pins.env
-source "${SCRIPTS}/bootstrap-db/pins.env"
 # shellcheck source=SCRIPTDIR/../../scripts/bootstrap-db/lib/connector-catalog.sh
 source "${SCRIPTS}/bootstrap-db/lib/connector-catalog.sh"
-export CLICKHOUSE_SERVER_IMAGE SOURCE_DECLARATIVE_MANIFEST_IMAGE
-export CLICKHOUSE_KEEPER_IMAGE="${CLICKHOUSE_SERVER_IMAGE/clickhouse-server/clickhouse-keeper}"
-
-export CLICKHOUSE_USER=insight CLICKHOUSE_PASSWORD=insight CLICKHOUSE_DATABASE=insight
-export CLICKHOUSE_PRESENTATION_PASSWORD=presentation-rig
-export RIG_USER_PASSWORD_PRESENTATION="${CLICKHOUSE_PRESENTATION_PASSWORD}"
-export RIG_TOPOLOGY="${TOPOLOGY}"
-
-case "${TOPOLOGY}" in
-  replicated)
-    export CLICKHOUSE_CLUSTER_MODE=true CLICKHOUSE_CLUSTER_NAME=rig
-    export RIG_NODES=http://127.0.0.1:18124,http://127.0.0.1:18125
-    export RIG_PROXY=http://127.0.0.1:18123
-    DESTINATION_HOST=proxy
-    ;;
-  standalone)
-    export CLICKHOUSE_CLUSTER_MODE=false CLICKHOUSE_CLUSTER_NAME=
-    export RIG_NODES=http://127.0.0.1:18126
-    export RIG_PROXY="${RIG_NODES}"
-    DESTINATION_HOST=single
-    ;;
-  *)
-    echo "run.sh: RIG_TOPOLOGY must be replicated or standalone, not '${TOPOLOGY}'" >&2
-    exit 2
-    ;;
-esac
-export CLICKHOUSE_URL="${RIG_PROXY}"
-
-PROJECT="insight-cluster-rig-${TOPOLOGY}"
-COMPOSE=(docker compose -p "${PROJECT}" --project-directory "${RIG_DIR}" -f "${RIG_DIR}/compose.yaml" --profile "${TOPOLOGY}")
-WORKDIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/cluster-rig.XXXXXXXX")"
-STARTED_AT="${SECONDS}"
-
+# For CH_DDL_TASK_TIMEOUT_S, the ceiling a coordinated statement answers within.
+# shellcheck source=SCRIPTDIR/../../scripts/lib/ch-exec.sh
+source "${SCRIPTS}/lib/ch-exec.sh"
 # shellcheck source=SCRIPTDIR/services.sh
 source "${RIG_DIR}/services.sh"
 
-cleanup() {
-  local status=$?
-  # SAFETY: a shell error (an unbound variable, say) reaches this trap with
-  # status 0 on some bash builds; only the last step may end the run green.
-  if [[ "${status}" -eq 0 && "${FINISHED:-0}" != 1 ]]; then
-    status=1
-  fi
+teardown() {
   stop_v3_core
-  if [[ "${status}" -ne 0 ]]; then
-    "${COMPOSE[@]}" logs --tail 80 >&2 || true
-  fi
-  if [[ "${RIG_KEEP:-0}" != "1" ]]; then
-    "${COMPOSE[@]}" down -v -t 5 >/dev/null 2>&1 || true
-  fi
-  rm -rf "${WORKDIR}"
-  exit "${status}"
-}
-trap cleanup EXIT
-
-step() {
-  echo "=== ${TOPOLOGY}: $* (+$(( SECONDS - STARTED_AT ))s) ==="
 }
 
-dbt_venv() {
-  if [[ -n "${RIG_DBT_VENV:-}" ]]; then
-    VENV="${RIG_DBT_VENV}"
-    return
-  fi
-  # INVARIANT: the pinned dbt does not run on interpreters newer than 3.12.
-  local python
-  python="$(command -v python3.12 || command -v python3.11 || command -v python3)"
-  "${python}" -m venv "${WORKDIR}/venv"
-  "${WORKDIR}/venv/bin/pip" install --quiet \
-    "dbt-core==${DBT_CORE_VERSION}" "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}" pyyaml
-  VENV="${WORKDIR}/venv"
+# The clickhouse-migrate Job as the chart renders it for this warehouse: the
+# topology the way an operator sets it, plus whatever a leg overrides.
+render_migrate_job() {
+  helm template rig "${CHART}" --values "${CHART}/tests/values.yaml" \
+    --set clickhouse.host=127.0.0.1 --set "clickhouse.port=${RIG_PROXY##*:}" \
+    --set "clickhouse.database=${CLICKHOUSE_DATABASE}" --set "clickhouse.username=${CLICKHOUSE_USER}" \
+    --set "clickhouse.clusterMode=${CLICKHOUSE_CLUSTER_MODE}" --set "clickhouse.clusterName=${CLICKHOUSE_CLUSTER_NAME}" \
+    "$@" --show-only templates/clickhouse-migrate-job.yaml
 }
 
-# The hook's output goes to the log named, and to the terminal.
+# What the rig holds under the Secret keys the Job reads; a key it lacks is
+# left unset, which the Job marks optional or not.
+rig_secret() {
+  case "$1" in
+    clickhouse-password) printf '%s' "${CLICKHOUSE_PASSWORD}" ;;
+    clickhouse-presentation-password) printf '%s' "${CLICKHOUSE_PRESENTATION_PASSWORD}" ;;
+    *) return 1 ;;
+  esac
+}
+
+# The deploy hook as the chart's Job runs it: its command, under its env and
+# nothing else of this shell's — the chart's spelling of the topology is what
+# reaches the script. Output goes to the log named, and to the terminal.
+# Helm overrides after the log reach the render.
 deploy_hook() {
-  bash "${SCRIPTS}/apply-ch-migrations.sh" 2>&1 | tee "$1"
+  local log="$1" job line name key optional secret job_env=() command=()
+  shift
+  job="$(render_migrate_job "$@" 2> "${log}")" || { cat "${log}" >&2; return 1; }
+  while IFS= read -r line; do
+    case "${line}" in
+      "value "*)
+        job_env+=("${line#value }") ;;
+      "secret "*)
+        read -r name key optional <<< "${line#secret }"
+        if secret="$(rig_secret "${key}")"; then
+          job_env+=("${name}=${secret}")
+        elif [[ "${optional}" != true ]]; then
+          echo "  the Job reads Secret key ${key} for ${name}, which the rig does not hold" >&2
+          return 1
+        fi ;;
+    esac
+  done < <(yq -r '.spec.template.spec.containers[0].env[]
+    | if .valueFrom then "secret " + .name + " " + .valueFrom.secretKeyRef.key + " " + ((.valueFrom.secretKeyRef.optional // false) | tostring)
+      else "value " + .name + "=" + ((.value // "") | tostring) end' <<< "${job}")
+  while IFS= read -r line; do
+    command+=("${line//${TOOLBOX_SCRIPTS}/${SCRIPTS}}")
+  done < <(yq -r '.spec.template.spec.containers[0] | .command + .args | .[]' <<< "${job}")
+  if [[ "${command[*]}" != *apply-ch-migrations.sh* ]]; then
+    echo "  the Job's command no longer runs apply-ch-migrations.sh: ${command[*]}" >&2
+    return 1
+  fi
+  env -i PATH="${PATH}" HOME="${HOME}" "${job_env[@]}" "${command[@]}" 2>&1 | tee "${log}"
+}
+
+# A deploy the warehouse must refuse: the hook fails, says why in the words
+# its guard documents, and has created nothing. Helm overrides after the three
+# arguments reach the render.
+refused_before_ddl() {
+  local log="$1" reason="$2" what="$3"
+  shift 3
+  if deploy_hook "${log}" "$@" > /dev/null; then
+    echo "  the deploy hook ran ${what}" >&2
+    return 1
+  fi
+  if ! grep -qF "${reason}" "${log}"; then
+    echo "  the deploy hook failed ${what} without saying '${reason}':" >&2
+    tail -n 30 "${log}" >&2
+    return 1
+  fi
+  if grep -q "=== Creating databases" "${log}"; then
+    echo "  the deploy hook created databases before refusing ${what}" >&2
+    return 1
+  fi
+  echo "  refused: $(grep -m1 -F "${reason}" "${log}" | sed 's/^ *//')"
 }
 
 # What the jira heals print when they find work, and only then.
@@ -238,45 +253,101 @@ dbt_build() {
     || { echo "  ${DBT_SELECT} built nothing" >&2; return 1; }
 }
 
-check() {
-  "${VENV}/bin/python" "${RIG_DIR}/check.py" "$@"
+# The flag turned on over a lone node: the chart hands the hook clusterMode
+# with a cluster name, and the server lists no such cluster.
+refuse_cluster_flag() {
+  refused_before_ddl "${WORKDIR}/refused-cluster-flag.log" "lists no such" \
+    "with clickhouse.clusterMode on against the lone node" \
+    --set clickhouse.clusterMode=true --set clickhouse.clusterName=rig
 }
 
-# One statement against one node directly, bypassing the proxy.
-ch_on_node() {
-  local node="$1" sql="$2"
-  curl -sS --fail-with-body \
-    -H "X-ClickHouse-User: ${CLICKHOUSE_USER}" \
-    -H @<(printf 'X-ClickHouse-Key: %s' "${CLICKHOUSE_PASSWORD}") \
-    --data-binary "${sql}" "${node%/}/"
+# The flag turned off over Replicated databases: every creator would emit
+# standalone DDL into them.
+refuse_standalone_flag() {
+  refused_before_ddl "${WORKDIR}/refused-standalone-flag.log" "is Replicated, but clickhouse.clusterMode is" \
+    "with clickhouse.clusterMode off against the Replicated databases" \
+    --set clickhouse.clusterMode=false
 }
 
 # A bronze table from before clusterMode was turned on: plain engine, on one
 # replica, which the destination's IF NOT EXISTS never converts (#3899). The
-# deploy hook must refuse it by name before it creates anything, whichever
-# replica the proxy hands its probe to; with the table gone it deploys again.
+# deploy hook must refuse it by name, whichever replica the proxy hands its
+# probe to; with the table gone it deploys again.
 refuse_plain_bronze_table() {
-  local node="${RIG_NODES%%,*}" table="bronze_cluster_rig.pre_flip" log="${WORKDIR}/refused.log"
+  local node="${RIG_NODES%%,*}" table="bronze_cluster_rig.pre_flip" log="${WORKDIR}/refused-plain-bronze.log"
   ch_on_node "${node}" "CREATE TABLE ${table} (id UInt8) ENGINE = ReplacingMergeTree ORDER BY id"
-
-  if deploy_hook "${log}" > /dev/null; then
-    echo "  the deploy hook ran over the plain ${table}" >&2
-    return 1
-  fi
-  if ! grep -q "${table}  ReplacingMergeTree" "${log}"; then
-    echo "  the deploy hook failed without naming ${table}:" >&2
-    tail -n 30 "${log}" >&2
-    return 1
-  fi
-  if grep -q "=== Creating databases" "${log}"; then
-    echo "  the deploy hook created databases before refusing ${table}" >&2
-    return 1
-  fi
-  echo "  refused: $(grep -m1 "${table}" "${log}" | sed 's/^ *//')"
-
+  refused_before_ddl "${log}" "${table}  ReplacingMergeTree" "over the plain ${table}"
   ch_on_node "${node}" "DROP TABLE ${table}"
-  deploy_hook "${log}" > /dev/null || { tail -n 30 "${log}" >&2; return 1; }
+  deploy_hook "${WORKDIR}/hook-after-plain-bronze.log" > /dev/null || { tail -n 30 "${WORKDIR}/hook-after-plain-bronze.log" >&2; return 1; }
   echo "  deployed again once the table was gone"
+}
+
+# Which replica answers each of N requests through the proxy, one per line.
+proxy_answers() {
+  local i
+  for i in $(seq 1 "$1"); do
+    ch_on_node "${RIG_PROXY}" "SELECT hostName()" 2>/dev/null || echo "-"
+  done
+}
+
+# Wait until the proxy's answers to N requests are exactly the replicas named.
+proxy_serves() {
+  local expected="$1" n="$2" i answers
+  for i in $(seq 1 30); do
+    answers="$(proxy_answers "${n}" | sort -u | paste -sd, -)"
+    [[ "${answers}" == "${expected}" ]] && return 0
+    sleep 1
+  done
+  echo "  the proxy still answers from ${answers}, expected ${expected}" >&2
+  return 1
+}
+
+# Every relation one node holds, in a form two reads can be compared by.
+relations_on() {
+  ch_on_node "$1" "SELECT database, name, engine, uuid FROM system.tables
+    WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema') ORDER BY 1, 2"
+}
+
+# A replica down while the deploy runs. The hook must refuse before any DDL —
+# the bronze sweep reads every replica and a missing one fails it closed — and
+# within the ceiling a coordinated statement waits, leaving the live replica
+# as it was; with the replica back, it deploys again.
+deploy_with_replica_down() {
+  local live="${RIG_NODES%%,*}" log="${WORKDIR}/refused-replica-down.log" before after started elapsed
+  "${COMPOSE[@]}" stop -t 10 ch2 > /dev/null 2>&1
+  proxy_serves ch1 10
+  before="$(relations_on "${live}")"
+
+  started="${SECONDS}"
+  refused_before_ddl "${log}" "could not read system.tables on every replica" "with ch2 down"
+  elapsed=$(( SECONDS - started ))
+  if (( elapsed >= CH_DDL_TASK_TIMEOUT_S )); then
+    echo "  the deploy hook took ${elapsed}s to refuse, not under the ${CH_DDL_TASK_TIMEOUT_S}s a coordinated statement waits" >&2
+    return 1
+  fi
+  after="$(relations_on "${live}")"
+  if [[ "${before}" != "${after}" ]]; then
+    echo "  ch1's relations changed while ch2 was down:" >&2
+    diff <(printf '%s\n' "${before}") <(printf '%s\n' "${after}") >&2 || true
+    return 1
+  fi
+  echo "  refused in ${elapsed}s, ch1 unchanged"
+
+  "${COMPOSE[@]}" up -d --wait ch2 > /dev/null 2>&1
+  proxy_serves ch1,ch2 20
+  # ch1 may still hold the address ch2 had; the sweep needs every replica.
+  local seen=0
+  for _ in $(seq 1 60); do
+    seen="$(ch_on_node "${live}" "SELECT count() FROM clusterAllReplicas('${CLICKHOUSE_CLUSTER_NAME}', system.one) SETTINGS skip_unavailable_shards = 0" 2>/dev/null)" || seen=0
+    [[ "${seen}" == 2 ]] && break
+    sleep 1
+  done
+  if [[ "${seen}" != 2 ]]; then
+    echo "  ch1 still reaches ${seen:-0} of 2 replicas a minute after ch2 came back" >&2
+    return 1
+  fi
+  deploy_hook "${WORKDIR}/hook-after-replica-down.log" > /dev/null || { tail -n 30 "${WORKDIR}/hook-after-replica-down.log" >&2; return 1; }
+  echo "  deployed again once ch2 was back"
 }
 
 jira_warm_state() {
@@ -284,14 +355,11 @@ jira_warm_state() {
 }
 
 step "starting the warehouse"
-"${COMPOSE[@]}" down -v -t 5 >/dev/null 2>&1 || true
-if ! "${COMPOSE[@]}" up -d --wait --quiet-pull > "${WORKDIR}/up.log" 2>&1; then
-  cat "${WORKDIR}/up.log" >&2
-  exit 1
-fi
-
+warehouse_up
 dbt_venv
 export PATH="${VENV}/bin:${PATH}"
+step "the chart's subcharts"
+helm dependency update "${CHART}" > "${WORKDIR}/helm-deps.log" 2>&1 || { cat "${WORKDIR}/helm-deps.log" >&2; exit 1; }
 step "the services' binaries"
 services_build
 step "discovering the connectors' streams"
@@ -325,12 +393,19 @@ step "dbt build, second run"
 dbt_build "${WORKDIR}/dbt-run-2"
 step "services, second run"
 services_run 2
+if [[ "${TOPOLOGY}" == replicated ]]; then
+  step "deploy hook with clickhouse.clusterMode turned off is refused"
+  refuse_standalone_flag
+  step "a plain bronze table from before the flip is refused"
+  refuse_plain_bronze_table
+  step "deploy hook with ch2 down is refused, and deploys once ch2 is back"
+  deploy_with_replica_down
+else
+  step "deploy hook with clickhouse.clusterMode turned on is refused"
+  refuse_cluster_flag
+fi
 step "asserting every node"
 check assert --baseline "${WORKDIR}/counts.json" --probe-rows "${PROBE_ROWS}" --users presentation \
   --run-results "${WORKDIR}/dbt-run-2/run_results.json" --columns "bronze_github.commits:${ADDED_COLUMN}"
-if [[ "${TOPOLOGY}" == replicated ]]; then
-  step "a plain bronze table from before the flip is refused"
-  refuse_plain_bronze_table
-fi
 FINISHED=1
 step "OK"
