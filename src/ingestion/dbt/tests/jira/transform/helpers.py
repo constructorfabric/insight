@@ -87,6 +87,10 @@ def issue(
     `jira_id` defaults to the key. Pass it explicitly to seed the same issue
     under two keys — the shape a move between projects leaves in bronze, whose
     rows are keyed by whatever key the connector saw at the time.
+
+    `updated` defaults to `created`. Pass a later time to seed an issue edited
+    after its last changelog event: a link its read no longer holds then closes
+    at that `updated`, not at the read.
     """
     return {
         **_airbyte(extracted_at),
