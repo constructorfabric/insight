@@ -34,7 +34,7 @@ inputs:
     description: Newline-separated paths for runs-on/cache (bucket actions-cache-<project>)
     default: ""
   downloads-key:
-    description: Cache key for downloads, e.g. cargo-${{ hashFiles('**/Cargo.lock') }}; required with downloads
+    description: "Cache key for downloads, e.g. cargo- plus hashFiles of Cargo.lock; required with downloads"
     default: ""
   downloads-restore-keys:
     description: Newline-separated restore-key prefixes for downloads
