@@ -10,6 +10,9 @@
 # profile `standalone` — one node, no Keeper: every install that is not
 # clustered.
 #   single  http://127.0.0.1:18126
+#
+# both profiles — the MariaDB the two services keep their definitions in:
+#   mariadb 127.0.0.1:18306   insight/insight, databases identity + insight_v3
 
 x-server: &server
   image: ${CLICKHOUSE_SERVER_IMAGE:?CLICKHOUSE_SERVER_IMAGE must be set (from pins.env)}
@@ -75,6 +78,23 @@ services:
         condition: service_healthy
       ch2:
         condition: service_healthy
+
+  mariadb:
+    profiles: [replicated, standalone]
+    image: mariadb:11.4
+    environment:
+      MARIADB_USER: insight
+      MARIADB_PASSWORD: insight
+      MARIADB_ROOT_PASSWORD: root
+    volumes:
+      - ../../../../deploy/compose/mariadb-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    ports:
+      - "127.0.0.1:18306:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
 
   single:
     <<: *server

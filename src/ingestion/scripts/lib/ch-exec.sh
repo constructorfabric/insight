@@ -12,6 +12,8 @@
 # Exposes:
 #   run_ch           — execute a (multi-statement) SQL block read from stdin.
 #   ch_table_exists  — `ch_table_exists <db> <table>`; exit 0 if present.
+#   ch_table_engine  — `ch_table_engine <db> <table>`; the engine, empty if
+#                      absent, failure if the probe did not run.
 #   ch_scalar        — one numeric answer of a SELECT, or failure.
 #   ch_cluster_mode  — succeeds where the install declared itself clustered.
 #
@@ -132,4 +134,14 @@ ch_table_exists() {
   result="$(printf "SELECT count() FROM system.tables WHERE database='%s' AND name='%s'" \
     "$db" "$tbl" | _ch_http_query | tr -d '[:space:]')"
   [[ "$result" == "1" ]]
+}
+
+# The engine of one table, empty when there is none. Fails when the lookup did
+# not run: a caller that acts on the engine (a rebuild copies it) must not read
+# a failed probe as an absent table.
+ch_table_engine() {
+  local db="$1" tbl="$2" engine
+  engine="$(printf "SELECT engine FROM system.tables WHERE database='%s' AND name='%s'" \
+    "$db" "$tbl" | _ch_http_query)" || return 1
+  printf '%s' "${engine}" | tr -d '[:space:]'
 }

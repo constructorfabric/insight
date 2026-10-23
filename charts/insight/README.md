@@ -201,26 +201,31 @@ carries its own remedy:
 | access storage is replicated | `system.user_directories` | SQL-created roles and users are otherwise node-local, and authentication through the load balancer succeeds or fails by which replica answers. A warehouse that stores access locally takes no role from this release: create them on every replica yourself and set `clickhouse.provisionAccess: false`, which turns this guard into a note and skips every provisioning script |
 | an existing database carries the right engine | `system.databases` | the flag never converts a database that already stands; a standalone deploy is checked in the opposite direction, since it would emit standalone DDL into a `Replicated` database |
 | every `Replicated` database has joined every replica | `system.zookeeper` (`<database keeper path>/replicas`, against the host count of `clusterName` in `system.clusters`), `system.distributed_ddl_queue` | a replica that never ran the `CREATE DATABASE` answers empty; one whose `CREATE` is still queued because it was down is a note, not a refusal, and replays it on return |
+| every `bronze_*` MergeTree table is `Replicated*` | `system.tables` on every replica (`clusterAllReplicas`) | the destination creates with `IF NOT EXISTS`, so a bronze table from before the flip keeps its plain engine on the one replica that created it; the guard lists each such table with its replica and names the remedy (drop the bronze database `ON CLUSTER` and re-sync, or the conversion runbook, #3902). The Jira rebuild asserts the same of its source before copying it. This is the one probe that needs every replica up: the one that is down may hold the table. It runs on the peers as the deploy user, which needs `REMOTE ON *.*` and `SHOW` on every `bronze_*` table (a full-access admin has both) and the cluster's `<remote_servers>` entry to carry an interserver `<secret>` |
 
 Bronze is the exception to "no `ON CLUSTER` anywhere else": `bronze_*` is an
 Atomic database the Airbyte destination creates, so nothing replays DDL issued
 in it, and a heal or migration that creates, drops, renames or exchanges a
 table there carries the clause.
 
-With a replica down, coordinated DDL waits only for the active replicas
-(`throw_only_active`, 60 s per statement from the hooks, 30 s from a service)
-and the absent one replays its queue when it returns, so a deploy proceeds on a
-degraded cluster. A write does not:
+With a replica down, a deploy does not start: the bronze-engine sweep needs
+every replica to answer, since the absent one may hold the table it looks for.
+Restore the replica, then deploy. A replica that drops out while a deploy runs
+is tolerated by the DDL: coordinated statements wait only for the active
+replicas (`throw_only_active`, 60 s per statement from the hooks, 30 s from a
+service) and the absent one replays its queue when it returns. A write is not:
 quorum inserts and synchronous mutations fail loudly rather than leave one
 replica with the old rows. The two hook Jobs carry an `activeDeadlineSeconds`
 sized from those ceilings.
 
 Flipping the values converts nothing that already stands: an existing
 standalone install moving to a cluster recreates its databases and bronze
-tables with the replicated engines first (epic #2010). The replicated leg of
+tables with the replicated engines first (epic #2010), and the guards above
+refuse the deploy until it has. The replicated leg of
 [`cluster-mode.yml`](../../.github/workflows/cluster-mode.yml) runs the full
 deploy hook, a connector's bronze and its dbt build twice on a two-replica
-warehouse and compares every node. Its rig
+warehouse, compares every node, and then asserts that a plain bronze table left
+on one replica is refused by name. Its rig
 ([`src/ingestion/tests/cluster-rig`](../../src/ingestion/tests/cluster-rig/README.md))
 also spells out what a clustered ClickHouse must provide before Insight installs
 onto it.

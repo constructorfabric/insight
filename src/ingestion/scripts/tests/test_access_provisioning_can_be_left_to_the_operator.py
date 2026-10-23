@@ -36,6 +36,7 @@ _ch_http_query() {
   sql="$(cat)"
   printf '%s\\n' "${sql}" >> "${SQL_LOG}"
   case "${sql}" in
+    *clusterAllReplicas*system.tables*) printf '\\n' ;;
     *system.user_directories*) printf '%s\\n' "${REPLICATED_DIRECTORIES}" ;;
     *system.macros*) printf '2\\n' ;;
     *system.zookeeper*"/replicas"*) printf '0\\n' ;;
