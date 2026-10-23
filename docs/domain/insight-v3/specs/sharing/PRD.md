@@ -143,7 +143,7 @@ One installation holds one tenant's definitions. People and the administrator ro
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-fr-identity`
 
-Every metric, widget, dashboard, dataset, folder and tag **MUST** get a generated identity, used by every operation and every stored reference, alerts and portal addresses included. Names are labels: a rename rewrites no reference. Two inputs still take a name and resolve it to an identity before anything is stored: a tag name resolves to the dashboard owner's tag of that name, created if absent (`cpt-insightspec-v3-sharing-fr-tags`), and a producer's dataset name resolves to the one dataset of that name (D6). Only these two kinds of name are unique.
+Every metric, widget, dashboard, folder and tag **MUST** have an identity, used by every operation and every stored reference, alerts and portal addresses included; a new one gets a generated identity. Names are labels: a rename rewrites no reference. A tag is still applied by name, resolved to the dashboard owner's tag of that name and created if absent (`cpt-insightspec-v3-sharing-fr-tags`). A dataset's unique name stays its identity (D6). Only tag and dataset names are unique.
 
 **Actors**: `cpt-insightspec-v3-sharing-actor-owner`, `cpt-insightspec-v3-sharing-actor-admin`, `cpt-insightspec-v3-sharing-actor-assistant`
 
@@ -151,7 +151,7 @@ Every metric, widget, dashboard, dataset, folder and tag **MUST** get a generate
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-fr-upgrade`
 
-The upgrade **MUST** give every existing definition, folder, tag, pin, folder placement and alert an identity and turn each reference by name into one by identity; one matching no name is kept and shows as missing, as now.
+The upgrade **MUST** keep every existing definition, folder, tag, pin, folder placement and alert, with each existing name becoming that definition's identity, so every stored reference and every link stays valid without being rewritten.
 
 **Actors**: `cpt-insightspec-v3-sharing-actor-operator`
 
@@ -429,7 +429,7 @@ Decisions taken by the product owner:
 - **D3.** The administrator role shows no private dashboard.
 - **D4.** Orphaned means the owner lost the role, which covers a leaver when leaving ends it.
 - **D5.** Ownerless rows stay; the operator, not a claim feature, assigns owners.
-- **D6.** Tag names are unique per owner, since tags are applied by name and created on first use; dataset names are unique, since outside producers address datasets by name, and unowned datasets disclose nothing.
+- **D6.** Tag names are unique per owner, since tags are applied by name and created on first use; a dataset's unique name stays its identity, since outside producers address datasets by name, and unowned datasets disclose nothing. Existing definitions keep their former name as their identity, so nothing stored is rewritten.
 - **D7.** Folders are places; tags group a dashboard several ways.
 - **D8.** Share targets are current administrators: nobody else opens the Custom zone.
 - **D9.** No sharing or transfer through the chat or MCP.
@@ -438,7 +438,6 @@ Decisions taken by the product owner:
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Links by name break | Missing page | Release note; the list finds a dashboard by name |
 | Searching a body by the name of a metric or widget it uses | No match | Search the definition's own name; dependents show its users |
 | Identity unreachable | Nobody identified | Server error, never allowed, like the administrator check now |
 | An owner loses the role briefly | Dashboard transferred meanwhile | Accepted; the new owner can share it back |
