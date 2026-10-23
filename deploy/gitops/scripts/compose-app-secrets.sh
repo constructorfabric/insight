@@ -78,6 +78,12 @@ CH_HOST=$( yq -r '.clickhouse.host'          "$VALUES")
 CH_PORT=$( yq -r '.clickhouse.port  // 8123' "$VALUES")
 CH_USER=$( yq -r '.clickhouse.username'      "$VALUES")
 CH_DB=$(   yq -r '.clickhouse.database'      "$VALUES")
+# Topology of the warehouse (epic #2010). The chart renders these into the
+# service Secrets under credentials.autoGenerate; in gitops mode this script is
+# the only place they come from, and a service without them renders standalone
+# DDL into a Replicated database.
+CH_CLUSTER_MODE=$(yq -r '.clickhouse.clusterMode // false' "$VALUES")
+CH_CLUSTER_NAME=$(yq -r '.clickhouse.clusterName // ""'    "$VALUES")
 CORE_CONFIG_SECRET=$(yq -r '.insightV3Core.existingSecret // ""' "$VALUES")
 RD_HOST=$( yq -r '.redis.host'               "$VALUES")
 RD_PORT=$( yq -r '.redis.port       // 6379' "$VALUES")
@@ -350,6 +356,8 @@ if [ -n "$CORE_CONFIG_SECRET" ] && [ "$CORE_CONFIG_SECRET" != "null" ]; then
     --from-literal=APP__gears__insight_v3_core__config__clickhouse_database="${CH_DB}" \
     --from-literal=APP__gears__insight_v3_core__config__clickhouse_user="${CH_USER}" \
     --from-literal=APP__gears__insight_v3_core__config__clickhouse_password="${CH_PW}" \
+    --from-literal=APP__gears__insight_v3_core__config__clickhouse_cluster_mode="${CH_CLUSTER_MODE}" \
+    --from-literal=APP__gears__insight_v3_core__config__clickhouse_cluster_name="${CH_CLUSTER_NAME}" \
     --from-literal=APP__gears__insight_v3_core__config__database_url="mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${CORE_DB}" \
     --from-literal=APP__gears__insight_v3_core__config__identity_url="${IDENTITY_URL}" \
     ${CORE_CH_READER_PW:+--from-literal=APP__gears__insight_v3_core__config__clickhouse_query_user="${CORE_CH_READER}"} \
@@ -432,6 +440,8 @@ stringData:
   APP__gears__identity_resolution__config__clickhouse_database: "${CH_DB}"
   APP__gears__identity_resolution__config__clickhouse_user: "${CH_USER}"
   APP__gears__identity_resolution__config__clickhouse_password: "${CH_PW}"
+  APP__gears__identity_resolution__config__clickhouse_cluster_mode: "${CH_CLUSTER_MODE}"
+  APP__gears__identity_resolution__config__clickhouse_cluster_name: "${CH_CLUSTER_NAME}"
 EOF
   # First-admin bootstrap inputs (migrate hook Job): mirror the
   # chart-side block in charts/insight/templates/secrets.yaml.

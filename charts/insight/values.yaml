@@ -212,14 +212,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.10.20.18.18-a66cee2" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.10.23.07.10-8cfe8f0" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.10.20.18.18-a66cee2" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.10.23.07.10-8cfe8f0" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   airbyteSync:
     pollIntervalSeconds: 30
     statusUnreadableThresholdSeconds: 1800
@@ -308,6 +308,15 @@ clickhouse:
   # still converges them later (clickhouse-migrate -> apply-ch-migrations.sh),
   # so the service user needs CREATE DATABASE either way.
   createDatabases: true
+  # When true (default), create-databases.sh also provisions the roles and
+  # grant-less users that read those databases (presentation, grafana, the
+  # MCP explorer and the custom assistant's reader), from both Jobs that run
+  # it. Set false where access is the operator's: a cluster whose ClickHouse
+  # stores access entities locally (no `<replicated>` user directory) cannot
+  # take them from one deploy, so the operator creates them on every replica
+  # and this release creates, grants and revokes nothing. The topology guard
+  # then only notes the missing replicated directory instead of refusing.
+  provisionAccess: true
   # When true (default), a post-install/post-upgrade Hook Job
   # (clickhouse-migrate-job) applies the schema migrations
   # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against
