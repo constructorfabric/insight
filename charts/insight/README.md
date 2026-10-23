@@ -158,7 +158,7 @@ The same decision under a different name in each layer:
 | Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-databases` and `clickhouse-migrate` Jobs (one shared env block, `insight.clickhouse.ddlEnv`), `scripts/lib/ch-topology.sh`, which renders the database engine `create-databases.sh` creates with, expands the `/*@@REPLICATED@@*/` and `/*@@ON_CLUSTER@@*/` markers a numbered migration spells its engine and its cluster clause behind, and refuses a deploy the warehouse cannot serve; and `scripts/lib/ch-exec.sh`, whose every request in cluster mode carries the session settings a replicated warehouse needs (`distributed_ddl_output_mode=throw_only_active`, a 60 s `distributed_ddl_task_timeout`, quorum writes with sequential-consistency reads, `allow_nondeterministic_mutations`, `mutations_sync`/`alter_sync` 2) and a 900 s transport ceiling |
 | Reconcile | `RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE` / `RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME` | `reconcile-cron.yaml`, consumed by `compose_destination_config.py` as the destination's `use_replicated_engines` / `cluster_name` |
 | dbt | project var `cluster_mode`, read by the `insight_engine` macro every engine is declared through -- the models', the `on-run-start` hooks' raw DDL and the jira journal's stages; the project-level `+engine` default for a model that declares none; the profile's `cluster:`, `database_engine: Replicated` and `cluster_mode: true` keys and the quorum / mutation / CTE `custom_settings`, all written by the one profile writer. No dbt statement carries `ON CLUSTER`: `database_engine: Replicated` is what keeps the adapter from adding it, and the hooks never render it | `dbt_project.yml`, `dbt/macros/insight_engine.sql`, `scripts/dbt_profiles.py` |
-| Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name` (the name is accepted for the shared contract and unused: a service emits no `ON CLUSTER`), decides the engine family every `insight_clickhouse::Ddl` create renders (`ReplicatedMergeTree`, argument-less, or `MergeTree`) and the read-after-write settings a swap needs. No service creates a database; `Client::assert_database_topology` refuses a missing one (naming `create-databases.sh`) or one whose engine contradicts the topology | `libs/insight-clickhouse` (`topology.rs`, `ddl.rs`, `consistency.rs`), `insight-v3-core` and `identity-resolution` gear config |
+| Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name` (the name is accepted for the shared contract and unused: a service emits no `ON CLUSTER`), decides the engine family every `insight_clickhouse::Ddl` create renders (`ReplicatedMergeTree`, argument-less, or `MergeTree`), the read-after-write settings a swap needs (only identity-resolution's staging count and watermark take them; v3-core's record inserts and preview reads never read their own write) and the wait every `Client::execute_ddl` makes for the active replicas (`throw_only_active`, 30 s). No service creates a database; `Client::assert_database_topology` refuses a missing one (naming `create-databases.sh`) or one whose engine contradicts the topology | `libs/insight-clickhouse` (`topology.rs`, `ddl.rs`, `consistency.rs`, `coordination.rs`), `insight-v3-core` and `identity-resolution` gear config |
 
 Tests that must know the topology read `CLICKHOUSE_CLUSTER_MODE` /
 `CLICKHOUSE_CLUSTER_NAME` from their harness, defaulting to a single node.
@@ -177,7 +177,10 @@ later DDL is logged in Keeper and replayed on every replica, which is what lets
 a creator state a table without naming a cluster. The
 `clickhouse-databases` pre-install Hook and the `clickhouse-migrate`
 post-install Hook both run that script; `clickhouse.createDatabases: false`
-turns the pre-install one off for a warehouse provisioned out of band.
+turns the pre-install one off for a warehouse provisioned out of band. The
+roles and grant-less users ride along in the same script, from both Hooks;
+`clickhouse.provisionAccess: false` leaves those to the operator while the
+databases are still created and checked.
 
 Replaying the DDL is not replicating the rows, though. A table still declares
 its own `Replicated*` engine, or it stands on every replica holding whatever
@@ -195,7 +198,7 @@ carries its own remedy:
 | `clusterName` is set and exists | `system.clusters` | every `ON CLUSTER` statement names it; the flag without a name would create a node-local `Replicated` database |
 | Keeper is reachable | `system.zookeeper` | the `Replicated` database engine and the DDL queue coordinate through it |
 | `{shard}` and `{replica}` are defined | `system.macros` | the database and table engines name them in their Keeper paths |
-| access storage is replicated | `system.user_directories` | SQL-created roles and users are otherwise node-local, and authentication through the load balancer succeeds or fails by which replica answers |
+| access storage is replicated | `system.user_directories` | SQL-created roles and users are otherwise node-local, and authentication through the load balancer succeeds or fails by which replica answers. A warehouse that stores access locally takes no role from this release: create them on every replica yourself and set `clickhouse.provisionAccess: false`, which turns this guard into a note and skips every provisioning script |
 | an existing database carries the right engine | `system.databases` | the flag never converts a database that already stands; a standalone deploy is checked in the opposite direction, since it would emit standalone DDL into a `Replicated` database |
 | every `Replicated` database has joined every replica | `system.zookeeper` (`<database keeper path>/replicas`, against the host count of `clusterName` in `system.clusters`), `system.distributed_ddl_queue` | a replica that never ran the `CREATE DATABASE` answers empty; one whose `CREATE` is still queued because it was down is a note, not a refusal, and replays it on return |
 
@@ -205,8 +208,9 @@ in it, and a heal or migration that creates, drops, renames or exchanges a
 table there carries the clause.
 
 With a replica down, coordinated DDL waits only for the active replicas
-(`throw_only_active`, 60 s per statement) and the absent one replays its queue
-when it returns, so a deploy proceeds on a degraded cluster. A write does not:
+(`throw_only_active`, 60 s per statement from the hooks, 30 s from a service)
+and the absent one replays its queue when it returns, so a deploy proceeds on a
+degraded cluster. A write does not:
 quorum inserts and synchronous mutations fail loudly rather than leave one
 replica with the old rows. The two hook Jobs carry an `activeDeadlineSeconds`
 sized from those ceilings.
@@ -237,6 +241,7 @@ Key groups:
 - `keycloak.deploy` + `keycloakConfig.*` — the in-stack identity broker and its realms-as-code hook
 - `clickhouse.clusterMode` / `clickhouse.clusterName` — warehouse topology, see [ClickHouse topology](#clickhouse-topology)
 - `clickhouse.createDatabases` — whether the release creates its own ClickHouse databases (see below)
+- `clickhouse.provisionAccess` — whether the release provisions the ClickHouse roles and grant-less users beside them; `false` leaves access to the operator (a cluster without a replicated user directory)
 - `clickhouse.fieldValueMap.*` — insert-only seed of operator-authored `config.field_value_map` / `config.field_value_defaults` rows from a TSV ConfigMap (post-upgrade hook, weight 300)
 - `previews.*`, `gitCliProxy.*`, `frontend.*` — optional services, on by default
 - `ingestion.templates.enabled` — whether to ship Argo WorkflowTemplates; requires Argo CRDs to be present in the cluster

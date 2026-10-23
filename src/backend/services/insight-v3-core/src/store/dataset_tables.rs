@@ -5,16 +5,19 @@
 //! database itself is `create-databases.sh`'s to make; a create first refuses
 //! one whose engine contradicts the configured topology.
 //!
-//! A reader that follows its own write can reach a replica behind the load
-//! balancer that has not merged it yet, so the insert and the reads go through
-//! the shared client's read-after-write pair.
+//! Nothing here reads its own write, so nothing here takes the shared
+//! client's read-after-write pair. A record is stored and never read back by
+//! the request that sent it, and a sequential quorum would refuse the next
+//! SDK client's insert into the same table while this one is unconfirmed. The
+//! preview looks at what arrived, from whichever replica answers: a read
+//! pinned to the quorum would throw on a lagging replica instead.
 
 use std::fmt;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use clickhouse::sql::Identifier;
-use insight_clickhouse::{Ddl, MissingRelation, TableSpec};
+use insight_clickhouse::{Ddl, MissingRelation, TableSpec, Unfinished};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -39,9 +42,12 @@ LIMIT ? OFFSET ?";
 const COUNT_ROWS: &str = "SELECT count() AS total FROM ?";
 const READ_SHAPE: &str = "SELECT sorting_key FROM system.tables
 WHERE database = currentDatabase() AND name = ?";
-/// Creating or dropping a table waits on a cluster-wide lock, so it gets a
-/// wider bound than a read.
-const DDL_TIMEOUT_SECS: u64 = 35;
+/// Creating or dropping a table waits for the replicas, so it gets a wider
+/// bound than a read: the warehouse's own wait, and then some, so that it is
+/// normally the warehouse that reports a statement as unfinished. A statement
+/// cut off here may still land, which is the caller's to allow for.
+const DDL_TIMEOUT: Duration =
+    insight_clickhouse::DDL_TASK_TIMEOUT.saturating_add(Duration::from_secs(5));
 const READ_TIMEOUT_SECS: u64 = 10;
 const INSERT_SEND_TIMEOUT_SECS: u64 = 10;
 const INSERT_END_TIMEOUT_SECS: u64 = 30;
@@ -76,7 +82,7 @@ impl DatasetTables {
     pub(crate) fn new(client: insight_clickhouse::Client) -> Self {
         Self {
             client,
-            ddl_timeout: Duration::from_secs(DDL_TIMEOUT_SECS),
+            ddl_timeout: DDL_TIMEOUT,
             read_timeout: Duration::from_secs(READ_TIMEOUT_SECS),
             insert: InsertTimeouts {
                 send: Duration::from_secs(INSERT_SEND_TIMEOUT_SECS),
@@ -84,6 +90,12 @@ impl DatasetTables {
                 total: Duration::from_secs(INSERT_TOTAL_TIMEOUT_SECS),
             },
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_ddl_timeout(mut self, bound: Duration) -> Self {
+        self.ddl_timeout = bound;
+        self
     }
 
     /// Puts one record into a dataset's table, whole and unread.
@@ -112,7 +124,8 @@ impl DatasetTables {
     async fn write(&self, table: &str, row: &RecordRow) -> Result<(), DatasetTableError> {
         let mut insert = self
             .client
-            .consistent_insert::<RecordRow>(table)
+            .inner()
+            .insert::<RecordRow>(table)
             .await?
             .with_timeouts(Some(self.insert.send), Some(self.insert.end));
         insert.write(row).await?;
@@ -140,7 +153,7 @@ impl DatasetTables {
         let statement = READ_PAGE.replace("{order}", page.order);
         let rows = self
             .client
-            .consistent_query(&statement)
+            .query(&statement)
             .bind(Identifier(table))
             .bind(page.limit)
             .bind(page.offset)
@@ -157,7 +170,7 @@ impl DatasetTables {
     pub(crate) async fn count(&self, table: &str) -> Result<u64, DatasetTableError> {
         let rows = self
             .client
-            .consistent_query(COUNT_ROWS)
+            .query(COUNT_ROWS)
             .bind(Identifier(table))
             .fetch_all::<CountRow>();
         let found = tokio::time::timeout(self.read_timeout, rows)
@@ -341,6 +354,7 @@ impl From<clickhouse::error::Error> for DatasetTableError {
     fn from(error: clickhouse::error::Error) -> Self {
         match error {
             clickhouse::error::Error::TimedOut => Self::Timeout,
+            ref reported if Unfinished::from_error(reported).is_some() => Self::Timeout,
             ref reported if MissingRelation::from_error(reported).is_some() => Self::Vanished,
             error => Self::ClickHouse(error),
         }

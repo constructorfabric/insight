@@ -42,7 +42,8 @@ models:
       sender email, date). Joins messages to users on `sender_id = id`
       using FINAL to collapse the RMT bronze of the user directory.
       Drops senders without a resolvable email (anonymous / bots) because
-      Silver identity needs a stable join key. Per-channel splits
+      Silver identity needs a stable join key, and drops guests (role 600);
+      a sender whose role is unknown is kept. Per-channel splits
       (direct/group/channel) are NULL — the proxy only exposes aggregated
       totals per sender per bucket.
     columns:
