@@ -166,20 +166,34 @@ issue_item_evidence AS (
     WHERE final_close_at IS NOT NULL
       AND status_category = 'done'
 ),
+-- A day's estimate deviation is not additive across accounts, so it is taken
+-- per person-day (`task_person_day_group`), the grain the email gave it.
+estimation_rows AS (
+    SELECT
+        tenant_id                                                            AS day_tenant_id,
+        entity_id                                                            AS day_entity_id,
+        account_source_type                                                  AS day_account_source_type,
+        account_source_id                                                    AS day_account_source_id,
+        account_id                                                           AS day_account_id,
+        {{ task_person_day_group('') }}                                      AS person_day,
+        metric_date                                                          AS day_metric_date,
+        is_done,
+        time_estimate_seconds,
+        time_spent_seconds
+    FROM issue_facts
+),
 estimation_day AS (
     SELECT
-        tenant_id,
-        entity_id,
-        account_source_type,
-        account_source_id,
-        account_id,
-        metric_date,
+        day_tenant_id AS tenant_id,
+        day_entity_id AS entity_id,
+        {{ task_person_day_account_columns('day_') }},
+        day_metric_date AS metric_date,
         100 * avgIf(time_estimate_seconds, is_done AND ifNull(time_estimate_seconds, 0) > 0 AND time_spent_seconds IS NOT NULL)
             / nullIf(avgIf(time_spent_seconds, is_done AND ifNull(time_estimate_seconds, 0) > 0 AND time_spent_seconds IS NOT NULL), 0)
             AS estimation_pct,
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
-    FROM issue_facts
-    GROUP BY tenant_id, entity_id, account_source_type, account_source_id, account_id, metric_date
+    FROM estimation_rows
+    GROUP BY day_tenant_id, day_entity_id, person_day, day_metric_date
 ),
 transitions AS (
     SELECT

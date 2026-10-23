@@ -6,11 +6,11 @@
 ) }}
 
 -- Per-source user dimension; unioned into `silver.class_task_users` via
--- `union_by_tag`. Gold reaches an issue's assignee only through a row here,
--- and a row exists only for an account with a known address, so an account
--- with none takes its issues out of every measure — the coverage of
--- `github__account_emails` is the ceiling on how much of the tracker reaches
--- a dashboard.
+-- `union_by_tag`. Gold reads an assignee's address from a row here, and a row
+-- exists only for an account with a known address; an account with none keeps
+-- its issues under the account id, which attributes only once identity binds
+-- it — so the coverage of `github__account_emails` still bounds how much of the
+-- tracker reaches a dashboard by e-mail alone.
 --
 -- `user_id` is the numeric account id as text, not the login: a login is
 -- renameable and the identity bridge already keys on the id.

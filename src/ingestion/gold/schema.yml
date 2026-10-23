@@ -940,8 +940,11 @@ models:
       Per-issue lifecycle state for the task-delivery observation pipeline:
       one row per assigned issue with the assignee's tracker account and email,
       the current status category, the close time, and the scalar fields the
-      observation measures read. Unassigned and deleted issues have no row. Materialized so the field-history pivot runs
-      once per build instead of once per measure branch.
+      observation measures read. The per-person attribution root, not a census:
+      unassigned and deleted issues have no row; an assignee missing from the
+      user directory keeps its issues under the account. Materialized so the
+      field-history pivot runs once per build instead of once per measure
+      branch.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -1013,10 +1016,13 @@ models:
   - name: task_worklog_flow
     description: >
       Per-person per-day time flow for the task-delivery observation pipeline:
-      in-progress seconds split from the status spans by calendar day, full
-      outer joined with the worklog seconds logged per author. One row per
-      (tenant, entity, date); either figure is 0 on a day the other side has
-      no rows for.
+      in-progress seconds split from the status spans by calendar day, summed
+      with the worklog seconds logged per author. One row per person-day: per
+      (tenant, email, date) where the tracker states an email, per (tenant,
+      account, date) where it states none; either figure is 0 on a day the
+      other side has no rows for. The account columns are set only on a day
+      a single account made, so the row resolves account-first; a day several
+      accounts of one email made resolves through the email.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
