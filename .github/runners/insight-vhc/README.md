@@ -110,7 +110,7 @@ The jobs under this rule:
 - `jira-field-history.yml`: `transformations`
 - `field-parity.yml`: `field-parity`
 - `warm-upgrade.yml`: `warm-upgrade`
-- `cluster-mode.yml`: `rig`
+- `cluster-mode.yml`: `rig` (every leg) and `warm-cache`
 - `ci.yml`: `rust`, only the matrix legs that start a database: the entry sets
   `live_db` or `live_ch` in `scripts/ci/components.py` **and** runs tests
   (`cover` or `test`), the same condition as the "Start MariaDB" and "Start
