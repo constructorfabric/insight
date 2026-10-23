@@ -221,3 +221,27 @@ def test_no_chart_template_creates_a_clickhouse_database() -> None:
     }
 
     assert not offenders, f"a chart template creates a ClickHouse database: {offenders}"
+
+
+#: The two Jobs that run create-databases.sh share one env block, so the
+#: access decision reaches both or neither.
+DDL_JOBS = ["templates/clickhouse-databases-job.yaml", "templates/clickhouse-migrate-job.yaml"]
+
+PROVISION_ACCESS = ("CLICKHOUSE_PROVISION_ACCESS",)
+
+
+@pytest.mark.parametrize("template", DDL_JOBS)
+def test_access_is_provisioned_unless_the_install_says_otherwise(chart_dependencies: None, template: str) -> None:
+    assert _values(_render(template, BASE), PROVISION_ACCESS) == {"CLICKHOUSE_PROVISION_ACCESS": "true"}
+
+
+@pytest.mark.parametrize("template", DDL_JOBS)
+def test_leaving_access_to_the_operator_reaches_every_job_that_provisions_it(
+    chart_dependencies: None, template: str
+) -> None:
+    """The migrate hook runs the same script as the pre-install Job; a value
+    that reached only one would leave the other provisioning onto a cluster
+    whose access storage cannot take it."""
+    found = _values(_render(template, [*CLUSTERED, "--set", "clickhouse.provisionAccess=false"]), PROVISION_ACCESS)
+
+    assert found == {"CLICKHOUSE_PROVISION_ACCESS": "false"}, f"{template} missed the access decision"

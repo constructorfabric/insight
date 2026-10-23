@@ -263,6 +263,24 @@ EXCHANGE TABLES bronze_jira.$1 AND bronze_jira.$1__rebuild $(ch_on_cluster);
 SQL
 }
 
+# INVARIANT: the copy below takes the source's engine verbatim, so on a cluster
+# a plain source (a table from before clusterMode was turned on) would yield a
+# plain copy that replicates nothing, and the quorum counts would judge one
+# replica. The topology guard refuses such a table before any DDL; this holds
+# the same at the copy.
+_jira_require_replicated_source() {
+  local table="$1" engine
+  ch_cluster_mode || return 0
+  engine="$(ch_table_engine bronze_jira "${table}")" || {
+    echo "  bronze_jira.${table}: could not read its engine — refusing to rebuild" >&2
+    return 1
+  }
+  [[ "${engine}" == Replicated* ]] && return 0
+
+  echo "  bronze_jira.${table}: engine ${engine:-not found on the replica that answered}; a copy of it would not replicate — refusing to rebuild" >&2
+  return 1
+}
+
 # Rebuild one bronze_jira table from `select_sql` and swap the result in.
 #
 # `expected` is the exact number of keys the copy must hold. Empty means the
@@ -283,6 +301,7 @@ _jira_swap_in_rebuilt() {
   local table="$1" expected="$2" select_sql="$3" carry_replace="${4:-}"
   local copy="bronze_jira.${table}__rebuild" before after copied live fault copy_start_ms
 
+  _jira_require_replicated_source "${table}"
   before="$(_jira_key_count "${table}")"
   copy_start_ms="$(ch_scalar "SELECT toUnixTimestamp64Milli(now64(3))")"
 

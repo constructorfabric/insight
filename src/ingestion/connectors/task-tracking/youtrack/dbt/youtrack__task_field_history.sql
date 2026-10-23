@@ -119,6 +119,16 @@ WITH changes AS (
         'synthetic_initial', toUInt32(0), i.reporter_id, 'created', 'Created', 'single',
         CAST([] AS Array(Tuple(String, String))), i.observed_at, 'set'
     FROM {{ ref('youtrack__issues') }} AS i
+), flagged_rows AS (
+    SELECT *, (tenant_id, insight_source_id, field_id) IN (
+            SELECT tenant_id, insight_source_id, field_id FROM {{ ref('youtrack__long_text_fields') }}) AS is_long_text
+    FROM rows
+), referenced_rows AS (
+    -- A long-text value is a text reference: the body is in youtrack__task_field_text.
+    SELECT * REPLACE (if(is_long_text,
+            arrayMap(p -> ({{ task_text_id('p.2') }}, {{ task_text_prefix('p.2') }}), arrayFilter(p -> p.2 != '', pairs)),
+            pairs) AS pairs)
+    FROM flagged_rows
 ), field_types AS (
     SELECT tenant_id, insight_source_id, field_id,
         if(uniqExact(value_type) = 1, any(value_type), 'none') AS value_id_type
@@ -132,7 +142,7 @@ WITH changes AS (
     SELECT *, row_number() OVER w AS position,
         lagInFrame(pairs) OVER w AS previous_pairs,
         lagInFrame(field_cardinality) OVER w AS previous_cardinality
-    FROM rows
+    FROM referenced_rows
     WINDOW w AS (PARTITION BY tenant_id, insight_source_id, issue_id, field_id
         ORDER BY event_at, {{ task_event_band('event_kind') }}, _seq
         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
@@ -150,7 +160,7 @@ SELECT concat(ifNull(h.tenant_id, ''), '-', h.insight_source_id, '-youtrack-', h
         AS LowCardinality(String)) AS field_cardinality,
     CAST(h.delta_action AS LowCardinality(String)) AS delta_action,
     arrayMap(x -> x.1, h.pairs) AS value_ids, arrayMap(x -> x.2, h.pairs) AS value_displays,
-    CAST(ifNull(nullIf(t.value_id_type, ''), 'none') AS LowCardinality(String)) AS value_id_type,
+    CAST(if(h.is_long_text, {{ task_text_ref_type() }}, ifNull(nullIf(t.value_id_type, ''), 'none')) AS LowCardinality(String)) AS value_id_type,
     h.collected_at AS collected_at, toUInt64(toUnixTimestamp64Milli(now64(3))) AS _version
 FROM ordered_rows AS h
 LEFT JOIN origins AS o

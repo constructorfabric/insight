@@ -214,3 +214,53 @@ def test_each_tenant_keeps_its_own_field_type_history(case: Warehouse) -> None:
         {"tenant_id": OTHER_TENANT, "observed_cardinality": "multi", "previously_observed_type": None},
         {"tenant_id": TENANT, "observed_cardinality": "single", "previously_observed_type": None},
     ]
+
+
+THEIR_ENUM = "Synthetic enum value of the other tenant"
+
+
+def _seed_long_text_type_for_one_tenant(case: Warehouse) -> None:
+    _field_type(case, TENANT, "text[1]", "2026-01-10T00:00:00")
+    _field_type(case, OTHER_TENANT, "enum[1]", "2026-01-10T00:00:00")
+    _issue(
+        case,
+        TENANT,
+        {"id": "text-value", "text": "Synthetic notes body", "$type": "TextFieldValue"},
+        "TextIssueCustomField",
+    )
+    _issue(
+        case,
+        OTHER_TENANT,
+        {"id": "theirs", "name": THEIR_ENUM, "$type": "EnumBundleElement"},
+        "SingleEnumIssueCustomField",
+    )
+    case.build()
+
+
+def test_a_field_is_long_text_only_for_the_tenant_that_types_it_so(case: Warehouse) -> None:
+    _seed_long_text_type_for_one_tenant(case)
+
+    found = case.rows(
+        "SELECT tenant_id, field_id FROM staging.youtrack__long_text_fields"
+        f" WHERE insight_source_id = '{SOURCE}' ORDER BY tenant_id, field_id"
+    )
+
+    assert list(found) == [
+        {"tenant_id": OTHER_TENANT, "field_id": "description"},
+        {"tenant_id": TENANT, "field_id": "description"},
+        {"tenant_id": TENANT, "field_id": "field-1"},
+    ]
+
+
+def test_another_tenants_value_of_the_same_field_is_never_stored_as_a_body(case: Warehouse) -> None:
+    _seed_long_text_type_for_one_tenant(case)
+
+    bodies = [
+        str(row["content"])
+        for row in case.rows(
+            f"SELECT content FROM staging.youtrack__task_field_text WHERE insight_source_id = '{SOURCE}'"
+        )
+    ]
+
+    assert "Synthetic notes body" in bodies, bodies
+    assert THEIR_ENUM not in bodies, bodies
