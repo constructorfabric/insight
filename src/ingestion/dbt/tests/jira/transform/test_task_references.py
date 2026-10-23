@@ -50,6 +50,7 @@ DESCRIPTION = _doc(
         "marks": [{"type": "link", "attrs": {"href": "https://example.atlassian.net/browse/DEF-5"}}],
     },
     {"type": "mention", "attrs": {"id": "acct-0001", "text": "@DEF-4", "accessLevel": ""}},
+    _text("Next line:\nDEF-12, not a key: DEF-13x"),
 )
 RICH_TEXT_VALUE = _doc(_text("Root cause tracked in DEF-3."))
 OLD_DESCRIPTION = "Old mention of DEF-7"
@@ -71,7 +72,7 @@ ISSUES = [
             LINKS: [{"id": "1", "type": BLOCKS, "outwardIssue": {"id": "2008", "key": "DEF-8"}}],
         },
     ),
-    *(_def(n) for n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
+    *(_def(n) for n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13)),
     _def(11, key="OLD-1", extracted_at="2026-01-10T12:00:00"),
     _def(11),
 ]
@@ -181,6 +182,7 @@ RULES = [
     Rule(
         "an unknown key of a synced project is kept unresolved", Reference("field", "description", "DEF-999", None, 1)
     ),
+    Rule("a key after an escaped line break in ADF", Reference("field", "description", "DEF-12", "2012", 1)),
     Rule("a key in a live comment", Reference("comment", LIVE_COMMENT, "DEF-9", "2009", 1)),
 ]
 
@@ -190,6 +192,7 @@ NOT_REFERENCES = [
     ("an issue naming its own key", "APP-1"),
     ("a key only a deleted comment held", "DEF-10"),
     ("a mention's display name", "DEF-4"),
+    ("a key glued to the word after it", "DEF-13"),
 ]
 
 
@@ -266,6 +269,7 @@ def test_issues_of_one_project_pointing_at_another_is_one_query(
     assert [r["target_key"] for r in rows] == [
         "DEF-1",
         "DEF-11",
+        "DEF-12",
         "DEF-2",
         "DEF-3",
         "DEF-5",
