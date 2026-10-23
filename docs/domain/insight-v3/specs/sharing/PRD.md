@@ -1,12 +1,12 @@
 ---
 status: draft
-version: "0.3"
-date: 2026-10-21
+version: "0.4"
+date: 2026-10-23
 ---
 
 # PRD — Insight v3 Dashboard Ownership and Sharing
 
-**Status:** [§4.1](#41-in-scope) approved for the first release.
+**Status:** [§4.1](#41-in-scope) approved for the first release. Revision 0.4 opens viewing to every signed-in person (D1, D8, D10–D12).
 
 <!-- toc -->
 
@@ -49,7 +49,7 @@ date: 2026-10-21
 
 ### 1.1 Purpose
 
-Every custom dashboard gets an owner and stays private until the owner shares it, view-only, with named administrators. This expands the parent's [§5.4](../PRD.md#54-metrics-widgets-and-dashboards).
+Every custom dashboard gets an owner and stays private until the owner shares it, view-only, with named people. This expands the parent's [§5.4](../PRD.md#54-metrics-widgets-and-dashboards).
 
 ### 1.2 Background / Problem Statement
 
@@ -68,6 +68,7 @@ Today every administrator sees and changes every custom dashboard, nothing recor
 | Definition | A stored metric, widget, dashboard or dataset |
 | Ownerless | A dashboard, folder or tag stored before ownership existed |
 | Orphaned | A dashboard whose owner no longer holds the administrator role |
+| Member | A signed-in person without the administrator role |
 
 ## 2. Actors
 
@@ -85,15 +86,15 @@ Today every administrator sees and changes every custom dashboard, nothing recor
 
 **ID**: `cpt-insightspec-v3-sharing-actor-viewer`
 
-**Role**: An administrator a dashboard is shared with.
+**Role**: Any signed-in person a dashboard is shared with, administrator or member.
 
-**Needs**: Shared dashboards easy to find.
+**Needs**: Shared dashboards easy to find; nothing in their way they cannot use.
 
 #### Administrator
 
 **ID**: `cpt-insightspec-v3-sharing-actor-admin`
 
-**Role**: Any authenticated Insight v3 administrator; the Custom zone admits no one else.
+**Role**: Any authenticated Insight v3 administrator; the only people who author.
 
 **Needs**: Ownerless dashboards unchanged; orphaned ones kept in use.
 
@@ -117,19 +118,22 @@ Today every administrator sees and changes every custom dashboard, nothing recor
 
 ### 3.1 Module-Specific Environment Constraints
 
-One installation holds one tenant's definitions. People and the administrator role come from the identity service; when identity stops granting a person the role, their dashboards become orphaned.
+One installation holds one tenant's definitions. People and the administrator role come from the identity service; when identity stops granting a person the role, their dashboards become orphaned. Every signed-in person reaches the Custom zone; the role decides what they may do there.
 
 ## 4. Scope
 
 ### 4.1 In Scope
 
 - Generated identities, with a lossless upgrade.
-- Owners, view-only shares, transfer, personal folders, owner's tags, personal pins, and ownerless pre-release rows.
+- Owners, view-only shares with any signed-in person, transfer, personal folders, owner's tags, personal pins, and ownerless pre-release rows.
+- Viewing by members: a shared dashboard drawn through the dashboard alone, with no reach into the metric and widget library.
 - The Custom zone, API, chat and MCP, acting as the signed-in person.
 
 ### 4.2 Out of Scope
 
-- Any access for non-administrators; a later feature defines what data a viewer may see.
+- Authoring, the library, chat, MCP, alerts, orphaned and ownerless dashboards for members; member authoring over the shared library is the next step (D1).
+- Per-viewer data scoping: a viewer sees what the dashboard's metrics return (D10).
+- Drilldown for members (D11).
 - Edit access for anyone but the owner; owners for metrics, widgets and datasets.
 - Public dashboards, links, and sharing with a group, role, organisation unit or attribute.
 - Handing over a dashboard while its owner is still an administrator; claiming an ownerless one in the product.
@@ -169,7 +173,7 @@ A dashboard's creator, on any surface, **MUST** own it; nothing creates an unown
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-fr-visibility`
 
-A person **MUST** see a dashboard only if they own it, it is shared with them, or it is ownerless (`cpt-insightspec-v3-sharing-nfr-isolation`); the administrator role grants nothing more. Lists show owners and narrow to owned or shared-with-me.
+A person **MUST** see a dashboard only if they own it, it is shared with them, or it is ownerless and they are an administrator (`cpt-insightspec-v3-sharing-nfr-isolation`); the administrator role grants nothing more, and a member never sees an ownerless one. Owning needs the role: a person who loses it sees their own dashboards only once one is shared back or transferred to them. A member sees a dashboard's owner by name only where identity lets them read that person; otherwise no owner is shown. Lists show owners and narrow to owned or shared-with-me.
 
 **Actors**: `cpt-insightspec-v3-sharing-actor-owner`, `cpt-insightspec-v3-sharing-actor-viewer`, `cpt-insightspec-v3-sharing-actor-admin`
 
@@ -181,21 +185,29 @@ The system **MUST** let only the owner edit, rename, delete, duplicate, tag and 
 
 **Actors**: `cpt-insightspec-v3-sharing-actor-owner`, `cpt-insightspec-v3-sharing-actor-viewer`
 
+#### Draw Through the Dashboard
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-fr-render`
+
+A viewer **MUST** read a dashboard's widgets and run their metrics only through a dashboard they can see, and only for widgets that dashboard holds; a widget it does not hold answers as missing. A viewer may ask the widget's metric for any time window, as the page itself does. A member gets no drilldown. A widget that fails answers a member with a generic message, the cause going to the log.
+
+**Actors**: `cpt-insightspec-v3-sharing-actor-viewer`, `cpt-insightspec-v3-sharing-actor-admin`
+
 #### Keep the Library Shared
 
 - [ ] `p2` - **ID**: `cpt-insightspec-v3-sharing-fr-library`
 
-Metrics, widgets and datasets **MUST** stay visible to and editable by every administrator. Reports of what uses a widget or metric, a refused deletion included, **MUST** name only visible dashboards and count the rest. Deleting something in use stays refused, whoever's dashboards use it.
+Metrics, widgets and datasets **MUST** stay visible to and editable by administrators alone. Reports of what uses a widget or metric, a refused deletion included, **MUST** name only visible dashboards and count the rest. Deleting something in use stays refused, whoever's dashboards use it.
 
 **Actors**: `cpt-insightspec-v3-sharing-actor-admin`
 
 ### 5.3 Sharing
 
-#### Share With Named Administrators
+#### Share With Named People
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-fr-share`
 
-An owner **MUST** be able to share a dashboard for viewing with one person picked by name, and list its shares. Only a person who holds the administrator role at that moment is offered or accepted. Sharing twice changes nothing. Viewers see the owner, not each other.
+An owner **MUST** be able to share a dashboard for viewing with one person picked by name, and list its shares. Any person identity knows is offered and accepted; the administrator role is not required, and there is no cap. Sharing twice changes nothing. Viewers see the owner, not each other.
 
 **Actors**: `cpt-insightspec-v3-sharing-actor-owner`
 
@@ -247,7 +259,7 @@ Pins **MUST** stay personal and reach only dashboards the person may see.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-fr-ownerless`
 
-Every dashboard, folder and tag stored before this release **MUST** stay ownerless, seen, edited and deleted by every administrator as now. Ownerless dashboards file only in ownerless folders, which hold nothing else, and carry ownerless tags, which any administrator sets and a new name creates. They cannot be shared or transferred. The product **MUST NOT** create ownerless dashboards or folders, or make anything owned ownerless; only the operator assigns owners, in the database.
+Every dashboard, folder and tag stored before this release **MUST** stay ownerless, seen, edited and deleted by every administrator as now, and by no member. Ownerless dashboards file only in ownerless folders, which hold nothing else, and carry ownerless tags, which any administrator sets and a new name creates. They cannot be shared or transferred. The product **MUST NOT** create ownerless dashboards or folders, or make anything owned ownerless; only the operator assigns owners, in the database.
 
 **Actors**: `cpt-insightspec-v3-sharing-actor-admin`, `cpt-insightspec-v3-sharing-actor-operator`
 
@@ -265,7 +277,7 @@ The operator procedure for giving an ownerless dashboard an owner **MUST** be do
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-fr-assistant`
 
-The chat and MCP **MUST** act as the signed-in person: same sight and rights, creations owned by that person, and a dashboard replaced only if that person owns it or it is ownerless. They create by returning a new identity and change by naming one; a name never means replace.
+The chat and MCP **MUST** act as the signed-in person: same sight and rights, creations owned by that person, and a dashboard replaced only if that person owns it or it is ownerless. They create by returning a new identity and change by naming one; a name never means replace. Both stay with administrators (D1).
 
 **Actors**: `cpt-insightspec-v3-sharing-actor-assistant`
 
@@ -278,7 +290,7 @@ The chat and MCP **MUST** act as the signed-in person: same sight and rights, cr
 | Efficiency | None — no show-stopper; obligations covered by `cpt-insightspec-v3-nfr-efficiency` | A few small tables and checks fit the parent footprint |
 | Reliability | The upgrade MUST lose nothing, `cpt-insightspec-v3-sharing-nfr-upgrade-integrity` | A dashboard drawing nothing is lost work nobody notices |
 | Performance | None — no show-stopper; obligations covered by `cpt-insightspec-v3-sharing-nfr-list-latency` and `cpt-insightspec-v3-nfr-performance` | Visibility filtering must not slow lists |
-| Security | A dashboard MUST reach only its owner, its viewers and, while ownerless, every administrator, `cpt-insightspec-v3-sharing-nfr-isolation`; access changes MUST be traceable, `cpt-insightspec-v3-sharing-nfr-audit` | Privacy is the feature's one promise |
+| Security | A dashboard MUST reach only its owner, its viewers and, while ownerless, every administrator, `cpt-insightspec-v3-sharing-nfr-isolation`; a member MUST reach nothing beyond their dashboards, `cpt-insightspec-v3-sharing-nfr-reach`; access changes MUST be traceable, `cpt-insightspec-v3-sharing-nfr-audit` | Privacy is the feature's one promise, and sharing a page must not hand over the library behind it |
 | Versatility | None — no show-stopper; obligations covered by `cpt-insightspec-v3-nfr-versatility` | One rule serves every surface |
 
 ### 6.2 NFR Inclusions
@@ -291,9 +303,21 @@ The chat and MCP **MUST** act as the signed-in person: same sight and rights, cr
 
 Nothing about an invisible dashboard (existence, name, owner, tags, folder, content) **MUST** reach a person, except the hidden count of `cpt-insightspec-v3-sharing-fr-library` and the orphaned list of `cpt-insightspec-v3-sharing-fr-transfer`.
 
-**Threshold**: beyond those, zero disclosure in lists, totals, searches, reads, refusals, pins, folders, tags, counts, caps, dependents, usage reports, chat context and MCP tools. An invisible dashboard answers exactly like a missing one. A viewer's refused change reveals nothing new.
+**Threshold**: beyond those, zero disclosure in lists, totals, searches, reads, refusals, pins, folders, tags, counts, caps, dependents, usage reports, chat context and MCP tools, to members and administrators alike. An invisible dashboard answers exactly like a missing one. A viewer's refused change reveals nothing new.
 
 **Rationale**: The feature is only as good as its privacy.
+
+#### Bounded Reach
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-nfr-reach`
+
+**Vector**: Security
+
+A member **MUST** reach nothing in the Custom zone but the dashboards shared with them, what those dashboards draw, and their own pins and folders.
+
+**Threshold**: every library, creation, metric-run, drilldown, chat, MCP, orphaned, alert, dataset and ownerless surface refuses a member as not permitted; a widget drawn through a dashboard is one that dashboard holds; no message to a member names a warehouse table or column, or a dataset. A member does read the widgets a shared dashboard holds, which name their metric and detail metric and the result columns they draw.
+
+**Rationale**: A shared page is a window onto chosen data, not a key to the warehouse.
 
 #### Traceable Access Changes
 
@@ -352,11 +376,11 @@ None.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-interface-definitions`
 
-**Type**: Administrator API and MCP tools.
+**Type**: API and MCP tools.
 
 **Stability**: Proposed, unreleased.
 
-**Description**: Operations take identities; API and MCP share one visibility rule.
+**Description**: Operations take identities; API and MCP share one visibility rule; dashboard-scoped reads serve viewers.
 
 **Breaking Change Policy**: Routes and tools move from names to identities together with the portal, chat and MCP in one release; routes by name are removed. See [DESIGN](./DESIGN.md).
 
@@ -366,7 +390,7 @@ None.
 
 **Direction**: Outbound to the identity service.
 
-**Protocol/Format**: The caller, their administrator role, current administrators, display names.
+**Protocol/Format**: The caller, their administrator role, current administrators, whether a person exists, display names.
 
 **Compatibility**: Only what identity already offers administrators.
 
@@ -378,16 +402,17 @@ None.
 
 **Actor**: `cpt-insightspec-v3-sharing-actor-owner`
 
-**Preconditions**: The colleague is an administrator.
+**Preconditions**: The colleague is a signed-in person, administrator or not.
 
 **Main Flow**:
 
-1. The owner shares the dashboard; the colleague finds, pins and files it.
-2. The owner withdraws the share; it leaves the colleague's list, pins and folders.
+1. The owner shares the dashboard; the colleague finds, opens, pins and files it, and its widgets draw.
+2. The colleague cannot open the metrics or widgets behind it on their own.
+3. The owner withdraws the share; it leaves the colleague's list, pins and folders.
 
 **Postconditions**: Only the owner and its viewers saw it.
 
-**Alternative Flows**: A non-administrator is not offered.
+**Alternative Flows**: A person identity does not know is not offered.
 
 #### Keep an Orphaned Dashboard in Use
 
@@ -406,7 +431,8 @@ None.
 
 ## 9. Acceptance Criteria
 
-- [ ] Tests prove every requirement in §5 and §6.2 on each surface it names, `cpt-insightspec-v3-sharing-nfr-isolation` as an administrator who is neither owner nor viewer.
+- [ ] Tests prove every requirement in §5 and §6.2 on each surface it names, `cpt-insightspec-v3-sharing-nfr-isolation` as an administrator and as a member who is neither owner nor viewer.
+- [ ] `cpt-insightspec-v3-sharing-fr-render` and `cpt-insightspec-v3-sharing-nfr-reach`: a member opens a shared dashboard and its widgets draw; the same member is refused on every library, creation, metric-run, drilldown, chat, MCP, orphaned, alert, dataset and ownerless surface; a widget the dashboard does not hold answers as missing; a failing widget tells the member nothing of its warehouse table or columns, or its dataset.
 - [ ] `cpt-insightspec-v3-sharing-fr-owner`: a duplicate of an ownerless dashboard carries its tag names as the duplicator's and sits in no folder.
 - [ ] `cpt-insightspec-v3-sharing-fr-identity`: same-named dashboards, folders, widgets or metrics coexist; same-named tags only under different owners; same-named datasets never.
 - [ ] Parent quality gates hold, including coverage and non-degradation.
@@ -416,23 +442,26 @@ None.
 | Dependency | Description | Criticality |
 |------------|-------------|-------------|
 | Insight v3 definitions | Definitions, folders, tags, pins and their references | p1 |
-| Identity service | Caller, administrator role, current administrators, display names | p1 |
-| Custom zone administrator gate | The only people who reach any of this | p1 |
+| Identity service | Caller, administrator role, current administrators, whether a person exists, display names | p1 |
+| Custom zone | Open to every signed-in person; the role decides what is offered | p1 |
 | Metric alerts | Refer to metrics; move to identities with them | p2 |
 
 ## 11. Assumptions
 
 Decisions taken by the product owner:
 
-- **D1.** Administrators only; non-administrator viewers, then authors over the shared library, may come later.
+- **D1.** Administrators author; any signed-in person may be a viewer. Member authoring over the shared library is the next step.
 - **D2.** Shares are view-only.
 - **D3.** The administrator role shows no private dashboard.
 - **D4.** Orphaned means the owner lost the role, which covers a leaver when leaving ends it.
 - **D5.** Ownerless rows stay; the operator, not a claim feature, assigns owners.
 - **D6.** Tag names are unique per owner, since tags are applied by name and created on first use; a dataset's unique name stays its identity, since outside producers address datasets by name, and unowned datasets disclose nothing. Existing definitions keep their former name as their identity, so nothing stored is rewritten.
 - **D7.** Folders are places; tags group a dashboard several ways.
-- **D8.** Share targets are current administrators: nobody else opens the Custom zone.
+- **D8.** Share targets are any person identity knows; the sharer is always an administrator.
 - **D9.** No sharing or transfer through the chat or MCP.
+- **D10.** A viewer sees what the dashboard's metrics return, over any time window the page can ask for, with no per-viewer scoping; sharing is the owner vouching for that person.
+- **D11.** Members get no drilldown: a detail metric returns rows the dashboard does not show.
+- **D12.** A member's errors are generic; the cause goes to the log.
 
 ## 12. Risks
 
@@ -441,3 +470,5 @@ Decisions taken by the product owner:
 | Searching a body by the name of a metric or widget it uses | No match | Search the definition's own name; dependents show its users |
 | Identity unreachable | Nobody identified | Server error, never allowed, like the administrator check now |
 | An owner loses the role briefly | Dashboard transferred meanwhile | Accepted; the new owner can share it back |
+| A viewer sees data the rest of the portal would scope away from them | Disclosure beyond the viewer's own team | D10: the owner chooses who sees a dashboard; per-viewer scoping is its own feature |
+| A member probes the library through dashboard-scoped runs | Reach beyond the shared page | `cpt-insightspec-v3-sharing-nfr-reach`: a run names a widget the dashboard holds or answers as missing |
