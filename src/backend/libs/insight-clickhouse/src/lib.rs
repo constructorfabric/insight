@@ -5,6 +5,8 @@
 //! - [`QueryBuilder`] — parameterized query builder (no string interpolation)
 //! - [`Config`] — connection configuration
 //! - [`Topology`] — whether the tables a service creates replicate
+//! - [`DDL_TASK_TIMEOUT`] — how long a coordinated statement waits for the replicas
+//! - [`Unfinished`] — the one reading of "the warehouse stopped waiting on a statement"
 //! - [`Ddl`] / [`TableSpec`] — the one place data-layer statements are written
 //! - [`MissingRelation`] — the one reading of "the warehouse has no such relation"
 //! - [`Error`] — error types
@@ -28,13 +30,17 @@
 
 pub mod config;
 mod consistency;
+mod coordination;
 pub mod ddl;
 pub mod error;
 pub mod missing_relation;
 pub mod query;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod topology;
 
 pub use config::Config;
+pub use coordination::{DDL_TASK_TIMEOUT, Unfinished};
 pub use ddl::{Ddl, TableSpec};
 pub use error::Error;
 pub use missing_relation::MissingRelation;
@@ -204,6 +210,11 @@ impl Client {
 
     /// Runs `ddl` against the warehouse.
     ///
+    /// On a replicated warehouse the statement waits for the active replicas
+    /// only, for at most [`DDL_TASK_TIMEOUT`]; a replica that is down replays
+    /// it on return. A caller bounding the call keeps its bound above that,
+    /// so a statement that finished is never taken for one that did not.
+    ///
     /// # Errors
     ///
     /// Returns [`Error`] if the statement is not this connection's to run, or
@@ -211,7 +222,11 @@ impl Client {
     pub async fn execute_ddl(&self, ddl: &Ddl) -> Result<(), Error> {
         let sql = self.ddl_sql(ddl)?;
         tracing::debug!(sql = %sql, "running data-layer DDL");
-        self.query(&sql).execute().await?;
+        let mut query = self.query(&sql);
+        for (name, value) in coordination::settings(self.config.topology) {
+            query = query.with_setting(name, value);
+        }
+        query.execute().await?;
         Ok(())
     }
 
@@ -472,5 +487,98 @@ mod tests {
                 Client::new(Config::new("http://ch:8123", "identity").with_topology(topology));
             let _q = client.consistent_query("SELECT count() FROM identity.identity_persons");
         }
+    }
+
+    #[derive(Debug, serde::Serialize, serde::Deserialize, clickhouse::Row)]
+    struct IdRow {
+        id: u64,
+    }
+
+    /// Every call below, against a warehouse that records what it was asked.
+    async fn recorded(
+        topology: Topology,
+    ) -> Result<Vec<test_support::Received>, Box<dyn std::error::Error>> {
+        let capture = test_support::Capture::start().await?;
+        let client = Client::new(Config::new(capture.url(), "identity").with_topology(topology));
+
+        client
+            .query("SELECT id FROM t")
+            .fetch_all::<IdRow>()
+            .await?;
+        let mut plain = client.inner().insert::<IdRow>("t").await?;
+        plain.write(&IdRow { id: 1 }).await?;
+        plain.end().await?;
+        client
+            .consistent_query("SELECT id FROM t")
+            .fetch_all::<IdRow>()
+            .await?;
+        let mut confirmed = client.consistent_insert::<IdRow>("t").await?;
+        confirmed.write(&IdRow { id: 1 }).await?;
+        confirmed.end().await?;
+        client
+            .execute_ddl(&Ddl::drop_table("identity", "t"))
+            .await?;
+
+        Ok(capture.received())
+    }
+
+    const QUORUM_PAIR: [&str; 3] = [
+        "insert_quorum",
+        "insert_quorum_parallel",
+        "select_sequential_consistency",
+    ];
+    const DDL_WAIT: [&str; 2] = [
+        "distributed_ddl_output_mode",
+        "distributed_ddl_task_timeout",
+    ];
+
+    fn carries(received: &test_support::Received, names: &[&str]) -> bool {
+        names.iter().any(|name| received.pair(name).is_some())
+    }
+
+    /// Only the `consistent_*` pair opts a call into the quorum settings, and
+    /// only a statement waits on the replicas: a plain read or write carries
+    /// neither, whatever the topology.
+    #[tokio::test]
+    async fn only_the_consistent_pair_and_a_statement_carry_cluster_settings()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let received = recorded(Topology::new(true, "insight_cluster")).await?;
+        let Ok([plain_read, plain_write, read, write, ddl]) =
+            <[test_support::Received; 5]>::try_from(received)
+        else {
+            panic!("five requests are sent, one per call");
+        };
+
+        assert!(!carries(&plain_read, &QUORUM_PAIR), "{plain_read:?}");
+        assert!(!carries(&plain_write, &QUORUM_PAIR), "{plain_write:?}");
+        assert_eq!(read.pair("select_sequential_consistency"), Some("1"));
+        assert_eq!(write.pair("insert_quorum"), Some("auto"));
+        assert_eq!(write.pair("insert_quorum_parallel"), Some("0"));
+        assert_eq!(
+            ddl.pair("distributed_ddl_output_mode"),
+            Some("throw_only_active")
+        );
+        assert_eq!(
+            ddl.pair("distributed_ddl_task_timeout"),
+            Some(DDL_TASK_TIMEOUT.as_secs().to_string().as_str())
+        );
+        for other in [&plain_read, &plain_write, &read, &write] {
+            assert!(!carries(other, &DDL_WAIT), "{other:?}");
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_single_node_is_sent_none_of_them() -> Result<(), Box<dyn std::error::Error>> {
+        let received = recorded(Topology::Standalone).await?;
+
+        assert_eq!(received.len(), 5, "one request per call: {received:?}");
+        for received in received {
+            assert!(!carries(&received, &QUORUM_PAIR), "{received:?}");
+            assert!(!carries(&received, &DDL_WAIT), "{received:?}");
+        }
+
+        Ok(())
     }
 }

@@ -135,7 +135,12 @@ name: jira
 # comments that still exist as deleted (#3708). MAJOR because the false
 # `remove` lifecycle events already written stay until the full refresh a
 # major dispatches (ADR-0015) rebuilds the journal.
-version: "15.0.0"
+# 16.0.0 (major): long-text bodies reach `silver.class_task_field_text`, keyed
+# by source and content hash, and a long-text value in `class_task_field_history`
+# carries `value_id_type = 'text_ref'` instead of `string_literal` (#3895).
+# MAJOR because rows already written change, and only the full refresh a major
+# dispatches (ADR-0015) re-derives them.
+version: "16.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer

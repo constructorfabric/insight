@@ -1,10 +1,10 @@
 """A clustered deploy is refused unless the server can serve the cluster it names.
 
-Four probes beyond Keeper and the access backend: the configured cluster exists
+Five probes beyond Keeper and the access backend: the configured cluster exists
 in `system.clusters`, both the `{shard}` and `{replica}` macros are defined,
 every one of our Replicated databases has joined as many replicas as the
-cluster has, and the flag never runs without a name. Each failure names the
-remedy. The transport is stubbed: what each probe asks is answered from a
+cluster has, no bronze table kept a plain engine from before the flip, and the
+flag never runs without a name. Each failure names the remedy. The transport is stubbed: what each probe asks is answered from a
 script, so a single wrong answer is what the guard must refuse.
 """
 
@@ -25,7 +25,8 @@ REACHED_THE_END = "GUARD PASSED"
 #: A transport whose answers come from the environment: TARGET replicas in the
 #: configured cluster, LONELY_JOINED replicas registered in Keeper by a
 #: Replicated database named `lonely` (no other database exists anywhere),
-#: MACROS defined, QUEUED hosts with its CREATE DATABASE still pending. Every
+#: MACROS defined, QUEUED hosts with its CREATE DATABASE still pending,
+#: PLAIN_BRONZE the lines the replica-wide bronze engine sweep returns. Every
 #: statement is appended to SQL_LOG.
 SCRIPTED = """
 _ch_http_query() {
@@ -33,6 +34,7 @@ _ch_http_query() {
   sql="$(cat)"
   printf '%s\\n' "${sql}" >> "${SQL_LOG}"
   case "${sql}" in
+    *clusterAllReplicas*system.tables*) printf '%s\\n' "${PLAIN_BRONZE}" ;;
     *system.clusters*) printf '%s\\n' "${TARGET}" ;;
     *system.macros*) printf '%s\\n' "${MACROS}" ;;
     *system.distributed_ddl_queue*) printf '%s\\n' "${QUEUED}" ;;
@@ -56,6 +58,7 @@ def run(
     lonely_joined: str = "2",
     macros: str = "2",
     queued: str = "0",
+    plain_bronze: str = "",
     log: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     script = f"""
@@ -79,6 +82,7 @@ echo '{REACHED_THE_END}'
             "LONELY_JOINED": lonely_joined,
             "MACROS": macros,
             "QUEUED": queued,
+            "PLAIN_BRONZE": plain_bronze,
             "SQL_LOG": str(log or "/dev/null"),
         },
         check=False,
@@ -167,3 +171,51 @@ def test_the_cluster_clause_marker_renders_per_topology() -> None:
     assert "ENGINE = ReplicatedMergeTree" in clustered.stdout, clustered
     assert "bronze_jira._boards ;" in standalone.stdout, standalone
     assert "ENGINE = MergeTree" in standalone.stdout, standalone
+
+
+def test_a_bronze_table_with_a_plain_engine_is_refused_by_name(tmp_path: Path) -> None:
+    """The destination creates with IF NOT EXISTS, so a bronze table from
+    before the flip keeps its plain engine on the one replica that created it.
+    The deploy stops before it creates anything, lists the table and names the
+    remedy."""
+    log = tmp_path / "sql.log"
+    plain = "bronze_jira.jira_issue  ReplacingMergeTree  on ch1\nbronze_jira.jira_comments  ReplacingMergeTree  on ch1"
+    result = run(f'CLICKHOUSE_DATABASE=insight source "{CREATE_DATABASES}"', plain_bronze=plain, log=log)
+
+    assert result.returncode != 0, result
+    assert REACHED_THE_END not in result.stdout
+    assert "bronze_jira.jira_issue  ReplacingMergeTree  on ch1" in result.stderr, result.stderr
+    assert "bronze_jira.jira_comments" in result.stderr, result.stderr
+    assert f"ON CLUSTER {CLUSTER}" in result.stderr and "#3902" in result.stderr, result.stderr
+    assert "CREATE DATABASE" not in log.read_text(), "DDL was sent over a bronze table that replicates nothing"
+
+
+def test_the_bronze_engines_are_read_on_every_replica_not_through_the_balancer(tmp_path: Path) -> None:
+    """A node-local table exists on one replica; a probe through the load
+    balancer finds it or not by which replica answers."""
+    log = tmp_path / "sql.log"
+    result = run("_ch_require_replicated_bronze_tables", log=log)
+
+    assert result.returncode == 0, result.stderr
+    sent = log.read_text()
+    assert "startsWith(database, 'bronze_')" in sent, sent
+    assert f"clusterAllReplicas('{CLUSTER}', system.tables)" in sent, sent
+    assert "FROM system.tables" not in sent, (
+        f"the bronze engines were read from the one replica behind the balancer: {sent}"
+    )
+    assert "skip_unavailable_shards = 0" in sent, (
+        f"a replica that is down may be the one holding the plain table; a profile must not let the sweep skip it: {sent}"
+    )
+
+
+def test_a_database_named_like_the_cluster_is_not_counted_as_hosts(tmp_path: Path) -> None:
+    """A Replicated database lists itself in system.clusters under its own
+    name, one row per replica with `database_replica_name` set. The product
+    database is `insight`; a cluster called `insight` would count those rows
+    as hosts and refuse every database as incomplete."""
+    log = tmp_path / "sql.log"
+    result = run("_ch_require_cluster_name && _ch_require_complete_databases lonely", log=log)
+    assert result.returncode == 0, result.stderr
+    host_counts = [line for line in log.read_text().splitlines() if "system.clusters" in line]
+    assert host_counts, log.read_text()
+    assert all("database_replica_name = ''" in line for line in host_counts), host_counts
