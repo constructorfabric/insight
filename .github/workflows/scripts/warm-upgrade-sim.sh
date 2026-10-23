@@ -33,6 +33,10 @@
 # Required env (same contract as apply-ch-migrations.sh):
 #   CLICKHOUSE_URL, CLICKHOUSE_USER, CLICKHOUSE_PASSWORD, CLICKHOUSE_DATABASE
 #   BASE_SHA  — commit whose tree plays the already-installed release
+# Optional env, the topology (same contract as apply-ch-migrations.sh): both
+# deploys, both syncs and the connectors' bronze read it, and the fixtures
+# below render their engines for it. Default: a standalone single node.
+#   CLICKHOUSE_CLUSTER_MODE, CLICKHOUSE_CLUSTER_NAME
 # Optional env, for the destination-clickhouse container that creates bronze:
 #   BRONZE_CLICKHOUSE_URL — the URL that container reaches ClickHouse at
 #                           (default CLICKHOUSE_URL; 127.0.0.1 is not it)
@@ -46,10 +50,21 @@ set -euo pipefail
 
 : "${BASE_SHA:?BASE_SHA must be set (the commit playing the installed release)}"
 : "${CLICKHOUSE_URL:?}" "${CLICKHOUSE_USER:?}" "${CLICKHOUSE_PASSWORD:?}" "${CLICKHOUSE_DATABASE:?}"
+export CLICKHOUSE_CLUSTER_MODE="${CLICKHOUSE_CLUSTER_MODE:-false}"
+export CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
+
+# The fixtures below spell their engines behind the topology markers this
+# tree's hook renders (lib/ch-topology.sh): a bronze relation, in an Atomic
+# database, carries the cluster clause; one in a Replicated database must not.
+source "$REPO_ROOT/src/ingestion/scripts/lib/ch-topology.sh"
+
+warm_sql() {
+  ch_render_topology | run_ch
+}
 
 if ! git -C "$REPO_ROOT" cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
   echo "::error title=warm-upgrade base unavailable::BASE_SHA ${BASE_SHA} is not a reachable commit — not this PR's fault. On a force-pushed or newly created ref there is no before-state to upgrade from."
@@ -164,33 +179,31 @@ fi
 # non-nullable unique_key), with the columns the backfill reads.
 seed_warm_bronze() {
   echo "=== Creating the bronze a synced warm installation would hold ==="
-  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
-  run_ch <<'SQL'
-CREATE DATABASE IF NOT EXISTS bronze_github;
-CREATE DATABASE IF NOT EXISTS bronze_gitlab;
-CREATE TABLE IF NOT EXISTS bronze_github.pull_requests
+  warm_sql <<'SQL'
+CREATE DATABASE IF NOT EXISTS bronze_github /*@@ON_CLUSTER@@*/;
+CREATE DATABASE IF NOT EXISTS bronze_gitlab /*@@ON_CLUSTER@@*/;
+CREATE TABLE IF NOT EXISTS bronze_github.pull_requests /*@@ON_CLUSTER@@*/
 (
     unique_key String, tenant_id Nullable(String), source_id Nullable(String),
     state Nullable(String), created_at Nullable(String), closed_at Nullable(String),
     merged_at Nullable(String), _airbyte_raw_id String,
     _airbyte_extracted_at DateTime64(3), _airbyte_meta String, _airbyte_generation_id UInt32
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
-CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_requests
+ENGINE = /*@@REPLICATED@@*/ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_requests /*@@ON_CLUSTER@@*/
 (
     unique_key String, tenant_id Nullable(String), source_id Nullable(String),
     state Nullable(String), created_at Nullable(String), closed_at Nullable(String),
     merged_at Nullable(String), _airbyte_raw_id String,
     _airbyte_extracted_at DateTime64(3), _airbyte_meta String, _airbyte_generation_id UInt32
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+ENGINE = /*@@REPLICATED@@*/ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
 SQL
 }
 
 seed_git_close_time_warm_state() {
   echo "=== Seeding the pre-contract git pull-request state ==="
-  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
-  run_ch <<'SQL'
+  warm_sql <<'SQL'
 -- TWO generations of the same request, the shape bronze actually holds: the
 -- first collection saw it closed, the second saw the merge. The backfill has to
 -- answer from the later one, so a lookup that takes whichever row a part merge
@@ -209,14 +222,14 @@ VALUES
 -- the stream that replaced it. Both name the same request and disagree; the
 -- current stream has to win by declaration, not by extraction time, so the
 -- legacy row here is deliberately the MORE recently extracted of the two.
-CREATE TABLE IF NOT EXISTS bronze_gitlab.merge_requests
+CREATE TABLE IF NOT EXISTS bronze_gitlab.merge_requests /*@@ON_CLUSTER@@*/
 (
     unique_key Nullable(String), tenant_id Nullable(String), source_id Nullable(String),
     state Nullable(String), created_at Nullable(String), closed_at Nullable(String),
     merged_at Nullable(String), _airbyte_raw_id String,
     _airbyte_extracted_at DateTime64(3), _airbyte_meta String, _airbyte_generation_id UInt32
 )
-ENGINE = MergeTree ORDER BY _airbyte_raw_id;
+ENGINE = /*@@REPLICATED@@*/MergeTree ORDER BY _airbyte_raw_id;
 INSERT INTO bronze_gitlab.merge_requests
     (unique_key, tenant_id, source_id, state, created_at, closed_at, merged_at,
      _airbyte_raw_id, _airbyte_extracted_at, _airbyte_meta, _airbyte_generation_id)
@@ -247,7 +260,6 @@ SQL
 
 assert_git_close_time_recovered() {
   echo "=== Asserting the reported close came from the source, not from closed_on ==="
-  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
   local got
   local expected="2026-01-01 10:00:00|2026-01-04 09:00:00|1|1"
   # ifNull around each part: concat() propagates a NULL, so an unfilled column
@@ -279,38 +291,37 @@ assert_git_close_time_recovered() {
 # git bronze above: the destination's shape, only the columns the heals read.
 seed_jira_issue_identity_warm_state() {
   echo "=== Seeding the pre-6.1.0 jira bronze state ==="
-  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
-  run_ch <<'SQL'
-CREATE DATABASE IF NOT EXISTS bronze_jira;
-CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue
+  warm_sql <<'SQL'
+CREATE DATABASE IF NOT EXISTS bronze_jira /*@@ON_CLUSTER@@*/;
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue /*@@ON_CLUSTER@@*/
 (
     unique_key String, tenant_id Nullable(String), source_id Nullable(String),
     id_readable Nullable(String), jira_id Nullable(String),
     _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
-CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_keys AS bronze_jira.jira_issue;
-CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_history
+ENGINE = /*@@REPLICATED@@*/ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_keys /*@@ON_CLUSTER@@*/ AS bronze_jira.jira_issue;
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_history /*@@ON_CLUSTER@@*/
 (
     unique_key String, tenant_id Nullable(String), source_id Nullable(String),
     id_readable Nullable(String), jira_id Nullable(String), items Nullable(String),
     _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
-CREATE TABLE IF NOT EXISTS bronze_jira.jira_comments
+ENGINE = /*@@REPLICATED@@*/ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_comments /*@@ON_CLUSTER@@*/
 (
     unique_key String, tenant_id Nullable(String), source_id Nullable(String),
     id_readable Nullable(String), jira_id Nullable(String), body Nullable(String),
     _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
-CREATE TABLE IF NOT EXISTS bronze_jira.jira_worklogs
+ENGINE = /*@@REPLICATED@@*/ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_worklogs /*@@ON_CLUSTER@@*/
 (
     unique_key String, tenant_id Nullable(String), source_id Nullable(String),
     id_readable Nullable(String), jira_id Nullable(String), issueId Nullable(String),
     _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+ENGINE = /*@@REPLICATED@@*/ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
 
 -- Issue 101 under both keys it has had: the current one, and the one it was
 -- moved away from. Only the old-key row maps WARM-OLD-7 to an id, and it is
@@ -350,7 +361,6 @@ SQL
 
 assert_jira_issue_identity_recovered() {
   echo "=== Asserting the issue id was recovered and the issue collapsed onto it ==="
-  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
   local got
   local expected="101|101|NULL|999|101|102|777|101|8|1|warm-jira-1-101"
   # The row count is part of the answer: the fill rebuilds the whole table, so a
@@ -389,15 +399,14 @@ assert_jira_issue_identity_recovered() {
 # tenant; the other does not, and keeps an empty one.
 seed_jira_catalogue_first_seen_warm_state() {
   echo "=== Seeding the pre-history Jira catalogue first-sync record ==="
-  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
-  run_ch <<'SQL'
-CREATE DATABASE IF NOT EXISTS bronze_jira;
-CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields
+  warm_sql <<'SQL'
+CREATE DATABASE IF NOT EXISTS bronze_jira /*@@ON_CLUSTER@@*/;
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields /*@@ON_CLUSTER@@*/
 (
     unique_key String, tenant_id Nullable(String), source_id Nullable(String),
     _airbyte_raw_id String, _airbyte_extracted_at DateTime64(3)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+ENGINE = /*@@REPLICATED@@*/ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
 INSERT INTO bronze_jira.jira_fields (unique_key, tenant_id, source_id, _airbyte_raw_id, _airbyte_extracted_at)
 VALUES ('warm-jira-1-summary', 'warm', 'jira-1', 'raw-f1', '2026-03-01 00:00:00');
 
@@ -406,7 +415,7 @@ CREATE TABLE staging.jira__catalogue_first_seen
 (
     insight_source_id String, catalogue_first_sync DateTime64(3), recorded_at DateTime64(3)
 )
-ENGINE = MergeTree ORDER BY insight_source_id;
+ENGINE = /*@@REPLICATED@@*/MergeTree ORDER BY insight_source_id;
 INSERT INTO staging.jira__catalogue_first_seen (insight_source_id, catalogue_first_sync, recorded_at)
 VALUES
     ('jira-1', '2026-01-01 00:00:00', '2026-01-01 00:05:00'),
@@ -416,9 +425,8 @@ SQL
 
 assert_jira_catalogue_first_seen_kept() {
   echo "=== Asserting the catalogue first sync survived the upgrade ==="
-  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
-  local got
-  local expected="ReplacingMergeTree|-jira-gone,,jira-gone,2026-01-02 00:00:00.000;warm-jira-1,warm,jira-1,2026-01-01 00:00:00.000"
+  local got expected
+  expected="$(ch_replicated_prefix)ReplacingMergeTree|-jira-gone,,jira-gone,2026-01-02 00:00:00.000;warm-jira-1,warm,jira-1,2026-01-01 00:00:00.000"
   got="$(printf "SELECT concat(
       (SELECT engine FROM system.tables WHERE database = 'staging' AND name = 'jira__catalogue_first_seen'), '|',
       arrayStringConcat(groupArray(row), ';'))

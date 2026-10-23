@@ -344,6 +344,138 @@ def test_a_link_re_added_after_its_type_was_reworded_is_one_occurrence(scenario:
     assert scenario.round_trip_holds()
 
 
+EPIC_LINK = "customfield_11300"
+EPIC_LINK_FIELD = field(
+    EPIC_LINK, name="Epic Link", schema_type="any", schema_custom="com.pyxis.greenhopper.jira:gh-epic-link"
+)
+READ = "2026-03-01 12:00:00.000"
+UPDATED = "2026-02-01 09:00:00.000"
+
+
+@case(
+    fields=[PARENT_FIELD],
+    issues=[
+        issue("TST-2", jira_id="1002"),
+        issue("TST-3", jira_id="1003", fields={PARENT: {"id": "1002", "key": "TST-2"}}),
+    ],
+    events=[
+        event(
+            "TST-3",
+            101,
+            "2026-01-06T10:00:00",
+            [item(PARENT, to="1002", to_str="TST-2"), item(PARENT, frm="1002", frm_str="TST-2")],
+            jira_id="1003",
+        )
+    ],
+)
+def test_one_entry_that_removes_and_adds_the_same_parent_leaves_it_held(scenario: Scenario) -> None:
+    """Jira can list an entry's addition before its removal. The removal sorts
+    first, so the parent is still there after the entry."""
+    assert _intervals(scenario.links(issue_id="1003")) == [
+        ("1003", "parent", "1002", "TST-2", CREATED, 0, DAY_6, None),
+        ("1003", "parent", "1002", "TST-2", DAY_6, 1, None, "101"),
+    ]
+
+
+def test_an_epic_link_change_is_a_parent_change(scenario: Scenario) -> None:
+    """Before the epic became the issue's `parent`, it was set through the
+    Epic Link field. Jira logged the parent cleared and the Epic Link set to the
+    same epic seconds later, so reading only the first would end a parent the
+    issue still has."""
+    scenario.seed(
+        fields=[PARENT_FIELD, EPIC_LINK_FIELD],
+        issues=[
+            issue("TST-2", jira_id="1002"),
+            issue("TST-3", jira_id="1003", fields={PARENT: {"id": "1002", "key": "TST-2"}, EPIC_LINK: None}),
+        ],
+        events=[
+            event("TST-3", 101, "2026-01-06T10:00:00", [item(PARENT, frm="1002", frm_str="TST-2")], jira_id="1003"),
+            event(
+                "TST-3",
+                102,
+                "2026-01-06T10:00:14",
+                [{**item(EPIC_LINK, to="1002", to_str="TST-2"), "fieldtype": "custom"}],
+                jira_id="1003",
+            ),
+        ],
+    )
+    scenario.build(LINKS_SELECTOR)
+
+    rows = scenario.links(issue_id="1003")
+    assert _intervals(rows) == [
+        ("1003", "parent", "1002", "TST-2", CREATED, 0, DAY_6, None),
+        ("1003", "parent", "1002", "TST-2", "2026-01-06 10:00:14.000", 1, None, "102"),
+    ]
+    assert {r["evidence"] for r in rows} == {"event"}
+
+
+def test_a_link_the_newest_read_no_longer_holds_closes_at_the_issues_last_update(scenario: Scenario) -> None:
+    """Nothing in the changelog removed the link; the issue's newest read lacks
+    it. The interval closes at the issue's `updated`, the newest change Jira
+    recorded on it, and says it was observed."""
+    scenario.seed(
+        fields=[LINKS_FIELD],
+        issues=[issue("TST-1", jira_id="1001", updated=UPDATED), issue("TST-2", jira_id="1002")],
+        events=[event("TST-1", 101, "2026-01-06T10:00:00", [_added("TST-2", "blocks")], jira_id="1001")],
+    )
+    scenario.build(LINKS_SELECTOR)
+
+    rows = scenario.links(issue_id="1001")
+    assert _intervals(rows) == [("1001", "blocking", "1002", "TST-2", DAY_6, 1, UPDATED, "101")]
+    assert (rows[0]["removed_by"], rows[0]["evidence"]) == (None, "observation")
+
+
+def test_a_link_gone_before_the_issues_last_update_closes_at_the_read(scenario: Scenario) -> None:
+    """The issue was not touched after the link was added — its linked issue
+    was deleted, say, which Jira logs on neither side. Only the read bounds the
+    removal."""
+    scenario.seed(
+        fields=[LINKS_FIELD],
+        issues=[issue("TST-1", jira_id="1001")],
+        events=[event("TST-1", 101, "2026-01-06T10:00:00", [_added("TST-2", "blocks")], jira_id="1001")],
+    )
+    scenario.build(LINKS_SELECTOR)
+
+    assert _intervals(scenario.links(issue_id="1001")) == [("1001", "blocking", None, "TST-2", DAY_6, 1, READ, "101")]
+
+
+def test_a_link_the_newest_read_holds_again_reopens_at_its_last_removal(scenario: Scenario) -> None:
+    """The changelog removed the link and never added it back, yet the issue
+    holds it. It reopens at the removal, a bound rather than a fact."""
+    scenario.seed(
+        fields=[LINKS_FIELD],
+        issues=[
+            issue("TST-1", jira_id="1001", fields={LINKS: [_outward("1", BLOCKS, "1002", "TST-2")]}),
+            issue("TST-2", jira_id="1002"),
+        ],
+        events=[
+            event("TST-1", 101, "2026-01-06T10:00:00", [_added("TST-2", "blocks")], jira_id="1001"),
+            event("TST-1", 102, "2026-01-07T10:00:00", [_removed("TST-2", "blocks")], jira_id="1001"),
+        ],
+    )
+    scenario.build(LINKS_SELECTOR)
+
+    rows = scenario.links(issue_id="1001")
+    assert _intervals(rows) == [
+        ("1001", "blocking", "1002", "TST-2", DAY_6, 1, DAY_7, "101"),
+        ("1001", "blocking", "1002", "TST-2", DAY_7, 0, None, None),
+    ]
+    assert [r["evidence"] for r in rows] == ["event", "observation"]
+
+
+def test_a_read_older_than_the_last_event_says_nothing(scenario: Scenario) -> None:
+    """The changelog was read after the issue row: the read predates the
+    addition, so its missing link is no evidence."""
+    scenario.seed(
+        fields=[LINKS_FIELD],
+        issues=[issue("TST-1", jira_id="1001", extracted_at="2026-01-06T09:00:00"), issue("TST-2", jira_id="1002")],
+        events=[event("TST-1", 101, "2026-01-06T10:00:00", [_added("TST-2", "blocks")], jira_id="1001")],
+    )
+    scenario.build(LINKS_SELECTOR)
+
+    assert _intervals(scenario.links(issue_id="1001")) == [("1001", "blocking", "1002", "TST-2", DAY_6, 1, None, "101")]
+
+
 @case(
     fields=[LINKS_FIELD],
     issues=[issue("TST-1", jira_id="1001")],
