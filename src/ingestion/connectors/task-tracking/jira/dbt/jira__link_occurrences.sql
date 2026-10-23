@@ -29,6 +29,17 @@ WITH key_ids AS (
     FROM {{ ref('jira__issue_key_ids') }} FINAL
 ),
 
+-- The fields an epic's children name it in. Before Jira made the epic the
+-- issue's `parent`, it was set through this field, and its changelog items name
+-- the epic by id and key exactly as a parent change does.
+epic_link_fields AS (
+    SELECT DISTINCT
+        CAST(source_id AS String)                                     AS insight_source_id,
+        field_id
+    FROM {{ source('bronze_jira', 'jira_fields') }} FINAL
+    WHERE schema_custom = 'com.pyxis.greenhopper.jira:gh-epic-link'
+),
+
 held_now AS (
     SELECT
         insight_source_id, issue_id, id_readable, kind, type_id, direction,
@@ -56,7 +67,8 @@ link_items AS (
 -- One operation per element an event added or removed. A remote link is logged
 -- in `issuelinks` under its own all-digit id and is no issue link (FIELD-
 -- HISTORY-IN-DBT.md §3.7). A parent change removes the old parent and adds the
--- new one, each named by id with its key of the time.
+-- new one, each named by id with its key of the time; an Epic Link change is
+-- one too.
 operations AS (
     SELECT
         insight_source_id, issue_id, issue_key, changelog_id, event_at, author_id, extracted_at,
@@ -89,7 +101,8 @@ operations AS (
         ('remove', COALESCE(value_from, ''), COALESCE(value_from_string, '')),
         ('add', COALESCE(value_to, ''), COALESCE(value_to_string, ''))
     ] AS side
-    WHERE field_id = 'parent'
+    WHERE (field_id = 'parent'
+           OR (insight_source_id, field_id) IN (SELECT insight_source_id, field_id FROM epic_link_fields))
       AND jira_id IS NOT NULL
       AND (side.2 != '' OR side.3 != '')
 ),
@@ -117,7 +130,7 @@ phrase_occurrences AS (
         argMax(issue_key, (event_at, toUInt64OrZero(changelog_id)))   AS issue_key,
         any(target_id)                                                AS target_id,
         argMax(target_key, (event_at, toUInt64OrZero(changelog_id)))  AS target_key,
-        arraySort(o -> (o.1, o.2),
+        arraySort(o -> (o.1, o.2, o.3 = 'add'),
                   groupArray((event_at, toUInt64OrZero(changelog_id), action, author_id,
                               changelog_id, extracted_at)))           AS phrase_ops
     FROM resolved_operations
@@ -317,7 +330,8 @@ keyed_phrases AS (
 ),
 
 -- An occurrence's identity, and its operations in the order they happened,
--- whichever phrase logged them.
+-- whichever phrase logged them. One entry that removes and adds the same link
+-- ("from X to X") leaves it held: its removal sorts first.
 occurrence_operations AS (
     SELECT
         insight_source_id,
@@ -328,7 +342,7 @@ occurrence_operations AS (
         argMax(issue_key, phrase_ops[-1].1)                           AS issue_key,
         any(target_id)                                                AS target_id,
         argMax(target_key, phrase_ops[-1].1)                          AS target_key,
-        arraySort(o -> (o.1, o.2), arrayFlatten(groupArray(phrase_ops))) AS ops
+        arraySort(o -> (o.1, o.2, o.3 = 'add'), arrayFlatten(groupArray(phrase_ops))) AS ops
     FROM keyed_phrases
     GROUP BY insight_source_id, issue_id, kind, occurrence_key, target_ident
 ),

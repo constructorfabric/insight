@@ -588,6 +588,25 @@ Two consequences worth stating:
   resource. An issue key always carries its project prefix, so an all-digit id
   side identifies these items unambiguously, and `jira_item_is_live` drops them.
 
+`jira__task_links` folds each occurrence's events into intervals, with three
+rules the events alone do not give:
+
+- **an Epic Link change is a parent change.** Before the epic became the
+  issue's `parent`, it was set through the `gh-epic-link` custom field, whose
+  items name the epic by id and key exactly as a parent item does. Read alone,
+  a parent cleared and an Epic Link set to the same epic seconds later ends a
+  parent the issue still has.
+- **within one changelog entry a removal precedes an addition.** An entry can
+  remove and add the same link, in either order of its items; the link holds
+  after it.
+- **the issue's newest read has the last word.** A link can go with no event on
+  either issue — deleting the linked issue logs nothing on this one, and a bulk
+  change can drop links unlogged — and come back the same way. Where the read
+  disagrees with the state the events leave, the occurrence closes at the
+  issue's `updated` when that is after the last event, else at the read, or
+  reopens at its last removal with `valid_from_known = 0`; either row is
+  `evidence = observation`. A read older than the last event is skipped.
+
 ## 4. Value normalization
 
 Value normalization lives in `dbt/macros/jira/jira_field_value.sql`. Every macro
