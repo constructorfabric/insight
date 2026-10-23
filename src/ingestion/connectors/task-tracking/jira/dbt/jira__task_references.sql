@@ -49,11 +49,17 @@ current_keys AS (
     GROUP BY insight_source_id, issue_id
 ),
 
-text_fields AS (
-    SELECT insight_source_id, field_id, field_kind
+-- Every field with a value a person sets, scanned as Jira displays it.
+-- Linked issues and the parent are links, read from `jira__task_links`.
+scanned_fields AS (
+    SELECT
+        insight_source_id,
+        field_id,
+        field_kind,
+        if(field_kind = 'long_text', 'long_text', 'short_text')       AS found_kind
     FROM {{ ref('jira__task_field_kind') }}
-    WHERE field_kind = 'long_text'
-       OR (field_kind = 'scalar' AND schema_type = 'string')
+    WHERE field_kind NOT IN ('ignored', 'UNKNOWN', 'link_array')
+      AND field_id != 'parent'
 ),
 
 texts AS (
@@ -66,6 +72,7 @@ current_long_text AS (
         c.insight_source_id                                           AS insight_source_id,
         c.issue_id                                                    AS issue_id,
         c.field_id                                                    AS field_id,
+        CAST('long_text' AS String)                                   AS found_kind,
         t.content_form                                                AS content_form,
         t.content                                                     AS content
     FROM {{ ref('jira__task_field_current_text') }} AS c FINAL
@@ -74,32 +81,34 @@ current_long_text AS (
        AND t.text_id = c.text_id
 ),
 
-current_short_text AS (
+current_short_values AS (
     SELECT
         s.insight_source_id                                           AS insight_source_id,
         s.issue_id                                                    AS issue_id,
         s.field_id                                                    AS field_id,
+        f.found_kind                                                  AS found_kind,
         CAST('plain' AS String)                                       AS content_form,
-        s.value_displays[1]                                           AS content
+        arrayStringConcat(s.value_displays, '\n')                    AS content
     FROM {{ ref('jira__issue_field_snapshot') }} AS s FINAL
-    INNER JOIN text_fields AS f
+    INNER JOIN scanned_fields AS f
         ON f.insight_source_id = s.insight_source_id
        AND f.field_id = s.field_id
-    WHERE f.field_kind = 'scalar'
+    WHERE f.field_kind != 'long_text'
 ),
 
 -- Every value a field ever held, so a key edited out of a body stays visible
 -- as no longer current.
-past_text AS (
+past_values AS (
     SELECT
         h.insight_source_id                                           AS insight_source_id,
         h.issue_id                                                    AS issue_id,
         h.field_id                                                    AS field_id,
+        f.found_kind                                                  AS found_kind,
         toDateTime64(h.event_at, 3)                                   AS seen_at,
         if(f.field_kind = 'long_text', t.content_form, 'plain')       AS content_form,
-        if(f.field_kind = 'long_text', t.content, h.value_displays[1]) AS content
+        if(f.field_kind = 'long_text', t.content, arrayStringConcat(h.value_displays, '\n')) AS content
     FROM {{ ref('jira__field_history_derived') }} AS h FINAL
-    INNER JOIN text_fields AS f
+    INNER JOIN scanned_fields AS f
         ON f.insight_source_id = h.insight_source_id
        AND f.field_id = h.field_id
     LEFT JOIN texts AS t
@@ -109,21 +118,21 @@ past_text AS (
 ),
 
 field_values AS (
-    SELECT insight_source_id, issue_id, field_id, CAST(NULL AS Nullable(DateTime64(3))) AS seen_at,
+    SELECT insight_source_id, issue_id, field_id, found_kind, CAST(NULL AS Nullable(DateTime64(3))) AS seen_at,
            toUInt8(1) AS is_current, content_form, content
     FROM current_long_text
 
     UNION ALL
 
-    SELECT insight_source_id, issue_id, field_id, CAST(NULL AS Nullable(DateTime64(3))) AS seen_at,
+    SELECT insight_source_id, issue_id, field_id, found_kind, CAST(NULL AS Nullable(DateTime64(3))) AS seen_at,
            toUInt8(1) AS is_current, content_form, content
-    FROM current_short_text
+    FROM current_short_values
 
     UNION ALL
 
-    SELECT insight_source_id, issue_id, field_id, CAST(seen_at AS Nullable(DateTime64(3))) AS seen_at,
+    SELECT insight_source_id, issue_id, field_id, found_kind, CAST(seen_at AS Nullable(DateTime64(3))) AS seen_at,
            toUInt8(0) AS is_current, content_form, ifNull(content, '') AS content
-    FROM past_text
+    FROM past_values
 ),
 
 field_keys AS (
@@ -132,6 +141,7 @@ field_keys AS (
         issue_id,
         CAST('field' AS String)                                       AS found_in,
         field_id                                                      AS found_ref,
+        found_kind,
         written_key,
         seen_at,
         is_current
@@ -147,6 +157,7 @@ comment_keys AS (
         assumeNotNull(issue_id)                                       AS issue_id,
         CAST('comment' AS String)                                     AS found_in,
         comment_id                                                    AS found_ref,
+        CAST('comment' AS String)                                     AS found_kind,
         written_key,
         CAST(created_at AS Nullable(DateTime64(3)))                   AS seen_at,
         toUInt8(1)                                                    AS is_current
@@ -157,12 +168,12 @@ comment_keys AS (
 ),
 
 written_keys AS (
-    SELECT insight_source_id, issue_id, found_in, found_ref, written_key, seen_at, is_current
+    SELECT insight_source_id, issue_id, found_in, found_ref, found_kind, written_key, seen_at, is_current
     FROM field_keys
 
     UNION ALL
 
-    SELECT insight_source_id, issue_id, found_in, found_ref, written_key, seen_at, is_current
+    SELECT insight_source_id, issue_id, found_in, found_ref, found_kind, written_key, seen_at, is_current
     FROM comment_keys
 ),
 
@@ -180,6 +191,7 @@ resolved_keys AS (
         w.issue_id                                                    AS issue_id,
         w.found_in                                                    AS found_in,
         w.found_ref                                                   AS found_ref,
+        w.found_kind                                                  AS found_kind,
         w.written_key                                                 AS written_key,
         k.issue_id                                                    AS target_id,
         w.seen_at                                                     AS seen_at,
@@ -200,6 +212,7 @@ links AS (
         issue_id,
         CAST('link' AS String)                                        AS found_in,
         link_type                                                     AS found_ref,
+        CAST('link' AS String)                                        AS found_kind,
         target_readable                                               AS written_key,
         target_id,
         CAST(valid_from AS Nullable(DateTime64(3)))                   AS seen_at,
@@ -209,12 +222,12 @@ links AS (
 ),
 
 references AS (
-    SELECT insight_source_id, issue_id, found_in, found_ref, written_key, target_id, seen_at, is_current
+    SELECT insight_source_id, issue_id, found_in, found_ref, found_kind, written_key, target_id, seen_at, is_current
     FROM resolved_keys
 
     UNION ALL
 
-    SELECT insight_source_id, issue_id, found_in, found_ref, written_key, target_id, seen_at, is_current
+    SELECT insight_source_id, issue_id, found_in, found_ref, found_kind, written_key, target_id, seen_at, is_current
     FROM links
 ),
 
@@ -225,6 +238,7 @@ other_issues AS (
         issue_id,
         found_in,
         found_ref,
+        found_kind,
         ifNull(target_id, written_key)                                AS target_ident,
         target_id                                                     AS candidate_id,
         written_key                                                   AS candidate_key,
@@ -242,13 +256,14 @@ per_target AS (
         issue_id,
         found_in,
         found_ref,
+        found_kind,
         target_ident,
         any(candidate_id)                                             AS target_id,
         argMax(candidate_key, ifNull(candidate_seen_at, toDateTime64('2100-01-01', 3))) AS written_key,
         min(candidate_seen_at)                                        AS seen_at,
         max(candidate_current)                                        AS is_current
     FROM other_issues
-    GROUP BY insight_source_id, issue_id, found_in, found_ref, target_ident
+    GROUP BY insight_source_id, issue_id, found_in, found_ref, found_kind, target_ident
 )
 
 SELECT
@@ -261,6 +276,7 @@ SELECT
     COALESCE(target.current_key, r.written_key)                       AS target_key,
     r.found_in                                                        AS found_in,
     r.found_ref                                                       AS found_ref,
+    r.found_kind                                                      AS found_kind,
     COALESCE(r.seen_at, i.created_at, toDateTime64(0, 3))             AS first_seen_at,
     r.is_current                                                      AS is_current,
     toUnixTimestamp64Milli(now64(3))                                  AS _version

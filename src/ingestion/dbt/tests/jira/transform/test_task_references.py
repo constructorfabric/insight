@@ -22,6 +22,7 @@ SELECTOR = f"{LINKS_SELECTOR} +jira__task_references"
 
 POINTING_ID = "1001"
 RICH_TEXT = "customfield_10100"
+FOUND_IN_VERSION = "customfield_10200"
 LINKS = "issuelinks"
 BLOCKS = {"id": "10000", "name": "Blocks", "outward": "blocks", "inward": "is blocked by"}
 
@@ -69,10 +70,12 @@ ISSUES = [
             "summary": "Follow-up of DEF-6",
             "description": DESCRIPTION,
             RICH_TEXT: RICH_TEXT_VALUE,
+            "labels": ["triage", "DEF-14"],
+            FOUND_IN_VERSION: {"id": "10", "value": "Seen with DEF-15"},
             LINKS: [{"id": "1", "type": BLOCKS, "outwardIssue": {"id": "2008", "key": "DEF-8"}}],
         },
     ),
-    *(_def(n) for n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13)),
+    *(_def(n) for n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15)),
     _def(11, key="OLD-1", extracted_at="2026-01-10T12:00:00"),
     _def(11),
 ]
@@ -87,6 +90,8 @@ FIELDS = [
         schema_custom="com.atlassian.jira.plugin.system.customfieldtypes:textarea",
     ),
     field(LINKS, name="Linked Issues", schema_type="array", schema_items="issuelinks"),
+    field("labels", name="Labels", schema_type="array", schema_items="string"),
+    field(FOUND_IN_VERSION, name="Found in", schema_type="option"),
 ]
 
 EVENTS = [
@@ -159,6 +164,7 @@ class Reference:
     target_key: str
     target_id: str | None
     is_current: int
+    found_kind: str
 
 
 @dataclass(frozen=True)
@@ -168,22 +174,30 @@ class Rule:
 
 
 RULES = [
-    Rule("a structured link is a reference", Reference("link", "blocking", "DEF-8", "2008", 1)),
-    Rule("a key in the description text", Reference("field", "description", "DEF-1", "2001", 1)),
-    Rule("a key in an ADF smart link URL", Reference("field", "description", "DEF-2", "2002", 1)),
-    Rule("a key in the href of a link mark", Reference("field", "description", "DEF-5", "2005", 1)),
-    Rule("a key in a rich-text custom field", Reference("field", RICH_TEXT, "DEF-3", "2003", 1)),
-    Rule("a key in a short text field", Reference("field", "summary", "DEF-6", "2006", 1)),
-    Rule("a key only an older body held is no longer current", Reference("field", "description", "DEF-7", "2007", 0)),
+    Rule("a structured link is a reference", Reference("link", "blocking", "DEF-8", "2008", 1, "link")),
+    Rule("a key in the description text", Reference("field", "description", "DEF-1", "2001", 1, "long_text")),
+    Rule("a key in an ADF smart link URL", Reference("field", "description", "DEF-2", "2002", 1, "long_text")),
+    Rule("a key in the href of a link mark", Reference("field", "description", "DEF-5", "2005", 1, "long_text")),
+    Rule("a key in a rich-text custom field", Reference("field", RICH_TEXT, "DEF-3", "2003", 1, "long_text")),
+    Rule("a key in a short text field", Reference("field", "summary", "DEF-6", "2006", 1, "short_text")),
+    Rule(
+        "a key only an older body held is no longer current",
+        Reference("field", "description", "DEF-7", "2007", 0, "long_text"),
+    ),
     Rule(
         "a moved issue's old key resolves to its id and current key",
-        Reference("field", "description", "DEF-11", "2011", 1),
+        Reference("field", "description", "DEF-11", "2011", 1, "long_text"),
     ),
     Rule(
-        "an unknown key of a synced project is kept unresolved", Reference("field", "description", "DEF-999", None, 1)
+        "an unknown key of a synced project is kept unresolved",
+        Reference("field", "description", "DEF-999", None, 1, "long_text"),
     ),
-    Rule("a key after an escaped line break in ADF", Reference("field", "description", "DEF-12", "2012", 1)),
-    Rule("a key in a live comment", Reference("comment", LIVE_COMMENT, "DEF-9", "2009", 1)),
+    Rule(
+        "a key after an escaped line break in ADF", Reference("field", "description", "DEF-12", "2012", 1, "long_text")
+    ),
+    Rule("a key in a label", Reference("field", "labels", "DEF-14", "2014", 1, "short_text")),
+    Rule("a key in a select option's value", Reference("field", FOUND_IN_VERSION, "DEF-15", "2015", 1, "short_text")),
+    Rule("a key in a live comment", Reference("comment", LIVE_COMMENT, "DEF-9", "2009", 1, "comment")),
 ]
 
 NOT_REFERENCES = [
@@ -207,7 +221,7 @@ def references(warehouse: Warehouse) -> Iterator[list[Reference]]:
     warehouse.dbt("run", "--select", "class_task_references")
 
     rows = warehouse.rows(
-        "SELECT found_in, found_ref, target_key, target_id, is_current"
+        "SELECT found_in, found_ref, target_key, target_id, is_current, found_kind"
         " FROM silver.class_task_references FINAL"
         " WHERE insight_source_id = {src:String} AND issue_id = {issue:String}"
         " ORDER BY found_in, found_ref, target_key",
@@ -270,6 +284,8 @@ def test_issues_of_one_project_pointing_at_another_is_one_query(
         "DEF-1",
         "DEF-11",
         "DEF-12",
+        "DEF-14",
+        "DEF-15",
         "DEF-2",
         "DEF-3",
         "DEF-5",

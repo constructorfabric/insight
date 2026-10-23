@@ -198,6 +198,16 @@ models:
         description: "`link_type` for a link, `field_id` for a field, `comment_id` for a comment."
         tests:
           - not_null
+      - name: found_kind
+        description: >
+          What kind of place held the key: `link`; `long_text` — a description or another rich-text field,
+          read from its full body; `short_text` — any other field value as the tracker displays it (a summary,
+          a single-line text, a label, an option); `comment`. A function of `found_in` and `found_ref`, kept as
+          a column so a reader can rank sources without a field catalogue.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['link', 'long_text', 'short_text', 'comment']
       - name: first_seen_at
         description: >
           When the reference appeared: a link's earliest `valid_from`, the earliest field event whose value
