@@ -469,11 +469,97 @@ assert_youtrack_field_observation_tenants() {
   echo "=== YouTrack field observations carry their tenant ==="
 }
 
+# The base sync built the task class producers without a tenant column. A
+# producer table gains it right after unique_key: String when it holds no row,
+# Nullable while rows without a tenant wait for the rebuild. A producer view
+# cannot be altered, so one without the column is dropped for its own
+# connector's run to recreate; a redeploy after that run keeps the recreated one.
+seed_task_producer_tenant_warm_state() {
+  echo "=== Seeding the pre-tenant task class producers ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  run_ch <<'SQL'
+INSERT INTO staging.jira__task_comments (unique_key, insight_source_id, comment_id, _version)
+VALUES ('jira-1-comment-1', 'jira-1', '1', 1);
+INSERT INTO staging.youtrack__task_issuetypes (unique_key, insight_source_id, issue_type_id, _version)
+VALUES ('yt-1-youtrack-type-1', 'yt-1', '1', 1);
+SQL
+}
+
+assert_task_producer_tenants() {
+  echo "=== Asserting the task class producers carry their tenant ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  local got
+  local expected="jira__task_comments:2:Nullable(String);youtrack__task_issuetypes:2:Nullable(String);youtrack__task_links:2:String|"
+  got="$(printf "SELECT concat(
+      (SELECT arrayStringConcat(groupArray(concat(table, ':', toString(position), ':', type)), ';')
+       FROM (SELECT table, position, type FROM system.columns
+             WHERE database = 'staging' AND name = 'tenant_id'
+               AND table IN ('jira__task_comments', 'youtrack__task_issuetypes', 'youtrack__task_links') ORDER BY table)), '|',
+      (SELECT arrayStringConcat(groupArray(name), ';')
+       FROM (SELECT name FROM system.tables
+             WHERE database = 'staging' AND name IN ('github__task_projects', 'jira__task_projects') ORDER BY name)))" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=warm upgrade left a task class producer without a tenant::Expected '${expected}' — tenant_id right after unique_key, String only where no row lacks a tenant, and the producer views without the column dropped — but got '${got}'."
+    exit 1
+  fi
+  echo "=== Task class producers carry their tenant ==="
+}
+
+assert_task_producer_views_kept_on_redeploy() {
+  echo "=== Redeploying over the first sync: the recreated producer views stay ==="
+  if ! PATH="$WORKDIR/branch-venv/bin:$PATH" \
+      bash "$REPO_ROOT/src/ingestion/scripts/apply-ch-migrations.sh"; then
+    echo "::error title=a redeploy after the first sync fails::This tree's deploy hook does not converge when run again over the relations its own first sync built."
+    exit 1
+  fi
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  local got
+  local expected="github__task_projects;jira__task_projects"
+  got="$(printf "SELECT arrayStringConcat(groupArray(name), ';')
+    FROM (SELECT name FROM system.tables
+          WHERE database = 'staging' AND name IN ('github__task_projects', 'jira__task_projects') ORDER BY name)" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=a redeploy dropped a producer view that carries its tenant::Expected '${expected}' — every producer view the first sync recreated with tenant_id kept — but got '${got}'."
+    exit 1
+  fi
+  echo "=== Producer views that carry their tenant are kept ==="
+}
+
+# The base sync built the task classes without a tenant column. A class gains
+# it right after unique_key, where every producer's rebuilt SELECT now puts it,
+# and stays Nullable while a row lacks a tenant.
+seed_task_class_tenant_warm_state() {
+  echo "=== Seeding a pre-tenant task class ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  run_ch <<'SQL'
+INSERT INTO silver.class_task_comments (unique_key, insight_source_id, comment_id, _version)
+VALUES ('jira-1-comment-1', 'jira-1', '1', 1);
+SQL
+}
+
+assert_task_class_tenant() {
+  echo "=== Asserting the task class carries its tenant ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  local got
+  local expected="2:Nullable(String)|1"
+  got="$(printf "SELECT concat(
+      (SELECT concat(toString(position), ':', type) FROM system.columns
+       WHERE database = 'silver' AND table = 'class_task_comments' AND name = 'tenant_id'), '|',
+      toString((SELECT count() FROM silver.class_task_comments)))" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=warm upgrade left a task class without a tenant::Expected '${expected}' — a Nullable(String) tenant_id right after unique_key, never narrowed while a row lacks a tenant, and the class row kept — but got '${got}'."
+    exit 1
+  fi
+  echo "=== Task class carries its tenant ==="
+}
+
 seed_warm_bronze
 seed_git_close_time_warm_state
 seed_jira_issue_identity_warm_state
 seed_jira_catalogue_first_seen_warm_state
 seed_youtrack_field_observation_warm_state
+seed_task_producer_tenant_warm_state
+seed_task_class_tenant_warm_state
 
 echo "=== Step 2: deploy the working tree onto the warm state ==="
 dbt_venv_for "$REPO_ROOT/src/ingestion/scripts/bootstrap-db/pins.env" "$WORKDIR/branch-venv"
@@ -487,11 +573,15 @@ assert_git_close_time_recovered
 assert_jira_issue_identity_recovered
 assert_jira_catalogue_first_seen_kept
 assert_youtrack_field_observation_tenants
+assert_task_producer_tenants
+assert_task_class_tenant
 
 echo "=== Step 3: the first sync after the upgrade — this tree's buildable graph over the warm warehouse ==="
 if ! build_graph "$REPO_ROOT" "$WORKDIR/branch-venv" branch; then
   echo "::error title=first sync after the upgrade fails — forgotten heal::A model reads a bronze/silver/staging column this branch adds but no heal widens an existing relation with, so the first connector sync after this release fails on every installation that already holds data. Ship the companion ALTER — a ch_table_exists-guarded heal in src/ingestion/scripts/apply-ch-migrations.sh, for silver.class_* as for staging.* — per the Warehouse contract changes rules in AGENTS.md."
   exit 1
 fi
+
+assert_task_producer_views_kept_on_redeploy
 
 echo "=== Warm upgrade OK: every relation the first sync reads is covered by a migration or heal ==="

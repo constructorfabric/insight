@@ -16,7 +16,7 @@
 WITH roster AS (
     SELECT
         unique_key,
-        CAST(tenant_id AS String)                           AS tenant_id,
+        tenant_id,
         source_id,
         toString(toInt64(project_id))                       AS project_id,
         project_key,

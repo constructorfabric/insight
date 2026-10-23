@@ -22,7 +22,7 @@
 WITH transitions AS (
     SELECT
         entity_id                                               AS worklog_id,
-        CAST(tenant_id AS String)                               AS tenant_id,
+        tenant_id,
         source_id,
         multiIf(
             field_name = 'is_deleted' AND new_value = '1',          'remove',
@@ -42,7 +42,7 @@ WITH transitions AS (
 -- issue; `assert_jira_substream_rows_without_issue_id` reports those.
 worklog_issue AS (
     SELECT
-        CAST(tenant_id AS String)                               AS tenant_id,
+        tenant_id,
         source_id,
         toString(worklog_id)                                    AS worklog_id,
         any(COALESCE(jira_id, issueId))                         AS jira_id
@@ -96,8 +96,9 @@ resolved AS (
 SELECT
     -- The class's one key formula: the issue by its immutable id, the event
     -- by the worklog's own id, action and instant.
-    {{ jira_history_key("COALESCE(t.source_id, '')", "COALESCE(t.jira_id, '')", "'worklog'",
+    {{ jira_history_key('t.tenant_id', "COALESCE(t.source_id, '')", "COALESCE(t.jira_id, '')", "'worklog'",
                          "concat('worklog:', COALESCE(t.worklog_id, ''), ':', t.action, ':', toString(toUnixTimestamp64Milli(t.event_at)))") }} AS unique_key,
+    ifNull(t.tenant_id, '')                                     AS tenant_id,
     COALESCE(t.source_id, '')                                   AS insight_source_id,
     CAST('jira' AS String)                                      AS data_source,
     COALESCE(t.jira_id, '')                                     AS issue_id,

@@ -27,8 +27,9 @@ WITH observations AS (
     SELECT *, arrayFirstIndex(v -> NOT arrayExists(l -> l.1 = link.1 AND l.2 = link.2, v.2), arraySlice(versions, start_index)) AS end_offset
     FROM spans
 )
-SELECT assumeNotNull(concat(insight_source_id, '-youtrack-', issue_id, '-', link.1, '-', link.2, '-', toString(versions[start_index].1))) AS unique_key,
-    insight_source_id, 'youtrack' AS data_source, id_readable,
+SELECT assumeNotNull(concat(ifNull(tenant_id, ''), '-', insight_source_id, '-youtrack-', issue_id, '-', link.1, '-',
+                            link.2, '-', toString(versions[start_index].1))) AS unique_key,
+    ifNull(tenant_id, '') AS tenant_id, insight_source_id, 'youtrack' AS data_source, id_readable,
     link.1 AS link_type, CAST('issue' AS Enum8('issue' = 1, 'pull_request' = 2)) AS target_type,
     arrayLast(l -> l.1 = link.1 AND l.2 = link.2, arrayFlatten(arrayMap(v -> v.2, versions))).3 AS target_readable,
     CAST(splitByChar('-', id_readable)[1] != splitByChar('-', target_readable)[1] AS Bool) AS is_cross_repository,

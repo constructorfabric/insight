@@ -2,27 +2,26 @@
 
 Comment and worklog ids are unique only inside one Jira site, so two tenants can
 hold the same id on different issues, and the same issue id with different
-entities on it. The lifecycle producers carry no tenant column, so each event is
-told apart by the issue it lands on.
+entities on it. Each event carries the tenant of the issue it lands on.
 """
 
 from __future__ import annotations
 
 import pytest
 from conftest import LIFECYCLE_SELECTOR, Scenario
-from helpers import SOURCE_ID, as_other_tenant, comment, issue, worklog
+from helpers import OTHER_TENANT, SOURCE_ID, TENANT_ID, as_other_tenant, comment, issue, worklog
 
 SAME_INSTANT = "2026-01-06T10:00:00.000+0000"
 
 # The rank among one issue's lifecycle events of one millisecond is the low
 # digits of `event_order` (`task_event_order`).
 COMMENT_EVENTS_SQL = (
-    "SELECT issue_id, id_readable, value_ids[1] AS entity_id, author_id, delta_action,"
+    "SELECT tenant_id, issue_id, id_readable, value_ids[1] AS entity_id, author_id, delta_action,"
     " toUInt32(event_order % 100000) AS same_instant_rank"
     " FROM staging.jira__comment_lifecycle_events FINAL WHERE insight_source_id = {src:String}"
 )
 WORKLOG_EVENTS_SQL = (
-    "SELECT issue_id, id_readable, value_ids[1] AS entity_id, author_id, delta_action,"
+    "SELECT tenant_id, issue_id, id_readable, value_ids[1] AS entity_id, author_id, delta_action,"
     " toUInt32(event_order % 100000) AS same_instant_rank"
     " FROM staging.jira__worklog_lifecycle_events FINAL WHERE insight_source_id = {src:String}"
 )
@@ -65,11 +64,19 @@ def test_each_event_lands_on_its_own_tenants_issue_ranked_among_its_own_tenants_
     rows = scenario.warehouse.rows(events_sql, {"src": SOURCE_ID})
 
     assert sorted(
-        (r["issue_id"], r["id_readable"], r["entity_id"], r["author_id"], r["delta_action"], r["same_instant_rank"])
+        (
+            r["tenant_id"],
+            r["issue_id"],
+            r["id_readable"],
+            r["entity_id"],
+            r["author_id"],
+            r["delta_action"],
+            r["same_instant_rank"],
+        )
         for r in rows
     ) == [
-        ("1001", "TST-1", "501", "author-mine", "add", 0),
-        ("2002", "OTH-7", "501", "author-theirs", "add", 0),
-        ("2002", "OTH-7", "502", "author-theirs", "add", 1),
-        ("2002", "TST-2", "503", "author-mine", "add", 0),
+        (TENANT_ID, "1001", "TST-1", "501", "author-mine", "add", 0),
+        (TENANT_ID, "2002", "TST-2", "503", "author-mine", "add", 0),
+        (OTHER_TENANT, "2002", "OTH-7", "501", "author-theirs", "add", 0),
+        (OTHER_TENANT, "2002", "OTH-7", "502", "author-theirs", "add", 1),
     ], f"should keep each tenant's {entity} events apart"

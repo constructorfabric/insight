@@ -20,7 +20,7 @@
 -- run in that phase.
 
 SELECT
-    CAST(f.tenant_id AS String)           AS tenant_id,
+    f.tenant_id                           AS tenant_id,
     COALESCE(f.source_id, '')             AS insight_source_id,
     CAST('jira' AS String)                AS data_source,
     COALESCE(f.field_id, '')              AS field_id,

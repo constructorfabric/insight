@@ -11,7 +11,7 @@
 ) }}
 
 -- Bodies of long-text fields, addressed by a hash of their content within one
--- source; `youtrack__task_field_history` carries the hash and a prefix. Every
+-- tenant's source; `youtrack__task_field_history` carries the hash and a prefix. Every
 -- body the history can hold is the display side of a snapshot or activity pair.
 
 WITH observed_bodies AS (
@@ -35,7 +35,8 @@ bodies AS (
 )
 
 SELECT
-    concat(insight_source_id, '-youtrack-', text_id)      AS unique_key,
+    concat(ifNull(tenant_id, ''), '-', insight_source_id, '-youtrack-', text_id) AS unique_key,
+    ifNull(tenant_id, '')                                 AS tenant_id,
     insight_source_id,
     CAST('youtrack' AS String)                            AS data_source,
     text_id,

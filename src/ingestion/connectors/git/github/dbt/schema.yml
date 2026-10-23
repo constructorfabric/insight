@@ -132,6 +132,48 @@ models:
         description: "The account's numeric GitHub id as a string, or the e-mail itself when no account claims it"
       - name: value
         description: "The claimed e-mail address, or the git author name for a display_name row"
+  - name: github__task_field_history
+    description: "Per-source staging projection unioned into silver.class_task_field_history."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: github__task_links
+    description: "Per-source staging projection unioned into silver.class_task_links."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: github__task_field_metadata
+    description: "Per-source staging projection unioned into silver.class_task_field_metadata."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: github__task_issuetypes
+    description: "Per-source staging projection unioned into silver.class_task_issuetypes."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: github__task_projects
+    description: "Per-source staging projection unioned into silver.class_task_projects."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: github__task_statuses
+    description: "Per-source staging projection unioned into silver.class_task_statuses."
   - name: github__issue_link_events
     description: "Every link between work items that appeared or disappeared, as a delta."
     columns:

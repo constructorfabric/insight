@@ -21,8 +21,8 @@
 
 {#- The predicate every issue-scoped read carries. Every read must pass the
     normalized strings the scope holds, or it misses the issue. -#}
-{% macro jira_journal_in_batch(source_expr, issue_expr) -%}
-    ({{ source_expr }}, {{ issue_expr }}) IN (SELECT insight_source_id, issue_id FROM {{ jira_journal_stage('batch') }})
+{% macro jira_journal_in_batch(tenant_expr, source_expr, issue_expr) -%}
+    ({{ tenant_expr }}, {{ source_expr }}, {{ issue_expr }}) IN (SELECT tenant_id, insight_source_id, issue_id FROM {{ jira_journal_stage('batch') }})
 {%- endmacro %}
 
 
@@ -36,6 +36,7 @@
     `task_issue_state.created_at` reads it by `event_kind`. -#}
 {% macro jira_journal_kinds_sql() %}
     SELECT
+        tenant_id,
         insight_source_id,
         field_id,
         field_name,
@@ -59,7 +60,7 @@
         assumeNotNull(ci.jira_id)                         AS issue_id
     FROM {{ ref('jira__changelog_items') }} AS ci
     WHERE ci.jira_id IS NOT NULL
-      AND {{ jira_journal_in_batch('ci.insight_source_id', 'assumeNotNull(ci.jira_id)') }}
+      AND {{ jira_journal_in_batch('ci.tenant_id', 'ci.insight_source_id', 'assumeNotNull(ci.jira_id)') }}
 {% endmacro %}
 
 
@@ -81,8 +82,8 @@
 {% macro jira_journal_derive_stages(batch, batches) %}
     {%- set marker = '/* jira-journal batch ' ~ batch ~ ' of ' ~ batches ~ ' */ ' -%}
     {%- do jira_journal_write_stage('batch',
-            'SELECT insight_source_id, issue_id FROM ' ~ jira_journal_stage('scope')
-            ~ ' WHERE cityHash64(insight_source_id, issue_id) % ' ~ batches ~ ' = ' ~ batch,
+            'SELECT tenant_id, insight_source_id, issue_id FROM ' ~ jira_journal_stage('scope')
+            ~ ' WHERE cityHash64(tenant_id, insight_source_id, issue_id) % ' ~ batches ~ ' = ' ~ batch,
             marker) -%}
     {%- do jira_journal_write_stage('ranked_events', jira_journal_ranked_events_sql()) -%}
     {%- do jira_journal_write_stage('ordered_events', jira_journal_ordered_events_sql()) -%}

@@ -147,7 +147,9 @@ WITH changes AS (
         ORDER BY event_at, {{ task_event_band('event_kind') }}, _seq
         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
 )
-SELECT concat(h.insight_source_id, '-youtrack-', h.issue_id, '-', h.field_id, '-', h.event_id) AS unique_key,
+SELECT concat(ifNull(h.tenant_id, ''), '-', h.insight_source_id, '-youtrack-', h.issue_id, '-', h.field_id, '-',
+              h.event_id) AS unique_key,
+    ifNull(h.tenant_id, '') AS tenant_id,
     h.insight_source_id AS insight_source_id, 'youtrack' AS data_source, h.issue_id AS issue_id, h.id_readable AS id_readable, h.event_id AS event_id, h.event_at AS event_at,
     CAST(h.event_kind AS LowCardinality(String)) AS event_kind, h._seq AS _seq,
     {{ task_event_order("if(h.event_kind = 'synthetic_initial', least(h.event_at, ifNull(o.first_event_at, h.event_at)), h.event_at)", task_event_band('h.event_kind'), 'h._seq') }} AS event_order,

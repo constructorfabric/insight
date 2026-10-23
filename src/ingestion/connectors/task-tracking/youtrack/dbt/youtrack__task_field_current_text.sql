@@ -18,7 +18,8 @@ WITH latest AS (
 )
 
 SELECT
-    concat(insight_source_id, '-youtrack-', issue_id, '-', field_id) AS unique_key,
+    concat(ifNull(tenant_id, ''), '-', insight_source_id, '-youtrack-', issue_id, '-', field_id) AS unique_key,
+    ifNull(tenant_id, '')                                 AS tenant_id,
     insight_source_id,
     CAST('youtrack' AS String)                            AS data_source,
     issue_id,

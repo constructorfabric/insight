@@ -42,7 +42,9 @@ WITH status_fields AS (
     FULL OUTER JOIN decided AS d
         ON d.tenant_id = o.tenant_id AND d.insight_source_id = o.insight_source_id AND d.value_id = o.value_id
 )
-SELECT CAST(concat(insight_source_id, '-youtrack-status-', value_id) AS Nullable(String)) AS unique_key,
+SELECT CAST(concat(ifNull(tenant_id, ''), '-', insight_source_id, '-youtrack-status-', value_id) AS Nullable(String))
+        AS unique_key,
+    ifNull(tenant_id, '') AS tenant_id,
     CAST(insight_source_id AS Nullable(String)) AS insight_source_id, 'youtrack' AS data_source,
     CAST(value_id AS Nullable(String)) AS status_id, CAST(value_name AS Nullable(String)) AS status_name,
     CAST(NULL AS Nullable(Int32)) AS category_id, CAST(NULL AS Nullable(String)) AS category_key,

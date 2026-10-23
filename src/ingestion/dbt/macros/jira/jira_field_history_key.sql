@@ -1,6 +1,6 @@
 {#
   The journal's `unique_key`, one formula for every arm of the Jira field
-  history: {source}-jira-{issue_id}-{field_id}-{event_id}.
+  history: {tenant}-{source}-jira-{issue_id}-{field_id}-{event_id}.
 
   The issue is named by its immutable id, never by `id_readable`: Jira changes
   the readable key when an issue moves between projects, and a key built from it
@@ -10,6 +10,6 @@
   model. `assert_jira_field_history_key_is_issue_keyed` recomputes this over
   every row.
 #}
-{% macro jira_history_key(source_id, issue_id, field_id, event_id) -%}
-concat({{ source_id }}, '-jira-', {{ issue_id }}, '-', {{ field_id }}, '-', {{ event_id }})
+{% macro jira_history_key(tenant_id, source_id, issue_id, field_id, event_id) -%}
+concat(ifNull({{ tenant_id }}, ''), '-', {{ source_id }}, '-jira-', {{ issue_id }}, '-', {{ field_id }}, '-', {{ event_id }})
 {%- endmacro %}
