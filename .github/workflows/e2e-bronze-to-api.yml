@@ -444,7 +444,7 @@ jobs:
           # -v names each spec as it starts, --log-cli-level surfaces the dbt
           # invocation behind it, and --durations ranks them once the run ends:
           # between them a shard that runs long says where the time went.
-          ./dev-compose.sh test-stand test "${trees[@]}" --tb=short -v --durations=25 --log-cli-level=INFO
+          ./dev-compose.sh test-stand test "${trees[@]}" --shared-dataset --tb=short -v --durations=25 --log-cli-level=INFO
 
       # The shards' ledgers merge into one directory, which keeps one file per
       # name — so each carries its own or the gate sees a quarter of the coverage.
