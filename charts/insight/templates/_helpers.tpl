@@ -121,6 +121,10 @@ Contract per dep (all infra is external — out-of-chart L2):
   value: {{ include "insight.clickhouse.clusterMode" . | quote }}
 - name: CLICKHOUSE_CLUSTER_NAME
   value: {{ include "insight.clickhouse.clusterName" . | quote }}
+# Whether the script provisions the roles and grant-less users below at all;
+# false leaves them to the operator.
+- name: CLICKHOUSE_PROVISION_ACCESS
+  value: {{ .Values.clickhouse.provisionAccess | quote }}
 - name: CLICKHOUSE_USER
   value: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
 - name: CLICKHOUSE_PASSWORD
