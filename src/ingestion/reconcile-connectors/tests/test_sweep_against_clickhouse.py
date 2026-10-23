@@ -15,6 +15,13 @@ Skipped unless a server is offered, so CI stays dependency-free:
     SWEEP_TEST_CH_USER=insight SWEEP_TEST_CH_PASSWORD=insight \\
         pytest src/ingestion/reconcile-connectors/tests
 
+`SWEEP_TEST_CH_CLUSTER=<name>` says the server is a replicated warehouse reached
+through a round-robin endpoint (the cluster rig's): the sweep is then handed the
+topology the reconcile CronWorkflow hands it, the fixtures take the engines and
+the cluster clause the deploy hook renders, and every statement here carries
+the session the ledger carries, so a fixture is on every replica before the
+sweep reads it and the sweep's rows before the assertions do.
+
 Run: pytest src/ingestion/reconcile-connectors/tests
 """
 
@@ -27,6 +34,7 @@ import sys
 import threading
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -38,9 +46,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 # sweep.__main__ imports insight_logging from the ingestion scripts package.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
+from sweep.ledger import CLUSTER_SESSION_SETTINGS
+
 CH_URL = os.environ.get("SWEEP_TEST_CH_URL")
 CH_USER = os.environ.get("SWEEP_TEST_CH_USER", "default")  # RULE-DEFAULTS-OK: local throwaway server's own default user
 CH_PASSWORD = os.environ.get("SWEEP_TEST_CH_PASSWORD", "")  # RULE-DEFAULTS-OK: that user has no password
+CH_CLUSTER = os.environ.get("SWEEP_TEST_CH_CLUSTER") or None
+
+#: The markers a migration spells its topology behind, rendered here the way
+#: `lib/ch-topology.sh` renders them for the deploy hook.
+REPLICATED_MARKER = "/*@@REPLICATED@@*/"
+ON_CLUSTER_MARKER = "/*@@ON_CLUSTER@@*/"
+REPLICATED_PREFIX = "Replicated" if CH_CLUSTER else ""
+#: The clause a relation in an Atomic database takes on a cluster; a relation in
+#: a Replicated database never takes it, the database replays the DDL itself.
+ON_CLUSTER = f" ON CLUSTER {CH_CLUSTER}" if CH_CLUSTER else ""
+#: What every statement of this harness carries on a cluster: the ledger's own
+#: session, and the waits the deploy hook gives the DDL it replays here, with
+#: a transport deadline past the coordinated statement's own ceiling.
+HARNESS_SESSION = {
+    **CLUSTER_SESSION_SETTINGS,
+    "alter_sync": "2",
+    "mutations_sync": "2",
+    "distributed_ddl_output_mode": "throw_only_active",
+    "distributed_ddl_task_timeout": "60",
+}
+HARNESS_TIMEOUT_SECS = 90 if CH_CLUSTER else 30
 
 TABLE = "ingestion_history.sync_events"
 CONNECTOR = "example-tracker"
@@ -54,6 +85,11 @@ BASE_HOUR = 8
 DAY = "2026-08-27"
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "scripts" / "migrations"
+
+#: The databases the recovery cases plant a connector's bronze in. Dropped once
+#: the cases are done: what the warehouse holds afterwards must be only what
+#: its creators made.
+SCRATCH_DATABASES = ("bronze_departed_tracker", "bronze_two_faced")
 
 #: The relation as a released install holds it: no identity columns. Written out
 #: rather than derived from the migration, so a future edit to the migration
@@ -72,7 +108,7 @@ CREATE TABLE {TABLE} (
     job_updated_at   Nullable(DateTime64(3, 'UTC')),
     duration_ms      Nullable(UInt64),
     records_reported Nullable(UInt64)
-) ENGINE = MergeTree
+) ENGINE = {REPLICATED_PREFIX}MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (event, connector, ts, event_id)
 TTL toDateTime(ts) + INTERVAL 6 MONTH
@@ -233,11 +269,14 @@ def _query(sql: str) -> str:
     # SAFETY: urllib honours `file://`. The URL is an opt-in env var, so the
     # scheme is pinned rather than taken on trust.
     assert CH_URL and CH_URL.startswith(("http://", "https://")), CH_URL
-    request = urllib.request.Request(f"{CH_URL}/", data=sql.encode(), method="POST")
+    url = f"{CH_URL}/"
+    if CH_CLUSTER:
+        url += "?" + urllib.parse.urlencode(HARNESS_SESSION)
+    request = urllib.request.Request(url, data=sql.encode(), method="POST")
     request.add_header("X-ClickHouse-User", CH_USER)
     request.add_header("X-ClickHouse-Key", CH_PASSWORD)
     # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urllib.request.urlopen(request, timeout=HARNESS_TIMEOUT_SECS) as response:
         return response.read().decode()
 
 
@@ -255,9 +294,8 @@ def _apply_migration(path: Path) -> None:
     migration that fails at deploy time only.
     """
     body = path.read_text(encoding="utf-8")
-    sql = "\n".join(
-        line for line in body.splitlines() if not line.lstrip().startswith("--")
-    )
+    sql = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith("--"))
+    sql = sql.replace(REPLICATED_MARKER, REPLICATED_PREFIX).replace(ON_CLUSTER_MARKER, ON_CLUSTER)
     for statement in sql.split(";"):
         if statement.strip():
             _query(statement)
@@ -296,8 +334,17 @@ class TestSweptRowsLandAndResolve:
                 "RECONCILE_DEST_CLICKHOUSE_PORT": CH_URL.rsplit(":", 1)[1],
                 "RECONCILE_DEST_CLICKHOUSE_USERNAME": CH_USER,
                 "RECONCILE_DEST_CLICKHOUSE_PASSWORD": CH_PASSWORD,
+                "RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE": "true" if CH_CLUSTER else "false",
+                "RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME": CH_CLUSTER or "",
             }
         )
+
+    @pytest.fixture(scope="class", autouse=True)
+    @classmethod
+    def _scratch_bronze_is_dropped(cls) -> Iterator[None]:
+        yield
+        for database in SCRATCH_DATABASES:
+            _query(f"DROP DATABASE IF EXISTS {database}{ON_CLUSTER}")
 
     @pytest.fixture(autouse=True)
     def _empty_ledger(self) -> None:
@@ -309,12 +356,7 @@ class TestSweptRowsLandAndResolve:
             {
                 "tick_id": tick_id,
                 "connectors": [
-                    {
-                        "name": CONNECTOR,
-                        "tenant_id": TENANT,
-                        "source_id": SOURCE,
-                        "connection_id": CONNECTION,
-                    }
+                    {"name": CONNECTOR, "tenant_id": TENANT, "source_id": SOURCE, "connection_id": CONNECTION}
                 ],
                 "descriptors": descriptors or [],
             }
@@ -484,17 +526,8 @@ class TestSweptRowsLandAndResolve:
             {
                 "tick_id": "tick-w",
                 "connectors": [
-                    {
-                        "name": CONNECTOR,
-                        "tenant_id": TENANT,
-                        "source_id": SOURCE,
-                        "connection_id": CONNECTION,
-                    },
-                    {
-                        "name": "awaiting-connection",
-                        "tenant_id": TENANT,
-                        "source_id": SOURCE,
-                    },
+                    {"name": CONNECTOR, "tenant_id": TENANT, "source_id": SOURCE, "connection_id": CONNECTION},
+                    {"name": "awaiting-connection", "tenant_id": TENANT, "source_id": SOURCE},
                 ],
             }
         )
@@ -516,12 +549,7 @@ class TestSweptRowsLandAndResolve:
             {
                 "tick_id": "tick-i",
                 "connectors": [
-                    {
-                        "name": CONNECTOR,
-                        "tenant_id": TENANT,
-                        "source_id": SOURCE,
-                        "connection_id": CONNECTION,
-                    },
+                    {"name": CONNECTOR, "tenant_id": TENANT, "source_id": SOURCE, "connection_id": CONNECTION},
                     {
                         "name": CONNECTOR,
                         "tenant_id": TENANT,
@@ -549,8 +577,7 @@ class TestSweptRowsLandAndResolve:
 
         assert (
             _count(
-                f"SELECT count() AS n FROM {TABLE} "
-                f"WHERE event = 'connector.configured' AND connector = '{CONNECTOR}'"
+                f"SELECT count() AS n FROM {TABLE} WHERE event = 'connector.configured' AND connector = '{CONNECTOR}'"
             )
             == 2
         ), "one connector installed twice is two configured rows, not one"
@@ -587,9 +614,7 @@ class TestSweptRowsLandAndResolve:
         )
 
     def _identity(self, job_id: str) -> dict:
-        return _rows(
-            f"SELECT tenant_id, source_id FROM {TABLE} WHERE job_id = '{job_id}'"
-        )[0]
+        return _rows(f"SELECT tenant_id, source_id FROM {TABLE} WHERE job_id = '{job_id}'")[0]
 
     def test_history_recorded_before_the_identity_existed_is_adopted(self) -> None:
         """The upgrade path, which no fresh install exercises.
@@ -633,12 +658,7 @@ class TestSweptRowsLandAndResolve:
             {
                 "tick_id": "tick-j",
                 "connectors": [
-                    {
-                        "name": CONNECTOR,
-                        "tenant_id": TENANT,
-                        "source_id": SOURCE,
-                        "connection_id": CONNECTION,
-                    },
+                    {"name": CONNECTOR, "tenant_id": TENANT, "source_id": SOURCE, "connection_id": CONNECTION},
                     {
                         "name": CONNECTOR,
                         "tenant_id": TENANT,
@@ -655,9 +675,7 @@ class TestSweptRowsLandAndResolve:
         assert identity["tenant_id"] == ""
         assert identity["source_id"] == ""
 
-    def test_a_departed_connector_that_synced_and_left_nothing_stays_unidentified(
-        self,
-    ) -> None:
+    def test_a_departed_connector_that_synced_and_left_nothing_stays_unidentified(self) -> None:
         """It has recorded syncs, and its identity is what says whose work those
         were. With no Secret and nothing it wrote, that is not a thing to infer
         from how other connectors happen to be named."""
@@ -679,61 +697,49 @@ class TestSweptRowsLandAndResolve:
         found through `system.tables` and the identity read out of it, both
         against a real server.
         """
-        _query("CREATE DATABASE IF NOT EXISTS bronze_departed_tracker")
-        _query("DROP TABLE IF EXISTS bronze_departed_tracker.rows")
+        _query(f"CREATE DATABASE IF NOT EXISTS bronze_departed_tracker{ON_CLUSTER}")
+        _query(f"DROP TABLE IF EXISTS bronze_departed_tracker.rows{ON_CLUSTER}")
         _query(
-            "CREATE TABLE bronze_departed_tracker.rows "
+            f"CREATE TABLE bronze_departed_tracker.rows{ON_CLUSTER} "
             "(tenant_id String, source_id String, payload String) "
-            "ENGINE = MergeTree ORDER BY tuple()"
+            f"ENGINE = {REPLICATED_PREFIX}MergeTree ORDER BY tuple()"
         )
-        _query(
-            "INSERT INTO bronze_departed_tracker.rows VALUES "
-            f"('{TENANT}', 'departed-tracker-reports', 'x')"
-        )
+        _query(f"INSERT INTO bronze_departed_tracker.rows VALUES ('{TENANT}', 'departed-tracker-reports', 'x')")
         self._legacy_sync_row("legacy-3", connector="departed-tracker")
 
         with _StubMover():
             code = self._tick(
-                "tick-r",
-                descriptors=[
-                    {"name": "departed-tracker", "namespace": "bronze_departed_tracker"}
-                ],
+                "tick-r", descriptors=[{"name": "departed-tracker", "namespace": "bronze_departed_tracker"}]
             )
         assert code == 0
 
         identity = self._identity("legacy-3")
         assert identity["tenant_id"] == TENANT
         assert identity["source_id"] == "departed-tracker-reports", (
-            "the identity must come from what the connector recorded, not from "
-            "the shape of its name"
+            "the identity must come from what the connector recorded, not from the shape of its name"
         )
 
     def test_a_relation_holding_two_identities_recovers_nothing(self) -> None:
         """More than one is not a majority to take: it would mean the era this
         recovers from was not single-instance after all."""
-        _query("CREATE DATABASE IF NOT EXISTS bronze_two_faced")
-        _query("DROP TABLE IF EXISTS bronze_two_faced.rows")
+        _query(f"CREATE DATABASE IF NOT EXISTS bronze_two_faced{ON_CLUSTER}")
+        _query(f"DROP TABLE IF EXISTS bronze_two_faced.rows{ON_CLUSTER}")
         _query(
-            "CREATE TABLE bronze_two_faced.rows (tenant_id String, source_id String) "
-            "ENGINE = MergeTree ORDER BY tuple()"
+            f"CREATE TABLE bronze_two_faced.rows{ON_CLUSTER} (tenant_id String, source_id String) "
+            f"ENGINE = {REPLICATED_PREFIX}MergeTree ORDER BY tuple()"
         )
         _query(f"INSERT INTO bronze_two_faced.rows VALUES ('{TENANT}', 'a'), ('{TENANT}', 'b')")
         self._legacy_sync_row("legacy-4", connector="two-faced")
 
         with _StubMover():
-            code = self._tick(
-                "tick-t",
-                descriptors=[{"name": "two-faced", "namespace": "bronze_two_faced"}],
-            )
+            code = self._tick("tick-t", descriptors=[{"name": "two-faced", "namespace": "bronze_two_faced"}])
         assert code == 0
 
         identity = self._identity("legacy-4")
         assert identity["tenant_id"] == ""
         assert identity["source_id"] == ""
 
-    def test_an_install_upgrading_with_history_keeps_its_rows_and_gains_identity(
-        self,
-    ) -> None:
+    def test_an_install_upgrading_with_history_keeps_its_rows_and_gains_identity(self) -> None:
         """The whole upgrade path in one case: the relation in its pre-change
         shape, a row already in it, the migrations, then a tick.
 
@@ -743,10 +749,9 @@ class TestSweptRowsLandAndResolve:
         is run at all.
         """
         # The relation this case rebuilds is the one every later case reads, and
-        # `_empty_ledger` only truncates it. Taken before the drop and put back
-        # whatever happens, so a failure between the two leaves the next case a
-        # canonical table rather than this one's pre-change shape.
-        canonical = _query(f"SHOW CREATE TABLE {TABLE} FORMAT TabSeparatedRaw")
+        # `_empty_ledger` only truncates it. Put back from the migrations whatever
+        # happens, so a failure between the two leaves the next case the table
+        # the deploy hook creates rather than this one's pre-change shape.
         try:
             _query(f"DROP TABLE {TABLE}")
             _query(PRE_CHANGE_DDL)
@@ -776,16 +781,15 @@ class TestSweptRowsLandAndResolve:
             assert self._identity("kept") == {"tenant_id": TENANT, "source_id": SOURCE}
         finally:
             _query(f"DROP TABLE IF EXISTS {TABLE}")
-            _query(canonical)
+            for migration in sorted(MIGRATIONS.glob("*connector-sync-history*.sql")):
+                _apply_migration(migration)
 
     def test_the_seal_keeps_the_empty_identity_it_is_meant_to_have(self) -> None:
         """It is about the tick, not about anything that synced."""
         with _StubMover():
             assert self._tick("tick-l") == 0
 
-        seal = _rows(
-            f"SELECT tenant_id, source_id FROM {TABLE} WHERE event = 'sweep.completed'"
-        )
+        seal = _rows(f"SELECT tenant_id, source_id FROM {TABLE} WHERE event = 'sweep.completed'")
         assert seal[0]["tenant_id"] == ""
         assert seal[0]["source_id"] == ""
 

@@ -17,6 +17,7 @@
 #   write_bronze <round>                 — one sync's bronze through the destination
 #   write_healed_bronze                  — the healed connector's bronze, empty
 #   dbt_build <target>                   — the connector's models, as Argo builds them
+#   sweep_ledger <log>                   — the reconcile sweep against the ledger, as its tick runs it
 CONNECTORS="$(cd -- "${RIG_DIR}/../../connectors" && pwd)"
 CHART="$(cd -- "${RIG_DIR}/../../../../charts/insight" && pwd)"
 # The scripts root the chart's Job names, which is the toolbox image's; this
@@ -191,6 +192,26 @@ write_healed_bronze() {
   cp "${work}/traces.jsonl" "${dest}/input.jsonl"
   cp "${work}/configured_catalog.json" "${dest}/configured_catalog.json"
   destination_write "${dest}"
+}
+
+# The reconcile sweep against the connector sync ledger, driven by its own
+# end-to-end cases (a stub mover, this warehouse through the proxy) under the
+# topology the reconcile CronWorkflow hands it. On a cluster every ledger
+# request has to carry the quorum session; check.py reads that back from the
+# query log afterwards.
+sweep_ledger() {
+  local log="$1" cluster=""
+  if ch_cluster_mode; then
+    cluster="${CLICKHOUSE_CLUSTER_NAME}"
+  fi
+  if ! SWEEP_TEST_CH_URL="${RIG_PROXY}" SWEEP_TEST_CH_USER="${CLICKHOUSE_USER}" \
+      SWEEP_TEST_CH_PASSWORD="${CLICKHOUSE_PASSWORD}" SWEEP_TEST_CH_CLUSTER="${cluster}" \
+      "${VENV}/bin/python" -m pytest -q -p no:cacheprovider \
+      "${SCRIPTS}/../reconcile-connectors/tests/test_sweep_against_clickhouse.py" > "${log}" 2>&1; then
+    tail -n 40 "${log}" >&2
+    return 1
+  fi
+  echo "  $(tail -n 1 "${log}")"
 }
 
 # The Argo dbt-run step's shape: the profile from dbt_profiles.py, the
