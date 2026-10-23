@@ -11,8 +11,8 @@ RIG_TOPOLOGY=replicated src/ingestion/tests/cluster-rig/convert.sh
 ```
 
 Needs Docker, `helm`, `jq`, `yq`, `curl`, a `python3.12` and `cargo`.
-`RIG_DBT_VENV=<venv>` reuses a venv with the pinned dbt instead of building
-one; `RIG_SERVICES_BIN=<dir>` reuses built `identity-resolution` and
+`RIG_DBT_VENV=<venv>` reuses a venv with the pinned dbt and pytest instead of
+building one; `RIG_SERVICES_BIN=<dir>` reuses built `identity-resolution` and
 `insight-v3-core` binaries instead of building them. `RIG_KEEP=1` leaves the
 containers up.
 
@@ -76,28 +76,36 @@ A MariaDB beside the warehouse holds the two services' definitions.
    jira bronze is then dropped — the connector's own models are outside the
    dbt selection below, and a silver class whose only contributor is one of
    them cannot be built with the bronze standing;
-4. the first sync: bronze through the destination, configured by reconcile's
+4. the reconcile sweep against `ingestion_history.sync_events`: its end-to-end
+   cases (`reconcile-connectors/tests/test_sweep_against_clickhouse.py`, a
+   stub mover) run through the proxy under the topology the reconcile
+   CronWorkflow hands the sweep, their fixtures taking the engines and the
+   cluster clause the deploy hook renders; on a cluster [`check.py`](check.py)
+   then reads the query log of every node past a boundary taken before them:
+   every ledger insert confirmed on a quorum, every read sequentially
+   consistent, the identity mutation waited for by every replica;
+5. the first sync: bronze through the destination, configured by reconcile's
    `compose_destination_config.py`, in one write: a probe stream with rows,
    the `github` streams with the records
    [`github_records.py`](github_records.py) emits (a repository, its commits,
    file changes, pull requests and the accounts behind them), and every other
    stream the `github` and `github-directory` connectors discover from the
    fake config in `bootstrap-db/connectors-config.yaml`, empty;
-5. the services, first run ([`services.sh`](services.sh)): identity-resolution
+6. the services, first run ([`services.sh`](services.sh)): identity-resolution
    migrates, its persons log is seeded, and `sync` publishes the log into
    `identity.identity_persons` (no live table yet: the staging is renamed into
    place); insight-v3-core migrates and runs, a dataset is declared, filled by
    eight callers posting at once, paged back whole, and dropped;
-6. `dbt run --select tag:github+ tag:sync:always`, the way the Argo dbt-run
+7. `dbt run --select tag:github+ tag:sync:always`, the way the Argo dbt-run
    step runs it: the profile from `dbt_profiles.py`, the unbuildable models
    excluded;
-7. a snapshot of every table's row count on every node;
-8. the second sync: the same records, extracted later, and the commits
+8. a snapshot of every table's row count on every node;
+9. the second sync: the same records, extracted later, and the commits
    carrying a column the connector did not have before;
-9. the deploy hook and the dbt run once more;
-10. the services, second run: the persons sync swaps behind the live table's
+10. the deploy hook and the dbt run once more;
+11. the services, second run: the persons sync swaps behind the live table's
     watermark; another dataset lives and dies;
-11. the deploys the warehouse must refuse — each fails on its guard, in the
+12. the deploys the warehouse must refuse — each fails on its guard, in the
     words the guard documents (`lib/ch-topology.sh`), and before anything is
     created:
     - on `standalone`: the chart rendered with `clusterMode: true` and a
@@ -113,7 +121,7 @@ A MariaDB beside the warehouse holds the two services' definitions.
       ceiling a coordinated statement waits (`CH_DDL_TASK_TIMEOUT_S`) and `ch1`'s
       relations are exactly what they were. With `ch2` back, the hook deploys
       again;
-12. the assertions.
+13. the assertions.
 
 After each service run, [`check.py`](check.py) reads every node directly:
 `identity.identity_persons` and the dataset's table stand there with the

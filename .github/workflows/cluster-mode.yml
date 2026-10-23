@@ -3,12 +3,13 @@ name: Cluster mode
 # Deploys onto a two-replica ClickHouse behind a round-robin proxy with
 # clusterMode on, and onto a single node with it off: the chart's
 # clickhouse-migrate Job as rendered for each, two syncs of a connector's
-# bronze, the heals a warm install needs, a connector's dbt models built
-# twice, the persons sync and the dataset lifecycle of the two services that
-# write the warehouse themselves, the deploys the warehouse must refuse (the
-# flag the wrong way round, a bronze table from before the flip, a replica
-# down) — then asserts what every node holds. A third leg upgrades a warm
-# installation on the replicated warehouse. src/ingestion/tests/cluster-rig/README.md.
+# bronze, the heals a warm install needs, the reconcile sweep against the
+# ledger, a connector's dbt models built twice, the persons sync and the
+# dataset lifecycle of the two services that write the warehouse themselves,
+# the deploys the warehouse must refuse (the flag the wrong way round, a
+# bronze table from before the flip, a replica down) — then asserts what
+# every node holds. A third leg upgrades a warm installation on the
+# replicated warehouse. src/ingestion/tests/cluster-rig/README.md.
 #
 # The legs run in the merge queue, not on the pull request, the way the
 # data-path shards do (e2e-bronze-to-api.yml): the `pull_request` trigger

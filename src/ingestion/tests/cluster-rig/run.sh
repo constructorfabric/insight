@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Deploy onto the rig's warehouse, sync a connector's bronze into it, heal
-# what a warm install carries, build the connector's models, run the two
-# services that write the warehouse themselves — then sync, deploy, build and
-# run once more. Then the deploys the warehouse must refuse: the topology
-# declared the wrong way round, a bronze table from before the flip and, on a
-# cluster, a replica that is down. Last, assert what every node holds.
+# what a warm install carries, run the reconcile sweep against the ledger,
+# build the connector's models, run the two services that write the warehouse
+# themselves — then sync, deploy, build and run once more. Then the deploys
+# the warehouse must refuse: the topology declared the wrong way round, a
+# bronze table from before the flip and, on a cluster, a replica that is down.
+# Last, assert what every node holds.
 #
 # Every deploy hook runs as the chart's clickhouse-migrate Job renders it for
 # this warehouse: the Job's command under the Job's env, so `clusterMode` is
@@ -181,6 +182,10 @@ step "deploy hook again: nothing left to heal"
 deploy_hook "${WORKDIR}/hook-jira-2.log"
 healed_nothing "${WORKDIR}/hook-jira-2.log"
 jira_warm_state drop
+step "the reconcile sweep against the connector sync ledger"
+check quorum-boundary --out "${WORKDIR}/sweep-boundary.json"
+sweep_ledger "${WORKDIR}/sweep.log"
+check sweep --after "${WORKDIR}/sweep-boundary.json"
 step "bronze through destination-clickhouse, first sync"
 write_bronze 1
 step "services, first run"
