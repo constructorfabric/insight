@@ -435,10 +435,10 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: ""
     redirectUri: "" # browser-facing callback, through the gateway edge
-    # REQUIRED. The install's one tenant, a lowercase UUID: the value the IdP
-    # stamps as the `tenant_id` claim, and the fallback when a token carries
-    # none. Data, connectors, identity and authorization all read this one
-    # value; set it once and never change it.
+    # REQUIRED. The install's one tenant, a lowercase UUID. The Keycloak realm
+    # stamps it as the `tenant_id` claim on every token, and data, connectors,
+    # identity and authorization all read this same value; set it once and
+    # never change it.
     defaultTenantId: ""
     # How a login finds its person. Two modes, declared — never a fallback
     # chain, so a token that cannot answer the configured question is refused
