@@ -50,8 +50,8 @@ apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin do
 systemctl enable --now docker
 usermod -aG docker runner
 
-YQ_VERSION=v4.53.6
-YQ_SHA256=c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385
+YQ_VERSION=v4.54.1
+YQ_SHA256=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
 curl -fsSL -o /tmp/yq \
   "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
 echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -

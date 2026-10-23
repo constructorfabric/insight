@@ -588,6 +588,25 @@ Two consequences worth stating:
   resource. An issue key always carries its project prefix, so an all-digit id
   side identifies these items unambiguously, and `jira_item_is_live` drops them.
 
+`jira__task_links` folds each occurrence's events into intervals, with three
+rules the events alone do not give:
+
+- **an Epic Link change is a parent change.** Before the epic became the
+  issue's `parent`, it was set through the `gh-epic-link` custom field, whose
+  items name the epic by id and key exactly as a parent item does. Read alone,
+  a parent cleared and an Epic Link set to the same epic seconds later ends a
+  parent the issue still has.
+- **within one changelog entry a removal precedes an addition.** An entry can
+  remove and add the same link, in either order of its items; the link holds
+  after it.
+- **the issue's newest read has the last word.** A link can go with no event on
+  either issue — deleting the linked issue logs nothing on this one, and a bulk
+  change can drop links unlogged — and come back the same way. Where the read
+  disagrees with the state the events leave, the occurrence closes at the
+  issue's `updated` when that is after the last event, else at the read, or
+  reopens at its last removal with `valid_from_known = 0`; either row is
+  `evidence = observation`. A read older than the last event is skipped.
+
 ## 4. Value normalization
 
 Value normalization lives in `dbt/macros/jira/jira_field_value.sql`. Every macro
@@ -1077,16 +1096,16 @@ is the remaining one.
 layout copies the whole body into every history row.
 
 A second model, `jira__task_field_text`, holds one row per distinct body of a
-source: `(insight_source_id, data_source, text_id, content_form, content)` with
+tenant's source: `(tenant_id, insight_source_id, data_source, text_id, content_form, content)` with
 `text_id = lower(hex(sipHash128(content)))` (the shared `task_text_id` macro),
-keyed by source and `text_id`. ReplacingMergeTree deduplicates identical bodies
+keyed by tenant, source and `text_id`. ReplacingMergeTree deduplicates identical bodies
 for free. It is tagged into `silver.class_task_field_text`, the source-neutral
 class every task tracker feeds.
 
 The history row is a text reference: `value_ids = [text_id]`,
 `value_displays = [the first task_long_text_prefix_chars characters]` (default
 200), and `value_id_type = 'text_ref'`. An empty value has no element and no
-body. A consumer joins `class_task_field_text` on (`insight_source_id`,
+body. A consumer joins `class_task_field_text` on (`tenant_id`, `insight_source_id`,
 `data_source`, `text_id = value_ids[1]`) for the full body.
 
 `content_form` says which representation a body is: `adf_json` for the current

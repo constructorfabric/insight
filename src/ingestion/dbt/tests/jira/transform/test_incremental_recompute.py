@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from conftest import Scenario
-from helpers import LATER_SYNC, SOURCE_ID, event, field, issue, item
+from helpers import LATER_SYNC, SOURCE_ID, TENANT_ID, event, field, issue, item
 
 STORY_POINTS = "customfield_10001"
 LABELS = "labels"
@@ -57,7 +57,7 @@ def _journal(scenario: Scenario) -> Journal:
 
 
 def _of_issue(journal: Journal, issue_id: str) -> Journal:
-    return {k: v for k, v in journal.items() if k.startswith(f"{SOURCE_ID}-jira-{issue_id}-")}
+    return {k: v for k, v in journal.items() if k.startswith(f"{TENANT_ID}-{SOURCE_ID}-jira-{issue_id}-")}
 
 
 def _seed_two_issues(scenario: Scenario) -> None:
@@ -250,7 +250,7 @@ def test_a_table_carrying_no_catalogue_record_is_rebuilt_not_patched(scenario: S
     scenario.warehouse.execute(
         "INSERT INTO staging.jira__field_history_derived"
         " SELECT * REPLACE ('4004' AS issue_id,"
-        "        concat(insight_source_id, '-jira-4004-', field_id, '-', event_id) AS unique_key)"
+        "        concat(tenant_id, '-', insight_source_id, '-jira-4004-', field_id, '-', event_id) AS unique_key)"
         " FROM staging.jira__field_history_derived LIMIT 1"
     )
     assert _of_issue(_journal(scenario), "4004"), "the fixture row was not inserted"

@@ -47,7 +47,7 @@ adds AS (
 
 removes AS (
     SELECT
-        insight_source_id, id_readable, link_type, target_readable,
+        insight_source_id, tenant_id, id_readable, link_type, target_readable,
         event_at                                                AS removed_at,
         actor_display                                           AS removed_by,
         collected_at                                            AS removed_collected_at,
@@ -86,7 +86,8 @@ event_intervals AS (
         if(r.matched = 1, greatest(a.collected_at, r.removed_collected_at), a.collected_at) AS collected_at
     FROM adds AS a
     ASOF LEFT JOIN removes AS r
-        ON a.insight_source_id = r.insight_source_id
+        ON a.tenant_id = r.tenant_id
+        AND a.insight_source_id = r.insight_source_id
         AND a.id_readable = r.id_readable
         AND a.link_type = r.link_type
         AND a.target_readable = r.target_readable
@@ -117,11 +118,11 @@ orphan_removes AS (
         collected_at                                            AS collected_at
     FROM (
         SELECT
+            tenant_id,
             insight_source_id,
             id_readable,
             link_type,
             target_readable,
-            any(tenant_id)                                             AS tenant_id,
             argMin(link_action, (event_at, event_id))                  AS first_action,
             min(event_at)                                              AS first_at,
             argMin(target_type, (event_at, event_id))                  AS target_type,
@@ -129,7 +130,7 @@ orphan_removes AS (
             argMin(actor_display, (event_at, event_id))                AS first_actor,
             max(collected_at)                                          AS collected_at
         FROM events
-        GROUP BY insight_source_id, id_readable, link_type, target_readable
+        GROUP BY tenant_id, insight_source_id, id_readable, link_type, target_readable
     )
     -- The earliest event of a link being a removal means its addition happened
     -- before anything collected. Any later add/remove pair in the same link is
@@ -142,7 +143,7 @@ orphan_removes AS (
 pr_observations AS (
     SELECT
         COALESCE(s.source_id, '')                               AS insight_source_id,
-        COALESCE(s.tenant_id, '')                               AS tenant_id,
+        s.tenant_id                                             AS tenant_id,
         concat(COALESCE(s.repo_full_name, ''), '#', toString(COALESCE(s.item_number, 0))) AS id_readable,
         concat(
             JSONExtractString(JSONExtractRaw(link_raw, 'repository'), 'nameWithOwner'),
@@ -163,17 +164,18 @@ pr_observations AS (
 -- link removed by emptying the set would read as still open.
 latest_observation AS (
     SELECT
+        tenant_id                                               AS tenant_id,
         COALESCE(source_id, '')                                 AS insight_source_id,
         concat(COALESCE(repo_full_name, ''), '#', toString(COALESCE(item_number, 0))) AS id_readable,
         max(_tracked_at)                                        AS last_version_at
     FROM {{ ref('github__issue_links_snapshot') }}
-    GROUP BY insight_source_id, id_readable
+    GROUP BY tenant_id, insight_source_id, id_readable
 ),
 
 pr_intervals AS (
     SELECT
         o.insight_source_id                                     AS insight_source_id,
-        any(o.tenant_id)                                        AS tenant_id,
+        o.tenant_id                                             AS tenant_id,
         o.id_readable                                           AS id_readable,
         'closed_by_pr'                                          AS link_type,
         'pull_request'                                          AS target_type,
@@ -197,8 +199,10 @@ pr_intervals AS (
         any(l.last_version_at)                                  AS collected_at
     FROM pr_observations AS o
     INNER JOIN latest_observation AS l
-        ON l.insight_source_id = o.insight_source_id AND l.id_readable = o.id_readable
-    GROUP BY o.insight_source_id, o.id_readable, o.target_readable
+        ON l.tenant_id = o.tenant_id
+        AND l.insight_source_id = o.insight_source_id
+        AND l.id_readable = o.id_readable
+    GROUP BY o.tenant_id, o.insight_source_id, o.id_readable, o.target_readable
 ),
 
 every_interval AS (
@@ -211,9 +215,11 @@ every_interval AS (
 
 SELECT
     CAST(concat(
+        ifNull(tenant_id, ''), '-',
         insight_source_id, '-github-', id_readable, '-', link_type, '-',
         target_readable, '-', toString(toUnixTimestamp64Milli(valid_from))
     ) AS String)                                                AS unique_key,
+    ifNull(tenant_id, '')                                       AS tenant_id,
     CAST(insight_source_id AS String)                           AS insight_source_id,
     CAST('github' AS String)                                    AS data_source,
     CAST(id_readable AS String)                                 AS id_readable,

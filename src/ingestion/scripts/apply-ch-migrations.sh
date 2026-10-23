@@ -64,6 +64,8 @@ export CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}"
 source "$SCRIPT_DIR/lib/ch-topology.sh"
 source "$SCRIPT_DIR/lib/retired-relations.sh"
 source "$SCRIPT_DIR/lib/heal-identity-map-tenant.sh"
+source "$SCRIPT_DIR/lib/heal-youtrack-field-observation-tenant.sh"
+source "$SCRIPT_DIR/lib/heal-task-producer-tenant.sh"
 
 bash "$SCRIPT_DIR/create-databases.sh"
 
@@ -514,6 +516,9 @@ heal_jira_issue_key jira_issue_keys
 echo "=== Healing the Jira catalogue first-sync record ==="
 source "$SCRIPT_DIR/lib/heal-jira-catalogue-first-seen.sh"
 heal_jira_catalogue_first_seen
+
+echo "=== Healing YouTrack field observation tenants ==="
+heal_youtrack_field_observation_tenant
 
 echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional
@@ -1098,6 +1103,12 @@ done
 for _task_link_table in github__task_links youtrack__task_links; do
   heal_task_link_ids "${_task_link_table}"
 done
+
+echo "=== Healing task class tenants ==="
+heal_task_class_tenants
+
+echo "=== Healing task class producer tenants ==="
+heal_task_producer_tenants
 
 echo "=== Removing Zoom participant device identifiers ==="
 # Connector 3.0.0 stops collecting these; rows already stored still hold them.

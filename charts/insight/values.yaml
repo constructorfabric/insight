@@ -212,14 +212,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.10.23.07.10-8cfe8f0" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.10.23.08.35-dbb4327" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.10.23.07.10-8cfe8f0" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.10.23.08.35-dbb4327" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   airbyteSync:
     pollIntervalSeconds: 30
     statusUnreadableThresholdSeconds: 1800
@@ -435,10 +435,10 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: ""
     redirectUri: "" # browser-facing callback, through the gateway edge
-    # REQUIRED. The install's one tenant, a lowercase UUID: the value the IdP
-    # stamps as the `tenant_id` claim, and the fallback when a token carries
-    # none. Data, connectors, identity and authorization all read this one
-    # value; set it once and never change it.
+    # REQUIRED. The install's one tenant, a lowercase UUID. The Keycloak realm
+    # stamps it as the `tenant_id` claim on every token, and data, connectors,
+    # identity and authorization all read this same value; set it once and
+    # never change it.
     defaultTenantId: ""
     # How a login finds its person. Two modes, declared — never a fallback
     # chain, so a token that cannot answer the configured question is refused
