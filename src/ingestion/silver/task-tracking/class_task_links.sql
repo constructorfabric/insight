@@ -33,7 +33,7 @@
 -- having collected the other.
 --
 -- `evidence` distinguishes an interval folded from the vendor's own add and
--- remove events from one bounded by successive observations. A consumer that
+-- remove events from one with an edge bounded by observations. A consumer that
 -- mixes them without noticing is comparing a second-accurate edge with one
 -- that is only known to a sync, so the column is not decoration.
 --

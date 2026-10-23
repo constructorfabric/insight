@@ -319,8 +319,9 @@ models:
       - name: evidence
         description: >
           `event` — folded from the vendor's own add and remove events, exact to the second.
-          `observation` — bounded by first-seen and last-seen across snapshots, so each edge lies between
-          two syncs. No link type is ever built from both, because their precision differs.
+          `observation` — at least one edge is bounded by snapshots rather than stated by an event, so it is
+          known only to a sync. A Jira interval opened by an event and closed because the issue's newest read
+          no longer holds the link is `observation`.
         tests:
           - accepted_values:
               values: ['event', 'observation']
