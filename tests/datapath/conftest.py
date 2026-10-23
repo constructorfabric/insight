@@ -31,14 +31,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CALLER_FIXTURE = "dev_lead"
 
 
-def pytest_addoption(parser: pytest.Parser) -> None:
-    parser.addoption(
-        "--shared-dataset",
-        action="store_true",
-        help="Batch explicitly marked read-only metric scenarios",
-    )
-
-
 _ENV_FILE_STEM = ".env.compose.test-stand"
 
 

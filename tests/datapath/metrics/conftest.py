@@ -1,9 +1,4 @@
-"""One built data path per spec module, and the completeness rule over its tests.
-
-A spec module names its fixture in `SPEC` and asserts one case per test. The path is
-built once for the module; each test then reads through `spec.call(...)` and is held to
-the rule the retired engine enforced — a selected row owes its view's required fields.
-"""
+"""Prepare isolated scenario batches and enforce metric assertion completeness."""
 
 from __future__ import annotations
 
@@ -44,32 +39,29 @@ def shared_readers() -> dict[int, dict[Path, SpecRun]]:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if config.getoption("shared_dataset", default=False):
-        if config.getoption("numprocesses", default=0):
-            raise pytest.UsageError(
-                "--shared-dataset requires one pytest process per isolated stand"
-            )
-        substitutions = {
-            "tenant": "00000000-0000-0000-0000-000000000001",
-            "supervisor_email": "lead@example.com",
-            "supervisor_name": "Test Lead",
-        }
-        tokens = {
-            str(path): content_tokens(load(path, substitutions=substitutions).bronze)
-            for path in sorted((METRICS_ROOT / "git").glob("*.test.yaml"))
-        }
-        config.stash[BATCHES] = {
-            (
-                Path(path).parent / f"test_{Path(path).name.removesuffix('.test.yaml')}.py"
-            ).resolve(): group + 1
-            for path, group in plan_batches(tokens).items()
-        }
-        items.sort(
-            key=lambda item: (
-                item.get_closest_marker("shared_dataset") is None,
-                batch_number(config, item.path),
-            )
+    if config.getoption("numprocesses", default=0):
+        raise pytest.UsageError("Datapath tests require one pytest process per isolated stand")
+    substitutions = {
+        "tenant": "00000000-0000-0000-0000-000000000001",
+        "supervisor_email": "lead@example.com",
+        "supervisor_name": "Test Lead",
+    }
+    tokens = {
+        str(path): content_tokens(load(path, substitutions=substitutions).bronze)
+        for path in sorted((METRICS_ROOT / "git").glob("*.test.yaml"))
+    }
+    config.stash[BATCHES] = {
+        (
+            Path(path).parent / f"test_{Path(path).name.removesuffix('.test.yaml')}.py"
+        ).resolve(): group + 1
+        for path, group in plan_batches(tokens).items()
+    }
+    items.sort(
+        key=lambda item: (
+            item.get_closest_marker("shared_dataset") is None,
+            batch_number(config, item.path),
         )
+    )
 
 
 @pytest.fixture(scope="module")
@@ -162,9 +154,7 @@ def spec(
     )
     if loaded.skip:
         pytest.skip(loaded.skip)
-    if request.config.getoption("shared_dataset") and request.node.get_closest_marker(
-        "shared_dataset"
-    ):
+    if request.node.get_closest_marker("shared_dataset"):
         prepared = request.getfixturevalue("shared_batch")
         return prepared[loaded.path]
     return run_spec(

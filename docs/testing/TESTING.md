@@ -99,16 +99,18 @@ Components against a real store, and the API contract:
 ./dev-compose.sh test-stand down --instance=datapath   # full reset: volumes go too
 ```
 
-Pass `--shared-dataset` to prepare explicitly marked, read-only metric scenarios in batches;
-CI uses this mode. Each scenario keeps its own people, department and connector source IDs.
-Task configuration follows the source, including source-derived census keys. Git scenarios
-with overlapping commit or content identities run in separate batches; original hashes and
-within-scenario deduplication remain unchanged. Unmarked and state-changing tests retain
-isolated preparation. All API assertions, dbt data tests and the metric-coverage gate still run.
+Read-only metric scenarios marked `shared_dataset` are always prepared in batches, using
+rows from their existing YAML fixtures. Each scenario keeps its own people, department and
+connector source IDs. Task configuration follows the source, including source-derived census
+keys. Git scenarios with overlapping commit or content identities run in separate batches;
+original hashes and within-scenario deduplication remain unchanged. Each batch runs the real
+bronze-to-gold preparation once, then all of its scenarios run their existing API assertions.
 
-Omit `--shared-dataset` to reproduce the isolated setup when debugging. The shared mode
-requires one pytest process per stand. Add the `shared_dataset` marker only to read-only
-person-metric scenarios; new fixture fields or configuration tables require an isolation review.
+Preparation is automatic in local runs and CI; there is no mode flag. Unmarked and
+state-changing tests require isolated preparation. All API assertions, dbt data tests and the
+metric-coverage gate still run. Use one pytest process per stand. Add the `shared_dataset`
+marker only to read-only person-metric scenarios; new fixture fields or configuration tables
+require an isolation review.
 
 **CI:** `e2e-bronze-to-api.yml` — one shard per metric class plus one for identity, each on a minimal stand of
 its own, and a blocking metric-coverage gate (`tests/lib/insight_datapath/metric_coverage.py`: every builtin
