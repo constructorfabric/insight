@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 from insight_datapath.spec_runner import SpecRun
 
-pytestmark = pytest.mark.fixture
+pytestmark = [pytest.mark.fixture, pytest.mark.shared_dataset]
 
 SPEC = "git_pr_author_account_attribution"
 
