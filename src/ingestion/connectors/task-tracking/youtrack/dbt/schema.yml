@@ -110,3 +110,11 @@ models:
         tests:
           - not_null
           - not_empty
+  - name: youtrack__long_text_fields
+    description: "The YouTrack fields whose values the history carries as text references."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty

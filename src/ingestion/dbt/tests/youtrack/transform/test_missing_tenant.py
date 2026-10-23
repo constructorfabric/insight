@@ -21,6 +21,7 @@ TENANT_MODELS = (
     "youtrack__issue_field_snapshot",
     "youtrack__issues",
     "youtrack__lifecycle_events",
+    "youtrack__long_text_fields",
     "youtrack__projects",
 )
 TENANT_TESTS = tuple(f"{test}_{model}_tenant_id" for model in TENANT_MODELS for test in ("not_null", "not_empty"))
@@ -80,7 +81,11 @@ FLAGGED_BY_STREAM: dict[str, set[str]] = {
     },
     "youtrack_comments": {"not_null_youtrack__lifecycle_events_tenant_id"},
     "youtrack_custom_fields": {"not_null_youtrack__field_type_history_tenant_id"},
-    "youtrack_issues": {"not_empty_youtrack__issues_tenant_id", "not_empty_youtrack__issue_field_snapshot_tenant_id"},
+    "youtrack_issues": {
+        "not_empty_youtrack__issues_tenant_id",
+        "not_empty_youtrack__issue_field_snapshot_tenant_id",
+        "not_empty_youtrack__long_text_fields_tenant_id",
+    },
     "youtrack_work_items": {"not_null_youtrack__lifecycle_events_tenant_id"},
 }
 

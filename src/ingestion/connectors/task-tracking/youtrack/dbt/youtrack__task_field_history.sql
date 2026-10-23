@@ -120,8 +120,8 @@ WITH changes AS (
         CAST([] AS Array(Tuple(String, String))), i.observed_at, 'set'
     FROM {{ ref('youtrack__issues') }} AS i
 ), flagged_rows AS (
-    SELECT *, (insight_source_id, field_id) IN (
-            SELECT insight_source_id, field_id FROM {{ ref('youtrack__long_text_fields') }}) AS is_long_text
+    SELECT *, (tenant_id, insight_source_id, field_id) IN (
+            SELECT tenant_id, insight_source_id, field_id FROM {{ ref('youtrack__long_text_fields') }}) AS is_long_text
     FROM rows
 ), referenced_rows AS (
     -- A long-text value is a text reference: the body is in youtrack__task_field_text.
