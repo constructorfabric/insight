@@ -1069,24 +1069,39 @@ journal never reaches it.
 
 ## 8. Long text in a side table
 
-Status: implemented (`jira__task_field_text`). §5's normalizers
-cover every other kind; this is the remaining one.
+Status: implemented (`jira__task_field_text`, reaching
+`silver.class_task_field_text`). §5's normalizers cover every other kind; this
+is the remaining one.
 
 `long_text` values are large, change often, and are stored per event, so a naive
 layout copies the whole body into every history row.
 
-A second model, `jira__task_field_text`, holds `(text_id, content)` with
-`text_id = sipHash128(content)`; ReplacingMergeTree on `text_id` deduplicates
-identical bodies for free. The history row stores `value_displays =
-[hex(text_id)]` and `value_id_type = 'text_ref'`.
+A second model, `jira__task_field_text`, holds one row per distinct body of a
+tenant's source: `(tenant_id, insight_source_id, data_source, text_id, content_form, content)` with
+`text_id = lower(hex(sipHash128(content)))` (the shared `task_text_id` macro),
+keyed by tenant, source and `text_id`. ReplacingMergeTree deduplicates identical bodies
+for free. It is tagged into `silver.class_task_field_text`, the source-neutral
+class every task tracker feeds.
 
-One dbt model writes one table, so this is simply a second model over the same
-upstream — no extra orchestration step.
+The history row is a text reference: `value_ids = [text_id]`,
+`value_displays = [the first task_long_text_prefix_chars characters]` (default
+200), and `value_id_type = 'text_ref'`. An empty value has no element and no
+body. A consumer joins `class_task_field_text` on (`tenant_id`, `insight_source_id`,
+`data_source`, `text_id = value_ids[1]`) for the full body.
+
+`content_form` says which representation a body is: `adf_json` for the current
+body read from the issue JSON, `rendered_text` for a body taken from either
+side of a changelog item. One dbt model writes one table, so this is simply a
+second model over the same upstream — no extra orchestration step.
 
 This makes long text cheap to store. It does not make it accurate: `toString`
-for a long-text field is Jira's rendering and may be truncated, so a
-reconstructed historical body is "as Jira rendered it", not the source text.
-Consumers needing exact bodies must read the issue snapshot, not the history.
+for a long-text field is Jira's rendering, so a reconstructed historical body
+is "as Jira rendered it", not the source text. The history references the
+`adf_json` row only where the field never changed — the initial value comes
+from the issue JSON then; after a change, the newest reference is Jira's
+rendering. The exact current body is `jira__task_field_current_text`
+(`silver.class_task_field_current_text`): one `text_id` per issue and field,
+keyed by the issue's immutable `jira_id`.
 
 ## 9. Failure policy
 

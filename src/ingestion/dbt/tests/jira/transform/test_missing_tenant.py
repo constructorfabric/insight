@@ -18,14 +18,25 @@ from helpers import comment, event, field, issue, item, worklog
 POINTS = "customfield_10001"
 NOTES = "customfield_10010"
 TEXTAREA = "com.atlassian.jira.plugin.system.customfieldtypes:textarea"
-SELECTOR = f"{FIELD_HISTORY_SELECTOR} +jira__task_links {LIFECYCLE_SELECTOR} +jira__task_field_metadata"
-CLASSES = ("class_task_field_history", "class_task_links", "class_task_field_metadata")
+SELECTOR = (
+    f"{FIELD_HISTORY_SELECTOR} +jira__task_links {LIFECYCLE_SELECTOR} +jira__task_field_metadata"
+    " +jira__task_field_current_text"
+)
+CLASSES = (
+    "class_task_field_history",
+    "class_task_links",
+    "class_task_field_metadata",
+    "class_task_field_text",
+    "class_task_field_current_text",
+)
 PRODUCERS = (
     "jira__field_history_derived",
     "jira__task_links",
     "jira__comment_lifecycle_events",
     "jira__worklog_lifecycle_events",
     "jira__task_field_metadata",
+    "jira__task_field_text",
+    "jira__task_field_current_text",
 )
 
 # Spelled out: a table name cannot be bound, and a formatted statement is what the security gate rejects.

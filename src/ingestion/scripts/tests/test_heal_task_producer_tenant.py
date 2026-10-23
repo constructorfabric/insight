@@ -26,6 +26,8 @@ PRODUCERS = [
     "jira__task_worklogs",
     "jira__task_field_metadata",
     "jira__task_links",
+    "jira__task_field_text",
+    "jira__task_field_current_text",
     "youtrack__task_field_history",
     "youtrack__task_field_metadata",
     "youtrack__task_issuetypes",
@@ -35,6 +37,8 @@ PRODUCERS = [
     "youtrack__task_sprints",
     "youtrack__task_statuses",
     "youtrack__task_worklogs",
+    "youtrack__task_field_text",
+    "youtrack__task_field_current_text",
     "github__task_field_history",
     "github__task_links",
 ]
@@ -48,6 +52,8 @@ CLASSES = [
     "class_task_sprints",
     "class_task_statuses",
     "class_task_worklogs",
+    "class_task_field_text",
+    "class_task_field_current_text",
 ]
 PRODUCER_VIEWS = [
     "jira__task_issuetypes",

@@ -7,17 +7,27 @@
 # carries a cluster clause and a `Replicated` engine, a table engine carries a
 # `Replicated` prefix, and roles need an access backend the whole cluster
 # shares. The spellings accepted for the flag are the ones every other reader
-# accepts (charts/insight/README.md, "ClickHouse topology").
+# accepts (charts/insight/README.md, "ClickHouse topology"). The flag converts
+# nothing that already stands, so the guard also refuses a database or a bronze
+# table left with the engine of the other topology.
+#
+# A second decision, CLICKHOUSE_PROVISION_ACCESS, says whether this deploy
+# provisions the roles and users at all: a clustered warehouse without a
+# replicated access backend cannot take them from here, and an operator who
+# creates them on every replica by hand turns the provisioning off.
 #
 # Sourced by create-databases.sh and apply-ch-migrations.sh. Exposes:
 #   ch_cluster_mode     — succeeds where the install declared itself clustered
 #                         (lib/ch-exec.sh, which the transport reads too)
+#   ch_provision_access — succeeds unless the install left access to the operator
 #   ch_on_cluster       — `ON CLUSTER <name>`, or nothing
 #   ch_database_engine  — the `ENGINE =` clause a CREATE DATABASE carries
 #   ch_render_topology  — expand the topology markers in SQL read from stdin
 #   ch_assert_topology  — refuse a deploy this server cannot serve
 #
-# Required env: whatever lib/ch-exec.sh requires, plus the optional pair above.
+# Required env: whatever lib/ch-exec.sh requires, plus the optional pair above
+# and CLICKHOUSE_PROVISION_ACCESS (unset or true -> roles and users are
+# provisioned here).
 
 # Idempotent source guard.
 [[ -n "${__CH_TOPOLOGY_SH:-}" ]] && return 0
@@ -32,6 +42,19 @@ CH_DATABASE_KEEPER_ROOT="/clickhouse/databases"
 
 ch_cluster_name() {
   printf '%s' "${CLICKHOUSE_CLUSTER_NAME:-}" | tr -d '[:space:]'
+}
+
+# Whether this deploy creates the roles and users beside the databases they
+# read. Off (clickhouse.provisionAccess: false) means the operator owns them —
+# no provisioning script runs, and the warehouse is not asked for a replicated
+# access backend. The spellings mirror ch_cluster_mode's.
+ch_provision_access() {
+  local flag
+  flag="$(printf '%s' "${CLICKHOUSE_PROVISION_ACCESS:-true}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  case "${flag}" in
+    0 | false | no | off) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 # A name without the flag names no cluster: the flag is what turns on the
@@ -155,12 +178,16 @@ MSG
   return 1
 }
 
+# A Replicated database registers itself in system.clusters under its own name,
+# one row per replica with `database_replica_name` set. A cluster that shares a
+# name with an Insight database (the product database is `insight`) would count
+# those rows as hosts; `database_replica_name = ''` keeps only <remote_servers>.
 _ch_require_cluster_name() {
   local name joined
   name="$(ch_cluster_name)"
   [[ -n "${name}" ]] || { _ch_cluster_name_missing; return 1; }
 
-  if ! joined="$(ch_scalar "SELECT count() FROM system.clusters WHERE cluster = '${name}'")"; then
+  if ! joined="$(ch_scalar "SELECT count() FROM system.clusters WHERE cluster = '${name}' AND database_replica_name = ''")"; then
     _ch_probe_unreadable system.clusters
     return 1
   fi
@@ -173,7 +200,8 @@ ERROR: clickhouse.clusterName is '${name}', but this server lists no such
        Every ON CLUSTER statement this deploy emits would be refused. The name
        is the <remote_servers> entry every replica carries in its server
        config; read the candidates with
-       \`SELECT DISTINCT cluster FROM system.clusters\` and set
+       \`SELECT DISTINCT cluster FROM system.clusters WHERE database_replica_name = ''\`
+       and set
        clickhouse.clusterName to the one whose hosts are this warehouse.
 MSG
   return 1
@@ -220,7 +248,7 @@ _ch_database_keeper_path() {
 _ch_require_complete_databases() {
   local name target database path joined queued
   name="$(ch_cluster_name)"
-  if ! target="$(ch_scalar "SELECT count() FROM system.clusters WHERE cluster = '${name}'")"; then
+  if ! target="$(ch_scalar "SELECT count() FROM system.clusters WHERE cluster = '${name}' AND database_replica_name = ''")"; then
     _ch_probe_unreadable system.clusters
     return 1
   fi
@@ -259,6 +287,8 @@ MSG
   done
 }
 
+# With provisioning left to the operator the missing backend is a note, not
+# a refusal: nothing this deploy creates would land on one replica.
 _ch_require_replicated_access_storage() {
   local replicated
   if ! replicated="$(ch_scalar "SELECT count() FROM system.user_directories WHERE type = 'replicated'")"; then
@@ -266,6 +296,16 @@ _ch_require_replicated_access_storage() {
     return 1
   fi
   [[ "${replicated}" -gt 0 ]] && return 0
+
+  if ! ch_provision_access; then
+    cat >&2 <<MSG
+WARN: this server stores access entities locally — no replicated user
+      directory is configured. clickhouse.provisionAccess is false, so this
+      deploy creates no role or user; the ones the warehouse holds must exist
+      on every replica.
+MSG
+    return 0
+  fi
 
   cat >&2 <<MSG
 ERROR: clickhouse.clusterMode is on, but this server stores access entities
@@ -285,7 +325,7 @@ ERROR: clickhouse.clusterMode is on, but this server stores access entities
            </user_directories>
 
        Or provision access out of band — create the roles and users on each
-       replica yourself, and set clickhouse.createDatabases to false so this
+       replica yourself, and set clickhouse.provisionAccess to false so this
        deploy stops provisioning them.
 MSG
   return 1
@@ -311,6 +351,47 @@ ERROR: clickhouse.clusterMode is on, but the database '${database}' already
 MSG
     return 1
   done
+}
+
+# `bronze_*` stays Atomic and the destination creates its tables with IF NOT
+# EXISTS, so a table from before the flip keeps its plain engine on the one
+# replica that created it. INVARIANT: read on every replica, and only when
+# every replica answers — a probe through the load balancer sees such a table
+# or not by which replica answers, and a replica that is down may be the one
+# holding it (no other guard notices a down replica whose databases already
+# joined). Needs REMOTE on the deploy user and the cluster's interserver secret.
+_ch_require_replicated_bronze_tables() {
+  local name plain
+  name="$(ch_cluster_name)"
+  if ! plain="$(printf "SELECT concat(database, '.', name, '  ', engine, '  on ', hostName())
+        FROM clusterAllReplicas('%s', system.tables)
+        WHERE startsWith(database, 'bronze_') AND endsWith(engine, 'MergeTree')
+          AND NOT startsWith(engine, 'Replicated')
+        ORDER BY database, name, hostName()
+        SETTINGS skip_unavailable_shards = 0" "${name}" | _ch_http_query)"; then
+    [[ -n "${plain}" ]] && printf '%s\n' "${plain}" >&2
+    _ch_probe_unreadable "system.tables on every replica (clusterAllReplicas('${name}', system.tables): every replica must answer, and the deploy user needs the REMOTE grant)"
+    return 1
+  fi
+  [[ "${plain}" =~ [^[:space:]] ]] || return 0
+
+  cat >&2 <<MSG
+ERROR: clickhouse.clusterMode is on, but these bronze tables carry a plain
+       MergeTree-family engine, so each stands on the one replica named:
+
+$(printf '%s\n' "${plain}" | sed 's/^/         /')
+
+       The destination creates its tables with IF NOT EXISTS, so turning the
+       flag on converted none of them: a read through the load balancer
+       answers their rows or none by which replica takes it, and every ALTER
+       or rebuild this deploy issues on them reaches that replica only.
+
+       Drop each listed database ON CLUSTER ${name} and let the connector's
+       next sync recreate it with the replicated engines, or convert the
+       tables in place along the standalone-to-cluster runbook (#3902). Then
+       re-run the deploy.
+MSG
+  return 1
 }
 
 _ch_refuse_replicated_databases() {
@@ -348,4 +429,5 @@ ch_assert_topology() {
   _ch_require_replicated_access_storage
   _ch_require_replicated_databases "$@"
   _ch_require_complete_databases "$@"
+  _ch_require_replicated_bronze_tables
 }

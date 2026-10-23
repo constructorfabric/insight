@@ -104,6 +104,12 @@ spec:
                   key: clickhouse-password
             - name: CLICKHOUSE_DATABASE
               value: "${SEED_CLICKHOUSE_DATABASE}"
+            # Topology the chart declared (epic #2010): the seed runs the same
+            # creation scripts as the deploy hook and must emit the same engines.
+            - name: CLICKHOUSE_CLUSTER_MODE
+              value: "${SEED_CLICKHOUSE_CLUSTER_MODE}"
+            - name: CLICKHOUSE_CLUSTER_NAME
+              value: "${SEED_CLICKHOUSE_CLUSTER_NAME}"
             # ── Seed semantics ───────────────────────────────────────────
             - name: TENANT_DEFAULT_ID
               value: "${SEED_TENANT_ID}"

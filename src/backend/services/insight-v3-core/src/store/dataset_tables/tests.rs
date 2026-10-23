@@ -150,6 +150,21 @@ async fn dropping_names_the_table_and_tolerates_its_absence() -> R {
     Ok(())
 }
 
+/// The warehouse's own "stopped waiting" is a timeout here too: the statement
+/// is still queued, so the caller must treat it as one whose fate is unknown.
+#[tokio::test]
+async fn a_statement_the_warehouse_stopped_waiting_on_is_a_timeout() {
+    let mock = Mock::new();
+    mock.add(handlers::exception(159));
+
+    let unfinished = tables(&mock).drop_table("ds_commits_1").await;
+
+    assert!(
+        matches!(unfinished, Err(DatasetTableError::Timeout)),
+        "{unfinished:?}"
+    );
+}
+
 /// A client that dials nothing: these pin the statement `provision` would
 /// send, which is decided before any of it reaches a server.
 fn tables_on(database: &str, topology: insight_clickhouse::Topology) -> DatasetTables {
@@ -213,4 +228,89 @@ fn the_create_names_the_datasets_database_and_no_other() {
         elsewhere.client.ddl_sql(&spec).is_err(),
         "a dataset's table belongs in the datasets database and nowhere else"
     );
+}
+
+/// A warehouse that records what it was asked, on a clustered install.
+async fn clustered_capture()
+-> Result<(insight_clickhouse::test_support::Capture, DatasetTables), std::io::Error> {
+    let capture = insight_clickhouse::test_support::Capture::start().await?;
+    let tables = DatasetTables::new(insight_clickhouse::Client::new(
+        insight_clickhouse::Config::new(capture.url(), "insight_datasets")
+            .with_topology(insight_clickhouse::Topology::new(true, "insight_cluster")),
+    ));
+    Ok((capture, tables))
+}
+
+const QUORUM_PAIR: [&str; 3] = [
+    "insert_quorum",
+    "insert_quorum_parallel",
+    "select_sequential_consistency",
+];
+
+/// A record is never read back by the request that stored it, and the
+/// preview follows no write of its own, so neither takes the quorum pair: a
+/// sequential quorum would refuse the next client's insert into the same
+/// table, and a quorum-pinned read would throw on a lagging replica.
+#[tokio::test]
+async fn record_inserts_and_preview_reads_carry_no_quorum_pair() -> R {
+    let (capture, tables) = clustered_capture().await?;
+    let page = Page {
+        limit: 10,
+        offset: 0,
+        order: "received_at DESC",
+    };
+
+    tables.insert("ds_commits_1", "commits", "{}").await?;
+    tables.page("ds_commits_1", page).await?;
+    tables.count("ds_commits_1").await?;
+
+    let received = capture.received();
+    assert_eq!(received.len(), 3, "{received:?}");
+    for request in &received {
+        for setting in QUORUM_PAIR {
+            assert!(
+                request.pair(setting).is_none(),
+                "{setting} on a call that never reads its own write: {request:?}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// A create or drop waits for the active replicas, inside this store's own
+/// bound: the warehouse reports a statement that did not finish before the
+/// store gives up on it, so a create that landed is not discarded.
+#[tokio::test]
+async fn a_statement_waits_for_the_active_replicas_within_the_bound() -> R {
+    let (capture, tables) = clustered_capture().await?;
+
+    tables.drop_table("ds_commits_1").await?;
+
+    let [dropped] = &capture.received()[..] else {
+        panic!("one statement is sent");
+    };
+    assert_eq!(
+        dropped.pair("distributed_ddl_output_mode"),
+        Some("throw_only_active"),
+        "{dropped:?}"
+    );
+    assert_eq!(
+        dropped.pair("distributed_ddl_task_timeout"),
+        Some(
+            insight_clickhouse::DDL_TASK_TIMEOUT
+                .as_secs()
+                .to_string()
+                .as_str()
+        ),
+        "{dropped:?}"
+    );
+    assert!(
+        tables.ddl_timeout > insight_clickhouse::DDL_TASK_TIMEOUT,
+        "the store outlives the warehouse's wait: {:?} <= {:?}",
+        tables.ddl_timeout,
+        insight_clickhouse::DDL_TASK_TIMEOUT
+    );
+
+    Ok(())
 }
