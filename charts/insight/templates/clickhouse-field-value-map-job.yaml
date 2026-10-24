@@ -58,6 +58,12 @@ spec:
                 secretKeyRef:
                   name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
                   key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+            # Topology of the target ClickHouse (epic #2010): on a cluster the
+            # loader's anti-join reads and inserts carry the quorum session.
+            - name: CLICKHOUSE_CLUSTER_MODE
+              value: {{ include "insight.clickhouse.clusterMode" . | quote }}
+            - name: CLICKHOUSE_CLUSTER_NAME
+              value: {{ include "insight.clickhouse.clusterName" . | quote }}
             - name: FIELD_VALUE_MAP_DIR
               value: "/config/field-value-map"
             - name: FIELD_VALUE_MAP_RECORDED_BY
