@@ -76,7 +76,8 @@ def test_a_silver_only_query_reads_every_body_of_a_long_text_field(case: Warehou
             h.value_displays AS value_displays, t.content_form AS content_form, t.content AS content
         FROM silver.class_task_field_history AS h FINAL
         LEFT JOIN silver.class_task_field_text AS t FINAL
-            ON t.insight_source_id = h.insight_source_id AND t.data_source = h.data_source
+            ON t.tenant_id = h.tenant_id AND t.insight_source_id = h.insight_source_id
+           AND t.data_source = h.data_source
            AND t.text_id = h.value_ids[1]
         WHERE h.data_source = 'youtrack' AND h.field_id IN ('description', 'field-1')
           AND h.event_kind IN ('synthetic_initial', 'changelog')
@@ -130,7 +131,8 @@ def test_the_current_body_is_found_by_the_issue_id(case: Warehouse) -> None:
         SELECT c.issue_id AS issue_id, c.field_id AS field_id, t.content AS content
         FROM silver.class_task_field_current_text AS c FINAL
         INNER JOIN silver.class_task_field_text AS t FINAL
-            ON t.insight_source_id = c.insight_source_id AND t.data_source = c.data_source
+            ON t.tenant_id = c.tenant_id AND t.insight_source_id = c.insight_source_id
+           AND t.data_source = c.data_source
            AND t.text_id = c.text_id
         WHERE c.data_source = 'youtrack'
         ORDER BY c.field_id""")

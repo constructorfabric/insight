@@ -7,38 +7,44 @@
 -- operator's config.task_value_map decision. A decision wins over the flag,
 -- and an open value nobody has decided is `undefined` — never guessed.
 WITH status_fields AS (
-    SELECT insight_source_id, field_id FROM (
+    SELECT tenant_id, insight_source_id, field_id FROM (
         SELECT * FROM {{ source('config', 'task_field_roles') }} FINAL
         WHERE data_source = 'youtrack' AND valid_from <= now64(3)
         ORDER BY valid_from DESC, recorded_at DESC
-        LIMIT 1 BY insight_source_id, field_id
+        LIMIT 1 BY tenant_id, insight_source_id, field_id
     ) WHERE is_deleted = 0 AND role = 'status'
 ), observed AS (
-    SELECT v.insight_source_id AS insight_source_id, v.value_id AS value_id, v.value_name AS value_name,
+    SELECT v.tenant_id AS tenant_id, v.insight_source_id AS insight_source_id,
+        v.value_id AS value_id, v.value_name AS value_name,
         JSONExtractBool(v.value, 'isResolved') AS is_resolved
     FROM {{ ref('youtrack__bundle_values') }} AS v
-    INNER JOIN status_fields AS f ON f.insight_source_id = v.insight_source_id AND f.field_id = v.field_id
+    INNER JOIN status_fields AS f
+        ON f.tenant_id = v.tenant_id AND f.insight_source_id = v.insight_source_id AND f.field_id = v.field_id
     WHERE v.value_id != ''
-    LIMIT 1 BY insight_source_id, value_id
+    LIMIT 1 BY tenant_id, insight_source_id, value_id
 ), decided AS (
-    SELECT insight_source_id, value_id, value_display, canonical_value FROM (
+    SELECT tenant_id, insight_source_id, value_id, value_display, canonical_value FROM (
         SELECT * FROM {{ source('config', 'task_value_map') }} FINAL
         WHERE data_source = 'youtrack' AND valid_from <= now64(3)
         ORDER BY valid_from DESC, recorded_at DESC
-        LIMIT 1 BY insight_source_id, field_id, value_id
+        LIMIT 1 BY tenant_id, insight_source_id, field_id, value_id
     )
     WHERE is_deleted = 0 AND canonical_value IN ('new', 'in_progress', 'done', 'undefined')
-    LIMIT 1 BY insight_source_id, value_id
+    LIMIT 1 BY tenant_id, insight_source_id, value_id
 ), statuses AS (
     -- A decided value no bundle lists any more (a removed state) keeps its row.
-    SELECT if(o.value_id != '', o.insight_source_id, d.insight_source_id) AS insight_source_id,
+    SELECT if(o.value_id != '', o.tenant_id, d.tenant_id) AS tenant_id,
+        if(o.value_id != '', o.insight_source_id, d.insight_source_id) AS insight_source_id,
         if(o.value_id != '', o.value_id, d.value_id) AS value_id,
         coalesce(nullIf(o.value_name, ''), nullIf(d.value_display, '')) AS value_name,
         coalesce(nullIf(d.canonical_value, ''), if(o.is_resolved, 'done', 'undefined')) AS status_category
     FROM observed AS o
-    FULL OUTER JOIN decided AS d ON d.insight_source_id = o.insight_source_id AND d.value_id = o.value_id
+    FULL OUTER JOIN decided AS d
+        ON d.tenant_id = o.tenant_id AND d.insight_source_id = o.insight_source_id AND d.value_id = o.value_id
 )
-SELECT CAST(concat(insight_source_id, '-youtrack-status-', value_id) AS Nullable(String)) AS unique_key,
+SELECT CAST(concat(ifNull(tenant_id, ''), '-', insight_source_id, '-youtrack-status-', value_id) AS Nullable(String))
+        AS unique_key,
+    ifNull(tenant_id, '') AS tenant_id,
     CAST(insight_source_id AS Nullable(String)) AS insight_source_id, 'youtrack' AS data_source,
     CAST(value_id AS Nullable(String)) AS status_id, CAST(value_name AS Nullable(String)) AS status_name,
     CAST(NULL AS Nullable(Int32)) AS category_id, CAST(NULL AS Nullable(String)) AS category_key,

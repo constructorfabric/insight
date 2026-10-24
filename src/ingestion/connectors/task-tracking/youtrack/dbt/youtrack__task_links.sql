@@ -1,7 +1,7 @@
 {{ config(materialized='table', schema='staging', tags=['youtrack', 'staging', 'silver:class_task_links'], engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], settings={'allow_nullable_key': 1}) }}
 
 WITH observations AS (
-    SELECT insight_source_id, issue_id, id_readable, observed_at,
+    SELECT tenant_id, insight_source_id, issue_id, id_readable, observed_at,
         arrayFlatten(arrayMap(l -> arrayMap(t -> (
             concat(JSONExtractString(l, 'linkType', 'id'), ':', JSONExtractString(l, 'direction')),
             JSONExtractString(t, 'id'), JSONExtractString(t, 'idReadable')),
@@ -12,10 +12,10 @@ WITH observations AS (
         l -> length(JSONExtractArrayRaw(l, 'trimmedIssues')) > length(JSONExtractArrayRaw(l, 'issues')),
         JSONExtractArrayRaw(payload, 'links'))
 ), timelines AS (
-    SELECT insight_source_id, issue_id,
+    SELECT tenant_id, insight_source_id, issue_id,
         argMax(id_readable, observed_at) AS id_readable,
         arraySort(x -> x.1, groupArray((observed_at, links))) AS versions
-    FROM observations GROUP BY insight_source_id, issue_id
+    FROM observations GROUP BY tenant_id, insight_source_id, issue_id
 ), edges AS (
     SELECT *, arrayJoin(arrayDistinct(arrayMap(l -> (l.1, l.2), arrayFlatten(arrayMap(v -> v.2, versions))))) AS link
     FROM timelines
@@ -27,8 +27,9 @@ WITH observations AS (
     SELECT *, arrayFirstIndex(v -> NOT arrayExists(l -> l.1 = link.1 AND l.2 = link.2, v.2), arraySlice(versions, start_index)) AS end_offset
     FROM spans
 )
-SELECT assumeNotNull(concat(insight_source_id, '-youtrack-', issue_id, '-', link.1, '-', link.2, '-', toString(versions[start_index].1))) AS unique_key,
-    insight_source_id, 'youtrack' AS data_source, id_readable,
+SELECT assumeNotNull(concat(ifNull(tenant_id, ''), '-', insight_source_id, '-youtrack-', issue_id, '-', link.1, '-',
+                            link.2, '-', toString(versions[start_index].1))) AS unique_key,
+    ifNull(tenant_id, '') AS tenant_id, insight_source_id, 'youtrack' AS data_source, id_readable,
     link.1 AS link_type, CAST('issue' AS Enum8('issue' = 1, 'pull_request' = 2)) AS target_type,
     arrayLast(l -> l.1 = link.1 AND l.2 = link.2, arrayFlatten(arrayMap(v -> v.2, versions))).3 AS target_readable,
     CAST(splitByChar('-', id_readable)[1] != splitByChar('-', target_readable)[1] AS Bool) AS is_cross_repository,

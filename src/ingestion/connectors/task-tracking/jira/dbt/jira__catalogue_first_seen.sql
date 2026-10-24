@@ -23,7 +23,7 @@
 
 WITH first_syncs AS (
     SELECT
-        COALESCE(tenant_id, '')                           AS tenant_id,
+        tenant_id,
         COALESCE(source_id, '')                           AS insight_source_id,
         min(_airbyte_extracted_at)                        AS catalogue_first_sync,
         now64(3)                                          AS recorded_at
@@ -32,7 +32,7 @@ WITH first_syncs AS (
 )
 
 SELECT
-    concat(tenant_id, '-', insight_source_id)             AS unique_key,
+    concat(ifNull(tenant_id, ''), '-', insight_source_id)             AS unique_key,
     tenant_id,
     insight_source_id,
     catalogue_first_sync,
