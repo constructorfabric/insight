@@ -145,7 +145,12 @@ name: jira
 # is a parent change, and a removal sorts before an addition within one
 # changelog entry (#3889). MAJOR because rows already written change, and only
 # the full refresh a major dispatches (ADR-0015) re-derives them.
-version: "17.0.0"
+# 18.0.0 (major): every Jira producer of a task class carries `tenant_id` after
+# `unique_key` and leads its key with the tenant, and the journal derives,
+# deletes and batches per tenant. MAJOR because rows already written change
+# key, and only the full refresh a major dispatches (ADR-0015) replaces them in
+# the journal, its lifecycle arms and the silver classes.
+version: "18.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer

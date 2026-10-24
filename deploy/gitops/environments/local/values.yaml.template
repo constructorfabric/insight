@@ -31,14 +31,6 @@ gitCliProxy:
 
 global:
   storageClass: local-path
-  # Single-tenant fallback for the analytics metric-catalog resolver
-  # (compose-app-secrets.sh reads .global.tenantDefaultId → emits
-  # APP__gears__analytics__config__metric_catalog__tenant_default_id).
-  # Set to the seeded demo tenant so the catalog resolves AND dashboards
-  # populate. (Note: under the gears-rust auth-disabled host the gateway
-  # injects toolkit-security's DEFAULT_TENANT_ID — the same UUID below — and
-  # /health is off the auth path, so probes no longer depend on this.)
-  tenantDefaultId: "00000000-df51-5b42-9538-d2b56b7ee953"
 
 # ─── L2 cross-namespace wiring ─────────────────────────────────────────────
 # Each subchart's `deploy: false` flips the umbrella from
@@ -149,10 +141,10 @@ authenticator:
     # (src/ingestion/tools/seed/insight_seed/keycloak_realm.py), so `sub`
     # already IS that stable id — no Entra-style non-default claim needed here.
     externalIdClaim: "sub"
-    # Optional tenant sourcing: `tenantClaim` names the id_token claim carrying
-    # the single tenant (default `tenant_id` — Keycloak; Entra: `tid`);
-    # `defaultTenantId` is the fallback for a claim-less IdP (e.g. Okta),
-    # empty = fail closed.
+    # The install's one tenant, the seeded demo tenant: the realm stamps it as
+    # the `tenant_id` claim, and data, identity and authorization read it from
+    # here. `tenantClaim` names that claim (default `tenant_id`; Entra: `tid`).
+    defaultTenantId: "00000000-df51-5b42-9538-d2b56b7ee953"
 
 # ─── Local IdP topology ──────────────────────────────────────────────────────
 # Local k8s runs an in-cluster `keycloak` exposed THROUGH the edge at the `/kc`

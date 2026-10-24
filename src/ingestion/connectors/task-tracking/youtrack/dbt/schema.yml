@@ -26,6 +26,11 @@ models:
   - name: youtrack__projects
     description: "Deduplicated YouTrack project catalog — one row per project, with the raw project JSON the task-tracking silver layer will map onto the class contract."
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
       - name: unique_key
         tests:
           - not_null
@@ -33,3 +38,101 @@ models:
       - name: project_id
         tests:
           - not_null
+  - name: youtrack__task_field_history
+    description: "Per-source staging projection unioned into silver.class_task_field_history."
+  - name: youtrack__issues
+    description: "Latest snapshot of each YouTrack issue across the search and activity streams."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_field_metadata
+    description: "Per-source staging projection unioned into silver.class_task_field_metadata."
+  - name: youtrack__activities
+    description: "YouTrack activity items normalised to one row per issue, field and event."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_issuetypes
+    description: "Per-source staging projection unioned into silver.class_task_issuetypes."
+  - name: youtrack__activity_order
+    description: "The order of each issue's YouTrack events."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_links
+    description: "Per-source staging projection unioned into silver.class_task_links."
+  - name: youtrack__field_states
+    description: "Each YouTrack field's state after every event."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_comments
+    description: "Per-source staging projection unioned into silver.class_task_comments."
+  - name: youtrack__issue_field_snapshot
+    description: "Every field of every observed YouTrack issue snapshot."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_projects
+    description: "Per-source staging projection unioned into silver.class_task_projects."
+  - name: youtrack__lifecycle_events
+    description: "YouTrack comment and work-item lifecycle changes."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_sprints
+    description: "Per-source staging projection unioned into silver.class_task_sprints."
+  - name: youtrack__bundle_values
+    description: "Latest observation of each YouTrack bundle value."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_statuses
+    description: "Per-source staging projection unioned into silver.class_task_statuses."
+  - name: youtrack__field_type_history
+    description: "Each YouTrack field type observation against the one before it."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__task_worklogs
+    description: "Per-source staging projection unioned into silver.class_task_worklogs."
+  - name: youtrack__comment_issues
+    description: "The issue each YouTrack comment belongs to, read from the issue snapshots."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: youtrack__long_text_fields
+    description: "The YouTrack fields whose values the history carries as text references."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty

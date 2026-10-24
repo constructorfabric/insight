@@ -98,16 +98,13 @@
     _synced_at, _version
 
   Types:
-    `insight_tenant_id` and `insight_source_id` are emitted as UUID, derived
-    from the source's raw `tenant_id` / `source_id` strings via sipHash128.
+    `insight_tenant_id` is the canonical tenant UUID Bronze is stamped with;
+    `insight_source_id` is derived from the raw `source_id` string via sipHash128.
     `_synced_at` is emitted as DateTime64(3). All three match what the seed-
     style identity inputs (seed_identity_inputs_from_cursor /
     _from_claude_admin) emit so the `silver/_shared/identity_inputs.sql`
     UNION ALL type-checks — ClickHouse 25.3 rejects UNION across UUID and
-    String with error code 386 NO_COMMON_TYPE. The hashing-to-UUID approach
-    is TEMPORARY pending a real tenants registry; the same hash applied to
-    the same raw tenant_id maps to the same UUID across all sources, so
-    downstream joins on `insight_tenant_id` stay consistent.
+    String with error code 386 NO_COMMON_TYPE.
 
   unique_key is
   `{tenant}-{source_id}-{source_type}-{source_account_id}-{value_type}-{operation}-{updated_at_ms}`
@@ -143,7 +140,7 @@ identity_field_events AS (
             if(new_value = '', 'DELETE-', 'UPSERT-'),
             toString(toUnixTimestamp64Milli(toDateTime64(updated_at, 3)))
         ) AS String) AS unique_key,
-        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        {{ tenant_uuid('tenant_id') }} AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         entity_id AS source_account_id,
@@ -222,7 +219,7 @@ roster_membership_upserts AS (
             'UPSERT-',
             toString(toUnixTimestamp64Milli(toDateTime64(h.updated_at, 3)))
         ) AS String) AS unique_key,
-        toUUID(UUIDNumToString(sipHash128(coalesce(h.tenant_id, '')))) AS insight_tenant_id,
+        {{ tenant_uuid('h.tenant_id') }} AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(h.source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         h.entity_id AS source_account_id,
@@ -253,7 +250,7 @@ roster_membership_deletes AS (
             'DELETE-',
             toString(toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)))
         ) AS String) AS unique_key,
-        toUUID(UUIDNumToString(sipHash128(coalesce(d.tenant_id, '')))) AS insight_tenant_id,
+        {{ tenant_uuid('d.tenant_id') }} AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(d.source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         d.entity_id AS source_account_id,
@@ -300,7 +297,7 @@ deletes AS (
             'DELETE-',
             toString(toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)))
         ) AS String) AS unique_key,
-        toUUID(UUIDNumToString(sipHash128(coalesce(d.tenant_id, '')))) AS insight_tenant_id,
+        {{ tenant_uuid('d.tenant_id') }} AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(d.source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         d.entity_id AS source_account_id,
@@ -333,7 +330,7 @@ id_upserts AS (
             'UPSERT-',
             toString(toUnixTimestamp64Milli(toDateTime64(updated_at, 3)))
         ) AS String) AS unique_key,
-        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        {{ tenant_uuid('tenant_id') }} AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         entity_id AS source_account_id,
@@ -359,7 +356,7 @@ id_deletes AS (
             'DELETE-',
             toString(toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)))
         ) AS String) AS unique_key,
-        toUUID(UUIDNumToString(sipHash128(coalesce(d.tenant_id, '')))) AS insight_tenant_id,
+        {{ tenant_uuid('d.tenant_id') }} AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(d.source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         d.entity_id AS source_account_id,

@@ -18,21 +18,21 @@
 -- Every row is expected to carry `jira_id`; one that does not is reported here
 -- per table, with the keys involved, rather than silently dropped.
 
-SELECT 'jira_issue_history' AS bronze_table, source_id, count() AS rows_without_issue_id, groupUniqArray(10)(id_readable) AS sample_keys
+SELECT 'jira_issue_history' AS bronze_table, tenant_id, source_id, count() AS rows_without_issue_id, groupUniqArray(10)(id_readable) AS sample_keys
 FROM {{ source('bronze_jira', 'jira_issue_history') }} FINAL
 WHERE jira_id IS NULL
-GROUP BY source_id
+GROUP BY tenant_id, source_id
 
 UNION ALL
 
-SELECT 'jira_comments' AS bronze_table, source_id, count() AS rows_without_issue_id, groupUniqArray(10)(id_readable) AS sample_keys
+SELECT 'jira_comments' AS bronze_table, tenant_id, source_id, count() AS rows_without_issue_id, groupUniqArray(10)(id_readable) AS sample_keys
 FROM {{ source('bronze_jira', 'jira_comments') }} FINAL
 WHERE jira_id IS NULL
-GROUP BY source_id
+GROUP BY tenant_id, source_id
 
 UNION ALL
 
-SELECT 'jira_worklogs' AS bronze_table, source_id, count() AS rows_without_issue_id, groupUniqArray(10)(id_readable) AS sample_keys
+SELECT 'jira_worklogs' AS bronze_table, tenant_id, source_id, count() AS rows_without_issue_id, groupUniqArray(10)(id_readable) AS sample_keys
 FROM {{ source('bronze_jira', 'jira_worklogs') }} FINAL
 WHERE jira_id IS NULL
-GROUP BY source_id
+GROUP BY tenant_id, source_id

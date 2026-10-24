@@ -24,15 +24,18 @@
     since then is in scope again, the half-written issue with it. -#}
 {% macro jira_journal_touched(processed_ms) %}
     SELECT
+        f.tenant_id                                       AS tenant_id,
         f.insight_source_id                               AS insight_source_id,
         f.issue_id                                        AS issue_id
     FROM (
         SELECT
+            tenant_id,
             insight_source_id,
             issue_id,
             max(extracted_at)                             AS fresh_at
         FROM (
             SELECT
+                ifNull(tenant_id, '')                     AS tenant_id,
                 COALESCE(source_id, '')                   AS insight_source_id,
                 COALESCE(toString(jira_id), '')           AS issue_id,
                 toDateTime64(_airbyte_extracted_at, 3)    AS extracted_at
@@ -42,23 +45,26 @@
             UNION ALL
 
             SELECT
+                tenant_id,
                 insight_source_id,
                 assumeNotNull(jira_id)                    AS issue_id,
                 extracted_at
             FROM {{ ref('jira__changelog_items') }}
             WHERE jira_id IS NOT NULL
         )
-        GROUP BY insight_source_id, issue_id
+        GROUP BY tenant_id, insight_source_id, issue_id
     ) AS f
     LEFT JOIN (
         SELECT
+            tenant_id,
             insight_source_id,
             issue_id,
             max(_version)                                 AS journal_version
         FROM {{ this }}
-        GROUP BY insight_source_id, issue_id
+        GROUP BY tenant_id, insight_source_id, issue_id
     ) AS v
-        ON v.insight_source_id = f.insight_source_id
+        ON v.tenant_id = f.tenant_id
+       AND v.insight_source_id = f.insight_source_id
        AND v.issue_id = f.issue_id
     WHERE toUnixTimestamp64Milli(f.fresh_at) > toInt64(COALESCE(v.journal_version, 0))
        OR toUnixTimestamp64Milli(f.fresh_at) > toInt64({{ processed_ms }})
@@ -67,11 +73,11 @@
 
 {#- Every issue bronze knows: the rebuild scope, counted for batching only. -#}
 {% macro jira_journal_all_issues() %}
-    SELECT COALESCE(source_id, '') AS insight_source_id, COALESCE(toString(jira_id), '') AS issue_id
+    SELECT ifNull(tenant_id, '') AS tenant_id, COALESCE(source_id, '') AS insight_source_id, COALESCE(toString(jira_id), '') AS issue_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
     WHERE jira_id IS NOT NULL
     UNION ALL
-    SELECT insight_source_id, assumeNotNull(jira_id) AS issue_id
+    SELECT tenant_id, insight_source_id, assumeNotNull(jira_id) AS issue_id
     FROM {{ ref('jira__changelog_items') }}
     WHERE jira_id IS NOT NULL
 {% endmacro %}
@@ -92,7 +98,7 @@
         {%- set scope_sql = jira_journal_touched(catalogue.processed_ms) if touched else jira_journal_all_issues() -%}
         {%- do jira_journal_write_stage('kinds', jira_journal_kinds_sql()) -%}
         {%- do jira_journal_write_stage('scope',
-                'SELECT insight_source_id, issue_id FROM (' ~ scope_sql ~ ') GROUP BY insight_source_id, issue_id') -%}
+                'SELECT tenant_id, insight_source_id, issue_id FROM (' ~ scope_sql ~ ') GROUP BY tenant_id, insight_source_id, issue_id') -%}
         {%- do jira_journal_derive_stages(0, jira_journal_batches()) -%}
     {%- endif -%}
     SELECT 1
@@ -129,8 +135,8 @@
                 {%- do run_query('DROP TABLE IF EXISTS ' ~ staged) -%}
                 {%- do run_query('CREATE TABLE ' ~ staged ~ ' AS ' ~ this) -%}
                 {%- do run_query('INSERT INTO ' ~ staged ~ ' (' ~ columns ~ ') ' ~ derive) -%}
-                {%- do run_query('DELETE FROM ' ~ this ~ ' WHERE (insight_source_id, issue_id) IN ('
-                                 ~ 'SELECT insight_source_id, issue_id FROM ' ~ staged ~ ')' ~ settings) -%}
+                {%- do run_query('DELETE FROM ' ~ this ~ ' WHERE (tenant_id, insight_source_id, issue_id) IN ('
+                                 ~ 'SELECT tenant_id, insight_source_id, issue_id FROM ' ~ staged ~ ')' ~ settings) -%}
                 {%- do run_query('INSERT INTO ' ~ this ~ ' (' ~ columns ~ ') SELECT ' ~ columns
                                  ~ ' FROM ' ~ staged ~ settings) -%}
                 {%- do run_query('DROP TABLE ' ~ staged) -%}
