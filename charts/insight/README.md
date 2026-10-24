@@ -222,10 +222,11 @@ replays its queue on return, which the completeness guard reports as a note
 on the next deploy. What does fail outright is every mutation and ALTER,
 which run with `mutations_sync` / `alter_sync` 2 and wait for every replica
 until the transport ceiling fails the deploy, and every quorum insert, which
-fails rather than leave one replica with the old rows. Nothing is retried
-around the absent replica: restore it and re-run the deploy, which is
-idempotent. The two hook Jobs carry an `activeDeadlineSeconds` sized from
-those ceilings.
+fails rather than leave one replica with the old rows. So does a heal whose
+table probe the balancer could not answer: the hook stops there instead of
+skipping the heal as if the table were absent. Nothing is retried around the
+absent replica: restore it and re-run the deploy, which is idempotent. The
+two hook Jobs carry an `activeDeadlineSeconds` sized from those ceilings.
 
 A two-replica cluster loses its quorum writes during a replica restart:
 `insert_quorum = auto` is a majority, and the majority of two is both, so
