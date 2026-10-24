@@ -421,6 +421,20 @@ YML
 # What the chart's pre-install Job does for a compose stand: every warehouse
 # database and reader role, from the one creation site, before any backend
 # asks for them. Passwords default to the values the compose init SQL used.
+# INVARIANT: compose drives a STANDALONE warehouse — nothing it starts carries
+# a cluster topology — so the flag is refused rather than overridden, and
+# refused before `up` touches the running stack.
+refuse_cluster_mode() {
+  case "$(printf '%s' "${CLICKHOUSE_CLUSTER_MODE:-false}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on)
+      echo "ERROR: CLICKHOUSE_CLUSTER_MODE=${CLICKHOUSE_CLUSTER_MODE} — compose runs a standalone ClickHouse only." >&2
+      echo "       Nothing compose starts carries a cluster topology. A replicated warehouse is a chart" >&2
+      echo "       stand (clickhouse.clusterMode + clickhouse.clusterName), seeded with" >&2
+      echo "       src/ingestion/tools/seed/seed-stand.sh." >&2
+      return 1 ;;
+  esac
+}
+
 create_warehouse_databases() {
   local url
   if [[ "${CLICKHOUSE_EXTERNAL:-false}" != "true" ]]; then
@@ -442,7 +456,12 @@ create_warehouse_databases() {
   CLICKHOUSE_V3_READER_PASSWORD="${CLICKHOUSE_V3_READER_PASSWORD:-insight-v3-reader-local}" \
   MCP_ENABLED="${MCP_ENABLED:-false}" SQL_API_ENABLED="${SQL_API_ENABLED:-false}" \
   CLICKHOUSE_MCP_PASSWORD="${CLICKHOUSE_MCP_PASSWORD:-}" \
-    bash "$ROOT_DIR/src/ingestion/scripts/create-databases.sh"
+    bash "$ROOT_DIR/src/ingestion/scripts/create-databases.sh" && return 0
+  if [[ "${CLICKHOUSE_EXTERNAL:-false}" == "true" ]]; then
+    echo "NOTE: compose runs a standalone ClickHouse only. If the warehouse at $url is replicated," >&2
+    echo "      it cannot be driven from compose: deploy the chart with clickhouse.clusterMode instead." >&2
+  fi
+  return 1
 }
 
 cmd_up() {
@@ -510,6 +529,7 @@ cmd_up() {
 
   env_file="$(resolve_env_file "$env_file")"
   set -a; source "$env_file"; set +a
+  refuse_cluster_mode || return 1
   COMPOSE_PROJECT_NAME="$(compose_project_name "$instance")" || return $?
   export COMPOSE_PROJECT_NAME
   [[ -n "$instance" ]] && echo "Compose instance → $COMPOSE_PROJECT_NAME"
