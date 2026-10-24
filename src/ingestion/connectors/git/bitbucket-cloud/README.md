@@ -124,8 +124,11 @@ proxy records every author it observes in the repositories it fetches for this
 source and stamps each one with its own clock whenever something about the
 author changes — first sighting, first sighting in another repository, more
 commits, or a credential that can newly read them. The stream reads the authors
-changed since its cursor and asks Bitbucket who each one is through one sample
-commit. Its state is that one cursor, so a sync's memory does not grow with the
+changed since its cursor — bounded to those whose newest commit is on or after
+`bitbucket_start_date`, because the feed holds every author in a mirror's whole
+history and a first sync would otherwise ask Bitbucket about each of them — and
+asks Bitbucket who each one is through one sample commit. Its state is that one
+cursor, so a sync's memory does not grow with the
 number of repositories it lists; a nested per-repository author list would make
 the CDK hold a copy of the whole per-repository state for every lookup in
 flight. An author revealed by a fetch later in the same sync is resolved by the

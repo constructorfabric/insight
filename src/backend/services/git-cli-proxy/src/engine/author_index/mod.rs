@@ -21,10 +21,22 @@ use crate::engine::metrics::{self, AuthorIndexFailure};
 use crate::engine::read::authors::AuthorRow;
 
 pub use book::AuthorChange;
-pub use cursor::{ChangesCursor, MalformedCursor, format_stamp, parse_instant_us};
+pub use cursor::{ChangesCursor, MalformedCursor, format_stamp, ordinal_of_us, parse_instant_us};
 
 use book::{Book, Observation, Window};
 use file::Shelf;
+
+/// What one feed request asks for; the cursor overrides the bounds on every
+/// page after the first.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FeedQuery<'a> {
+    /// Exclusive lower bound on `changed_at`.
+    pub since_us: Option<i64>,
+    /// Authors whose newest readable commit predates this are omitted.
+    pub committed_since_us: Option<i64>,
+    pub cursor: Option<&'a ChangesCursor>,
+    pub limit: usize,
+}
 
 /// One page of the change feed.
 #[derive(Debug)]
@@ -155,25 +167,26 @@ impl AuthorIndex {
     /// One page of authors changed in `tenant_id`/`source_id`, visible to a
     /// caller holding `fingerprint`.
     ///
-    /// `since_us` bounds the first page; a cursor carries every later one.
     pub async fn changes(
         &self,
         tenant_id: &str,
         source_id: &str,
         fingerprint: &str,
-        since_us: Option<i64>,
-        cursor: Option<&ChangesCursor>,
-        limit: usize,
+        query: FeedQuery<'_>,
     ) -> ChangesPage {
         let loaded = self.loaded(tenant_id, source_id).await;
         let loaded = loaded.lock().await;
 
+        let cursor = query.cursor;
         let high_water_us = cursor.map_or(loaded.book.last_stamp_us(), |c| c.high_water_us);
+        let committed_since_us = cursor.map_or(query.committed_since_us, |c| c.committed_since_us);
+        let committed_since = committed_since_us.and_then(ordinal_of_us);
         let window = Window {
-            since_us: cursor.map_or(since_us, |c| c.since_us),
+            since_us: cursor.map_or(query.since_us, |c| c.since_us),
             after: cursor.map(|c| (c.after_us, c.after_email.as_str())),
             high_water_us,
-            limit,
+            committed_since: committed_since.as_deref(),
+            limit: query.limit,
         };
         let (items, more) = loaded.book.changes(fingerprint, window);
 
@@ -185,6 +198,7 @@ impl AuthorIndex {
                 since_us: window.since_us,
                 after_us: last.changed_us,
                 after_email: last.email.clone(),
+                committed_since_us,
             });
         ChangesPage { items, next }
     }
@@ -283,7 +297,15 @@ mod tests {
 
     async fn feed(index: &AuthorIndex, fingerprint: &str) -> Vec<AuthorChange> {
         index
-            .changes("acme", "git-main", fingerprint, None, None, 100)
+            .changes(
+                "acme",
+                "git-main",
+                fingerprint,
+                FeedQuery {
+                    limit: 100,
+                    ..FeedQuery::default()
+                },
+            )
             .await
             .items
     }
@@ -398,7 +420,16 @@ mod tests {
         let mut cursor: Option<ChangesCursor> = None;
         loop {
             let page = index
-                .changes("acme", "git-main", "fp", None, cursor.as_ref(), 2)
+                .changes(
+                    "acme",
+                    "git-main",
+                    "fp",
+                    FeedQuery {
+                        cursor: cursor.as_ref(),
+                        limit: 2,
+                        ..FeedQuery::default()
+                    },
+                )
                 .await;
             seen.extend(page.items.into_iter().map(|change| change.email));
             match page.next {
@@ -408,6 +439,65 @@ mod tests {
         }
 
         assert_eq!(seen.len(), 5, "every author exactly once: {seen:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn the_cursor_carries_the_committed_since_bound_to_every_later_page() {
+        let dir = temp_dir("bounded-paging");
+        let index = open(&dir);
+        let mut rows: Vec<AuthorRow> = (0..3)
+            .map(|n| author(&format!("recent{n}@example.com"), 1))
+            .collect();
+        let mut old = author("old@example.com", 1);
+        old.last_committed_date = "2023-06-01T00:00:00Z".to_owned();
+        rows.insert(1, old);
+        record(&index, refresh("app", 1, "fp"), rows).await;
+
+        let Some(bound_us) = parse_instant_us("2024-01-01") else {
+            panic!("the bound must parse");
+        };
+        let first = index
+            .changes(
+                "acme",
+                "git-main",
+                "fp",
+                FeedQuery {
+                    committed_since_us: Some(bound_us),
+                    limit: 1,
+                    ..FeedQuery::default()
+                },
+            )
+            .await;
+        let mut seen: Vec<String> = first.items.into_iter().map(|change| change.email).collect();
+
+        let mut cursor = first.next;
+        while let Some(next) = cursor {
+            let page = index
+                .changes(
+                    "acme",
+                    "git-main",
+                    "fp",
+                    FeedQuery {
+                        cursor: Some(&next),
+                        limit: 1,
+                        ..FeedQuery::default()
+                    },
+                )
+                .await;
+            seen.extend(page.items.into_iter().map(|change| change.email));
+            cursor = page.next;
+        }
+
+        assert_eq!(
+            seen.len(),
+            3,
+            "later pages must keep the first page's bound: {seen:?}"
+        );
+        assert!(
+            !seen.iter().any(|email| email == "old@example.com"),
+            "an author older than the bound must stay out of every page: {seen:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
