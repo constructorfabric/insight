@@ -305,3 +305,24 @@ def test_a_worklog_names_an_issue_the_run_emitted(
         assert row["id_readable"] == issues[row["jira_id"]]["id_readable"], (
             f"worklog {row['worklog_id']} disagrees with the issue's readable key"
         )
+
+
+@pytest.mark.parametrize("table", _TABLES)
+def test_every_seeded_row_belongs_to_the_install_tenant(rows: Rows, table: str) -> None:
+    """The task classes are built from these rows and joined on tenant, so a row without it reads as nobody's."""
+    assert rows[table], f"{table} seeds no rows"
+    strays = {row.get("tenant_id") for row in rows[table]} - {_TENANT}
+    assert not strays, f"{table} carries rows outside the install tenant: {strays!r}"
+
+
+def test_every_bronze_row_the_generator_writes_carries_the_install_tenant(rows: Rows) -> None:
+    """The staging models refuse a bronze row without a tenant, so one such row fails the whole build."""
+    bronze = {table: table_rows for table, table_rows in rows.items() if table.startswith("bronze_")}
+    assert bronze, "the generator writes no bronze"
+
+    tenantless = {
+        table: len([row for row in table_rows if row.get("tenant_id") != _TENANT])
+        for table, table_rows in bronze.items()
+    }
+
+    assert not any(tenantless.values()), f"bronze rows without the install tenant: {tenantless!r}"

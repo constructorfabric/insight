@@ -47,4 +47,4 @@ SELECT candidate.* FROM (
 -- YouTrack is reconciled whole by the pre_hook, so its rows bypass the boundary.
 -- INVARIANT: the Jira journal, its availability arm and the comment and worklog lifecycle arms share one
 -- connection and each stamps `_version` on its own clock; event_kind + field_id keep them apart.
-{{ silver_incremental_watermark(['insight_source_id', 'data_source', 'event_kind', 'field_id'], always_reread="candidate.data_source = 'youtrack'") }}
+{{ silver_incremental_watermark(['tenant_id', 'insight_source_id', 'data_source', 'event_kind', 'field_id'], always_reread="candidate.data_source = 'youtrack'") }}

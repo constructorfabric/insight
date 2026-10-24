@@ -1,3 +1,6 @@
+{{- if (.Values.seed).tenantDefaultId }}
+{{- fail "identityResolution.seed.tenantDefaultId is removed (seed.tenantDefaultId when this chart is installed on its own): the seed reads its tenant only from its config Secret. In the insight chart set authenticator.oidc.defaultTenantId; standalone, put APP__gears__identity_resolution__config__tenant_default_id in existingSecret. Then delete the key." }}
+{{- end }}
 {{- if .Values.seed.enabled }}
 # Scheduled persons-seed (#1690): rebuilds the identity org projection
 # (`persons` / `org_chart`) from ClickHouse
@@ -90,17 +93,6 @@ spec:
                 # tenant_default_id — everything the seed needs.
                 - secretRef:
                     name: {{ required "existingSecret is required (umbrella provides `insight-identity-resolution-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
-              {{- with .Values.seed.tenantDefaultId }}
-              env:
-                # Explicit tenant for the seed run — the single source when
-                # set (in Kubernetes `env` entries override `envFrom`, so
-                # this wins over any tenant_default_id the Secret carries).
-                # Standalone installs that don't carry the tenant in their
-                # Secret set this; the umbrella wires the Secret from
-                # global.tenantDefaultId instead and validates it at render.
-                - name: APP__gears__identity_resolution__config__tenant_default_id
-                  value: {{ . | quote }}
-              {{- end }}
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true

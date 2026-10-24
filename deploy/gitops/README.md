@@ -261,11 +261,15 @@ or from other existing Secrets via `keycloakConfig.extraEnv`. Never put
 placeholder syntax in realm YAML comments — config-cli substitution
 scans comments and fails the import.
 
-The tenant is pinned per environment: `global.tenantDefaultId` reaches
-the import as `INSIGHT_TENANT_ID` (e.g.
-`033dcbad-2374-4548-a9fa-04e2d5e0889a`), stamped by each IdP's
-`hardcoded-attribute-idp-mapper` — never derived from upstream claims,
-so an IdP swap or upstream drift cannot change the tenant. Canonical
+The tenant is pinned per environment, and the realm never holds its
+value. The chart sets the keycloak-config Job's `INSIGHT_TENANT_ID` from
+`authenticator.oidc.defaultTenantId` (e.g.
+`0f6b3c2e-5d4a-4e7b-9c1d-2a3b4c5d6e7f`); config-cli substitutes it into
+each IdP's `hardcoded-attribute-idp-mapper`, written literally as
+`$(env:INSIGHT_TENANT_ID)`. A UUID typed into the mapper instead stops
+following the chart value, and the token tenant drifts from the one
+identity and analytics check. The tenant is never derived from upstream
+claims, so an IdP swap or upstream drift cannot change it. Canonical
 realm shape to copy:
 [`environments/local/keycloak/realms/insight-broker.yaml`](environments/local/keycloak/realms/insight-broker.yaml).
 
@@ -281,7 +285,7 @@ identityProviderMappers:
     config:
       syncMode: FORCE
       attribute: tenant_id
-      attribute.value: <env placeholder INSIGHT_TENANT_ID>
+      attribute.value: $(env:INSIGHT_TENANT_ID)
   - name: idp-sub
     identityProviderAlias: <alias>
     identityProviderMapper: oidc-user-attribute-idp-mapper
