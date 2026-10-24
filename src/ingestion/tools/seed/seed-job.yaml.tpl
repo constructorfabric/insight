@@ -16,6 +16,8 @@
 #   SEED_IDENTITY_DB          database holding `persons`
 #   SEED_ANALYTICS_DB         database holding `metric_definitions`
 #   SEED_CLICKHOUSE_HOST/_HTTP_PORT/_USER/_DATABASE
+#   SEED_CLICKHOUSE_CLUSTER_MODE/_CLUSTER_NAME
+#                             the stand's topology; "false" / "" is standalone
 #   SEED_TENANT_ID            tenant every seeded row is scoped to
 #   SEED_DEV_USER_EMAIL       persona the dev-lead login resolves to
 #   SEED_IDP_SOURCE_TYPE      identity source_type the login rows are written under
