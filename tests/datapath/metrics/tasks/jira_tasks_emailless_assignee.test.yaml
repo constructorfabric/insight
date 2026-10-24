@@ -1,0 +1,61 @@
+spec_version: 1
+description: >
+  Metric: tasks.closed and tasks.worklog_accuracy — an assignee the tracker
+  states no email for still reaches a person, through the account, #1776.
+  How it's computed (bronze → silver → gold):
+    • bronze: Jira issues, their changelog and a worklog, assigned to and
+      logged by accounts of the user directory: an old second account of
+      dave's with no email, and an app account whose profile carries erin's
+      address.
+    • silver: one row per issue and worklog keyed by the tracker account; the
+      user directory gives each account its email, empty for dave's.
+    • gold:   every assigned issue keeps its assignee's account beside the
+      email, so the analytics runtime resolves it account-first: dave's
+      account, bound to dave by an operator, credits dave; the app account,
+      bound to the excluded person, credits nobody and never falls back to
+      the email it carries.
+
+  Cases: dave closes OLD-1 (one day in progress, 12 h logged) and OLD-2 in
+  April → tasks.closed 2, worklog accuracy 50, the evidence names both issues;
+  the app account closes APP-1 → erin, whose address it carries, has none.
+
+identity_accounts:
+  - {source_type: jira, source_id: jira-test, account_id: dave-old-acct, person: dave@example.com}
+  - {source_type: jira, source_id: jira-test, account_id: app-bot-acct, person: excluded}
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_jira.jira_user:
+    # No email: before #1776 every issue on this account left every task measure.
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-dave-old-acct, account_id: dave-old-acct, email: null, display_name: Dave Delta}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-app-bot-acct, account_id: app-bot-acct, email: erin@example.com, display_name: Automation, account_type: app}
+
+  bronze_jira.jira_statuses:
+    - $ref: ../templates/jira_task.yaml#/templates/status_open
+    - $ref: ../templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: ../templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: ../templates/jira_task.yaml#/templates/field_status
+    - $ref: ../templates/jira_task.yaml#/templates/field_assignee
+    - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
+
+  config.field_value_defaults:
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default_unknown
+    - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default_unknown
+
+  bronze_jira.jira_issue:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: "17761", jira_id: "17761", unique_key: jira-test-OLD-1, id_readable: OLD-1, created: "2026-04-07T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-old-acct","displayName":"Dave Delta"}}'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: "17762", jira_id: "17762", unique_key: jira-test-OLD-2, id_readable: OLD-2, created: "2026-04-09T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-old-acct","displayName":"Dave Delta"}}'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: "17763", jira_id: "17763", unique_key: jira-test-APP-1, id_readable: APP-1, created: "2026-04-09T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"app-bot-acct","displayName":"Automation"}}'}
+
+  bronze_jira.jira_issue_history:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: OLD-1, jira_id: "17761", changelog_id: "77601", unique_key: jira-test-OLD1-77601, created_at: "2026-04-08T00:00:00.000+0000", author_account_id: dave-old-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: OLD-2, jira_id: "17762", changelog_id: "77602", unique_key: jira-test-OLD2-77602, created_at: "2026-04-10T14:00:00.000+0000", author_account_id: dave-old-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"Closed","to":"6"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: APP-1, jira_id: "17763", changelog_id: "77603", unique_key: jira-test-APP1-77603, created_at: "2026-04-10T14:00:00.000+0000", author_account_id: app-bot-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"Closed","to":"6"}]'}
+
+  bronze_jira.jira_worklogs:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_worklog, tenant_id: "{{ tenant }}", worklog_id: 77611, id_readable: OLD-1, jira_id: "17761", unique_key: jira-test-worklog-OLD-1, author_account_id: dave-old-acct, started: "2026-04-07T10:00:00.000+0000", time_spent_seconds: 43200, _airbyte_raw_id: "00000000-0000-0000-0000-000000177611"}
