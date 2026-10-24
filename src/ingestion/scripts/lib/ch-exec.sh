@@ -11,7 +11,8 @@
 # access-provisioning scripts.
 # Exposes:
 #   run_ch           — execute a (multi-statement) SQL block read from stdin.
-#   ch_table_exists  — `ch_table_exists <db> <table>`; exit 0 if present.
+#   ch_table_exists  — `ch_table_exists <db> <table>`; exit 0 if present, 1 if
+#                      absent; a probe that did not answer stops the script.
 #   ch_table_engine  — `ch_table_engine <db> <table>`; the engine, empty if
 #                      absent, failure if the probe did not run.
 #   ch_scalar        — one numeric answer of a SELECT, or failure.
@@ -127,14 +128,34 @@ ch_scalar() {
   printf '%s' "${value}"
 }
 
-# NB: callers use `if ! ch_table_exists ...`, which disables `set -e` for
-# this body — a probe failure (auth/transient/DNS) reads as "absent" and the
-# caller falls through to CREATE ... IF NOT EXISTS, which is idempotent.
+# 0 when the table stands, 1 when the server answered that it does not.
+# SAFETY: exits, never returns, on an unanswered probe — every caller is
+# `ch_table_exists ... || return 0`, and `||` would read any failure as absent.
 ch_table_exists() {
   local db="$1" tbl="$2" result
-  result="$(printf "SELECT count() FROM system.tables WHERE database='%s' AND name='%s'" \
-    "$db" "$tbl" | _ch_http_query | tr -d '[:space:]')"
-  [[ "$result" == "1" ]]
+  if ! result="$(printf "SELECT count() FROM system.tables WHERE database='%s' AND name='%s'" \
+    "$db" "$tbl" | _ch_http_query)"; then
+    _ch_table_probe_unanswered "${db}" "${tbl}"
+    exit 1
+  fi
+  case "$(printf '%s' "${result}" | tr -d '[:space:]')" in
+    1) return 0 ;;
+    0) return 1 ;;
+    *) _ch_table_probe_unanswered "${db}" "${tbl}"; exit 1 ;;
+  esac
+}
+
+_ch_table_probe_unanswered() {
+  cat >&2 <<MSG
+ERROR: could not read system.tables to tell whether ${1}.${2} stands.
+
+       A heal guarded on that table would have been skipped as if the table
+       were absent, and this deploy would have reported success over a shape
+       it never healed. A probe that did not answer is not a probe that
+       answered "absent". Nothing was changed for this heal; the steps before
+       it stand as applied. Fix the connection, or the deploy admin's access
+       to system.tables, and re-run the deploy — every step is re-runnable.
+MSG
 }
 
 # The engine of one table, empty when there is none. Fails when the lookup did
