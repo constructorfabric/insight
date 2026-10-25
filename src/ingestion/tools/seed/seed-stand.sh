@@ -259,7 +259,8 @@ if [[ -z "$ANALYTICS_DB" ]]; then
   ANALYTICS_DB="$(cm_value MARIADB_DATABASE)"
 fi
 
-# The seeder speaks HTTP to ClickHouse only.
+# The seeder speaks HTTP to ClickHouse only; the bronze Job's destination is
+# told the same protocol.
 platform_ch_url="$(cm_value CLICKHOUSE_URL)"
 case "$platform_ch_url" in
   https://*)
@@ -267,6 +268,7 @@ case "$platform_ch_url" in
        Point it at an HTTP endpoint with --release/--image overrides, or teach
        config.ClickHouse.url a scheme first." ;;
 esac
+CLICKHOUSE_PROTOCOL=http
 
 ir_secret="insight-identity-resolution-config"
 # Unreadable is an access problem, not "pass --tenant".
@@ -532,6 +534,7 @@ export SEED_IDENTITY_DB="$IDENTITY_DB"
 export SEED_ANALYTICS_DB="$ANALYTICS_DB"
 export SEED_CLICKHOUSE_HOST="$CLICKHOUSE_HOST"
 export SEED_CLICKHOUSE_HTTP_PORT="$CLICKHOUSE_HTTP_PORT"
+export SEED_CLICKHOUSE_PROTOCOL="$CLICKHOUSE_PROTOCOL"
 export SEED_CLICKHOUSE_USER="$CLICKHOUSE_USER"
 export SEED_CLICKHOUSE_DATABASE="$CLICKHOUSE_DATABASE"
 export SEED_CLICKHOUSE_CLUSTER_MODE="$CLICKHOUSE_CLUSTER_MODE"
@@ -802,8 +805,8 @@ render_bronze_manifest() {
     ${BRONZE_JOB_NAME} ${BRONZE_CONNECTOR} ${BRONZE_CATALOG_CONFIGMAP}
     ${BRONZE_DESTINATION_IMAGE}
     ${SEED_NAMESPACE} ${SEED_IMAGE} ${SEED_DEADLINE_SECONDS} ${SEED_DB_SECRET}
-    ${SEED_CLICKHOUSE_HOST} ${SEED_CLICKHOUSE_HTTP_PORT} ${SEED_CLICKHOUSE_USER}
-    ${SEED_CLICKHOUSE_DATABASE}
+    ${SEED_CLICKHOUSE_HOST} ${SEED_CLICKHOUSE_HTTP_PORT} ${SEED_CLICKHOUSE_PROTOCOL}
+    ${SEED_CLICKHOUSE_USER} ${SEED_CLICKHOUSE_DATABASE}
     ${SEED_CLICKHOUSE_CLUSTER_MODE} ${SEED_CLICKHOUSE_CLUSTER_NAME}
     ${SEED_PULL_SECRETS}
   ' < "$BRONZE_JOB_TEMPLATE"
