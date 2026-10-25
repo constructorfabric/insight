@@ -23,17 +23,11 @@ concurrency:
 permissions:
   contents: read
 
-# Routing exception to the rule in .github/runners/insight-vhc/README.md: EVERY
-# pull request stays on a GitHub-hosted runner here, a same-repository one
-# included. The render contract asserts an issuer URL carrying the namespace
-# helm resolved, and a runner pod supplies its own — so on the ARC scale set the
-# lane renders the runners' namespace where the test expects `default`. Pinning
-# the namespace in the test is what lifts this; until then the exception stands.
-# Non-pull-request events and INSIGHT_FORCE_GITHUB_HOSTED follow the usual rule.
+# Routing: .github/runners/README.md.
 jobs:
   helm-contract:
     name: render contract
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 10
     steps:
       # Pinned to full SHAs (mutable tags are repointable — supply-chain

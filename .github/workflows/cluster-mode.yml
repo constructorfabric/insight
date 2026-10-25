@@ -42,10 +42,7 @@ concurrency:
 permissions:
   contents: read
 
-# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
-# takes a GitHub-hosted runner; otherwise the legs take a whole `persistent`
-# machine each and the rest the shared self-hosted pool.
-# INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# Routing: .github/runners/README.md.
 jobs:
   # What an `on: paths:` filter would have done, moved into a job so the
   # workflow always runs and the umbrella below can always report. The list
@@ -62,7 +59,7 @@ jobs:
   changes:
     name: Detect changes
     if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
@@ -111,7 +108,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: changes
     if: ${{ needs.changes.outputs.relevant == 'true' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -193,10 +190,9 @@ jobs:
 
       - name: Ensure yq can run the rig's expressions
         # run.sh reads the chart's Job with `if … then … else … end`, which
-        # mikefarah's yq parses from 4.54.1. The persistent machines and the
-        # hosted image both carry older builds, and neither is this job's to
-        # upgrade (ARC pods have no sudo; a shared machine must not carry what one
-        # job installed), so a sufficient yq on PATH is kept and an older one is
+        # mikefarah's yq parses from 4.54.1. Runner images may carry older
+        # builds, and installing system packages is not this job's to do, so a
+        # sufficient yq on PATH is kept and an older one is
         # shadowed by the pinned release under RUNNER_TEMP. INVARIANT: version
         # and digest are one pin — bump both together, from the release's own
         # checksums file.
@@ -226,7 +222,7 @@ jobs:
   warm-cache:
     name: Warm the services' build cache
     if: github.event_name == 'push'
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -256,7 +252,7 @@ jobs:
     name: Cluster rig
     needs: [changes, rig]
     if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:
       # A skipped leg means either that `changes` found nothing to prove (a
