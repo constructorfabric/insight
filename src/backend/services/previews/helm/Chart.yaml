@@ -4,5 +4,5 @@ description: Insight Previews — preview-experiment provisioning (epic #1981)
 version: 0.1.0
 # appVersion is managed by the release pipeline (build-images.yml): it is
 # bumped to the freshly built image tag on merges that change this service.
-appVersion: "2026.10.25.16.09-d4aa4a8"
+appVersion: "2026.10.25.16.25-2af282a"
 type: application
