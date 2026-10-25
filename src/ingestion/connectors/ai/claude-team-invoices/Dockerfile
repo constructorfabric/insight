@@ -19,7 +19,10 @@ RUN pip install /airbyte/integration_code
 # tooling unused at runtime (CVE-2026-34591, CVE-2026-42305). cryptography
 # arrives with the base image's keyring stack (SecretStorage); its wheel
 # bundles OpenSSL, and 50.0.1 is the first built against 4.0.2 (CVE-2026-63072).
+# certifi ships with the base image too; 2026.10.19 drops the compromised emSign
+# roots (GHSA-6q48-6c7w-9gw2).
 RUN pip install --no-cache-dir --no-deps nltk==3.10.3 defusedxml==0.7.1 cryptography==50.0.1 \
+    certifi==2026.10.19 \
     && pip uninstall -y poetry dulwich
 
 RUN useradd --create-home --no-log-init --shell /bin/bash airbyte_user
