@@ -248,7 +248,7 @@ An administrator who owns or edits a dashboard or folder **MUST** be able to gra
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-sharing-fr-share-onward`
 
-An editor **MUST** manage grants as the owner does: add one, change its level, and withdraw any, everyone's and other editors' included. The owner's own access is not a grant and **MUST NOT** be withdrawable.
+An editor whose editor level comes from a grant to them or to everyone **MUST** manage grants as the owner does: add one, change its level, and withdraw any, everyone's and other editors' included. An editor only through a folder edits but does not manage grants, so no one can turn folder access into a grant of their own. The owner's own access is not a grant and **MUST NOT** be withdrawable.
 
 **Actors**: `cpt-insightspec-v3-sharing-actor-editor`, `cpt-insightspec-v3-sharing-actor-owner`
 
@@ -502,7 +502,7 @@ None.
 - [ ] Tests prove every requirement in §5 and §6.2 on each surface it names, `cpt-insightspec-v3-sharing-nfr-isolation` as an administrator and as a member who is neither owner nor grantee of the dashboard or of any folder carrying it.
 - [ ] `cpt-insightspec-v3-sharing-fr-render` and `cpt-insightspec-v3-sharing-nfr-reach`: a member opens a visible dashboard and its widgets draw; the same member is refused on every surface the reach threshold names, also when granted the editor level; a widget the dashboard does not hold answers as missing; a failing widget tells the member nothing of its warehouse table or columns, or its dataset.
 - [ ] `cpt-insightspec-v3-sharing-fr-entries`: a folder's viewer sees a dashboard carried into it and not one only filed there; removing the carrying entry ends that access; a folder's editor edits what it carries.
-- [ ] `cpt-insightspec-v3-sharing-fr-share` and `cpt-insightspec-v3-sharing-fr-share-onward`: a grant to everyone reaches a member with no other grant; an editor adds, changes and withdraws grants, everyone's included, but cannot delete the dashboard or withdraw the owner.
+- [ ] `cpt-insightspec-v3-sharing-fr-share` and `cpt-insightspec-v3-sharing-fr-share-onward`: a grant to everyone reaches a member with no other grant; an editor by grant adds, changes and withdraws grants, everyone's included, but cannot delete the dashboard or withdraw the owner; an editor only through a folder is refused.
 - [ ] `cpt-insightspec-v3-sharing-fr-unshare`: a pin and an entry of a person whose grant is withdrawn reappear when access returns.
 - [ ] `cpt-insightspec-v3-sharing-fr-entries`: an editor whose editor grant is withdrawn or lowered, or whose everyone grant goes, no longer reaches the dashboard through a folder they placed it in, nor does that folder's audience; an editor whose access comes only through a folder files.
 - [ ] `cpt-insightspec-v3-sharing-fr-owner`: a duplicate of an ownerless dashboard carries its tag names as the duplicator's and sits in no folder.
@@ -535,7 +535,7 @@ Decisions taken by the product owner:
 - **D11.** Members get no drilldown: a detail metric returns rows the dashboard does not show.
 - **D12.** A member's errors are generic; the cause goes to the log.
 - **D13.** A grant is at the viewer or the editor level; an editor changes everything about a dashboard but deleting it.
-- **D14.** Editors share onward: managing grants is not reserved to the owner.
+- **D14.** Editors share onward: managing grants is not reserved to the owner, but needs an editor grant to the person or to everyone, the same standing that lets an entry carry (D20).
 - **D15.** A dashboard or folder may be granted to everyone, as an explicit choice that is never the default. This reverses the earlier exclusion of public dashboards; links stay excluded.
 - **D16.** Folders are shareable containers: a dashboard sits in any number of folders, and an entry carries the folder's audience only as D20 allows.
 - **D17.** Every signed-in person, members included, may own personal folders and file in them what they see; only administrators share folders.

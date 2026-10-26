@@ -301,13 +301,13 @@ The contract is the service's drift-checked OpenAPI document. `{kind}` is `metri
 | `DELETE /v1/{kind}/{id}` | — | No content; refused while referenced, naming visible holders, counting the rest | Administrators; dashboards also `Owner` or `Ownerless` |
 | `GET /v1/{kind}/{id}/dependents` | — | `{holders: [{kind, id, name}], hidden}`, `hidden` counting dashboards the caller cannot see | Administrators who can see it |
 | `GET /v1/dashboards/{id}/widgets` | — | `{items: [{id, name, body, clock}]}`: the widgets the dashboard holds, in its order; one it names that is missing is left out | Any who can see it |
-| `POST /v1/dashboards/{id}/widgets/{widget_id}/run` | as `POST /v1/metrics/{id}/run` | The widget's metric result, as that route answers it | Any who can see it; the widget is one the dashboard holds |
+| `POST /v1/dashboards/{id}/widgets/{widget_id}/run` | as `POST /v1/metrics/{id}/run` | The widget's metric result, as that route answers it; `resource_exhausted` when every run slot stays busy | Any who can see it; the widget is one the dashboard holds; runs share a bounded number of slots |
 | `POST /v1/dashboards/{id}/widgets/{widget_id}/drilldown` | as `POST /v1/metrics/{id}/drilldown` | The rows of the widget's `detail` metric, or its `metric` when it has none, as that route answers them | Administrators who can see it; the widget is one the dashboard holds |
 | `POST /v1/dashboards/{id}/duplicate` | `{name}` | `{id}` of the copy | Administrators; `Owner`, `Editor` or `Ownerless` |
 | `PUT /v1/dashboards/{id}/tags` | `{tags}`: names | No content | Administrators; `Owner`, `Editor` or `Ownerless`; names resolve in the owner's scope |
-| `GET /v1/dashboards/{id}/grants`, `GET /v1/folders/{id}/grants` | — | `{items: [{grantee, level, granted_by, created_at}]}` | Administrators; `Owner` or `Editor` |
-| `PUT /v1/dashboards/{id}/grants/{grantee}`, `PUT /v1/folders/{id}/grants/{grantee}` | `{level}` | No content; idempotent, sets the level; lowering a dashboard grant demotes the entries it qualified | Administrators; `Owner` or `Editor`; a person grantee is one identity knows and not the owner |
-| `DELETE /v1/dashboards/{id}/grants/{grantee}`, `DELETE /v1/folders/{id}/grants/{grantee}` | — | No content; idempotent; on a dashboard, demotes the entries it qualified | Administrators; `Owner` or `Editor` |
+| `GET /v1/dashboards/{id}/grants`, `GET /v1/folders/{id}/grants` | — | `{items: [{grantee, level, granted_by, created_at}]}` | Administrators; `Owner`, or on a dashboard an `Editor` by a grant to them or to everyone, on a folder any `Editor` |
+| `PUT /v1/dashboards/{id}/grants/{grantee}`, `PUT /v1/folders/{id}/grants/{grantee}` | `{level}` | No content; idempotent, sets the level; lowering a dashboard grant demotes the entries it qualified | Administrators; as listing grants, checked in the write; a person grantee is one identity knows and not the owner |
+| `DELETE /v1/dashboards/{id}/grants/{grantee}`, `DELETE /v1/folders/{id}/grants/{grantee}` | — | No content; idempotent; on a dashboard, demotes the entries it qualified | Administrators; as listing grants, checked in the write |
 | `GET /v1/folders` | — | The caller-visible folders, each `{id, name, owner_person_id, access, dashboards}`, `dashboards` counting the visible ones it holds; plus the caller's visible unfiled count | Any caller |
 | `POST /v1/folders` | `{name}` | `{id}` | Any caller, who owns it; at most `MAX_FOLDERS` per owner |
 | `PATCH /v1/folders/{id}` | `{name}` | No content | `Owner`, `Editor` or `Ownerless` |
@@ -450,7 +450,7 @@ The service reads the folder with `folder_access` and requires `Owner`, `Editor`
 
 **ID**: `cpt-insightspec-v3-sharing-seq-render`
 
-The portal asks `GET /v1/dashboards/{id}/widgets`; the service resolves the caller and role, reads the dashboard with the caller's access, loads the widgets its body names and answers them in the dashboard's order. For each, `POST /v1/dashboards/{id}/widgets/{widget_id}/run` reads the dashboard with access again, refuses a widget the body does not name as missing, and runs the widget's metric as `/v1/metrics/{id}/run` would. A failure reaches a member as a generic message and is logged with its cause; an administrator gets the metric route's own detail.
+The portal asks `GET /v1/dashboards/{id}/widgets`; the service resolves the caller and role, reads the dashboard with the caller's access, loads the widgets its body names and answers them in the dashboard's order. For each, `POST /v1/dashboards/{id}/widgets/{widget_id}/run` reads the dashboard with access again, refuses a widget the body does not name as missing, and runs the widget's metric as `/v1/metrics/{id}/run` would. Runs share a bounded set of slots, configured beside the drilldown's, so members opening dashboards cannot flood the warehouse; a run that finds none free answers busy and the portal offers to try again. A failure reaches a member as a generic message that names no library id and is logged with its cause; an administrator gets the metric route's own detail.
 
 #### Transfer an Orphaned Dashboard or Folder
 
