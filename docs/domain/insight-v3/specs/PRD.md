@@ -150,6 +150,8 @@ TBD
 
 ### 5.4 Metrics, Widgets and Dashboards
 
+Dashboard ownership, private dashboards and sharing, personal folders and owner-scoped tags are detailed in the [Dashboard Ownership and Sharing PRD](./sharing/PRD.md) and [technical design](./sharing/DESIGN.md); they narrow who sees a dashboard, a folder and a tag below.
+
 #### Create Metrics in Realtime
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-create-metrics`

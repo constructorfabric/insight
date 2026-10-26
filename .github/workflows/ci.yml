@@ -85,9 +85,9 @@ jobs:
     # its own merge commit, so a fork can rewrite this line, and the runner is
     # picked before any step executes. What keeps untrusted code off these
     # machines is the approval setting for outside contributors' workflows, and
-    # sending a pull request to an ephemeral pod rather than a persistent
-    # machine, so a job that does get through leaves nothing behind.
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    # every runner being ephemeral, so a job that does get through leaves
+    # nothing behind.
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
@@ -136,7 +136,7 @@ jobs:
     name: Guards
     # Inline rather than `needs: changes`: this job runs beside change detection
     # today, and a dependency would serialise it for no gain.
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small-vm' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -208,7 +208,10 @@ jobs:
     name: Rust — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.rust != '[]' }}
-    runs-on: ${{ (matrix.entry.live_db || matrix.entry.live_ch) && (matrix.entry.cover || matrix.entry.test) && ((vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]')) || vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
+    # Only a push to main enters the environment, whose read-write cache key
+    # GitHub releases to main alone; every other run reads the caches only.
+    environment: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'ci-trusted' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -234,7 +237,22 @@ jobs:
           # rustfmt + clippy for the lint steps; llvm-tools-preview for cargo-llvm-cov.
           components: rustfmt, clippy, llvm-tools-preview
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - id: cache
+        uses: ./.github/actions/ci-cache
+        with:
+          rw-key-id: ${{ secrets.CI_CACHE_RW_KEY_ID }}
+          rw-secret: ${{ secrets.CI_CACHE_RW_SECRET }}
+          trusted: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+          rust: true
+          downloads: |
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          downloads-key: cargo-${{ hashFiles('src/backend/Cargo.lock', 'src/ingestion/connectors/task-tracking/jira/enrich/Cargo.lock') }}
+          downloads-restore-keys: cargo-
+
+      # Runners without the shared caches (GitHub-hosted) keep the target cache.
+      - if: ${{ steps.cache.outputs.mode == 'none' }}
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           # Both possible workspaces declared; only the relevant one is used per
           # crate. Per-component cache key so jobs don't thrash a shared target.
@@ -264,17 +282,6 @@ jobs:
         if: ${{ matrix.entry.cover }}
         with:
           tool: cargo-llvm-cov
-
-      # Fixed names on fixed ports: a killed predecessor — this lane's or another
-      # on the same runner — keeps 3306/6379/8123 bound. Containers only; images
-      # and language caches are what make a persistent runner worth having.
-      - name: Reclaim the fixed ports
-        run: |
-          set -uo pipefail
-          docker rm -f insight-maria insight-redis insight-clickhouse >/dev/null 2>&1 || true
-          for port in 3306 6379 8123; do
-            docker ps -q --filter "publish=${port}" | xargs -r docker rm -f >/dev/null 2>&1 || true
-          done
 
       # DB-backed components (analytics) run their #[ignore]d live_tests
       # against a real MariaDB. Gated on live_db so only those entries pay the
@@ -430,7 +437,8 @@ jobs:
     name: Python coverage — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.python != '[]' }}
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    # Each entry names its runner size (scripts/ci/changed.py, `runner`).
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || format('insight-{0}', matrix.entry.runner) }}
     strategy:
       fail-fast: false
       matrix:
@@ -499,7 +507,7 @@ jobs:
     name: Frontend — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.js != '[]' }}
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))))) && 'ubuntu-latest' || 'insight-large' }}
     # Chromium for the browser `storybook` project comes baked in; downloading it
     # at CI time stalls the runner. The tag MUST track `playwright` in the
     # component's package.json so the pre-installed build matches.
@@ -615,7 +623,7 @@ jobs:
     name: Coverage gate
     needs: [changes, rust, python, js]
     if: ${{ !cancelled() }}
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && ((contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)) && 'insight-vhc-arc' || 'ubuntu-latest') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 15
     steps:
       # If detection failed, or any CHANGED component's producer job failed

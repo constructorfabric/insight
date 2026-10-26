@@ -1,14 +1,17 @@
-{% macro sum_measure(measure_key, relation, value_expr, dimensions_col, where=none) %}
+{# `keys` names further identity columns of `relation` (an account binding
+   beside the email) that the row grain keeps and the output carries. #}
+{% macro sum_measure(measure_key, relation, value_expr, dimensions_col, where=none, keys=[]) %}
     SELECT
         tenant_id,
         entity_id,
-        metric_date,
+        {% for key in keys %}{{ key }},
+        {% endfor %}metric_date,
         '{{ measure_key }}' AS measure_key,
         toNullable(sumIf(toFloat64({{ value_expr }}), ({{ value_expr }}) IS NOT NULL)) AS value,
         {{ dimensions_col }} AS dimensions
     FROM {{ relation }}
     {% if where %}WHERE {{ where }}
-    {% endif %}GROUP BY tenant_id, entity_id, metric_date, {{ dimensions_col }}
+    {% endif %}GROUP BY tenant_id, entity_id, {% for key in keys %}{{ key }}, {% endfor %}metric_date, {{ dimensions_col }}
     HAVING countIf(({{ value_expr }}) IS NOT NULL) > 0
 {% endmacro %}
 

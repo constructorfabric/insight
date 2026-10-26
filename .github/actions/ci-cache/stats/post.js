@@ -1,0 +1,17 @@
+// Append `sccache --show-stats` to the job summary. Never fails the job.
+const { execFileSync } = require("child_process");
+const fs = require("fs");
+
+let stats;
+try {
+  stats = execFileSync("sccache", ["--show-stats"], { encoding: "utf8", timeout: 30000 });
+} catch (e) {
+  stats = `sccache --show-stats failed: ${e.message}`;
+}
+try {
+  const body = stats.endsWith("\n") ? stats : stats + "\n";
+  fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "### sccache\n\n```\n" + body + "```\n");
+} catch (e) {
+  console.log(`::warning::ci-cache: could not write the job summary: ${e.message}`);
+}
+console.log(stats);

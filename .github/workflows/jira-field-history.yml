@@ -59,13 +59,11 @@ concurrency:
 permissions:
   contents: read
 
-# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
-# takes a GitHub-hosted runner, everything else a whole `persistent` machine,
-# and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# Routing: .github/runners/README.md.
 jobs:
   transformations:
     name: transformations + dbt tests
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
     # The lane grows by a scenario with most changes and a runner varies by a
     # third between runs; 74 scenarios took 31 to 42 minutes, so 45 was the
     # edge, and a timeout reads as `cancelled` rather than as a failing test.

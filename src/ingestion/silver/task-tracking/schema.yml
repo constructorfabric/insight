@@ -152,6 +152,77 @@ models:
         tests:
           - not_null
 
+  - name: class_task_references
+    description: >
+      Which issues an issue points at, and where each reference was found: one
+      row per (source, issue, place, target). A place is a link of one type, one
+      field, or one comment. A key written in text counts only when it resolves
+      to an issue, or carries the prefix of a project the source syncs — then
+      `target_id` is NULL. A deleted comment points at nothing, and an issue
+      naming its own key is not a reference. "Which issues of project B does an
+      issue of project A point at" filters `id_readable` and `target_key` by
+      prefix.
+    columns:
+      - name: unique_key
+        description: "Source, issue, `found_in`, `found_ref` and the target — its id when the key resolved, else the key as written."
+        tests:
+          - not_null
+          - unique
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: data_source
+        tests:
+          - not_null
+      - name: issue_id
+        description: "Immutable source-native ID of the issue that points, scoped by insight_source_id."
+        tests:
+          - not_null
+      - name: id_readable
+        description: "The pointing issue's current key; display and project filtering only, never a join key."
+        tests:
+          - not_null
+      - name: target_id
+        description: "Immutable source-native ID of the issue pointed at; NULL when the key resolved to no issue the source knows."
+      - name: target_key
+        description: "The target's current key when it is known — so a moved issue reads under its new project — else the key as written."
+        tests:
+          - not_null
+      - name: found_in
+        description: "`link` — a structured link in `class_task_links`; `field` — a key written in a field value; `comment` — a key written in a live comment."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['link', 'field', 'comment']
+      - name: found_ref
+        description: "`link_type` for a link, `field_id` for a field, `comment_id` for a comment."
+        tests:
+          - not_null
+      - name: found_kind
+        description: >
+          What kind of place held the key: `link`; `long_text` — a description or another rich-text field,
+          read from its full body; `short_text` — any other field value as the tracker displays it (a summary,
+          a single-line text, a label, an option); `comment`. A function of `found_in` and `found_ref`, kept as
+          a column so a reader can rank sources without a field catalogue.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['link', 'long_text', 'short_text', 'comment']
+      - name: first_seen_at
+        description: >
+          When the reference appeared: a link's earliest `valid_from`, the earliest field event whose value
+          held the key, a comment's creation. A key added to a comment by an edit dates from the comment's
+          creation, because comment bodies have no history.
+        tests:
+          - not_null
+      - name: is_current
+        description: "1 while the reference is there: an open link interval, a key in the field's current value, a live comment. 0 for a closed link or a key only an older field value held."
+        tests:
+          - not_null
+          - accepted_values:
+              values: [0, 1]
+              quote: false
+
   - name: class_task_field_metadata
     description: "Unified task-tracker field catalog. Declares cardinality (`is_multi`) and whether the field has an opaque ID vs a string literal (`has_id`)."
     columns:

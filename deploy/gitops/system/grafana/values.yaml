@@ -12163,8 +12163,8 @@ alerting:
             editorType: sql
             format: 1
             rawSql: |-
-              -- Assignee-independent population: gold task_issue_state INNER JOINs task
-              -- users, so a source whose closed issues are unassigned never reaches it.
+              -- Assignee-independent population: gold task_issue_state keeps only
+              -- assigned issues, so a source whose closed issues are unassigned never reaches it.
               -- Config coverage does not depend on assignment, so the population is
               -- rebuilt here from silver field history, and the kind is resolved the
               -- same way gold resolves it: field_value_map -> field_value_defaults ->
