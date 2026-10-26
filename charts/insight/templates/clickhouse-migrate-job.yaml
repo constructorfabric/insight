@@ -61,6 +61,11 @@ spec:
   # Low on purpose: migration SQL errors are deterministic (see header).
   # A couple of attempts still absorbs a transient CH blip mid-run.
   backoffLimit: 2
+  # 2700 s = 3 attempts (backoffLimit 2) x 900 s, lib/ch-exec.sh's cluster-mode
+  # transport ceiling per statement: an attempt either runs its ~200 statements
+  # and the row-moving heals well inside one ceiling, or stalls on one statement
+  # and is cut at it (a coordinated DDL answers within its own 60 s).
+  activeDeadlineSeconds: 2700
   ttlSecondsAfterFinished: 600
   template:
     metadata:

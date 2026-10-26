@@ -74,9 +74,11 @@ impl TestHarness {
         }
     }
 
-    /// The datasets database answers that nothing holds the name, and takes
-    /// whatever statement follows.
+    /// The datasets database stands as a plain one, answers that nothing
+    /// holds the name, and takes whatever statement follows.
     fn a_free_name(&self) {
+        self.mock
+            .add(handlers::provide(vec![String::from("Atomic")]));
         self.mock.add(handlers::provide(Vec::<NoTable>::new()));
         self.mock.add(handlers::record_ddl());
     }
@@ -285,6 +287,9 @@ async fn a_dataset_still_being_made_is_shown_by_nothing() {
     // The name is free, and then the table cannot be made: the row stays
     // claimed, holding the name, with nothing published under it. The attempt
     // takes back whatever it may have made before giving up.
+    harness
+        .mock
+        .add(handlers::provide(vec![String::from("Atomic")]));
     harness.mock.add(handlers::provide(Vec::<NoTable>::new()));
     harness.mock.add(handlers::failure(
         axum::http::StatusCode::INTERNAL_SERVER_ERROR,

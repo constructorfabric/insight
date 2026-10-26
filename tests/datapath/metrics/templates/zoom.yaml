@@ -53,9 +53,6 @@ templates:
     user_name: null
     device: null
     client: null
-    ip_address: null
-    internal_ip_addresses: null
-    location: null
     network_type: null
     microphone: null
     speaker: null
@@ -71,11 +68,6 @@ templates:
     share_desktop: null
     share_whiteboard: null
     recording: null
-    pc_name: null
-    domain: null
-    mac_addr: null
-    harddisk_id: null
-    leave_reason: null
     email: null
     registrant_id: null
     status: null
@@ -83,7 +75,6 @@ templates:
     os_version: null
     browser_name: null
     browser_version: null
-    device_name: null
     groupId: null
     health: null
     customer_key: null

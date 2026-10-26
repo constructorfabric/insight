@@ -12,7 +12,7 @@ import pytest
 from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
-pytestmark = pytest.mark.fixture
+pytestmark = [pytest.mark.fixture, pytest.mark.shared_dataset]
 
 SPEC = "wiki_edits"
 

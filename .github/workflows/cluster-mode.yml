@@ -1,0 +1,282 @@
+name: Cluster mode
+
+# Deploys onto a two-replica ClickHouse behind a round-robin proxy with
+# clusterMode on, and onto a single node with it off: the chart's
+# clickhouse-migrate Job as rendered for each, two syncs of a connector's
+# bronze, the heals a warm install needs, a connector's dbt models built
+# twice, the persons sync and the dataset lifecycle of the two services that
+# write the warehouse themselves, the deploys the warehouse must refuse (the
+# flag the wrong way round, a bronze table from before the flip, a replica
+# down) — then asserts what every node holds. A third leg upgrades a warm
+# installation on the replicated warehouse. src/ingestion/tests/cluster-rig/README.md.
+#
+# The legs run in the merge queue, not on the pull request, the way the
+# data-path shards do (e2e-bronze-to-api.yml): the `pull_request` trigger
+# stays, with no `paths:` filter, so the required "Cluster rig" check exists
+# on every PR with every job skipped — a skipped required check counts as
+# passed, a check that never reported holds the queue. `changes` decides from
+# the merge base whether the diff can reach a warehouse creator; the umbrella
+# fails closed when it cannot tell.
+
+on:
+  merge_group:
+  pull_request:
+    branches: [main]
+  # Cache-warm runs only: merge-queue refs cannot restore caches saved by
+  # earlier queue entries, so main is the only warm source the services'
+  # build has. Only `warm-cache` runs on push.
+  push:
+    branches: [main]
+    paths:
+      - "src/backend/**"
+      - ".github/workflows/cluster-mode.yml"
+  workflow_dispatch:
+
+# A push to main must not cancel a cache-warm build still saving, nor a
+# dispatched run on main; merge-queue refs are unique, so nothing to cancel there.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+permissions:
+  contents: read
+
+# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
+# takes a GitHub-hosted runner; otherwise the legs take a whole `persistent`
+# machine each and the rest the shared self-hosted pool.
+# INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+jobs:
+  # What an `on: paths:` filter would have done, moved into a job so the
+  # workflow always runs and the umbrella below can always report. The list
+  # covers every creator of a warehouse relation and everything the rig runs:
+  #
+  #   src/ingestion/            the deploy hook, its libraries and migrations,
+  #                             the dbt project and every connector's models
+  #   src/backend/libs/insight-clickhouse/   the services' DDL and consistency
+  #   src/backend/services/{identity-resolution,insight-v3-core}/{src,config,Cargo.toml}
+  #                             the two services the rig runs from the tree
+  #   charts/insight/           the Job the rig renders the hook from
+  #   deploy/compose/           the server config and MariaDB init the rig mounts
+  #   .github/workflows/scripts/warm-upgrade-sim.sh   the warm leg
+  changes:
+    name: Detect changes
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The diff needs both endpoints and their merge base.
+          fetch-depth: 0
+          persist-credentials: false
+      - id: filter
+        env:
+          BASE: ${{ github.event.merge_group.base_sha }}
+          HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # No base to diff against (a manual dispatch): run rather than skip
+          # a required gate on a guess.
+          if [ -z "${BASE:-}" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "no base sha — running"
+            exit 0
+          fi
+          # From the MERGE BASE: a two-dot diff against the base branch's tip
+          # attributes everything that landed on main since the branch forked.
+          base_point="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || true)"
+          if [ -z "$base_point" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "no merge base between $BASE and $HEAD — running"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$base_point" "$HEAD")"
+          echo "$changed" | sed 's/^/  /'
+
+          # Nothing the rig runs reads these.
+          IGNORED_PATHS='^src/backend/services/[^/]+/helm/|\.md$'
+          # `|| true`: a grep selecting nothing exits 1 — set -e fails the step.
+          changes_to_test="$(printf '%s\n' "$changed" | grep -vE "$IGNORED_PATHS" || true)"
+          if echo "$changes_to_test" | grep -qE '^(src/ingestion/|src/backend/libs/insight-clickhouse/|src/backend/services/(identity-resolution|insight-v3-core)/(src|config)/|src/backend/services/(identity-resolution|insight-v3-core)/Cargo\.toml$|src/backend/Cargo\.(toml|lock)$|charts/insight/|deploy/compose/|\.github/workflows/cluster-mode\.yml$|\.github/workflows/scripts/warm-upgrade-sim\.sh$)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "no creator of a warehouse relation changed"
+          fi
+
+  rig:
+    name: ${{ matrix.name }}
+    needs: changes
+    if: ${{ needs.changes.outputs.relevant == 'true' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Deploy onto a standalone warehouse
+            topology: standalone
+            script: run.sh
+            # The services run from the tree; the warm leg runs none.
+            services: true
+            memory: 2g
+          - name: Deploy onto a replicated warehouse
+            topology: replicated
+            script: run.sh
+            services: true
+            memory: 2g
+          # The whole buildable graph, twice, with the same budget the
+          # standalone warm-upgrade lane gives its one node.
+          - name: Upgrade a warm replicated warehouse
+            topology: replicated
+            script: warm-upgrade.sh
+            services: false
+            memory: 3g
+    env:
+      RIG_TOPOLOGY: ${{ matrix.topology }}
+      CLICKHOUSE_MEM_LIMIT: ${{ matrix.memory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The warm leg replays the base commit's tree as the installed
+          # release, so that commit's objects must be present. (`&& 1 || 0`:
+          # a 0 on the left of `||` is falsy and would always yield the right.)
+          fetch-depth: ${{ matrix.script == 'run.sh' && 1 || 0 }}
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # INVARIANT: same major as the toolbox image that runs the deploy hook.
+          python-version: "3.12"
+
+      - name: Install protoc + curl headers
+        if: ${{ matrix.services }}
+        # The same build inputs as ci.yml's rust job: grpc-hub's generated code
+        # needs protoc.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev libcurl4-openssl-dev
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        if: ${{ matrix.services }}
+        with:
+          toolchain: "1.98.1"
+
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        if: ${{ matrix.services }}
+        with:
+          workspaces: src/backend -> target
+          shared-key: cluster-rig
+          save-if: false
+
+      - name: Build the services the rig runs
+        if: ${{ matrix.services }}
+        working-directory: src/backend
+        run: cargo build -p identity-resolution -p insight-v3-core
+
+      - name: Resolve the installed-release commit
+        if: ${{ matrix.script == 'warm-upgrade.sh' }}
+        # The base the queue entry merges onto — the release a warm
+        # installation is on when this change deploys; a manual dispatch
+        # upgrades main onto itself.
+        env:
+          MERGE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: echo "BASE_SHA=${MERGE_BASE_SHA:-$(git rev-parse origin/main)}" >> "$GITHUB_ENV"
+
+      - name: Ensure yq can run the rig's expressions
+        # run.sh reads the chart's Job with `if … then … else … end`, which
+        # mikefarah's yq parses from 4.54.1. The persistent machines and the
+        # hosted image both carry older builds, and neither is this job's to
+        # upgrade (ARC pods have no sudo; a shared machine must not carry what one
+        # job installed), so a sufficient yq on PATH is kept and an older one is
+        # shadowed by the pinned release under RUNNER_TEMP. INVARIANT: version
+        # and digest are one pin — bump both together, from the release's own
+        # checksums file.
+        env:
+          YQ_VERSION: 4.54.1
+          YQ_SHA256: 8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
+        run: |
+          set -euo pipefail
+          have="$(yq --version 2>/dev/null | sed -nE 's/.*v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' || true)"
+          if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$have" "$YQ_VERSION" | sort -V | head -1)" = "$YQ_VERSION" ]; then
+            echo "yq $have on PATH is at least $YQ_VERSION"
+            exit 0
+          fi
+          echo "yq ${have:-missing} on PATH is older than $YQ_VERSION; installing the pinned release"
+          bin="${RUNNER_TEMP}/yq-bin"
+          mkdir -p "$bin"
+          curl -fsSL --retry 3 --retry-delay 2 -o "$bin/yq" \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          printf '%s  %s\n' "$YQ_SHA256" "$bin/yq" | sha256sum -c -
+          chmod 0755 "$bin/yq"
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/yq" --version
+
+      - name: Deploy and assert
+        run: src/ingestion/tests/cluster-rig/${{ matrix.script }}
+
+  warm-cache:
+    name: Warm the services' build cache
+    if: github.event_name == 'push'
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install protoc + curl headers
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev libcurl4-openssl-dev
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.98.1"
+
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: src/backend -> target
+          shared-key: cluster-rig
+          save-if: true
+
+      - name: Build the services the rig runs
+        working-directory: src/backend
+        run: cargo build -p identity-resolution -p insight-v3-core
+
+  # The required check the `main` ruleset names — the name is branch-protection
+  # config, so keep it even as `needs:` changes.
+  cluster-rig:
+    name: Cluster rig
+    needs: [changes, rig]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    timeout-minutes: 5
+    steps:
+      # A skipped leg means either that `changes` found nothing to prove (a
+      # pass) or that `changes` itself failed (not a pass), so the results are
+      # read one at a time rather than through `contains(needs.*.result, ...)`.
+      - name: Require every leg to have succeeded
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
+          # Matrix aggregate: 'success' only when EVERY leg passed.
+          LEGS: ${{ needs.rig.result }}
+        run: |
+          set -euo pipefail
+          echo "changes=$CHANGES relevant=$RELEVANT legs=$LEGS"
+
+          # Fail closed. A `changes` job that did not succeed leaves `relevant`
+          # empty, which would otherwise read as "irrelevant" and green a
+          # required check that proved nothing.
+          if [ "$CHANGES" != "success" ]; then
+            echo "::error::the changes job did not succeed ($CHANGES) — relevance is unknown, so the warehouse topologies are unproven."
+            exit 1
+          fi
+
+          if [ "$RELEVANT" != "true" ]; then
+            echo "no creator of a warehouse relation changed — nothing to prove."
+          elif [ "$LEGS" != "success" ]; then
+            echo "::error::a leg did not pass ($LEGS) — the rig did not fully run for this change."
+            exit 1
+          else
+            echo "Cluster rig passed: every leg succeeded."
+          fi

@@ -966,6 +966,7 @@ async fn arranging_a_board_that_is_not_there_is_refused() {
 #[tokio::test]
 async fn a_declared_dataset_is_listed_for_a_metric_to_read() {
     let mock = Mock::new();
+    mock.add(handlers::provide(vec![String::from("Atomic")]));
     mock.add(handlers::provide(Vec::<NoTable>::new()));
     mock.add(handlers::record_ddl());
     let surfaces = surfaces_over(mock.url());

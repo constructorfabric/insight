@@ -129,7 +129,8 @@ models:
           Seconds the user spent in meetings on this day while someone else was
           there: each session counts only its overlap with the union of everyone
           else's sessions, so a room left open, a pause with nobody else and a
-          session alone add nothing. Guests without an email count as company.
+          session alone add nothing. Time in the waiting room is not a session.
+          Guests without an email count as company.
           Known limits: two devices of the same person in one meeting add up, and
           a session that crosses UTC midnight counts entirely on its join day.
           video_duration_seconds and screen_share_duration_seconds count the same

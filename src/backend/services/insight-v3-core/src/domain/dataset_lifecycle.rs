@@ -212,13 +212,27 @@ impl<'a> DatasetLifecycle<'a> {
     ) -> Result<Value, DatasetChangeError> {
         let table = attempt.token.table(name);
 
-        // A refusal means the name is held by a table this service never
-        // made, so there is nothing of ours to take away and dropping it
-        // would take somebody else's. Anything else leaves a table that may
-        // exist with nothing naming it.
         if let Err(error) = self.tables.provision(&table).await {
-            if !matches!(error, DatasetTableError::NotOurs(_)) {
-                self.discard(&table).await;
+            match error {
+                // The name is held by a table this service never made:
+                // nothing of ours to take away, and a drop would take
+                // somebody else's.
+                DatasetTableError::NotOurs(_) => {}
+                // INVARIANT: a warehouse that did not answer in time may
+                // still be making the table; a drop sent now could land
+                // before the create and leave it standing. Nothing names it,
+                // and a repeat of this create keeps it.
+                DatasetTableError::Timeout => {
+                    tracing::error!(
+                        dataset = name.as_str(),
+                        table,
+                        "a dataset's table was left where the warehouse may still be making it"
+                    );
+                }
+                DatasetTableError::Vanished
+                | DatasetTableError::ClickHouse(_)
+                | DatasetTableError::NotOurDatabase
+                | DatasetTableError::DatabaseTopology(_) => self.discard(&table).await,
             }
 
             return Err(error.into());

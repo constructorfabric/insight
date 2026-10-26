@@ -61,6 +61,10 @@ metadata:
     app.kubernetes.io/component: clickhouse-databases
 spec:
   backoffLimit: 6
+  # 1200 s = 120 s ping wait + 900 s (one statement held to lib/ch-exec.sh's
+  # cluster-mode transport ceiling; a coordinated DDL answers within its 60 s)
+  # + 180 s for the ~70 statements the run issues, each sub-second when healthy.
+  activeDeadlineSeconds: 1200
   ttlSecondsAfterFinished: 600
   template:
     metadata:

@@ -14,14 +14,18 @@ name: Warm upgrade
 # first connector sync after the upgrade — later, and on the pipeline rather
 # than on helm, which is why this lane matters more, not less.
 #
-# The simulation runs the base commit's own deploy and gold build first (what
-# an existing installation's last deploy and last sync left behind), adds the
-# bronze a connector would have synced into it, then this branch's
-# apply-ch-migrations.sh end to end — exactly like the Helm clickhouse-migrate
-# hook — and finally its build-gold.sh, standing in for that first sync.
+# The simulation runs the base commit's own deploy first, lets its connectors
+# create their bronze through destination-clickhouse and plays its last sync
+# (the whole buildable dbt graph) — what an existing installation's last
+# deploy and last sync left behind — adds the rows a connector would have
+# synced into it, then runs this branch's apply-ch-migrations.sh end to end —
+# exactly like the Helm clickhouse-migrate hook — and finally its own whole
+# buildable graph, standing in for that first sync.
 #
 # Not a required check: on pull requests an `on: paths` filter scopes it to
-# the warehouse path, so an unrelated change gets no run at all.
+# the warehouse path, so an unrelated change gets no run at all. This lane
+# upgrades a single node; the same simulation on a two-replica warehouse is
+# a required leg of cluster-mode.yml, run in the merge queue.
 #
 # The push run is not redundant: a PR is validated against its own base, so
 # two PRs green apart can still leave main uncovered, and only a run on the
@@ -91,10 +95,19 @@ jobs:
       - name: Start an empty ClickHouse
         run: |
           set -euo pipefail
+          # seed-connectors.sh needs mikefarah yq v4 and jq; both ship in the
+          # runner image.
+          yq --version
+          jq --version
           # pins.env is plain KEY=VALUE, so it doubles as a $GITHUB_ENV fragment.
           cat src/ingestion/scripts/bootstrap-db/pins.env >> "$GITHUB_ENV"
           source src/ingestion/scripts/bootstrap-db/pins.env
-          echo "CLICKHOUSE_URL=http://127.0.0.1:8123" >> "$GITHUB_ENV"
+          # The bridge gateway is the runner host as seen from inside a
+          # container: one address that works for dbt on the host and for the
+          # destination-clickhouse container the sim starts, which reaches the
+          # published port. `host.docker.internal` does not resolve on Linux.
+          host="$(docker network inspect bridge -f '{{ (index .IPAM.Config 0).Gateway }}')"
+          echo "CLICKHOUSE_URL=http://${host}:8123" >> "$GITHUB_ENV"
           CLICKHOUSE_SERVER_IMAGE="$CLICKHOUSE_SERVER_IMAGE" \
             .github/workflows/scripts/start-clickhouse.sh "${CLICKHOUSE_CONTAINER}"
 
