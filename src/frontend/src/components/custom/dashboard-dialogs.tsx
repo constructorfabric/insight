@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { DEFINITION_NAME_MAX } from "@/api/custom-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { refusal } from "@/components/custom/refusal";
 import { Input } from "@/components/ui/input";
@@ -11,7 +12,16 @@ import {
   useRenameDefinition,
 } from "@/queries/custom";
 
+const COPY_SUFFIX = " copy";
+
+function copyName(name: string): string {
+  const kept = name.slice(0, DEFINITION_NAME_MAX - COPY_SUFFIX.length);
+
+  return `${kept.trimEnd()}${COPY_SUFFIX}`;
+}
+
 interface DialogProps {
+  id: string;
   name: string;
   open: boolean;
   onClose: () => void;
@@ -90,7 +100,7 @@ function NameDialog({
       <Input
         autoFocus
         aria-label="Dashboard name"
-        className="font-mono"
+        maxLength={DEFINITION_NAME_MAX}
         readOnly={pending}
         value={value}
         onChange={(event) => {
@@ -107,26 +117,20 @@ function NameDialog({
   );
 }
 
-export function RenameDashboard({
-  name,
-  open,
-  onClose,
-  onRenamed,
-}: DialogProps & { onRenamed?: (to: string) => void }) {
+export function RenameDashboard({ id, name, open, onClose }: DialogProps) {
   const rename = useRenameDefinition();
 
   async function save(to: string) {
     if (to === name) return;
 
-    await rename.mutateAsync({ kind: "dashboards", name, to });
-    onRenamed?.(to);
+    await rename.mutateAsync({ kind: "dashboards", id, to });
   }
 
   return (
     <NameDialog
       open={open}
       title="Rename dashboard"
-      description={`Changes the name ${name} is stored under. Its title stays.`}
+      description="Its title stays."
       confirmLabel="Rename"
       initial={name}
       fallback="The dashboard could not be renamed."
@@ -138,15 +142,16 @@ export function RenameDashboard({
 }
 
 export function DuplicateDashboard({
+  id,
   name,
   open,
   onClose,
   onDuplicated,
-}: DialogProps & { onDuplicated?: (to: string) => void }) {
+}: DialogProps & { onDuplicated?: (id: string) => void }) {
   const duplicate = useDuplicateDashboard();
 
   async function save(to: string) {
-    const made = await duplicate.mutateAsync({ name, to });
+    const made = await duplicate.mutateAsync({ id, to });
     onDuplicated?.(made);
   }
 
@@ -156,7 +161,7 @@ export function DuplicateDashboard({
       title="Duplicate dashboard"
       description={`Copies ${name} with its folder and tags.`}
       confirmLabel="Duplicate"
-      initial={`${name}-copy`}
+      initial={copyName(name)}
       fallback="The dashboard could not be duplicated."
       pending={duplicate.isPending}
       onSave={save}
@@ -166,12 +171,12 @@ export function DuplicateDashboard({
 }
 
 export function DeleteDashboard({
-  name,
+  id,
   title,
   open,
   onClose,
   onDeleted,
-}: DialogProps & { title: string; onDeleted?: () => void }) {
+}: Omit<DialogProps, "name"> & { title: string; onDeleted?: () => void }) {
   const remove = useRemoveDefinition();
   const refused = useRefusal("The dashboard could not be deleted.");
 
@@ -182,7 +187,7 @@ export function DeleteDashboard({
 
   async function confirm() {
     try {
-      await remove.mutateAsync({ kind: "dashboards", name });
+      await remove.mutateAsync({ kind: "dashboards", id });
       close();
       onDeleted?.();
     } catch (failure) {

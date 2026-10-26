@@ -3,15 +3,15 @@ use sea_orm::{
     ConnectionTrait as _, DbBackend, FromQueryResult, Statement, TransactionTrait as _, Value,
 };
 
-use super::{MariaDefinitions, NameRow, TotalRow};
-use crate::domain::definition::{DefinitionName, NamePage, Page};
+use super::{ListedRow, MariaDefinitions, TotalRow};
+use crate::domain::definition::{DefinitionId, ListedPage, Page};
 use crate::domain::folders::{
     Folder, FolderError, FolderFilter, FolderId, FolderList, FolderName, FolderSummary, Folders,
     MAX_FOLDERS,
 };
 use crate::store::like_escaped;
 
-const LIST_FOLDERS: &str = "SELECT folders.id, folders.name, COUNT(dashboards.name) AS dashboards
+const LIST_FOLDERS: &str = "SELECT folders.id, folders.name, COUNT(dashboards.id) AS dashboards
 FROM folders LEFT JOIN dashboards ON dashboards.folder_id = folders.id
 GROUP BY folders.id, folders.name
 ORDER BY folders.name";
@@ -30,15 +30,15 @@ const DELETE_FOLDER: &str = "DELETE FROM folders WHERE id = ?";
 
 const FOLDER_OF: &str = "SELECT folders.id, folders.name
 FROM dashboards JOIN folders ON folders.id = dashboards.folder_id
-WHERE dashboards.name = ?";
+WHERE dashboards.id = ?";
 
-pub(super) const COUNT_DASHBOARD: &str = "SELECT COUNT(*) AS total FROM dashboards WHERE name = ?";
+pub(super) const COUNT_DASHBOARD: &str = "SELECT COUNT(*) AS total FROM dashboards WHERE id = ?";
 
-const FILE_DASHBOARD: &str = "UPDATE dashboards SET folder_id = ? WHERE name = ?";
+const FILE_DASHBOARD: &str = "UPDATE dashboards SET folder_id = ? WHERE id = ?";
 
-const PAGE_FILED: &str = "SELECT name FROM dashboards
+const PAGE_FILED: &str = "SELECT id, name FROM dashboards
 WHERE (name LIKE ? OR body LIKE ?) AND {filter}
-ORDER BY name
+ORDER BY name, id
 LIMIT ? OFFSET ?";
 
 const COUNT_FILED: &str = "SELECT COUNT(*) AS total FROM dashboards
@@ -102,7 +102,7 @@ pub(super) fn count_statement(needle: &str, filter: FolderFilter) -> Statement {
     )
 }
 
-pub(super) fn file_statement(dashboard: &DefinitionName, folder: Option<FolderId>) -> Statement {
+pub(super) fn file_statement(dashboard: &DefinitionId, folder: Option<FolderId>) -> Statement {
     let folder: Value = folder.map(|id| id.to_string()).into();
     statement(FILE_DASHBOARD, vec![folder, dashboard.as_str().into()])
 }
@@ -191,7 +191,7 @@ impl Folders for MariaDefinitions {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn folder_of(&self, dashboard: &DefinitionName) -> Result<Option<Folder>, FolderError> {
+    async fn folder_of(&self, dashboard: &DefinitionId) -> Result<Option<Folder>, FolderError> {
         let row =
             FolderRow::find_by_statement(statement(FOLDER_OF, vec![dashboard.as_str().into()]))
                 .one(&self.db)
@@ -202,7 +202,7 @@ impl Folders for MariaDefinitions {
 
     async fn file(
         &self,
-        dashboard: &DefinitionName,
+        dashboard: &DefinitionId,
         folder: Option<FolderId>,
     ) -> Result<(), FolderError> {
         let transaction = self.db.begin().await?;
@@ -238,8 +238,8 @@ impl Folders for MariaDefinitions {
         needle: &str,
         page: Page,
         filter: FolderFilter,
-    ) -> Result<NamePage, FolderError> {
-        let rows = NameRow::find_by_statement(page_statement(needle, page, filter))
+    ) -> Result<ListedPage, FolderError> {
+        let rows = ListedRow::find_by_statement(page_statement(needle, page, filter))
             .all(&self.db)
             .await?;
         let total = TotalRow::find_by_statement(count_statement(needle, filter))
@@ -247,8 +247,8 @@ impl Folders for MariaDefinitions {
             .await?
             .map_or(0, |row| row.total);
 
-        Ok(NamePage {
-            names: rows.into_iter().map(|row| row.name).collect(),
+        Ok(ListedPage {
+            items: rows.into_iter().map(ListedRow::into_listed).collect(),
             total: u64::try_from(total).unwrap_or(0),
         })
     }

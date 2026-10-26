@@ -25,10 +25,10 @@ beforeEach(() => {
 });
 
 describe("<RemoveDefinition>", () => {
-  it("asks before it removes", async () => {
+  it("asks before it removes, and removes by id", async () => {
     vi.mocked(customClient.deleteDefinition).mockResolvedValue(undefined);
 
-    render(<RemoveDefinition kind="metrics" name="lines_per_day" />, {
+    render(<RemoveDefinition kind="metrics" id="m-1" name="lines_per_day" />, {
       wrapper,
     });
 
@@ -41,12 +41,14 @@ describe("<RemoveDefinition>", () => {
     await userEvent.click(screen.getByRole("button", { name: "Remove it" }));
     expect(customClient.deleteDefinition).toHaveBeenCalledWith(
       "metrics",
-      "lines_per_day"
+      "m-1"
     );
   });
 
   it("keeps it when the reader backs out", async () => {
-    render(<RemoveDefinition kind="widgets" name="lines_table" />, { wrapper });
+    render(<RemoveDefinition kind="widgets" id="w-1" name="lines_table" />, {
+      wrapper,
+    });
 
     await userEvent.click(
       screen.getByRole("button", { name: "Remove lines_table" })
@@ -69,7 +71,7 @@ describe("<RemoveDefinition>", () => {
       })
     );
 
-    render(<RemoveDefinition kind="metrics" name="lines_per_day" />, {
+    render(<RemoveDefinition kind="metrics" id="m-1" name="lines_per_day" />, {
       wrapper,
     });
     await userEvent.click(
@@ -87,7 +89,7 @@ describe("<RemoveDefinition>", () => {
       new Error("network down")
     );
 
-    render(<RemoveDefinition kind="dashboards" name="engineering" />, {
+    render(<RemoveDefinition kind="dashboards" id="d-1" name="engineering" />, {
       wrapper,
     });
     await userEvent.click(

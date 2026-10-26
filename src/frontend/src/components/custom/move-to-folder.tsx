@@ -25,16 +25,16 @@ import {
 const UNFILED = "unfiled";
 
 export function MoveToFolderItems({
-  name,
+  id,
   open,
   onNewFolder,
 }: {
-  name: string;
+  id: string;
   open: boolean;
   onNewFolder: () => void;
 }) {
   const folders = useQuery({ ...foldersQuery(), enabled: open });
-  const current = useQuery({ ...dashboardFolderQuery(name), enabled: open });
+  const current = useQuery({ ...dashboardFolderQuery(id), enabled: open });
   const move = useMoveDashboard();
 
   const filed = current.data === undefined ? "" : (current.data?.id ?? UNFILED);
@@ -47,7 +47,7 @@ export function MoveToFolderItems({
           value={filed}
           onValueChange={(value: string) =>
             move.mutate(
-              { name, folder: value === UNFILED ? null : value },
+              { id, folder: value === UNFILED ? null : value },
               {
                 onError: (error) =>
                   toast.error(
@@ -81,10 +81,12 @@ export function MoveToFolderItems({
 }
 
 export function NewFolderAndMove({
+  id,
   name,
   open,
   onClose,
 }: {
+  id: string;
   name: string;
   open: boolean;
   onClose: () => void;
@@ -108,7 +110,7 @@ export function NewFolderAndMove({
     try {
       const folder = made ?? (await create.mutateAsync(value));
       setMade(folder);
-      await move.mutateAsync({ name, folder: folder.id });
+      await move.mutateAsync({ id, folder: folder.id });
       close();
     } catch (failure) {
       setError(refusal(failure, "The folder could not be made."));

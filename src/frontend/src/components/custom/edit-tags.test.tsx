@@ -27,6 +27,7 @@ const TAGS = [
 
 function carrying(tags: string[]) {
   vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+    name: "delivery",
     body: { title: "Delivery", widgets: [] },
     tags,
   });
@@ -51,7 +52,7 @@ async function openTagsDialog(staleTime = 0) {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <DashboardMenu name="delivery" />
+      <DashboardMenu id="dash-1" name="delivery" />
     </QueryClientProvider>
   );
 
@@ -83,7 +84,7 @@ describe("the tags dialog", () => {
     await user.click(await screen.findByRole("checkbox", { name: "Platform" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
 
-    expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", [
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith("dash-1", [
       "Ops",
       "Platform",
     ]);
@@ -96,7 +97,7 @@ describe("the tags dialog", () => {
     await user.click(await screen.findByRole("checkbox", { name: "Ops" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
 
-    expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", []);
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith("dash-1", []);
   });
 
   it("adds a new name ticked", async () => {
@@ -110,7 +111,7 @@ describe("the tags dialog", () => {
     expect(box("Hiring")).toBeChecked();
     expect(screen.getByRole("textbox", { name: "Add tag" })).toHaveValue("");
     await user.click(screen.getByRole("button", { name: "Done" }));
-    expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", [
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith("dash-1", [
       "Ops",
       "Hiring",
     ]);
@@ -148,7 +149,7 @@ describe("the tags dialog", () => {
     await user.type(screen.getByRole("textbox", { name: "Add tag" }), "Hiring");
     await user.click(screen.getByRole("button", { name: "Done" }));
 
-    expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", [
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith("dash-1", [
       "Ops",
       "Hiring",
     ]);
@@ -261,14 +262,18 @@ describe("the tags dialog", () => {
 
     const { user } = await openTagsDialog();
     await user.type(screen.getByRole("textbox", { name: "Add tag" }), "Qa{Enter}");
-    arrive({ body: { title: "Delivery", widgets: [] }, tags: ["Ops"] });
+    arrive({
+      name: "delivery",
+      body: { title: "Delivery", widgets: [] },
+      tags: ["Ops"],
+    });
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Done" })).toBeEnabled()
     );
     await user.click(screen.getByRole("button", { name: "Done" }));
 
     expect(customClient.setDashboardTags).toHaveBeenCalledWith(
-      "delivery",
+      "dash-1",
       expect.arrayContaining(["Ops"])
     );
   });
@@ -285,7 +290,7 @@ describe("the tags dialog", () => {
     await waitFor(() => expect(box("Platform")).toBeChecked());
     await user.click(screen.getByRole("button", { name: "Done" }));
 
-    expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", [
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith("dash-1", [
       "Ops",
       "Platform",
     ]);

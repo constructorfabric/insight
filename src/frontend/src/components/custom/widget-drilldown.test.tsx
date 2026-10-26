@@ -39,6 +39,7 @@ function wrapper({ children }: { children: ReactNode }) {
 
 /** A metric a window can select by, and the date it would use. */
 const CLOCKED = {
+  name: "Merged pull requests",
   definition: {
     dataset: "pull_requests",
     time: { field: "merged_at" },
@@ -49,6 +50,7 @@ const CLOCKED = {
 
 /** The same metric over a dataset that marks no date: nothing windows it. */
 const CLOCKLESS = {
+  name: "Pull requests",
   definition: {
     dataset: "pull_requests",
     fields: [{ field: "id", type: "int", agg: "count", as_name: "total" }],
@@ -301,6 +303,28 @@ describe("<WidgetDrilldown>", () => {
     await user.click(screen.getByRole("button", { name: "Retry" }));
 
     expect(await screen.findByText("example-api")).toBeInTheDocument();
+  });
+
+  it("names the metric behind the rows and opens it by its id", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
+    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(page([]));
+
+    renderDrilldown({ type: "table", metric: "m-1", columns: ["service"] });
+
+    await user.click(
+      await screen.findByRole("button", { name: "Pull requests" })
+    );
+
+    expect(
+      await screen.findByText("The metric, as it is stored.")
+    ).toBeInTheDocument();
+    expect(customClient.fetchMetric).toHaveBeenCalledWith("m-1");
+    expect(customClient.fetchDrilldownPage).toHaveBeenCalledWith(
+      "m-1",
+      expect.anything(),
+      expect.anything()
+    );
   });
 
   it("numbers the rows behind a widget, as the card does", async () => {

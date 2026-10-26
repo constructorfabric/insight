@@ -4,6 +4,10 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
   return { ...actual, sendChat: vi.fn() };
 });
+vi.mock("@tanstack/react-router", async () => {
+  const { portalRouterMock } = await import("@/test/portal-router");
+  return portalRouterMock();
+});
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
@@ -73,9 +77,14 @@ describe("<CustomChat>", () => {
   });
 
   it("shows the reply and calls onCreated when a reply creates definitions", async () => {
+    const created = {
+      metric: null,
+      widgets: [{ id: "w-1", name: "Commits graph" }],
+      dashboard: null,
+    };
     vi.mocked(customClient.sendChat).mockResolvedValue({
       reply: "Added a chart",
-      created: { widgets: ["commits_graph"] },
+      created,
     });
     const onCreated = vi.fn();
 
@@ -84,13 +93,53 @@ describe("<CustomChat>", () => {
     await userEvent.click(screen.getByRole("button", { name: /send/i }));
 
     expect(await screen.findByText("Added a chart")).toBeInTheDocument();
-    expect(onCreated).toHaveBeenCalledWith({ widgets: ["commits_graph"] });
+    expect(onCreated).toHaveBeenCalledWith(created);
   });
 
-  it("says which names it replaced", async () => {
+  it("names what it built and links each by its id", async () => {
+    vi.mocked(customClient.sendChat).mockResolvedValue({
+      reply: "Built it",
+      created: {
+        metric: { id: "m-1", name: "Commits per day" },
+        widgets: [{ id: "w-1", name: "Commits graph" }],
+        dashboard: { id: "d-1", name: "Engineering" },
+      },
+    });
+
+    render(<CustomChat onCreated={vi.fn()} />, { wrapper });
+    await userEvent.type(screen.getByRole("textbox"), "build a board");
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(
+      await screen.findByText(
+        (_, element) =>
+          element?.tagName === "P" &&
+          element.textContent ===
+            "Built metric Commits per day · widget Commits graph · dashboard Engineering"
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Commits per day" })
+    ).toHaveAttribute("href", "/portal/custom/metrics/m-1");
+    expect(screen.getByRole("link", { name: "Commits graph" })).toHaveAttribute(
+      "href",
+      "/portal/custom/widgets/w-1"
+    );
+    expect(screen.getByRole("link", { name: "Engineering" })).toHaveAttribute(
+      "href",
+      "/portal/custom/d-1"
+    );
+  });
+
+  it("says which definitions it replaced", async () => {
     vi.mocked(customClient.sendChat).mockResolvedValue({
       reply: "Changed it",
-      updated: { widgets: ["commits_table"], dashboard: "engineering" },
+      created: { metric: null, widgets: [], dashboard: null },
+      updated: {
+        metric: null,
+        widgets: [{ id: "w-2", name: "Commits table" }],
+        dashboard: { id: "d-1", name: "Engineering" },
+      },
     });
     const onCreated = vi.fn();
 
@@ -100,9 +149,13 @@ describe("<CustomChat>", () => {
 
     expect(
       await screen.findByText(
-        "Replaced widget commits_table · dashboard engineering"
+        (_, element) =>
+          element?.tagName === "P" &&
+          element.textContent ===
+            "Replaced widget Commits table · dashboard Engineering"
       )
     ).toBeInTheDocument();
+    expect(screen.queryByText(/^Built/)).toBeNull();
   });
 
   it("sends the thread so far, so a follow-up has its context", async () => {

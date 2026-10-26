@@ -88,6 +88,22 @@
         ],
         "type": "object"
       },
+      "DefinitionRequest": {
+        "properties": {
+          "body": {
+            "description": "The definition body."
+          },
+          "name": {
+            "description": "What a reader calls it: trimmed, 1 to 128 characters, and shared by\nas many definitions as like.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "body"
+        ],
+        "type": "object"
+      },
       "DestinationResponse": {
         "properties": {
           "name": {
@@ -169,6 +185,7 @@
       "DuplicateRequest": {
         "properties": {
           "name": {
+            "description": "What the copy is called: trimmed, 1 to 128 characters.",
             "type": "string"
           }
         },
@@ -323,7 +340,15 @@
             ]
           },
           "metric": {
+            "description": "The id of the metric checked.",
             "type": "string"
+          },
+          "metric_name": {
+            "description": "What the metric was called when the notification was owed; null\nwhere only its id is known.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "provider_receipt": {
             "type": [
@@ -424,7 +449,7 @@
             "type": "array"
           },
           "metric": {
-            "description": "The stored metric to check.",
+            "description": "The id of the stored metric to check.",
             "type": "string"
           },
           "range": {
@@ -522,18 +547,6 @@
         ],
         "type": "object"
       },
-      "RenameRequest": {
-        "properties": {
-          "to": {
-            "description": "The name it should answer to from now on.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "to"
-        ],
-        "type": "object"
-      },
       "RowsShape": {
         "oneOf": [
           {
@@ -603,7 +616,7 @@
             "type": "integer"
           },
           "metric": {
-            "description": "The stored metric to check.",
+            "description": "The id of the stored metric to check.",
             "type": "string"
           },
           "name": {
@@ -1799,7 +1812,7 @@
             }
           },
           {
-            "description": "Names to skip",
+            "description": "Definitions to skip",
             "in": "query",
             "name": "offset",
             "required": false,
@@ -1840,7 +1853,7 @@
                 }
               }
             },
-            "description": "One page of names, and how many match"
+            "description": "One page of ids and names, and how many match"
           },
           "400": {
             "content": {
@@ -1883,27 +1896,32 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "List definition names, or the ones matching ?q=",
+        "summary": "List definitions by id and name, or the ones matching ?q=",
         "x-toolkit-visibility": "exposed"
-      }
-    },
-    "/v1/dashboards/{name}": {
-      "delete": {
-        "operationId": "insight_v3_core.dashboards.delete",
-        "parameters": [
-          {
-            "description": "Definition name",
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
+      },
+      "post": {
+        "operationId": "insight_v3_core.dashboards.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinitionRequest"
+              }
             }
-          }
-        ],
+          },
+          "description": "The definition's name and body",
+          "required": true
+        },
         "responses": {
-          "204": {
-            "description": "Definition removed"
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The new definition's id"
           },
           "400": {
             "content": {
@@ -1914,6 +1932,59 @@
               }
             },
             "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Create a definition under a fresh id",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/dashboards/{id}": {
+      "delete": {
+        "operationId": "insight_v3_core.dashboards.delete",
+        "parameters": [
+          {
+            "description": "Definition id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Definition removed"
           },
           "403": {
             "content": {
@@ -1973,9 +2044,9 @@
         "operationId": "insight_v3_core.dashboards.get",
         "parameters": [
           {
-            "description": "Definition name",
+            "description": "Definition id",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -1991,17 +2062,7 @@
                 }
               }
             },
-            "description": "The definition body"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Bad Request"
+            "description": "The definition's id, name and body"
           },
           "403": {
             "content": {
@@ -2051,9 +2112,9 @@
         "operationId": "insight_v3_core.dashboards.put",
         "parameters": [
           {
-            "description": "Definition name",
+            "description": "Definition id",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -2064,11 +2125,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Value"
+                "$ref": "#/components/schemas/DefinitionRequest"
               }
             }
           },
-          "description": "The definition body",
+          "description": "The definition's name and body",
           "required": true
         },
         "responses": {
@@ -2095,6 +2156,16 @@
             },
             "description": "Forbidden"
           },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -2116,18 +2187,18 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "Create or replace a definition",
+        "summary": "Replace an existing definition's name and body",
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/dashboards/{name}/dependents": {
+    "/v1/dashboards/{id}/dependents": {
       "get": {
         "operationId": "insight_v3_core.dashboards.dependents",
         "parameters": [
           {
-            "description": "Definition name",
+            "description": "Definition id",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -2144,16 +2215,6 @@
               }
             },
             "description": "What would break if this were removed"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Bad Request"
           },
           "403": {
             "content": {
@@ -2200,14 +2261,14 @@
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/dashboards/{name}/duplicate": {
+    "/v1/dashboards/{id}/duplicate": {
       "post": {
         "operationId": "insight_v3_core.dashboards.duplicate",
         "parameters": [
           {
-            "description": "The dashboard to copy",
+            "description": "The id of the dashboard to copy",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -2234,7 +2295,7 @@
                 }
               }
             },
-            "description": "The copy's name"
+            "description": "The copy's id"
           },
           "400": {
             "content": {
@@ -2266,16 +2327,6 @@
             },
             "description": "Not Found"
           },
-          "409": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -2297,18 +2348,18 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "Copy a dashboard, its folder and its tags under a new name",
+        "summary": "Copy a dashboard, its folder and its tags under a fresh id",
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/dashboards/{name}/folder": {
+    "/v1/dashboards/{id}/folder": {
       "put": {
         "operationId": "insight_v3_core.dashboards.folder",
         "parameters": [
           {
-            "description": "Dashboard name",
+            "description": "Dashboard id",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -2385,115 +2436,14 @@
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/dashboards/{name}/rename": {
-      "post": {
-        "operationId": "insight_v3_core.dashboards.rename",
-        "parameters": [
-          {
-            "description": "Definition name",
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RenameRequest"
-              }
-            }
-          },
-          "description": "The new name",
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            },
-            "description": "The new name, and what was rewritten"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "500": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Internal Server Error"
-          },
-          "504": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Gateway Timeout"
-          }
-        },
-        "summary": "Rename a definition, and everything that points at it",
-        "x-toolkit-visibility": "exposed"
-      }
-    },
-    "/v1/dashboards/{name}/tags": {
+    "/v1/dashboards/{id}/tags": {
       "put": {
         "operationId": "insight_v3_core.dashboards.tags",
         "parameters": [
           {
-            "description": "Dashboard name",
+            "description": "Dashboard id",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -3436,7 +3386,7 @@
             }
           },
           {
-            "description": "Names to skip",
+            "description": "Definitions to skip",
             "in": "query",
             "name": "offset",
             "required": false,
@@ -3454,7 +3404,7 @@
                 }
               }
             },
-            "description": "One page of names, and how many match"
+            "description": "One page of ids and names, and how many match"
           },
           "400": {
             "content": {
@@ -3497,27 +3447,32 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "List definition names, or the ones matching ?q=",
+        "summary": "List definitions by id and name, or the ones matching ?q=",
         "x-toolkit-visibility": "exposed"
-      }
-    },
-    "/v1/metrics/{name}": {
-      "delete": {
-        "operationId": "insight_v3_core.metrics.delete",
-        "parameters": [
-          {
-            "description": "Definition name",
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
+      },
+      "post": {
+        "operationId": "insight_v3_core.metrics.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinitionRequest"
+              }
             }
-          }
-        ],
+          },
+          "description": "The definition's name and body",
+          "required": true
+        },
         "responses": {
-          "204": {
-            "description": "Definition removed"
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The new definition's id"
           },
           "400": {
             "content": {
@@ -3528,6 +3483,59 @@
               }
             },
             "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Create a definition under a fresh id",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/metrics/{id}": {
+      "delete": {
+        "operationId": "insight_v3_core.metrics.delete",
+        "parameters": [
+          {
+            "description": "Definition id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Definition removed"
           },
           "403": {
             "content": {
@@ -3587,9 +3595,9 @@
         "operationId": "insight_v3_core.metrics.get",
         "parameters": [
           {
-            "description": "Definition name",
+            "description": "Definition id",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -3605,17 +3613,7 @@
                 }
               }
             },
-            "description": "The definition body"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Bad Request"
+            "description": "The definition's id, name and body"
           },
           "403": {
             "content": {
@@ -3665,9 +3663,9 @@
         "operationId": "insight_v3_core.metrics.put",
         "parameters": [
           {
-            "description": "Definition name",
+            "description": "Definition id",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -3678,86 +3676,16 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Value"
+                "$ref": "#/components/schemas/DefinitionRequest"
               }
             }
           },
-          "description": "The definition body",
+          "description": "The definition's name and body",
           "required": true
         },
         "responses": {
           "204": {
             "description": "Definition stored"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "500": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Internal Server Error"
-          },
-          "504": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Gateway Timeout"
-          }
-        },
-        "summary": "Create or replace a definition",
-        "x-toolkit-visibility": "exposed"
-      }
-    },
-    "/v1/metrics/{name}/dependents": {
-      "get": {
-        "operationId": "insight_v3_core.metrics.dependents",
-        "parameters": [
-          {
-            "description": "Definition name",
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            },
-            "description": "What would break if this were removed"
           },
           "400": {
             "content": {
@@ -3810,18 +3738,88 @@
             "description": "Gateway Timeout"
           }
         },
+        "summary": "Replace an existing definition's name and body",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/metrics/{id}/dependents": {
+      "get": {
+        "operationId": "insight_v3_core.metrics.dependents",
+        "parameters": [
+          {
+            "description": "Definition id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "What would break if this were removed"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
         "summary": "Every definition that names this one",
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/metrics/{name}/drilldown": {
+    "/v1/metrics/{id}/drilldown": {
       "post": {
         "operationId": "insight_v3_core.metrics.drilldown",
         "parameters": [
           {
-            "description": "Metric name",
+            "description": "Metric id",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -3915,115 +3913,14 @@
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/metrics/{name}/rename": {
-      "post": {
-        "operationId": "insight_v3_core.metrics.rename",
-        "parameters": [
-          {
-            "description": "Definition name",
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RenameRequest"
-              }
-            }
-          },
-          "description": "The new name",
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            },
-            "description": "The new name, and what was rewritten"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "500": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Internal Server Error"
-          },
-          "504": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Gateway Timeout"
-          }
-        },
-        "summary": "Rename a definition, and everything that points at it",
-        "x-toolkit-visibility": "exposed"
-      }
-    },
-    "/v1/metrics/{name}/run": {
+    "/v1/metrics/{id}/run": {
       "post": {
         "operationId": "insight_v3_core.metrics.run",
         "parameters": [
           {
-            "description": "Metric name",
+            "description": "Metric id",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -4108,7 +4005,7 @@
                 }
               }
             },
-            "description": "The caller's pinned dashboard names, oldest pin first"
+            "description": "The caller's pinned dashboards by id and name, oldest pin first"
           },
           "403": {
             "content": {
@@ -4145,14 +4042,14 @@
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/pins/{name}": {
+    "/v1/pins/{dashboard_id}": {
       "delete": {
         "operationId": "insight_v3_core.pins.unpin",
         "parameters": [
           {
-            "description": "Dashboard name",
+            "description": "Dashboard id",
             "in": "path",
-            "name": "name",
+            "name": "dashboard_id",
             "required": true,
             "schema": {
               "type": "string"
@@ -4221,9 +4118,9 @@
         "operationId": "insight_v3_core.pins.pin",
         "parameters": [
           {
-            "description": "Dashboard name",
+            "description": "Dashboard id",
             "in": "path",
-            "name": "name",
+            "name": "dashboard_id",
             "required": true,
             "schema": {
               "type": "string"
@@ -4624,7 +4521,7 @@
             }
           },
           {
-            "description": "Names to skip",
+            "description": "Definitions to skip",
             "in": "query",
             "name": "offset",
             "required": false,
@@ -4642,7 +4539,7 @@
                 }
               }
             },
-            "description": "One page of names, and how many match"
+            "description": "One page of ids and names, and how many match"
           },
           "400": {
             "content": {
@@ -4685,27 +4582,32 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "List definition names, or the ones matching ?q=",
+        "summary": "List definitions by id and name, or the ones matching ?q=",
         "x-toolkit-visibility": "exposed"
-      }
-    },
-    "/v1/widgets/{name}": {
-      "delete": {
-        "operationId": "insight_v3_core.widgets.delete",
-        "parameters": [
-          {
-            "description": "Definition name",
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
+      },
+      "post": {
+        "operationId": "insight_v3_core.widgets.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinitionRequest"
+              }
             }
-          }
-        ],
+          },
+          "description": "The definition's name and body",
+          "required": true
+        },
         "responses": {
-          "204": {
-            "description": "Definition removed"
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The new definition's id"
           },
           "400": {
             "content": {
@@ -4716,6 +4618,59 @@
               }
             },
             "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Create a definition under a fresh id",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/widgets/{id}": {
+      "delete": {
+        "operationId": "insight_v3_core.widgets.delete",
+        "parameters": [
+          {
+            "description": "Definition id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Definition removed"
           },
           "403": {
             "content": {
@@ -4775,9 +4730,9 @@
         "operationId": "insight_v3_core.widgets.get",
         "parameters": [
           {
-            "description": "Definition name",
+            "description": "Definition id",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -4793,17 +4748,7 @@
                 }
               }
             },
-            "description": "The definition body"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Bad Request"
+            "description": "The definition's id, name and body"
           },
           "403": {
             "content": {
@@ -4853,9 +4798,9 @@
         "operationId": "insight_v3_core.widgets.put",
         "parameters": [
           {
-            "description": "Definition name",
+            "description": "Definition id",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -4866,11 +4811,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Value"
+                "$ref": "#/components/schemas/DefinitionRequest"
               }
             }
           },
-          "description": "The definition body",
+          "description": "The definition's name and body",
           "required": true
         },
         "responses": {
@@ -4897,6 +4842,16 @@
             },
             "description": "Forbidden"
           },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -4918,18 +4873,18 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "Create or replace a definition",
+        "summary": "Replace an existing definition's name and body",
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/widgets/{name}/dependents": {
+    "/v1/widgets/{id}/dependents": {
       "get": {
         "operationId": "insight_v3_core.widgets.dependents",
         "parameters": [
           {
-            "description": "Definition name",
+            "description": "Definition id",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -4946,16 +4901,6 @@
               }
             },
             "description": "What would break if this were removed"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Bad Request"
           },
           "403": {
             "content": {
@@ -4999,107 +4944,6 @@
           }
         },
         "summary": "Every definition that names this one",
-        "x-toolkit-visibility": "exposed"
-      }
-    },
-    "/v1/widgets/{name}/rename": {
-      "post": {
-        "operationId": "insight_v3_core.widgets.rename",
-        "parameters": [
-          {
-            "description": "Definition name",
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RenameRequest"
-              }
-            }
-          },
-          "description": "The new name",
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            },
-            "description": "The new name, and what was rewritten"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "403": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "500": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Internal Server Error"
-          },
-          "504": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Gateway Timeout"
-          }
-        },
-        "summary": "Rename a definition, and everything that points at it",
         "x-toolkit-visibility": "exposed"
       }
     }

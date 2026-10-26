@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import type { DefinitionKind } from "@/api/custom-client";
+import type { DefinitionKind, Listed } from "@/api/custom-client";
 import {
   DefinitionCount,
   MoreDefinitions,
@@ -17,14 +17,14 @@ import { cn } from "@/lib/utils";
 
 /**
  * A catalogue page: every definition of one kind, each in a card that renders
- * its own body. The list endpoint returns names only, so each row fetches its
- * own definition — which is also what keeps a broken one from blanking the
- * page.
+ * its own body. The list endpoint returns ids and names only, so each row
+ * fetches its own definition — which is also what keeps a broken one from
+ * blanking the page.
  */
 export function DefinitionList({
   title,
   blurb,
-  names,
+  items,
   isLoading,
   isError,
   onRetry,
@@ -36,12 +36,12 @@ export function DefinitionList({
 }: {
   title: string;
   blurb: string;
-  names: string[] | undefined;
+  items: Listed[] | undefined;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
   emptyLabel: string;
-  renderRow: (name: string) => ReactNode;
+  renderRow: (item: Listed) => ReactNode;
   search?: { label: string; value: string; onChange: (needle: string) => void };
   paging?: Paging;
   /** What starts a new one of this kind, where one may be written by hand. */
@@ -83,13 +83,13 @@ export function DefinitionList({
           label={`Couldn't load the ${title.toLowerCase()}.`}
           onRetry={onRetry}
         />
-      ) : !names ? null : names.length === 0 ? (
+      ) : !items ? null : items.length === 0 ? (
         <ComingSoon variant="card" state="empty" label={emptyLabel} />
       ) : (
         <>
           <ul className="grid gap-4 @3xl:grid-cols-2">
-            {names.map((name) => (
-              <li key={name}>{renderRow(name)}</li>
+            {items.map((item) => (
+              <li key={item.id}>{renderRow(item)}</li>
             ))}
           </ul>
           {paging ? <MoreDefinitions {...paging} /> : null}
@@ -99,12 +99,6 @@ export function DefinitionList({
   );
 }
 
-/**
- * One definition's card, with its name as the identifier it is.
- *
- * What may be done to it is passed in rather than assumed: a dataset owns
- * records and cannot be renamed, so the actions differ by kind.
- */
 export function DefinitionCard({
   name,
   actions,
@@ -117,7 +111,7 @@ export function DefinitionCard({
   return (
     <Card className="h-full">
       <CardHeader className="flex flex-row items-center gap-2">
-        <CardTitle className={cn(TEXT_HEADING, "min-w-0 truncate font-mono")}>
+        <CardTitle className={cn(TEXT_HEADING, "min-w-0 truncate")}>
           {name}
         </CardTitle>
         <span className="ms-auto flex shrink-0 items-center gap-1">
@@ -132,15 +126,19 @@ export function DefinitionCard({
 /** What a card offers: opening the editor, where renaming and removal live too. */
 export function DefinitionActions({
   kind,
+  id,
   name,
 }: {
   kind: DefinitionKind;
+  id: string;
   name: string;
 }) {
   return (
     <>
-      <EditLink kind={kind} name={name} />
-      {kind === "dashboards" ? null : <PreviewLink kind={kind} name={name} />}
+      <EditLink kind={kind} id={id} name={name} />
+      {kind === "dashboards" ? null : (
+        <PreviewLink kind={kind} id={id} name={name} />
+      )}
     </>
   );
 }

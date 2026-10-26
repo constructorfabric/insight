@@ -21,7 +21,7 @@ export function kindFromPath(
     : undefined;
 }
 
-export function nameFromPath(pathname: string): string | undefined {
+export function idFromPath(pathname: string): string | undefined {
   const match = pathname.match(/^\/portal\/custom\/edit\/[^/]+\/([^/]+)/);
 
   return match ? decodeURIComponent(match[1]) : undefined;

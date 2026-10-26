@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 
+import type { Listed } from "@/api/custom-client";
 import {
   DefinitionActions,
   DefinitionCard,
@@ -26,7 +27,7 @@ function WidgetsCatalogue() {
     <DefinitionList
       title="Widgets"
       blurb="Every stored visual. Each draws one metric; a dashboard holds them."
-      names={catalogue.names}
+      items={catalogue.items}
       isLoading={catalogue.isLoading}
       isError={catalogue.isError}
       onRetry={catalogue.refetch}
@@ -34,18 +35,20 @@ function WidgetsCatalogue() {
       paging={catalogue.paging}
       create={<NewLink kind="widgets" noun="widget" />}
       emptyLabel="No widgets yet. Ask the assistant for one."
-      renderRow={(name) => <WidgetRow name={name} />}
+      renderRow={(item) => <WidgetRow item={item} />}
     />
   );
 }
 
-function WidgetRow({ name }: { name: string }) {
-  const { data, isPending, isError, error } = useQuery(widgetQuery(name));
+function WidgetRow({ item }: { item: Listed }) {
+  const { data, isPending, isError, error } = useQuery(widgetQuery(item.id));
 
   return (
     <DefinitionCard
-      name={name}
-      actions={<DefinitionActions kind="widgets" name={name} />}
+      name={item.name}
+      actions={
+        <DefinitionActions kind="widgets" id={item.id} name={item.name} />
+      }
     >
       {isPending ? (
         <CenteredSpinner className="min-h-24" />
@@ -54,7 +57,7 @@ function WidgetRow({ name }: { name: string }) {
           {(error as Error).message}
         </p>
       ) : (
-        <WidgetSummary widget={data} />
+        <WidgetSummary widget={data.widget} />
       )}
     </DefinitionCard>
   );

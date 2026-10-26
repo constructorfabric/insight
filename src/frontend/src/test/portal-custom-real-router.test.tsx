@@ -101,9 +101,10 @@ afterEach(() => {
 
 describe("the /portal/custom routes, through the real router", { timeout: 20_000 }, () => {
   it("renders the dashboard list at /portal/custom, inside the portal shell", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "engineering",
-    ], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: [{ id: "d-1", name: "engineering" }],
+      total: 1,
+    });
 
     renderAt("/portal/custom");
 
@@ -112,7 +113,7 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
       { name: "engineering" },
       { timeout: 10000 },
     );
-    expect(card).toHaveAttribute("href", "/portal/custom/engineering");
+    expect(card).toHaveAttribute("href", "/portal/custom/d-1");
     expect(screen.getByRole("link", { name: /All dashboards/ })).toHaveAttribute(
       "href",
       "/portal/custom",
@@ -123,35 +124,40 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
   });
 
   it("renders a dashboard at /portal/custom/$name, inside the portal shell", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "engineering",
-    ], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: [{ id: "d-1", name: "engineering" }],
+      total: 1,
+    });
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      name: "engineering",
       body: { title: "Engineering", widgets: [] },
       tags: [],
     });
 
-    renderAt("/portal/custom/engineering");
+    renderAt("/portal/custom/d-1");
 
     expect(
       await screen.findByRole("heading", { name: "Engineering" }, { timeout: 10000 })
     ).toBeInTheDocument();
+    expect(customClient.fetchDashboardRead).toHaveBeenCalledWith("d-1");
     expect(
       document.querySelector('[data-slot="sidebar-wrapper"]')
     ).toBeInTheDocument();
   });
 
   it("keeps the thread when creating a dashboard navigates to it", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "engineering",
-    ], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: [{ id: "d-1", name: "engineering" }],
+      total: 1,
+    });
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      name: "engineering",
       body: { title: "Delivery", widgets: [] },
       tags: [],
     });
     vi.mocked(customClient.sendChat).mockResolvedValue({
       reply: "Built it",
-      created: { widgets: [], dashboard: "delivery" },
+      created: { widgets: [], dashboard: { id: "d-2", name: "delivery" } },
     });
 
     renderAt("/portal/custom");
@@ -169,6 +175,7 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     expect(
       await screen.findByRole("heading", { name: "Delivery" }, { timeout: 10000 })
     ).toBeInTheDocument();
+    expect(customClient.fetchDashboardRead).toHaveBeenCalledWith("d-2");
     // ...and the conversation is still there. The chat used to be mounted per
     // page, so this navigation unmounted it and the reader lost what they had
     // just asked.
@@ -179,22 +186,28 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
   });
 
   it("shows a widget the chat adds to the open dashboard, without a reload", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "engineering",
-    ], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: [{ id: "d-1", name: "engineering" }],
+      total: 1,
+    });
     vi.mocked(customClient.fetchDashboardRead)
       .mockResolvedValueOnce({
+        name: "engineering",
         body: { title: "Engineering", widgets: [] },
         tags: [],
       })
       .mockResolvedValue({
+        name: "engineering",
         body: { title: "Engineering", widgets: ["revenue_table"] },
         tags: [],
       });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
-      type: "table",
-      metric: "revenue_per_day",
-      columns: ["day", "revenue"],
+      name: "Revenue table",
+      widget: {
+        type: "table",
+        metric: "revenue_per_day",
+        columns: ["day", "revenue"],
+      },
     });
     vi.mocked(customClient.runMetric).mockResolvedValue({
       columns: ["day", "revenue"],
@@ -202,10 +215,10 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     });
     vi.mocked(customClient.sendChat).mockResolvedValue({
       reply: "Added a revenue widget",
-      created: { widgets: ["revenue_table"] },
+      created: { widgets: [{ id: "revenue_table", name: "Revenue table" }] },
     });
 
-    renderAt("/portal/custom/engineering");
+    renderAt("/portal/custom/d-1");
     await screen.findByRole("heading", { name: "Engineering" }, { timeout: 10000 });
 
     await openAssistant();
@@ -222,9 +235,10 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
 
   it("refuses the zone to a caller without the admin role", async () => {
     signedInAs({ admin: false });
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "engineering",
-    ], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: [{ id: "d-1", name: "engineering" }],
+      total: 1,
+    });
 
     renderAt("/portal/custom");
 

@@ -22,16 +22,16 @@ const PAGE: Record<Holder["kind"], string> = {
  */
 export function HeldBy({
   kind,
-  name,
+  id,
   title = "Used by",
   empty = "Nothing draws it yet.",
 }: {
   kind: DefinitionKind;
-  name: string;
+  id: string;
   title?: string;
   empty?: string;
 }) {
-  const held = useQuery(dependentsQuery(kind, name));
+  const held = useQuery(dependentsQuery(kind, id));
 
   return (
     <Held
@@ -75,11 +75,11 @@ export function Held({
         ) : (
           <ul className="flex flex-col gap-1">
             {holders.map((holder) => (
-              <li key={`${holder.kind}/${holder.name}`} className={TEXT_BODY}>
+              <li key={`${holder.kind}/${holder.id}`} className={TEXT_BODY}>
                 <Link
                   to={PAGE[holder.kind]}
-                  params={{ name: holder.name }}
-                  className="font-mono underline decoration-dotted underline-offset-4"
+                  params={{ name: holder.id }}
+                  className="underline decoration-dotted underline-offset-4"
                 >
                   {holder.name}
                 </Link>{" "}

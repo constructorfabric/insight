@@ -33,14 +33,22 @@ beforeEach(() => {
 });
 
 describe("/portal/custom/widgets", () => {
-  it("shows a table widget's columns and links its metric", async () => {
-    vi.mocked(customClient.fetchWidgetNames).mockResolvedValue({ names: [
-      "commits_table",
-    ], total: 1 });
+  it("shows a table widget's columns and links its metric by id, under its name", async () => {
+    vi.mocked(customClient.fetchWidgets).mockResolvedValue({
+      items: [{ id: "commits_table", name: "commits_table" }],
+      total: 1,
+    });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
-      type: "table",
-      metric: "commits_per_day",
-      columns: ["day", "lines"],
+      name: "commits_table",
+      widget: {
+        type: "table",
+        metric: "commits_per_day",
+        columns: ["day", "lines"],
+      },
+    });
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "Commits per day",
+      definition: { dataset: "commits", fields: [] },
     });
 
     render(<Component />, { wrapper });
@@ -49,19 +57,23 @@ describe("/portal/custom/widgets", () => {
     expect(await screen.findByText("table")).toBeInTheDocument();
     expect(await screen.findByText("day, lines")).toBeInTheDocument();
     expect(
-      await screen.findByRole("link", { name: "commits_per_day" })
-    ).toHaveAttribute("href", "/portal/custom/metrics");
+      await screen.findByRole("link", { name: "Commits per day" })
+    ).toHaveAttribute("href", "/portal/custom/metrics/commits_per_day");
   });
 
   it("shows a line widget's axes instead of columns", async () => {
-    vi.mocked(customClient.fetchWidgetNames).mockResolvedValue({ names: [
-      "commits_graph",
-    ], total: 1 });
+    vi.mocked(customClient.fetchWidgets).mockResolvedValue({
+      items: [{ id: "commits_graph", name: "commits_graph" }],
+      total: 1,
+    });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
-      type: "line",
-      metric: "commits_per_day",
-      x: "day",
-      y: "lines",
+      name: "commits_graph",
+      widget: {
+        type: "line",
+        metric: "commits_per_day",
+        x: "day",
+        y: "lines",
+      },
     });
 
     render(<Component />, { wrapper });
@@ -72,7 +84,7 @@ describe("/portal/custom/widgets", () => {
   });
 
   it("says so when there are no widgets yet", async () => {
-    vi.mocked(customClient.fetchWidgetNames).mockResolvedValue({ names: [], total: 0 });
+    vi.mocked(customClient.fetchWidgets).mockResolvedValue({ items: [], total: 0 });
 
     render(<Component />, { wrapper });
 
@@ -80,7 +92,7 @@ describe("/portal/custom/widgets", () => {
   });
 
   it("shows a retryable error when the list fails to load", async () => {
-    vi.mocked(customClient.fetchWidgetNames).mockRejectedValue(
+    vi.mocked(customClient.fetchWidgets).mockRejectedValue(
       new Error("network down")
     );
 

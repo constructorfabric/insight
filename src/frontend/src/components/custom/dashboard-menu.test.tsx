@@ -54,7 +54,7 @@ async function openMenu() {
   render(
     <QueryClientProvider client={queryClient}>
       <PinnedPane />
-      <DashboardMenu name="delivery" />
+      <DashboardMenu id="dash-1" name="delivery" />
     </QueryClientProvider>
   );
 
@@ -75,17 +75,20 @@ describe("pinning from the ··· menu", () => {
 
     await user.click(item);
 
-    expect(customClient.pinDashboard).toHaveBeenCalledWith("delivery");
+    expect(customClient.pinDashboard).toHaveBeenCalledWith("dash-1");
     await waitFor(() => expect(pinsRead()).toBeGreaterThan(before));
   });
 
-  it("unpins a pinned dashboard", async () => {
-    vi.mocked(customClient.fetchPins).mockResolvedValue(["hiring", "delivery"]);
+  it("unpins a pinned dashboard, matched by its id", async () => {
+    vi.mocked(customClient.fetchPins).mockResolvedValue([
+      { id: "dash-2", name: "hiring" },
+      { id: "dash-1", name: "delivery" },
+    ]);
 
     const user = await openMenu();
     await user.click(await screen.findByRole("menuitem", { name: "Unpin" }));
 
-    expect(customClient.unpinDashboard).toHaveBeenCalledWith("delivery");
+    expect(customClient.unpinDashboard).toHaveBeenCalledWith("dash-1");
     expect(customClient.pinDashboard).not.toHaveBeenCalled();
   });
 

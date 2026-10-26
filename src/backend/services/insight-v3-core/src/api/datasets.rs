@@ -18,7 +18,7 @@ use super::tags::tags_in;
 use crate::domain::dataset_lifecycle::{Broken, DatasetChangeError, Removal};
 use crate::domain::dataset_records::PreviewError;
 use crate::domain::datasets::Refused;
-use crate::domain::definition::{DefinitionName, MAX_PAGE_LIMIT, Page};
+use crate::domain::definition::{DefinitionId, MAX_PAGE_LIMIT, Page};
 use crate::domain::kinds::dataset::state::DatasetState;
 use crate::domain::tags::TagError;
 use crate::domain::violation::Violation;
@@ -220,7 +220,7 @@ async fn put_dataset(
 ) -> Result<Response, CanonicalError> {
     let caller = admin_only(&state, &headers).await?;
     let Json(body) = body.map_err(|error| DatasetApiError::unreadable_body(&error))?;
-    let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
+    let name = DefinitionId::parse(&name).map_err(DatasetApiError::definition_error)?;
     tracing::info!(%caller, dataset = name.as_str(), "declaring a dataset");
 
     let stored = state
@@ -247,7 +247,7 @@ async fn get_dataset(
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
     admin_only(&state, &headers).await?;
-    let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
+    let name = DefinitionId::parse(&name).map_err(DatasetApiError::definition_error)?;
 
     let held = state
         .datasets()
@@ -273,7 +273,7 @@ async fn delete_dataset(
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
     let caller = admin_only(&state, &headers).await?;
-    let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
+    let name = DefinitionId::parse(&name).map_err(DatasetApiError::definition_error)?;
     tracing::info!(%caller, dataset = name.as_str(), "removing a dataset");
 
     match state
@@ -382,7 +382,7 @@ async fn dataset_records(
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
     admin_only(&state, &headers).await?;
-    let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
+    let name = DefinitionId::parse(&name).map_err(DatasetApiError::definition_error)?;
 
     let preview = state
         .dataset_records()
@@ -414,7 +414,7 @@ async fn dataset_dependents(
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
     admin_only(&state, &headers).await?;
-    let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
+    let name = DefinitionId::parse(&name).map_err(DatasetApiError::definition_error)?;
 
     if crate::domain::datasets::ready(state.datasets(), name.as_str())
         .await

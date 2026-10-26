@@ -3,7 +3,9 @@ use std::error::Error;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::domain::definition::{Change, DefinitionKind, DefinitionName, Definitions};
+use crate::domain::definition::{
+    DefinitionId, DefinitionKind, DefinitionLabel, Definitions, Listed,
+};
 use crate::domain::pins::{MAX_PINS, PinError, Pins};
 use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -12,15 +14,15 @@ type R = Result<(), Box<dyn Error>>;
 const ANNA: Uuid = Uuid::from_u128(1);
 const BORIS: Uuid = Uuid::from_u128(2);
 
-fn name(value: &str) -> DefinitionName {
-    DefinitionName::parse(value).unwrap_or_else(|error| panic!("the name must parse: {error}"))
+fn name(value: &str) -> DefinitionId {
+    DefinitionId::parse(value).unwrap_or_else(|error| panic!("the name must parse: {error}"))
 }
 
 async fn with_boards(names: &[&str]) -> MemoryDefinitions {
     let store = MemoryDefinitions::new();
     for board in names {
         store
-            .put(
+            .seed(
                 DefinitionKind::Dashboard,
                 &name(board),
                 &json!({ "title": board }),
@@ -36,6 +38,9 @@ async fn pinned(store: &MemoryDefinitions, person: Uuid) -> Vec<String> {
         .pins_of(person)
         .await
         .unwrap_or_else(|error| panic!("the pins must read: {error}"))
+        .into_iter()
+        .map(|listed| listed.id)
+        .collect()
 }
 
 #[tokio::test]
@@ -136,32 +141,27 @@ async fn pinning_or_unpinning_a_dashboard_that_is_not_there_is_refused() {
 }
 
 #[tokio::test]
-async fn a_carried_pin_takes_the_old_name_s_place() -> R {
-    let store = with_boards(&["alpha", "beta", "gamma"]).await;
-    for person in [ANNA, BORIS] {
-        for board in ["alpha", "beta", "gamma"] {
-            store.pin(person, &name(board)).await?;
-        }
-    }
-
+async fn a_pin_answers_the_dashboard_s_name_beside_its_id() -> R {
+    let store = MemoryDefinitions::new();
     store
-        .apply(&[
-            Change::Create(
-                DefinitionKind::Dashboard,
-                name("renamed"),
-                json!({ "title": "beta" }),
-            ),
-            Change::CarryPins {
-                from: name("beta"),
-                to: name("renamed"),
-            },
-            Change::Delete(DefinitionKind::Dashboard, name("beta")),
-        ])
+        .create(
+            DefinitionKind::Dashboard,
+            &name("board-1"),
+            &DefinitionLabel::parse("Delivery")?,
+            &json!({ "title": "Delivery" }),
+        )
         .await?;
 
-    for person in [ANNA, BORIS] {
-        assert_eq!(pinned(&store, person).await, ["alpha", "renamed", "gamma"]);
-    }
+    store.pin(ANNA, &name("board-1")).await?;
+
+    let pins = store.pins_of(ANNA).await?;
+    assert_eq!(
+        pins,
+        [Listed {
+            id: "board-1".to_owned(),
+            name: "Delivery".to_owned(),
+        }]
+    );
     Ok(())
 }
 

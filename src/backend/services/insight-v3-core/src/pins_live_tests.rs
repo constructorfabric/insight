@@ -3,30 +3,28 @@ use std::sync::Arc;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::domain::definition::{DefinitionKind, DefinitionName, Definitions};
+use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionLabel, Definitions};
 use crate::domain::pins::{MAX_PINS, PinError, Pins};
-use crate::domain::query::metric_query::People;
-use crate::domain::surfaces::Surfaces;
 use crate::live_mariadb::{store_or_skip, unique};
-use crate::store::datasets::memory::MemoryDatasets;
 use crate::store::definitions::MariaDefinitions;
 
-fn dashboard(name: &str) -> DefinitionName {
-    DefinitionName::parse(name).unwrap_or_else(|error| panic!("{error}"))
+fn dashboard(name: &str) -> DefinitionId {
+    DefinitionId::parse(name).unwrap_or_else(|error| panic!("{error}"))
 }
 
-fn boards(prefix: &str, count: usize) -> Vec<DefinitionName> {
+fn boards(prefix: &str, count: usize) -> Vec<DefinitionId> {
     (0..count)
         .map(|index| dashboard(&unique(&format!("{prefix}{index}"))))
         .collect()
 }
 
-async fn stored(store: &MariaDefinitions, names: &[DefinitionName]) {
+async fn stored(store: &MariaDefinitions, names: &[DefinitionId]) {
     for name in names {
         store
-            .put(
+            .create(
                 DefinitionKind::Dashboard,
                 name,
+                &DefinitionLabel::of_id(name),
                 &json!({ "title": "Board", "items": [] }),
             )
             .await
@@ -34,7 +32,7 @@ async fn stored(store: &MariaDefinitions, names: &[DefinitionName]) {
     }
 }
 
-async fn removed(store: &MariaDefinitions, names: &[DefinitionName]) {
+async fn removed(store: &MariaDefinitions, names: &[DefinitionId]) {
     for name in names {
         Definitions::delete(store, DefinitionKind::Dashboard, name)
             .await
@@ -42,7 +40,7 @@ async fn removed(store: &MariaDefinitions, names: &[DefinitionName]) {
     }
 }
 
-async fn pin(store: &MariaDefinitions, person: Uuid, name: &DefinitionName) {
+async fn pin(store: &MariaDefinitions, person: Uuid, name: &DefinitionId) {
     store
         .pin(person, name)
         .await
@@ -54,9 +52,12 @@ async fn pinned(store: &MariaDefinitions, person: Uuid) -> Vec<String> {
         .pins_of(person)
         .await
         .unwrap_or_else(|error| panic!("{error}"))
+        .into_iter()
+        .map(|listed| listed.id)
+        .collect()
 }
 
-fn spelled(names: &[DefinitionName]) -> Vec<String> {
+fn spelled(names: &[DefinitionId]) -> Vec<String> {
     names.iter().map(|name| name.as_str().to_owned()).collect()
 }
 
@@ -156,41 +157,37 @@ async fn pinning_or_unpinning_a_dashboard_that_is_not_there_is_refused() {
 }
 
 #[tokio::test]
-async fn a_rename_carries_every_pin_in_place_and_a_delete_drops_them() {
+async fn a_pin_answers_the_name_and_a_delete_drops_it() {
     let Some(store) = store_or_skip().await else {
         return;
     };
-    let (anna, boris) = (Uuid::now_v7(), Uuid::now_v7());
-    let named = boards("carried", 3);
-    let renamed = dashboard(&unique("renamed"));
+    let anna = Uuid::now_v7();
+    let named = boards("listed", 2);
     stored(&store, &named).await;
-    for person in [anna, boris] {
-        for name in &named {
-            pin(&store, person, name).await;
-        }
+    for name in &named {
+        pin(&store, anna, name).await;
     }
-    let people = People::new("identity");
-    let datasets = MemoryDatasets::at(chrono::Utc::now());
-    let surfaces = Surfaces::new(&store, &datasets, "insight_datasets", &people);
 
-    surfaces
-        .rename(DefinitionKind::Dashboard, &named[1], &renamed)
+    let listed = store
+        .pins_of(anna)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
-    let carried = [pinned(&store, anna).await, pinned(&store, boris).await];
-    removed(&store, &[named[0].clone(), renamed.clone()]).await;
-    let left = [pinned(&store, anna).await, pinned(&store, boris).await];
+    removed(&store, &named[..1]).await;
+    let left = pinned(&store, anna).await;
 
-    removed(&store, &named[2..]).await;
-    for held in carried {
-        assert_eq!(
-            held,
-            spelled(&[named[0].clone(), renamed.clone(), named[2].clone()])
-        );
-    }
-    for held in left {
-        assert_eq!(held, spelled(&named[2..]));
-    }
+    removed(&store, &named[1..]).await;
+    let answered: Vec<(&str, &str)> = listed
+        .iter()
+        .map(|one| (one.id.as_str(), one.name.as_str()))
+        .collect();
+    assert_eq!(
+        answered,
+        [
+            (named[0].as_str(), named[0].as_str()),
+            (named[1].as_str(), named[1].as_str())
+        ]
+    );
+    assert_eq!(left, spelled(&named[1..]));
 }
 
 #[tokio::test]

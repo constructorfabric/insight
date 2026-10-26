@@ -30,7 +30,7 @@ function DatasetsCatalogue() {
     <DefinitionList
       title="Datasets"
       blurb="Every declared dataset. A metric reads one of these, and records are sent into them."
-      names={catalogue.names}
+      items={catalogue.items}
       isLoading={catalogue.isLoading}
       isError={catalogue.isError}
       onRetry={catalogue.refetch}
@@ -38,7 +38,7 @@ function DatasetsCatalogue() {
       paging={catalogue.paging}
       create={<NewLink kind="datasets" noun="dataset" />}
       emptyLabel="No datasets yet. Declare one to send records into it."
-      renderRow={(name) => <DatasetRow name={name} />}
+      renderRow={(item) => <DatasetRow name={item.id} />}
     />
   );
 }
@@ -51,8 +51,8 @@ function DatasetRow({ name }: { name: string }) {
       name={name}
       actions={
         <>
-          <EditLink kind="datasets" name={name} />
-          <PreviewLink kind="datasets" name={name} />
+          <EditLink kind="datasets" id={name} name={name} />
+          <PreviewLink kind="datasets" id={name} name={name} />
         </>
       }
     >

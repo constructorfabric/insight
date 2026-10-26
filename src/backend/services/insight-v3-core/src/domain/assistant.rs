@@ -1,7 +1,7 @@
 //! What the assistant is told before it is asked anything.
 
 use super::datasets::{self, Datasets};
-use super::definition::{DefinitionKind, Definitions};
+use super::definition::{DefinitionKind, Definitions, Listed, MAX_PAGE_LIMIT, Page};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::dataset::describe::{describe, describe_all};
 use crate::chat::{Catalogue, Schemas};
@@ -81,25 +81,44 @@ impl<'a> Assistant<'a> {
         }
     }
 
-    /// What is already stored, so the model can name it, reuse it, and replace it
+    /// What is already stored, so the model can draw it and replace it by id
     /// when the reader asks for a change. A listing failure degrades the hint; it
     /// does not fail the chat.
     async fn catalogue(&self) -> Catalogue {
         let mut built = Vec::with_capacity(DefinitionKind::ALL.len());
 
         for kind in DefinitionKind::ALL {
-            built.push((kind, self.names(kind).await));
+            built.push((kind, self.listed(kind).await));
         }
 
         Catalogue::new(built)
     }
 
-    async fn names(&self, kind: DefinitionKind) -> Vec<String> {
-        match self.definitions.list(kind).await {
-            Ok(names) => names,
-            Err(error) => {
-                tracing::warn!(error = ?error, ?kind, "could not list definitions for the chat");
-                Vec::new()
+    /// Every definition of this kind by id and name, a page at a time.
+    async fn listed(&self, kind: DefinitionKind) -> Vec<Listed> {
+        let mut listed = Vec::new();
+
+        loop {
+            let offset = listed.len() as u64;
+            let page = match Page::parse(Some(MAX_PAGE_LIMIT), Some(offset)) {
+                Ok(page) => page,
+                Err(error) => {
+                    tracing::warn!(%error, ?kind, "could not page definitions for the chat");
+                    return listed;
+                }
+            };
+            let found = match self.definitions.page(kind, "", page).await {
+                Ok(found) => found,
+                Err(error) => {
+                    tracing::warn!(error = ?error, ?kind, "could not list definitions for the chat");
+                    return listed;
+                }
+            };
+
+            let read = found.items.len();
+            listed.extend(found.items);
+            if read == 0 || listed.len() as u64 >= found.total {
+                return listed;
             }
         }
     }

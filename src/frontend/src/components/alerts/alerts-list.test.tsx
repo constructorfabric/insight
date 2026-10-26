@@ -3,6 +3,10 @@ vi.mock("@tanstack/react-router", async () => {
   return portalRouterMock();
 });
 vi.mock("@/api/alerts-client");
+vi.mock("@/api/custom-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/custom-client")>();
+  return { ...actual, fetchMetric: vi.fn() };
+});
 
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -10,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as alertsClient from "@/api/alerts-client";
 import type { AlertPage, AlertSummary } from "@/api/alerts-types";
+import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import { ALERT, SUMMARY, wrapper } from "@/test/alerts";
 import {
@@ -36,21 +41,28 @@ beforeEach(() => {
   vi.resetAllMocks();
   portalRouter.reset("/portal/custom/alerts");
   scrollEndOutOfView();
+  vi.mocked(customClient.fetchMetric).mockRejectedValue(
+    new CustomApiError(404, null)
+  );
 });
 
 describe("AlertsList", () => {
-  it("lists each alert with its metric and links to both", async () => {
+  it("lists each alert with its metric by name and links to both by id", async () => {
     vi.mocked(alertsClient.fetchAlerts).mockResolvedValue(page([SUMMARY]));
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "Open pull requests",
+      definition: { dataset: "pull_requests", fields: [] },
+    });
 
     render(<AlertsList />, { wrapper });
 
     expect(
       await screen.findByRole("link", { name: "Too many open PRs" })
     ).toHaveAttribute("href", "/portal/custom/alerts/a1");
-    expect(screen.getByRole("link", { name: "prs-open" })).toHaveAttribute(
-      "href",
-      "/portal/custom/metrics/prs-open"
-    );
+    expect(
+      await screen.findByRole("link", { name: "Open pull requests" })
+    ).toHaveAttribute("href", "/portal/custom/metrics/prs-open");
+    expect(customClient.fetchMetric).toHaveBeenCalledWith("prs-open");
     expect(screen.getByRole("button", { name: "New alert" })).toHaveAttribute(
       "href",
       "/portal/custom/alerts/new"

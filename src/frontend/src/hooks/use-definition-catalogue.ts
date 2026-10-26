@@ -9,8 +9,8 @@ import { definitionPagesQuery } from "@/queries/custom";
 const SEARCH_DEBOUNCE_MS = 400;
 
 /**
- * One catalogue: the names read so far, how many are behind them, and the box
- * that narrows both.
+ * One catalogue: the definitions read so far, how many are behind them, and
+ * the box that narrows both.
  *
  * The needle is debounced and trimmed before it reaches the query key, so a
  * word typed at speed is one request rather than one per keystroke.
@@ -32,7 +32,7 @@ export function useDefinitionCatalogue(
   const pages = catalogue.data?.pages;
 
   return {
-    names: pages?.flatMap((page) => page.names),
+    items: pages?.flatMap((page) => page.items),
     isLoading: catalogue.isLoading || !enabled,
     isError: catalogue.isError,
     refetch: () => void catalogue.refetch(),

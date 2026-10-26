@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
+import type { Listed } from "@/api/custom-client";
 import {
   DefinitionCount,
   MoreDefinitions,
@@ -102,7 +103,7 @@ function CustomDashboardIndex() {
         />
       </div>
       <CustomDashboardList
-        names={catalogue.names}
+        dashboards={catalogue.items}
         isLoading={catalogue.isLoading}
         isError={catalogue.isError}
         onRetry={catalogue.refetch}
@@ -124,14 +125,14 @@ function CustomDashboardIndex() {
 }
 
 function CustomDashboardList({
-  names,
+  dashboards,
   isLoading,
   isError,
   onRetry,
   paging,
   empty,
 }: {
-  names: string[] | undefined;
+  dashboards: Listed[] | undefined;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
@@ -150,16 +151,16 @@ function CustomDashboardList({
     );
   }
 
-  if (!names) return null;
+  if (!dashboards) return null;
 
-  if (names.length === 0) return empty;
+  if (dashboards.length === 0) return empty;
 
   return (
     <>
       <ul className="grid gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">
-        {names.map((name) => (
-          <li key={name}>
-            <DashboardCard name={name} />
+        {dashboards.map((dashboard) => (
+          <li key={dashboard.id}>
+            <DashboardCard dashboard={dashboard} />
           </li>
         ))}
       </ul>

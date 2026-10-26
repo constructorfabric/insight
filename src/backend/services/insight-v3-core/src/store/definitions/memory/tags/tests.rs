@@ -2,15 +2,15 @@ use std::error::Error;
 
 use serde_json::json;
 
-use crate::domain::definition::{Change, DefinitionKind, DefinitionName, Definitions, Page};
+use crate::domain::definition::{Change, DefinitionId, DefinitionKind, Definitions, Page};
 use crate::domain::folders::{FolderFilter, FolderName, Folders};
 use crate::domain::tags::{MAX_TAGS, TagError, TagFilter, TagSet, Tags};
 use crate::store::definitions::memory::MemoryDefinitions;
 
 type R = Result<(), Box<dyn Error>>;
 
-fn name(value: &str) -> DefinitionName {
-    DefinitionName::parse(value).unwrap_or_else(|error| panic!("the name must parse: {error}"))
+fn name(value: &str) -> DefinitionId {
+    DefinitionId::parse(value).unwrap_or_else(|error| panic!("the name must parse: {error}"))
 }
 
 fn tags(values: &[&str]) -> TagSet {
@@ -27,11 +27,15 @@ fn any_of(values: &[&str]) -> TagFilter {
         .unwrap_or_else(|| panic!("a filter naming tags is one"))
 }
 
+fn ids(page: &crate::domain::definition::ListedPage) -> Vec<&str> {
+    page.items.iter().map(|listed| listed.id.as_str()).collect()
+}
+
 async fn with_boards(names: &[&str]) -> MemoryDefinitions {
     let store = MemoryDefinitions::new();
     for board in names {
         store
-            .put(
+            .seed(
                 DefinitionKind::Dashboard,
                 &name(board),
                 &json!({ "title": board }),
@@ -240,7 +244,7 @@ async fn a_body_write_leaves_the_dashboard_s_tags() -> R {
         .await?;
 
     store
-        .put(
+        .seed(
             DefinitionKind::Dashboard,
             &name("delivery"),
             &json!({ "title": "Rewritten" }),
@@ -269,31 +273,31 @@ async fn deleting_a_dashboard_drops_its_tags_and_those_only_it_carried() -> R {
 }
 
 #[tokio::test]
-async fn carried_tags_move_with_the_name_in_the_same_batch() -> R {
-    let store = with_boards(&["old"]).await;
+async fn carried_tags_go_to_the_copy_in_the_same_batch() -> R {
+    let store = with_boards(&["original"]).await;
     store
-        .set_tags(&name("old"), &tags(&["Delivery", "Platform"]))
+        .set_tags(&name("original"), &tags(&["Delivery", "Platform"]))
         .await?;
 
     store
         .apply(&[
             Change::Create(
                 DefinitionKind::Dashboard,
-                name("new"),
-                json!({ "title": "old" }),
+                name("copy"),
+                crate::domain::definition::DefinitionLabel::parse("Copy")?,
+                json!({ "title": "original" }),
             ),
             Change::CarryTags {
-                from: name("old"),
-                to: name("new"),
+                from: name("original"),
+                to: name("copy"),
             },
-            Change::Delete(DefinitionKind::Dashboard, name("old")),
         ])
         .await?;
 
-    assert_eq!(carried(&store, "new").await, ["Delivery", "Platform"]);
+    assert_eq!(carried(&store, "copy").await, ["Delivery", "Platform"]);
     assert_eq!(
         listed(&store).await,
-        [("Delivery".to_owned(), 1), ("Platform".to_owned(), 1)]
+        [("Delivery".to_owned(), 2), ("Platform".to_owned(), 2)]
     );
 
     Ok(())
@@ -314,7 +318,7 @@ async fn a_page_by_tag_holds_the_dashboards_carrying_any_of_them() -> R {
         .page_tagged("", page, None, &any_of(&["alpha", "BETA"]))
         .await?;
 
-    assert_eq!(found.names, ["delivery", "delivery_ai", "hiring"]);
+    assert_eq!(ids(&found), ["delivery", "delivery_ai", "hiring"]);
     assert_eq!(found.total, 3);
 
     Ok(())
@@ -340,9 +344,9 @@ async fn a_page_by_tag_still_searches_and_keeps_to_its_folder() -> R {
         .page_tagged("", page, Some(FolderFilter::Unfiled), &alpha)
         .await?;
 
-    assert_eq!(searched.names, ["delivery", "delivery_ai"]);
-    assert_eq!(filed.names, ["delivery", "hiring"]);
-    assert_eq!(unfiled.names, ["delivery_ai"]);
+    assert_eq!(ids(&searched), ["delivery", "delivery_ai"]);
+    assert_eq!(ids(&filed), ["delivery", "hiring"]);
+    assert_eq!(ids(&unfiled), ["delivery_ai"]);
 
     Ok(())
 }
@@ -356,7 +360,7 @@ async fn a_page_by_a_tag_nobody_carries_is_empty() -> R {
         .page_tagged("", Page::parse(None, None)?, None, &any_of(&["Omega"]))
         .await?;
 
-    assert!(found.names.is_empty());
+    assert!(ids(&found).is_empty());
     assert_eq!(found.total, 0);
 
     Ok(())

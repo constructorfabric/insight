@@ -14,13 +14,25 @@ export function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
-/** Every catalogue answers empty, and every dataset declares nothing, unless a test says otherwise. */
+/**
+ * Every catalogue answers empty, every dataset declares nothing, and no
+ * definition is found, unless a test says otherwise.
+ */
 export function mockCatalogues(): void {
-  const none = { names: [], total: 0 };
-  vi.mocked(customClient.fetchMetricNames).mockResolvedValue(none);
-  vi.mocked(customClient.fetchWidgetNames).mockResolvedValue(none);
-  vi.mocked(customClient.fetchDashboardNames).mockResolvedValue(none);
-  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue(none);
+  const none = { items: [], total: 0 };
+  vi.mocked(customClient.fetchMetrics).mockResolvedValue(none);
+  vi.mocked(customClient.fetchWidgets).mockResolvedValue(none);
+  vi.mocked(customClient.fetchDashboards).mockResolvedValue(none);
+  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
+    names: [],
+    total: 0,
+  });
+  vi.mocked(customClient.fetchMetric).mockRejectedValue(
+    new CustomApiError(404, null)
+  );
+  vi.mocked(customClient.fetchWidget).mockRejectedValue(
+    new CustomApiError(404, null)
+  );
   vi.mocked(customClient.fetchDataset).mockImplementation(async (name) => ({
     name,
     declaration: { title: name, fields: [] },

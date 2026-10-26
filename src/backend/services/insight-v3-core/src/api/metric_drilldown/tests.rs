@@ -65,11 +65,23 @@ impl TestHarness {
         }
     }
 
-    async fn store(&self, name: &str, body: serde_json::Value) {
-        let parsed = DefinitionName::parse(name)
-            .unwrap_or_else(|error| panic!("test name must parse: {error}"));
+    /// Stores the metric under an id the case chooses, replacing what it
+    /// held when it is already there.
+    async fn store(&self, id: &str, body: serde_json::Value) {
+        let parsed =
+            DefinitionId::parse(id).unwrap_or_else(|error| panic!("test id must parse: {error}"));
+        let label = crate::domain::definition::DefinitionLabel::of_id(&parsed);
+
+        let replaced = self
+            .definitions
+            .replace(DefinitionKind::Metric, &parsed, &label, &body)
+            .await
+            .unwrap_or_else(|error| panic!("the store must answer: {error}"));
+        if replaced {
+            return;
+        }
         self.definitions
-            .put(DefinitionKind::Metric, &parsed, &body)
+            .create(DefinitionKind::Metric, &parsed, &label, &body)
             .await
             .unwrap_or_else(|error| panic!("the store must accept it: {error}"));
     }
