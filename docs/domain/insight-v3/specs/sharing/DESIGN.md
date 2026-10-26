@@ -309,12 +309,12 @@ The contract is the service's drift-checked OpenAPI document. `{kind}` is `metri
 | `PUT /v1/dashboards/{id}/grants/{grantee}`, `PUT /v1/folders/{id}/grants/{grantee}` | `{level}` | No content; idempotent, sets the level; lowering a dashboard grant demotes the entries it qualified | Administrators; as listing grants, checked in the write; a person grantee is one identity knows and not the owner |
 | `DELETE /v1/dashboards/{id}/grants/{grantee}`, `DELETE /v1/folders/{id}/grants/{grantee}` | — | No content; idempotent; on a dashboard, demotes the entries it qualified | Administrators; as listing grants, checked in the write |
 | `GET /v1/folders` | — | The caller-visible folders, each `{id, name, owner_person_id, access, dashboards}`, `dashboards` counting the visible ones it holds; plus the caller's visible unfiled count | Any caller |
-| `POST /v1/folders` | `{name}` | `{id}` | Any caller, who owns it; at most `MAX_FOLDERS` per owner |
-| `PATCH /v1/folders/{id}` | `{name}` | No content | `Owner`, `Editor` or `Ownerless` |
+| `POST /v1/folders` | `{name}` | The folder: `{id, name, owner_person_id, access}` | Any caller, who owns it; at most `MAX_FOLDERS` per owner |
+| `PATCH /v1/folders/{id}` | `{name}` | The folder under its new name, as `POST` answers it | `Owner`, `Editor` or `Ownerless` |
 | `DELETE /v1/folders/{id}` | — | No content; its entries go, its dashboards stay | `Owner` or `Ownerless` |
 | `PUT /v1/folders/{id}/dashboards/{dashboard_id}` | — | `{carries}`: whether the entry carries, as the [domain model](#31-domain-model) decides | `Owner`, `Editor` or `Ownerless` on the folder; sight of the dashboard; matching ownership |
 | `DELETE /v1/folders/{id}/dashboards/{dashboard_id}` | — | No content | `Owner`, `Editor` or `Ownerless` on the folder |
-| `GET /v1/orphaned-dashboards`, `GET /v1/orphaned-folders` | `limit`, `offset` | One page of `{id, name, owner_person_id}`, dashboards also `updated_at` | Administrators |
+| `GET /v1/orphaned-dashboards`, `GET /v1/orphaned-folders` | `limit`, `offset` | One page of `{id, name, owner_person_id, updated_at}` | Administrators |
 | `POST /v1/dashboards/{id}/transfer`, `POST /v1/folders/{id}/transfer` | `{to}`: a person id | No content | Administrators; orphaned, and `to` is a current administrator |
 | `GET /v1/tags` | — | Names of tags on visible dashboards, each with a count of those dashboards | Any caller |
 | `GET /v1/pins`, `PUT /v1/pins/{dashboard_id}`, `DELETE /v1/pins/{dashboard_id}` | as today | Ids and names of the caller's pins whose dashboards are visible now | Any caller; pinning needs sight |
