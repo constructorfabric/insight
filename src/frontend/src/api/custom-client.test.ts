@@ -6,37 +6,46 @@ import { fetchWithAuth } from "@/api/fetch-with-auth";
 
 import {
   CustomApiError,
+  EVERYONE,
+  addToFolder,
   createDefinition,
   createFolder,
   deleteDataset,
   deleteDefinition,
   deleteFolder,
+  deleteGrant,
   duplicateDashboard,
-  fetchDashboardFolder,
+  fetchDashboardDrilldownPage,
   fetchDashboardRead,
+  fetchDashboardWidgets,
   fetchDashboards,
   fetchDataset,
   fetchDatasetDependents,
   fetchDatasetRecords,
   fetchDefinition,
   fetchDependents,
-  fetchDrilldownPage,
   fetchFolders,
+  fetchGrants,
   fetchMetric,
   fetchMetrics,
+  fetchOrphanedDashboards,
+  fetchOrphanedFolders,
   fetchPins,
   fetchTable,
   fetchTags,
   fetchWidget,
   fetchWidgets,
-  moveDashboard,
   pinDashboard,
   putDataset,
   putDefinition,
+  putGrant,
+  removeFromFolder,
   renameDefinition,
   renameFolder,
+  runDashboardWidget,
   runMetric,
   setDashboardTags,
+  transferOrphan,
   unpinDashboard,
 } from "./custom-client";
 
@@ -58,11 +67,21 @@ beforeEach(() => {
 });
 
 describe("fetchDashboards", () => {
-  it("reads the page of ids and names, and how many it is a page of", async () => {
+  it("reads the page, each dashboard with its owner and the caller's access", async () => {
     const page = {
       items: [
-        { id: "engineering", name: "Engineering" },
-        { id: "delivery", name: "Delivery" },
+        {
+          id: "engineering",
+          name: "Engineering",
+          owner_person_id: "00000000-0000-4000-8000-000000000001",
+          access: "owner",
+        },
+        {
+          id: "delivery",
+          name: "Delivery",
+          owner_person_id: null,
+          access: "ownerless",
+        },
       ],
       total: 2,
     };
@@ -81,6 +100,19 @@ describe("fetchDashboards", () => {
       "/api/v3/v1/dashboards?q=git+ops&limit=50&offset=50"
     );
   });
+
+  it.each(["me", "shared"] as const)(
+    "narrows to the dashboards owned=%s",
+    async (owned) => {
+      mockFetch.mockResolvedValueOnce(response({ items: [], total: 0 }));
+
+      await fetchDashboards({ owned, limit: 50 });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        `/api/v3/v1/dashboards?limit=50&owned=${owned}`
+      );
+    }
+  );
 
   it("surfaces a failure as an API error", async () => {
     mockFetch.mockResolvedValueOnce(
@@ -302,10 +334,11 @@ describe("an id or name that reached the client empty", () => {
     ["fetchMetric", () => fetchMetric("")],
     ["fetchWidget", () => fetchWidget("")],
     ["fetchDefinition", () => fetchDefinition("dashboards", "")],
-    ["fetchDashboardFolder", () => fetchDashboardFolder("")],
     ["fetchDashboardRead", () => fetchDashboardRead("")],
     ["setDashboardTags", () => setDashboardTags("", [])],
-    ["moveDashboard", () => moveDashboard("", null)],
+    ["addToFolder (folder)", () => addToFolder("", "d1")],
+    ["addToFolder (dashboard)", () => addToFolder("f1", "")],
+    ["removeFromFolder", () => removeFromFolder("f1", "")],
     ["renameFolder", () => renameFolder("", "Product")],
     ["deleteFolder", () => deleteFolder("")],
     ["fetchDatasetRecords", () => fetchDatasetRecords("", { limit: 20 })],
@@ -315,8 +348,24 @@ describe("an id or name that reached the client empty", () => {
     ["renameDefinition", () => renameDefinition("metrics", "", "to")],
     ["runMetric", () => runMetric("")],
     ["putDefinition", () => putDefinition("metrics", "", "name", {})],
+    ["fetchGrants", () => fetchGrants({ kind: "dashboards", id: "" })],
+    [
+      "putGrant (dashboard)",
+      () => putGrant({ kind: "dashboards", id: "" }, "p1", "viewer"),
+    ],
+    [
+      "putGrant (grantee)",
+      () => putGrant({ kind: "folders", id: "f1" }, "", "viewer"),
+    ],
+    ["deleteGrant", () => deleteGrant({ kind: "folders", id: "f1" }, "")],
+    ["transferOrphan", () => transferOrphan("dashboards", "", "p1")],
+    ["fetchDashboardWidgets", () => fetchDashboardWidgets("")],
+    ["runDashboardWidget", () => runDashboardWidget("d1", "")],
+    [
+      "fetchDashboardDrilldownPage",
+      () => fetchDashboardDrilldownPage("", "w1", {}),
+    ],
     ["duplicateDashboard", () => duplicateDashboard("", "copy")],
-    ["fetchDrilldownPage", () => fetchDrilldownPage("", {})],
     ["fetchDependents", () => fetchDependents("metrics", "")],
     ["fetchDatasetDependents", () => fetchDatasetDependents("")],
     ["fetchTable (database)", () => fetchTable("", "commits")],
@@ -330,7 +379,15 @@ describe("an id or name that reached the client empty", () => {
 describe("folders", () => {
   it("lists every folder with what it holds, and the unfiled count", async () => {
     const list = {
-      folders: [{ id: "f1", name: "Platform", dashboards: 2 }],
+      folders: [
+        {
+          id: "f1",
+          name: "Platform",
+          owner_person_id: "00000000-0000-4000-8000-000000000001",
+          dashboards: 2,
+        },
+        { id: "f2", name: "Shared", owner_person_id: null, dashboards: 1 },
+      ],
       unfiled: 3,
     };
     mockFetch.mockResolvedValueOnce(response(list));
@@ -389,53 +446,27 @@ describe("folders", () => {
     });
   });
 
-  it("moves a dashboard into a folder, and out of every folder", async () => {
-    mockFetch.mockResolvedValue(response(null, { status: 204 }));
+  it("adds a dashboard to a folder and reads whether the entry carries", async () => {
+    mockFetch.mockResolvedValueOnce(response({ carries: true }));
 
-    await moveDashboard("delivery", "f1");
-    await moveDashboard("delivery", null);
-
-    expect(mockFetch).toHaveBeenNthCalledWith(
-      1,
-      "/api/v3/v1/dashboards/delivery/folder",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folder: "f1" }),
-      }
-    );
-    expect(mockFetch).toHaveBeenNthCalledWith(
-      2,
-      "/api/v3/v1/dashboards/delivery/folder",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folder: null }),
-      }
+    await expect(addToFolder("f1", "delivery")).resolves.toEqual({
+      carries: true,
+    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/folders/f1/dashboards/delivery",
+      { method: "PUT" }
     );
   });
 
-  it("reads the folder a dashboard is filed in, or none", async () => {
-    const body = { title: "Delivery", items: [] };
-    mockFetch
-      .mockResolvedValueOnce(
-        response({
-          id: "delivery",
-          name: "Delivery",
-          body,
-          folder: { id: "f1", name: "Platform" },
-        })
-      )
-      .mockResolvedValueOnce(
-        response({ id: "delivery", name: "Delivery", body, folder: null })
-      );
+  it("takes a dashboard out of one folder", async () => {
+    mockFetch.mockResolvedValueOnce(response(null, { status: 204 }));
 
-    await expect(fetchDashboardFolder("delivery")).resolves.toEqual({
-      id: "f1",
-      name: "Platform",
-    });
-    await expect(fetchDashboardFolder("delivery")).resolves.toBeNull();
-    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/dashboards/delivery");
+    await removeFromFolder("f1", "delivery");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/folders/f1/dashboards/delivery",
+      { method: "DELETE" }
+    );
   });
 
   it("asks for one folder's dashboards, or the unfiled ones", async () => {
@@ -497,20 +528,37 @@ describe("tags", () => {
 
   it("reads a dashboard with the tags it carries, or none", async () => {
     const body = { title: "Delivery", widgets: [] };
-    const read = { id: "delivery", name: "Delivery", body, folder: null };
+    const read = {
+      id: "delivery",
+      name: "Delivery",
+      body,
+      owner_person_id: null,
+      access: "ownerless",
+    };
+    const folders = [{ id: "f1", name: "Platform" }];
     mockFetch
-      .mockResolvedValueOnce(response({ ...read, tags: ["Ops"] }))
+      .mockResolvedValueOnce(
+        response({ ...read, tags: ["Ops"], folders, carries: true })
+      )
       .mockResolvedValueOnce(response(read));
 
     await expect(fetchDashboardRead("delivery")).resolves.toEqual({
       name: "Delivery",
       body,
       tags: ["Ops"],
+      ownerPersonId: null,
+      access: "ownerless",
+      folders,
+      carries: true,
     });
     await expect(fetchDashboardRead("delivery")).resolves.toEqual({
       name: "Delivery",
       body,
       tags: [],
+      ownerPersonId: null,
+      access: "ownerless",
+      folders: [],
+      carries: false,
     });
     expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/dashboards/delivery");
   });
@@ -602,33 +650,33 @@ describe("duplicateDashboard", () => {
     );
   });
 
-  it("refuses a copy of a dashboard that is not there with what the service said", async () => {
+  it("refuses a copy the caller may not make with what the service said", async () => {
     mockFetch.mockResolvedValueOnce(
-      response({ detail: "not found" }, { ok: false, status: 404 })
+      response({ detail: "not the owner" }, { ok: false, status: 403 })
     );
 
     await expect(
       duplicateDashboard("delivery", "Hiring")
-    ).rejects.toMatchObject({ status: 404, body: { detail: "not found" } });
+    ).rejects.toMatchObject({ status: 403, body: { detail: "not the owner" } });
   });
 });
 
 describe("a dashboard's age", () => {
   it("reads when the dashboard was last changed, when the service says", async () => {
     const body = { title: "Delivery", widgets: [] };
+    const read = {
+      id: "delivery",
+      name: "Delivery",
+      body,
+      tags: [],
+      owner_person_id: "00000000-0000-4000-8000-000000000001",
+      access: "viewer",
+    };
     mockFetch
       .mockResolvedValueOnce(
-        response({
-          id: "delivery",
-          name: "Delivery",
-          body,
-          tags: [],
-          updated_at: "2026-09-25T10:00:00Z",
-        })
+        response({ ...read, updated_at: "2026-09-25T10:00:00Z" })
       )
-      .mockResolvedValueOnce(
-        response({ id: "delivery", name: "Delivery", body, tags: [] })
-      );
+      .mockResolvedValueOnce(response(read));
 
     await expect(fetchDashboardRead("delivery")).resolves.toMatchObject({
       updatedAt: "2026-09-25T10:00:00Z",
@@ -693,41 +741,211 @@ describe("writing a definition", () => {
     ).rejects.toMatchObject({ status: 404 });
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
-
-  it("removes one by id", async () => {
-    mockFetch.mockResolvedValueOnce(response(null, { status: 204 }));
-
-    await deleteDefinition("widgets", "w1");
-
-    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/widgets/w1", {
-      method: "DELETE",
-    });
-  });
 });
 
 describe("fetchDependents", () => {
-  it("reads every holder by kind, id and name", async () => {
-    const holders = [{ kind: "widgets", id: "w1", name: "Commits table" }];
-    mockFetch.mockResolvedValueOnce(response({ holders }));
+  it("reads the visible holders by id and name, and how many are hidden", async () => {
+    const dependents = {
+      holders: [{ kind: "widgets", id: "w1", name: "Commits table" }],
+      hidden: 2,
+    };
+    mockFetch.mockResolvedValueOnce(response(dependents));
 
-    await expect(fetchDependents("metrics", "m1")).resolves.toEqual(holders);
+    await expect(fetchDependents("metrics", "m1")).resolves.toEqual(dependents);
     expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/metrics/m1/dependents");
   });
 });
 
-describe("fetchDrilldownPage", () => {
-  it("reads one page of the rows behind a metric, by its id", async () => {
+describe("grants", () => {
+  const PERSON = "00000000-0000-4000-8000-000000000002";
+
+  it.each([
+    ["dashboards", "d1"],
+    ["folders", "f1"],
+  ] as const)("lists who one of the %s is shared with", async (kind, id) => {
+    const items = [
+      {
+        grantee: EVERYONE,
+        level: "viewer",
+        granted_by: "00000000-0000-4000-8000-000000000001",
+        created_at: "2026-09-25T10:00:00Z",
+      },
+    ];
+    mockFetch.mockResolvedValueOnce(response({ items }));
+
+    await expect(fetchGrants({ kind, id })).resolves.toEqual(items);
+    expect(mockFetch).toHaveBeenCalledWith(`/api/v3/v1/${kind}/${id}/grants`);
+  });
+
+  it("grants a level and withdraws it, by grantee", async () => {
+    mockFetch.mockResolvedValue(response(null, { status: 204 }));
+
+    await putGrant({ kind: "dashboards", id: "d1" }, PERSON, "editor");
+    await deleteGrant({ kind: "folders", id: "f1" }, EVERYONE);
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      `/api/v3/v1/dashboards/d1/grants/${PERSON}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ level: "editor" }),
+      }
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/v3/v1/folders/f1/grants/everyone",
+      { method: "DELETE" }
+    );
+  });
+
+  it("refuses with what the service said", async () => {
+    const refusal = { detail: "only the owner or an editor can share this" };
+    mockFetch.mockResolvedValueOnce(
+      response(refusal, { ok: false, status: 403 })
+    );
+
+    await expect(
+      putGrant({ kind: "dashboards", id: "d1" }, PERSON, "viewer")
+    ).rejects.toMatchObject({ status: 403, body: refusal });
+  });
+});
+
+describe("a dashboard's widgets", () => {
+  it("reads them through the dashboard", async () => {
+    const items = [
+      {
+        id: "w1",
+        name: "Commits",
+        body: { type: "stat", metric: "m1", value: "n" },
+        clock: { field: "day", from: "metric" },
+      },
+    ];
+    mockFetch.mockResolvedValueOnce(response({ items }));
+
+    await expect(fetchDashboardWidgets("d1")).resolves.toEqual(items);
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/dashboards/d1/widgets");
+  });
+
+  it("runs one with the window, and without one", async () => {
+    mockFetch.mockResolvedValue(response({ columns: [], rows: [] }));
+
+    await runDashboardWidget("d1", "w1", { range: "P30D", bucket: false });
+    await runDashboardWidget("d1", "w1");
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/v3/v1/dashboards/d1/widgets/w1/run",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ range: "P30D", bucket: false }),
+      }
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/v3/v1/dashboards/d1/widgets/w1/run",
+      { method: "POST" }
+    );
+  });
+
+  it("reads one page of the rows behind one", async () => {
     const page = { selection: {}, columns: [], rows: [], next_cursor: null };
     mockFetch.mockResolvedValueOnce(response(page));
 
-    await expect(fetchDrilldownPage("m1", { limit: 100 })).resolves.toEqual(
-      page
+    await expect(
+      fetchDashboardDrilldownPage("d1", "w1", { limit: 100 })
+    ).resolves.toEqual(page);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/dashboards/d1/widgets/w1/drilldown",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 100 }),
+        signal: undefined,
+      }
     );
-    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/metrics/m1/drilldown", {
+  });
+});
+
+describe("orphans", () => {
+  it("reads one page of them with their owner and last change", async () => {
+    const page = {
+      items: [
+        {
+          id: "d1",
+          name: "Release notes",
+          owner_person_id: "00000000-0000-4000-8000-000000000003",
+          updated_at: "2026-09-25T10:00:00Z",
+        },
+      ],
+      total: 1,
+    };
+    mockFetch.mockResolvedValueOnce(response(page));
+
+    await expect(
+      fetchOrphanedDashboards({ limit: 50, offset: 50 })
+    ).resolves.toEqual(page);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/orphaned-dashboards?limit=50&offset=50"
+    );
+  });
+
+  it("reads one page of the orphaned folders", async () => {
+    const page = {
+      items: [
+        {
+          id: "f1",
+          name: "Handover",
+          owner_person_id: "00000000-0000-4000-8000-000000000003",
+          updated_at: "2026-09-25T10:00:00Z",
+        },
+      ],
+      total: 1,
+    };
+    mockFetch.mockResolvedValueOnce(response(page));
+
+    await expect(fetchOrphanedFolders({ limit: 50 })).resolves.toEqual(page);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/orphaned-folders?limit=50"
+    );
+  });
+
+  it.each([
+    ["dashboards", "d1"],
+    ["folders", "f1"],
+  ] as const)("transfers one of the %s to an administrator", async (kind, id) => {
+    mockFetch.mockResolvedValueOnce(response(null, { status: 204 }));
+
+    await transferOrphan(kind, id, "00000000-0000-4000-8000-000000000002");
+
+    expect(mockFetch).toHaveBeenCalledWith(`/api/v3/v1/${kind}/${id}/transfer`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ limit: 100 }),
-      signal: undefined,
+      body: JSON.stringify({ to: "00000000-0000-4000-8000-000000000002" }),
+    });
+  });
+
+  it("refuses a dashboard that is no longer orphaned with what the service said", async () => {
+    const refused = {
+      detail: "Failed precondition",
+      context: {
+        violations: [
+          {
+            type: "owner_is_administrator",
+            subject: "owner",
+            description: "the dashboard's owner is still an administrator",
+          },
+        ],
+      },
+    };
+    mockFetch.mockResolvedValueOnce(
+      response(refused, { ok: false, status: 409 })
+    );
+
+    await expect(transferOrphan("dashboards", "d1", "p1")).rejects.toMatchObject({
+      status: 409,
+      body: refused,
     });
   });
 });

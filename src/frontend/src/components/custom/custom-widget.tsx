@@ -1,4 +1,4 @@
-import type { MetricResult, Widget } from "@/api/custom-client";
+import { isBusy, type MetricResult, type Widget } from "@/api/custom-client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { MetricName } from "@/components/custom/metric-name";
 import { refusal } from "@/components/custom/refusal";
@@ -10,6 +10,7 @@ import { CustomStat } from "@/components/custom/custom-stat";
 import { CustomTable } from "@/components/custom/custom-table";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
+import { useIsAdmin } from "@/queries/identity-me";
 
 export interface CustomWidgetProps {
   widget: Widget;
@@ -20,6 +21,7 @@ export interface CustomWidgetProps {
   windowed?: boolean;
   /** Whether the run is still in flight, which is not the same as empty. */
   pending?: boolean;
+  onRetry?: () => void;
 }
 
 export function CustomWidget({
@@ -28,8 +30,22 @@ export function CustomWidget({
   error,
   windowed,
   pending,
+  onRetry,
 }: CustomWidgetProps) {
-  if (error) {
+  const busy = isBusy(error);
+
+  if (busy && !pending) {
+    return (
+      <ComingSoon
+        variant="card"
+        state="error"
+        label="Busy, try again."
+        onRetry={onRetry}
+      />
+    );
+  }
+
+  if (error && !busy) {
     return (
       <Alert variant="destructive">
         <AlertDescription>
@@ -125,10 +141,35 @@ function drawable(
   if (missing.length === 0) return null;
 
   return (
+    <MissingColumns metric={metric} missing={missing} returned={result.columns} />
+  );
+}
+
+/** Only an administrator, who can fix the definition, is told what is missing. */
+function MissingColumns({
+  metric,
+  missing,
+  returned,
+}: {
+  metric: string;
+  missing: string[];
+  returned: string[];
+}) {
+  const { isAdmin, isPending } = useIsAdmin();
+  const member = !isPending && !isAdmin;
+
+  return (
     <Alert variant="destructive">
       <AlertDescription>
-        This widget draws {missing.join(", ")}, which <MetricName id={metric} />{" "}
-        does not return. Its columns are {result.columns.join(", ")}.
+        {!member ? (
+          <>
+            This widget draws {missing.join(", ")}, which{" "}
+            <MetricName id={metric} /> does not return. Its columns are{" "}
+            {returned.join(", ")}.
+          </>
+        ) : (
+          "Couldn't draw this widget."
+        )}
       </AlertDescription>
     </Alert>
   );

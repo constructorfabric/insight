@@ -5,6 +5,7 @@ import type { DefinitionKind, Holder } from "@/api/custom-client";
 import { refusal } from "@/components/custom/refusal";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import { hiddenHolders } from "@/lib/custom/hidden-holders";
 import { dependentsQuery } from "@/queries/custom";
 import { TEXT_BODY, TEXT_HEADING } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -39,7 +40,8 @@ export function HeldBy({
       empty={empty}
       pending={held.isPending}
       error={held.error}
-      holders={held.data}
+      holders={held.data?.holders}
+      hidden={held.data?.hidden ?? 0}
     />
   );
 }
@@ -51,13 +53,17 @@ export function Held({
   pending,
   error,
   holders,
+  hidden = 0,
 }: {
   title: string;
   empty: string;
   pending: boolean;
   error: unknown;
   holders: Holder[] | undefined;
+  hidden?: number;
 }) {
+  const unseen = hiddenHolders(hidden, holders?.length ?? 0);
+
   return (
     <Card>
       <CardHeader>
@@ -70,11 +76,11 @@ export function Held({
           <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
             {refusal(error, "Couldn't read what uses it.")}
           </p>
-        ) : !holders || holders.length === 0 ? (
+        ) : (!holders || holders.length === 0) && !unseen ? (
           <p className={cn(TEXT_BODY, "text-muted-foreground")}>{empty}</p>
         ) : (
           <ul className="flex flex-col gap-1">
-            {holders.map((holder) => (
+            {holders?.map((holder) => (
               <li key={`${holder.kind}/${holder.id}`} className={TEXT_BODY}>
                 <Link
                   to={PAGE[holder.kind]}
@@ -86,6 +92,11 @@ export function Held({
                 <span className="text-muted-foreground">{holder.kind}</span>
               </li>
             ))}
+            {unseen ? (
+              <li className={cn(TEXT_BODY, "text-muted-foreground")}>
+                {unseen}
+              </li>
+            ) : null}
           </ul>
         )}
       </CardContent>

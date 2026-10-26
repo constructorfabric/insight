@@ -1,6 +1,7 @@
 import {
   Copy,
   Ellipsis,
+  FolderPlus,
   Pin,
   PinOff,
   Tags,
@@ -9,16 +10,14 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import type { DashboardAccess } from "@/api/custom-client";
 import {
   DeleteDashboard,
   DuplicateDashboard,
   RenameDashboard,
 } from "@/components/custom/dashboard-dialogs";
+import { AddToFolder } from "@/components/custom/dashboard-folders";
 import { EditTags } from "@/components/custom/edit-tags";
-import {
-  MoveToFolderItems,
-  NewFolderAndMove,
-} from "@/components/custom/move-to-folder";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -28,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { usePinToggle } from "@/hooks/use-pin-toggle";
+import { dashboardAllows } from "@/lib/custom/dashboard-access";
 
 type Asked = "rename" | "duplicate" | "delete" | "folder" | "tags";
 
@@ -35,20 +35,21 @@ export function DashboardMenu({
   id,
   name,
   title,
-  filing = true,
+  access,
   onDuplicated,
   onDeleted,
 }: {
   id: string;
   name: string;
   title?: string;
-  filing?: boolean;
+  access: DashboardAccess;
   onDuplicated?: (id: string) => void;
   onDeleted?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [asked, setAsked] = useState<Asked | null>(null);
   const pin = usePinToggle(id, open);
+  const allows = dashboardAllows(access);
 
   const done = () => setAsked(null);
 
@@ -72,66 +73,72 @@ export function DashboardMenu({
             {pin.pinned ? <PinOff /> : <Pin />}
             {pin.pinned ? "Unpin" : "Pin"}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setAsked("rename")}>
-            <TextCursorInput />
-            Rename…
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setAsked("duplicate")}>
-            <Copy />
-            Duplicate…
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          {filing ? (
+          {allows.edit ? (
             <>
-              <MoveToFolderItems
-                id={id}
-                open={open}
-                onNewFolder={() => setAsked("folder")}
-              />
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setAsked("tags")}>
-                <Tags />
-                Edit tags…
+              <DropdownMenuItem onClick={() => setAsked("rename")}>
+                <TextCursorInput />
+                Rename…
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setAsked("duplicate")}>
+                <Copy />
+                Duplicate…
+              </DropdownMenuItem>
             </>
           ) : null}
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={() => setAsked("delete")}
-          >
-            <Trash2 />
-            Delete…
+          <DropdownMenuItem onClick={() => setAsked("folder")}>
+            <FolderPlus />
+            Add to folder…
           </DropdownMenuItem>
+          {allows.edit ? (
+            <DropdownMenuItem onClick={() => setAsked("tags")}>
+              <Tags />
+              Edit tags…
+            </DropdownMenuItem>
+          ) : null}
+          {allows.remove ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => setAsked("delete")}
+              >
+                <Trash2 />
+                Delete…
+              </DropdownMenuItem>
+            </>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
-      <RenameDashboard
+      <AddToFolder
         id={id}
         name={name}
-        open={asked === "rename"}
+        access={access}
+        open={asked === "folder"}
         onClose={done}
       />
-      <DuplicateDashboard
-        id={id}
-        name={name}
-        open={asked === "duplicate"}
-        onClose={done}
-        onDuplicated={onDuplicated}
-      />
-      <DeleteDashboard
-        id={id}
-        title={title || name}
-        open={asked === "delete"}
-        onClose={done}
-        onDeleted={onDeleted}
-      />
-      {filing ? (
+      {allows.remove ? (
+        <DeleteDashboard
+          id={id}
+          title={title || name}
+          open={asked === "delete"}
+          onClose={done}
+          onDeleted={onDeleted}
+        />
+      ) : null}
+      {allows.edit ? (
         <>
-          <NewFolderAndMove
+          <RenameDashboard
             id={id}
             name={name}
-            open={asked === "folder"}
+            open={asked === "rename"}
             onClose={done}
+          />
+          <DuplicateDashboard
+            id={id}
+            name={name}
+            open={asked === "duplicate"}
+            onClose={done}
+            onDuplicated={onDuplicated}
           />
           <EditTags
             id={id}

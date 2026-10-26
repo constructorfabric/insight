@@ -8,6 +8,8 @@ import {
 
 import type {
   ChatTurn,
+  DashboardAccess,
+  DashboardListed,
   DashboardRead,
   DrilldownPage,
   DrilldownRequest,
@@ -16,18 +18,28 @@ import type {
   EditableKind,
   FolderFilter,
   Listed,
+  GrantLevel,
+  GrantTarget,
+  Grantee,
   ListedPage,
+  OrphanedDashboard,
+  OrphanedFolder,
+  OrphanKind,
+  OwnedFilter,
   PageRequest,
 } from "@/api/custom-client";
 import {
+  addToFolder,
   createDefinition,
   createFolder,
   deleteDataset,
   deleteDefinition,
   deleteFolder,
+  deleteGrant,
   duplicateDashboard,
-  fetchDashboardFolder,
+  fetchDashboardDrilldownPage,
   fetchDashboardRead,
+  fetchDashboardWidgets,
   fetchDashboards,
   fetchDataset,
   fetchDatasetDependents,
@@ -35,30 +47,36 @@ import {
   fetchDatasetRecords,
   fetchDefinition,
   fetchDependents,
-  fetchDrilldownPage,
   fetchFolders,
+  fetchGrants,
   fetchMetric,
   fetchMetrics,
+  fetchOrphanedDashboards,
+  fetchOrphanedFolders,
   fetchPins,
   fetchTable,
   fetchTables,
   fetchTags,
   fetchWidget,
   fetchWidgets,
-  moveDashboard,
   pinDashboard,
   putDataset,
   putDefinition,
+  putGrant,
+  removeFromFolder,
   renameDefinition,
   renameFolder,
+  runDashboardWidget,
   runMetric,
   sendChat,
   setDashboardTags,
+  transferOrphan,
   unpinDashboard,
 } from "@/api/custom-client";
 import type { RunOptions } from "@/api/custom-client";
 
 const WIDGET_QUERY_PREFIX = ["custom", "widget"] as const;
+const WIDGET_RESULT_PREFIX = ["custom", "dashboard-widget-result"] as const;
 const NAME_PAGES_PREFIX = ["custom", "names"] as const;
 const FOLDERS_PREFIX = ["custom", "folders"] as const;
 const TAGS_PREFIX = ["custom", "tags"] as const;
@@ -71,6 +89,16 @@ const PAGE_SIZE = 50;
 const MAX_PAGE = 200;
 
 const DATASET_PREFIX = ["custom", "dataset"] as const;
+const GRANTS_PREFIX = ["custom", "grants"] as const;
+const ORPHANED_PREFIX = ["custom", "orphaned"] as const;
+const DASHBOARD_PREFIX = ["custom", "dashboard"] as const;
+
+interface Catalogued {
+  metrics: Listed;
+  widgets: Listed;
+  dashboards: DashboardListed;
+  datasets: Listed;
+}
 
 async function fetchDatasetPage(page: PageRequest): Promise<ListedPage> {
   const read = await fetchDatasetNames(page);
@@ -81,15 +109,23 @@ async function fetchDatasetPage(page: PageRequest): Promise<ListedPage> {
   };
 }
 
-const FETCH_PAGE: Record<
-  EditableKind,
-  (page: PageRequest) => Promise<ListedPage>
-> = {
+const FETCH_PAGE: {
+  [K in EditableKind]: (
+    page: PageRequest
+  ) => Promise<ListedPage<Catalogued[K]>>;
+} = {
   metrics: fetchMetrics,
   widgets: fetchWidgets,
   dashboards: fetchDashboards,
   datasets: fetchDatasetPage,
 };
+
+/** What narrows a catalogue besides a search. Only dashboards are narrowed. */
+export interface Narrowing {
+  folder?: FolderFilter;
+  tags?: string[];
+  owned?: OwnedFilter;
+}
 
 /**
  * A catalogue, a page at a time.
@@ -97,16 +133,22 @@ const FETCH_PAGE: Record<
  * `total` counts the matches rather than the page, so the list can say what
  * is behind it and stop asking once it has them all.
  */
-export function definitionPagesQuery(
-  kind: EditableKind,
+export function definitionPagesQuery<K extends EditableKind>(
+  kind: K,
   search = "",
-  folder?: FolderFilter,
-  tags: string[] = []
+  { folder, tags = [], owned }: Narrowing = {}
 ) {
   return infiniteQueryOptions({
     // The needle is part of the key, so a search is its own cached answer
     // rather than overwriting the list everyone else is reading.
-    queryKey: [...NAME_PAGES_PREFIX, kind, search, folder ?? null, tags],
+    queryKey: [
+      ...NAME_PAGES_PREFIX,
+      kind,
+      search,
+      folder ?? null,
+      tags,
+      owned ?? null,
+    ],
     queryFn: ({ pageParam }) =>
       FETCH_PAGE[kind]({
         search,
@@ -114,9 +156,13 @@ export function definitionPagesQuery(
         offset: pageParam,
         ...(folder ? { folder } : {}),
         ...(tags.length > 0 ? { tags } : {}),
+        ...(owned ? { owned } : {}),
       }),
     initialPageParam: 0,
-    getNextPageParam: (last: ListedPage, pages: ListedPage[]) => {
+    getNextPageParam: (
+      last: ListedPage<Catalogued[K]>,
+      pages: ListedPage<Catalogued[K]>[]
+    ) => {
       const read = pages.reduce((count, page) => count + page.items.length, 0);
       return read < last.total ? read : undefined;
     },
@@ -126,6 +172,8 @@ export function definitionPagesQuery(
 export interface EditedDefinition {
   name: string;
   document: Record<string, unknown>;
+  /** Only a dashboard has one. */
+  access?: DashboardAccess;
 }
 
 // Each kind hands its body back in its own envelope; the editor writes the body,
@@ -149,7 +197,8 @@ export function definitionBodyQuery(kind: EditableKind, id: string) {
         };
       }
       const read = await fetchDefinition<Record<string, unknown>>(kind, id);
-      return { name: read.name, document: read.body };
+      const edited: EditedDefinition = { name: read.name, document: read.body };
+      return read.access ? { ...edited, access: read.access } : edited;
     },
   });
 }
@@ -164,7 +213,7 @@ export function catalogueQuery(kind: EditableKind) {
 
 export function dashboardReadQuery(id: string) {
   return queryOptions({
-    queryKey: ["custom", "dashboard", id],
+    queryKey: [...DASHBOARD_PREFIX, id],
     queryFn: () => fetchDashboardRead(id),
   });
 }
@@ -204,10 +253,45 @@ export function foldersQuery() {
   });
 }
 
-export function dashboardFolderQuery(id: string) {
+export function grantsQuery(target: GrantTarget) {
   return queryOptions({
-    queryKey: [...FOLDERS_PREFIX, "of", id],
-    queryFn: () => fetchDashboardFolder(id),
+    queryKey: [...GRANTS_PREFIX, target.kind, target.id],
+    queryFn: () => fetchGrants(target),
+  });
+}
+
+const FETCH_ORPHANS: {
+  dashboards: typeof fetchOrphanedDashboards;
+  folders: typeof fetchOrphanedFolders;
+} = {
+  dashboards: fetchOrphanedDashboards,
+  folders: fetchOrphanedFolders,
+};
+
+export function orphanedPagesQuery<K extends OrphanKind>(kind: K) {
+  type Orphan = K extends "dashboards" ? OrphanedDashboard : OrphanedFolder;
+
+  return infiniteQueryOptions({
+    queryKey: [...ORPHANED_PREFIX, kind],
+    queryFn: ({ pageParam }) =>
+      FETCH_ORPHANS[kind]({ limit: PAGE_SIZE, offset: pageParam }) as Promise<
+        ListedPage<Orphan>
+      >,
+    initialPageParam: 0,
+    getNextPageParam: (
+      last: ListedPage<Orphan>,
+      pages: ListedPage<Orphan>[]
+    ) => {
+      const read = pages.reduce((count, page) => count + page.items.length, 0);
+      return read < last.total ? read : undefined;
+    },
+  });
+}
+
+export function dashboardWidgetsQuery(id: string) {
+  return queryOptions({
+    queryKey: [...WIDGET_QUERY_PREFIX, "of", id],
+    queryFn: () => fetchDashboardWidgets(id),
   });
 }
 
@@ -310,32 +394,52 @@ export function metricResultQuery(id: string, options?: RunOptions) {
   });
 }
 
+export function dashboardWidgetResultQuery(
+  dashboard: string,
+  widget: string,
+  options?: RunOptions
+) {
+  return queryOptions({
+    queryKey: [
+      ...WIDGET_RESULT_PREFIX,
+      dashboard,
+      widget,
+      options?.range ?? null,
+      options?.bucket ?? null,
+    ],
+    queryFn: () => runDashboardWidget(dashboard, widget, options),
+  });
+}
+
 /** How many rows one page of a drilldown asks for. */
 const DRILLDOWN_PAGE_ROWS = 100;
 
 /**
- * A metric's rows behind a widget, one ordered page at a time.
+ * The rows behind a dashboard's widget, one ordered page at a time.
  *
  * The window and the order are in the key: a re-order is its own answer,
  * and the previous one is kept on screen until it arrives rather than
  * replaced by a spinner under the header the reader just clicked.
  */
 export function drilldownPagesQuery(
-  metric: string,
+  dashboard: string,
+  widget: string,
   view: Omit<DrilldownRequest, "cursor" | "limit">
 ) {
   return infiniteQueryOptions({
     queryKey: [
       "custom",
       "drilldown",
-      metric,
+      dashboard,
+      widget,
       view.range ?? null,
       view.bucket ?? null,
       view.sort ?? null,
     ],
     queryFn: ({ pageParam, signal }) =>
-      fetchDrilldownPage(
-        metric,
+      fetchDashboardDrilldownPage(
+        dashboard,
+        widget,
         { ...view, limit: DRILLDOWN_PAGE_ROWS, cursor: pageParam },
         signal
       ),
@@ -443,7 +547,11 @@ export function useRenameFolder() {
   return useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) =>
       renameFolder(id, name),
-    onSettled: () => invalidateDashboardList(queryClient),
+    onSettled: () =>
+      Promise.all([
+        invalidateDashboardList(queryClient),
+        queryClient.invalidateQueries({ queryKey: DASHBOARD_PREFIX }),
+      ]),
   });
 }
 
@@ -452,18 +560,43 @@ export function useDeleteFolder() {
 
   return useMutation({
     mutationFn: (id: string) => deleteFolder(id),
-    onSettled: () => invalidateDashboardList(queryClient),
+    onSettled: () =>
+      Promise.all([
+        invalidateDashboardList(queryClient),
+        queryClient.invalidateQueries({ queryKey: DASHBOARD_PREFIX }),
+      ]),
   });
 }
 
-export function useMoveDashboard() {
+export interface FolderEntry {
+  folder: string;
+  dashboard: string;
+}
+
+function useFolderEntry<T>(
+  change: (folder: string, dashboard: string) => Promise<T>
+) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, folder }: { id: string; folder: string | null }) =>
-      moveDashboard(id, folder),
-    onSettled: () => invalidateDashboardList(queryClient),
+    mutationFn: ({ folder, dashboard }: FolderEntry) =>
+      change(folder, dashboard),
+    onSettled: (_done, _error, { dashboard }) =>
+      Promise.all([
+        invalidateDashboardList(queryClient),
+        queryClient.invalidateQueries({
+          queryKey: dashboardReadQuery(dashboard).queryKey,
+        }),
+      ]),
   });
+}
+
+export function useAddToFolder() {
+  return useFolderEntry(addToFolder);
+}
+
+export function useRemoveFromFolder() {
+  return useFolderEntry(removeFromFolder);
 }
 
 export function useSetDashboardTags() {
@@ -502,6 +635,56 @@ export function useSetPinned() {
   });
 }
 
+/** A grant can change the caller's own access too, so their lists and reads are refreshed. */
+function invalidateGrants(queryClient: QueryClient, target: GrantTarget) {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: grantsQuery(target).queryKey }),
+    queryClient.invalidateQueries({ queryKey: DASHBOARD_PREFIX }),
+    invalidateDashboardList(queryClient),
+  ]);
+}
+
+export function usePutGrant(target: GrantTarget) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ grantee, level }: { grantee: Grantee; level: GrantLevel }) =>
+      putGrant(target, grantee, level),
+    onSettled: () => invalidateGrants(queryClient, target),
+  });
+}
+
+export function useDeleteGrant(target: GrantTarget) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (grantee: Grantee) => deleteGrant(target, grantee),
+    onSettled: () => invalidateGrants(queryClient, target),
+  });
+}
+
+export function useTransferOrphan() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      kind,
+      id,
+      to,
+    }: {
+      kind: OrphanKind;
+      id: string;
+      to: string;
+    }) => transferOrphan(kind, id, to),
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ORPHANED_PREFIX }),
+        queryClient.invalidateQueries({ queryKey: DASHBOARD_PREFIX }),
+        invalidateDashboardList(queryClient),
+      ]),
+  });
+}
+
 export function useSendChat() {
   return useMutation({
     mutationFn: ({
@@ -531,5 +714,6 @@ export function invalidateDashboardPage(queryClient: QueryClient, id: string) {
       queryKey: dashboardReadQuery(id).queryKey,
     }),
     queryClient.invalidateQueries({ queryKey: WIDGET_QUERY_PREFIX }),
+    queryClient.invalidateQueries({ queryKey: WIDGET_RESULT_PREFIX }),
   ]);
 }

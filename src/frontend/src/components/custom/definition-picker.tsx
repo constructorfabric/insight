@@ -133,7 +133,7 @@ export function DefinitionPicker({
               aria-hidden={!found.isFetchingNextPage}
               className={cn(TEXT_LABEL, "px-3 py-2")}
             >
-              {found.isFetchingNextPage ? "Loading more…" : "\u00a0"}
+              {found.isFetchingNextPage ? "Loading more…" : " "}
             </p>
           ) : null}
         </ComboboxList>

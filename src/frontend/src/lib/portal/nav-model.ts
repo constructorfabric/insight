@@ -315,8 +315,6 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
 const MY_DASHBOARDS: PaneItem = { id: "mine", label: "My dashboards", icon: User, unbuilt: true };
 
 export const DASHBOARD_BROWSE_PLANNED: readonly PaneItem[] = [
-  MY_DASHBOARDS,
-  { id: "shared", label: "Shared with me", icon: Share2, unbuilt: true },
   { id: "starred", label: "Starred", icon: Star, unbuilt: true },
 ];
 

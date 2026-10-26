@@ -34,10 +34,7 @@ beforeEach(() => {
 
 describe("/portal/custom/widgets", () => {
   it("shows a table widget's columns and links its metric by id, under its name", async () => {
-    vi.mocked(customClient.fetchWidgets).mockResolvedValue({
-      items: [{ id: "commits_table", name: "commits_table" }],
-      total: 1,
-    });
+    vi.mocked(customClient.fetchWidgets).mockResolvedValue({ items: [{ id: "commits_table", name: "commits_table" }], total: 1 });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
       name: "commits_table",
       widget: {
@@ -62,10 +59,7 @@ describe("/portal/custom/widgets", () => {
   });
 
   it("shows a line widget's axes instead of columns", async () => {
-    vi.mocked(customClient.fetchWidgets).mockResolvedValue({
-      items: [{ id: "commits_graph", name: "commits_graph" }],
-      total: 1,
-    });
+    vi.mocked(customClient.fetchWidgets).mockResolvedValue({ items: [{ id: "commits_graph", name: "commits_graph" }], total: 1 });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
       name: "commits_graph",
       widget: {

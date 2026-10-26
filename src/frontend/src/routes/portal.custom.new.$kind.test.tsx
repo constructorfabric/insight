@@ -71,7 +71,7 @@ describe("/portal/custom/new/$kind", () => {
     expect(customClient.fetchDataset).not.toHaveBeenCalled();
   });
 
-  it("stores what was written under the name it was given", async () => {
+  it("stores a dataset under the name it was given, then opens it", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.putDataset).mockResolvedValue({
       name: "deployments",
@@ -89,53 +89,49 @@ describe("/portal/custom/new/$kind", () => {
         title: "Deployments",
       })
     );
-    expect(portalRouter.navigations).toContainEqual({
-      to: "/portal/custom/datasets",
-    });
+    await waitFor(() =>
+      expect(portalRouter.navigations).toContainEqual({
+        to: "/portal/custom/datasets/$name",
+        params: { name: "deployments" },
+      })
+    );
   });
 
   it.each([
-    ["metrics", "/portal/custom/metrics"],
-    ["widgets", "/portal/custom/widgets"],
-    ["dashboards", "/portal/custom"],
-  ])(
-    "creates a new %s under the name it was given, then returns to its catalogue",
-    async (kind, catalogue) => {
-      const user = userEvent.setup();
-      portalRouter.reset(`/portal/custom/new/${kind}`);
-      vi.mocked(customClient.createDefinition).mockResolvedValue(
-        "0192f0aa-0000-7000-8000-000000000004"
-      );
+    ["metrics", "/portal/custom/metrics/$name"],
+    ["widgets", "/portal/custom/widgets/$name"],
+    ["dashboards", "/portal/custom/$name"],
+  ])("creates a new %s and opens it by the id it was given", async (kind, page) => {
+    const user = userEvent.setup();
+    portalRouter.reset(`/portal/custom/new/${kind}`);
+    vi.mocked(customClient.createDefinition).mockResolvedValue(
+      "0192f0aa-0000-7000-8000-000000000004"
+    );
 
-      render(<Component />, { wrapper });
+    render(<Component />, { wrapper });
 
-      const text = {
-        metrics: "Commits",
-        widgets: "Commits",
-        dashboards: "Board",
-      };
-      await user.type(
-        screen.getByLabelText("Name"),
-        text[kind as keyof typeof text]
-      );
-      await user.click(screen.getByRole("button", { name: "JSON" }));
-      const document = screen.getByLabelText(/as text/i);
-      await user.clear(document);
-      await user.type(document, '{{"title": "Board"}');
-      await user.click(screen.getByRole("button", { name: "Save" }));
+    const text = { metrics: "Commits", widgets: "Commits", dashboards: "Board" };
+    await user.type(screen.getByLabelText("Name"), text[kind as keyof typeof text]);
+    await user.click(screen.getByRole("button", { name: "JSON" }));
+    const document = screen.getByLabelText(/as text/i);
+    await user.clear(document);
+    await user.type(document, '{{"title": "Board"}');
+    await user.click(screen.getByRole("button", { name: "Save" }));
 
-      await waitFor(() =>
-        expect(customClient.createDefinition).toHaveBeenCalledWith(
-          kind,
-          text[kind as keyof typeof text],
-          { title: "Board" }
-        )
-      );
-      await waitFor(() =>
-        expect(portalRouter.navigations).toContainEqual({ to: catalogue })
-      );
-    }
-  );
+    await waitFor(() =>
+      expect(customClient.createDefinition).toHaveBeenCalledWith(
+        kind,
+        text[kind as keyof typeof text],
+        { title: "Board" }
+      )
+    );
+    await waitFor(() =>
+      expect(portalRouter.navigations).toContainEqual({
+        to: page,
+        params: { name: "0192f0aa-0000-7000-8000-000000000004" },
+      })
+    );
+  });
 
   it("will not store anything until it has been named", () => {
     render(<Component />, { wrapper });

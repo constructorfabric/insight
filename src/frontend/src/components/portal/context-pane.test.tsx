@@ -67,13 +67,16 @@ vi.mock("@/lib/portal/portal-store", async (orig) => ({
 vi.mock("@/api/custom-client", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   fetchDashboards: async () => ({
-    items: [{ id: "delivery", name: "delivery" }],
+    items: [
+      { id: "delivery", name: "delivery", owner_person_id: null, access: "ownerless" },
+    ],
     total: 14,
   }),
   fetchFolders: async () => ({
     folders: [
-      { id: "f1", name: "Platform", dashboards: 3 },
-      { id: "f2", name: "Product", dashboards: 0 },
+      { id: "f1", name: "Platform", owner_person_id: "me@x", access: "owner", dashboards: 3 },
+      { id: "f2", name: "Product", owner_person_id: null, access: "ownerless", dashboards: 0 },
+      { id: "f3", name: "Shared", owner_person_id: "other@x", access: "viewer", dashboards: 1 },
     ],
     unfiled: 11,
   }),
@@ -81,7 +84,7 @@ vi.mock("@/api/custom-client", async (orig) => ({
   renameFolder: (id: string, name: string) => mocks.renameFolder(id, name),
   deleteFolder: (id: string) => mocks.deleteFolder(id),
   fetchPins: () => mocks.fetchPins(),
-  fetchDashboardRead: (id: string) => mocks.fetchDashboardRead(id),
+  fetchDashboardRead: (name: string) => mocks.fetchDashboardRead(name),
 }));
 
 import { CustomApiError } from "@/api/custom-client";
@@ -176,10 +179,10 @@ describe("Home pane", () => {
     expect(item.result.current).toBe("health");
   });
 
-  it("keeps the Dashboards group from a viewer who cannot open dashboards", () => {
+  it("shows a member the planned Dashboards group too, since every viewer opens dashboards", () => {
     mocks.showPlanned = true;
     pane();
-    expect(screen.queryByText("My dashboards")).toBeNull();
+    expect(buttonFor("My dashboards")).toHaveAttribute("aria-disabled", "true");
   });
 
   it("shows an admin the planned Dashboards group only with planned sections on", () => {
@@ -527,6 +530,23 @@ describe("Reports pane", () => {
 });
 
 describe("Dashboards pane", () => {
+  beforeEach(() => {
+    mocks.isAdmin = true;
+  });
+
+  it("offers a member neither the catalogues nor what they own", async () => {
+    mocks.isAdmin = false;
+    inZone("custom");
+    pane();
+
+    expect(await screen.findByText("14")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Shared with me" })).toBeInTheDocument();
+    for (const name of ["Owned by me", "Metrics", "Widgets", "Datasets", "Alerts", "Orphaned"]) {
+      expect(screen.queryByRole("link", { name }), `should not link: ${name}`).toBeNull();
+    }
+    expect(screen.queryByText("Catalogue")).toBeNull();
+  });
+
   it("counts every dashboard beside All dashboards", async () => {
     inZone("custom");
     pane();
@@ -554,6 +574,37 @@ describe("Dashboards pane", () => {
       "href",
       "/portal/custom/alerts",
     );
+    expect(screen.getByRole("link", { name: "Orphaned" })).toHaveAttribute(
+      "href",
+      "/portal/custom/orphaned",
+    );
+  });
+
+  it("narrows the list to what the reader owns, or what is shared with them", () => {
+    inZone("custom");
+    pane();
+    expect(screen.getByRole("link", { name: "Owned by me" })).toHaveAttribute(
+      "href",
+      "/portal/custom?owned=me",
+    );
+    expect(screen.getByRole("link", { name: "Shared with me" })).toHaveAttribute(
+      "href",
+      "/portal/custom?owned=shared",
+    );
+  });
+
+  it("keeps the picked tags when narrowing by ownership", () => {
+    inZone("custom");
+    act(() => {
+      portalRouter.go("/portal/custom");
+      portalRouter.set({ tag: ["Ops"] });
+    });
+    pane();
+
+    const query = new URLSearchParams(
+      screen.getByRole("link", { name: "Owned by me" }).getAttribute("href")!.split("?")[1],
+    );
+    expect(Object.fromEntries(query)).toEqual({ owned: "me", tag: "Ops" });
   });
 
   it("no longer lists each saved dashboard", async () => {
@@ -563,17 +614,16 @@ describe("Dashboards pane", () => {
     expect(screen.queryByText("delivery")).toBeNull();
   });
 
-  it("shows the planned browse filters only with planned sections on", () => {
+  it("shows the planned browse filter only with planned sections on", () => {
     inZone("custom");
     const { unmount } = pane();
-    expect(screen.queryByText("Shared with me")).toBeNull();
+    expect(screen.queryByText("Starred")).toBeNull();
     unmount();
 
     mocks.showPlanned = true;
     pane();
-    for (const label of ["My dashboards", "Shared with me", "Starred"]) {
-      expect(buttonFor(label)).toHaveAttribute("aria-disabled", "true");
-    }
+    expect(buttonFor("Starred")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByText("My dashboards")).toBeNull();
     expect(screen.queryByText("Starter")).toBeNull();
   });
 });
@@ -606,6 +656,10 @@ describe("ContextPane highlight", () => {
 });
 
 describe("Dashboards pane folders", () => {
+  beforeEach(() => {
+    mocks.isAdmin = true;
+  });
+
   const onTheList = (folder?: string) => {
     inZone("custom");
     act(() => {
@@ -721,7 +775,37 @@ describe("Dashboards pane folders", () => {
     expect(mocks.renameFolder).toHaveBeenCalledWith("f1", "Core");
   });
 
-  it("asks before deleting a folder, and says where its dashboards go", async () => {
+  it("offers each folder only what the caller's access to it allows", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    expect(
+      (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+    ).toEqual(["Rename", "Share…", "Delete"]);
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("button", { name: "More for Product" }));
+    expect(
+      (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+    ).toEqual(["Rename", "Delete"]);
+    expect(screen.queryByRole("button", { name: "More for Shared" })).toBeNull();
+  });
+
+  it("offers a member no sharing of a folder they own", async () => {
+    mocks.isAdmin = false;
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    expect(
+      (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+    ).toEqual(["Rename", "Delete"]);
+  });
+
+  it("asks before deleting a folder, and says its dashboards stay", async () => {
     onTheList();
     pane();
     const user = userEvent.setup();
@@ -730,7 +814,7 @@ describe("Dashboards pane folders", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
     expect(await screen.findByRole("dialog")).toHaveTextContent(
-      "Its 3 dashboards move to Unfiled.",
+      "Its dashboards are not deleted.",
     );
     expect(mocks.deleteFolder).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Delete folder" }));
@@ -739,6 +823,10 @@ describe("Dashboards pane folders", () => {
 });
 
 describe("Dashboards pane pins", () => {
+  beforeEach(() => {
+    mocks.isAdmin = true;
+  });
+
   const TITLES: Record<string, string> = {
     hiring: "Hiring pipeline",
     delivery: "Delivery",
@@ -750,6 +838,8 @@ describe("Dashboards pane pins", () => {
       name: id,
       body: { title: TITLES[id] ?? "", widgets: [] },
       tags: [],
+      ownerPersonId: null,
+      access: "ownerless",
     }));
     inZone("custom");
   }
@@ -795,6 +885,8 @@ describe("Dashboards pane pins", () => {
             name: "Untitled board",
             body: { title: "", widgets: [] },
             tags: [],
+            ownerPersonId: null,
+            access: "ownerless",
           }),
     );
     inZone("custom");

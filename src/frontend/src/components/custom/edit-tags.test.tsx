@@ -6,7 +6,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchDashboardRead: vi.fn(),
     setDashboardTags: vi.fn(),
     fetchFolders: vi.fn(),
-    fetchDashboardFolder: vi.fn(),
   };
 });
 
@@ -30,6 +29,10 @@ function carrying(tags: string[]) {
     name: "delivery",
     body: { title: "Delivery", widgets: [] },
     tags,
+    ownerPersonId: null,
+    access: "ownerless",
+    folders: [],
+    carries: true,
   });
 }
 
@@ -40,7 +43,6 @@ beforeEach(() => {
     folders: [],
     unfiled: 1,
   });
-  vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
   vi.mocked(customClient.setDashboardTags).mockResolvedValue(undefined);
   carrying(["Ops"]);
 });
@@ -52,7 +54,7 @@ async function openTagsDialog(staleTime = 0) {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <DashboardMenu id="dash-1" name="delivery" />
+      <DashboardMenu id="delivery" name="delivery" access="ownerless" />
     </QueryClientProvider>
   );
 
@@ -84,7 +86,7 @@ describe("the tags dialog", () => {
     await user.click(await screen.findByRole("checkbox", { name: "Platform" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
 
-    expect(customClient.setDashboardTags).toHaveBeenCalledWith("dash-1", [
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", [
       "Ops",
       "Platform",
     ]);
@@ -97,7 +99,7 @@ describe("the tags dialog", () => {
     await user.click(await screen.findByRole("checkbox", { name: "Ops" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
 
-    expect(customClient.setDashboardTags).toHaveBeenCalledWith("dash-1", []);
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", []);
   });
 
   it("adds a new name ticked", async () => {
@@ -111,7 +113,7 @@ describe("the tags dialog", () => {
     expect(box("Hiring")).toBeChecked();
     expect(screen.getByRole("textbox", { name: "Add tag" })).toHaveValue("");
     await user.click(screen.getByRole("button", { name: "Done" }));
-    expect(customClient.setDashboardTags).toHaveBeenCalledWith("dash-1", [
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", [
       "Ops",
       "Hiring",
     ]);
@@ -149,7 +151,7 @@ describe("the tags dialog", () => {
     await user.type(screen.getByRole("textbox", { name: "Add tag" }), "Hiring");
     await user.click(screen.getByRole("button", { name: "Done" }));
 
-    expect(customClient.setDashboardTags).toHaveBeenCalledWith("dash-1", [
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", [
       "Ops",
       "Hiring",
     ]);
@@ -266,6 +268,10 @@ describe("the tags dialog", () => {
       name: "delivery",
       body: { title: "Delivery", widgets: [] },
       tags: ["Ops"],
+      ownerPersonId: null,
+      access: "ownerless",
+      folders: [],
+      carries: true,
     });
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Done" })).toBeEnabled()
@@ -273,7 +279,7 @@ describe("the tags dialog", () => {
     await user.click(screen.getByRole("button", { name: "Done" }));
 
     expect(customClient.setDashboardTags).toHaveBeenCalledWith(
-      "dash-1",
+      "delivery",
       expect.arrayContaining(["Ops"])
     );
   });
@@ -290,7 +296,7 @@ describe("the tags dialog", () => {
     await waitFor(() => expect(box("Platform")).toBeChecked());
     await user.click(screen.getByRole("button", { name: "Done" }));
 
-    expect(customClient.setDashboardTags).toHaveBeenCalledWith("dash-1", [
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", [
       "Ops",
       "Platform",
     ]);
