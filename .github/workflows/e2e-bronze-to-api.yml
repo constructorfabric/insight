@@ -1,36 +1,15 @@
 name: E2E bronze to API
 
-# End-to-end data-path tests: a spec seeds bronze, dbt builds staging, silver
-# and gold on a ClickHouse the stand raised, identity mints the spec's people
-# through the product, and the metric is read back over HTTP as a seeded
-# persona. The assertions are pytest; the specs are tests/datapath/metrics.
-#
-# This is the DATA-PATH suite, and only that. The HTTP CONTRACT suites the `api`
-# and `identity` lanes once ran retired: those contracts are asserted against a
-# deployed stand in `e2e-stand.yml` (tests/stand), which crosses a real gateway
-# with a real Keycloak session and can therefore prove the 401/403 behaviour an
-# in-process rig structurally cannot. What is left here is what only a suite
-# that seeds its own bronze can do — bronze → dbt → ClickHouse → analytics
-# response for the metric specs, and identity's own data path (a connector's
-# output reaching persons-seed, and an operator's correction surviving the seed
-# run after it), both read back as real stand personas.
-#
-# Topology: a cheap `changes` job decides whether the diff can reach the data
-# path at all and everything expensive hangs off it. The suite is a shard
-# matrix, one leg per metric class plus one for identity: each leg raises a
-# MINIMAL compose stand of its own (`dev-compose.sh test-stand minimal
-# --pinned` — identity and the realm seeded, the warehouse empty), pulls the
-# chart-pinned backend images or, when the diff touched the backend, mounts
-# the binaries and loads the gateway/insight-v3-core images `build-backend`
-# produced once for every shard, runs its
-# directories of the suite host-side with uv, and the metric legs upload that
-# session's `.artifacts/` for `metric-coverage-gate`, a pure-Python check over
-# two JSON files: the builtin metric catalogue the run read from analytics, and
-# the ledger of what it asserted.
-#
-# Code:  tests/datapath/ and tests/lib/insight_datapath/
+# INVARIANT: candidate calls use one verified image set for every shard and
+# keep API endpoint coverage alongside metric coverage before publication.
 
 on:
+  workflow_call:
+    inputs:
+      candidate_artifact:
+        description: "Verified candidate inputs from the calling build run."
+        required: true
+        type: string
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit merge_group,
   # and the required "Run E2E suite" check must report there or every queued PR
   # times out and is evicted.
@@ -56,8 +35,8 @@ on:
 # A new push obsoletes any run still in flight for the same ref — cancel it so a
 # rebase/force-push doesn't leave a slow suite burning minutes.
 concurrency:
-  group: e2e-bronze-to-api-${{ github.ref }}
-  cancel-in-progress: true
+  group: e2e-bronze-to-api-${{ github.ref }}-${{ inputs.candidate_artifact != '' && github.run_id || 'source' }}
+  cancel-in-progress: ${{ inputs.candidate_artifact == '' }}
 
 env:
   CI: "true"
@@ -122,8 +101,14 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          CANDIDATE: ${{ inputs.candidate_artifact }}
         run: |
           set -euo pipefail
+          if [ -n "$CANDIDATE" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "backend=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # A push run exists only to warm the backend build cache; the paths:
           # filter already scoped it, so compile unconditionally and skip the diff.
           if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
@@ -137,7 +122,8 @@ jobs:
           # a guess.
           if [ -z "${BASE:-}" ]; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "no base sha — running"
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            echo "no base sha — building the selected source"
             exit 0
           fi
           # Diff from the MERGE BASE, not from the base branch's tip. A two-dot
@@ -149,6 +135,7 @@ jobs:
           base_point="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || true)"
           if [ -z "$base_point" ]; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "backend=true" >> "$GITHUB_OUTPUT"
             echo "no merge base between $BASE and $HEAD — running"
             exit 0
           fi
@@ -303,11 +290,12 @@ jobs:
     # `!cancelled()` so a skipped build-backend (backend untouched → pinned
     # images) does not skip the shards along with it; the result check keeps a
     # FAILED build from letting them run against stale binaries.
-    if: ${{ !cancelled() && github.event_name != 'push' && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || inputs.candidate_artifact != '') && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
-    timeout-minutes: 80
+    timeout-minutes: ${{ inputs.candidate_artifact != '' && 60 || 80 }}
     permissions:
       contents: read
+      actions: read
       packages: read
     strategy:
       # Every leg reports: a red shard must not cancel its siblings, or their
@@ -324,7 +312,7 @@ jobs:
         # time from the tree, so a new class can never silently fall out of
         # CI. Rebalancing = naming a class here AND excluding it in the run
         # step's `rest` branch.
-        shard: [ai, git, tasks, rest, identity]
+        shard: ${{ fromJSON(inputs.candidate_artifact != '' && '["ai","git","tasks","rest","identity","api"]' || '["ai","git","tasks","rest","identity"]') }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -390,7 +378,20 @@ jobs:
       # `minimal` seeds identity and the realm and leaves the warehouse empty:
       # the suite writes its own bronze and clears it between specs, and the
       # guard at its door refuses an instance whose seed shares those tables.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: inputs.candidate_artifact != ''
+        with:
+          name: ${{ inputs.candidate_artifact }}
+          path: candidate-inputs
+
+      - name: Bring the candidate stand up
+        if: inputs.candidate_artifact != ''
+        env:
+          MODE: ${{ matrix.shard == 'api' && 'up' || 'minimal' }}
+        run: bash .github/workflows/scripts/start-candidate-stand.sh candidate-inputs "$GITHUB_SHA" "$MODE"
+
       - name: Bring a minimal stand up
+        if: inputs.candidate_artifact == ''
         id: stand-up
         env:
           BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
@@ -414,6 +415,7 @@ jobs:
       # `test-stand test` picks the suite's own dependency group for a tree
       # under tests/datapath and aims it at the stand it just raised.
       - name: Run the data-path shard
+        if: matrix.shard != 'api'
         id: suite
         env:
           SHARD: ${{ matrix.shard }}
@@ -443,10 +445,24 @@ jobs:
           # between them a shard that runs long says where the time went.
           ./dev-compose.sh test-stand test "${trees[@]}" --tb=short -v --durations=25 --log-cli-level=INFO
 
+      - name: Run API contracts and harness tests
+        if: matrix.shard == 'api'
+        run: ./dev-compose.sh test-stand test --ignore=tests/stand/ui
+
+      - name: Require API endpoint coverage
+        if: matrix.shard == 'api'
+        run: |
+          set -euo pipefail
+          python3 tests/lib/insight_stand/coverage.py \
+            --observed .artifacts/stand_observed_endpoints.json \
+            --catalogue .artifacts/stand_operations.json \
+            --spec docs/components/backend/analytics/openapi.json | tee api-coverage.md
+          cat api-coverage.md >> "$GITHUB_STEP_SUMMARY"
+
       # The shards' ledgers merge into one directory, which keeps one file per
       # name — so each carries its own or the gate sees a quarter of the coverage.
       - name: Name this shard's assertion ledger
-        if: ${{ !cancelled() && matrix.shard != 'identity' }}
+        if: ${{ !cancelled() && matrix.shard != 'identity' && matrix.shard != 'api' }}
         env:
           SHARD: ${{ matrix.shard }}
         run: |
@@ -460,7 +476,7 @@ jobs:
       # run. metric_definitions.json is the full builtin catalogue, identical
       # in every shard; the ledgers are per shard and the gate unions them.
       - name: Upload coverage inputs
-        if: ${{ !cancelled() && matrix.shard != 'identity' }}
+        if: ${{ !cancelled() && matrix.shard != 'identity' && matrix.shard != 'api' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-inputs-metrics-${{ matrix.shard }}
@@ -539,16 +555,12 @@ jobs:
     # The required check the `main` ruleset names — the name is branch-protection
     # config, so keep it even as `needs:` changes.
     #
-    # It no longer folds in an endpoint-coverage gate: after the api/identity
-    # retirement this workflow has none — those contracts and their gate live in
-    # `e2e-stand.yml`, under its own umbrella ("Stand E2E").
-    #
     needs:
       - changes
       - build-backend
       - e2e-datapath
       - metric-coverage-gate
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'push' || inputs.candidate_artifact != '') }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:

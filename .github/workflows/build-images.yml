@@ -23,10 +23,18 @@ on:
       - ".github/workflows/scripts/verify-chart-candidate.sh"
       - ".github/workflows/deploy-test-stand.yml"
       - "scripts/ci/prebuilt_images.py"
+      - "scripts/ci/candidate_inputs.py"
+      - "tests/datapath/**"
       - "tests/stand/**"
       - "tests/lib/**"
       - "tests/pyproject.toml"
       - "tests/uv.lock"
+      - "dev-compose.sh"
+      - "docker-compose.yml"
+      - "deploy/compose/**"
+      - ".env.compose.example"
+      - ".github/workflows/e2e-bronze-to-api.yml"
+      - ".github/workflows/scripts/start-candidate-stand.sh"
   pull_request:
     branches: ["release-**"]
     paths:
@@ -45,6 +53,18 @@ on:
       - ".github/workflows/scripts/verify-chart-candidate.sh"
       - ".github/workflows/deploy-test-stand.yml"
       - "scripts/ci/prebuilt_images.py"
+      - "scripts/ci/candidate_inputs.py"
+      - "tests/datapath/**"
+      - "tests/stand/**"
+      - "tests/lib/**"
+      - "tests/pyproject.toml"
+      - "tests/uv.lock"
+      - "dev-compose.sh"
+      - "docker-compose.yml"
+      - "deploy/compose/**"
+      - ".env.compose.example"
+      - ".github/workflows/e2e-bronze-to-api.yml"
+      - ".github/workflows/scripts/start-candidate-stand.sh"
   workflow_call:
   # A manual dispatch is a full rebuild by default: every service and
   # connector image is rebuilt regardless of changed paths, and publish-chart
@@ -99,6 +119,7 @@ jobs:
     permissions:
       contents: read
     outputs:
+      candidate_checks: ${{ steps.filter.outputs.candidate_checks }}
       analytics: ${{ steps.filter.outputs.analytics == 'true' || (github.event_name == 'merge_group' && steps.filter.outputs.mq_analytics == 'true') }}
       authenticator: ${{ steps.filter.outputs.authenticator == 'true' || (github.event_name == 'merge_group' && steps.filter.outputs.mq_authenticator == 'true') }}
       gateway: ${{ steps.filter.outputs.gateway == 'true' || (github.event_name == 'merge_group' && steps.filter.outputs.mq_gateway == 'true') }}
@@ -275,6 +296,15 @@ jobs:
             # silently stale published image.
             seed:
               - 'src/ingestion/**'
+            candidate_checks:
+              - 'tests/**'
+              - 'dev-compose.sh'
+              - 'docker-compose.yml'
+              - 'deploy/compose/**'
+              - '.env.compose.example'
+              - 'scripts/ci/candidate_inputs.py'
+              - '.github/workflows/e2e-bronze-to-api.yml'
+              - '.github/workflows/scripts/start-candidate-stand.sh'
             umbrella:
               - 'charts/insight/**'
               - 'src/backend/services/*/helm/**'
@@ -1979,6 +2009,7 @@ jobs:
         || needs.changes.outputs.seed         == 'true'
         || needs.changes.outputs.umbrella     == 'true'
         || needs.changes.outputs.validation   == 'true'
+        || (github.ref == 'refs/heads/main' && needs.changes.outputs.candidate_checks == 'true')
       )
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     permissions:
