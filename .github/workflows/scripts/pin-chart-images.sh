@@ -19,6 +19,7 @@ while IFS=$'\t' read -r alias repository; do
   [[ -n "$tag" ]] || tag="$(yq -r '.appVersion' "$dependency/Chart.yaml")"
   ref="$(pin_image "$image_repository:$tag")"
   # INVARIANT: tag@digest preserves the existing repository:tag templates while fixing content identity.
+  IMAGE_REPOSITORY="$image_repository" yq -i ".${alias}.image.repository = strenv(IMAGE_REPOSITORY)" "$chart/values.yaml"
   PINNED_TAG="${ref#"$image_repository:"}" yq -i ".${alias}.image.tag = strenv(PINNED_TAG)" "$chart/values.yaml"
 done <<< "$dependencies"
 

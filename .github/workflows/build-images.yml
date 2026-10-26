@@ -21,6 +21,18 @@ on:
       - ".github/workflows/scripts/verify-chart-candidate.sh"
       - ".github/workflows/deploy-test-stand.yml"
       - "scripts/ci/prebuilt_images.py"
+      - "scripts/ci/candidate_inputs.py"
+      - "tests/datapath/**"
+      - "tests/stand/**"
+      - "tests/lib/**"
+      - "tests/pyproject.toml"
+      - "tests/uv.lock"
+      - "dev-compose.sh"
+      - "docker-compose.yml"
+      - "deploy/compose/**"
+      - ".env.compose.example"
+      - ".github/workflows/e2e-bronze-to-api.yml"
+      - ".github/workflows/scripts/start-candidate-stand.sh"
   pull_request:
     branches: ["release-**"]
     paths:
@@ -38,6 +50,18 @@ on:
       - ".github/workflows/scripts/verify-chart-candidate.sh"
       - ".github/workflows/deploy-test-stand.yml"
       - "scripts/ci/prebuilt_images.py"
+      - "scripts/ci/candidate_inputs.py"
+      - "tests/datapath/**"
+      - "tests/stand/**"
+      - "tests/lib/**"
+      - "tests/pyproject.toml"
+      - "tests/uv.lock"
+      - "dev-compose.sh"
+      - "docker-compose.yml"
+      - "deploy/compose/**"
+      - ".env.compose.example"
+      - ".github/workflows/e2e-bronze-to-api.yml"
+      - ".github/workflows/scripts/start-candidate-stand.sh"
   workflow_call:
   # A manual dispatch is a full rebuild by default: every service and
   # connector image is rebuilt regardless of changed paths, and publish-chart
@@ -92,6 +116,7 @@ jobs:
     permissions:
       contents: read
     outputs:
+      candidate_checks: ${{ steps.filter.outputs.candidate_checks }}
       analytics: ${{ steps.filter.outputs.analytics }}
       authenticator: ${{ steps.filter.outputs.authenticator }}
       gateway: ${{ steps.filter.outputs.gateway }}
@@ -287,6 +312,15 @@ jobs:
             seed:
               - '.github/workflows/build-images.yml'
               - 'src/ingestion/**'
+            candidate_checks:
+              - 'tests/**'
+              - 'dev-compose.sh'
+              - 'docker-compose.yml'
+              - 'deploy/compose/**'
+              - '.env.compose.example'
+              - 'scripts/ci/candidate_inputs.py'
+              - '.github/workflows/e2e-bronze-to-api.yml'
+              - '.github/workflows/scripts/start-candidate-stand.sh'
             umbrella:
               - '.github/workflows/release-helm.yml'
               - '.github/workflows/scripts/verify-chart-candidate.sh'
@@ -1954,6 +1988,7 @@ jobs:
         || needs.changes.outputs.toolbox      == 'true'
         || needs.changes.outputs.seed         == 'true'
         || needs.changes.outputs.umbrella     == 'true'
+        || (github.ref == 'refs/heads/main' && needs.changes.outputs.candidate_checks == 'true')
       )
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     permissions:
