@@ -1,7 +1,7 @@
 {{ config(
     materialized='table',
     engine='MergeTree',
-    order_by=['tenant_id', 'entity_id', 'metric_date'],
+    order_by=['tenant_id', 'entity_id', 'account_source_type', 'account_source_id', 'account_id', 'metric_date'],
     schema=var('gold_database'),
     alias='task_worklog_flow',
     tags=['gold'],
@@ -14,21 +14,35 @@
     }
 ) }}
 
+-- One row per person-day (see `task_person_day_group`): the evidence gates
+-- worklog seconds on the in-progress seconds of the same row, so the two must
+-- meet wherever the old email grain met them.
 
 WITH
+-- Same reads as task_issue_state: the tenant comes from the source, and the
+-- author joins LEFT with no email filter, so an author with no email or no
+-- directory row still owns the worklog through the account.
+source_tenants AS (
+    SELECT
+        insight_source_id,
+        min(tenant_id) AS tenant_id
+    FROM {{ ref('class_task_users') }} FINAL
+    GROUP BY insight_source_id
+),
 task_users AS (
     SELECT
-        tenant_id,
         insight_source_id,
         user_id,
-        lower(email) AS email
+        if(email LIKE '%@%', {{ normalized_email('email') }}, '') AS email
     FROM {{ ref('class_task_users') }} FINAL
-    WHERE email LIKE '%@%'
 ),
-in_progress_per_day AS (
+in_progress_per_account_day AS (
     SELECT
         s.tenant_id                                                          AS tenant_id,
         s.entity_id                                                          AS entity_id,
+        s.account_source_type                                                AS account_source_type,
+        s.account_source_id                                                  AS account_source_id,
+        s.account_id                                                         AS account_id,
         day                                                                  AS metric_date,
         sum(toFloat64(greatest(toInt64(0),
             dateDiff('second',
@@ -44,33 +58,75 @@ in_progress_per_day AS (
                      dateDiff('day', toDate(i.interval_start), toDate(i.interval_end)) + 1
                  )))) AS day
     WHERE i.status_category = 'in_progress'
-    GROUP BY s.tenant_id, s.entity_id, day
+    GROUP BY s.tenant_id, s.entity_id, s.account_source_type, s.account_source_id, s.account_id, day
 ),
--- in_progress_per_day inherits the availability filter through its
+-- in_progress_per_account_day inherits the availability filter through its
 -- task_issue_state join; worklogs aggregate per person without touching
 -- issues, so deletion awareness comes from the class contract's is_deleted
 -- (worklog tombstones + deleted parent issue).
-worklog_per_day AS (
+worklog_per_account_day AS (
     SELECT
-        u.tenant_id                                                          AS tenant_id,
-        u.email                                                              AS entity_id,
+        t.tenant_id                                                          AS tenant_id,
+        coalesce(u.email, '')                                                AS entity_id,
+        {{ task_account_source_type('w.data_source') }}                      AS account_source_type,
+        w.insight_source_id                                                  AS account_source_id,
+        w.author_id                                                          AS account_id,
         toDate(w.work_date)                                                  AS metric_date,
         sum(ifNull(w.duration_seconds, 0))                                   AS worklog_seconds
     FROM {{ ref('class_task_worklogs') }} AS w FINAL
-    INNER JOIN task_users AS u
+    INNER JOIN source_tenants AS t
+        ON t.insight_source_id = w.insight_source_id
+    LEFT JOIN task_users AS u
         ON u.insight_source_id = w.insight_source_id AND u.user_id = w.author_id
     WHERE w.work_date IS NOT NULL
       AND ifNull(w.is_deleted, 0) = 0
-    GROUP BY u.tenant_id, u.email, toDate(w.work_date)
+      AND coalesce(w.author_id, '') != ''
+    GROUP BY t.tenant_id, entity_id, account_source_type, account_source_id, account_id, metric_date
+),
+account_days AS (
+    SELECT
+        tenant_id,
+        entity_id,
+        account_source_type,
+        account_source_id,
+        account_id,
+        metric_date,
+        in_progress_seconds,
+        toFloat64(0) AS worklog_seconds
+    FROM in_progress_per_account_day
+
+    UNION ALL
+
+    SELECT
+        tenant_id,
+        entity_id,
+        account_source_type,
+        account_source_id,
+        account_id,
+        metric_date,
+        toFloat64(0) AS in_progress_seconds,
+        toFloat64(worklog_seconds) AS worklog_seconds
+    FROM worklog_per_account_day
+),
+person_day_rows AS (
+    SELECT
+        tenant_id                                                            AS day_tenant_id,
+        entity_id                                                            AS day_entity_id,
+        account_source_type                                                  AS day_account_source_type,
+        account_source_id                                                    AS day_account_source_id,
+        account_id                                                           AS day_account_id,
+        {{ task_person_day_group('') }}                                      AS person_day,
+        metric_date                                                          AS day_metric_date,
+        in_progress_seconds                                                  AS day_in_progress_seconds,
+        worklog_seconds                                                      AS day_worklog_seconds
+    FROM account_days
 )
 SELECT
-    assumeNotNull(coalesce(ip.tenant_id, wl.tenant_id))                      AS tenant_id,
-    assumeNotNull(coalesce(ip.entity_id, wl.entity_id))                      AS entity_id,
-    assumeNotNull(coalesce(ip.metric_date, wl.metric_date))                  AS metric_date,
-    ifNull(ip.in_progress_seconds, 0)                                        AS in_progress_seconds,
-    ifNull(wl.worklog_seconds, 0)                                            AS worklog_seconds
-FROM in_progress_per_day AS ip
-FULL OUTER JOIN worklog_per_day AS wl
-    ON wl.tenant_id = ip.tenant_id
-    AND wl.entity_id = ip.entity_id
-    AND wl.metric_date = ip.metric_date
+    assumeNotNull(day_tenant_id)                                             AS tenant_id,
+    assumeNotNull(day_entity_id)                                             AS entity_id,
+    {{ task_person_day_account_columns('day_') }},
+    assumeNotNull(day_metric_date)                                           AS metric_date,
+    sum(day_in_progress_seconds)                                             AS in_progress_seconds,
+    sum(day_worklog_seconds)                                                 AS worklog_seconds
+FROM person_day_rows
+GROUP BY day_tenant_id, day_entity_id, person_day, day_metric_date
