@@ -548,3 +548,23 @@ describe("/portal/custom/$name — widgets that cannot be read", () => {
     expect(customClient.runDashboardWidget).not.toHaveBeenCalled();
   });
 });
+
+describe("/portal/custom/$name — a widget the service is too busy to run", () => {
+  it("says it is busy and runs it again on retry", async () => {
+    boardOfCommits();
+    vi.mocked(customClient.runDashboardWidget).mockRejectedValueOnce(
+      new customClient.CustomApiError(429, { detail: "busy" })
+    );
+
+    render(<Component />, { wrapper });
+
+    const busy = await screen.findByRole("status", {
+      name: "Busy, try again.",
+    });
+    await userEvent.click(within(busy).getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByRole("cell", { name: "59" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(customClient.runDashboardWidget).toHaveBeenCalledTimes(2);
+  });
+});

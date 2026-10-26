@@ -3,6 +3,7 @@ import { http, HttpResponse } from "msw";
 import type {
   Dashboard,
   DashboardAccess,
+  DashboardWidget,
   FolderAccess,
   Grant,
   GrantLevel,
@@ -16,6 +17,16 @@ const COLLEAGUE = PEOPLE[1]?.person_id ?? "";
 const LEAVER = PEOPLE[2]?.person_id ?? "";
 const UPDATED_AT = "2026-09-01T09:00:00.000Z";
 const EVERYONE = "everyone";
+const MAX_FOLDERS = 200;
+const MAX_PINS = 20;
+
+const DASHBOARD_NOT_EDITOR =
+  "only the owner or an editor can change this dashboard";
+const DASHBOARD_NOT_SHARER =
+  "only the owner or an editor granted this dashboard directly or through everyone can share it";
+const FOLDER_NOT_EDITOR = "only the owner or an editor can change this folder";
+const FOLDER_NOT_OWNER = "only the owner can delete this folder";
+const ADMIN_ONLY = "admin role required for this operation";
 
 interface MockDashboard {
   name: string;
@@ -46,7 +57,7 @@ const granted = (grantee: string, level: GrantLevel, by: string): Grant => ({
 const dashboards: Record<string, MockDashboard> = {
   "delivery-overview": {
     name: "Delivery overview",
-    body: { title: "Delivery overview", widgets: [] },
+    body: { title: "Delivery overview", widgets: ["deploys-per-week"] },
     owner: CALLER,
     grants: [granted(COLLEAGUE, "editor", CALLER)],
   },
@@ -70,6 +81,25 @@ const dashboards: Record<string, MockDashboard> = {
   },
 };
 
+const widgets: Record<string, DashboardWidget> = {
+  "deploys-per-week": {
+    id: "deploys-per-week",
+    name: "Deploys per week",
+    body: { type: "table", metric: "deploys", columns: ["week", "deploys"] },
+    clock: null,
+  },
+};
+
+const ROWS = {
+  columns: ["week", "deploys"],
+  rows: [
+    ["2026-08-24", 12],
+    ["2026-08-31", 9],
+  ],
+};
+
+const pins: string[] = [];
+
 const folders: Record<string, MockFolder> = {
   "folder-delivery": {
     name: "Delivery",
@@ -82,6 +112,12 @@ const folders: Record<string, MockFolder> = {
     owner: LEAVER,
     grants: [granted(CALLER, "editor", LEAVER)],
     entries: [{ dashboard: "release-notes", carries: true }],
+  },
+  "folder-archive": {
+    name: "Archive",
+    owner: null,
+    grants: [],
+    entries: [{ dashboard: "team-activity", carries: false }],
   },
 };
 
@@ -113,7 +149,9 @@ function grantedLevel(grants: readonly Grant[]): GrantLevel | null {
 function folderAccessOf(id: string): FolderAccess | null {
   const folder = folders[id];
   if (!folder) return null;
-  if (folder.owner === null) return "ownerless";
+  if (folder.owner === null) {
+    return isAdministrator(CALLER) ? "ownerless" : null;
+  }
   if (folder.owner === CALLER) return "owner";
 
   return grantedLevel(folder.grants);
@@ -142,7 +180,6 @@ function accessOf(id: string): DashboardAccess | null {
   ]);
 }
 
-/** Whether an entry the caller adds would carry: owner, or a direct or Everyone Editor grant. */
 function carriesFor(id: string): boolean {
   const dashboard = dashboards[id];
   if (!dashboard) return false;
@@ -190,17 +227,26 @@ function page<T>(items: T[], query: URLSearchParams) {
 const notFound = () => new HttpResponse(null, { status: 404 });
 const done = () => new HttpResponse(null, { status: 204 });
 
-const denied = (detail: string) =>
-  HttpResponse.json({ detail }, { status: 403 });
+const denied = (reason: string) =>
+  HttpResponse.json(
+    {
+      detail: "You do not have permission to perform this operation",
+      context: { reason },
+    },
+    { status: 403 }
+  );
 
-const refusedTransfer = (kind: string, description: string) =>
+const conflict = (subject: string, kind: string, description: string) =>
   HttpResponse.json(
     {
       detail: "Failed precondition",
-      context: { violations: [{ type: kind, subject: "owner", description }] },
+      context: { violations: [{ type: kind, subject, description }] },
     },
     { status: 409 }
   );
+
+const refusedTransfer = (kind: string, description: string) =>
+  conflict("owner", kind, description);
 
 const notAdministrator = () =>
   HttpResponse.json(
@@ -219,17 +265,42 @@ const notAdministrator = () =>
     { status: 400 }
   );
 
-/** The grants of a dashboard or folder the caller may share, or a refusal. */
+function shareRefusal(kind: string, id: string): Response | null {
+  const dashboard = kind === "dashboards";
+  const access = dashboard ? accessOf(id) : folderAccessOf(id);
+  const noun = dashboard ? "dashboard" : "folder";
+
+  if (!access) return notFound();
+  if (access === "ownerless") {
+    return conflict(
+      "owner",
+      "ownerless",
+      `an ownerless ${noun} cannot be shared or transferred`
+    );
+  }
+  if (access === "viewer") {
+    return denied(dashboard ? DASHBOARD_NOT_EDITOR : FOLDER_NOT_EDITOR);
+  }
+  if (access === "owner") return null;
+
+  const direct = grantedLevel(
+    dashboards[id]?.grants ?? folders[id]?.grants ?? []
+  );
+  if (direct === "editor") return null;
+
+  return denied(dashboard ? DASHBOARD_NOT_SHARER : FOLDER_NOT_EDITOR);
+}
+
 function sharedThing(
   kind: string,
   id: string
 ): { grants: Grant[]; set: (grants: Grant[]) => void } | Response {
+  if (!isAdministrator(CALLER)) return denied(ADMIN_ONLY);
+
   const thing = kind === "dashboards" ? dashboards[id] : folders[id];
-  const access = kind === "dashboards" ? accessOf(id) : folderAccessOf(id);
-  if (!thing || !access) return notFound();
-  if (access !== "owner" && access !== "editor") {
-    return denied("only the owner or an editor can share this");
-  }
+  const refused = shareRefusal(kind, id);
+  if (refused) return refused;
+  if (!thing) return notFound();
 
   return {
     grants: thing.grants,
@@ -288,7 +359,14 @@ export const dashboardHandlers = [
     const query = new URL(request.url).searchParams;
     const items = Object.entries(folders).flatMap(([id, folder]) =>
       isOrphaned(folder.owner) && folder.grants.length > 0
-        ? [{ id, name: folder.name, owner_person_id: folder.owner }]
+        ? [
+            {
+              id,
+              name: folder.name,
+              owner_person_id: folder.owner,
+              updated_at: UPDATED_AT,
+            },
+          ]
         : []
     );
 
@@ -309,9 +387,25 @@ export const dashboardHandlers = [
       updated_at: UPDATED_AT,
     });
   }),
-  http.get("/api/v3/v1/dashboards/:id/widgets", ({ params }) =>
-    accessOf(String(params.id)) ? HttpResponse.json({ items: [] }) : notFound()
-  ),
+  http.get("/api/v3/v1/dashboards/:id/widgets", ({ params }) => {
+    const id = String(params.id);
+    const dashboard = dashboards[id];
+    if (!dashboard || !accessOf(id)) return notFound();
+
+    const items = (dashboard.body.widgets ?? []).flatMap((widget) => {
+      const drawn = widgets[widget];
+      return drawn ? [drawn] : [];
+    });
+    return HttpResponse.json({ items });
+  }),
+  http.post("/api/v3/v1/dashboards/:id/widgets/:widget/run", ({ params }) => {
+    const id = String(params.id);
+    const widget = String(params.widget);
+    const drawn = dashboards[id]?.body.widgets?.includes(widget);
+    if (!accessOf(id) || !drawn || !widgets[widget]) return notFound();
+
+    return HttpResponse.json(ROWS);
+  }),
   http.get("/api/v3/v1/:kind/:id/grants", ({ params }) => {
     const shared = sharedThing(String(params.kind), String(params.id));
     if (shared instanceof Response) return shared;
@@ -365,7 +459,37 @@ export const dashboardHandlers = [
     thing.owner = to;
     return done();
   }),
-  http.get("/api/v3/v1/pins", () => HttpResponse.json({ pins: [] })),
+  http.get("/api/v3/v1/pins", () =>
+    HttpResponse.json({
+      pins: pins.flatMap((id) => {
+        const shown = listed(id);
+        return shown ? [{ id, name: shown.name }] : [];
+      }),
+    })
+  ),
+  http.put("/api/v3/v1/pins/:id", ({ params }) => {
+    const id = String(params.id);
+    if (!accessOf(id)) return notFound();
+    if (pins.includes(id)) return done();
+    if (pins.length >= MAX_PINS) {
+      return conflict(
+        "name",
+        "too_many",
+        `at most ${MAX_PINS} dashboards can be pinned; unpin one first`
+      );
+    }
+
+    pins.push(id);
+    return done();
+  }),
+  http.delete("/api/v3/v1/pins/:id", ({ params }) => {
+    const id = String(params.id);
+    const at = pins.indexOf(id);
+    if (at === -1) return accessOf(id) ? done() : notFound();
+
+    pins.splice(at, 1);
+    return done();
+  }),
   http.get("/api/v3/v1/folders", () => {
     const shown = visibleFolders().flatMap((id) => {
       const folder = folders[id];
@@ -392,18 +516,70 @@ export const dashboardHandlers = [
   }),
   http.post("/api/v3/v1/folders", async ({ request }) => {
     const { name } = (await request.json()) as { name: string };
+    const owned = Object.values(folders).filter(
+      (folder) => folder.owner === CALLER
+    ).length;
+    if (owned >= MAX_FOLDERS) {
+      return conflict(
+        "name",
+        "too_many",
+        `at most ${MAX_FOLDERS} folders can be yours; delete one first`
+      );
+    }
+
     const id = `folder-${Object.keys(folders).length + 1}`;
     folders[id] = { name, owner: CALLER, grants: [], entries: [] };
 
-    return HttpResponse.json({ id, name }, { status: 201 });
+    return HttpResponse.json(
+      { id, name, owner_person_id: CALLER, access: "owner" },
+      { status: 201 }
+    );
+  }),
+  http.patch("/api/v3/v1/folders/:id", async ({ params, request }) => {
+    const id = String(params.id);
+    const folder = folders[id];
+    const access = folderAccessOf(id);
+    if (!folder || !access) return notFound();
+    if (access === "viewer") return denied(FOLDER_NOT_EDITOR);
+
+    const { name } = (await request.json()) as { name: string };
+    folder.name = name.trim();
+    return HttpResponse.json({
+      id,
+      name: folder.name,
+      owner_person_id: folder.owner,
+      access,
+    });
+  }),
+  http.delete("/api/v3/v1/folders/:id", ({ params }) => {
+    const id = String(params.id);
+    const access = folderAccessOf(id);
+    if (!access) return notFound();
+    if (access !== "owner" && access !== "ownerless") {
+      return denied(FOLDER_NOT_OWNER);
+    }
+
+    delete folders[id];
+    return done();
   }),
   http.put("/api/v3/v1/folders/:id/dashboards/:dashboard", ({ params }) => {
     const folder = folders[String(params.id)];
     const dashboard = String(params.dashboard);
     const access = folderAccessOf(String(params.id));
-    if (!folder || !access || !accessOf(dashboard)) return notFound();
-    if (access === "viewer")
-      return denied("only the owner or an editor can change this folder");
+    if (!folder || !access) return notFound();
+    if (access === "viewer") return denied(FOLDER_NOT_EDITOR);
+
+    const seen = accessOf(dashboard);
+    if (!seen) return notFound();
+    if ((seen === "ownerless") !== (access === "ownerless")) {
+      return conflict(
+        "folder",
+        "wrong_shelf",
+        seen === "ownerless"
+          ? "an ownerless dashboard goes only in an ownerless folder"
+          : "an ownerless folder holds only ownerless dashboards"
+      );
+    }
 
     const carries = carriesFor(dashboard);
     folder.entries = [
@@ -416,8 +592,7 @@ export const dashboardHandlers = [
     const folder = folders[String(params.id)];
     const access = folderAccessOf(String(params.id));
     if (!folder || !access) return notFound();
-    if (access === "viewer")
-      return denied("only the owner or an editor can change this folder");
+    if (access === "viewer") return denied(FOLDER_NOT_EDITOR);
 
     const dashboard = String(params.dashboard);
     folder.entries = folder.entries.filter(

@@ -40,6 +40,29 @@ describe("personNameQuery", () => {
     expect(identityClient.searchPersons).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["a person with no name", [{ person_id: PERSON, display_name: null }]],
+    ["a person the search does not find", []],
+  ])(
+    "falls back to the id through the tenant search for %s",
+    async (_case, items) => {
+      vi.mocked(identityClient.searchPersons).mockResolvedValue({
+        items: items as never,
+      });
+
+      await expect(read("tenant"), `case: ${_case}`).resolves.toBe(PERSON);
+    }
+  );
+
+  it("never answers the id through the roster for a person with no name", async () => {
+    vi.mocked(identityClient.getPerson).mockResolvedValue({
+      person_id: PERSON,
+      display_name: null,
+    } as never);
+
+    await expect(read("roster")).resolves.toBeNull();
+  });
+
   it("fails when the roster refuses the person, so no owner is shown", async () => {
     vi.mocked(identityClient.getPerson).mockRejectedValue(
       new identityClient.IdentityApiError(404, null)

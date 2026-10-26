@@ -291,3 +291,29 @@ describe("adding a dashboard to a folder", () => {
     }
   );
 });
+
+describe("adding a dashboard to a folder whose people cannot be read", () => {
+  it("warns anyway when the entry carries", async () => {
+    vi.mocked(customClient.fetchFolders).mockResolvedValue({
+      folders: FOLDERS,
+      unfiled: 1,
+    });
+    vi.mocked(customClient.fetchGrants).mockRejectedValue(
+      new customClient.CustomApiError(403, null)
+    );
+    const user = await openMenu("owner");
+    await user.click(screen.getByRole("menuitem", { name: "Add to folder…" }));
+    const dialog = await screen.findByRole("dialog");
+
+    await user.click(
+      await within(dialog).findByRole("combobox", { name: "Folder" })
+    );
+    await user.click(await screen.findByRole("option", { name: "Mine" }));
+
+    expect(
+      await within(dialog).findByText(
+        "People with access to Mine will see this dashboard."
+      )
+    ).toBeInTheDocument();
+  });
+});

@@ -255,7 +255,6 @@ export function foldersQuery() {
   });
 }
 
-/** Who a dashboard or folder is shared with; only its owner or an editor may read it. */
 export function grantsQuery(target: GrantTarget) {
   return queryOptions({
     queryKey: [...GRANTS_PREFIX, target.kind, target.id],
@@ -271,7 +270,6 @@ const FETCH_ORPHANS: {
   folders: fetchOrphanedFolders,
 };
 
-/** The dashboards or folders whose owner is no longer an administrator, a page at a time. */
 export function orphanedPagesQuery<K extends OrphanKind>(kind: K) {
   type Orphan = K extends "dashboards" ? OrphanedDashboard : OrphanedFolder;
 
@@ -292,7 +290,6 @@ export function orphanedPagesQuery<K extends OrphanKind>(kind: K) {
   });
 }
 
-/** The widgets a dashboard draws, read through the dashboard. */
 export function dashboardWidgetsQuery(id: string) {
   return queryOptions({
     queryKey: [...WIDGET_QUERY_PREFIX, "of", id],
@@ -399,7 +396,6 @@ export function metricResultQuery(id: string, options?: RunOptions) {
   });
 }
 
-/** One widget of a dashboard, run as the dashboard draws it, over one window. */
 export function dashboardWidgetResultQuery(
   dashboard: string,
   widget: string,
@@ -576,7 +572,6 @@ export function useDeleteFolder() {
   });
 }
 
-/** One dashboard in one folder, as an entry is addressed. */
 export interface FolderEntry {
   folder: string;
   dashboard: string;

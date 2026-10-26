@@ -6,7 +6,6 @@ import type {
 
 /** What a caller with this access may do to a dashboard beyond opening, pinning and filing it. */
 export interface DashboardAllows {
-  /** Edit, rename, duplicate and tag. */
   edit: boolean;
   share: boolean;
   remove: boolean;
@@ -25,9 +24,7 @@ export function dashboardAllows(access: DashboardAccess): DashboardAllows {
   }
 }
 
-/** What a caller with this access may do to a folder beyond opening it. */
 export interface FolderAllows {
-  /** Rename it, and add or remove the dashboards in it. */
   edit: boolean;
   share: boolean;
   remove: boolean;

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 
 import {
   CustomApiError,
+  isBusy,
   type DashboardRead,
   type DashboardWidget,
   type RunOptions,
@@ -292,6 +293,7 @@ function DashboardWidgetSlot({
       error={resultState.error}
       windowed={Boolean(options)}
       pending={resultState.isPending || resultState.isFetching}
+      onRetry={() => void resultState.refetch()}
     />
   );
 
@@ -318,37 +320,37 @@ function DashboardWidgetSlot({
           </Button>
         ) : null}
       </CardHeader>
-      {isAdmin ? (
-        <>
-          <CardContent
-            role="button"
-            tabIndex={0}
-            aria-label={label}
-            className="max-h-72 cursor-pointer overflow-auto"
-            onClick={() => setDrilldown(true)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                setDrilldown(true);
-              }
-            }}
-          >
-            {drawn}
-          </CardContent>
-          <WidgetDrilldown
-            dashboard={dashboard}
-            widgetId={id}
-            widget={widget.body}
-            name={name}
-            label={heading}
-            open={drilldown}
-            onOpenChange={setDrilldown}
-            options={options}
-          />
-        </>
+      {isAdmin && !isBusy(resultState.error) ? (
+        <CardContent
+          role="button"
+          tabIndex={0}
+          aria-label={label}
+          className="max-h-72 cursor-pointer overflow-auto"
+          onClick={() => setDrilldown(true)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setDrilldown(true);
+            }
+          }}
+        >
+          {drawn}
+        </CardContent>
       ) : (
         <CardContent className="max-h-72 overflow-auto">{drawn}</CardContent>
       )}
+      {isAdmin ? (
+        <WidgetDrilldown
+          dashboard={dashboard}
+          widgetId={id}
+          widget={widget.body}
+          name={name}
+          label={heading}
+          open={drilldown}
+          onOpenChange={setDrilldown}
+          options={options}
+        />
+      ) : null}
     </Card>
   );
 }

@@ -21,7 +21,6 @@ import {
   useRemoveFromFolder,
 } from "@/queries/custom";
 
-/** The folders holding a dashboard, each removable where the caller edits that folder. */
 export function DashboardFolders({
   id,
   folders,
@@ -84,7 +83,6 @@ export function DashboardFolders({
   );
 }
 
-/** Adds a dashboard to one more folder the caller edits. */
 export function AddToFolder({
   id,
   name,
@@ -154,7 +152,6 @@ export function AddToFolder({
           onChange={setPicked}
         />
       )}
-      {/* INVARIANT: an ownerless folder cannot be shared, so it has no one to warn about. */}
       {chosen && chosen.access !== "ownerless" && read.data?.carries ? (
         <FolderAudience folderId={chosen.id} folderName={chosen.name} />
       ) : null}
@@ -162,7 +159,6 @@ export function AddToFolder({
   );
 }
 
-/** Warns that a folder shared with people opens the dashboard to them too. */
 function FolderAudience({
   folderId,
   folderName,
@@ -172,7 +168,8 @@ function FolderAudience({
 }) {
   const grants = useQuery(grantsQuery({ kind: "folders", id: folderId }));
 
-  if (!grants.data || grants.data.length === 0) return null;
+  if (grants.isPending) return null;
+  if (grants.isSuccess && grants.data.length === 0) return null;
 
   return (
     <p role="status" className={cn(TEXT_BODY, "text-muted-foreground")}>

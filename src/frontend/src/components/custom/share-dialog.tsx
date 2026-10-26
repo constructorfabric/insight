@@ -1,9 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Globe, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import {
   EVERYONE,
+  isDenied,
   type Grant,
   type GrantLevel,
   type GrantTarget,
@@ -19,6 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { toast } from "@/components/ui/sonner";
 import { Spinner } from "@/components/ui/spinner";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -41,7 +43,6 @@ function shownOrder(grants: readonly Grant[]): Grant[] {
   );
 }
 
-/** Who a dashboard or a folder is shared with, and at what level. */
 export function ShareDialog({
   target,
   title,
@@ -55,11 +56,13 @@ export function ShareDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const queryClient = useQueryClient();
   const grants = useQuery({ ...grantsQuery(target), enabled: open });
   const put = usePutGrant(target);
   const remove = useDeleteGrant(target);
   const [level, setLevel] = useState<GrantLevel>("viewer");
   const [error, setError] = useState<string | null>(null);
+  const changing = put.isPending || remove.isPending;
 
   const granted = grants.data ?? [];
   const toEveryone = granted.some((grant) => grant.grantee === EVERYONE);
@@ -72,17 +75,50 @@ export function ShareDialog({
     setError(null);
     put.mutate(
       { grantee, level: at },
-      { onError: (failure) => setError(refusal(failure, "Couldn't share.")) }
+      {
+        onSuccess: closeIfLockedOut,
+        onError: (failure) => refused(failure, "Couldn't share."),
+      }
     );
   }
 
   function withdraw(grantee: Grantee) {
     setError(null);
     remove.mutate(grantee, {
-      onError: (failure) =>
-        setError(refusal(failure, "Couldn't remove access.")),
+      onSuccess: closeIfLockedOut,
+      onError: (failure) => refused(failure, "Couldn't remove access."),
     });
   }
+
+  function refused(failure: unknown, fallback: string) {
+    if (isDenied(failure)) {
+      dismiss(refusal(failure, fallback));
+      return;
+    }
+    setError(refusal(failure, fallback));
+  }
+
+  // INVARIANT: runs after the grants re-read, because the grant hooks return
+  // that invalidation from onSettled and the mutation awaits it.
+  function closeIfLockedOut() {
+    const reread = queryClient.getQueryState(grantsQuery(target).queryKey);
+    if (isDenied(reread?.error)) dismiss(null);
+  }
+
+  function dismiss(notice: string | null) {
+    queryClient.removeQueries({ queryKey: grantsQuery(target).queryKey });
+    if (notice) toast.error(notice);
+    close();
+  }
+
+  const onGrantsDenied = useEffectEvent((failure: unknown) =>
+    dismiss(refusal(failure, "Couldn't read who it is shared with."))
+  );
+  useEffect(() => {
+    if (open && !changing && isDenied(grants.error)) {
+      onGrantsDenied(grants.error);
+    }
+  }, [open, changing, grants.error]);
 
   function close() {
     setError(null);

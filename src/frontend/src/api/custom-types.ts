@@ -118,7 +118,6 @@ export interface Listed {
 /** What the caller may do with a dashboard, as the service decides it. */
 export type DashboardAccess = "owner" | "editor" | "viewer" | "ownerless";
 
-/** What the caller may do with a folder, as the service decides it. */
 export type FolderAccess = "owner" | "editor" | "viewer" | "ownerless";
 
 export interface DashboardListed extends Listed {
@@ -167,7 +166,6 @@ export interface DashboardRead {
   carries: boolean;
 }
 
-/** One widget a dashboard draws, read through the dashboard. */
 export interface DashboardWidget {
   id: string;
   name: string;
@@ -176,10 +174,8 @@ export interface DashboardWidget {
   clock?: EffectiveClock | null;
 }
 
-/** How far a grant reaches. */
 export type GrantLevel = "viewer" | "editor";
 
-/** A person id, or `"everyone"` for every signed-in person. */
 export type Grantee = string;
 
 export interface Grant {
@@ -195,9 +191,9 @@ export interface OrphanedDashboard extends Listed {
   updated_at: string;
 }
 
-/** A shared folder whose owner no longer holds the administrator role. */
 export interface OrphanedFolder extends Listed {
   owner_person_id: string;
+  updated_at: string;
 }
 
 export interface TagSummary {

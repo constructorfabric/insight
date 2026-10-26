@@ -53,6 +53,14 @@ export class CustomApiError extends Error {
   }
 }
 
+export function isBusy(error: unknown): boolean {
+  return error instanceof CustomApiError && error.status === 429;
+}
+
+export function isDenied(error: unknown): boolean {
+  return error instanceof CustomApiError && error.status === 403;
+}
+
 /** Refuses with what the service said, or with nothing when it said nothing. */
 export async function ensureOk(res: Response): Promise<void> {
   if (!res.ok) {
@@ -266,10 +274,8 @@ export async function unpinDashboard(id: string): Promise<void> {
   await ensureOk(res);
 }
 
-/** The grantee that stands for every signed-in person. */
 export const EVERYONE: Grantee = "everyone";
 
-/** Something that carries grants: a dashboard or a folder, by id. */
 export interface GrantTarget {
   kind: "dashboards" | "folders";
   id: string;
@@ -287,7 +293,6 @@ export async function fetchGrants(target: GrantTarget): Promise<Grant[]> {
   return read.items;
 }
 
-/** Shares with one grantee at a level; granting again changes the level. */
 export async function putGrant(
   target: GrantTarget,
   grantee: Grantee,
@@ -321,7 +326,6 @@ export async function fetchOrphanedDashboards(
   return readJson<ListedPage<OrphanedDashboard>>(res);
 }
 
-/** One page of the shared folders whose owner is no longer an administrator. */
 export async function fetchOrphanedFolders(
   page: Pick<PageRequest, "limit" | "offset"> = {}
 ): Promise<ListedPage<OrphanedFolder>> {
@@ -329,10 +333,8 @@ export async function fetchOrphanedFolders(
   return readJson<ListedPage<OrphanedFolder>>(res);
 }
 
-/** What an orphan is: a dashboard or a folder. */
 export type OrphanKind = "dashboards" | "folders";
 
-/** Makes an administrator the owner of an orphaned dashboard or folder. */
 export async function transferOrphan(
   kind: OrphanKind,
   id: string,
@@ -396,7 +398,6 @@ export async function addToFolder(
   return readJson<{ carries: boolean }>(res);
 }
 
-/** Takes a dashboard out of one folder; the dashboard itself stays. */
 export async function removeFromFolder(
   folder: string,
   dashboard: string
@@ -563,7 +564,6 @@ export async function runMetric(
   return readJson<MetricResult>(res);
 }
 
-/** The widgets a dashboard draws, in its order, read through the dashboard. */
 export async function fetchDashboardWidgets(
   id: string
 ): Promise<DashboardWidget[]> {
@@ -577,7 +577,6 @@ function dashboardWidgetPath(dashboard: string, widget: string): string {
   return `${BASE}/dashboards/${named(dashboard)}/widgets/${named(widget)}`;
 }
 
-/** Runs one widget's metric as the dashboard holding it draws it. */
 export async function runDashboardWidget(
   dashboard: string,
   widget: string,
@@ -595,7 +594,6 @@ export async function runDashboardWidget(
   return readJson<MetricResult>(res);
 }
 
-/** One ordered page of the rows behind a dashboard's widget. The signal cancels a page the reader has moved past. */
 export async function fetchDashboardDrilldownPage(
   dashboard: string,
   widget: string,

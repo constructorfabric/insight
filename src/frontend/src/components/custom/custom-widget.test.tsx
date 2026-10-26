@@ -159,6 +159,38 @@ describe("<CustomWidget>", () => {
     expect(screen.getByRole("alert")).not.toHaveTextContent("400");
   });
 
+  it("says the service is busy and offers another try when a run is turned away", async () => {
+    const onRetry = vi.fn();
+    render(
+      <CustomWidget
+        widget={{ type: "table", metric: "m", columns: ["day"] }}
+        error={new CustomApiError(429, { detail: "every slot is taken" })}
+        onRetry={onRetry}
+      />
+    );
+
+    expect(screen.getByRole("status")).toHaveAccessibleName("Busy, try again.");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    screen.getByRole("button", { name: "Retry" }).click();
+    await waitFor(() => expect(onRetry).toHaveBeenCalledOnce());
+  });
+
+  it("waits rather than repeating busy while another try is in flight", () => {
+    render(
+      <CustomWidget
+        widget={{ type: "table", metric: "m", columns: ["day"] }}
+        error={new CustomApiError(429, null)}
+        pending
+      />
+    );
+
+    expect(screen.queryByText("Busy, try again.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
+  });
+
   it("says plainly when the failure carries nothing readable", () => {
     render(
       <CustomWidget

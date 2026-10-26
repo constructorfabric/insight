@@ -91,6 +91,7 @@ const ORPHANED_FOLDER = {
   id: "folder-1",
   name: "Handover",
   owner_person_id: LEAVER,
+  updated_at: "2026-08-15T00:00:00.000Z",
 };
 
 async function openTransfer(
@@ -131,6 +132,15 @@ describe("<Orphaned>", () => {
     expect(row).not.toBeNull();
     expect(row).toHaveTextContent("Erin Left");
     expect(row).toHaveTextContent("1 Sep 2026");
+  });
+
+  it("lists each orphaned folder with its owner and last change", async () => {
+    renderPage();
+
+    const row = (await screen.findByText("Handover")).closest("tr");
+    expect(row).not.toBeNull();
+    expect(row).toHaveTextContent("Erin Left");
+    expect(row).toHaveTextContent("15 Aug 2026");
   });
 
   it("says so when nothing is orphaned", async () => {

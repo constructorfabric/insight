@@ -51,7 +51,6 @@ export async function startUsageTelemetry(session: Session): Promise<void> {
   }
 }
 
-/** The pages under `/portal/custom` whose name is not a dashboard id. */
 const CUSTOM_PAGES = new Set([
   "metrics",
   "widgets",
@@ -69,8 +68,7 @@ export function screenPath(path: string): string {
   return segments
     .map((segment, i) =>
       // The segment after `/ic` is a person key whatever shape it arrives in;
-      // matching on shape alone lets an email through. A dashboard's id is
-      // the name its author gave it, so it goes the same way.
+      // matching on shape alone lets an email through.
       segments[i - 1] === "ic" ||
       isDashboardId(segments, i) ||
       isIdentifier(segment)

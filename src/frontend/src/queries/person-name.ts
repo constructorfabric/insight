@@ -11,7 +11,11 @@ import { useIsAdmin } from "@/queries/identity-me";
  */
 export type PersonNameSource = "tenant" | "roster";
 
-/** The name one person goes by. Null when the journal knows no name. */
+/**
+ * What to show for one person. The tenant search falls back to the id; the
+ * roster answers null for a person it names nothing, so a member never sees
+ * a raw id.
+ */
 export function personNameQuery(
   personId: string,
   source: PersonNameSource = "tenant"
@@ -30,7 +34,7 @@ export function personNameQuery(
         (item) => normalizePersonId(item.person_id) === id
       );
 
-      return person ? personName(person) : null;
+      return (person ? personName(person) : null) ?? id;
     },
   });
 }

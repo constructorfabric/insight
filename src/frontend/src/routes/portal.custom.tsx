@@ -30,7 +30,6 @@ export const Route = createFileRoute("/portal/custom")({
   component: CustomZone,
 });
 
-/** The pages open to a caller without the administrator role. */
 const MEMBER_ROUTES = new Set(["/portal/custom/", "/portal/custom/$name"]);
 
 function CustomZone() {

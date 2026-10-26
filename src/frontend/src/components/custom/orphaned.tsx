@@ -28,7 +28,6 @@ import { formatUtcInstant } from "@/lib/format";
 import { TEXT_HEADING, TEXT_TITLE } from "@/lib/type-scale";
 import { orphanedPagesQuery, useTransferOrphan } from "@/queries/custom";
 
-/** One orphan as the transfer acts on it. */
 interface Orphan {
   kind: OrphanKind;
   id: string;
@@ -99,9 +98,7 @@ function OrphanSection({
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Owner</TableHead>
-                {kind === "dashboards" ? (
-                  <TableHead>Last change</TableHead>
-                ) : null}
+                <TableHead>Last change</TableHead>
                 <TableHead className="w-28">
                   <span className="sr-only">Actions</span>
                 </TableHead>
@@ -116,11 +113,9 @@ function OrphanSection({
                   <TableCell className="max-w-0 truncate">
                     <PersonName personId={orphan.owner_person_id} />
                   </TableCell>
-                  {"updated_at" in orphan ? (
-                    <TableCell>
-                      {formatUtcInstant(orphan.updated_at, "d MMM yyyy")}
-                    </TableCell>
-                  ) : null}
+                  <TableCell>
+                    {formatUtcInstant(orphan.updated_at, "d MMM yyyy")}
+                  </TableCell>
                   <TableCell className="text-end">
                     <Button
                       variant="outline"

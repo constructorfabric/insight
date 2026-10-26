@@ -47,6 +47,9 @@ vi.mock("@/queries/person-name", () => ({
     data: people.names[personId ?? ""] ?? null,
   }),
 }));
+vi.mock("@/components/ui/sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
 vi.mock("@/hooks/use-debounced-value", () => ({
   useDebouncedValue: <T,>(value: T) => value,
 }));
@@ -54,11 +57,13 @@ vi.mock("@/hooks/use-debounced-value", () => ({
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import * as customClient from "@/api/custom-client";
 import { CustomApiError, type GrantTarget } from "@/api/custom-client";
+import { toast } from "@/components/ui/sonner";
 
 import { ShareDialog } from "./share-dialog";
 
@@ -71,24 +76,56 @@ const granted = (grantee: string, level: "viewer" | "editor") => ({
   created_at: "2026-09-01T09:00:00Z",
 });
 
+const REFUSALS: Record<
+  GrantTarget["kind"],
+  { reason: string; sentence: string }
+> = {
+  dashboards: {
+    reason:
+      "only the owner or an editor granted this dashboard directly or through everyone can share it",
+    sentence: "Editors through a folder can't share this dashboard.",
+  },
+  folders: {
+    reason: "only the owner or an editor can change this folder",
+    sentence: "Only the owner or an editor can change this folder.",
+  },
+};
+
 const TARGETS: [string, GrantTarget][] = [
   ["a dashboard", { kind: "dashboards", id: "dash-1" }],
   ["a folder", { kind: "folders", id: "folder-1" }],
 ];
 
-function renderDialog(target: GrantTarget) {
+function Opened({
+  target,
+  onClose,
+}: {
+  target: GrantTarget;
+  onClose: () => void;
+}) {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <ShareDialog
+      target={target}
+      title="Delivery"
+      ownerPersonId={OWNER}
+      open={open}
+      onClose={() => {
+        setOpen(false);
+        onClose();
+      }}
+    />
+  );
+}
+
+function renderDialog(target: GrantTarget, onClose = vi.fn()) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <ShareDialog
-        target={target}
-        title="Delivery"
-        ownerPersonId={OWNER}
-        open
-        onClose={vi.fn()}
-      />
+      <Opened target={target} onClose={onClose} />
     </QueryClientProvider>
   );
 
@@ -202,18 +239,105 @@ describe.each(TARGETS)("<ShareDialog> for %s", (_label, target) => {
 
   it("says what the service said when a grant is refused", async () => {
     vi.mocked(customClient.putGrant).mockRejectedValue(
-      new CustomApiError(403, {
-        detail: "only the owner or an editor can share this",
+      new CustomApiError(400, {
+        detail: "Invalid argument",
+        context: {
+          field_violations: [
+            { field: "grantee", description: "no person has the id" },
+          ],
+        },
       })
     );
-    const user = renderDialog(target);
+    const onClose = vi.fn();
+    const user = renderDialog(target, onClose);
     await within(sharedWith()).findByText("Carol Chen");
     await user.type(screen.getByRole("searchbox"), "an");
 
     await user.click(screen.getByRole("button", { name: "Dave Liu" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "only the owner or an editor can share this"
+      "no person has the id"
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["sharing with someone", "put"],
+    ["withdrawing a grant", "delete"],
+  ] as const)(
+    "closes with the service's sentence, once, when %s is refused",
+    async (_case, change) => {
+      const refused = new CustomApiError(403, {
+        detail: "You do not have permission to perform this operation",
+        context: { reason: REFUSALS[target.kind].reason },
+      });
+      vi.mocked(customClient.putGrant).mockRejectedValue(refused);
+      vi.mocked(customClient.deleteGrant).mockRejectedValue(refused);
+      const onClose = vi.fn();
+      const user = renderDialog(target, onClose);
+      await within(sharedWith()).findByText("Carol Chen");
+
+      if (change === "put") {
+        await user.type(screen.getByRole("searchbox"), "an");
+        await user.click(screen.getByRole("button", { name: "Dave Liu" }));
+      } else {
+        await user.click(
+          screen.getByRole("button", { name: "Stop sharing with Carol Chen" })
+        );
+      }
+
+      await waitFor(() => expect(onClose, `case: ${_case}`).toHaveBeenCalled());
+      expect(toast.error).toHaveBeenCalledOnce();
+      expect(toast.error).toHaveBeenCalledWith(REFUSALS[target.kind].sentence);
+      expect(screen.queryByRole("alert")).toBeNull();
+    }
+  );
+
+  it("closes with the service's word when who it is shared with may not be read", async () => {
+    vi.mocked(customClient.fetchGrants).mockRejectedValue(
+      new CustomApiError(403, {
+        detail: "You do not have permission to perform this operation",
+        context: { reason: "a reason this portal does not know" },
+      })
+    );
+    const onClose = vi.fn();
+    renderDialog(target, onClose);
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(toast.error).toHaveBeenCalledWith(
+      "You do not have permission to perform this operation"
     );
   });
+
+  it.each([
+    ["withdraws", "Stop sharing with Everyone", undefined],
+    ["lowers", "Level for Everyone", "Viewer"],
+  ])(
+    "closes quietly when the caller %s the grant they shared through",
+    async (_case, control, option) => {
+      vi.mocked(customClient.fetchGrants).mockResolvedValueOnce([
+        granted(CAROL, "viewer"),
+        granted("everyone", "editor"),
+      ]);
+      vi.mocked(customClient.fetchGrants).mockRejectedValue(
+        new CustomApiError(403, {
+          detail: "You do not have permission to perform this operation",
+          context: { reason: REFUSALS[target.kind].reason },
+        })
+      );
+      const onClose = vi.fn();
+      const user = renderDialog(target, onClose);
+      await within(sharedWith()).findByText("Carol Chen");
+
+      if (option) {
+        await pick(user, control, option);
+      } else {
+        await user.click(screen.getByRole("button", { name: control }));
+      }
+
+      await waitFor(() => expect(onClose, `case: ${_case}`).toHaveBeenCalled());
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(screen.queryByRole("alert")).toBeNull();
+    }
+  );
 });

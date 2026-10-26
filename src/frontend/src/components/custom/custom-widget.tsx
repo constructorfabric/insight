@@ -1,4 +1,4 @@
-import type { MetricResult, Widget } from "@/api/custom-client";
+import { isBusy, type MetricResult, type Widget } from "@/api/custom-client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { MetricName } from "@/components/custom/metric-name";
 import { refusal } from "@/components/custom/refusal";
@@ -21,6 +21,7 @@ export interface CustomWidgetProps {
   windowed?: boolean;
   /** Whether the run is still in flight, which is not the same as empty. */
   pending?: boolean;
+  onRetry?: () => void;
 }
 
 export function CustomWidget({
@@ -29,8 +30,22 @@ export function CustomWidget({
   error,
   windowed,
   pending,
+  onRetry,
 }: CustomWidgetProps) {
-  if (error) {
+  const busy = isBusy(error);
+
+  if (busy && !pending) {
+    return (
+      <ComingSoon
+        variant="card"
+        state="error"
+        label="Busy, try again."
+        onRetry={onRetry}
+      />
+    );
+  }
+
+  if (error && !busy) {
     return (
       <Alert variant="destructive">
         <AlertDescription>

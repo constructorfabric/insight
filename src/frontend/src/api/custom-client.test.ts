@@ -898,6 +898,7 @@ describe("orphans", () => {
           id: "f1",
           name: "Handover",
           owner_person_id: "00000000-0000-4000-8000-000000000003",
+          updated_at: "2026-09-25T10:00:00Z",
         },
       ],
       total: 1,
