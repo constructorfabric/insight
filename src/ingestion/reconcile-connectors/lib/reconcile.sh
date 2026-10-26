@@ -1327,6 +1327,12 @@ _reconcile_one_connector() {
     fi
     injected_json="$(GIT_PROXY_URL_VAL="${GIT_PROXY_URL}" GIT_PROXY_TOKEN_VAL="${GIT_PROXY_TOKEN}" \
       python3 -c 'import os, json; print(json.dumps({"git_proxy_url": os.environ["GIT_PROXY_URL_VAL"], "git_proxy_token": os.environ["GIT_PROXY_TOKEN_VAL"]}))')"
+    if ! cfg_hash="$(python3 "${_RECONCILE_PY_DIR}/platform_cfg_hash.py" "${cfg_hash}" "${injected_json}")" \
+        || [[ -z "${cfg_hash}" ]]; then
+      reconcile__log ERROR "${name}" "cannot fold the injected platform fields into the cfg-hash"
+      _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
+      return 1
+    fi
   fi
 
   local source_cfg_json
@@ -1365,29 +1371,14 @@ _reconcile_one_connector() {
   # Source create/update/recreate is data-affecting per ADR-0008.
   [[ "${src_action}" != "noop" ]] && data_changed=1
 
-  # A rotated proxy token is invisible to both drift signals: Airbyte returns
-  # `airbyte_secret: true` fields masked, so classify_change cannot see it, and
-  # the cfg-hash tag covers the K8s Secret, which does not carry an injected
-  # field. Re-push the composed config on every noop tick instead. Not
-  # data-affecting: the token re-authenticates the same dataset, so it does not
-  # warrant the forced re-sync a tenant credential change gets.
-  if [[ "${uses_git_proxy}" == "true" && "${src_action}" == "noop" ]]; then
-    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
-      reconcile__log CHANGE "${name}" "would refresh injected platform config on source ${src_id}"
-    elif ! ab_update_source "${src_id}" "${source_cfg_json}" "${expected_source_name}" >/dev/null; then
-      reconcile__log ERROR "${name}" "ab_update_source failed refreshing injected platform config for ${src_id}"
-      rc=1
-    fi
-  fi
-
   # Layer 3 — connection tags. Two outcomes are data-affecting and trigger
   # a sync afterwards:
   #   1. `created` — first-time bootstrap of the connection.
-  #   2. `patch_tags` — cfg-hash drift detected, i.e. the K8s Secret rotated.
-  #      Per ADR-0008 the layer is "tag-only" in the sense that we do not
-  #      recreate the connection, but a credential rotation is still a
-  #      genuine reason to re-sync (the new credentials may scope to a
-  #      different account / dataset).
+  #   2. `patch_tags` — cfg-hash drift detected: the K8s Secret or an
+  #      injected platform field rotated. Per ADR-0008 the layer is
+  #      "tag-only" in the sense that we do not recreate the connection, but
+  #      a credential rotation is still a genuine reason to re-sync (the new
+  #      credentials may scope to a different account / dataset).
   local conn_result conn_action conn_id
   if ! conn_result="$(reconcile_connections "${name}" "${src_id}" "${cfg_hash}" "${ns_format}" "${expected_source_name}")"; then
     log_line ERROR "${name}: failed to reconcile connection"
@@ -1401,12 +1392,15 @@ _reconcile_one_connector() {
       data_changed=1
       ;;
     patch_tags)
-      # cfg-hash drift = K8s Secret rotated. classify_change cannot tell
-      # because Airbyte returns secrets masked (`********`) on /sources/list,
-      # so the source diff was a false-noop. The cfg-hash tag is the
-      # canonical rotation signal; push the new config now so the sync we
-      # are about to trigger uses fresh credentials.
-      if ab_update_source "${src_id}" "${source_cfg_json}" \
+      # classify_change cannot see a rotated secret (Airbyte masks it on
+      # read), so the cfg-hash tag is the rotation signal; push the config
+      # now so the sync we are about to trigger uses fresh credentials.
+      # INVARIANT: ab_update_source only on cfg-hash drift — every update
+      # retires the previous secret version, and a sync still hydrating it
+      # fails.
+      if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+        reconcile__log CHANGE "${name}" "would rotate source ${src_id} credentials (cfg-hash drift)"
+      elif ab_update_source "${src_id}" "${source_cfg_json}" \
             "${expected_source_name}" >/dev/null; then
         reconcile__log INFO "${name}" \
           "rotated source ${src_id} credentials (cfg-hash drift)"
