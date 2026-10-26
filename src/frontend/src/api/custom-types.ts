@@ -9,7 +9,7 @@ import type {
 /** What every widget carries, whatever it draws. */
 interface WidgetBase {
   metric: string;
-  /** The heading a reader sees. Without it the card shows the identifier. */
+  /** The heading a reader sees. Without it the card shows the widget's name. */
   title?: string;
   /**
    * A metric for the drilldown to run instead of this widget's own.
@@ -108,8 +108,20 @@ export interface EffectiveClock {
   from: "metric" | "dataset";
 }
 
+export interface Listed {
+  id: string;
+  name: string;
+}
+
+export interface ListedPage {
+  items: Listed[];
+  total: number;
+}
+
 /** A stored definition as the service hands it back. */
 export interface DefinitionResponse<T> {
+  id: string;
+  name: string;
   body: T;
   /** Only a metric has one, and only when a window has a date to select by. */
   clock?: EffectiveClock;
@@ -119,6 +131,7 @@ export interface DefinitionResponse<T> {
 }
 
 export interface DashboardRead {
+  name: string;
   body: Dashboard;
   tags: string[];
   updatedAt?: string;
@@ -148,7 +161,7 @@ export interface FolderList {
 }
 
 export interface PinList {
-  pins: string[];
+  pins: Listed[];
 }
 
 /** A folder id, or `"unfiled"` for the dashboards in none. */
@@ -156,8 +169,14 @@ export type FolderFilter = string;
 
 /** A metric as it is stored, with the clock a window over it would use. */
 export interface StoredMetric {
+  name: string;
   definition: MetricDefinition;
   clock?: EffectiveClock;
+}
+
+export interface StoredWidget {
+  name: string;
+  widget: Widget;
 }
 
 /** What a value is read as, which decides what a metric may do with it. */
@@ -232,10 +251,9 @@ export interface DatasetRecord {
 }
 
 /** One definition that names another: what a removal would break. */
-export interface Holder {
+export interface Holder extends Listed {
   /** The kind it is, as the API path spells it. */
   kind: "metrics" | "widgets" | "dashboards";
-  name: string;
 }
 
 /** What one page of a dataset's records is asked for. */
@@ -327,9 +345,9 @@ export interface Dashboard {
 }
 
 export interface ChatCreated {
-  metric?: string;
-  widgets: string[];
-  dashboard?: string;
+  metric?: Listed | null;
+  widgets: Listed[];
+  dashboard?: Listed | null;
 }
 
 /** One turn already in the thread, sent back so the model can read it. */
@@ -342,6 +360,6 @@ export interface ChatReply {
   reply: string;
   result?: MetricResult;
   created?: ChatCreated;
-  /** Names that already existed and now hold something else. */
+  /** Definitions that already existed and now hold something else. */
   updated?: ChatCreated;
 }

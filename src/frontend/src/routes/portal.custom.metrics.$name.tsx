@@ -22,7 +22,7 @@ export const Route = createFileRoute("/portal/custom/metrics/$name")({
 /** The windows a look may run over: the board's presets, without all time, which is the run with no window. */
 const WINDOWS = RANGE_PRESETS.filter(({ token }) => token !== "inf");
 
-function metricNameFromPath(pathname: string): string {
+function metricIdFromPath(pathname: string): string {
   const match = pathname.match(/^\/portal\/custom\/metrics\/([^/]+)/);
 
   return match ? decodeURIComponent(match[1]) : "";
@@ -30,15 +30,15 @@ function metricNameFromPath(pathname: string): string {
 
 function MetricPage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const name = metricNameFromPath(pathname);
-  const metric = useQuery(metricQuery(name));
+  const id = metricIdFromPath(pathname);
+  const metric = useQuery(metricQuery(id));
 
   if (metric.isPending) return <CenteredSpinner className="min-h-40" />;
 
   if (metric.isError) {
     return (
       <div className="flex flex-col gap-2 p-4 md:p-6">
-        <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>
+        <h1 className={cn(TEXT_HEADING, "font-mono")}>{id}</h1>
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(metric.error, "That metric is not there.")}
         </p>
@@ -59,7 +59,7 @@ function MetricPage() {
     <div className="flex flex-col gap-4 p-4 md:p-6">
       <header className="flex flex-wrap items-baseline gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>
+          <h1 className={TEXT_HEADING}>{metric.data.name}</h1>
           <Link
             to="/portal/custom/metrics"
             className={cn(
@@ -71,7 +71,7 @@ function MetricPage() {
           </Link>
         </div>
         <span className="ms-auto">
-          <EditLink kind="metrics" name={name} />
+          <EditLink kind="metrics" id={id} name={metric.data.name} />
         </span>
       </header>
 
@@ -89,19 +89,17 @@ function MetricPage() {
         </CardContent>
       </Card>
 
-      <Run name={name} windowed={metric.data.clock !== undefined} />
+      <Run id={id} windowed={metric.data.clock !== undefined} />
 
-      <HeldBy kind="metrics" name={name} />
+      <HeldBy kind="metrics" id={id} />
     </div>
   );
 }
 
 /** The metric run here and now, over a window the reader picks. */
-function Run({ name, windowed }: { name: string; windowed: boolean }) {
+function Run({ id, windowed }: { id: string; windowed: boolean }) {
   const [range, setRange] = useState<string | undefined>(undefined);
-  const result = useQuery(
-    metricResultQuery(name, range ? { range } : undefined)
-  );
+  const result = useQuery(metricResultQuery(id, range ? { range } : undefined));
 
   return (
     <Card>

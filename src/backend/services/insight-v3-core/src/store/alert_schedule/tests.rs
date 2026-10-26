@@ -81,7 +81,7 @@ mod worker {
     use crate::domain::alerts::rule::{AlertName, AlertStore, RuleSpec, Write};
     use crate::domain::alerts::schedule::{AlertSchedule as _, Scheduled};
     use crate::domain::alerts::{Destinations, Limits};
-    use crate::domain::definition::{DefinitionKind, DefinitionName, Definitions as _, Page};
+    use crate::domain::definition::{DefinitionId, DefinitionKind, Page};
     use crate::store::alerts::memory::MemoryAlerts;
     use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -132,9 +132,9 @@ mod worker {
         deliveries: Arc<dyn crate::domain::alerts::delivery::Deliveries>,
     ) -> Arc<AppState> {
         let definitions = Arc::new(MemoryDefinitions::new());
-        let metric = DefinitionName::parse("prs-open").unwrap_or_else(|error| panic!("{error}"));
+        let metric = DefinitionId::parse("prs-open").unwrap_or_else(|error| panic!("{error}"));
         definitions
-            .put(
+            .seed(
                 DefinitionKind::Metric,
                 &metric,
                 &json!({"dataset": "commits", "fields": [{"agg": "count", "type": "int", "as_name": "total"}]}),
@@ -207,7 +207,7 @@ mod worker {
                 Write {
                     spec: RuleSpec {
                         name: AlertName::parse("Worker probe")?,
-                        metric: DefinitionName::parse("prs-open")?,
+                        metric: DefinitionId::parse("prs-open")?,
                         condition: Condition::one_above("total", 10),
                         context_columns: Vec::new(),
                         range: None,
@@ -288,7 +288,7 @@ mod delivery {
     use crate::domain::alerts::rule::{
         AlertName, AlertStore as _, Notification, NotificationStatus, RuleSpec, Write,
     };
-    use crate::domain::definition::DefinitionName;
+    use crate::domain::definition::DefinitionId;
     use crate::store::alerts::memory::MemoryAlerts;
     use crate::store::providers::Discord;
 
@@ -359,7 +359,7 @@ mod delivery {
                     spec: RuleSpec {
                         name: AlertName::parse("Delivery probe")
                             .unwrap_or_else(|error| panic!("{error}")),
-                        metric: DefinitionName::parse("prs-open")
+                        metric: DefinitionId::parse("prs-open")
                             .unwrap_or_else(|error| panic!("{error}")),
                         condition: Condition::one_above("total", 10),
                         context_columns: Vec::new(),
@@ -382,6 +382,7 @@ mod delivery {
                     breached: true,
                     witness: Witness::one_value("total", serde_json::json!(42), true),
                 },
+                metric_name: None,
                 evaluated_at: Utc::now(),
             })
             .await

@@ -13,7 +13,7 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use crate::domain::definition::DefinitionName;
+use crate::domain::definition::{DefinitionId, DefinitionKind};
 use crate::domain::folders::{Folder, FolderError, FolderId, FolderList, FolderName};
 
 #[resource_error("gts.cf.insight.insight_v3_core.folders.v1~")]
@@ -193,12 +193,12 @@ pub(crate) fn register_routes(
         .register(Router::new(), openapi)
         .layer(Extension(state.clone()));
 
-    let file = OperationBuilder::put("/v1/dashboards/{name}/folder")
+    let file = OperationBuilder::put("/v1/dashboards/{id}/folder")
         .operation_id("insight_v3_core.dashboards.folder")
         .summary("Move a dashboard into a folder, or out of every folder")
         .anonymous()
         .exposed()
-        .param(path_param("name", "Dashboard name"))
+        .param(path_param("id", "Dashboard id"))
         .json_request::<MoveRequest>(openapi, "The folder to hold it")
         .no_content_response(StatusCode::NO_CONTENT, "Dashboard moved")
         .error_400(openapi)
@@ -289,14 +289,15 @@ async fn delete_folder(
 
 async fn file_dashboard(
     Extension(state): Extension<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
     body: Result<Json<MoveRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
     crate::api::require_admin(&state, &headers, denied).await?;
     let Json(request) = body.map_err(|error| FolderApiError::unreadable_body(&error))?;
 
-    let dashboard = DefinitionName::parse(&name).map_err(FolderApiError::definition_error)?;
+    let dashboard = DefinitionId::parse(&id)
+        .map_err(|_| FolderApiError::malformed_id(DefinitionKind::Dashboard, &id))?;
     let folder = request
         .folder
         .as_deref()

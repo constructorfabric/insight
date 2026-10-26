@@ -21,19 +21,19 @@ use crate::domain::query::metric_query::MetricQueryError;
 use crate::domain::query::time_window::WindowError;
 use crate::domain::violation::Violation;
 
-/// One definition naming another: a widget naming its metric, a board naming
-/// a widget it draws.
+/// One definition naming another by id: a widget naming its metric, a board
+/// naming a widget it draws.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Reference {
     pub(crate) kind: DefinitionKind,
-    pub(crate) name: String,
+    pub(crate) id: String,
 }
 
 impl Reference {
-    pub(crate) fn new(kind: DefinitionKind, name: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: DefinitionKind, id: impl Into<String>) -> Self {
         Self {
             kind,
-            name: name.into(),
+            id: id.into(),
         }
     }
 }
@@ -90,14 +90,41 @@ pub(crate) fn refers_to(kind: DefinitionKind, body: &Value) -> Vec<Reference> {
 
 /// The same body, with every reference to `from` now naming `to`.
 ///
-/// A name is the only handle one definition has on another, so renaming one
-/// alone would leave the others pointing at nothing.
+/// A chat proposal's items name each other by a key local to the proposal,
+/// which becomes the id each is stored under.
 pub(crate) fn rename_reference(kind: DefinitionKind, body: Value, from: &str, to: &str) -> Value {
     match kind {
         DefinitionKind::Metric => body,
         DefinitionKind::Widget => widget::rename_reference(body, from, to),
         DefinitionKind::Dashboard => dashboard::rename_reference(body, from, to),
     }
+}
+
+/// The same body, with each reference naming a pair's `from` now naming its
+/// `to`, all in one pass: a `to` that is also another pair's `from` is not
+/// renamed a second time.
+pub(crate) fn rename_references(
+    kind: DefinitionKind,
+    body: Value,
+    pairs: &[(&str, &str)],
+) -> Value {
+    // INVARIANT: a placeholder holds a control character, which no label and
+    // no id may, so it can never be mistaken for a reference.
+    let placeholder = |place: usize| format!("\u{1}{place}");
+
+    let parked = pairs
+        .iter()
+        .enumerate()
+        .fold(body, |body, (place, (from, _))| {
+            rename_reference(kind, body, from, &placeholder(place))
+        });
+
+    pairs
+        .iter()
+        .enumerate()
+        .fold(parked, |body, (place, (_, to))| {
+            rename_reference(kind, body, &placeholder(place), to)
+        })
 }
 
 /// The kinds whose bodies can name this one, and so the only kinds worth

@@ -45,7 +45,7 @@ fn verifier() -> TokenVerifier {
 /// A dataset that stands, ready to take records into `table`.
 async fn a_ready_dataset(url: &str, table: &str) -> crate::api::Datasets {
     let rows = crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now());
-    let name = crate::domain::definition::DefinitionName::parse("synthetic_events")
+    let name = crate::domain::definition::DefinitionId::parse("synthetic_events")
         .unwrap_or_else(|error| panic!("the name parses: {error}"));
     let attempt = rows
         .take_create(
@@ -358,7 +358,7 @@ async fn openapi_documents_the_instance_token_and_timeout_response() {
 #[test]
 fn a_store_that_did_not_answer_in_time_is_a_gateway_timeout() {
     let dataset =
-        DefinitionName::parse("commits").unwrap_or_else(|error| panic!("the name parses: {error}"));
+        DefinitionId::parse("commits").unwrap_or_else(|error| panic!("the name parses: {error}"));
 
     let response = ingest_error(
         &dataset,
@@ -372,7 +372,7 @@ fn a_store_that_did_not_answer_in_time_is_a_gateway_timeout() {
 #[test]
 fn a_record_named_for_a_dataset_that_is_not_ready_is_not_found() {
     let dataset =
-        DefinitionName::parse("commits").unwrap_or_else(|error| panic!("the name parses: {error}"));
+        DefinitionId::parse("commits").unwrap_or_else(|error| panic!("the name parses: {error}"));
 
     let response = ingest_error(&dataset, IngestError::NotReady).into_response();
 

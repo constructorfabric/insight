@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use super::{KindError, Reference};
 use crate::domain::datasets::Datasets;
-use crate::domain::definition::{DefinitionKind, DefinitionName, Lookup};
+use crate::domain::definition::{DefinitionId, DefinitionKind, Lookup};
 use crate::domain::kinds::dataset::declaration::BUCKET_COLUMN;
 use crate::domain::kinds::metric::answerable::effective_clock;
 use crate::domain::query::metric_query::MetricQuery;
@@ -204,7 +204,7 @@ pub(crate) async fn check(
     let widget: Widget =
         serde_json::from_value(body.clone()).map_err(|error| KindError::Widget(error.into()))?;
 
-    let metric_name = DefinitionName::parse(widget.metric())
+    let metric_name = DefinitionId::parse(widget.metric())
         .map_err(|_| KindError::Widget(WidgetError::NoMetric(widget.metric().to_owned())))?;
 
     let stored = definitions
@@ -234,7 +234,7 @@ pub(crate) async fn check(
 
 /// A stored metric, read as one, or the refusal that there is none.
 async fn stored_metric(named: &str, definitions: &dyn Lookup) -> Result<MetricQuery, KindError> {
-    let name = DefinitionName::parse(named)
+    let name = DefinitionId::parse(named)
         .map_err(|_| KindError::Widget(WidgetError::NoMetric(named.to_owned())))?;
 
     let stored = definitions

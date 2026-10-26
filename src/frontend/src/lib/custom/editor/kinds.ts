@@ -499,7 +499,7 @@ const WIDGET: Description = {
     {
       name: "title",
       label: "Title",
-      hint: "The heading a reader sees. Without it the card shows the identifier.",
+      hint: "The heading a reader sees. Without it the card shows the widget's name.",
       shape: { of: "text" },
     },
     {
@@ -525,7 +525,7 @@ const DASHBOARD: Description = {
     {
       name: "items",
       label: "Drawn, top to bottom",
-      hint: "A stored widget by name, a section heading, or a paragraph of text.",
+      hint: "A stored widget, a section heading, or a paragraph of text.",
       shape: {
         of: "list",
         entryLabel: "item",
@@ -536,7 +536,7 @@ const DASHBOARD: Description = {
               {
                 name: "widget",
                 label: "Widget",
-                hint: "A stored widget, by name.",
+                hint: "A stored widget.",
                 shape: { of: "reference", to: "widgets" },
                 required: true,
               },

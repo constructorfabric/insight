@@ -46,7 +46,11 @@ impl Message {
             "Insight alert: {}",
             notification.rule_name.as_str()
         ));
-        let met = line(&format!("{}: {condition}", notification.metric.as_str()));
+        let metric = notification
+            .metric_name
+            .as_deref()
+            .unwrap_or_else(|| notification.metric.as_str());
+        let met = line(&format!("{metric}: {condition}"));
         let counted = match condition.rows {
             Quantifier::One => None,
             Quantifier::Any | Quantifier::All | Quantifier::None | Quantifier::Count { .. } => {
@@ -279,7 +283,7 @@ mod tests {
     use super::*;
     use crate::domain::alerts::condition::Condition;
     use crate::domain::alerts::rule::{AlertName, NotificationStatus};
-    use crate::domain::definition::DefinitionName;
+    use crate::domain::definition::DefinitionId;
     use crate::domain::query::metric_query::ColumnKind;
 
     fn notification(condition: &Value, witness: Witness) -> Notification {
@@ -295,7 +299,8 @@ mod tests {
             rule_revision: 3,
             rule_name: AlertName::parse("Too many open PRs")
                 .unwrap_or_else(|error| panic!("{error}")),
-            metric: DefinitionName::parse("prs-open").unwrap_or_else(|error| panic!("{error}")),
+            metric: DefinitionId::parse("prs-open").unwrap_or_else(|error| panic!("{error}")),
+            metric_name: None,
             condition: Condition::parse(condition, &columns)
                 .unwrap_or_else(|error| panic!("{error}")),
             context_columns: Vec::new(),
@@ -333,6 +338,33 @@ mod tests {
             message.markdown,
             "Insight alert: Too many open PRs\nprs-open: total above 50\n`total 63`\nChecked 2026-09-29 08:15 UTC."
         );
+    }
+
+    #[test]
+    fn the_metric_is_named_by_its_label_and_by_its_id_without_one() {
+        let cases = [
+            (
+                Some("Open pull requests"),
+                "Open pull requests: total above 50",
+            ),
+            (None, "prs-open: total above 50"),
+        ];
+
+        for (metric_name, expected) in cases {
+            let mut owed = notification(
+                &json!({ "rows": "one", "where": { "column": "total", "op": ">", "value": 50 } }),
+                witness(1, 1, &["total"], vec![vec![json!(63)]]),
+            );
+            owed.metric_name = metric_name.map(str::to_owned);
+
+            let message = Message::of(&owed);
+
+            assert_eq!(
+                message.markdown.lines().nth(1).unwrap_or_default(),
+                expected,
+                "should name the metric for: {metric_name:?}"
+            );
+        }
     }
 
     #[test]

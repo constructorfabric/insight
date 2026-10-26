@@ -8,7 +8,7 @@
 
 use toolkit_canonical_errors::CanonicalError;
 
-use crate::domain::definition::{DefinitionError, DefinitionStoreError};
+use crate::domain::definition::{DefinitionError, DefinitionKind, DefinitionStoreError};
 use crate::domain::query::metric_query::MetricRunError;
 use crate::domain::query::time_window::WindowError;
 use crate::domain::surfaces::CustomError;
@@ -64,8 +64,8 @@ pub(crate) trait ApiErrors {
     /// Whatever reading a stored metric can fail with, as the caller sees it.
     fn custom_error(error: CustomError) -> CanonicalError {
         match error {
-            CustomError::NotFound { kind, name } => {
-                Self::missing(&name, format!("{} `{name}` was not found", kind.singular()))
+            CustomError::NotFound { kind, id } => {
+                Self::missing(&id, format!("{} `{id}` was not found", kind.singular()))
             }
             CustomError::DatasetNotReady(named) => Self::missing(
                 &named,
@@ -89,6 +89,11 @@ pub(crate) trait ApiErrors {
     /// A name the store cannot hold.
     fn definition_error(error: DefinitionError) -> CanonicalError {
         Self::invalid_field("name", error.to_string())
+    }
+
+    /// An id in a path that cannot be one, which names nothing.
+    fn malformed_id(kind: DefinitionKind, raw: &str) -> CanonicalError {
+        Self::missing(raw, format!("{} `{raw}` was not found", kind.singular()))
     }
 
     /// A body axum would not read.
@@ -153,7 +158,10 @@ pub(crate) trait ApiErrors {
                 tracing::error!(error = ?source, "definition store operation failed");
                 CanonicalError::internal("definition store operation failed").create()
             }
-            DefinitionStoreError::NameTaken(name) => Self::name_taken(&name),
+            DefinitionStoreError::IdTaken(id) => Self::name_taken(&id),
+            DefinitionStoreError::Missing(id) => {
+                Self::missing(&id, format!("`{id}` does not exist"))
+            }
             DefinitionStoreError::Json(source) => {
                 tracing::error!(error = ?source, "definition body serialization failed");
                 CanonicalError::internal("definition store operation failed").create()

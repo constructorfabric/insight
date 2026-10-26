@@ -165,6 +165,33 @@ mod memory {
     }
 
     #[tokio::test]
+    async fn a_notification_carries_what_its_metric_was_called() -> R {
+        let store = MemoryAlerts::new();
+        let rule = store.create(super::write(10), super::UNBOUNDED).await?;
+
+        let recorded = store
+            .record(super::recording(&rule, super::breach(12)))
+            .await?;
+        let crate::domain::alerts::rule::Recorded::Accepted(accepted) = recorded else {
+            panic!("the breach is recorded: {recorded:?}");
+        };
+        let owed = accepted
+            .notification
+            .unwrap_or_else(|| panic!("the breach owes a notification"));
+
+        assert_eq!(owed.metric_name.as_deref(), Some(super::METRIC_NAME));
+        assert_eq!(
+            store
+                .notification(owed.id)
+                .await?
+                .and_then(|held| held.metric_name),
+            Some(super::METRIC_NAME.to_owned())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn a_check_lands_only_on_its_revision() -> R {
         let store = MemoryAlerts::new();
         let first = store.create(super::write(10), super::UNBOUNDED).await?;
@@ -175,6 +202,7 @@ mod memory {
                 rule_id: first.id,
                 revision: first.revision,
                 outcome: super::breach(12),
+                metric_name: None,
                 evaluated_at: Utc::now(),
             })
             .await?;
@@ -215,7 +243,7 @@ async fn store() -> Option<MariaAlerts> {
 fn spec(threshold: i64) -> RuleSpec {
     RuleSpec {
         name: AlertName::parse("Too many open PRs").unwrap_or_else(|error| panic!("{error}")),
-        metric: DefinitionName::parse("prs-open").unwrap_or_else(|error| panic!("{error}")),
+        metric: DefinitionId::parse("prs-open").unwrap_or_else(|error| panic!("{error}")),
         condition: Condition::one_above("total", threshold),
         context_columns: vec!["assignee".to_owned()],
         range: None,
@@ -250,11 +278,14 @@ fn clear(value: i64) -> Outcome {
     }
 }
 
+const METRIC_NAME: &str = "Open pull requests";
+
 fn recording(rule: &AlertRule, outcome: Outcome) -> Recording {
     Recording {
         rule_id: rule.id,
         revision: rule.revision,
         outcome,
+        metric_name: Some(METRIC_NAME.to_owned()),
         evaluated_at: Utc::now(),
     }
 }
@@ -392,6 +423,7 @@ async fn one_logical_breach_owes_one_notification_until_a_valid_clear() -> R {
     };
     assert_eq!(owed.witness, Witness::one_value("total", seen(12), true));
     assert_eq!(owed.context_columns, ["assignee"]);
+    assert_eq!(owed.metric_name.as_deref(), Some(METRIC_NAME));
     assert_eq!(owed.status, NotificationStatus::Pending);
     assert_eq!(first.rule.state.last_valid_breached, Some(true));
     assert!(first.rule.state.breached_since.is_some());
@@ -435,6 +467,7 @@ async fn one_logical_breach_owes_one_notification_until_a_valid_clear() -> R {
         Witness::one_value("total", seen(15), true)
     );
     assert_eq!(listed[0].context_columns, ["assignee"]);
+    assert_eq!(listed[0].metric_name.as_deref(), Some(METRIC_NAME));
 
     store.delete(rule.id).await?;
 

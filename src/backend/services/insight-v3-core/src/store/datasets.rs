@@ -14,7 +14,7 @@ use crate::domain::datasets::{
     Attempt, Dataset, DatasetStoreError, Datasets, Finish, Held, Lease, OperationToken, Owning,
     Refused, Taken, Taking, finishing, taking,
 };
-use crate::domain::definition::{DefinitionName, NamePage, Page};
+use crate::domain::definition::{DefinitionId, NamePage, Page};
 use crate::domain::kinds::dataset::state::{DatasetState, Operation};
 use crate::store::like_escaped;
 
@@ -57,7 +57,7 @@ impl MariaDatasets {
 
 #[async_trait]
 impl Datasets for MariaDatasets {
-    async fn get(&self, name: &DefinitionName) -> Result<Option<Dataset>, DatasetStoreError> {
+    async fn get(&self, name: &DefinitionId) -> Result<Option<Dataset>, DatasetStoreError> {
         let found = DatasetRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::MySql,
             SELECT_ROW,
@@ -117,13 +117,13 @@ impl Datasets for MariaDatasets {
 
     async fn take_create(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<Taken, DatasetStoreError> {
         self.take(name, Operation::Create, Some(declaration)).await
     }
 
-    async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
+    async fn take_remove(&self, name: &DefinitionId) -> Result<Attempt, DatasetStoreError> {
         match self.take(name, Operation::Remove, None).await? {
             Taken::Attempt(attempt) => Ok(attempt),
             // Only a create is answered with a dataset that stands.
@@ -133,7 +133,7 @@ impl Datasets for MariaDatasets {
 
     async fn replace(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<bool, DatasetStoreError> {
         let replaced = self
@@ -154,7 +154,7 @@ impl Datasets for MariaDatasets {
 
     async fn finish(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         token: &OperationToken,
         finish: Finish,
     ) -> Result<Owning, DatasetStoreError> {
@@ -191,7 +191,7 @@ impl Datasets for MariaDatasets {
 impl MariaDatasets {
     async fn take(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         operation: Operation,
         declaration: Option<&Value>,
     ) -> Result<Taken, DatasetStoreError> {
@@ -277,7 +277,7 @@ impl MariaDatasets {
 /// The row, held for the rest of the transaction.
 async fn held_row(
     transaction: &sea_orm::DatabaseTransaction,
-    name: &DefinitionName,
+    name: &DefinitionId,
 ) -> Result<Option<Dataset>, DatasetStoreError> {
     DatasetRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
@@ -324,7 +324,7 @@ impl DatasetRow {
     fn into_dataset(self) -> Result<Dataset, DatasetStoreError> {
         let state = DatasetState::parse(&self.state)
             .ok_or_else(|| DatasetStoreError::UnreadableRow(self.state.clone()))?;
-        let name = DefinitionName::parse(&self.name)
+        let name = DefinitionId::parse(&self.name)
             .map_err(|_| DatasetStoreError::UnreadableRow(self.name.clone()))?;
 
         let held = match (self.operation, self.operation_token, self.lease_until) {

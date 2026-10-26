@@ -18,17 +18,19 @@ const TOO_MANY = `A dashboard carries at most ${DASHBOARD_TAGS_MAX} tags.`;
 const TOO_LONG = `A tag name is at most ${TAG_NAME_MAX} characters.`;
 
 export function EditTags({
+  id,
   name,
   open,
   onClose,
 }: {
+  id: string;
   name: string;
   open: boolean;
   onClose: () => void;
 }) {
   const every = useQuery({ ...tagsQuery(), enabled: open });
   const carried = useQuery({
-    ...dashboardTagsQuery(name),
+    ...dashboardTagsQuery(id),
     enabled: open,
     staleTime: 0,
   });
@@ -101,7 +103,7 @@ export function EditTags({
     if (!tags) return;
 
     save.mutate(
-      { name, tags },
+      { id, tags },
       {
         onSuccess: close,
         onError: (failure) =>

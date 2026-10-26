@@ -360,6 +360,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             "string",
         )
         .query_param_typed(
+            "committed_since",
+            false,
+            "An author whose newest readable commit predates this instant (RFC 3339, or YYYY-MM-DD as midnight UTC) is omitted",
+            "string",
+        )
+        .query_param_typed(
             "page_size",
             false,
             "1..=1000, default 1000; larger values are clamped",
@@ -588,6 +594,7 @@ mod tests {
     async fn the_change_feed_refuses_a_malformed_instant_or_cursor() {
         for uri in [
             "/v1/authors/changes?changed_since=yesterday",
+            "/v1/authors/changes?committed_since=last-year",
             "/v1/authors/changes?page_token=!!!",
         ] {
             assert_eq!(

@@ -551,6 +551,7 @@ mod deliveries {
                 rule_id: rule.id,
                 revision: rule.revision,
                 outcome: super::seen(true, json!(12)),
+                metric_name: None,
                 evaluated_at: Utc::now(),
             })
             .await

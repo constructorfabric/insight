@@ -5,16 +5,15 @@ import { DashboardMenu } from "@/components/custom/dashboard-menu";
 import { Button } from "@/components/ui/button";
 
 export function DashboardPageActions({
+  id,
   name,
   title,
 }: {
+  id: string;
   name: string;
   title: string;
 }) {
   const navigate = useNavigate();
-
-  const land = (to: string) =>
-    void navigate({ to: "/portal/custom/$name", params: { name: to } });
 
   return (
     <span className="flex shrink-0 items-center gap-1">
@@ -27,18 +26,20 @@ export function DashboardPageActions({
         render={
           <Link
             to="/portal/custom/edit/$kind/$name"
-            params={{ kind: "dashboards", name }}
+            params={{ kind: "dashboards", name: id }}
           />
         }
       >
         Edit
       </Button>
       <DashboardMenu
+        id={id}
         name={name}
         title={title}
         filing={false}
-        onRenamed={land}
-        onDuplicated={land}
+        onDuplicated={(copy) =>
+          void navigate({ to: "/portal/custom/$name", params: { name: copy } })
+        }
         onDeleted={() => void navigate({ to: "/portal/custom" })}
       />
     </span>

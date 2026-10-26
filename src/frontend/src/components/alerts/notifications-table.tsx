@@ -150,8 +150,14 @@ function Reading({
         {conditionText(notification.condition)}
       </span>
       {notification.metric !== rule.metric ? (
-        <span className={cn(TEXT_LABEL, "font-mono break-words")}>
-          {notification.metric}
+        <span
+          className={cn(
+            TEXT_LABEL,
+            "break-words",
+            notification.metric_name === null && "font-mono"
+          )}
+        >
+          {notification.metric_name ?? notification.metric}
         </span>
       ) : null}
     </span>

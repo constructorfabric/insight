@@ -5,7 +5,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::domain::definition::{
-    DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
+    DefinitionId, DefinitionKind, DefinitionStoreError, Definitions, ListedPage, Page,
 };
 use crate::domain::pins::Pins;
 use crate::domain::tags::Tags;
@@ -99,7 +99,7 @@ pub(crate) enum FolderError {
     Id,
     #[error("no folder has the id `{0}`")]
     FolderNotFound(FolderId),
-    #[error("no dashboard is named `{0}`")]
+    #[error("no dashboard has the id `{0}`")]
     DashboardNotFound(String),
     #[error("a folder named `{0}` already exists")]
     NameTaken(String),
@@ -133,11 +133,11 @@ pub(crate) trait Folders: Send + Sync + fmt::Debug {
 
     async fn delete_folder(&self, id: FolderId) -> Result<bool, FolderError>;
 
-    async fn folder_of(&self, dashboard: &DefinitionName) -> Result<Option<Folder>, FolderError>;
+    async fn folder_of(&self, dashboard: &DefinitionId) -> Result<Option<Folder>, FolderError>;
 
     async fn file(
         &self,
-        dashboard: &DefinitionName,
+        dashboard: &DefinitionId,
         folder: Option<FolderId>,
     ) -> Result<(), FolderError>;
 
@@ -146,11 +146,11 @@ pub(crate) trait Folders: Send + Sync + fmt::Debug {
         needle: &str,
         page: Page,
         filter: FolderFilter,
-    ) -> Result<NamePage, FolderError>;
+    ) -> Result<ListedPage, FolderError>;
 }
 
-/// INVARIANT: one store holds all four, because a dashboard rename carries
-/// its folder, its tags and its pins inside the definitions' own transaction.
+/// INVARIANT: one store holds all four, because a dashboard duplicate carries
+/// its folder and its tags inside the definitions' own transaction.
 pub(crate) trait DefinitionStore: Definitions + Folders + Tags + Pins {}
 
 impl<T: Definitions + Folders + Tags + Pins> DefinitionStore for T {}

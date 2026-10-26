@@ -1,5 +1,18 @@
-import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/api/custom-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/custom-client")>();
+  return {
+    ...actual,
+    fetchMetric: vi.fn(async () => ({
+      name: "Lines per day",
+      definition: { table: "commits", fields: [] },
+    })),
+  };
+});
 
 // Deterministic, DOM-inspectable stand-ins for the recharts wrappers (which
 // render nothing under jsdom's zero-size ResponsiveContainer). Partial, not
@@ -64,8 +77,16 @@ vi.mock("recharts", async (importOriginal) => {
 });
 
 import { CustomApiError } from "@/api/custom-client";
+import * as customClient from "@/api/custom-client";
 
 import { CustomWidget } from "./custom-widget";
+
+function wrapper({ children }: { children: ReactNode }) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return createElement(QueryClientProvider, { client: queryClient }, children);
+}
 
 const result = {
   columns: ["day", "lines"],
@@ -306,14 +327,15 @@ describe("<CustomWidget>", () => {
           columns: ["day", "total_lines"],
           rows: [["2026-09-01", 132]],
         }}
-      />
+      />,
+      { wrapper }
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent("draws lines");
     expect(screen.queryByTestId(frame)).not.toBeInTheDocument();
   });
 
-  it("says which column is missing instead of drawing an empty chart", () => {
+  it("says which column is missing, naming the metric by its stored name", async () => {
     // Seen live: y named the metric's raw json field instead of its as_name,
     // so every point was undefined and the chart drew axes and no line.
     render(
@@ -323,12 +345,16 @@ describe("<CustomWidget>", () => {
           columns: ["day", "total_lines"],
           rows: [["2026-09-01", 132]],
         }}
-      />
+      />,
+      { wrapper }
     );
 
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("draws lines");
-    expect(alert).toHaveTextContent("lines_per_day does not return");
+    await waitFor(() =>
+      expect(alert).toHaveTextContent("Lines per day does not return")
+    );
+    expect(customClient.fetchMetric).toHaveBeenCalledWith("lines_per_day");
     expect(alert).toHaveTextContent("day, total_lines");
     expect(screen.queryByTestId("custom-line-chart")).not.toBeInTheDocument();
   });

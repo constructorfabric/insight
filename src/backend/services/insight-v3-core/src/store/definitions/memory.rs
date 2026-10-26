@@ -7,12 +7,12 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use uuid::Uuid;
 
 use crate::domain::definition::{
-    Change, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, Lookup, NamePage,
-    Page,
+    Change, DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Definitions,
+    Listed, ListedPage, Lookup, Page, StoredDefinition,
 };
 use crate::domain::folders::{
     Folder, FolderError, FolderFilter, FolderId, FolderList, FolderName, FolderSummary, Folders,
@@ -22,10 +22,11 @@ use crate::domain::tags::TagName;
 
 const DASHBOARDS: &str = "dashboards";
 
+type Key = (&'static str, String);
+
 #[derive(Debug, Default, Clone)]
 struct Stored {
-    definitions: BTreeMap<(&'static str, String), serde_json::Value>,
-    written: BTreeMap<(&'static str, String), DateTime<Utc>>,
+    definitions: BTreeMap<Key, StoredDefinition>,
     folders: BTreeMap<FolderId, FolderName>,
     filed: BTreeMap<String, FolderId>,
     tagged: BTreeMap<String, Vec<TagName>>,
@@ -33,24 +34,59 @@ struct Stored {
 }
 
 impl Stored {
-    fn has_dashboard(&self, name: &DefinitionName) -> bool {
+    fn has_dashboard(&self, id: &DefinitionId) -> bool {
         self.definitions
-            .contains_key(&(DASHBOARDS, name.as_str().to_owned()))
+            .contains_key(&(DASHBOARDS, id.as_str().to_owned()))
     }
 
-    fn write(&mut self, key: (&'static str, String), body: serde_json::Value) {
-        self.written.insert(key.clone(), Utc::now());
-        self.definitions.insert(key, body);
+    fn write(&mut self, key: Key, name: &str, body: serde_json::Value) {
+        let stored = StoredDefinition {
+            name: name.to_owned(),
+            body,
+            updated_at: Utc::now(),
+        };
+        self.definitions.insert(key, stored);
     }
 
-    fn remove(&mut self, kind: DefinitionKind, name: &DefinitionName) -> bool {
-        if kind.table() == DASHBOARDS {
-            self.filed.remove(name.as_str());
-            self.tagged.remove(name.as_str());
-            self.drop_pins(name.as_str());
+    fn create(
+        &mut self,
+        kind: DefinitionKind,
+        id: &DefinitionId,
+        name: &DefinitionLabel,
+        body: &serde_json::Value,
+    ) -> Result<(), DefinitionStoreError> {
+        let key = MemoryDefinitions::key(kind, id);
+        if self.definitions.contains_key(&key) {
+            return Err(DefinitionStoreError::IdTaken(id.as_str().to_owned()));
         }
-        let key = MemoryDefinitions::key(kind, name);
-        self.written.remove(&key);
+        self.write(key, name.as_str(), body.clone());
+
+        Ok(())
+    }
+
+    fn replace(
+        &mut self,
+        kind: DefinitionKind,
+        id: &DefinitionId,
+        name: &DefinitionLabel,
+        body: &serde_json::Value,
+    ) -> bool {
+        let key = MemoryDefinitions::key(kind, id);
+        if !self.definitions.contains_key(&key) {
+            return false;
+        }
+        self.write(key, name.as_str(), body.clone());
+
+        true
+    }
+
+    fn remove(&mut self, kind: DefinitionKind, id: &DefinitionId) -> bool {
+        if kind.table() == DASHBOARDS {
+            self.filed.remove(id.as_str());
+            self.tagged.remove(id.as_str());
+            self.drop_pins(id.as_str());
+        }
+        let key = MemoryDefinitions::key(kind, id);
         self.definitions.remove(&key).is_some()
     }
 
@@ -76,29 +112,46 @@ impl Stored {
         })
     }
 
-    fn matching(&self, kind: DefinitionKind, needle: &str) -> Vec<String> {
-        let needle = needle.to_lowercase();
+    fn listed(&self, kind: DefinitionKind, id: &str) -> Option<Listed> {
         self.definitions
+            .get(&(kind.table(), id.to_owned()))
+            .map(|stored| Listed {
+                id: id.to_owned(),
+                name: stored.name.clone(),
+            })
+    }
+
+    /// Ordered by name, then id, as the store's page is.
+    fn matching(&self, kind: DefinitionKind, needle: &str) -> Vec<Listed> {
+        let needle = needle.to_lowercase();
+        let mut matched: Vec<Listed> = self
+            .definitions
             .iter()
             .filter(|((table, _), _)| *table == kind.table())
-            .filter(|((_, name), body)| {
-                name.to_lowercase().contains(&needle)
-                    || body.to_string().to_lowercase().contains(&needle)
+            .filter(|(_, stored)| {
+                stored.name.to_lowercase().contains(&needle)
+                    || stored.body.to_string().to_lowercase().contains(&needle)
             })
-            .map(|((_, name), _)| name.clone())
-            .collect()
+            .map(|((_, id), stored)| Listed {
+                id: id.clone(),
+                name: stored.name.clone(),
+            })
+            .collect();
+        matched.sort_by(|left, right| (&left.name, &left.id).cmp(&(&right.name, &right.id)));
+
+        matched
     }
 }
 
-fn paged(matched: Vec<String>, page: Page) -> NamePage {
+fn paged(matched: Vec<Listed>, page: Page) -> ListedPage {
     let total = matched.len() as u64;
-    let names = matched
+    let items = matched
         .into_iter()
         .skip(usize::try_from(page.offset()).unwrap_or(usize::MAX))
         .take(usize::try_from(page.limit()).unwrap_or(usize::MAX))
         .collect();
 
-    NamePage { names, total }
+    ListedPage { items, total }
 }
 
 #[derive(Debug, Default)]
@@ -121,8 +174,30 @@ impl MemoryDefinitions {
         }
     }
 
-    fn key(kind: DefinitionKind, name: &DefinitionName) -> (&'static str, String) {
-        (kind.table(), name.as_str().to_owned())
+    fn key(kind: DefinitionKind, id: &DefinitionId) -> Key {
+        (kind.table(), id.as_str().to_owned())
+    }
+
+    /// Stores `body` under `id`, labelled by the id itself, whatever it held.
+    ///
+    /// For a test that needs a definition in place without saying how it got
+    /// there.
+    #[expect(
+        clippy::unused_async,
+        clippy::unused_async_trait_impl,
+        reason = "awaited as the store's own writes are"
+    )]
+    pub(crate) async fn seed(
+        &self,
+        kind: DefinitionKind,
+        id: &DefinitionId,
+        body: &serde_json::Value,
+    ) -> Result<(), DefinitionStoreError> {
+        self.writable()?;
+        self.lock()
+            .write(Self::key(kind, id), id.as_str(), body.clone());
+
+        Ok(())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Stored> {
@@ -153,26 +228,46 @@ impl Lookup for MemoryDefinitions {
     async fn get(
         &self,
         kind: DefinitionKind,
-        name: &DefinitionName,
+        id: &DefinitionId,
     ) -> Result<Option<serde_json::Value>, DefinitionStoreError> {
-        Ok(self.lock().definitions.get(&Self::key(kind, name)).cloned())
+        Ok(self
+            .lock()
+            .definitions
+            .get(&Self::key(kind, id))
+            .map(|stored| stored.body.clone()))
     }
 }
 
 #[async_trait]
 impl Definitions for MemoryDefinitions {
-    async fn put(
+    async fn read(
         &self,
         kind: DefinitionKind,
-        name: &DefinitionName,
+        id: &DefinitionId,
+    ) -> Result<Option<StoredDefinition>, DefinitionStoreError> {
+        Ok(self.lock().definitions.get(&Self::key(kind, id)).cloned())
+    }
+
+    async fn create(
+        &self,
+        kind: DefinitionKind,
+        id: &DefinitionId,
+        name: &DefinitionLabel,
         body: &serde_json::Value,
     ) -> Result<(), DefinitionStoreError> {
-        if self.failing {
-            return Err(Self::refuse());
-        }
-        self.lock().write(Self::key(kind, name), body.clone());
+        self.writable()?;
+        self.lock().create(kind, id, name, body)
+    }
 
-        Ok(())
+    async fn replace(
+        &self,
+        kind: DefinitionKind,
+        id: &DefinitionId,
+        name: &DefinitionLabel,
+        body: &serde_json::Value,
+    ) -> Result<bool, DefinitionStoreError> {
+        self.writable()?;
+        Ok(self.lock().replace(kind, id, name, body))
     }
 
     async fn list(&self, kind: DefinitionKind) -> Result<Vec<String>, DefinitionStoreError> {
@@ -181,7 +276,7 @@ impl Definitions for MemoryDefinitions {
             .definitions
             .keys()
             .filter(|(table, _)| *table == kind.table())
-            .map(|(_, name)| name.clone())
+            .map(|(_, id)| id.clone())
             .collect())
     }
 
@@ -190,52 +285,35 @@ impl Definitions for MemoryDefinitions {
         kind: DefinitionKind,
         needle: &str,
         page: Page,
-    ) -> Result<NamePage, DefinitionStoreError> {
+    ) -> Result<ListedPage, DefinitionStoreError> {
         Ok(paged(self.lock().matching(kind, needle), page))
-    }
-
-    async fn updated_at(
-        &self,
-        kind: DefinitionKind,
-        name: &DefinitionName,
-    ) -> Result<Option<DateTime<Utc>>, DefinitionStoreError> {
-        Ok(self.lock().written.get(&Self::key(kind, name)).copied())
     }
 
     async fn delete(
         &self,
         kind: DefinitionKind,
-        name: &DefinitionName,
+        id: &DefinitionId,
     ) -> Result<bool, DefinitionStoreError> {
-        Ok(self.lock().remove(kind, name))
+        Ok(self.lock().remove(kind, id))
     }
 
     async fn apply(&self, changes: &[Change]) -> Result<(), DefinitionStoreError> {
-        if self.failing {
-            return Err(Self::refuse());
-        }
+        self.writable()?;
         // INVARIANT: all or nothing, as the real transaction is.
         let mut stored = self.lock();
         let mut applied = stored.clone();
 
         for change in changes {
             match change {
-                Change::Put(kind, name, body) => {
-                    applied.write(Self::key(*kind, name), body.clone());
-                }
-                Change::Create(kind, name, body) => {
-                    let key = Self::key(*kind, name);
-                    if applied.definitions.contains_key(&key) {
-                        return Err(DefinitionStoreError::NameTaken(name.as_str().to_owned()));
+                Change::Create(kind, id, name, body) => applied.create(*kind, id, name, body)?,
+                Change::Replace(kind, id, name, body) => {
+                    if !applied.replace(*kind, id, name, body) {
+                        return Err(DefinitionStoreError::Missing(id.as_str().to_owned()));
                     }
-                    applied.write(key, body.clone());
-                }
-                Change::Delete(kind, name) => {
-                    applied.remove(*kind, name);
                 }
                 Change::CarryFolder { from, to } => {
-                    if let Some(id) = applied.filed.get(from.as_str()).copied() {
-                        applied.filed.insert(to.as_str().to_owned(), id);
+                    if let Some(folder) = applied.filed.get(from.as_str()).copied() {
+                        applied.filed.insert(to.as_str().to_owned(), folder);
                     }
                 }
                 Change::CarryTags { from, to } => {
@@ -243,7 +321,6 @@ impl Definitions for MemoryDefinitions {
                         applied.tagged.insert(to.as_str().to_owned(), tags);
                     }
                 }
-                Change::CarryPins { from, to } => applied.carry_pins(from, to),
             }
         }
 
@@ -319,7 +396,7 @@ impl Folders for MemoryDefinitions {
         Ok(stored.folders.remove(&id).is_some())
     }
 
-    async fn folder_of(&self, dashboard: &DefinitionName) -> Result<Option<Folder>, FolderError> {
+    async fn folder_of(&self, dashboard: &DefinitionId) -> Result<Option<Folder>, FolderError> {
         let stored = self.lock();
 
         Ok(stored
@@ -330,7 +407,7 @@ impl Folders for MemoryDefinitions {
 
     async fn file(
         &self,
-        dashboard: &DefinitionName,
+        dashboard: &DefinitionId,
         folder: Option<FolderId>,
     ) -> Result<(), FolderError> {
         self.writable()?;
@@ -358,12 +435,12 @@ impl Folders for MemoryDefinitions {
         needle: &str,
         page: Page,
         filter: FolderFilter,
-    ) -> Result<NamePage, FolderError> {
+    ) -> Result<ListedPage, FolderError> {
         let stored = self.lock();
         let matched = stored
             .matching(DefinitionKind::Dashboard, needle)
             .into_iter()
-            .filter(|name| stored.in_folder(name, filter))
+            .filter(|listed| stored.in_folder(&listed.id, filter))
             .collect();
 
         Ok(paged(matched, page))

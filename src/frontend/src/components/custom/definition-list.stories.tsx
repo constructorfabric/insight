@@ -15,7 +15,7 @@ function Catalogue() {
       <DefinitionList
         title="Datasets"
         blurb="Every declared dataset. A metric reads one of these, and records are sent into them."
-        names={[]}
+        items={[]}
         isLoading={false}
         isError={false}
         onRetry={() => {}}

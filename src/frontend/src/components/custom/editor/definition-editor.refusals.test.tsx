@@ -6,11 +6,14 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
   return {
     ...actual,
+    createDefinition: vi.fn(),
     putDefinition: vi.fn(),
     putDataset: vi.fn(),
-    fetchMetricNames: vi.fn(),
-    fetchWidgetNames: vi.fn(),
-    fetchDashboardNames: vi.fn(),
+    fetchMetric: vi.fn(),
+    fetchMetrics: vi.fn(),
+    fetchWidget: vi.fn(),
+    fetchWidgets: vi.fn(),
+    fetchDashboards: vi.fn(),
     fetchDatasetNames: vi.fn(),
     fetchDataset: vi.fn(),
     fetchTables: vi.fn(),
@@ -48,6 +51,7 @@ describe("<DefinitionEditor> shown a refusal", () => {
     render(
       <DefinitionEditor
         kind="metrics"
+        id="wrong"
         name="wrong"
         document={{ dataset: "commits", limit: -1 }}
         onStored={vi.fn()}
@@ -74,6 +78,7 @@ describe("<DefinitionEditor> shown a refusal", () => {
     render(
       <DefinitionEditor
         kind="datasets"
+        id="commits"
         name="commits"
         document={{
           title: "",
@@ -111,6 +116,7 @@ describe("<DefinitionEditor> shown a refusal", () => {
     render(
       <DefinitionEditor
         kind="datasets"
+        id="commits"
         name="commits"
         document={{ title: "Commits", fields: [{ name: "day" }] }}
         onStored={vi.fn()}
@@ -134,6 +140,7 @@ describe("<DefinitionEditor> shown a refusal", () => {
     render(
       <DefinitionEditor
         kind="widgets"
+        id="chart"
         name="chart"
         document={{ type: "stat", metric: "commits", value: "total" }}
         onStored={vi.fn()}
@@ -151,12 +158,13 @@ describe("<DefinitionEditor> shown a refusal", () => {
   it("says a refusal it has no field for, above the document", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.putDefinition).mockRejectedValue(
-      new CustomApiError(409, { detail: "that name is taken" })
+      new CustomApiError(409, { detail: "the metric changed meanwhile" })
     );
 
     render(
       <DefinitionEditor
         kind="metrics"
+        id="taken"
         name="taken"
         document={{ dataset: "commits" }}
         onStored={vi.fn()}
@@ -166,7 +174,7 @@ describe("<DefinitionEditor> shown a refusal", () => {
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    const said = await screen.findByText("that name is taken");
+    const said = await screen.findByText("the metric changed meanwhile");
     const document = screen.getByLabelText("Dataset");
     expect(
       said.compareDocumentPosition(document) & Node.DOCUMENT_POSITION_FOLLOWING
@@ -193,6 +201,7 @@ describe("<DefinitionEditor> shown a refusal", () => {
     render(
       <DefinitionEditor
         kind="datasets"
+        id="commits"
         name="commits"
         document={{ title: "Commits", fields: [] }}
         onStored={vi.fn()}
@@ -216,6 +225,7 @@ describe("<DefinitionEditor> shown a refusal", () => {
     render(
       <DefinitionEditor
         kind="metrics"
+        id="offline"
         name="offline"
         document={{ dataset: "commits" }}
         onStored={vi.fn()}
@@ -239,6 +249,7 @@ describe("<DefinitionEditor> shown a refusal", () => {
     render(
       <DefinitionEditor
         kind="metrics"
+        id="wrong"
         name="wrong"
         document={{ dataset: "commits", limit: -1 }}
         onStored={vi.fn()}

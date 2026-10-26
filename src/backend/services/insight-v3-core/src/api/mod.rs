@@ -158,7 +158,7 @@ impl Datasets {
 
         futures::executor::block_on(async {
             for (named, declaration) in declared {
-                let name = crate::domain::definition::DefinitionName::parse(named)
+                let name = crate::domain::definition::DefinitionId::parse(named)
                     .unwrap_or_else(|error| panic!("`{named}` should be a dataset name: {error}"));
                 let attempt = rows
                     .take_create(&name, declaration)

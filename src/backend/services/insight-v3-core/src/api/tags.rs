@@ -13,7 +13,7 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use crate::domain::definition::DefinitionName;
+use crate::domain::definition::{DefinitionId, DefinitionKind};
 use crate::domain::tags::{TagError, TagName, TagSet, TagSummary};
 
 #[resource_error("gts.cf.insight.insight_v3_core.tags.v1~")]
@@ -123,12 +123,12 @@ pub(crate) fn register_routes(
         .register(Router::new(), openapi)
         .layer(Extension(state.clone()));
 
-    let set = OperationBuilder::put("/v1/dashboards/{name}/tags")
+    let set = OperationBuilder::put("/v1/dashboards/{id}/tags")
         .operation_id("insight_v3_core.dashboards.tags")
         .summary("Replace the tags a dashboard carries")
         .anonymous()
         .exposed()
-        .param(ParamSpec::path("name").description("Dashboard name"))
+        .param(ParamSpec::path("id").description("Dashboard id"))
         .json_request::<TagsRequest>(openapi, "The dashboard's whole set of tags")
         .no_content_response(StatusCode::NO_CONTENT, "Tags set")
         .error_400(openapi)
@@ -157,14 +157,15 @@ async fn list_tags(
 
 async fn set_tags(
     Extension(state): Extension<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
     body: Result<Json<TagsRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
     crate::api::require_admin(&state, &headers, denied).await?;
     let Json(request) = body.map_err(|error| TagApiError::unreadable_body(&error))?;
 
-    let dashboard = DefinitionName::parse(&name).map_err(TagApiError::definition_error)?;
+    let dashboard = DefinitionId::parse(&id)
+        .map_err(|_| TagApiError::malformed_id(DefinitionKind::Dashboard, &id))?;
     let tags = TagSet::parse(&request.tags).map_err(tag_error)?;
     state
         .tags()

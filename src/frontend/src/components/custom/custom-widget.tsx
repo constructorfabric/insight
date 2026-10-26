@@ -1,5 +1,6 @@
 import type { MetricResult, Widget } from "@/api/custom-client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { MetricName } from "@/components/custom/metric-name";
 import { refusal } from "@/components/custom/refusal";
 import { CustomAreaChart } from "@/components/custom/custom-area-chart";
 import { CustomBarChart } from "@/components/custom/custom-bar-chart";
@@ -126,8 +127,8 @@ function drawable(
   return (
     <Alert variant="destructive">
       <AlertDescription>
-        This widget draws {missing.join(", ")}, which {metric} does not return.
-        Its columns are {result.columns.join(", ")}.
+        This widget draws {missing.join(", ")}, which <MetricName id={metric} />{" "}
+        does not return. Its columns are {result.columns.join(", ")}.
       </AlertDescription>
     </Alert>
   );

@@ -66,7 +66,10 @@ vi.mock("@/lib/portal/portal-store", async (orig) => ({
 }));
 vi.mock("@/api/custom-client", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
-  fetchDashboardNames: async () => ({ names: ["delivery"], total: 14 }),
+  fetchDashboards: async () => ({
+    items: [{ id: "delivery", name: "delivery" }],
+    total: 14,
+  }),
   fetchFolders: async () => ({
     folders: [
       { id: "f1", name: "Platform", dashboards: 3 },
@@ -78,7 +81,7 @@ vi.mock("@/api/custom-client", async (orig) => ({
   renameFolder: (id: string, name: string) => mocks.renameFolder(id, name),
   deleteFolder: (id: string) => mocks.deleteFolder(id),
   fetchPins: () => mocks.fetchPins(),
-  fetchDashboardRead: (name: string) => mocks.fetchDashboardRead(name),
+  fetchDashboardRead: (id: string) => mocks.fetchDashboardRead(id),
 }));
 
 import { CustomApiError } from "@/api/custom-client";
@@ -741,10 +744,11 @@ describe("Dashboards pane pins", () => {
     delivery: "Delivery",
   };
 
-  function pinned(names: string[]) {
-    mocks.fetchPins.mockResolvedValue(names);
-    mocks.fetchDashboardRead.mockImplementation(async (name: string) => ({
-      body: { title: TITLES[name] ?? "", widgets: [] },
+  function pinned(ids: string[]) {
+    mocks.fetchPins.mockResolvedValue(ids.map((id) => ({ id, name: id })));
+    mocks.fetchDashboardRead.mockImplementation(async (id: string) => ({
+      name: id,
+      body: { title: TITLES[id] ?? "", widgets: [] },
       tags: [],
     }));
     inZone("custom");
@@ -780,22 +784,33 @@ describe("Dashboards pane pins", () => {
   });
 
   it("names a pinned dashboard by its name while its title loads or when it has none", async () => {
-    mocks.fetchPins.mockResolvedValue(["loading", "untitled"]);
-    mocks.fetchDashboardRead.mockImplementation((name: string) =>
-      name === "loading"
+    mocks.fetchPins.mockResolvedValue([
+      { id: "d-loading", name: "Loading board" },
+      { id: "d-untitled", name: "Untitled board" },
+    ]);
+    mocks.fetchDashboardRead.mockImplementation((id: string) =>
+      id === "d-loading"
         ? new Promise(() => {})
-        : Promise.resolve({ body: { title: "", widgets: [] }, tags: [] }),
+        : Promise.resolve({
+            name: "Untitled board",
+            body: { title: "", widgets: [] },
+            tags: [],
+          }),
     );
     inZone("custom");
     pane();
 
-    await screen.findByRole("link", { name: "loading" });
+    await screen.findByRole("link", { name: "Loading board" });
     await waitFor(() =>
-      expect(mocks.fetchDashboardRead).toHaveBeenCalledWith("untitled"),
+      expect(mocks.fetchDashboardRead).toHaveBeenCalledWith("d-untitled"),
     );
     expect(pinnedRows().map((row) => row.textContent)).toEqual([
-      "loading",
-      "untitled",
+      "Loading board",
+      "Untitled board",
+    ]);
+    expect(pinnedRows().map((row) => row.getAttribute("href"))).toEqual([
+      "/portal/custom/d-loading",
+      "/portal/custom/d-untitled",
     ]);
   });
 

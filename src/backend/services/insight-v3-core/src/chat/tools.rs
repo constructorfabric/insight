@@ -2,13 +2,13 @@
 
 use serde_json::{Value, json};
 
-use crate::domain::definition::DefinitionName;
+use crate::domain::definition::DefinitionId;
 
 pub(super) const ANSWER_TOOL: &str = "answer";
 pub(super) const CREATE_TOOL: &str = "create";
 pub(super) const LOOK_UP_TOOL: &str = "look_up";
-/// Definition names, as the store spells the rule.
-pub(super) const NAME_PATTERN: &str = DefinitionName::PATTERN;
+/// Definition ids, as the store spells the rule.
+pub(super) const ID_PATTERN: &str = DefinitionId::PATTERN;
 
 /// The structured query a metric carries. Shared by both tools: the
 /// answer tool runs one, the create tool stores one.
@@ -109,6 +109,29 @@ fn metric_field_schema() -> Value {
     })
 }
 
+fn described(description: &str) -> Value {
+    json!({ "type": "string", "description": description })
+}
+
+/// One definition a create carries: new, or replacing the built one its id
+/// names.
+fn proposed_item(body: &Value) -> Value {
+    let name =
+        described("What a reader calls it, free text. Other items of this create name it by this.");
+    let id = json!({
+        "type": "string",
+        "pattern": ID_PATTERN,
+        "description": "The id of a built definition this replaces. Leave it out to create a new one.",
+    });
+
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "body"],
+        "properties": { "id": id, "name": name, "body": body },
+    })
+}
+
 /// The tools the model may call. The tool it picks IS the intent, so a
 /// question cannot be mistaken for a creation.
 ///
@@ -118,11 +141,10 @@ fn metric_field_schema() -> Value {
 /// refuses and the repair round fixes.
 pub(super) fn proposal_tools() -> Vec<Value> {
     let plain = json!({ "type": "string" });
-    let name = json!({
-        "type": "string",
-        "pattern": NAME_PATTERN,
-        "description": "letters, digits, underscore and dash only - never a space",
-    });
+    let metric_reference =
+        described("The name of the metric in this create, or the id of a built metric.");
+    let widget_reference =
+        described("The name of a widget in this create, or the id of a built widget.");
     let metric_query = metric_query_schema();
 
     let widget = json!({
@@ -131,7 +153,7 @@ pub(super) fn proposal_tools() -> Vec<Value> {
         "required": ["type", "metric"],
         "properties": {
             "type": { "enum": ["table", "line", "bar", "area", "stat", "pie"] },
-            "metric": name,
+            "metric": metric_reference,
             "columns": { "type": "array", "items": plain },
             "x": plain,
             "y": plain,
@@ -144,7 +166,7 @@ pub(super) fn proposal_tools() -> Vec<Value> {
         "additionalProperties": false,
         "description": "Exactly one of widget, heading or text.",
         "properties": {
-            "widget": name,
+            "widget": widget_reference,
             "heading": { "type": "string" },
             "text": { "type": "string" },
         },
@@ -158,14 +180,6 @@ pub(super) fn proposal_tools() -> Vec<Value> {
             "items": { "type": "array", "items": item },
         },
     });
-    let named = |body: Value| {
-        json!({
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["name", "body"],
-            "properties": { "name": name, "body": body },
-        })
-    };
 
     vec![
         json!({
@@ -203,9 +217,9 @@ pub(super) fn proposal_tools() -> Vec<Value> {
                 "required": ["reply"],
                 "properties": {
                     "reply": { "type": "string" },
-                    "metric": named(metric_query),
-                    "widgets": { "type": "array", "items": named(widget) },
-                    "dashboard": named(dashboard),
+                    "metric": proposed_item(&metric_query),
+                    "widgets": { "type": "array", "items": proposed_item(&widget) },
+                    "dashboard": proposed_item(&dashboard),
                 },
             },
         }),

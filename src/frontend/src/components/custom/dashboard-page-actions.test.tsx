@@ -30,17 +30,12 @@ const { CustomApiError } = customClient;
 
 beforeEach(() => {
   vi.resetAllMocks();
-  portalRouter.reset("/portal/custom/delivery");
+  portalRouter.reset("/portal/custom/dash-1");
   vi.mocked(customClient.fetchPins).mockResolvedValue([]);
   vi.mocked(customClient.pinDashboard).mockResolvedValue(undefined);
   vi.mocked(customClient.unpinDashboard).mockResolvedValue(undefined);
-  vi.mocked(customClient.renameDefinition).mockResolvedValue({
-    name: "shipping",
-    rewritten: [],
-  });
-  vi.mocked(customClient.duplicateDashboard).mockResolvedValue(
-    "delivery-copy"
-  );
+  vi.mocked(customClient.renameDefinition).mockResolvedValue(undefined);
+  vi.mocked(customClient.duplicateDashboard).mockResolvedValue("dash-2");
   vi.mocked(customClient.deleteDefinition).mockResolvedValue(undefined);
 });
 
@@ -50,7 +45,7 @@ function actions() {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <DashboardPageActions name="delivery" title="Delivery" />
+      <DashboardPageActions id="dash-1" name="delivery" title="Delivery" />
     </QueryClientProvider>
   );
 }
@@ -71,12 +66,12 @@ async function choose(user: ReturnType<typeof userEvent.setup>, item: string) {
 }
 
 describe("<DashboardPageActions>", () => {
-  it("links Edit to the dashboard's editor", () => {
+  it("links Edit to the dashboard's editor by its id", () => {
     actions();
 
     expect(screen.getByRole("button", { name: "Edit delivery" })).toHaveAttribute(
       "href",
-      "/portal/custom/edit/dashboards/delivery"
+      "/portal/custom/edit/dashboards/dash-1"
     );
   });
 
@@ -97,19 +92,21 @@ describe("<DashboardPageActions>", () => {
     await waitFor(() => expect(item).not.toHaveAttribute("aria-disabled"));
     await user.click(item);
 
-    expect(customClient.pinDashboard).toHaveBeenCalledWith("delivery");
+    expect(customClient.pinDashboard).toHaveBeenCalledWith("dash-1");
   });
 
   it("unpins the dashboard on screen", async () => {
-    vi.mocked(customClient.fetchPins).mockResolvedValue(["delivery"]);
+    vi.mocked(customClient.fetchPins).mockResolvedValue([
+      { id: "dash-1", name: "delivery" },
+    ]);
     const user = await openMenu();
 
     await user.click(await screen.findByRole("menuitem", { name: "Unpin" }));
 
-    expect(customClient.unpinDashboard).toHaveBeenCalledWith("delivery");
+    expect(customClient.unpinDashboard).toHaveBeenCalledWith("dash-1");
   });
 
-  it("lands on the new name after a rename", async () => {
+  it("stays on the dashboard's page after a rename, which keeps its id", async () => {
     const user = await openMenu();
 
     const dialog = await choose(user, "Rename…");
@@ -119,9 +116,13 @@ describe("<DashboardPageActions>", () => {
     await user.clear(field);
     await user.type(field, "shipping{Enter}");
 
-    await waitFor(() =>
-      expect(portalRouter.pathname).toBe("/portal/custom/shipping")
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(customClient.renameDefinition).toHaveBeenCalledWith(
+      "dashboards",
+      "dash-1",
+      "shipping"
     );
+    expect(portalRouter.navigations).toHaveLength(0);
   });
 
   it("lands on the copy after a duplicate", async () => {
@@ -131,7 +132,7 @@ describe("<DashboardPageActions>", () => {
     await user.click(within(dialog).getByRole("button", { name: "Duplicate" }));
 
     await waitFor(() =>
-      expect(portalRouter.pathname).toBe("/portal/custom/delivery-copy")
+      expect(portalRouter.pathname).toBe("/portal/custom/dash-2")
     );
   });
 
@@ -148,7 +149,7 @@ describe("<DashboardPageActions>", () => {
 
   it("stays on the page and says why when a rename is refused", async () => {
     vi.mocked(customClient.renameDefinition).mockRejectedValue(
-      new CustomApiError(409, { detail: "shipping is taken" })
+      new CustomApiError(400, { detail: "name must be 1 to 128 characters" })
     );
     const user = await openMenu();
 
@@ -160,7 +161,7 @@ describe("<DashboardPageActions>", () => {
     await user.type(field, "shipping{Enter}");
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "shipping is taken"
+      "name must be 1 to 128 characters"
     );
     expect(portalRouter.navigations).toHaveLength(0);
   });
@@ -170,7 +171,7 @@ describe("<DashboardPageActions>", () => {
       "Duplicate…",
       "Duplicate",
       customClient.duplicateDashboard,
-      "delivery-copy is taken",
+      "the dashboard is gone",
     ],
     [
       "Delete…",

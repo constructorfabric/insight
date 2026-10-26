@@ -15,7 +15,7 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use crate::domain::definition::DefinitionName;
+use crate::domain::definition::{DefinitionId, DefinitionKind};
 use crate::domain::drilldown::{
     Asked, Column, CursorError, DEFAULT_PAGE_ROWS, DrilldownError, MAX_PAGE_ROWS, Page, Sort,
 };
@@ -65,12 +65,12 @@ pub(crate) fn register_routes(
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let page = OperationBuilder::post("/v1/metrics/{name}/drilldown")
+    let page = OperationBuilder::post("/v1/metrics/{id}/drilldown")
         .operation_id("insight_v3_core.metrics.drilldown")
         .summary("Read a metric's rows one ordered page at a time")
         .anonymous()
         .exposed()
-        .param(ParamSpec::path("name").description("Metric name"))
+        .param(ParamSpec::path("id").description("Metric id"))
         .json_request::<DrilldownBody>(openapi, "How the page is ordered, cut and continued")
         .json_response(
             StatusCode::OK,
@@ -157,7 +157,7 @@ struct DrilldownResponse {
 
 async fn page_metric(
     Extension(state): Extension<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
     body: Result<Option<Json<serde_json::Value>>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
@@ -168,7 +168,8 @@ async fn page_metric(
     })
     .await?;
 
-    let name = DefinitionName::parse(&name).map_err(DrilldownApiError::definition_error)?;
+    let name = DefinitionId::parse(&id)
+        .map_err(|_| DrilldownApiError::malformed_id(DefinitionKind::Metric, &id))?;
     let asked = asked(body)?;
 
     // INVARIANT: held across the read. The permit is this request's share of
@@ -273,7 +274,7 @@ fn column_out(column: &Column) -> ColumnOut {
     }
 }
 
-fn drilldown_error(error: DrilldownError, name: &DefinitionName) -> CanonicalError {
+fn drilldown_error(error: DrilldownError, name: &DefinitionId) -> CanonicalError {
     let said = error.to_string();
 
     match error {
