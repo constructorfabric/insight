@@ -1,14 +1,12 @@
-use super::*;
-use crate::domain::definition::{DefinitionKind, Page};
-use crate::domain::folders::FolderId;
-use crate::store::definitions::{REPLACE_ONE, sql};
+use uuid::Uuid;
 
-fn bound(statement: &Statement) -> Vec<String> {
-    statement
-        .values
-        .as_ref()
-        .map(|values| values.0.iter().map(ToString::to_string).collect())
-        .unwrap_or_default()
+use super::*;
+use crate::store::definitions::visibility::assert_bound;
+
+fn callers() -> [Caller; 2] {
+    let person = PersonId::new(Uuid::from_u128(7));
+
+    [Caller::administrator(person), Caller::member(person)]
 }
 
 fn an_id() -> FolderId {
@@ -16,61 +14,99 @@ fn an_id() -> FolderId {
         .unwrap_or_else(|error| panic!("the id must parse: {error}"))
 }
 
-fn a_page() -> Page {
-    Page::parse(Some(20), Some(40)).unwrap_or_else(|error| panic!("the page must parse: {error}"))
+fn delivery() -> DefinitionId {
+    DefinitionId::parse("delivery").unwrap_or_else(|error| panic!("{error}"))
 }
 
 #[test]
-fn a_body_write_names_no_folder_so_a_rewrite_keeps_it() {
-    let replace = sql(REPLACE_ONE, DefinitionKind::Dashboard);
+fn every_folder_query_binds_a_value_to_each_mark() {
+    for caller in callers() {
+        let statements = [
+            list_statement(caller),
+            unfiled_statement(caller),
+            holding_statement(&delivery(), caller),
+            add_entry_statement(an_id(), &delivery(), caller, Entry::Carrying),
+            add_entry_statement(an_id(), &delivery(), caller, Entry::Filing),
+            remove_entry_statement(an_id(), &delivery(), caller),
+        ];
 
-    assert!(!replace.contains("folder_id"), "{replace}");
-}
-
-#[test]
-fn a_page_of_one_folder_binds_the_folder_and_keeps_the_search() {
-    let statement = page_statement("deliv", a_page(), FolderFilter::In(an_id()));
-
-    assert!(statement.sql.contains("folder_id = ?"), "{}", statement.sql);
-    assert!(
-        statement.sql.contains("name LIKE ? OR body LIKE ?"),
-        "{}",
-        statement.sql
-    );
-    assert_eq!(
-        bound(&statement),
-        [
-            "'%deliv%'",
-            "'%deliv%'",
-            "'0192a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b'",
-            "20",
-            "40",
-        ]
-    );
-}
-
-#[test]
-fn a_page_of_the_unfiled_asks_for_no_folder_at_all() {
-    let statement = page_statement("", a_page(), FolderFilter::Unfiled);
-    let counted = count_statement("", FolderFilter::Unfiled);
-
-    for query in [&statement.sql, &counted.sql] {
-        assert!(query.contains("folder_id IS NULL"), "{query}");
+        for statement in &statements {
+            assert_bound(statement);
+        }
     }
-    assert_eq!(bound(&statement), ["'%%'", "'%%'", "20", "40"]);
 }
 
 #[test]
-fn filing_binds_the_folder_then_the_dashboard() {
-    let name = crate::domain::definition::DefinitionId::parse("delivery")
-        .unwrap_or_else(|error| panic!("{error}"));
+fn the_folder_list_keeps_the_folders_the_caller_sees_counting_the_dashboards_they_see() {
+    for caller in callers() {
+        let statement = list_statement(caller);
 
-    let filed = file_statement(&name, Some(an_id()));
-    let unfiled = file_statement(&name, None);
+        assert!(
+            statement.sql.contains(&folder_visible("folders", caller).0),
+            "{}",
+            statement.sql
+        );
+        assert!(
+            statement.sql.contains(&dashboard_visible(caller).0),
+            "{}",
+            statement.sql
+        );
+    }
+}
 
-    assert_eq!(
-        bound(&filed),
-        ["'0192a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b'", "'delivery'"]
+#[test]
+fn an_entry_lands_only_on_a_dashboard_the_caller_sees_and_never_stops_carrying_here() {
+    for caller in callers() {
+        let statement = add_entry_statement(an_id(), &delivery(), caller, Entry::Filing);
+
+        assert!(
+            statement.sql.contains(&dashboard_visible(caller).0),
+            "{}",
+            statement.sql
+        );
+        assert!(
+            statement
+                .sql
+                .contains("carries = folder_entries.carries OR VALUES(carries)"),
+            "{}",
+            statement.sql
+        );
+    }
+}
+
+#[test]
+fn an_entry_goes_only_while_the_caller_sees_its_dashboard() {
+    for caller in callers() {
+        let statement = remove_entry_statement(an_id(), &delivery(), caller);
+
+        assert!(
+            statement.sql.contains(&dashboard_visible(caller).0),
+            "{}",
+            statement.sql
+        );
+    }
+}
+
+#[test]
+fn an_entry_carries_only_while_its_placer_owns_the_dashboard_or_holds_an_editor_grant() {
+    let statement = add_entry_statement(an_id(), &delivery(), callers()[0], Entry::Carrying);
+
+    for part in [
+        "? AND (dashboards.owner_person_id IS NULL",
+        "OR dashboards.owner_person_id = ?",
+        "qualifying.level = 'editor'",
+        "qualifying.grantee IN (?, 'everyone')",
+        "placed_by = IF(VALUES(carries), VALUES(placed_by), folder_entries.placed_by)",
+    ] {
+        assert!(statement.sql.contains(part), "{part}: {}", statement.sql);
+    }
+}
+
+#[test]
+fn the_folder_cap_counts_one_owners_folders_under_the_folders_lock() {
+    assert!(
+        COUNT_FOLDERS.ends_with("WHERE owner_person_id = ?"),
+        "{COUNT_FOLDERS}"
     );
-    assert_eq!(bound(&unfiled), ["NULL", "'delivery'"]);
+    assert!(LOCK_FOLDERS.ends_with("FOR UPDATE"), "{LOCK_FOLDERS}");
 }

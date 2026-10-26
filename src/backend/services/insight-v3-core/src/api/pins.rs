@@ -12,7 +12,7 @@ use super::AppState;
 use super::definitions::listed_json;
 use super::errors::ApiErrors;
 use crate::domain::definition::{DefinitionId, DefinitionKind};
-use crate::domain::pins::PinError;
+use crate::domain::pins::{self, PinError};
 
 #[resource_error("gts.cf.insight.insight_v3_core.pins.v1~")]
 struct PinApiError;
@@ -60,9 +60,9 @@ fn pin_error(error: PinError) -> CanonicalError {
     }
 }
 
-fn denied() -> CanonicalError {
+fn unidentified() -> CanonicalError {
     PinApiError::permission_denied()
-        .with_reason(crate::api::ADMIN_ONLY)
+        .with_reason(crate::api::UNIDENTIFIED)
         .create()
 }
 
@@ -81,7 +81,7 @@ pub(crate) fn register_routes(
 ) -> Router {
     let list = OperationBuilder::get("/v1/pins")
         .operation_id("insight_v3_core.pins.list")
-        .summary("List the dashboards the caller pinned")
+        .summary("List the dashboards the caller pinned and still sees")
         .anonymous()
         .exposed()
         .json_response(
@@ -135,7 +135,7 @@ async fn list_pins(
     Extension(state): Extension<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    let caller = crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::caller(&state, &headers, unidentified).await?;
 
     let pins = state.pins().pins_of(caller).await.map_err(pin_error)?;
 
@@ -147,12 +147,10 @@ async fn pin_dashboard(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    let caller = crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::caller(&state, &headers, unidentified).await?;
 
     let dashboard = dashboard_id(&id)?;
-    state
-        .pins()
-        .pin(caller, &dashboard)
+    pins::pin(state.store(), caller, &dashboard)
         .await
         .map_err(pin_error)?;
 
@@ -164,12 +162,10 @@ async fn unpin_dashboard(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    let caller = crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::caller(&state, &headers, unidentified).await?;
 
     let dashboard = dashboard_id(&id)?;
-    state
-        .pins()
-        .unpin(caller, &dashboard)
+    pins::unpin(state.store(), caller, &dashboard)
         .await
         .map_err(pin_error)?;
 

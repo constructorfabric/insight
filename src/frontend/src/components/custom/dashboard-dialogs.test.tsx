@@ -6,7 +6,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchFolders: vi.fn(),
     fetchTags: vi.fn(),
     fetchDashboards: vi.fn(),
-    fetchDashboardFolder: vi.fn(),
     renameDefinition: vi.fn(),
     duplicateDashboard: vi.fn(),
     deleteDefinition: vi.fn(),
@@ -47,10 +46,16 @@ beforeEach(() => {
   });
   vi.mocked(customClient.fetchTags).mockResolvedValue({ tags: [] });
   vi.mocked(customClient.fetchDashboards).mockResolvedValue({
-    items: [{ id: "dash-1", name: "delivery" }],
+    items: [
+      {
+        id: "dash-1",
+        name: "delivery",
+        owner_person_id: null,
+        access: "ownerless",
+      },
+    ],
     total: 1,
   });
-  vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
 });
 
 function Lists() {
@@ -86,7 +91,12 @@ async function openCardMenu(name = "delivery") {
   render(
     <QueryClientProvider client={queryClient}>
       <Lists />
-      <DashboardMenu id="dash-1" name={name} title="Delivery" />
+      <DashboardMenu
+        id="dash-1"
+        name={name}
+        title="Delivery"
+        access="owner"
+      />
     </QueryClientProvider>
   );
   await waitFor(() => expect(reads().pins).toBe(1));
@@ -103,7 +113,7 @@ async function choose(user: ReturnType<typeof userEvent.setup>, item: string) {
 }
 
 describe("the card's ··· menu", () => {
-  it("offers pin, rename and duplicate, then filing, then delete", async () => {
+  it("offers pin, rename and duplicate, then filing and tags, then delete", async () => {
     await openCardMenu();
 
     await screen.findByRole("menuitem", { name: "Unpin" });
@@ -113,13 +123,10 @@ describe("the card's ··· menu", () => {
       "Unpin",
       "Rename…",
       "Duplicate…",
-      "New folder…",
+      "Add to folder…",
       "Edit tags…",
       "Delete…",
     ]);
-    expect(
-      screen.getByRole("menuitemradio", { name: "Unfiled" })
-    ).toBeInTheDocument();
   });
 });
 
@@ -249,7 +256,7 @@ describe("duplicating from the card", () => {
 
   it("says why a copy was refused, and reads the lists again", async () => {
     vi.mocked(customClient.duplicateDashboard).mockRejectedValue(
-      new CustomApiError(404, { detail: "the dashboard is gone" })
+      new CustomApiError(403, { detail: "only the owner may change it" })
     );
     const user = await openCardMenu();
 
@@ -258,7 +265,7 @@ describe("duplicating from the card", () => {
     await user.click(within(dialog).getByRole("button", { name: "Duplicate" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "the dashboard is gone"
+      "only the owner may change it"
     );
     await expectListsReadAgain(before);
   });

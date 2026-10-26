@@ -239,7 +239,8 @@ function WrittenLine({ verb, items }: { verb: string; items: Written[] }) {
       {items.map((item, index) => (
         <span key={`${item.noun}-${item.id}`}>
           {index > 0 ? " · " : null}
-          {item.noun} <WrittenLink item={item} />
+          {item.noun}{" "}
+          <WrittenLink item={item} />
         </span>
       ))}
     </p>

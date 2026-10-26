@@ -675,7 +675,9 @@ async fn create_alert(
     headers: axum::http::HeaderMap,
     body: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    let actor = crate::api::require_admin(&state, &headers, denied).await?;
+    let actor = crate::api::require_admin(&state, &headers, denied)
+        .await?
+        .person;
     let alerts = alerts(&state)?;
     let Json(body) = body.map_err(|error| AlertApiError::unreadable_body(&error))?;
 
@@ -683,7 +685,7 @@ async fn create_alert(
         .map_err(|error| AlertApiError::invalid_field("body", error.to_string()))?;
 
     let rule = alerts
-        .create(&draft, Some(actor))
+        .create(&draft, Some(actor.uuid()))
         .await
         .map_err(alerts_error)?;
 
@@ -696,7 +698,9 @@ async fn put_alert(
     headers: axum::http::HeaderMap,
     body: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    let actor = crate::api::require_admin(&state, &headers, denied).await?;
+    let actor = crate::api::require_admin(&state, &headers, denied)
+        .await?
+        .person;
     let alerts = alerts(&state)?;
     let Json(body) = body.map_err(|error| AlertApiError::unreadable_body(&error))?;
 
@@ -705,7 +709,7 @@ async fn put_alert(
         .map_err(|error| AlertApiError::invalid_field("body", error.to_string()))?;
 
     let rule = alerts
-        .replace(id, &draft, Some(actor))
+        .replace(id, &draft, Some(actor.uuid()))
         .await
         .map_err(alerts_error)?;
 

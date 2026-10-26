@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useZoneNav } from "@/lib/portal/use-zone-nav";
 import { TEXT_EYEBROW } from "@/lib/type-scale";
 import { definitionPagesQuery } from "@/queries/custom";
+import { useIsAdmin } from "@/queries/identity-me";
 
 export function HomeDashboards() {
   const { zones } = useZoneNav();
@@ -17,6 +18,7 @@ export function HomeDashboards() {
 
 function DashboardSection() {
   const dashboards = useInfiniteQuery(definitionPagesQuery("dashboards"));
+  const { isAdmin } = useIsAdmin();
   const shown =
     dashboards.data?.pages.flatMap((page) => page.items).slice(0, 3) ?? [];
 
@@ -35,7 +37,7 @@ function DashboardSection() {
           >
             All dashboards
           </Button>
-          <NewLink kind="dashboards" noun="dashboard" />
+          {isAdmin ? <NewLink kind="dashboards" noun="dashboard" /> : null}
         </div>
       </div>
       {dashboards.isPending ? (

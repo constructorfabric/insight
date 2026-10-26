@@ -545,3 +545,113 @@ async fn a_proposed_metric_that_cannot_be_read_as_a_query_is_refused_before_it_i
     assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
     assert!(!harness.holds_any(DefinitionKind::Metric).await);
 }
+
+/// Who the fixed identity says is chatting.
+fn chatting() -> crate::domain::access::PersonId {
+    crate::domain::access::PersonId::new(uuid::Uuid::nil())
+}
+
+fn someone_else() -> crate::domain::access::PersonId {
+    crate::domain::access::PersonId::new(uuid::Uuid::from_u128(2))
+}
+
+fn a_new_board() -> Proposal {
+    Proposal::Create {
+        reply: "ok".to_owned(),
+        metric: None,
+        widgets: Vec::new(),
+        dashboard: Some(proposed(
+            "Board",
+            json!({ "title": "Board", "widgets": [] }),
+        )),
+    }
+}
+
+fn replacing_their_board() -> Proposal {
+    Proposal::Create {
+        reply: "ok".to_owned(),
+        metric: None,
+        widgets: Vec::new(),
+        dashboard: Some(replacing(
+            "theirs",
+            "Mine now",
+            json!({ "title": "Mine now", "widgets": [] }),
+        )),
+    }
+}
+
+impl TestHarness {
+    async fn owned_by(&self, id: &str, owner: crate::domain::access::PersonId) {
+        let parsed = crate::domain::definition::DefinitionId::parse(id)
+            .unwrap_or_else(|error| panic!("the id must parse: {error}"));
+
+        self.definitions
+            .seed_owned(&parsed, &json!({ "title": id, "widgets": [] }), owner)
+            .await
+            .unwrap_or_else(|error| panic!("the store must accept it: {error}"));
+    }
+}
+
+#[tokio::test]
+async fn a_dashboard_the_assistant_creates_is_the_callers() {
+    use crate::domain::dashboards::DashboardCatalogue as _;
+
+    let harness = TestHarness::new(ChatClient::scripted(a_new_board)).await;
+    harness.queue_chat_context();
+
+    let response = harness.post_chat("make me a board").await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let id = reported_id(&response.json().await["created"]["dashboard"]);
+    let parsed = crate::domain::definition::DefinitionId::parse(&id)
+        .unwrap_or_else(|error| panic!("the id must parse: {error}"));
+    let standing = harness
+        .definitions
+        .standing(
+            &parsed,
+            crate::domain::access::Caller::administrator(chatting()),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("the store must answer: {error}"));
+    assert_eq!(
+        standing.map(|held| held.owner),
+        Some(crate::domain::access::Owner::Person(chatting()))
+    );
+}
+
+#[tokio::test]
+async fn replacing_a_dashboard_the_caller_cannot_see_is_refused_as_missing() {
+    let harness = TestHarness::new(ChatClient::scripted(replacing_their_board)).await;
+    harness.owned_by("theirs", someone_else()).await;
+    harness.queue_chat_context();
+
+    let refused = harness.post_chat("rename their board").await;
+
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        harness.stored(DefinitionKind::Dashboard, "theirs").await["title"],
+        json!("theirs")
+    );
+}
+
+#[tokio::test]
+async fn replacing_a_dashboard_shared_with_the_caller_is_refused_to_a_viewer() {
+    let harness = TestHarness::new(ChatClient::scripted(replacing_their_board)).await;
+    harness.owned_by("theirs", someone_else()).await;
+    let parsed = crate::domain::definition::DefinitionId::parse("theirs")
+        .unwrap_or_else(|error| panic!("the id must parse: {error}"));
+    harness
+        .definitions
+        .seed_viewer(&parsed, chatting(), someone_else())
+        .await
+        .unwrap_or_else(|error| panic!("the store must share it: {error}"));
+    harness.queue_chat_context();
+
+    let refused = harness.post_chat("rename their board").await;
+
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        harness.stored(DefinitionKind::Dashboard, "theirs").await["title"],
+        json!("theirs")
+    );
+}

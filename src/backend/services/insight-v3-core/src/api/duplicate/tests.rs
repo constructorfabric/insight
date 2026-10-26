@@ -120,10 +120,13 @@ impl Harness {
         let folder = self
             .sent("POST", "/v1/folders", Some(json!({ "name": "Platform" })))
             .await;
+        let folder = folder["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a folder answers its id: {folder}"));
         self.sent(
             "PUT",
-            &format!("/v1/dashboards/{id}/folder"),
-            Some(json!({ "folder": folder["id"] })),
+            &format!("/v1/folders/{folder}/dashboards/{id}"),
+            None,
         )
         .await;
         self.sent(
@@ -172,7 +175,7 @@ async fn a_duplicate_is_created_under_a_fresh_id_with_the_body_folder_and_tags()
 
     assert_ne!(copy_id, source_id);
     assert_eq!(copy["name"], "Delivery copy");
-    for field in ["body", "folder", "tags"] {
+    for field in ["body", "folders", "tags"] {
         assert_eq!(copy[field], source[field], "{field}");
     }
     assert_eq!(harness.sent("GET", &source_path, None).await, source);

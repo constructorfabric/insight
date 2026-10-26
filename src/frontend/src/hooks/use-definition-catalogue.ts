@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 
-import type { EditableKind, FolderFilter } from "@/api/custom-client";
+import type { EditableKind } from "@/api/custom-client";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { definitionPagesQuery } from "@/queries/custom";
+import { definitionPagesQuery, type Narrowing } from "@/queries/custom";
 
 /** Long enough that a word is typed before the service hears about it. */
 const SEARCH_DEBOUNCE_MS = 400;
@@ -15,18 +15,14 @@ const SEARCH_DEBOUNCE_MS = 400;
  * The needle is debounced and trimmed before it reaches the query key, so a
  * word typed at speed is one request rather than one per keystroke.
  */
-export function useDefinitionCatalogue(
-  kind: EditableKind,
-  {
-    folder,
-    tags,
-    enabled = true,
-  }: { folder?: FolderFilter; tags?: string[]; enabled?: boolean } = {}
+export function useDefinitionCatalogue<K extends EditableKind>(
+  kind: K,
+  { enabled = true, ...narrowing }: Narrowing & { enabled?: boolean } = {}
 ) {
   const [needle, setNeedle] = useState("");
   const searching = useDebouncedValue(needle, SEARCH_DEBOUNCE_MS).trim();
   const catalogue = useInfiniteQuery({
-    ...definitionPagesQuery(kind, searching, folder, tags),
+    ...definitionPagesQuery(kind, searching, narrowing),
     enabled,
   });
   const pages = catalogue.data?.pages;

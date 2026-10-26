@@ -3,16 +3,17 @@ use std::error::Error;
 use serde_json::json;
 use uuid::Uuid;
 
+use crate::domain::access::{Caller, PersonId};
 use crate::domain::definition::{
-    DefinitionId, DefinitionKind, DefinitionLabel, Definitions, Listed,
+    Change, DefinitionId, DefinitionKind, DefinitionLabel, Definitions, Listed,
 };
-use crate::domain::pins::{MAX_PINS, PinError, Pins};
+use crate::domain::pins::{self, MAX_PINS, PinError, Pins};
 use crate::store::definitions::memory::MemoryDefinitions;
 
 type R = Result<(), Box<dyn Error>>;
 
-const ANNA: Uuid = Uuid::from_u128(1);
-const BORIS: Uuid = Uuid::from_u128(2);
+const ANNA: Caller = Caller::administrator(PersonId::new(Uuid::from_u128(1)));
+const BORIS: Caller = Caller::administrator(PersonId::new(Uuid::from_u128(2)));
 
 fn name(value: &str) -> DefinitionId {
     DefinitionId::parse(value).unwrap_or_else(|error| panic!("the name must parse: {error}"))
@@ -33,7 +34,7 @@ async fn with_boards(names: &[&str]) -> MemoryDefinitions {
     store
 }
 
-async fn pinned(store: &MemoryDefinitions, person: Uuid) -> Vec<String> {
+async fn pinned(store: &MemoryDefinitions, person: Caller) -> Vec<String> {
     store
         .pins_of(person)
         .await
@@ -130,7 +131,7 @@ async fn pinning_or_unpinning_a_dashboard_that_is_not_there_is_refused() {
     let store = with_boards(&["alpha"]).await;
 
     let pinned_nothing = store.pin(ANNA, &name("nowhere")).await;
-    let unpinned_nothing = store.unpin(ANNA, &name("nowhere")).await;
+    let unpinned_nothing = pins::unpin(&store, ANNA, &name("nowhere")).await;
 
     for refused in [pinned_nothing, unpinned_nothing] {
         assert!(
@@ -188,4 +189,71 @@ async fn a_store_that_is_down_refuses_a_pin() {
     let refused = store.pin(ANNA, &name("alpha")).await;
 
     assert!(matches!(refused, Err(PinError::Store(_))), "{refused:?}");
+}
+
+#[tokio::test]
+async fn a_pin_of_a_dashboard_the_person_no_longer_sees_is_neither_listed_nor_counted() -> R {
+    let boards: Vec<String> = (0..=MAX_PINS).map(|index| format!("b{index}")).collect();
+    let named: Vec<&str> = boards.iter().map(String::as_str).collect();
+    let store = with_boards(&named).await;
+    for board in &boards[..MAX_PINS] {
+        store.pin(ANNA, &name(board)).await?;
+    }
+
+    store
+        .apply(&[Change::Own {
+            dashboard: name(&boards[0]),
+            owner: BORIS.person,
+        }])
+        .await?;
+    let room = store.pin(ANNA, &name(&boards[MAX_PINS])).await;
+
+    assert!(room.is_ok(), "{room:?}");
+    assert!(!pinned(&store, ANNA).await.contains(&boards[0]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_withdrawn_viewer_can_neither_pin_nor_file_the_dashboard() -> R {
+    use crate::domain::access::{Entry, Grantee, Level};
+    use crate::domain::folders::{FolderError, FolderName, Folders as _};
+    use crate::domain::sharing::{Grants as _, Shared};
+
+    let store = MemoryDefinitions::new();
+    let board = name("delivery");
+    store
+        .seed_owned(&board, &json!({ "title": "delivery" }), ANNA.person)
+        .await?;
+    let folder = store
+        .create_folder(BORIS.person, FolderName::parse("Mine")?)
+        .await?;
+    let shared = Shared::Dashboard(&board);
+    store
+        .grant(
+            shared,
+            Grantee::Person(BORIS.person),
+            Level::Viewer,
+            ANNA.person,
+        )
+        .await?;
+    store
+        .withdraw(shared, Grantee::Person(BORIS.person), ANNA.person)
+        .await?;
+
+    let pinned_after = store.pin(BORIS, &board).await;
+    let filed_after = store
+        .add_entry(folder.id, &board, BORIS, Entry::Filing)
+        .await;
+
+    assert!(
+        matches!(pinned_after, Err(PinError::DashboardNotFound(_))),
+        "{pinned_after:?}"
+    );
+    assert!(
+        matches!(filed_after, Err(FolderError::DashboardNotFound(_))),
+        "{filed_after:?}"
+    );
+    assert_eq!(pinned(&store, BORIS).await, Vec::<String>::new());
+    assert!(store.folders_holding(&board, BORIS).await?.is_empty());
+    Ok(())
 }

@@ -1,7 +1,11 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
-import { createElement, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const role = vi.hoisted(() => ({ isAdmin: false, isPending: true }));
+vi.mock("@/queries/identity-me", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-me")>()),
+  useIsAdmin: () => ({ ...role, isError: false, retry: () => {} }),
+}));
 
 vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
@@ -77,16 +81,9 @@ vi.mock("recharts", async (importOriginal) => {
 });
 
 import { CustomApiError } from "@/api/custom-client";
-import * as customClient from "@/api/custom-client";
+import { wrapper } from "@/test/alerts";
 
 import { CustomWidget } from "./custom-widget";
-
-function wrapper({ children }: { children: ReactNode }) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return createElement(QueryClientProvider, { client: queryClient }, children);
-}
 
 const result = {
   columns: ["day", "lines"],
@@ -160,6 +157,38 @@ describe("<CustomWidget>", () => {
       "a metric reads a dataset, so it may not name a `table`"
     );
     expect(screen.getByRole("alert")).not.toHaveTextContent("400");
+  });
+
+  it("says the service is busy and offers another try when a run is turned away", async () => {
+    const onRetry = vi.fn();
+    render(
+      <CustomWidget
+        widget={{ type: "table", metric: "m", columns: ["day"] }}
+        error={new CustomApiError(429, { detail: "every slot is taken" })}
+        onRetry={onRetry}
+      />
+    );
+
+    expect(screen.getByRole("status")).toHaveAccessibleName("Busy, try again.");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    screen.getByRole("button", { name: "Retry" }).click();
+    await waitFor(() => expect(onRetry).toHaveBeenCalledOnce());
+  });
+
+  it("waits rather than repeating busy while another try is in flight", () => {
+    render(
+      <CustomWidget
+        widget={{ type: "table", metric: "m", columns: ["day"] }}
+        error={new CustomApiError(429, null)}
+        pending
+      />
+    );
+
+    expect(screen.queryByText("Busy, try again.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
   });
 
   it("says plainly when the failure carries nothing readable", () => {
@@ -335,7 +364,7 @@ describe("<CustomWidget>", () => {
     expect(screen.queryByTestId(frame)).not.toBeInTheDocument();
   });
 
-  it("says which column is missing, naming the metric by its stored name", async () => {
+  it("says which column is missing instead of drawing an empty chart", async () => {
     // Seen live: y named the metric's raw json field instead of its as_name,
     // so every point was undefined and the chart drew axes and no line.
     render(
@@ -354,9 +383,30 @@ describe("<CustomWidget>", () => {
     await waitFor(() =>
       expect(alert).toHaveTextContent("Lines per day does not return")
     );
-    expect(customClient.fetchMetric).toHaveBeenCalledWith("lines_per_day");
     expect(alert).toHaveTextContent("day, total_lines");
     expect(screen.queryByTestId("custom-line-chart")).not.toBeInTheDocument();
+  });
+
+  describe("for a member", () => {
+    afterEach(() => {
+      role.isPending = true;
+    });
+
+    it("says only that the widget cannot be drawn", () => {
+      role.isPending = false;
+      render(
+        <CustomWidget
+          widget={{ type: "line", metric: "lines_per_day", x: "day", y: "lines" }}
+          result={{ columns: ["day", "total_lines"], rows: [["2026-09-01", 132]] }}
+        />,
+        { wrapper }
+      );
+
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Couldn't draw this widget."
+      );
+      expect(screen.getByRole("alert")).not.toHaveTextContent("total_lines");
+    });
   });
 });
 

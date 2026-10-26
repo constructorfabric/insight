@@ -30,8 +30,11 @@ export const Route = createFileRoute("/portal/custom")({
   component: CustomZone,
 });
 
+const MEMBER_ROUTES = new Set(["/portal/custom/", "/portal/custom/$name"]);
+
 function CustomZone() {
   const { isAdmin, isPending, isError, retry } = useIsAdmin();
+  const routeId = useRouterState({ select: (s) => s.matches.at(-1)?.routeId });
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const openDashboard = dashboardIdFromPath(pathname);
   const queryClient = useQueryClient();
@@ -53,8 +56,6 @@ function CustomZone() {
     }
   }
 
-  // The rail hides this zone for a caller without the role; the URL is the
-  // other way in, and the service refuses either way.
   if (isPending) return <CenteredSpinner className="min-h-40" />;
   if (isError) {
     return (
@@ -69,14 +70,22 @@ function CustomZone() {
     );
   }
   if (!isAdmin) {
+    const open = routeId != null && MEMBER_ROUTES.has(routeId);
+
     return (
-      <div className="mx-auto w-full max-w-md p-8">
-        <ComingSoon
-          variant="card"
-          state="empty"
-          label="Custom dashboards are open to administrators only."
-        />
-      </div>
+      <CustomPageShell>
+        {open ? (
+          <Outlet />
+        ) : (
+          <div className="mx-auto w-full max-w-md p-8">
+            <ComingSoon
+              variant="card"
+              state="empty"
+              label="This page is open to administrators only."
+            />
+          </div>
+        )}
+      </CustomPageShell>
     );
   }
 

@@ -299,9 +299,9 @@ async fn a_deleted_dashboard_leaves_the_pinned_list() {
 }
 
 #[tokio::test]
-async fn a_caller_without_the_admin_role_is_refused_on_every_pin_route() {
+async fn a_caller_identity_refuses_is_refused_on_every_pin_route() {
     let harness = Harness::build(
-        IdentityClient::fixed(false),
+        IdentityClient::unidentified(),
         Arc::new(MemoryDefinitions::new()),
     );
 

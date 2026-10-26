@@ -9,11 +9,28 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchPins: vi.fn(),
     pinDashboard: vi.fn(),
     unpinDashboard: vi.fn(),
+    fetchFolders: vi.fn(),
     renameDefinition: vi.fn(),
     duplicateDashboard: vi.fn(),
     deleteDefinition: vi.fn(),
   };
 });
+vi.mock("@/components/custom/share-dialog", () => ({
+  ShareDialog: ({
+    open,
+    target,
+    ownerPersonId,
+  }: {
+    open: boolean;
+    target: { kind: string; id: string };
+    ownerPersonId: string;
+  }) =>
+    open ? (
+      <div role="dialog" aria-label="Share">
+        {`${target.kind}/${target.id} ${ownerPersonId}`}
+      </div>
+    ) : null,
+}));
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -22,37 +39,52 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import * as customClient from "@/api/custom-client";
+import type { DashboardAccess } from "@/api/custom-client";
 import { portalRouter } from "@/test/portal-router";
 
 import { DashboardPageActions } from "./dashboard-page-actions";
 
 const { CustomApiError } = customClient;
 
+const ID = "dash-1";
+const OWNER = "01900000-0000-7000-8000-00000000000a";
+
 beforeEach(() => {
   vi.resetAllMocks();
-  portalRouter.reset("/portal/custom/dash-1");
+  portalRouter.reset(`/portal/custom/${ID}`);
   vi.mocked(customClient.fetchPins).mockResolvedValue([]);
   vi.mocked(customClient.pinDashboard).mockResolvedValue(undefined);
   vi.mocked(customClient.unpinDashboard).mockResolvedValue(undefined);
+  vi.mocked(customClient.fetchFolders).mockResolvedValue({
+    folders: [],
+    unfiled: 1,
+  });
   vi.mocked(customClient.renameDefinition).mockResolvedValue(undefined);
   vi.mocked(customClient.duplicateDashboard).mockResolvedValue("dash-2");
   vi.mocked(customClient.deleteDefinition).mockResolvedValue(undefined);
 });
 
-function actions() {
+function actions(access: DashboardAccess = "owner", carries = access !== "viewer") {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <DashboardPageActions id="dash-1" name="delivery" title="Delivery" />
+      <DashboardPageActions
+        id={ID}
+        name="delivery"
+        title="Delivery"
+        access={access}
+        ownerPersonId={access === "ownerless" ? null : OWNER}
+        carries={carries}
+      />
     </QueryClientProvider>
   );
 }
 
-async function openMenu() {
+async function openMenu(access: DashboardAccess = "owner") {
   const user = userEvent.setup();
-  actions();
+  actions(access);
 
   await user.click(screen.getByRole("button", { name: "More for delivery" }));
   await screen.findByRole("menu");
@@ -66,47 +98,99 @@ async function choose(user: ReturnType<typeof userEvent.setup>, item: string) {
 }
 
 describe("<DashboardPageActions>", () => {
-  it("links Edit to the dashboard's editor by its id", () => {
+  it("links Edit to the dashboard's editor by id", () => {
     actions();
 
     expect(screen.getByRole("button", { name: "Edit delivery" })).toHaveAttribute(
       "href",
-      "/portal/custom/edit/dashboards/dash-1"
+      `/portal/custom/edit/dashboards/${ID}`
     );
   });
 
-  it("offers pin, rename, duplicate and delete, and no filing", async () => {
+  it.each([
+    ["owner", true, true, true],
+    ["editor", true, true, true],
+    ["editor", false, false, true],
+    ["ownerless", true, false, true],
+    ["viewer", false, false, false],
+  ] as const)(
+    "a caller with %s access, carrying %s, is offered Share: %s, Edit: %s",
+    (access, carries, share, edit) => {
+      actions(access, carries);
+
+      expect(
+        screen.queryByRole("button", { name: "Share delivery" }) !== null
+      ).toBe(share);
+      expect(
+        screen.queryByRole("button", { name: "Edit delivery" }) !== null
+      ).toBe(edit);
+      expect(
+        screen.getByRole("button", { name: "More for delivery" })
+      ).toBeInTheDocument();
+    }
+  );
+
+  it.each(["owner", "editor"] as const)(
+    "opens the dashboard's share dialog for an %s",
+    async (access) => {
+      const user = userEvent.setup();
+      actions(access);
+
+      await user.click(screen.getByRole("button", { name: "Share delivery" }));
+
+      expect(
+        await screen.findByRole("dialog", { name: "Share" })
+      ).toHaveTextContent(`dashboards/${ID} ${OWNER}`);
+    }
+  );
+
+  it("offers pin, rename, duplicate, filing, tags and delete to the owner", async () => {
     await openMenu();
 
     await screen.findByRole("menuitem", { name: "Pin" });
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent)
-    ).toEqual(["Pin", "Rename…", "Duplicate…", "Delete…"]);
-    expect(screen.queryByRole("menuitemradio")).toBeNull();
+    ).toEqual([
+      "Pin",
+      "Rename…",
+      "Duplicate…",
+      "Add to folder…",
+      "Edit tags…",
+      "Delete…",
+    ]);
   });
 
-  it("pins the dashboard on screen", async () => {
+  it("offers an editor everything but delete", async () => {
+    await openMenu("editor");
+
+    await screen.findByRole("menuitem", { name: "Pin" });
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent)
+    ).toEqual(["Pin", "Rename…", "Duplicate…", "Add to folder…", "Edit tags…"]);
+  });
+
+  it("pins the dashboard on screen by its id", async () => {
     const user = await openMenu();
 
     const item = await screen.findByRole("menuitem", { name: "Pin" });
     await waitFor(() => expect(item).not.toHaveAttribute("aria-disabled"));
     await user.click(item);
 
-    expect(customClient.pinDashboard).toHaveBeenCalledWith("dash-1");
+    expect(customClient.pinDashboard).toHaveBeenCalledWith(ID);
   });
 
   it("unpins the dashboard on screen", async () => {
     vi.mocked(customClient.fetchPins).mockResolvedValue([
-      { id: "dash-1", name: "delivery" },
+      { id: ID, name: "delivery" },
     ]);
     const user = await openMenu();
 
     await user.click(await screen.findByRole("menuitem", { name: "Unpin" }));
 
-    expect(customClient.unpinDashboard).toHaveBeenCalledWith("dash-1");
+    expect(customClient.unpinDashboard).toHaveBeenCalledWith(ID);
   });
 
-  it("stays on the dashboard's page after a rename, which keeps its id", async () => {
+  it("stays on the page after a rename, since the id does not change", async () => {
     const user = await openMenu();
 
     const dialog = await choose(user, "Rename…");
@@ -119,13 +203,13 @@ describe("<DashboardPageActions>", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(customClient.renameDefinition).toHaveBeenCalledWith(
       "dashboards",
-      "dash-1",
+      ID,
       "shipping"
     );
     expect(portalRouter.navigations).toHaveLength(0);
   });
 
-  it("lands on the copy after a duplicate", async () => {
+  it("lands on the copy's id after a duplicate", async () => {
     const user = await openMenu();
 
     const dialog = await choose(user, "Duplicate…");
@@ -147,37 +231,24 @@ describe("<DashboardPageActions>", () => {
     await waitFor(() => expect(portalRouter.pathname).toBe("/portal/custom"));
   });
 
-  it("stays on the page and says why when a rename is refused", async () => {
-    vi.mocked(customClient.renameDefinition).mockRejectedValue(
-      new CustomApiError(400, { detail: "name must be 1 to 128 characters" })
-    );
-    const user = await openMenu();
-
-    const dialog = await choose(user, "Rename…");
-    const field = within(dialog).getByRole("textbox", {
-      name: "Dashboard name",
-    });
-    await user.clear(field);
-    await user.type(field, "shipping{Enter}");
-
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "name must be 1 to 128 characters"
-    );
-    expect(portalRouter.navigations).toHaveLength(0);
-  });
-
   it.each([
+    [
+      "Rename…",
+      "Rename",
+      customClient.renameDefinition,
+      "only the owner may change it",
+    ],
     [
       "Duplicate…",
       "Duplicate",
       customClient.duplicateDashboard,
-      "the dashboard is gone",
+      "only the owner may change it",
     ],
     [
       "Delete…",
       "Delete dashboard",
       customClient.deleteDefinition,
-      "no dashboard named delivery",
+      "a widget still draws it",
     ],
   ])(
     "stays on the page and says why when %s is refused",
@@ -188,6 +259,13 @@ describe("<DashboardPageActions>", () => {
       const user = await openMenu();
 
       const dialog = await choose(user, item);
+      if (item === "Rename…") {
+        const field = within(dialog).getByRole("textbox", {
+          name: "Dashboard name",
+        });
+        await user.clear(field);
+        await user.type(field, "shipping");
+      }
       await user.click(within(dialog).getByRole("button", { name: confirm }));
 
       expect(await within(dialog).findByRole("alert")).toHaveTextContent(said);

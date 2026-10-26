@@ -35,6 +35,26 @@ import { ADMIN_ROLE_ID } from "@/queries/identity-me";
 vi.mock("@/api/custom-client");
 vi.mock("@/api/identity-client");
 
+const LISTING = {
+  items: [
+    {
+      id: "engineering",
+      name: "engineering",
+      owner_person_id: null,
+      access: "ownerless" as const,
+    },
+  ],
+  total: 1,
+};
+
+const READ = {
+  name: "engineering",
+  ownerPersonId: null,
+  access: "ownerless" as const,
+  folders: [],
+  carries: true,
+};
+
 /** The caller `GET /v1/me` describes, which is what the zone gates on. */
 function signedInAs({ admin }: { admin: boolean }) {
   vi.mocked(identityClient.getMe).mockResolvedValue({
@@ -101,10 +121,7 @@ afterEach(() => {
 
 describe("the /portal/custom routes, through the real router", { timeout: 20_000 }, () => {
   it("renders the dashboard list at /portal/custom, inside the portal shell", async () => {
-    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
-      items: [{ id: "d-1", name: "engineering" }],
-      total: 1,
-    });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
 
     renderAt("/portal/custom");
 
@@ -113,7 +130,7 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
       { name: "engineering" },
       { timeout: 10000 },
     );
-    expect(card).toHaveAttribute("href", "/portal/custom/d-1");
+    expect(card).toHaveAttribute("href", "/portal/custom/engineering");
     expect(screen.getByRole("link", { name: /All dashboards/ })).toHaveAttribute(
       "href",
       "/portal/custom",
@@ -124,46 +141,43 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
   });
 
   it("renders a dashboard at /portal/custom/$name, inside the portal shell", async () => {
-    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
-      items: [{ id: "d-1", name: "engineering" }],
-      total: 1,
-    });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
-      name: "engineering",
+      ...READ,
       body: { title: "Engineering", widgets: [] },
       tags: [],
     });
 
-    renderAt("/portal/custom/d-1");
+    renderAt("/portal/custom/engineering");
 
     expect(
       await screen.findByRole("heading", { name: "Engineering" }, { timeout: 10000 })
     ).toBeInTheDocument();
-    expect(customClient.fetchDashboardRead).toHaveBeenCalledWith("d-1");
     expect(
       document.querySelector('[data-slot="sidebar-wrapper"]')
     ).toBeInTheDocument();
   });
 
   it("keeps the thread when creating a dashboard navigates to it", async () => {
-    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
-      items: [{ id: "d-1", name: "engineering" }],
-      total: 1,
-    });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
-      name: "engineering",
+      ...READ,
       body: { title: "Delivery", widgets: [] },
       tags: [],
     });
     vi.mocked(customClient.sendChat).mockResolvedValue({
       reply: "Built it",
-      created: { widgets: [], dashboard: { id: "d-2", name: "delivery" } },
+      created: {
+        metric: null,
+        widgets: [],
+        dashboard: { id: "delivery", name: "Delivery" },
+      },
     });
 
     renderAt("/portal/custom");
     await screen.findByRole("heading", { name: "Custom" }, { timeout: 10000 });
-
     await openAssistant();
+
     await userEvent.type(
       screen.getByTestId("chat-input"),
       "a dashboard about delivery"
@@ -175,7 +189,6 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     expect(
       await screen.findByRole("heading", { name: "Delivery" }, { timeout: 10000 })
     ).toBeInTheDocument();
-    expect(customClient.fetchDashboardRead).toHaveBeenCalledWith("d-2");
     // ...and the conversation is still there. The chat used to be mounted per
     // page, so this navigation unmounted it and the reader lost what they had
     // just asked.
@@ -186,42 +199,46 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
   });
 
   it("shows a widget the chat adds to the open dashboard, without a reload", async () => {
-    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
-      items: [{ id: "d-1", name: "engineering" }],
-      total: 1,
-    });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
     vi.mocked(customClient.fetchDashboardRead)
       .mockResolvedValueOnce({
-        name: "engineering",
+        ...READ,
         body: { title: "Engineering", widgets: [] },
         tags: [],
       })
       .mockResolvedValue({
-        name: "engineering",
+        ...READ,
         body: { title: "Engineering", widgets: ["revenue_table"] },
         tags: [],
       });
-    vi.mocked(customClient.fetchWidget).mockResolvedValue({
-      name: "Revenue table",
-      widget: {
-        type: "table",
-        metric: "revenue_per_day",
-        columns: ["day", "revenue"],
-      },
-    });
-    vi.mocked(customClient.runMetric).mockResolvedValue({
+    vi.mocked(customClient.fetchDashboardWidgets).mockResolvedValue([
+        {
+          id: "revenue_table",
+          name: "Revenue",
+          body: {
+            type: "table",
+            metric: "revenue_per_day",
+            columns: ["day", "revenue"],
+          },
+        },
+      ]);
+    vi.mocked(customClient.runDashboardWidget).mockResolvedValue({
       columns: ["day", "revenue"],
       rows: [["2026-09-01", 100]],
     });
     vi.mocked(customClient.sendChat).mockResolvedValue({
       reply: "Added a revenue widget",
-      created: { widgets: [{ id: "revenue_table", name: "Revenue table" }] },
+      created: {
+        metric: null,
+        widgets: [{ id: "revenue_table", name: "Revenue" }],
+        dashboard: null,
+      },
     });
 
-    renderAt("/portal/custom/d-1");
+    renderAt("/portal/custom/engineering");
     await screen.findByRole("heading", { name: "Engineering" }, { timeout: 10000 });
-
     await openAssistant();
+
     await userEvent.type(
       screen.getByTestId("chat-input"),
       "add revenue tracking"
@@ -233,22 +250,111 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     ).toBeInTheDocument();
   });
 
-  it("refuses the zone to a caller without the admin role", async () => {
+  it("renders the orphaned page at /portal/custom/orphaned, not a dashboard of that id", async () => {
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
+    vi.mocked(customClient.fetchOrphanedDashboards).mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    vi.mocked(customClient.fetchOrphanedFolders).mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+
+    renderAt("/portal/custom/orphaned");
+
+    expect(
+      await screen.findByRole(
+        "heading",
+        { level: 1, name: "Orphaned" },
+        { timeout: 10000 },
+      )
+    ).toBeInTheDocument();
+    expect(customClient.fetchDashboardRead).not.toHaveBeenCalled();
+  });
+
+  it("opens the dashboard list to a member, without the library or the assistant", async () => {
     signedInAs({ admin: false });
     vi.mocked(customClient.fetchDashboards).mockResolvedValue({
-      items: [{ id: "d-1", name: "engineering" }],
+      items: [{ ...LISTING.items[0]!, access: "viewer" as const }],
       total: 1,
     });
+    vi.mocked(customClient.fetchFolders).mockResolvedValue({
+      folders: [],
+      unfiled: 1,
+    });
+    vi.mocked(customClient.fetchPins).mockResolvedValue([]);
+    vi.mocked(customClient.fetchTags).mockResolvedValue({ tags: [] });
 
     renderAt("/portal/custom");
 
     expect(
-      await screen.findByText(/administrators only/i, undefined, { timeout: 10000 })
-    ).toBeInTheDocument();
-    // Nothing of the zone renders, not even the list it would have shown.
-    expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+      await screen.findByRole("link", { name: "engineering" }, { timeout: 10000 })
+    ).toHaveAttribute("href", "/portal/custom/engineering");
+    expect(screen.getByRole("link", { name: /Shared with me/ })).toBeInTheDocument();
+    for (const hidden of [
+      /Owned by me/,
+      /^Metrics$/,
+      /^Widgets$/,
+      /^Datasets$/,
+      /^Alerts$/,
+      /^Orphaned$/,
+    ]) {
+      expect(
+        screen.queryByRole("link", { name: hidden }),
+        `should not link: ${hidden}`
+      ).toBeNull();
+    }
+    expect(screen.queryByRole("button", { name: "New dashboard" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open assistant" })).toBeNull();
     expect(
-      screen.queryByRole("heading", { name: "Custom" })
-    ).not.toBeInTheDocument();
+      screen.queryByRole("button", { name: "Collapse assistant" })
+    ).toBeNull();
+    expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+  });
+
+  it("opens a shared dashboard to a member", async () => {
+    signedInAs({ admin: false });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
+      access: "viewer",
+      body: { title: "Engineering", widgets: [] },
+      tags: [],
+    });
+    vi.mocked(customClient.fetchDashboardWidgets).mockResolvedValue([]);
+
+    renderAt("/portal/custom/engineering");
+
+    expect(
+      await screen.findByRole("heading", { name: "Engineering" }, { timeout: 10000 })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit engineering" })).toBeNull();
+  });
+
+  it.each([
+    "/portal/custom/metrics",
+    "/portal/custom/widgets",
+    "/portal/custom/datasets",
+    "/portal/custom/alerts",
+    "/portal/custom/orphaned",
+    "/portal/custom/new/dashboards",
+    "/portal/custom/edit/dashboards/engineering",
+  ])("refuses %s to a member", async (path) => {
+    signedInAs({ admin: false });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
+
+    renderAt(path);
+
+    expect(
+      await screen.findByText(
+        "This page is open to administrators only.",
+        undefined,
+        { timeout: 10000 }
+      )
+    ).toBeInTheDocument();
+    expect(customClient.fetchMetrics).not.toHaveBeenCalled();
+    expect(customClient.fetchOrphanedDashboards).not.toHaveBeenCalled();
+    expect(customClient.fetchDefinition).not.toHaveBeenCalled();
   });
 });

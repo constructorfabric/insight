@@ -265,6 +265,19 @@ async fn clocked(metric: &MetricQuery, datasets: &dyn Datasets) -> bool {
 
 const METRIC_KEYS: [&str; 2] = ["metric", "detail"];
 
+/// The metric a widget draws, when its body names one readably.
+pub(crate) fn drawn_metric(body: &Value) -> Option<&str> {
+    body.get("metric")?.as_str()
+}
+
+/// The metric a reader drills into: the widget's detail, else the metric it
+/// draws.
+pub(crate) fn drilled_metric(body: &Value) -> Option<&str> {
+    body.get("detail")
+        .and_then(Value::as_str)
+        .or_else(|| drawn_metric(body))
+}
+
 /// The metrics a widget draws and drills into, when its body names them
 /// readably. One metric named twice is one reference.
 pub(crate) fn refers_to(body: &Value) -> Vec<Reference> {

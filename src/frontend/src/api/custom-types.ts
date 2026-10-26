@@ -113,8 +113,19 @@ export interface Listed {
   name: string;
 }
 
-export interface ListedPage {
-  items: Listed[];
+/** What the caller may do with a dashboard, as the service decides it. */
+export type DashboardAccess = "owner" | "editor" | "viewer" | "ownerless";
+
+export type FolderAccess = "owner" | "editor" | "viewer" | "ownerless";
+
+export interface DashboardListed extends Listed {
+  /** Null for a dashboard nobody owns. */
+  owner_person_id: string | null;
+  access: DashboardAccess;
+}
+
+export interface ListedPage<T extends Listed = Listed> {
+  items: T[];
   total: number;
 }
 
@@ -125,9 +136,20 @@ export interface DefinitionResponse<T> {
   body: T;
   /** Only a metric has one, and only when a window has a date to select by. */
   clock?: EffectiveClock;
-  folder?: Folder | null;
   tags?: string[];
   updated_at?: string;
+  /** Only a dashboard has one. */
+  access?: DashboardAccess;
+}
+
+/** A dashboard as the service hands it back, with who owns it and what the caller may do. */
+export interface DashboardResponse extends DefinitionResponse<Dashboard> {
+  owner_person_id: string | null;
+  access: DashboardAccess;
+  /** The folders holding it that the caller can see. */
+  folders?: Folder[];
+  /** Whether placing it in a folder would carry that folder's people to it. */
+  carries?: boolean;
 }
 
 export interface DashboardRead {
@@ -135,6 +157,40 @@ export interface DashboardRead {
   body: Dashboard;
   tags: string[];
   updatedAt?: string;
+  ownerPersonId: string | null;
+  access: DashboardAccess;
+  folders: Folder[];
+  carries: boolean;
+}
+
+export interface DashboardWidget {
+  id: string;
+  name: string;
+  body: Widget;
+  /** Absent when a window over its metric has no date to select by. */
+  clock?: EffectiveClock | null;
+}
+
+export type GrantLevel = "viewer" | "editor";
+
+export type Grantee = string;
+
+export interface Grant {
+  grantee: Grantee;
+  level: GrantLevel;
+  granted_by: string;
+  created_at: string;
+}
+
+/** A dashboard whose owner no longer holds the administrator role. */
+export interface OrphanedDashboard extends Listed {
+  owner_person_id: string;
+  updated_at: string;
+}
+
+export interface OrphanedFolder extends Listed {
+  owner_person_id: string;
+  updated_at: string;
 }
 
 export interface TagSummary {
@@ -152,6 +208,10 @@ export interface Folder {
 }
 
 export interface FolderSummary extends Folder {
+  /** Null for a folder nobody owns, which only ownerless dashboards are filed in. */
+  owner_person_id: string | null;
+  access: FolderAccess;
+  /** How many of the dashboards in it the caller can see. */
   dashboards: number;
 }
 
@@ -254,6 +314,12 @@ export interface DatasetRecord {
 export interface Holder extends Listed {
   /** The kind it is, as the API path spells it. */
   kind: "metrics" | "widgets" | "dashboards";
+}
+
+export interface Dependents {
+  holders: Holder[];
+  /** Dashboards that name it which the caller cannot see. */
+  hidden: number;
 }
 
 /** What one page of a dataset's records is asked for. */

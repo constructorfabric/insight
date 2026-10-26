@@ -19,6 +19,8 @@ use serde::Deserialize;
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::domain::access::{Caller, Owner, PersonId};
+
 const MAX_ID_CHARS: usize = 128;
 const MAX_LABEL_CHARS: usize = 128;
 
@@ -61,6 +63,32 @@ impl DefinitionKind {
             Self::Metric => "metric",
             Self::Widget => "widget",
             Self::Dashboard => "dashboard",
+        }
+    }
+
+    /// The kind as the shared library holds it, or none for a dashboard,
+    /// whose catalogue depends on who is asking.
+    pub(crate) fn library(self) -> Option<LibraryKind> {
+        match self {
+            Self::Metric => Some(LibraryKind::Metric),
+            Self::Widget => Some(LibraryKind::Widget),
+            Self::Dashboard => None,
+        }
+    }
+}
+
+/// A kind every administrator sees all of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LibraryKind {
+    Metric,
+    Widget,
+}
+
+impl LibraryKind {
+    pub(crate) fn kind(self) -> DefinitionKind {
+        match self {
+            Self::Metric => DefinitionKind::Metric,
+            Self::Widget => DefinitionKind::Widget,
         }
     }
 }
@@ -220,13 +248,23 @@ pub(crate) enum Change {
         DefinitionLabel,
         serde_json::Value,
     ),
-    CarryFolder {
+    /// Makes a dashboard the person's.
+    Own {
+        dashboard: DefinitionId,
+        owner: PersonId,
+    },
+    /// Puts `to`, carrying, in each owned folder holding `from` that
+    /// `placer` may arrange.
+    CarryEntries {
         from: DefinitionId,
         to: DefinitionId,
+        placer: Caller,
     },
+    /// Tags `to` with the names `from` carries, as tags of `scope`.
     CarryTags {
         from: DefinitionId,
         to: DefinitionId,
+        scope: Owner,
     },
 }
 
@@ -271,6 +309,10 @@ pub(crate) trait Definitions: Lookup {
 
     /// Stores a new definition; an id already held is
     /// [`DefinitionStoreError::IdTaken`].
+    ///
+    /// For the tests alone: a dashboard stored this way has no owner, and
+    /// the service creates every definition through [`Definitions::apply`].
+    #[cfg(test)]
     async fn create(
         &self,
         kind: DefinitionKind,
@@ -303,7 +345,7 @@ pub(crate) trait Definitions: Lookup {
     /// that kind.
     async fn page(
         &self,
-        kind: DefinitionKind,
+        kind: LibraryKind,
         needle: &str,
         page: Page,
     ) -> Result<ListedPage, DefinitionStoreError>;
@@ -349,6 +391,13 @@ pub(crate) enum DefinitionStoreError {
     Missing(String),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error(
+        "at most {} tags can exist per owner; reuse one that does",
+        crate::domain::tags::MAX_TAGS
+    )]
+    TagsFull,
+    #[error("a stored {0} is not one this service wrote")]
+    UnreadableRow(&'static str),
 }
 
 #[cfg(test)]

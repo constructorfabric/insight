@@ -61,7 +61,10 @@ beforeEach(() => {
   portalRouter.reset("/portal/custom/widgets/w-5");
   vi.mocked(customClient.fetchWidget).mockResolvedValue(STORED);
   vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
-  vi.mocked(customClient.fetchDependents).mockResolvedValue([]);
+  vi.mocked(customClient.fetchDependents).mockResolvedValue({
+    holders: [],
+    hidden: 0,
+  });
   vi.mocked(customClient.runMetric).mockResolvedValue({
     columns: ["author", "lines"],
     rows: [["ada", 120]],
@@ -72,6 +75,7 @@ describe("/portal/custom/widgets/$name", () => {
   // A reader who opened this from the catalogue needs the way back, whether
   // or not the page found what it was looking for.
   it("offers the way back to the catalogue", async () => {
+
     render(<Component />, { wrapper });
 
     expect(
@@ -136,15 +140,19 @@ describe("/portal/custom/widgets/$name", () => {
 
   // What a removal would break, before a reader asks for one.
   it("names what draws it, and links each by its id", async () => {
-    vi.mocked(customClient.fetchDependents).mockResolvedValue([
-      { kind: "dashboards", id: "d-9", name: "Engineering" },
-    ]);
+    vi.mocked(customClient.fetchDependents).mockResolvedValue({
+      holders: [{ kind: "dashboards", id: "d-9", name: "Engineering" }],
+      hidden: 1,
+    });
 
     render(<Component />, { wrapper });
 
     expect(
       await screen.findByRole("link", { name: "Engineering" })
     ).toHaveAttribute("href", "/portal/custom/d-9");
+    expect(
+      screen.getByText("and 1 dashboard you can't see")
+    ).toBeInTheDocument();
     expect(customClient.fetchDependents).toHaveBeenCalledWith("widgets", "w-5");
   });
 

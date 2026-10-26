@@ -7,10 +7,14 @@ import { Button } from "@/components/ui/button";
 
 import {
   CustomApiError,
+  isBusy,
   type DashboardRead,
+  type DashboardWidget,
   type RunOptions,
 } from "@/api/custom-client";
+import { DashboardFolders } from "@/components/custom/dashboard-folders";
 import { DashboardPageActions } from "@/components/custom/dashboard-page-actions";
+import { OwnerName } from "@/components/custom/person-name";
 import { RangePicker } from "@/components/custom/range-picker";
 import { selectedRange } from "@/lib/custom/board-range";
 import { dashboardIdFromPath } from "@/lib/custom/dashboard-path";
@@ -29,11 +33,16 @@ import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import {
   dashboardReadQuery,
-  metricQuery,
-  metricResultQuery,
-  widgetQuery,
+  dashboardWidgetResultQuery,
+  dashboardWidgetsQuery,
 } from "@/queries/custom";
-import { TEXT_BODY, TEXT_HEADING, TEXT_TITLE } from "@/lib/type-scale";
+import { useIsAdmin } from "@/queries/identity-me";
+import {
+  TEXT_BODY,
+  TEXT_HEADING,
+  TEXT_LABEL,
+  TEXT_TITLE,
+} from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/portal/custom/$name")({
@@ -119,7 +128,18 @@ function CustomDashboardBody({
   return (
     <>
       <header className="sticky -top-4 z-10 -mx-4 -mt-4 mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b bg-background px-4 pt-4 pb-3 md:-top-6 md:-mx-6 md:-mt-6 md:px-6 md:pt-6">
-        <h1 className={cn(TEXT_TITLE, "shrink-0")}>{dashboard.title}</h1>
+        <div className="flex min-w-0 flex-col">
+          <h1 className={cn(TEXT_TITLE, "shrink-0")}>
+            {dashboard.title || read.name}
+          </h1>
+          {read.ownerPersonId ? (
+            <OwnerName
+              personId={read.ownerPersonId}
+              className={cn(TEXT_LABEL, "text-muted-foreground")}
+            />
+          ) : null}
+          <DashboardFolders id={id} folders={read.folders} />
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {offered && offered.length > 0 && range ? (
             <RangePicker
@@ -132,6 +152,9 @@ function CustomDashboardBody({
             id={id}
             name={read.name}
             title={dashboard.title}
+            access={read.access}
+            ownerPersonId={read.ownerPersonId}
+            carries={read.carries}
           />
         </div>
       </header>
@@ -142,75 +165,106 @@ function CustomDashboardBody({
           label="This dashboard holds no widgets yet."
         />
       ) : (
-        <div className="grid items-start gap-4 @3xl:grid-cols-2">
-          {items.map((item, index) =>
-            "widget" in item ? (
-              <DashboardWidgetSlot
-                key={`${index}-${item.widget}`}
-                id={item.widget}
-                range={range}
-              />
-            ) : "heading" in item ? (
-              // The eyebrow label the portal's own sections use, and the whole
-              // row: it introduces the widgets under it rather than sitting
-              // beside one.
-              <h2
-                key={`${index}-heading`}
-                className="col-span-full mt-2 text-xs font-medium tracking-wider text-muted-foreground uppercase first:mt-0"
-              >
-                {item.heading}
-              </h2>
-            ) : (
-              <p
-                key={`${index}-text`}
-                className={cn(
-                  TEXT_BODY,
-                  "col-span-full max-w-prose text-muted-foreground"
-                )}
-              >
-                {item.text}
-              </p>
-            )
-          )}
-        </div>
+        <DashboardItems dashboard={id} items={items} range={range} />
       )}
     </>
   );
 }
 
-function DashboardWidgetSlot({
-  id,
+function DashboardItems({
+  dashboard,
+  items,
   range,
 }: {
-  id: string;
+  dashboard: string;
+  items: ReturnType<typeof dashboardItems>;
   range: string | undefined;
 }) {
-  const [drilldown, setDrilldown] = useState(false);
-  const widgetState = useQuery(widgetQuery(id));
-  const widget = widgetState.data?.widget;
-  const metric = widget?.metric;
+  const widgets = useQuery(dashboardWidgetsQuery(dashboard));
+  const byId = new Map(widgets.data?.map((widget) => [widget.id, widget]));
 
-  // Whether a window has a date to select by decides the request, so nothing
-  // runs until the definition is in: guessing shows a number the picker does
-  // not claim. The metric's body cannot answer it - the date may be the
-  // dataset's - so the service reports the one in force.
-  const definitionState = useQuery({
-    ...metricQuery(metric ?? ""),
-    enabled: Boolean(metric) && Boolean(range),
-  });
-  const clocked = Boolean(definitionState.data?.clock);
-  const known = !range || definitionState.isSuccess;
+  if (widgets.isError) {
+    return (
+      <ComingSoon
+        variant="card"
+        state="error"
+        label={refusal(widgets.error, "Couldn't load the widgets.")}
+        onRetry={() => void widgets.refetch()}
+      />
+    );
+  }
+
+  return (
+    <div className="grid items-start gap-4 @3xl:grid-cols-2">
+      {items.map((item, index) =>
+        "widget" in item ? (
+          <DashboardWidgetSlot
+            key={`${index}-${item.widget}`}
+            dashboard={dashboard}
+            id={item.widget}
+            widget={byId.get(item.widget)}
+            pending={widgets.isPending}
+            range={range}
+          />
+        ) : "heading" in item ? (
+          // The eyebrow label the portal's own sections use, and the whole
+          // row: it introduces the widgets under it rather than sitting
+          // beside one.
+          <h2
+            key={`${index}-heading`}
+            className="col-span-full mt-2 text-xs font-medium tracking-wider text-muted-foreground uppercase first:mt-0"
+          >
+            {item.heading}
+          </h2>
+        ) : (
+          <p
+            key={`${index}-text`}
+            className={cn(
+              TEXT_BODY,
+              "col-span-full max-w-prose text-muted-foreground"
+            )}
+          >
+            {item.text}
+          </p>
+        )
+      )}
+    </div>
+  );
+}
+
+function DashboardWidgetSlot({
+  dashboard,
+  id,
+  widget,
+  pending,
+  range,
+}: {
+  dashboard: string;
+  id: string;
+  /** Absent once the widgets are read means the dashboard no longer draws it. */
+  widget: DashboardWidget | undefined;
+  pending: boolean;
+  range: string | undefined;
+}) {
+  const { isAdmin } = useIsAdmin();
+  const [drilldown, setDrilldown] = useState(false);
+  const name = widget?.name ?? id;
+
+  // Whether a window has a date to select by decides the request. The
+  // metric's body cannot answer it - the date may be the dataset's - so the
+  // service reports the one in force with the widget.
+  const clocked = Boolean(widget?.clock);
   const options: RunOptions | undefined =
     range && clocked && widget
-      ? { range, bucket: drawsBucket(widget) }
+      ? { range, bucket: drawsBucket(widget.body) }
       : undefined;
 
   const resultState = useQuery({
-    ...metricResultQuery(metric ?? "", options),
-    enabled: Boolean(metric) && known,
+    ...dashboardWidgetResultQuery(dashboard, id, options),
+    enabled: widget !== undefined,
   });
 
-  if (widgetState.isPending) {
+  if (pending) {
     return (
       <Card>
         <CardContent>
@@ -219,37 +273,30 @@ function DashboardWidgetSlot({
       </Card>
     );
   }
-  if (widgetState.isError) {
+  if (!widget) {
     return (
       <Card>
         <CardContent>
           <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-            {refusal(widgetState.error, "Couldn't read this widget.")}
+            {`Couldn't read ${name}.`}
           </p>
         </CardContent>
       </Card>
     );
   }
 
-  const { name } = widgetState.data;
-
-  // A definition that cannot be read leaves the card unable to say whether its
-  // metric is windowed, so it says that rather than running something.
-  if (range && definitionState.isError) {
-    return (
-      <Card>
-        <CardContent>
-          <ComingSoon
-            variant="card"
-            state="error"
-            label={`Couldn't read the metric behind ${name}.`}
-            onRetry={() => void definitionState.refetch()}
-          />
-        </CardContent>
-      </Card>
-    );
-  }
-  const heading = widgetState.data.widget.title ?? name;
+  const heading = widget.body.title ?? name;
+  const label = `Show the data behind ${heading}`;
+  const drawn = (
+    <CustomWidget
+      widget={widget.body}
+      result={resultState.data}
+      error={resultState.error}
+      windowed={Boolean(options)}
+      pending={resultState.isPending || resultState.isFetching}
+      onRetry={() => void resultState.refetch()}
+    />
+  );
 
   return (
     <Card>
@@ -257,50 +304,54 @@ function DashboardWidgetSlot({
         <CardTitle className={cn(TEXT_HEADING, "min-w-0 flex-1")}>
           {heading}
         </CardTitle>
-        {range && definitionState.isSuccess && !clocked ? (
+        {range && !clocked ? (
           <Badge variant="secondary" className="shrink-0">
             All time
           </Badge>
         ) : null}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`Show the data behind ${heading}`}
-          className="text-muted-foreground"
-          onClick={() => setDrilldown(true)}
-        >
-          <Table2 />
-        </Button>
+        {isAdmin ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={label}
+            className="text-muted-foreground"
+            onClick={() => setDrilldown(true)}
+          >
+            <Table2 />
+          </Button>
+        ) : null}
       </CardHeader>
-      <CardContent
-        role="button"
-        tabIndex={0}
-        aria-label={`Show the data behind ${heading}`}
-        className="max-h-72 cursor-pointer overflow-auto"
-        onClick={() => setDrilldown(true)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            setDrilldown(true);
-          }
-        }}
-      >
-        <CustomWidget
-          widget={widgetState.data.widget}
-          result={resultState.data}
-          error={resultState.error}
-          windowed={Boolean(options)}
-          pending={!known || resultState.isPending || resultState.isFetching}
+      {isAdmin && !isBusy(resultState.error) ? (
+        <CardContent
+          role="button"
+          tabIndex={0}
+          aria-label={label}
+          className="max-h-72 cursor-pointer overflow-auto"
+          onClick={() => setDrilldown(true)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setDrilldown(true);
+            }
+          }}
+        >
+          {drawn}
+        </CardContent>
+      ) : (
+        <CardContent className="max-h-72 overflow-auto">{drawn}</CardContent>
+      )}
+      {isAdmin ? (
+        <WidgetDrilldown
+          dashboard={dashboard}
+          widgetId={id}
+          widget={widget.body}
+          name={name}
+          label={heading}
+          open={drilldown}
+          onOpenChange={setDrilldown}
+          options={options}
         />
-      </CardContent>
-      <WidgetDrilldown
-        widget={widgetState.data.widget}
-        name={name}
-        label={heading}
-        open={drilldown}
-        onOpenChange={setDrilldown}
-        options={options}
-      />
+      ) : null}
     </Card>
   );
 }
