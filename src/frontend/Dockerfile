@@ -21,7 +21,7 @@ RUN pnpm run build
 # fixable OS CVEs that no code change could clear (insight#2021). Floating minor
 # tag on purpose — Docker Official Images rebuild it when Alpine ships package
 # updates, so routine rebuilds pick the fixes up.
-FROM nginxinc/nginx-unprivileged:1.31-alpine@sha256:19c132c9ab02d3b783f478743dafc7a7f42e27aa7d2bdcbec1bb1128ca8f2a07
+FROM nginxinc/nginx-unprivileged:1.31-alpine@sha256:b5047b9b76845eac124358373c6852377c52e4b05834a47647e955dd91cb8f1e
 
 # The base image already drops to an unprivileged user; the build steps below
 # need to write under /etc/nginx, so root is restored for them and dropped again
