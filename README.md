@@ -142,6 +142,7 @@ docs/
 │   ├── api-guideline/
 │   └── glossary/
 ├── testing/                      ← test plan and reference orgs
+├── operations/                   ← operator runbooks (ClickHouse cluster conversion)
 ├── domain/
 │   └── identity-resolution/      ← cross-cutting: person registry, binding journal,
 │                                    match rules, org hierarchy

@@ -1,0 +1,60 @@
+spec_version: 1
+description: >
+  Metric: tasks.worklog_accuracy and tasks.estimation_accuracy — measures that
+  are not additive across accounts stay whole for a person with two tracker
+  accounts under one email, #1776.
+  How it's computed (bronze → silver → gold):
+    • bronze: two Jira accounts of dave's, both carrying dave's address; one is
+      assigned an issue that sits in progress for a day, the other logs work on
+      it that day; each closes one issue on the same day with an estimate and
+      time spent.
+    • silver: one row per issue and worklog keyed by the tracker account.
+    • gold:   the worklog gate (logged time counts on a day with in-progress
+      time) and the day's estimate deviation are taken per person-day — per
+      email where the tracker states one — so the two accounts meet before
+      either is applied.
+
+  Cases: dave-a holds TWA-1 in progress on 14 April and dave-b logs 12 h on it
+  → worklog accuracy 50; on 15 April dave-a closes TWA-1 (1 h estimated, 2 h
+  spent) and dave-b closes TWB-1 (3 h estimated, 2 h spent) → the day's
+  estimate matches its time spent → estimation accuracy 100.
+
+identity_accounts:
+  - {source_type: jira, source_id: jira-test, account_id: dave-a-acct, person: dave@example.com}
+  - {source_type: jira, source_id: jira-test, account_id: dave-b-acct, person: dave@example.com}
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/dave
+
+  bronze_jira.jira_user:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-dave-a-acct, account_id: dave-a-acct, email: dave@example.com, display_name: Dave Delta}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-dave-b-acct, account_id: dave-b-acct, email: dave@example.com, display_name: Dave Delta}
+
+  bronze_jira.jira_statuses:
+    - $ref: ../templates/jira_task.yaml#/templates/status_open
+    - $ref: ../templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: ../templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: ../templates/jira_task.yaml#/templates/field_status
+    - $ref: ../templates/jira_task.yaml#/templates/field_assignee
+    - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
+    - $ref: ../templates/jira_task.yaml#/templates/field_timeoriginalestimate
+    - $ref: ../templates/jira_task.yaml#/templates/field_timespent
+
+  config.field_value_defaults:
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default_unknown
+    - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default_unknown
+
+  bronze_jira.jira_issue:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: "17781", jira_id: "17781", unique_key: jira-test-TWA-1, id_readable: TWA-1, created: "2026-04-14T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-a-acct","displayName":"Dave Delta"}}'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: "17782", jira_id: "17782", unique_key: jira-test-TWB-1, id_readable: TWB-1, created: "2026-04-14T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-b-acct","displayName":"Dave Delta"}}'}
+
+  bronze_jira.jira_issue_history:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: TWA-1, jira_id: "17781", changelog_id: "77801", unique_key: jira-test-TWA1-77801, created_at: "2026-04-15T00:00:00.000+0000", author_account_id: dave-a-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"},{"field":"timeoriginalestimate","fieldId":"timeoriginalestimate","from":null,"fromString":null,"to":"3600","toString":"3600"},{"field":"timespent","fieldId":"timespent","from":null,"fromString":null,"to":"7200","toString":"7200"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: TWB-1, jira_id: "17782", changelog_id: "77802", unique_key: jira-test-TWB1-77802, created_at: "2026-04-15T12:00:00.000+0000", author_account_id: dave-b-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"Closed","to":"6"},{"field":"timeoriginalestimate","fieldId":"timeoriginalestimate","from":null,"fromString":null,"to":"10800","toString":"10800"},{"field":"timespent","fieldId":"timespent","from":null,"fromString":null,"to":"7200","toString":"7200"}]'}
+
+  bronze_jira.jira_worklogs:
+    # Logged by dave's OTHER account on the issue dave-a holds in progress.
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_worklog, tenant_id: "{{ tenant }}", worklog_id: 77811, id_readable: TWA-1, jira_id: "17781", unique_key: jira-test-worklog-TWA-1, author_account_id: dave-b-acct, started: "2026-04-14T10:00:00.000+0000", time_spent_seconds: 43200, _airbyte_raw_id: "00000000-0000-0000-0000-000000177811"}

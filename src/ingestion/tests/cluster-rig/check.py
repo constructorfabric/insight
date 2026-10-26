@@ -10,6 +10,7 @@ Usage:
   check.py absent   --name db.table              a service's table gone from every node
   check.py quorum-boundary --out boundary.json    where every node's query log ends now
   check.py quorum --after boundary.json           the persons sync since then wrote and read with quorum
+  check.py sweep --after boundary.json            the reconcile sweep since then reached the ledger with quorum
 
 Runs in the dbt venv, whose dbt-clickhouse brings clickhouse-connect.
 
@@ -85,6 +86,8 @@ POPULATED_RELATIONS = (
 )
 # identity-resolution stages a persons snapshot here before swapping it live.
 PERSONS_STAGING_PREFIX = "identity.identity_persons_staging_"
+# The reconcile sweep's ledger, written and read back through the proxy.
+LEDGER_TABLE = "ingestion_history.sync_events"
 # A dbt-clickhouse intermediate the run should have dropped behind itself.
 DBT_LEFTOVER = r"__dbt_(exchange_test|new_data|tmp|backup|distributed)"
 
@@ -445,31 +448,44 @@ def quorum_boundary(out: str) -> None:
     Path(out).write_text(json.dumps(boundary))
 
 
+def statements_since(after: str, where: str, settings: tuple[str, ...]) -> list[list[str]]:
+    """The kind and the named settings of every statement a client finished on
+    any node since the boundary, among those `where` selects. Read from the
+    query log of whichever replica served each one; the proxy spreads them."""
+    boundary = json.loads(Path(after).read_text())
+    columns = ", ".join(f"Settings['{name}']" for name in settings)
+    found: list[list[str]] = []
+    for url in nodes():
+        query(url, "SYSTEM FLUSH LOGS")
+        found += rows(
+            url,
+            f"SELECT query_kind, {columns} FROM system.query_log "
+            f"WHERE event_time_microseconds > fromUnixTimestamp64Micro({boundary[url]}) "
+            # SAFETY: this read names the statements `where` looks for; an
+            # earlier run of it must not be judged as one of them.
+            "AND type = 'QueryFinish' AND is_initial_query AND query NOT LIKE '%system.query_log%' "
+            f"AND {where} ORDER BY event_time_microseconds",
+        )
+    return found
+
+
 def check_quorum(after: str) -> None:
     """On a cluster, the persons sync run since the boundary confirmed its
     staging insert on a quorum and read its count back sequentially consistent
     — the pair that makes the count it judges the batch by mean something
-    (insight-clickhouse's consistency.rs). Read from the query log of whichever
-    replica served each statement; the proxy spreads them."""
+    (insight-clickhouse's consistency.rs)."""
     if not replicated():
         emit("ok  quorum settings are not expected on a standalone warehouse")
         return
-    boundary = json.loads(Path(after).read_text())
-    inserts: list[list[str]] = []
-    reads: list[list[str]] = []
-    for url in nodes():
-        query(url, "SYSTEM FLUSH LOGS")
-        found = rows(
-            url,
-            "SELECT query_kind, Settings['insert_quorum'], Settings['insert_quorum_parallel'], "
-            "Settings['select_sequential_consistency'] FROM system.query_log "
-            f"WHERE event_time_microseconds > fromUnixTimestamp64Micro({boundary[url]}) "
-            # SAFETY: by the statement text, not `tables`: a bare count() names no table there.
-            f"AND type = 'QueryFinish' AND is_initial_query AND query LIKE '%{PERSONS_STAGING_PREFIX.split('.')[1]}%' "
-            "AND (query_kind = 'Insert' OR query LIKE 'SELECT count() FROM %') ORDER BY event_time_microseconds",
-        )
-        inserts += [row for row in found if row[0] == "Insert"]
-        reads += [row for row in found if row[0] == "Select"]
+    found = statements_since(
+        after,
+        # SAFETY: by the statement text, not `tables`: a bare count() names no table there.
+        f"query LIKE '%{PERSONS_STAGING_PREFIX.split('.')[1]}%' "
+        "AND (query_kind = 'Insert' OR query LIKE 'SELECT count() FROM %')",
+        ("insert_quorum", "insert_quorum_parallel", "select_sequential_consistency"),
+    )
+    inserts = [row for row in found if row[0] == "Insert"]
+    reads = [row for row in found if row[0] == "Select"]
     if not inserts:
         raise Failure(f"no insert into {PERSONS_STAGING_PREFIX}* in any node's query log since the boundary")
     if not reads:
@@ -484,6 +500,44 @@ def check_quorum(after: str) -> None:
         raise Failure(f"{len(stale)}/{len(reads)} persons staging read(s) ran without select_sequential_consistency=1")
     emit(
         f"ok  {len(inserts)} persons staging insert(s) confirmed on a quorum, {len(reads)} read(s) sequentially consistent"
+    )
+
+
+def check_sweep(after: str) -> None:
+    """On a cluster, every statement the reconcile sweep ran against the ledger
+    since the boundary carried the session a round-robin endpoint needs: its
+    inserts confirmed on a quorum, its reads sequentially consistent, and the
+    identity mutation waited for by every replica (sweep/ledger.py)."""
+    if not replicated():
+        emit("ok  the sweep's quorum settings are not expected on a standalone warehouse")
+        return
+    found = statements_since(
+        after,
+        f"query LIKE '%{LEDGER_TABLE}%' AND (query_kind IN ('Insert', 'Select') "
+        f"OR query LIKE 'ALTER TABLE {LEDGER_TABLE} UPDATE %')",
+        ("insert_quorum", "insert_quorum_parallel", "select_sequential_consistency", "mutations_sync"),
+    )
+    by_kind = {kind: [row for row in found if row[0] == kind] for kind in ("Insert", "Select", "Alter")}
+    for kind, statements in by_kind.items():
+        if not statements:
+            raise Failure(f"no {kind.lower()} on {LEDGER_TABLE} in any node's query log since the boundary")
+    unconfirmed = [row for row in by_kind["Insert"] if (row[1], row[2]) != ("auto", "0")]
+    if unconfirmed:
+        raise Failure(
+            f"{len(unconfirmed)}/{len(by_kind['Insert'])} ledger insert(s) ran without "
+            "insert_quorum=auto, insert_quorum_parallel=0"
+        )
+    stale = [row for row in by_kind["Select"] if row[3] != "1"]
+    if stale:
+        raise Failure(
+            f"{len(stale)}/{len(by_kind['Select'])} ledger read(s) ran without select_sequential_consistency=1"
+        )
+    unwaited = [row for row in by_kind["Alter"] if row[4] != "2"]
+    if unwaited:
+        raise Failure(f"{len(unwaited)}/{len(by_kind['Alter'])} ledger mutation(s) ran without mutations_sync=2")
+    emit(
+        f"ok  {len(by_kind['Insert'])} ledger insert(s) confirmed on a quorum, {len(by_kind['Select'])} read(s) "
+        f"sequentially consistent, {len(by_kind['Alter'])} mutation(s) waited for by every replica"
     )
 
 
@@ -516,6 +570,8 @@ def main() -> int:
     boundary.add_argument("--out", required=True)
     quorum = sub.add_parser("quorum")
     quorum.add_argument("--after", required=True, help="the boundary.json quorum-boundary wrote")
+    sweep = sub.add_parser("sweep")
+    sweep.add_argument("--after", required=True, help="the boundary.json quorum-boundary wrote")
     args = parser.parse_args()
 
     try:
@@ -531,6 +587,8 @@ def main() -> int:
             quorum_boundary(args.out)
         elif args.command == "quorum":
             check_quorum(args.after)
+        elif args.command == "sweep":
+            check_sweep(args.after)
         else:
             sync_replicas()
             check_databases_and_tables(args.run_results, [column.replace(":", ".") for column in args.columns])

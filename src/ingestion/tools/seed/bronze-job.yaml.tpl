@@ -21,7 +21,7 @@
 #   SEED_IMAGE                the seeder image — renders the destination config
 #   SEED_DEADLINE_SECONDS     wall-clock ceiling for the pod
 #   SEED_DB_SECRET            Secret with clickhouse-password
-#   SEED_CLICKHOUSE_HOST/_HTTP_PORT/_USER/_DATABASE
+#   SEED_CLICKHOUSE_HOST/_HTTP_PORT/_PROTOCOL/_USER/_DATABASE
 #   SEED_CLICKHOUSE_CLUSTER_MODE/_CLUSTER_NAME
 #                             the stand's topology; "false" / "" is standalone
 #   SEED_PULL_SECRETS         YAML flow sequence of pull secrets, `[]` for none
@@ -84,7 +84,7 @@ spec:
             - name: RECONCILE_DEST_CLICKHOUSE_PORT
               value: "${SEED_CLICKHOUSE_HTTP_PORT}"
             - name: RECONCILE_DEST_CLICKHOUSE_PROTOCOL
-              value: http
+              value: "${SEED_CLICKHOUSE_PROTOCOL}"
             - name: RECONCILE_DEST_CLICKHOUSE_USERNAME
               value: "${SEED_CLICKHOUSE_USER}"
             - name: RECONCILE_DEST_CLICKHOUSE_PASSWORD

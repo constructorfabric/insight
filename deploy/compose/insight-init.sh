@@ -336,6 +336,7 @@ EOF
     CLICKHOUSE_PASSWORD=insight-local
   else
     CLICKHOUSE_EXTERNAL=true
+    [[ "$TARGET" == "compose" ]] && echo "  NOTE: compose drives a standalone ClickHouse only; a replicated warehouse is a chart stand." >&2
     CLICKHOUSE_HOST=$(ask "  External ClickHouse host" "")
     [[ -z "$CLICKHOUSE_HOST" ]] && { echo "  ERROR: host is required." >&2; exit 1; }
     [[ "$TARGET" == "compose" ]] && warn_localhost_host "$CLICKHOUSE_HOST" "ClickHouse"

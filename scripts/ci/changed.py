@@ -72,6 +72,9 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True, test: b
         # False ⇒ plain pytest: no report is produced or uploaded at all, so a
         # suite below the overall minimum still gates on test results (insight-seed).
         entry["collect"] = comp.get("collect", True)
+        # Runner size: "small" (a pod) unless the component says otherwise; the
+        # job's runs-on turns it into the insight-<runner> label.
+        entry["runner"] = comp.get("runner", "small")
     return entry
 
 
