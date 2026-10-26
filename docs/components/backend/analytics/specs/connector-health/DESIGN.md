@@ -697,10 +697,12 @@ customer extracts, which must never carry service rows.
 | `duration_ms` | `Nullable(UInt64)` | between the mover's own start and end stamps; NULL while a job is in flight and where either stamp is missing, which a zero could not express |
 | `records_reported` | `Nullable(UInt64)` | the mover's own count; NULL where it reported none |
 
-`ENGINE = MergeTree`, `PARTITION BY toYYYYMM(ts)`,
+`ENGINE = /*@@REPLICATED@@*/MergeTree` (`MergeTree` on a single node, `ReplicatedMergeTree` on a
+cluster), `PARTITION BY toYYYYMM(ts)`,
 `ORDER BY (event, connector, ts, event_id)`, `TTL toDateTime(ts) + INTERVAL 6 MONTH`.
 
-The identity is deliberately outside the sort key. This is a plain MergeTree, so the key buys
+The identity is deliberately outside the sort key. The engine is the plain `MergeTree` family, not
+a `Replacing*` one, so the key buys
 read locality rather than identity, and `connector` already narrows a per-instance read to the
 handful of rows the aggregate then groups — while rewriting the key on an install that already
 holds months of history would buy that install nothing.

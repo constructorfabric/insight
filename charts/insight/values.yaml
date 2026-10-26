@@ -301,7 +301,8 @@ clickhouse:
   # SQL-created access stored in Keeper (<user_directories> <replicated>), or
   # provisionAccess: false below; `host` at a load-balancer endpoint, and the
   # deploy user holding REMOTE ON *.*. createDatabases: false changes none of
-  # it: the post-install Hook creates and checks the databases either way.
+  # it: with runMigrations on, the post-install Hook creates and checks the
+  # databases either way.
   # The dbt builds, the hook's heals and the persons sync write with a
   # quorum: with two replicas, a replica restart stops those until it is
   # back (the destination's, dataset and usage-event writes carry no quorum

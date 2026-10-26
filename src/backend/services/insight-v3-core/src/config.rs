@@ -302,7 +302,8 @@ pub(crate) struct GearConfig {
     /// How long an abandoned create or removal holds its dataset.
     pub(crate) dataset_lease_secs: i64,
     /// Topology of the warehouse: whether the tables this service creates
-    /// must replicate, and the cluster its DDL is qualified with.
+    /// must replicate. The name is the chart's shared contract and unused
+    /// here: no statement this service emits carries `ON CLUSTER`.
     pub(crate) clickhouse_cluster_mode: bool,
     pub(crate) clickhouse_cluster_name: String,
     pub(crate) clickhouse_user: Option<String>,
