@@ -53,7 +53,10 @@ const CLOCKED = {
 beforeEach(() => {
   vi.resetAllMocks();
   portalRouter.reset("/portal/custom/metrics/m-7");
-  vi.mocked(customClient.fetchDependents).mockResolvedValue([]);
+  vi.mocked(customClient.fetchDependents).mockResolvedValue({
+    holders: [],
+    hidden: 0,
+  });
   vi.mocked(customClient.runMetric).mockResolvedValue({
     columns: ["author", "lines"],
     rows: [
@@ -129,9 +132,10 @@ describe("/portal/custom/metrics/$name", () => {
   // What a removal would break, before a reader asks for one.
   it("names what draws it, and links each by its id", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
-    vi.mocked(customClient.fetchDependents).mockResolvedValue([
-      { kind: "widgets", id: "w-3", name: "Lines table" },
-    ]);
+    vi.mocked(customClient.fetchDependents).mockResolvedValue({
+      holders: [{ kind: "widgets", id: "w-3", name: "Lines table" }],
+      hidden: 0,
+    });
 
     render(<Component />, { wrapper });
 
@@ -139,6 +143,22 @@ describe("/portal/custom/metrics/$name", () => {
       await screen.findByRole("link", { name: "Lines table" })
     ).toHaveAttribute("href", "/portal/custom/widgets/w-3");
     expect(customClient.fetchDependents).toHaveBeenCalledWith("metrics", "m-7");
+    expect(screen.queryByText(/you can't see/)).toBeNull();
+  });
+
+  it("counts the dashboards that draw it which the reader cannot see", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
+    vi.mocked(customClient.fetchDependents).mockResolvedValue({
+      holders: [],
+      hidden: 2,
+    });
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByText("2 dashboards you can't see")
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nothing draws it yet.")).toBeNull();
   });
 
   it("heads the page with the stored name and edits it by its id", async () => {

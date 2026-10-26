@@ -14,10 +14,7 @@ export function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
-/**
- * Every catalogue answers empty, every dataset declares nothing, and no
- * definition is found, unless a test says otherwise.
- */
+/** Every catalogue answers empty, every dataset declares nothing, and no definition is found, unless a test says otherwise. */
 export function mockCatalogues(): void {
   const none = { items: [], total: 0 };
   vi.mocked(customClient.fetchMetrics).mockResolvedValue(none);

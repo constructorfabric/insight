@@ -162,7 +162,9 @@ const handlers = [
       offset: 0,
     })
   ),
-  http.get("*/api/v3/v1/metrics/:id", () => HttpResponse.json(BY_TEAM_METRIC)),
+  http.get("*/api/v3/v1/metrics/:id", () =>
+    HttpResponse.json(BY_TEAM_METRIC)
+  ),
   http.get("*/api/v3/v1/datasets/:name", () =>
     HttpResponse.json(PULL_REQUESTS)
   ),

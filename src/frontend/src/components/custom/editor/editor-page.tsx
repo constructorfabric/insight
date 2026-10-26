@@ -7,6 +7,7 @@ import { refusal } from "@/components/custom/refusal";
 import { RemoveDataset } from "@/components/custom/remove-dataset";
 import { RemoveDefinition } from "@/components/custom/remove-definition";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import { dashboardAllows } from "@/lib/custom/dashboard-access";
 import { DESCRIPTIONS } from "@/lib/custom/editor/kinds";
 import { definitionBodyQuery } from "@/queries/custom";
 import { TEXT_BODY, TEXT_HEADING, TEXT_TITLE } from "@/lib/type-scale";
@@ -17,6 +18,13 @@ const CATALOGUE: Record<EditableKind, string> = {
   metrics: "/portal/custom/metrics",
   widgets: "/portal/custom/widgets",
   dashboards: "/portal/custom",
+};
+
+const PAGE: Record<EditableKind, string> = {
+  datasets: "/portal/custom/datasets/$name",
+  metrics: "/portal/custom/metrics/$name",
+  widgets: "/portal/custom/widgets/$name",
+  dashboards: "/portal/custom/$name",
 };
 
 export function EditorPage({
@@ -41,6 +49,8 @@ export function EditorPage({
     stored.isFetchedAfterMount && stored.isSuccess ? stored.data : undefined;
 
   const done = () => void navigate({ to: CATALOGUE[kind] });
+  const created = (made: string) =>
+    void navigate({ to: PAGE[kind], params: { name: made } });
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
@@ -62,10 +72,14 @@ export function EditorPage({
       </div>
 
       {id === undefined ? (
-        <DefinitionEditor kind={kind} onStored={done} />
+        <DefinitionEditor kind={kind} onStored={created} />
       ) : stored.isError ? (
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(stored.error, `That ${description.noun} is not there.`)}
+        </p>
+      ) : fresh?.access && !dashboardAllows(fresh.access).edit ? (
+        <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
+          Only the owner or an editor can change this dashboard.
         </p>
       ) : fresh ? (
         <>
@@ -76,7 +90,9 @@ export function EditorPage({
             document={fresh.document}
             onStored={done}
           />
-          <Removal kind={kind} id={id} name={fresh.name} onRemoved={done} />
+          {!fresh.access || dashboardAllows(fresh.access).remove ? (
+            <Removal kind={kind} id={id} name={fresh.name} onRemoved={done} />
+          ) : null}
         </>
       ) : (
         <CenteredSpinner className="min-h-40" />

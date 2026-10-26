@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-import type { Listed } from "@/api/custom-client";
+import type { DashboardListed, OwnedFilter } from "@/api/custom-client";
 import {
   DefinitionCount,
   MoreDefinitions,
@@ -18,6 +18,7 @@ import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
 import { useTagPicks } from "@/hooks/use-tag-picks";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import { foldersQuery } from "@/queries/custom";
+import { useIsAdmin } from "@/queries/identity-me";
 import { TEXT_BODY, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -27,11 +28,21 @@ export const Route = createFileRoute("/portal/custom/")({
 
 const UNFILED = "unfiled";
 
-function emptyLabel(folder: string | undefined): string {
+const OWNED_HEADING: Record<OwnedFilter, string> = {
+  me: "Owned by me",
+  shared: "Shared with me",
+};
+
+function emptyLabel(
+  folder: string | undefined,
+  owned: OwnedFilter | undefined,
+  isAdmin: boolean
+): string {
+  if (owned === "shared") return "Nothing is shared with you yet.";
+  if (owned === "me") return "You own no dashboards yet.";
   if (folder === UNFILED) return "Every dashboard is in a folder.";
-  if (folder) {
-    return "No dashboards in this folder yet. Move one here from its ··· menu.";
-  }
+  if (folder) return "No dashboards in this folder yet.";
+  if (!isAdmin) return "Nothing is shared with you yet.";
   return "No dashboards yet. Describe one to the assistant and it will build it.";
 }
 
@@ -43,13 +54,13 @@ interface Shown {
 }
 
 function useShownFolder(): Shown {
-  const { folder: asked } = usePortalSearch();
+  const { folder: asked, owned } = usePortalSearch();
   const folders = useQuery({
     ...foldersQuery(),
     enabled: asked != null && asked !== UNFILED,
   });
 
-  if (!asked) return { heading: "Custom" };
+  if (!asked) return { heading: owned ? OWNED_HEADING[owned] : "Custom" };
   if (asked === UNFILED) return { folder: UNFILED, heading: "Unfiled" };
   if (folders.isError) return { folder: asked, heading: "Custom" };
   if (!folders.data) return { heading: "Custom", pending: true };
@@ -61,11 +72,14 @@ function useShownFolder(): Shown {
 }
 
 function CustomDashboardIndex() {
+  const { owned } = usePortalSearch();
+  const { isAdmin } = useIsAdmin();
   const shown = useShownFolder();
   const tags = useTagPicks();
   const catalogue = useDefinitionCatalogue("dashboards", {
     folder: shown.folder,
     tags: tags.picked,
+    owned,
     enabled: !shown.pending && !tags.pending,
   });
 
@@ -74,12 +88,14 @@ function CustomDashboardIndex() {
       <header className="mb-3 flex flex-wrap items-start gap-3">
         <div className="min-w-0 grow">
           <h1 className={TEXT_TITLE}>{shown.heading}</h1>
-          <p className={cn(TEXT_BODY, "text-muted-foreground")}>
-            Dashboards built from your own data. Ask the assistant for a new
-            one, or write one by hand.
-          </p>
+          {isAdmin ? (
+            <p className={cn(TEXT_BODY, "text-muted-foreground")}>
+              Dashboards built from your own data. Ask the assistant for a new
+              one, or write one by hand.
+            </p>
+          ) : null}
         </div>
-        <NewLink kind="dashboards" noun="dashboard" />
+        {isAdmin ? <NewLink kind="dashboards" noun="dashboard" /> : null}
       </header>
       {shown.lost ? (
         <p
@@ -115,7 +131,7 @@ function CustomDashboardIndex() {
             <ComingSoon
               variant="card"
               state="empty"
-              label={emptyLabel(shown.folder)}
+              label={emptyLabel(shown.folder, owned, isAdmin)}
             />
           )
         }
@@ -132,7 +148,7 @@ function CustomDashboardList({
   paging,
   empty,
 }: {
-  dashboards: Listed[] | undefined;
+  dashboards: DashboardListed[] | undefined;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;

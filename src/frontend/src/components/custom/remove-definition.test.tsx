@@ -46,9 +46,7 @@ describe("<RemoveDefinition>", () => {
   });
 
   it("keeps it when the reader backs out", async () => {
-    render(<RemoveDefinition kind="widgets" id="w-1" name="lines_table" />, {
-      wrapper,
-    });
+    render(<RemoveDefinition kind="widgets" id="w-1" name="lines_table" />, { wrapper });
 
     await userEvent.click(
       screen.getByRole("button", { name: "Remove lines_table" })

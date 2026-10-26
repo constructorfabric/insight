@@ -6,19 +6,31 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
   return { ...actual, fetchDashboardRead: vi.fn() };
 });
+const OWNER = vi.hoisted(() => "01900000-0000-7000-8000-00000000000a");
+vi.mock("@/queries/person-name", () => ({
+  usePersonName: (personId: string | null) => ({
+    isPending: false,
+    data: personId === OWNER ? "Jane Doe" : null,
+  }),
+}));
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as customClient from "@/api/custom-client";
-import type { Listed } from "@/api/custom-client";
+import type { DashboardListed } from "@/api/custom-client";
 
 import { DashboardCard } from "./dashboard-card";
 
-const LISTED: Listed = { id: "delivery", name: "delivery" };
+const LISTED: DashboardListed = {
+  id: "delivery",
+  name: "delivery",
+  owner_person_id: null,
+  access: "ownerless",
+};
 
-function card(dashboard: Listed = LISTED) {
+function card(dashboard: DashboardListed = LISTED) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -34,6 +46,10 @@ function reading() {
     name: "delivery",
     body: { title: "Delivery", widgets: [] },
     tags: [],
+    ownerPersonId: null,
+    access: "ownerless",
+    folders: [],
+    carries: true,
   });
 }
 
@@ -78,15 +94,19 @@ describe("<DashboardCard>", () => {
     );
   });
 
-  it("shows the name under a title that differs from it, and once when they match", async () => {
+  it("names the owner, and no one for an ownerless dashboard", async () => {
     reading();
 
-    const { unmount } = card({ id: "d1", name: "Delivery board" });
-    expect(await screen.findByText("Delivery")).toBeInTheDocument();
-    expect(screen.getByText("Delivery board")).toBeInTheDocument();
+    const { unmount } = card({
+      ...LISTED,
+      owner_person_id: OWNER,
+      access: "owner",
+    });
+    expect(await screen.findByText("Owner: Jane Doe")).toBeInTheDocument();
     unmount();
 
-    card({ id: "d1", name: "Delivery" });
-    expect(await screen.findAllByText("Delivery")).toHaveLength(1);
+    card();
+    await screen.findByText("Delivery");
+    expect(screen.queryByText(/Owner:/)).toBeNull();
   });
 });

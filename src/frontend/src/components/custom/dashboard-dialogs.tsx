@@ -159,7 +159,7 @@ export function DuplicateDashboard({
     <NameDialog
       open={open}
       title="Duplicate dashboard"
-      description={`Copies ${name} with its folder and tags.`}
+      description={`Copies ${name}.`}
       confirmLabel="Duplicate"
       initial={copyName(name)}
       fallback="The dashboard could not be duplicated."

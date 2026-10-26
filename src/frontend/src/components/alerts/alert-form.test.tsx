@@ -372,10 +372,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     const first = Array.from({ length: 50 }, (_, at) => `metric-${at}`);
     vi.mocked(customClient.fetchMetrics)
       .mockResolvedValueOnce({ items: listed(first), total: 51 })
-      .mockResolvedValueOnce({
-        items: listed(["metric-49", "metric-50"]),
-        total: 52,
-      });
+      .mockResolvedValueOnce({ items: listed(["metric-49", "metric-50"]), total: 52 });
 
     render(<NewAlertPage />, { wrapper });
     await userEvent.click(await screen.findByLabelText("Metric"));

@@ -154,6 +154,35 @@ describe("PersonPicker", () => {
     expect(screen.queryByText(/at least 2 characters/i)).not.toBeInTheDocument();
   });
 
+  it("offers only the persons the caller allows, whatever the case of their id", () => {
+    list.state.data = { pages: [page([BOB, CAROL])] };
+    render(
+      <PersonPicker
+        onPick={vi.fn()}
+        browseWhenEmpty
+        onlyIds={new Set([BOB.person_id.toLowerCase()])}
+      />,
+    );
+
+    expect(screen.getByText("Bob Park")).toBeInTheDocument();
+    expect(screen.queryByText("Carol Chen")).not.toBeInTheDocument();
+  });
+
+  it("matches an allowed id listed in capitals", () => {
+    list.state.data = {
+      pages: [page([{ ...BOB, person_id: BOB.person_id.toUpperCase() }])],
+    };
+    render(
+      <PersonPicker
+        onPick={vi.fn()}
+        browseWhenEmpty
+        onlyIds={new Set([BOB.person_id])}
+      />,
+    );
+
+    expect(screen.getByText("Bob Park")).toBeInTheDocument();
+  });
+
   it("hands the picked person to the caller and fires nothing else", async () => {
     list.state.data = { pages: [page([BOB])] };
     const onPick = vi.fn();

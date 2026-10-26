@@ -182,10 +182,7 @@ describe("/portal/custom/metrics", () => {
 
   it("keeps the rest of the page when one metric fails to load", async () => {
     vi.mocked(customClient.fetchMetrics).mockResolvedValue({
-      items: [
-        { id: "broken", name: "broken" },
-        { id: "fine", name: "fine" },
-      ],
+      items: [{ id: "broken", name: "broken" }, { id: "fine", name: "fine" }],
       total: 2,
     });
     vi.mocked(customClient.fetchMetric).mockImplementation(async (name) => {

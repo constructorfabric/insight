@@ -13,39 +13,48 @@ import * as customClient from "@/api/custom-client";
 
 import {
   catalogueQuery,
-  dashboardFolderQuery,
   dashboardQuery,
+  dashboardReadQuery,
   dashboardTagsQuery,
+  dashboardWidgetResultQuery,
+  dashboardWidgetsQuery,
   definitionBodyQuery,
+  drilldownPagesQuery,
   definitionPagesQuery,
   foldersQuery,
+  grantsQuery,
   metricResultQuery,
+  orphanedPagesQuery,
   pinsQuery,
   tagsQuery,
+  useAddToFolder,
   useCreateFolder,
   useDeleteFolder,
+  useDeleteGrant,
   useDuplicateDashboard,
-  useMoveDashboard,
+  usePutGrant,
   useRemoveDefinition,
+  useRemoveFromFolder,
   useRenameDefinition,
   useRenameFolder,
   useSetDashboardTags,
   useSetPinned,
   useStoreDefinition,
+  useTransferOrphan,
   widgetQuery,
 } from "./custom";
 
 describe("definitionPagesQuery", () => {
   it("asks for one page at a time, and stops once it has them all", async () => {
-    const first = [
-      { id: "a", name: "A" },
-      { id: "b", name: "B" },
-    ];
-    const last = [{ id: "c", name: "C" }];
-    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
-      items: first,
+    const first = {
+      items: [
+        { id: "a", name: "A" },
+        { id: "b", name: "B" },
+      ],
       total: 3,
-    });
+    };
+    const second = { items: [{ id: "c", name: "C" }], total: 3 };
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue(first);
 
     const options = definitionPagesQuery("metrics", "git");
 
@@ -57,31 +66,10 @@ describe("definitionPagesQuery", () => {
     });
 
     // Two of three read, so the next page starts at the third.
+    expect(options.getNextPageParam(first, [first], 0, [0])).toBe(2);
     expect(
-      options.getNextPageParam({ items: first, total: 3 }, [
-        { items: first, total: 3 },
-      ], 0, [0]),
-    ).toBe(2);
-    expect(
-      options.getNextPageParam({ items: last, total: 3 }, [
-        { items: first, total: 3 },
-        { items: last, total: 3 },
-      ], 2, [0, 2]),
+      options.getNextPageParam(second, [first, second], 2, [0, 2]),
     ).toBeUndefined();
-  });
-
-  it("lists a dataset under its name, which is its id", async () => {
-    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
-      names: ["commits"],
-      total: 1,
-    });
-
-    await expect(
-      definitionPagesQuery("datasets").queryFn?.({ pageParam: 0 } as never),
-    ).resolves.toEqual({
-      items: [{ id: "commits", name: "commits" }],
-      total: 1,
-    });
   });
 
   it("keys the cache by kind and needle", () => {
@@ -94,37 +82,47 @@ describe("definitionPagesQuery", () => {
   });
 });
 
-describe("catalogueQuery", () => {
-  it("asks for every definition of a kind in one page, and keeps the ids and names", async () => {
-    const items = [{ id: "w1", name: "Commits table" }];
-    vi.mocked(customClient.fetchWidgets).mockResolvedValue({
-      items,
+describe("datasets in a catalogue", () => {
+  it("are listed under their name, which is their id", async () => {
+    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
+      names: ["commits"],
       total: 1,
     });
 
+    await expect(
+      definitionPagesQuery("datasets").queryFn?.({ pageParam: 0 } as never),
+    ).resolves.toEqual({ items: [{ id: "commits", name: "commits" }], total: 1 });
+  });
+});
+
+describe("catalogueQuery", () => {
+  it("offers every definition of a kind by id and name", async () => {
+    const page = { items: [{ id: "w1", name: "Commits table" }], total: 1 };
+    vi.mocked(customClient.fetchWidgets).mockResolvedValue(page);
     const options = catalogueQuery("widgets");
-    const page = await options.queryFn?.(undefined as never);
+
+    const read = await options.queryFn?.(undefined as never);
 
     expect(customClient.fetchWidgets).toHaveBeenCalledWith({ limit: 200 });
-    expect(page && options.select?.(page)).toEqual(items);
+    expect(options.select?.(read as never)).toEqual(page.items);
   });
 });
 
 describe("definitionBodyQuery", () => {
-  it("opens a definition by id with its name and body", async () => {
+  it("opens a definition with its name and the body a save would send", async () => {
     vi.mocked(customClient.fetchDefinition).mockResolvedValue({
-      id: "m1",
-      name: "Commits",
-      body: { dataset: "commits" },
+      id: "w1",
+      name: "Commits table",
+      body: { type: "table" },
     });
 
     await expect(
-      definitionBodyQuery("metrics", "m1").queryFn?.(undefined as never),
-    ).resolves.toEqual({ name: "Commits", document: { dataset: "commits" } });
-    expect(customClient.fetchDefinition).toHaveBeenCalledWith("metrics", "m1");
+      definitionBodyQuery("widgets", "w1").queryFn?.(undefined as never),
+    ).resolves.toEqual({ name: "Commits table", document: { type: "table" } });
+    expect(customClient.fetchDefinition).toHaveBeenCalledWith("widgets", "w1");
   });
 
-  it("opens a dataset by its name with its declaration", async () => {
+  it("opens a dataset with its declaration under its name", async () => {
     vi.mocked(customClient.fetchDataset).mockResolvedValue({
       name: "commits",
       declaration: { title: "Commits", fields: [] },
@@ -135,71 +133,6 @@ describe("definitionBodyQuery", () => {
     ).resolves.toEqual({
       name: "commits",
       document: { title: "Commits", fields: [] },
-    });
-  });
-});
-
-describe("useStoreDefinition", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("creates a definition with no id yet and answers with the id it was given", async () => {
-    vi.mocked(customClient.createDefinition).mockResolvedValue("m-new");
-    const { result } = rendered(() => useStoreDefinition());
-
-    await expect(
-      act(() =>
-        result.current.mutateAsync({
-          kind: "metrics",
-          name: "Commits",
-          body: { dataset: "commits" },
-        }),
-      ),
-    ).resolves.toBe("m-new");
-    expect(customClient.createDefinition).toHaveBeenCalledWith(
-      "metrics",
-      "Commits",
-      { dataset: "commits" },
-    );
-    expect(customClient.putDefinition).not.toHaveBeenCalled();
-  });
-
-  it("replaces a definition by its id under the name it is given", async () => {
-    const { result } = rendered(() => useStoreDefinition());
-
-    await expect(
-      act(() =>
-        result.current.mutateAsync({
-          kind: "widgets",
-          id: "w1",
-          name: "Renamed",
-          body: { type: "stat" },
-        }),
-      ),
-    ).resolves.toBe("w1");
-    expect(customClient.putDefinition).toHaveBeenCalledWith(
-      "widgets",
-      "w1",
-      "Renamed",
-      { type: "stat" },
-    );
-  });
-
-  it("stores a dataset under its name", async () => {
-    const { result } = rendered(() => useStoreDefinition());
-
-    await expect(
-      act(() =>
-        result.current.mutateAsync({
-          kind: "datasets",
-          name: "commits",
-          body: { title: "Commits" },
-        }),
-      ),
-    ).resolves.toBe("commits");
-    expect(customClient.putDataset).toHaveBeenCalledWith("commits", {
-      title: "Commits",
     });
   });
 });
@@ -217,6 +150,10 @@ describe("dashboardQuery", () => {
       name: "Engineering",
       body: dashboard,
       tags: ["Ops"],
+      ownerPersonId: null,
+      access: "ownerless",
+      folders: [],
+      carries: true,
     });
     const queryClient = new QueryClient();
     const wrapper = ({ children }: { children: ReactNode }) =>
@@ -243,16 +180,16 @@ describe("dashboardQuery", () => {
 
 describe("widgetQuery", () => {
   it("keys on the widget id and asks fetchWidget", async () => {
-    const widget = {
+    const stored = {
       name: "Commits table",
       widget: { type: "table" as const, metric: "m", columns: ["day"] },
     };
-    vi.mocked(customClient.fetchWidget).mockResolvedValue(widget);
+    vi.mocked(customClient.fetchWidget).mockResolvedValue(stored);
 
     const options = widgetQuery("commits_table");
 
     await expect(options.queryFn?.(undefined as never)).resolves.toEqual(
-      widget,
+      stored,
     );
     expect(customClient.fetchWidget).toHaveBeenCalledWith("commits_table");
   });
@@ -311,7 +248,7 @@ describe("definitionPagesQuery in a folder", () => {
       total: 0,
     });
 
-    const options = definitionPagesQuery("dashboards", "", "f1");
+    const options = definitionPagesQuery("dashboards", "", { folder: "f1" });
     await options.queryFn?.({ pageParam: 0 } as never);
 
     expect(customClient.fetchDashboards).toHaveBeenCalledWith({
@@ -322,8 +259,34 @@ describe("definitionPagesQuery in a folder", () => {
     });
     const keys = [
       definitionPagesQuery("dashboards", ""),
-      definitionPagesQuery("dashboards", "", "f1"),
-      definitionPagesQuery("dashboards", "", "unfiled"),
+      definitionPagesQuery("dashboards", "", { folder: "f1" }),
+      definitionPagesQuery("dashboards", "", { folder: "unfiled" }),
+    ].map((query) => JSON.stringify(query.queryKey));
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe("definitionPagesQuery by ownership", () => {
+  it("asks for the owned or shared dashboards and keeps them apart in the cache", async () => {
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+
+    await definitionPagesQuery("dashboards", "", { owned: "shared" }).queryFn?.(
+      { pageParam: 0 } as never,
+    );
+
+    expect(customClient.fetchDashboards).toHaveBeenCalledWith({
+      search: "",
+      limit: 50,
+      offset: 0,
+      owned: "shared",
+    });
+    const keys = [
+      definitionPagesQuery("dashboards", ""),
+      definitionPagesQuery("dashboards", "", { owned: "me" }),
+      definitionPagesQuery("dashboards", "", { owned: "shared" }),
     ].map((query) => JSON.stringify(query.queryKey));
     expect(new Set(keys).size).toBe(keys.length);
   });
@@ -336,20 +299,6 @@ describe("foldersQuery", () => {
 
     await expect(foldersQuery().queryFn?.(undefined as never)).resolves.toEqual(
       list,
-    );
-  });
-});
-
-describe("dashboardFolderQuery", () => {
-  it("asks for one dashboard's folder and is refreshed with the folders", async () => {
-    vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
-
-    const options = dashboardFolderQuery("delivery");
-    await options.queryFn?.(undefined as never);
-
-    expect(customClient.fetchDashboardFolder).toHaveBeenCalledWith("delivery");
-    expect(options.queryKey.slice(0, foldersQuery().queryKey.length)).toEqual(
-      foldersQuery().queryKey,
     );
   });
 });
@@ -404,16 +353,25 @@ describe("the folder mutations", () => {
     expectCountsAndListsRefreshed(invalidated);
   });
 
-  it("moves a dashboard, then refreshes the counts and the lists", async () => {
-    const { result, invalidated } = rendered(() => useMoveDashboard());
+  it.each([
+    ["adds", useAddToFolder, "addToFolder"],
+    ["removes", useRemoveFromFolder, "removeFromFolder"],
+  ] as const)(
+    "%s a dashboard, then refreshes the counts, the lists and its page",
+    async (_verb, hook, call) => {
+      const { result, invalidated } = rendered(() => hook());
 
-    await act(() =>
-      result.current.mutateAsync({ id: "delivery", folder: null }),
-    );
+      await act(async () => {
+        await result.current.mutateAsync({ folder: "f1", dashboard: "delivery" });
+      });
 
-    expect(customClient.moveDashboard).toHaveBeenCalledWith("delivery", null);
-    expectCountsAndListsRefreshed(invalidated);
-  });
+      expect(customClient[call]).toHaveBeenCalledWith("f1", "delivery");
+      expectCountsAndListsRefreshed(invalidated);
+      expect(invalidated).toHaveBeenCalledWith({
+        queryKey: dashboardReadQuery("delivery").queryKey,
+      });
+    },
+  );
 
   it("refreshes the counts and the lists after a taken name is refused", async () => {
     vi.mocked(customClient.createFolder).mockRejectedValueOnce(new Error("taken"));
@@ -424,13 +382,13 @@ describe("the folder mutations", () => {
     expectCountsAndListsRefreshed(invalidated);
   });
 
-  it("refreshes the counts and the lists after a move into a gone folder is refused", async () => {
-    vi.mocked(customClient.moveDashboard).mockRejectedValueOnce(new Error("gone"));
-    const { result, invalidated } = rendered(() => useMoveDashboard());
+  it("refreshes the counts and the lists after an add into a gone folder is refused", async () => {
+    vi.mocked(customClient.addToFolder).mockRejectedValueOnce(new Error("gone"));
+    const { result, invalidated } = rendered(() => useAddToFolder());
 
     await act(() =>
       result.current
-        .mutateAsync({ id: "delivery", folder: "gone" })
+        .mutateAsync({ folder: "gone", dashboard: "delivery" })
         .catch(() => undefined),
     );
 
@@ -455,7 +413,10 @@ describe("definitionPagesQuery with tags", () => {
       total: 0,
     });
 
-    const options = definitionPagesQuery("dashboards", "", "f1", ["Ops"]);
+    const options = definitionPagesQuery("dashboards", "", {
+      folder: "f1",
+      tags: ["Ops"],
+    });
     await options.queryFn?.({ pageParam: 0 } as never);
 
     expect(customClient.fetchDashboards).toHaveBeenCalledWith({
@@ -466,10 +427,13 @@ describe("definitionPagesQuery with tags", () => {
       tags: ["Ops"],
     });
     const keys = [
-      definitionPagesQuery("dashboards", "", "f1"),
-      definitionPagesQuery("dashboards", "", "f1", ["Ops"]),
-      definitionPagesQuery("dashboards", "", "f1", ["Ops", "Platform"]),
-      definitionPagesQuery("dashboards", "", undefined, ["Ops"]),
+      definitionPagesQuery("dashboards", "", { folder: "f1" }),
+      definitionPagesQuery("dashboards", "", { folder: "f1", tags: ["Ops"] }),
+      definitionPagesQuery("dashboards", "", {
+        folder: "f1",
+        tags: ["Ops", "Platform"],
+      }),
+      definitionPagesQuery("dashboards", "", { tags: ["Ops"] }),
     ].map((query) => JSON.stringify(query.queryKey));
     expect(new Set(keys).size).toBe(keys.length);
   });
@@ -480,7 +444,7 @@ describe("definitionPagesQuery with tags", () => {
       total: 0,
     });
 
-    await definitionPagesQuery("dashboards", "", undefined, []).queryFn?.({
+    await definitionPagesQuery("dashboards", "", { tags: [] }).queryFn?.({
       pageParam: 0,
     } as never);
 
@@ -636,15 +600,13 @@ describe("duplicating a dashboard", () => {
     expect(invalidated).toHaveBeenCalledWith({ queryKey: tagsQuery().queryKey });
   }
 
-  it("copies under the new name, then refreshes the lists and the counts", async () => {
-    vi.mocked(customClient.duplicateDashboard).mockResolvedValueOnce("d-copy");
+  it("copies under the new name, answers the copy's id, then refreshes the lists and the counts", async () => {
+    vi.mocked(customClient.duplicateDashboard).mockResolvedValueOnce("d2");
     const { result, invalidated } = rendered(() => useDuplicateDashboard());
 
     await expect(
-      act(() =>
-        result.current.mutateAsync({ id: "delivery", to: "Delivery copy" }),
-      ),
-    ).resolves.toBe("d-copy");
+      act(() => result.current.mutateAsync({ id: "delivery", to: "Delivery copy" })),
+    ).resolves.toBe("d2");
 
     expect(customClient.duplicateDashboard).toHaveBeenCalledWith(
       "delivery",
@@ -655,7 +617,7 @@ describe("duplicating a dashboard", () => {
 
   it("refreshes the lists and the counts after a copy is refused", async () => {
     vi.mocked(customClient.duplicateDashboard).mockRejectedValueOnce(
-      new Error("gone"),
+      new Error("refused"),
     );
     const { result, invalidated } = rendered(() => useDuplicateDashboard());
 
@@ -670,13 +632,12 @@ describe("duplicating a dashboard", () => {
 });
 
 describe("useRenameDefinition", () => {
-  it("renames by id and refreshes what the custom zone has read", async () => {
+  it("renames by id and refreshes every cached read, keeping the id's entries", async () => {
     vi.mocked(customClient.renameDefinition).mockResolvedValue(undefined);
     const queryClient = new QueryClient({
       defaultOptions: { mutations: { retry: false } },
     });
     queryClient.setQueryData(["custom", "dashboard", "d1"], {
-      name: "Engineering",
       body: {},
       tags: [],
     });
@@ -700,5 +661,209 @@ describe("useRenameDefinition", () => {
     expect(
       queryClient.getQueryState(["custom", "dashboard", "d1"])?.isInvalidated,
     ).toBe(true);
+  });
+});
+
+describe("useStoreDefinition", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("creates a definition with no id yet and answers the id it was given", async () => {
+    vi.mocked(customClient.createDefinition).mockResolvedValue("w-new");
+    const { result } = rendered(() => useStoreDefinition());
+
+    await expect(
+      act(() =>
+        result.current.mutateAsync({
+          kind: "widgets",
+          name: "Commits table",
+          body: { type: "table" },
+        }),
+      ),
+    ).resolves.toBe("w-new");
+    expect(customClient.createDefinition).toHaveBeenCalledWith(
+      "widgets",
+      "Commits table",
+      { type: "table" },
+    );
+    expect(customClient.putDefinition).not.toHaveBeenCalled();
+  });
+
+  it("replaces a definition by its id, with its name, and answers that id", async () => {
+    vi.mocked(customClient.putDefinition).mockResolvedValue(undefined);
+    const { result } = rendered(() => useStoreDefinition());
+
+    await expect(
+      act(() =>
+        result.current.mutateAsync({
+          kind: "metrics",
+          id: "m1",
+          name: "Commits",
+          body: { dataset: "commits" },
+        }),
+      ),
+    ).resolves.toBe("m1");
+    expect(customClient.putDefinition).toHaveBeenCalledWith(
+      "metrics",
+      "m1",
+      "Commits",
+      { dataset: "commits" },
+    );
+    expect(customClient.createDefinition).not.toHaveBeenCalled();
+  });
+
+  it("declares a dataset under its name, which is its id", async () => {
+    vi.mocked(customClient.putDataset).mockResolvedValue({
+      name: "commits",
+      declaration: { title: "Commits", fields: [] },
+    });
+    const { result } = rendered(() => useStoreDefinition());
+
+    await expect(
+      act(() =>
+        result.current.mutateAsync({
+          kind: "datasets",
+          name: "commits",
+          body: { title: "Commits", fields: [] },
+        }),
+      ),
+    ).resolves.toBe("commits");
+    expect(customClient.putDataset).toHaveBeenCalledWith("commits", {
+      title: "Commits",
+      fields: [],
+    });
+  });
+});
+
+describe("grants", () => {
+  const PERSON = "00000000-0000-4000-8000-000000000002";
+  const BOARD = { kind: "dashboards", id: "d1" } as const;
+  const FOLDER = { kind: "folders", id: "d1" } as const;
+
+  it("reads the grants of one dashboard or folder under a key of its own", async () => {
+    vi.mocked(customClient.fetchGrants).mockResolvedValue([]);
+
+    await grantsQuery(BOARD).queryFn?.(undefined as never);
+
+    expect(customClient.fetchGrants).toHaveBeenCalledWith(BOARD);
+    expect(grantsQuery(BOARD).queryKey).not.toEqual(grantsQuery(FOLDER).queryKey);
+  });
+
+  it("grants a level, then refreshes those grants", async () => {
+    const { result, invalidated } = rendered(() => usePutGrant(FOLDER));
+
+    await act(() =>
+      result.current.mutateAsync({ grantee: PERSON, level: "editor" }),
+    );
+
+    expect(customClient.putGrant).toHaveBeenCalledWith(FOLDER, PERSON, "editor");
+    expect(invalidated).toHaveBeenCalledWith({
+      queryKey: grantsQuery(FOLDER).queryKey,
+    });
+  });
+
+  it("withdraws a grant, then refreshes those grants", async () => {
+    const { result, invalidated } = rendered(() => useDeleteGrant(BOARD));
+
+    await act(() => result.current.mutateAsync("everyone"));
+
+    expect(customClient.deleteGrant).toHaveBeenCalledWith(BOARD, "everyone");
+    expect(invalidated).toHaveBeenCalledWith({
+      queryKey: grantsQuery(BOARD).queryKey,
+    });
+  });
+});
+
+describe("a dashboard's widgets", () => {
+  it("reads them and runs each through the dashboard, keyed by window", async () => {
+    vi.mocked(customClient.fetchDashboardWidgets).mockResolvedValue([]);
+    await dashboardWidgetsQuery("d1").queryFn?.(undefined as never);
+    expect(customClient.fetchDashboardWidgets).toHaveBeenCalledWith("d1");
+
+    const options = { range: "P30D", bucket: true };
+    await dashboardWidgetResultQuery("d1", "w1", options).queryFn?.(
+      undefined as never,
+    );
+    expect(customClient.runDashboardWidget).toHaveBeenCalledWith(
+      "d1",
+      "w1",
+      options,
+    );
+    expect(dashboardWidgetResultQuery("d1", "w1", options).queryKey).not.toEqual(
+      dashboardWidgetResultQuery("d1", "w1").queryKey,
+    );
+  });
+
+  it("reads the rows behind one through the dashboard", async () => {
+    await drilldownPagesQuery("d1", "w1", {}).queryFn?.({
+      pageParam: "c1",
+      signal: undefined,
+    } as never);
+
+    expect(customClient.fetchDashboardDrilldownPage).toHaveBeenCalledWith(
+      "d1",
+      "w1",
+      { limit: 100, cursor: "c1" },
+      undefined,
+    );
+  });
+});
+
+describe("orphans", () => {
+  it("are read a page at a time until all are in", async () => {
+    const first = {
+      items: [
+        {
+          id: "d1",
+          name: "Release notes",
+          owner_person_id: "p3",
+          updated_at: "2026-09-25T10:00:00Z",
+        },
+      ],
+      total: 2,
+    };
+    vi.mocked(customClient.fetchOrphanedDashboards).mockResolvedValue(first);
+    const options = orphanedPagesQuery("dashboards");
+
+    await options.queryFn?.({ pageParam: 0 } as never);
+
+    expect(customClient.fetchOrphanedDashboards).toHaveBeenCalledWith({
+      limit: 50,
+      offset: 0,
+    });
+    expect(options.getNextPageParam(first, [first], 0, [0])).toBe(1);
+  });
+
+  it("reads orphaned folders under a key of their own", async () => {
+    vi.mocked(customClient.fetchOrphanedFolders).mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    const options = orphanedPagesQuery("folders");
+
+    await options.queryFn?.({ pageParam: 0 } as never);
+
+    expect(customClient.fetchOrphanedFolders).toHaveBeenCalledWith({
+      limit: 50,
+      offset: 0,
+    });
+    expect(options.queryKey).not.toEqual(
+      orphanedPagesQuery("dashboards").queryKey,
+    );
+  });
+
+  it("refreshes every orphan list and the dashboard lists after a transfer", async () => {
+    const { result, invalidated } = rendered(() => useTransferOrphan());
+
+    await act(() =>
+      result.current.mutateAsync({ kind: "folders", id: "f1", to: "p2" }),
+    );
+
+    expect(customClient.transferOrphan).toHaveBeenCalledWith("folders", "f1", "p2");
+    expect(invalidated).toHaveBeenCalledWith({
+      queryKey: ["custom", "orphaned"],
+    });
+    expect(invalidated).toHaveBeenCalledWith({ queryKey: ["custom", "names"] });
   });
 });

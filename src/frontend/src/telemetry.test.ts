@@ -47,6 +47,28 @@ describe("screenPath", () => {
       "/portal/manage/platform-usage",
     );
   });
+
+  it.each([
+    ["/portal/custom", "/portal/custom"],
+    ["/portal/custom/", "/portal/custom/"],
+    ["/portal/custom/q3-hiring-plan", "/portal/custom/:id"],
+    ["/portal/custom/Board%20for%20Jane", "/portal/custom/:id"],
+    ["/portal/custom/metrics", "/portal/custom/metrics"],
+    ["/portal/custom/widgets", "/portal/custom/widgets"],
+    ["/portal/custom/datasets", "/portal/custom/datasets"],
+    ["/portal/custom/alerts", "/portal/custom/alerts"],
+    ["/portal/custom/destinations", "/portal/custom/destinations"],
+    ["/portal/custom/orphaned", "/portal/custom/orphaned"],
+    ["/portal/custom/new/dashboards", "/portal/custom/new/dashboards"],
+    ["/portal/custom/edit/metrics/m", "/portal/custom/edit/metrics/m"],
+    ["/portal/custom/edit/dashboards/q3-plan", "/portal/custom/edit/dashboards/:id"],
+    [
+      "/portal/custom/alerts/cccccccc-0000-0000-0000-000000000001",
+      "/portal/custom/alerts/:id",
+    ],
+  ])("names a custom page %s as %s", (path, shown) => {
+    expect(screenPath(path), `path: ${path}`).toBe(shown);
+  });
 });
 
 describe("startUsageTelemetry", () => {

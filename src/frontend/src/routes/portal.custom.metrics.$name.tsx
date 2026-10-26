@@ -99,7 +99,9 @@ function MetricPage() {
 /** The metric run here and now, over a window the reader picks. */
 function Run({ id, windowed }: { id: string; windowed: boolean }) {
   const [range, setRange] = useState<string | undefined>(undefined);
-  const result = useQuery(metricResultQuery(id, range ? { range } : undefined));
+  const result = useQuery(
+    metricResultQuery(id, range ? { range } : undefined)
+  );
 
   return (
     <Card>
