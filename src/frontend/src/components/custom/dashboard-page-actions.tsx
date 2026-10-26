@@ -14,12 +14,14 @@ export function DashboardPageActions({
   title,
   access,
   ownerPersonId,
+  carries,
 }: {
   id: string;
   name: string;
   title: string;
   access: DashboardAccess;
   ownerPersonId: string | null;
+  carries: boolean;
 }) {
   const navigate = useNavigate();
   const [sharing, setSharing] = useState(false);
@@ -27,7 +29,7 @@ export function DashboardPageActions({
 
   return (
     <span className="flex shrink-0 items-center gap-1">
-      {allows.share ? (
+      {allows.share && carries ? (
         <>
           <Button
             variant="outline"

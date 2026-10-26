@@ -64,7 +64,7 @@ beforeEach(() => {
   vi.mocked(customClient.deleteDefinition).mockResolvedValue(undefined);
 });
 
-function actions(access: DashboardAccess = "owner") {
+function actions(access: DashboardAccess = "owner", carries = access !== "viewer") {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -76,6 +76,7 @@ function actions(access: DashboardAccess = "owner") {
         title="Delivery"
         access={access}
         ownerPersonId={access === "ownerless" ? null : OWNER}
+        carries={carries}
       />
     </QueryClientProvider>
   );
@@ -107,14 +108,15 @@ describe("<DashboardPageActions>", () => {
   });
 
   it.each([
-    ["owner", true, true],
-    ["editor", true, true],
-    ["ownerless", false, true],
-    ["viewer", false, false],
+    ["owner", true, true, true],
+    ["editor", true, true, true],
+    ["editor", false, false, true],
+    ["ownerless", true, false, true],
+    ["viewer", false, false, false],
   ] as const)(
-    "a caller with %s access is offered Share: %s, Edit: %s",
-    (access, share, edit) => {
-      actions(access);
+    "a caller with %s access, carrying %s, is offered Share: %s, Edit: %s",
+    (access, carries, share, edit) => {
+      actions(access, carries);
 
       expect(
         screen.queryByRole("button", { name: "Share delivery" }) !== null

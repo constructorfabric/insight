@@ -154,6 +154,7 @@ function CustomDashboardBody({
             title={dashboard.title}
             access={read.access}
             ownerPersonId={read.ownerPersonId}
+            carries={read.carries}
           />
         </div>
       </header>
