@@ -75,8 +75,10 @@ def user(account: str, email: str | None, tenant: str = TENANT) -> dict[str, Any
 
 @pytest.fixture
 def attribution(warehouse: Warehouse) -> dict[str, dict[str, Any]]:
-    for table in (HISTORY_TABLE, USERS_TABLE):
-        warehouse.execute(f"DELETE FROM {table} WHERE insight_source_id = {{src:String}}", {"src": SOURCE})
+    warehouse.execute(
+        "DELETE FROM silver.class_task_field_history WHERE insight_source_id = {src:String}", {"src": SOURCE}
+    )
+    warehouse.execute("DELETE FROM silver.class_task_users WHERE insight_source_id = {src:String}", {"src": SOURCE})
     warehouse.insert(
         USERS_TABLE,
         [
@@ -132,11 +134,7 @@ def test_an_unassigned_issue_attributes_to_nobody(attribution: dict[str, dict[st
 
 @pytest.mark.parametrize(
     ("issue", "tenant", "entity_id"),
-    [
-        ("ATR-5", TENANT, EMAIL),
-        ("ATR-6", OTHER_TENANT, OTHER_EMAIL),
-        ("ATR-7", OTHER_TENANT, ""),
-    ],
+    [("ATR-5", TENANT, EMAIL), ("ATR-6", OTHER_TENANT, OTHER_EMAIL), ("ATR-7", OTHER_TENANT, "")],
 )
 def test_an_account_reads_the_directory_of_its_own_tenant_only(
     attribution: dict[str, dict[str, Any]], issue: str, tenant: str, entity_id: str
