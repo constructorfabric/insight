@@ -140,8 +140,16 @@ name: jira
 # carries `value_id_type = 'text_ref'` instead of `string_literal` (#3895).
 # MAJOR because rows already written change, and only the full refresh a major
 # dispatches (ADR-0015) re-derives them.
-version: "16.0.0"
-schedule: "0 3 * * *"
+# 17.0.0 (major): Jira links close and reopen where the issue's newest read
+# disagrees with its changelog (`evidence = observation`), an Epic Link change
+# is a parent change, and a removal sorts before an addition within one
+# changelog entry (#3889). MAJOR because rows already written change, and only
+# the full refresh a major dispatches (ADR-0015) re-derives them.
+version: "17.0.0"
+# 22:10 and 10:10 UTC: clear of the 02:00-06:00 daily block and of github's
+# 4-hourly ticks, which rebuild the same task chain; :10 misses the */15
+# reconcile and identity-seed ticks.
+schedule: "10 10,22 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
 # package, not by this connector. The pipeline runs

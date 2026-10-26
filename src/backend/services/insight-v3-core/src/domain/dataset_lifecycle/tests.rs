@@ -1,7 +1,6 @@
-use std::time::Duration;
-
 use chrono::{TimeZone as _, Utc};
 use clickhouse::test::{Mock, handlers};
+use futures::FutureExt as _;
 use serde::Serialize;
 use serde_json::json;
 
@@ -11,6 +10,10 @@ use crate::store::datasets::memory::MemoryDatasets;
 use crate::store::definitions::memory::MemoryDefinitions;
 
 type R = Result<(), Box<dyn std::error::Error>>;
+
+/// `TIMEOUT_EXCEEDED`: the warehouse stopped waiting on a statement that is
+/// still queued, so whether it lands is unknown to the caller.
+const TIMEOUT_EXCEEDED: u8 = 159;
 
 /// What `system.tables` answers about a name nothing holds.
 #[derive(Debug, Serialize, clickhouse::Row)]
@@ -368,19 +371,22 @@ async fn a_publication_the_store_never_answered_for_keeps_its_table() -> R {
     Ok(())
 }
 
-/// The warehouse may still be making a table whose create this service gave
-/// up waiting for; a drop sent now could land first and leave it standing.
+/// The warehouse may still be making a table whose create was not answered
+/// in time; a drop sent now could land first and leave it standing.
+///
+/// The warehouse itself reports the create unfinished, which the store takes
+/// for a timeout just as it takes its own bound running out. A bound racing
+/// a mock is not a timeout a test can count on: the mock answers within the
+/// millisecond the timer needs to fire. A drop would be the next request the
+/// mock sees.
 #[tokio::test]
 async fn a_create_the_warehouse_did_not_answer_in_time_is_left_where_it_is() -> R {
     let fixture = Fixture::new();
     fixture.nothing_holds_the_name();
-    let recording = fixture.mock.add(handlers::record_ddl());
-    let tables = DatasetTables::new(insight_clickhouse::Client::new(
-        insight_clickhouse::Config::new(fixture.mock.url(), "insight_datasets"),
-    ))
-    .with_ddl_timeout(Duration::ZERO);
+    fixture.mock.add(handlers::exception(TIMEOUT_EXCEEDED));
+    let dropping = fixture.mock.add(handlers::record_ddl());
 
-    let refused = DatasetLifecycle::new(&fixture.datasets, &tables, &fixture.definitions)
+    let refused = DatasetLifecycle::new(&fixture.datasets, &fixture.tables, &fixture.definitions)
         .declare(&name("commits"), &declaration())
         .await;
 
@@ -391,12 +397,10 @@ async fn a_create_the_warehouse_did_not_answer_in_time_is_left_where_it_is() -> 
         ),
         "{refused:?}"
     );
-    if let Ok(issued) = tokio::time::timeout(Duration::from_millis(200), recording.query()).await {
-        assert!(
-            !issued.contains("DROP TABLE"),
-            "a create that may still land must not be followed by a drop: {issued}"
-        );
-    }
+    assert!(
+        dropping.query().now_or_never().is_none(),
+        "a create that may still land must not be followed by a drop"
+    );
 
     Ok(())
 }

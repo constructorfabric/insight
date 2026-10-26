@@ -34,9 +34,12 @@
 -- for the type names.
 -- Fields are matched by ROLE, not by vendor field id: `field_id` is documented
 -- as vendor-specific, so a literal here would only ever be Jira's name for the
--- thing. `task_field_roles_current` carries the binding. Attribution:
--- assignee account id → lowercased email via class_task_users; only
--- email-shaped keys pass (unresolvable accounts are excluded, not carried).
+-- thing. `task_field_roles_current` carries the binding. Attribution is the
+-- assignee's account, carried with its email when the tracker states one: the
+-- analytics runtime resolves account-first through identity, so an assignee
+-- with no email still reaches a person once identity binds the account.
+-- This is the per-person attribution root, not a census of issues: an
+-- unassigned issue attributes to nobody and has no row.
 -- Class reads keep FINAL: RMT parts are not duplicate-immune and argMax over
 -- a stale version would skew the pivot.
 
@@ -135,14 +138,24 @@ resolution_default AS (
     WHERE is_deleted = 0
       AND default_value IN ('fixed', 'duplicate', 'wontfix', 'unknown')
 ),
+-- The field history carries no tenant, so a source's tenant is read off its
+-- user directory. INVARIANT: one tenant per source id.
+source_tenants AS (
+    SELECT
+        insight_source_id,
+        min(tenant_id) AS tenant_id
+    FROM {{ ref('class_task_users') }} FINAL
+    GROUP BY insight_source_id
+),
+-- INVARIANT: no email filter, and the issue joins this LEFT. A deleted,
+-- deactivated or app account carries no email, an account the directory never
+-- listed has no row, and dropping either takes its issues out of every measure.
 task_users AS (
     SELECT
-        tenant_id,
         insight_source_id,
         user_id,
-        lower(email) AS email
+        if(email LIKE '%@%', {{ normalized_email('email') }}, '') AS email
     FROM {{ ref('class_task_users') }} FINAL
-    WHERE email LIKE '%@%'
 ),
 -- Per-issue scalar pivot; created = first synthetic_initial event.
 history AS (
@@ -253,8 +266,11 @@ issue_close AS (
     GROUP BY fh.insight_source_id, fh.issue_id
 )
 SELECT
-    u.tenant_id                                                              AS tenant_id,
-    u.email                                                                  AS entity_id,
+    t.tenant_id                                                              AS tenant_id,
+    coalesce(u.email, '')                                                    AS entity_id,
+    {{ task_account_source_type('p.data_source') }}                          AS account_source_type,
+    p.insight_source_id                                                      AS account_source_id,
+    p.assignee_account_id                                                    AS account_id,
     p.insight_source_id                                                      AS insight_source_id,
     p.data_source                                                            AS data_source,
     p.issue_id                                                               AS issue_id,
@@ -294,7 +310,9 @@ SELECT
     c.final_close_at                                                         AS final_close_at,
     p.last_status_event_at                                                   AS last_status_event_at
 FROM issue_pivot AS p
-INNER JOIN task_users AS u
+INNER JOIN source_tenants AS t
+    ON t.insight_source_id = p.insight_source_id
+LEFT JOIN task_users AS u
     ON u.insight_source_id = p.insight_source_id
     AND u.user_id = p.assignee_account_id
 LEFT JOIN issue_close AS c
@@ -304,18 +322,18 @@ LEFT JOIN {{ ref('class_task_statuses') }} AS cur FINAL
 LEFT JOIN {{ ref('class_task_issuetypes') }} AS it FINAL
     ON it.insight_source_id = p.insight_source_id AND it.issue_type_id = p.issue_type_id
 LEFT JOIN issue_type_map AS m
-    ON m.tenant_id = u.tenant_id
+    ON m.tenant_id = t.tenant_id
     AND m.insight_source_id = p.insight_source_id
     AND m.source_key = p.issue_type_id
 LEFT JOIN issue_type_default AS d
-    ON d.tenant_id = u.tenant_id
+    ON d.tenant_id = t.tenant_id
     AND d.insight_source_id = p.insight_source_id
 LEFT JOIN resolution_map AS rm
-    ON rm.tenant_id = u.tenant_id
+    ON rm.tenant_id = t.tenant_id
     AND rm.insight_source_id = p.insight_source_id
     AND rm.source_key = p.resolution_id_raw
 LEFT JOIN resolution_default AS rd
-    ON rd.tenant_id = u.tenant_id
+    ON rd.tenant_id = t.tenant_id
     AND rd.insight_source_id = p.insight_source_id
 -- Issues deleted at the source (or in the project trash) leave every task
 -- metric: this table is the root of the gold task chain, so the filter
@@ -323,3 +341,4 @@ LEFT JOIN resolution_default AS rd
 -- unobserved issues stay in — the entity still exists, its data is merely
 -- stale. Issues with no availability events default to present ('').
 WHERE p.availability NOT IN ('deleted', 'trashed')
+  AND p.assignee_account_id != ''
