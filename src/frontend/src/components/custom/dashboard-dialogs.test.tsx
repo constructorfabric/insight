@@ -93,7 +93,7 @@ async function openCardMenu(name = "delivery") {
       <Lists />
       <DashboardMenu
         id="dash-1"
-        name="delivery"
+        name={name}
         title="Delivery"
         access="owner"
       />

@@ -124,7 +124,6 @@ export interface DashboardListed extends Listed {
   access: DashboardAccess;
 }
 
-/** One page of a catalogue, and how many definitions it is a page of. */
 export interface ListedPage<T extends Listed = Listed> {
   items: T[];
   total: number;

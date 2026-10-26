@@ -429,7 +429,6 @@ export async function fetchWidget(id: string): Promise<StoredWidget> {
   return { name: read.name, widget: read.body };
 }
 
-/** One page of a catalogue of names, as the dataset catalogue answers. */
 export interface NamePage {
   names: string[];
   total: number;
