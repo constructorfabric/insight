@@ -28,6 +28,7 @@ PRODUCERS = [
     "jira__task_links",
     "jira__task_field_text",
     "jira__task_field_current_text",
+    "jira__task_references",
     "youtrack__task_field_history",
     "youtrack__task_field_metadata",
     "youtrack__task_issuetypes",
@@ -54,6 +55,7 @@ CLASSES = [
     "class_task_worklogs",
     "class_task_field_text",
     "class_task_field_current_text",
+    "class_task_references",
 ]
 PRODUCER_VIEWS = [
     "jira__task_issuetypes",

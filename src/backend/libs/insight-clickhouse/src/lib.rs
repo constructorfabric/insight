@@ -196,14 +196,16 @@ impl Client {
             (true, false) => Err(Error::Topology(format!(
                 "clickhouse_cluster_mode is on, but database `{database}` has engine `{engine}`; \
                  every table created in it would reach one replica only.\n  \
-                 Turning the flag on does not convert it: create a Replicated database beside it \
-                 (create-databases.sh), move the tables over, rename, then restart."
+                 Turning the flag on does not convert it: convert the database first \
+                 (docs/operations/CLICKHOUSE-CLUSTER-CONVERSION.md, \
+                 convert-database-to-cluster.sh), then restart."
             ))),
             (false, true) => Err(Error::Topology(format!(
                 "database `{database}` is Replicated, but clickhouse_cluster_mode is off; \
                  this service would emit standalone engines into it.\n  \
                  Turn clickhouse.clusterMode back on (with clickhouse.clusterName), or convert \
-                 the database to a plain one before running standalone."
+                 the database back to a plain one first \
+                 (docs/operations/CLICKHOUSE-CLUSTER-CONVERSION.md, \"Rollback\")."
             ))),
         }
     }

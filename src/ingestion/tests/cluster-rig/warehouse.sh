@@ -8,7 +8,7 @@
 # RIG_PROXY, DESTINATION_HOST and the CLICKHOUSE_* the hook reads, plus:
 #   step            — a timestamped heading
 #   warehouse_up    — the compose project, waited for
-#   dbt_venv        — VENV with the pinned dbt (and check.py's driver)
+#   dbt_venv        — VENV with the pinned dbt (and check.py's driver) and pytest
 #   check           — check.py in that venv
 #   ch_on_node      — one statement against one node, bypassing the proxy
 #
@@ -98,7 +98,7 @@ dbt_venv() {
   python="$(command -v python3.12 || command -v python3.11 || command -v python3)"
   "${python}" -m venv "${WORKDIR}/venv"
   "${WORKDIR}/venv/bin/pip" install --quiet \
-    "dbt-core==${DBT_CORE_VERSION}" "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}" pyyaml
+    "dbt-core==${DBT_CORE_VERSION}" "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}" pyyaml pytest
   VENV="${WORKDIR}/venv"
 }
 

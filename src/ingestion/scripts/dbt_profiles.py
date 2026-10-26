@@ -98,6 +98,14 @@ def session_settings(*, correlated_subqueries: bool) -> dict[str, object]:
         # WORKAROUND: CH 25.7.5 loses the CTE of `INSERT INTO <replicated>
         # WITH c AS (...) SELECT ... FROM c` unless this is off; fixed by 26.9.
         settings["parallel_distributed_insert_select"] = 0
+        # INVARIANT: a mutation returns once EVERY replica applied it, the
+        # session every other creator runs (scripts/lib/ch-exec.sh, the sweep's
+        # ledger). The adapter's own default is 3, and a lightweight DELETE
+        # ignores mutations_sync for lightweight_deletes_sync, so all three are
+        # stated here rather than in any statement.
+        settings["mutations_sync"] = 2
+        settings["alter_sync"] = 2
+        settings["lightweight_deletes_sync"] = 2
 
     return settings
 
