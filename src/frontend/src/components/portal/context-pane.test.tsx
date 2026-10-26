@@ -74,8 +74,9 @@ vi.mock("@/api/custom-client", async (orig) => ({
   }),
   fetchFolders: async () => ({
     folders: [
-      { id: "f1", name: "Platform", owner_person_id: "me@x", dashboards: 3 },
-      { id: "f2", name: "Product", owner_person_id: null, dashboards: 0 },
+      { id: "f1", name: "Platform", owner_person_id: "me@x", access: "owner", dashboards: 3 },
+      { id: "f2", name: "Product", owner_person_id: null, access: "ownerless", dashboards: 0 },
+      { id: "f3", name: "Shared", owner_person_id: "other@x", access: "viewer", dashboards: 1 },
     ],
     unfiled: 11,
   }),
@@ -178,10 +179,10 @@ describe("Home pane", () => {
     expect(item.result.current).toBe("health");
   });
 
-  it("keeps the Dashboards group from a viewer who cannot open dashboards", () => {
+  it("shows a member the planned Dashboards group too, since every viewer opens dashboards", () => {
     mocks.showPlanned = true;
     pane();
-    expect(screen.queryByText("My dashboards")).toBeNull();
+    expect(buttonFor("My dashboards")).toHaveAttribute("aria-disabled", "true");
   });
 
   it("shows an admin the planned Dashboards group only with planned sections on", () => {
@@ -529,6 +530,23 @@ describe("Reports pane", () => {
 });
 
 describe("Dashboards pane", () => {
+  beforeEach(() => {
+    mocks.isAdmin = true;
+  });
+
+  it("offers a member neither the catalogues nor what they own", async () => {
+    mocks.isAdmin = false;
+    inZone("custom");
+    pane();
+
+    expect(await screen.findByText("14")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Shared with me" })).toBeInTheDocument();
+    for (const name of ["Owned by me", "Metrics", "Widgets", "Datasets", "Alerts", "Orphaned"]) {
+      expect(screen.queryByRole("link", { name }), `should not link: ${name}`).toBeNull();
+    }
+    expect(screen.queryByText("Catalogue")).toBeNull();
+  });
+
   it("counts every dashboard beside All dashboards", async () => {
     inZone("custom");
     pane();
@@ -638,6 +656,10 @@ describe("ContextPane highlight", () => {
 });
 
 describe("Dashboards pane folders", () => {
+  beforeEach(() => {
+    mocks.isAdmin = true;
+  });
+
   const onTheList = (folder?: string) => {
     inZone("custom");
     act(() => {
@@ -753,7 +775,37 @@ describe("Dashboards pane folders", () => {
     expect(mocks.renameFolder).toHaveBeenCalledWith("f1", "Core");
   });
 
-  it("asks before deleting a folder, and says where its dashboards go", async () => {
+  it("offers each folder only what the caller's access to it allows", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    expect(
+      (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+    ).toEqual(["Rename", "Share…", "Delete"]);
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("button", { name: "More for Product" }));
+    expect(
+      (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+    ).toEqual(["Rename", "Delete"]);
+    expect(screen.queryByRole("button", { name: "More for Shared" })).toBeNull();
+  });
+
+  it("offers a member no sharing of a folder they own", async () => {
+    mocks.isAdmin = false;
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    expect(
+      (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+    ).toEqual(["Rename", "Delete"]);
+  });
+
+  it("asks before deleting a folder, and says its dashboards stay", async () => {
     onTheList();
     pane();
     const user = userEvent.setup();
@@ -762,7 +814,7 @@ describe("Dashboards pane folders", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
     expect(await screen.findByRole("dialog")).toHaveTextContent(
-      "Its 3 dashboards move to Unfiled.",
+      "Its dashboards are not deleted.",
     );
     expect(mocks.deleteFolder).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Delete folder" }));
@@ -771,6 +823,10 @@ describe("Dashboards pane folders", () => {
 });
 
 describe("Dashboards pane pins", () => {
+  beforeEach(() => {
+    mocks.isAdmin = true;
+  });
+
   const TITLES: Record<string, string> = {
     hiring: "Hiring pipeline",
     delivery: "Delivery",

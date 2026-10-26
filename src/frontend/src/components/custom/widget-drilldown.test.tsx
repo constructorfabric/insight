@@ -4,7 +4,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     ...actual,
     fetchMetric: vi.fn(),
     fetchWidget: vi.fn(),
-    fetchDrilldownPage: vi.fn(),
+    fetchDashboardDrilldownPage: vi.fn(),
   };
 });
 vi.mock("@tanstack/react-virtual", () => ({
@@ -83,6 +83,8 @@ function renderDrilldown(
 ) {
   return render(
     <WidgetDrilldown
+      dashboard="board"
+      widgetId="w1"
       widget={widget}
       name="services"
       label="Service health"
@@ -110,7 +112,7 @@ beforeEach(() => {
 describe("<WidgetDrilldown>", () => {
   it("reads the window the card read, so the two cannot disagree", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
-    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(page([]));
+    vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(page([]));
 
     renderDrilldown(
       { type: "stat", metric: "merged", value: "merged", label: "Merged" },
@@ -118,8 +120,9 @@ describe("<WidgetDrilldown>", () => {
     );
 
     await waitFor(() => {
-      expect(customClient.fetchDrilldownPage).toHaveBeenCalledWith(
-        "merged",
+      expect(customClient.fetchDashboardDrilldownPage).toHaveBeenCalledWith(
+        "board",
+        "w1",
         { range: "P30D", bucket: false, limit: 100, cursor: undefined },
         expect.anything()
       );
@@ -128,7 +131,7 @@ describe("<WidgetDrilldown>", () => {
 
   it("does not window a metric that carries no clock of its own", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
-    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(page([]));
+    vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(page([]));
 
     renderDrilldown(
       { type: "stat", metric: "total", value: "total", label: "Total" },
@@ -136,8 +139,9 @@ describe("<WidgetDrilldown>", () => {
     );
 
     await waitFor(() => {
-      expect(customClient.fetchDrilldownPage).toHaveBeenCalledWith(
-        "total",
+      expect(customClient.fetchDashboardDrilldownPage).toHaveBeenCalledWith(
+        "board",
+        "w1",
         { limit: 100, cursor: undefined },
         expect.anything()
       );
@@ -146,7 +150,7 @@ describe("<WidgetDrilldown>", () => {
 
   it("draws the page the service ordered, headers announcing that order", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
-    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(
+    vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(
       page([
         { service: "example-api", commits: 96 },
         { service: "example-web", commits: 128 },
@@ -169,7 +173,7 @@ describe("<WidgetDrilldown>", () => {
   // written the same way: grouped, and with the unit the metric declares.
   it("writes numbers the way the card writes them, percentages included", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
-    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(
+    vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(
       page([{ service: "example-api", commits: 1234567, share: 83.91167 }], {
         columns: [
           ...COLUMNS,
@@ -190,7 +194,7 @@ describe("<WidgetDrilldown>", () => {
   it("asks the service for the order a header click chooses, over the same window", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
-    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(
+    vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(
       page([{ service: "example-api", commits: 96 }])
     );
 
@@ -203,8 +207,9 @@ describe("<WidgetDrilldown>", () => {
     await user.click(screen.getByRole("button", { name: /commits/ }));
 
     await waitFor(() => {
-      expect(customClient.fetchDrilldownPage).toHaveBeenLastCalledWith(
-        "merged",
+      expect(customClient.fetchDashboardDrilldownPage).toHaveBeenLastCalledWith(
+        "board",
+        "w1",
         {
           range: "P30D",
           bucket: false,
@@ -222,7 +227,7 @@ describe("<WidgetDrilldown>", () => {
   it("flips the column the service chose on the first click", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
-    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(
+    vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(
       page([{ service: "example-api", commits: 96 }])
     );
 
@@ -233,8 +238,9 @@ describe("<WidgetDrilldown>", () => {
     await user.click(within(header).getByRole("button"));
 
     await waitFor(() => {
-      expect(customClient.fetchDrilldownPage).toHaveBeenLastCalledWith(
-        "m",
+      expect(customClient.fetchDashboardDrilldownPage).toHaveBeenLastCalledWith(
+        "board",
+        "w1",
         { sort: { key: "service", direction: "desc" }, limit: 100, cursor: undefined },
         expect.anything()
       );
@@ -245,7 +251,7 @@ describe("<WidgetDrilldown>", () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
     const reordered = deferred<DrilldownPage>();
-    vi.mocked(customClient.fetchDrilldownPage)
+    vi.mocked(customClient.fetchDashboardDrilldownPage)
       .mockResolvedValueOnce(page([{ service: "example-api", commits: 96 }]))
       .mockReturnValueOnce(reordered.promise);
 
@@ -273,7 +279,7 @@ describe("<WidgetDrilldown>", () => {
 
   it("asks for the next page with the cursor the last one handed back", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
-    vi.mocked(customClient.fetchDrilldownPage)
+    vi.mocked(customClient.fetchDashboardDrilldownPage)
       .mockResolvedValueOnce(
         page([{ service: "example-api", commits: 96 }], { next_cursor: "c1" })
       )
@@ -282,8 +288,9 @@ describe("<WidgetDrilldown>", () => {
     renderDrilldown();
 
     expect(await screen.findByText("example-cli")).toBeInTheDocument();
-    expect(customClient.fetchDrilldownPage).toHaveBeenLastCalledWith(
-      "m",
+    expect(customClient.fetchDashboardDrilldownPage).toHaveBeenLastCalledWith(
+      "board",
+      "w1",
       { limit: 100, cursor: "c1" },
       expect.anything()
     );
@@ -292,7 +299,7 @@ describe("<WidgetDrilldown>", () => {
   it("says what went wrong and offers to try again", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
-    vi.mocked(customClient.fetchDrilldownPage)
+    vi.mocked(customClient.fetchDashboardDrilldownPage)
       .mockRejectedValueOnce(new CustomApiError(504, { detail: "metric query timed out" }))
       .mockResolvedValue(page([{ service: "example-api", commits: 96 }]));
 
@@ -307,7 +314,7 @@ describe("<WidgetDrilldown>", () => {
 
   it("numbers the rows behind a widget, as the card does", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
-    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(
+    vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(
       page([
         { service: "example-api", commits: 96 },
         { service: "example-web", commits: 128 },
@@ -328,7 +335,7 @@ describe("<WidgetDrilldown>", () => {
 
   it("links a cell that is a URL, so a row can be followed", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
-    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(
+    vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(
       page([{ service: "https://example.com/repo/app", commits: 1 }])
     );
 
@@ -342,7 +349,7 @@ describe("<WidgetDrilldown>", () => {
 
   it("says there is no data rather than drawing an empty table", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
-    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(page([]));
+    vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(page([]));
 
     renderDrilldown();
 
@@ -352,7 +359,7 @@ describe("<WidgetDrilldown>", () => {
   it("names the metric behind the rows and opens it by its id", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
-    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(page([]));
+    vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(page([]));
 
     renderDrilldown({ type: "table", metric: "m-1", columns: ["service"] });
 
@@ -374,7 +381,7 @@ describe("<WidgetDrilldown>", () => {
   it("fills the window when asked, and gives the room back", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
-    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(
+    vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(
       page([{ service: "example-api", commits: 96 }])
     );
 

@@ -48,6 +48,8 @@ function reading() {
     tags: [],
     ownerPersonId: null,
     access: "ownerless",
+    folders: [],
+    carries: true,
   });
 }
 

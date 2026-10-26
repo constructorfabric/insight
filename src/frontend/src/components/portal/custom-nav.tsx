@@ -28,6 +28,7 @@ import { DASHBOARD_BROWSE_PLANNED } from "@/lib/portal/nav-model";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { definitionPagesQuery } from "@/queries/custom";
+import { useIsAdmin } from "@/queries/identity-me";
 
 const CATALOGUES: readonly {
   to:
@@ -50,15 +51,18 @@ const OWNED: readonly {
   owned: OwnedFilter;
   label: string;
   icon: LucideIcon;
+  /** Only an administrator owns dashboards. */
+  adminOnly: boolean;
 }[] = [
-  { owned: "me", label: "Owned by me", icon: User },
-  { owned: "shared", label: "Shared with me", icon: Share2 },
+  { owned: "me", label: "Owned by me", icon: User, adminOnly: true },
+  { owned: "shared", label: "Shared with me", icon: Share2, adminOnly: false },
 ];
 
 const DASHBOARD_ROUTES = new Set(["/portal/custom/", "/portal/custom/$name"]);
 
 export function CustomNav() {
   const showPlanned = usePortalShowPlanned();
+  const { isAdmin } = useIsAdmin();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const routeId = useRouterState({ select: (s) => s.matches.at(-1)?.routeId });
   const { folder, tag, owned } = usePortalSearch();
@@ -82,22 +86,24 @@ export function CustomNav() {
               </SidebarMenuButton>
               {total != null ? <CountBadge>{total}</CountBadge> : null}
             </SidebarMenuItem>
-            {OWNED.map(({ owned: narrowed, label, icon: Icon }) => (
-              <SidebarMenuItem key={narrowed}>
-                <SidebarMenuButton
-                  isActive={onDashboards && owned === narrowed}
-                  render={
-                    <Link
-                      to="/portal/custom"
-                      search={{ owned: narrowed, tag }}
-                    />
-                  }
-                >
-                  <Icon />
-                  <span>{label}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
+            {OWNED.filter((item) => isAdmin || !item.adminOnly).map(
+              ({ owned: narrowed, label, icon: Icon }) => (
+                <SidebarMenuItem key={narrowed}>
+                  <SidebarMenuButton
+                    isActive={onDashboards && owned === narrowed}
+                    render={
+                      <Link
+                        to="/portal/custom"
+                        search={{ owned: narrowed, tag }}
+                      />
+                    }
+                  >
+                    <Icon />
+                    <span>{label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )
+            )}
             {showPlanned
               ? DASHBOARD_BROWSE_PLANNED.map((item) => (
                   <UnbuiltRow key={item.id} item={item} />
@@ -107,25 +113,31 @@ export function CustomNav() {
         </SidebarGroupContent>
       </SidebarGroup>
       <FoldersGroup />
-      <SidebarGroup>
-        <SidebarGroupLabel>Catalogue</SidebarGroupLabel>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {CATALOGUES.map(({ to, label, icon: Icon }) => (
-              <SidebarMenuItem key={to}>
-                <SidebarMenuButton
-                  isActive={pathname.startsWith(to)}
-                  render={<Link to={to} />}
-                >
-                  <Icon />
-                  <span>{label}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
+      {isAdmin ? <CatalogueGroup pathname={pathname} /> : null}
       <PinnedGroup />
     </>
+  );
+}
+
+function CatalogueGroup({ pathname }: { pathname: string }) {
+  return (
+    <SidebarGroup>
+      <SidebarGroupLabel>Catalogue</SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          {CATALOGUES.map(({ to, label, icon: Icon }) => (
+            <SidebarMenuItem key={to}>
+              <SidebarMenuButton
+                isActive={pathname.startsWith(to)}
+                render={<Link to={to} />}
+              >
+                <Icon />
+                <span>{label}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
   );
 }

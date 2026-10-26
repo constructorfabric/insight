@@ -77,9 +77,9 @@ export function EditorPage({
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(stored.error, `That ${description.noun} is not there.`)}
         </p>
-      ) : fresh?.access && !dashboardAllows(fresh.access).change ? (
+      ) : fresh?.access && !dashboardAllows(fresh.access).edit ? (
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-          Only the owner can edit this dashboard.
+          Only the owner or an editor can change this dashboard.
         </p>
       ) : fresh ? (
         <>
@@ -90,7 +90,9 @@ export function EditorPage({
             document={fresh.document}
             onStored={done}
           />
-          <Removal kind={kind} id={id} name={fresh.name} onRemoved={done} />
+          {!fresh.access || dashboardAllows(fresh.access).remove ? (
+            <Removal kind={kind} id={id} name={fresh.name} onRemoved={done} />
+          ) : null}
         </>
       ) : (
         <CenteredSpinner className="min-h-40" />

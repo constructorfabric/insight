@@ -1,6 +1,7 @@
 import {
   Copy,
   Ellipsis,
+  FolderPlus,
   Pin,
   PinOff,
   Tags,
@@ -15,11 +16,8 @@ import {
   DuplicateDashboard,
   RenameDashboard,
 } from "@/components/custom/dashboard-dialogs";
+import { AddToFolder } from "@/components/custom/dashboard-folders";
 import { EditTags } from "@/components/custom/edit-tags";
-import {
-  MoveToFolderItems,
-  NewFolderAndMove,
-} from "@/components/custom/move-to-folder";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -75,7 +73,7 @@ export function DashboardMenu({
             {pin.pinned ? <PinOff /> : <Pin />}
             {pin.pinned ? "Unpin" : "Pin"}
           </DropdownMenuItem>
-          {allows.change ? (
+          {allows.edit ? (
             <>
               <DropdownMenuItem onClick={() => setAsked("rename")}>
                 <TextCursorInput />
@@ -87,20 +85,18 @@ export function DashboardMenu({
               </DropdownMenuItem>
             </>
           ) : null}
-          <DropdownMenuSeparator />
-          <MoveToFolderItems
-            id={id}
-            access={access}
-            open={open}
-            onNewFolder={() => setAsked("folder")}
-          />
-          {allows.change ? (
+          <DropdownMenuItem onClick={() => setAsked("folder")}>
+            <FolderPlus />
+            Add to folder…
+          </DropdownMenuItem>
+          {allows.edit ? (
+            <DropdownMenuItem onClick={() => setAsked("tags")}>
+              <Tags />
+              Edit tags…
+            </DropdownMenuItem>
+          ) : null}
+          {allows.remove ? (
             <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setAsked("tags")}>
-                <Tags />
-                Edit tags…
-              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 variant="destructive"
@@ -113,13 +109,23 @@ export function DashboardMenu({
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
-      <NewFolderAndMove
+      <AddToFolder
         id={id}
         name={name}
+        access={access}
         open={asked === "folder"}
         onClose={done}
       />
-      {allows.change ? (
+      {allows.remove ? (
+        <DeleteDashboard
+          id={id}
+          title={title || name}
+          open={asked === "delete"}
+          onClose={done}
+          onDeleted={onDeleted}
+        />
+      ) : null}
+      {allows.edit ? (
         <>
           <RenameDashboard
             id={id}
@@ -133,13 +139,6 @@ export function DashboardMenu({
             open={asked === "duplicate"}
             onClose={done}
             onDuplicated={onDuplicated}
-          />
-          <DeleteDashboard
-            id={id}
-            title={title || name}
-            open={asked === "delete"}
-            onClose={done}
-            onDeleted={onDeleted}
           />
           <EditTags
             id={id}

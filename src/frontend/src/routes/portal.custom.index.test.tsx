@@ -9,6 +9,16 @@ vi.mock("@/api/custom-client");
 vi.mock("@/queries/person-name", () => ({
   usePersonName: () => ({ isPending: false, data: "Jane Doe" }),
 }));
+const role = vi.hoisted(() => ({ isAdmin: true }));
+vi.mock("@/queries/identity-me", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-me")>()),
+  useIsAdmin: () => ({
+    isAdmin: role.isAdmin,
+    isPending: false,
+    isError: false,
+    retry: () => {},
+  }),
+}));
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -47,10 +57,13 @@ const READ = {
   name: "delivery",
   ownerPersonId: null,
   access: "ownerless" as const,
+  folders: [],
+  carries: true,
 };
 
 beforeEach(() => {
   vi.resetAllMocks();
+  role.isAdmin = true;
   portalRouter.reset();
 });
 
@@ -90,6 +103,20 @@ describe("/portal/custom", () => {
     render(<Component />, { wrapper });
 
     expect(await screen.findByText(/no dashboards yet/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New dashboard" })).toBeInTheDocument();
+  });
+
+  it("offers a member nothing to create, and says nothing is shared yet", async () => {
+    role.isAdmin = false;
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing());
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByText("Nothing is shared with you yet.")
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New dashboard" })).toBeNull();
+    expect(screen.queryByText(/ask the assistant/i)).toBeNull();
   });
 
   it("shows a loading state before the list resolves", () => {
@@ -122,6 +149,7 @@ describe("/portal/custom in a folder", () => {
     id: "f1",
     name: "Platform",
     owner_person_id: null,
+    access: "ownerless" as const,
     dashboards: 1,
   };
 
@@ -170,14 +198,14 @@ describe("/portal/custom in a folder", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Custom" })).toBeInTheDocument();
   });
 
-  it("says how to fill an empty folder rather than that nothing exists", async () => {
+  it("says an empty folder is empty rather than that nothing exists", async () => {
     portalRouter.set({ folder: "f1" });
     vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing());
 
     render(<Component />, { wrapper });
 
     expect(
-      await screen.findByText("No dashboards in this folder yet. Move one here from its ··· menu."),
+      await screen.findByText("No dashboards in this folder yet."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/no dashboards yet\. describe/i)).toBeNull();
   });
@@ -189,60 +217,6 @@ describe("/portal/custom in a folder", () => {
     render(<Component />, { wrapper });
 
     expect(await screen.findByText("Every dashboard is in a folder.")).toBeInTheDocument();
-  });
-
-  it("checks the folder a dashboard is in", async () => {
-    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("delivery"));
-    vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue({ id: "f1", name: "Platform" });
-    const user = userEvent.setup();
-
-    render(<Component />, { wrapper });
-    await user.click(await screen.findByRole("button", { name: "More for delivery" }));
-
-    await waitFor(() =>
-      expect(screen.getByRole("menuitemradio", { name: /Platform/ })).toHaveAttribute("aria-checked", "true"),
-    );
-    expect(screen.getByRole("menuitemradio", { name: /Unfiled/ })).toHaveAttribute("aria-checked", "false");
-  });
-
-  it("moves a dashboard out of the folder on screen, and the card leaves", async () => {
-    portalRouter.set({ folder: "f1" });
-    vi.mocked(customClient.fetchDashboards)
-      .mockResolvedValueOnce(listing("delivery"))
-      .mockResolvedValue(listing());
-    vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue({ id: "f1", name: "Platform" });
-    vi.mocked(customClient.moveDashboard).mockResolvedValue(undefined);
-    const user = userEvent.setup();
-
-    render(<Component />, { wrapper });
-    await user.click(await screen.findByRole("button", { name: "More for delivery" }));
-    await user.click(await screen.findByRole("menuitemradio", { name: /Unfiled/ }));
-
-    expect(customClient.moveDashboard).toHaveBeenCalledWith("delivery", null);
-    await waitFor(() => expect(screen.queryByRole("link", { name: "delivery" })).toBeNull());
-  });
-
-  it("makes a folder and then moves the dashboard into it", async () => {
-    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
-      items: [item("delivery", "owner")],
-      total: 1,
-    });
-    vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
-    vi.mocked(customClient.createFolder).mockResolvedValue({ id: "f9", name: "Hiring" });
-    vi.mocked(customClient.moveDashboard).mockResolvedValue(undefined);
-    const user = userEvent.setup();
-
-    render(<Component />, { wrapper });
-    await user.click(await screen.findByRole("button", { name: "More for delivery" }));
-    await user.click(await screen.findByRole("menuitem", { name: /New folder/ }));
-    await user.type(await screen.findByRole("textbox", { name: "Folder name" }), "Hiring");
-    await user.click(screen.getByRole("button", { name: "Create and move" }));
-
-    await waitFor(() => expect(customClient.moveDashboard).toHaveBeenCalledWith("delivery", "f9"));
-    expect(customClient.createFolder).toHaveBeenCalledWith("Hiring");
-    expect(vi.mocked(customClient.createFolder).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(customClient.moveDashboard).mock.invocationCallOrder[0],
-    );
   });
 });
 
@@ -337,7 +311,13 @@ describe("/portal/custom filtered by tag", () => {
   it("combines the picked tags with the folder", async () => {
     vi.mocked(customClient.fetchFolders).mockResolvedValue({
       folders: [
-        { id: "f1", name: "Platform", owner_person_id: null, dashboards: 1 },
+        {
+          id: "f1",
+          name: "Platform",
+          owner_person_id: null,
+          access: "ownerless",
+          dashboards: 1,
+        },
       ],
       unfiled: 0,
     });

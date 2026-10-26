@@ -1,19 +1,30 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
-import { searchPersons } from "@/api/identity-client";
+import { getPerson, searchPersons } from "@/api/identity-client";
 import { personName } from "@/lib/identities/person-display";
 import { normalizePersonId } from "@/lib/metrics/entity";
+import { useIsAdmin } from "@/queries/identity-me";
 
 /**
- * The name one person goes by, read through the administrator person search,
- * which names anyone in the tenant by id. Null when the journal knows no name.
+ * Where a name is read: the administrator person search names anyone in the
+ * tenant; anyone else reads the roster, which names only who they may see.
  */
-export function personNameQuery(personId: string) {
+export type PersonNameSource = "tenant" | "roster";
+
+/** The name one person goes by. Null when the journal knows no name. */
+export function personNameQuery(
+  personId: string,
+  source: PersonNameSource = "tenant"
+) {
   const id = normalizePersonId(personId);
 
   return queryOptions({
-    queryKey: ["identity", "person-name", id],
+    queryKey: ["identity", "person-name", source, id],
     queryFn: async ({ signal }) => {
+      if (source === "roster") {
+        return personName(await getPerson(id, signal));
+      }
+
       const found = await searchPersons(id, { limit: 1 }, signal);
       const person = found.items.find(
         (item) => normalizePersonId(item.person_id) === id
@@ -25,8 +36,11 @@ export function personNameQuery(personId: string) {
 }
 
 export function usePersonName(personId: string | null) {
+  const { isAdmin, isPending } = useIsAdmin();
+
   return useQuery({
-    ...personNameQuery(personId ?? ""),
-    enabled: personId != null && personId !== "",
+    ...personNameQuery(personId ?? "", isAdmin ? "tenant" : "roster"),
+    enabled: personId != null && personId !== "" && !isPending,
+    ...(isAdmin ? {} : { retry: false }),
   });
 }

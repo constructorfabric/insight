@@ -6,7 +6,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchDashboardRead: vi.fn(),
     setDashboardTags: vi.fn(),
     fetchFolders: vi.fn(),
-    fetchDashboardFolder: vi.fn(),
   };
 });
 
@@ -32,6 +31,8 @@ function carrying(tags: string[]) {
     tags,
     ownerPersonId: null,
     access: "ownerless",
+    folders: [],
+    carries: true,
   });
 }
 
@@ -42,7 +43,6 @@ beforeEach(() => {
     folders: [],
     unfiled: 1,
   });
-  vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
   vi.mocked(customClient.setDashboardTags).mockResolvedValue(undefined);
   carrying(["Ops"]);
 });
@@ -270,6 +270,8 @@ describe("the tags dialog", () => {
       tags: ["Ops"],
       ownerPersonId: null,
       access: "ownerless",
+      folders: [],
+      carries: true,
     });
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Done" })).toBeEnabled()

@@ -10,6 +10,7 @@ import { CustomStat } from "@/components/custom/custom-stat";
 import { CustomTable } from "@/components/custom/custom-table";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
+import { useIsAdmin } from "@/queries/identity-me";
 
 export interface CustomWidgetProps {
   widget: Widget;
@@ -125,10 +126,35 @@ function drawable(
   if (missing.length === 0) return null;
 
   return (
+    <MissingColumns metric={metric} missing={missing} returned={result.columns} />
+  );
+}
+
+/** Only an administrator, who can fix the definition, is told what is missing. */
+function MissingColumns({
+  metric,
+  missing,
+  returned,
+}: {
+  metric: string;
+  missing: string[];
+  returned: string[];
+}) {
+  const { isAdmin, isPending } = useIsAdmin();
+  const member = !isPending && !isAdmin;
+
+  return (
     <Alert variant="destructive">
       <AlertDescription>
-        This widget draws {missing.join(", ")}, which <MetricName id={metric} />{" "}
-        does not return. Its columns are {result.columns.join(", ")}.
+        {!member ? (
+          <>
+            This widget draws {missing.join(", ")}, which{" "}
+            <MetricName id={metric} /> does not return. Its columns are{" "}
+            {returned.join(", ")}.
+          </>
+        ) : (
+          "Couldn't draw this widget."
+        )}
       </AlertDescription>
     </Alert>
   );

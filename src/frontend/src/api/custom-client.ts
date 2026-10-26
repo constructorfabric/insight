@@ -5,9 +5,8 @@ export const BASE =
 
 export type * from "@/api/custom-types";
 import type {
-  Dashboard,
   DashboardListed,
-  DashboardShare,
+  DashboardWidget,
   Dataset,
   DatasetRecords,
   Dependents,
@@ -29,7 +28,11 @@ import type {
   Folder,
   FolderFilter,
   FolderList,
+  Grant,
+  GrantLevel,
+  Grantee,
   MetricDefinition,
+  OrphanedFolder,
   PinList,
   TableList,
   TableSchema,
@@ -191,12 +194,6 @@ export async function fetchDashboards(
   return readJson<ListedPage<DashboardListed>>(res);
 }
 
-export async function fetchDashboardFolder(id: string): Promise<Folder | null> {
-  const read = await fetchDefinition<Dashboard>("dashboards", id);
-
-  return read.folder ?? null;
-}
-
 export async function fetchDashboardRead(id: string): Promise<DashboardRead> {
   const res = await fetchWithAuth(`${BASE}/dashboards/${named(id)}`);
   const read = await readJson<DashboardResponse>(res);
@@ -206,6 +203,8 @@ export async function fetchDashboardRead(id: string): Promise<DashboardRead> {
     tags: read.tags ?? [],
     ownerPersonId: read.owner_person_id,
     access: read.access,
+    folders: read.folders ?? [],
+    carries: read.carries ?? false,
   };
 
   return read.updated_at ? { ...shown, updatedAt: read.updated_at } : shown;
@@ -267,34 +266,48 @@ export async function unpinDashboard(id: string): Promise<void> {
   await ensureOk(res);
 }
 
-/** Who a dashboard is shared with. Only its owner may ask. */
-export async function fetchShares(id: string): Promise<DashboardShare[]> {
-  const res = await fetchWithAuth(`${BASE}/dashboards/${named(id)}/shares`);
-  const read = await readJson<{ items: DashboardShare[] }>(res);
+/** The grantee that stands for every signed-in person. */
+export const EVERYONE: Grantee = "everyone";
+
+/** Something that carries grants: a dashboard or a folder, by id. */
+export interface GrantTarget {
+  kind: "dashboards" | "folders";
+  id: string;
+}
+
+function grantsPath({ kind, id }: GrantTarget): string {
+  return `${BASE}/${kind}/${named(id)}/grants`;
+}
+
+/** Who a dashboard or folder is shared with. Only its owner or an editor may ask. */
+export async function fetchGrants(target: GrantTarget): Promise<Grant[]> {
+  const res = await fetchWithAuth(grantsPath(target));
+  const read = await readJson<{ items: Grant[] }>(res);
 
   return read.items;
 }
 
-/** Shares a dashboard for viewing with one administrator; sharing twice changes nothing. */
-export async function shareDashboard(
-  id: string,
-  personId: string
+/** Shares with one grantee at a level; granting again changes the level. */
+export async function putGrant(
+  target: GrantTarget,
+  grantee: Grantee,
+  level: GrantLevel
 ): Promise<void> {
-  const res = await fetchWithAuth(
-    `${BASE}/dashboards/${named(id)}/shares/${named(personId)}`,
-    { method: "PUT" }
-  );
+  const res = await fetchWithAuth(`${grantsPath(target)}/${named(grantee)}`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ level }),
+  });
   await ensureOk(res);
 }
 
-export async function unshareDashboard(
-  id: string,
-  personId: string
+export async function deleteGrant(
+  target: GrantTarget,
+  grantee: Grantee
 ): Promise<void> {
-  const res = await fetchWithAuth(
-    `${BASE}/dashboards/${named(id)}/shares/${named(personId)}`,
-    { method: "DELETE" }
-  );
+  const res = await fetchWithAuth(`${grantsPath(target)}/${named(grantee)}`, {
+    method: "DELETE",
+  });
   await ensureOk(res);
 }
 
@@ -308,12 +321,24 @@ export async function fetchOrphanedDashboards(
   return readJson<ListedPage<OrphanedDashboard>>(res);
 }
 
-/** Makes an administrator the owner of an orphaned dashboard. */
-export async function transferDashboard(
+/** One page of the shared folders whose owner is no longer an administrator. */
+export async function fetchOrphanedFolders(
+  page: Pick<PageRequest, "limit" | "offset"> = {}
+): Promise<ListedPage<OrphanedFolder>> {
+  const res = await fetchWithAuth(`${BASE}/orphaned-folders${pageQuery(page)}`);
+  return readJson<ListedPage<OrphanedFolder>>(res);
+}
+
+/** What an orphan is: a dashboard or a folder. */
+export type OrphanKind = "dashboards" | "folders";
+
+/** Makes an administrator the owner of an orphaned dashboard or folder. */
+export async function transferOrphan(
+  kind: OrphanKind,
   id: string,
   to: string
 ): Promise<void> {
-  const res = await fetchWithAuth(`${BASE}/dashboards/${named(id)}/transfer`, {
+  const res = await fetchWithAuth(`${BASE}/${kind}/${named(id)}/transfer`, {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify({ to }),
@@ -353,14 +378,31 @@ export async function deleteFolder(id: string): Promise<void> {
   await ensureOk(res);
 }
 
-export async function moveDashboard(
-  id: string,
-  folder: string | null
-): Promise<void> {
-  const res = await fetchWithAuth(`${BASE}/dashboards/${named(id)}/folder`, {
+function entryPath(folder: string, dashboard: string): string {
+  return `${BASE}/folders/${named(folder)}/dashboards/${named(dashboard)}`;
+}
+
+/**
+ * Puts a dashboard in a folder; it stays in every other folder holding it.
+ * Answers whether the entry carries the folder's people to the dashboard.
+ */
+export async function addToFolder(
+  folder: string,
+  dashboard: string
+): Promise<{ carries: boolean }> {
+  const res = await fetchWithAuth(entryPath(folder, dashboard), {
     method: "PUT",
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ folder }),
+  });
+  return readJson<{ carries: boolean }>(res);
+}
+
+/** Takes a dashboard out of one folder; the dashboard itself stays. */
+export async function removeFromFolder(
+  folder: string,
+  dashboard: string
+): Promise<void> {
+  const res = await fetchWithAuth(entryPath(folder, dashboard), {
+    method: "DELETE",
   });
   await ensureOk(res);
 }
@@ -521,18 +563,54 @@ export async function runMetric(
   return readJson<MetricResult>(res);
 }
 
-/** One ordered page of a metric's rows. The signal cancels a page the reader has moved past. */
-export async function fetchDrilldownPage(
-  id: string,
+/** The widgets a dashboard draws, in its order, read through the dashboard. */
+export async function fetchDashboardWidgets(
+  id: string
+): Promise<DashboardWidget[]> {
+  const res = await fetchWithAuth(`${BASE}/dashboards/${named(id)}/widgets`);
+  const read = await readJson<{ items: DashboardWidget[] }>(res);
+
+  return read.items;
+}
+
+function dashboardWidgetPath(dashboard: string, widget: string): string {
+  return `${BASE}/dashboards/${named(dashboard)}/widgets/${named(widget)}`;
+}
+
+/** Runs one widget's metric as the dashboard holding it draws it. */
+export async function runDashboardWidget(
+  dashboard: string,
+  widget: string,
+  options?: RunOptions
+): Promise<MetricResult> {
+  const res = await fetchWithAuth(
+    `${dashboardWidgetPath(dashboard, widget)}/run`,
+    {
+      method: "POST",
+      ...(options
+        ? { headers: JSON_HEADERS, body: JSON.stringify(options) }
+        : {}),
+    }
+  );
+  return readJson<MetricResult>(res);
+}
+
+/** One ordered page of the rows behind a dashboard's widget. The signal cancels a page the reader has moved past. */
+export async function fetchDashboardDrilldownPage(
+  dashboard: string,
+  widget: string,
   request: DrilldownRequest,
   signal?: AbortSignal
 ): Promise<DrilldownPage> {
-  const res = await fetchWithAuth(`${BASE}/metrics/${named(id)}/drilldown`, {
-    method: "POST",
-    headers: JSON_HEADERS,
-    body: JSON.stringify(request),
-    signal,
-  });
+  const res = await fetchWithAuth(
+    `${dashboardWidgetPath(dashboard, widget)}/drilldown`,
+    {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify(request),
+      signal,
+    }
+  );
   return readJson<DrilldownPage>(res);
 }
 

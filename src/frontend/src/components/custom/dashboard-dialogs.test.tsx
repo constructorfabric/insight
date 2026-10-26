@@ -6,7 +6,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchFolders: vi.fn(),
     fetchTags: vi.fn(),
     fetchDashboards: vi.fn(),
-    fetchDashboardFolder: vi.fn(),
     renameDefinition: vi.fn(),
     duplicateDashboard: vi.fn(),
     deleteDefinition: vi.fn(),
@@ -57,7 +56,6 @@ beforeEach(() => {
     ],
     total: 1,
   });
-  vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
 });
 
 function Lists() {
@@ -115,7 +113,7 @@ async function choose(user: ReturnType<typeof userEvent.setup>, item: string) {
 }
 
 describe("the card's ··· menu", () => {
-  it("offers pin, rename and duplicate, then filing, then delete", async () => {
+  it("offers pin, rename and duplicate, then filing and tags, then delete", async () => {
     await openCardMenu();
 
     await screen.findByRole("menuitem", { name: "Unpin" });
@@ -125,13 +123,10 @@ describe("the card's ··· menu", () => {
       "Unpin",
       "Rename…",
       "Duplicate…",
-      "New folder…",
+      "Add to folder…",
       "Edit tags…",
       "Delete…",
     ]);
-    expect(
-      screen.getByRole("menuitemradio", { name: "Unfiled" })
-    ).toBeInTheDocument();
   });
 });
 

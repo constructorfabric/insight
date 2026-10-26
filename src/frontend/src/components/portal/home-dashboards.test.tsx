@@ -3,9 +3,18 @@ vi.mock("@tanstack/react-router", async () => {
   return portalRouterMock();
 });
 
-const access = vi.hoisted(() => ({ dashboards: true }));
+const access = vi.hoisted(() => ({ dashboards: true, isAdmin: true }));
 vi.mock("@/lib/portal/use-zone-nav", () => ({
   useZoneNav: () => ({ zones: access.dashboards ? [{ id: "custom" }] : [] }),
+}));
+vi.mock("@/queries/identity-me", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-me")>()),
+  useIsAdmin: () => ({
+    isAdmin: access.isAdmin,
+    isPending: false,
+    isError: false,
+    retry: () => {},
+  }),
 }));
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -47,6 +56,7 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 beforeEach(() => {
   access.dashboards = true;
+  access.isAdmin = true;
 });
 
 describe("Home dashboards", () => {
@@ -79,6 +89,7 @@ describe("Home dashboards", () => {
           tags: [],
           owner_person_id: null,
           access: "ownerless",
+          folders: [],
         })
       )
     );
@@ -147,5 +158,20 @@ describe("Home dashboards", () => {
     expect(
       screen.getByRole("button", { name: /New dashboard/i })
     ).toBeInTheDocument();
+  });
+
+  it("offers a member the dashboards shared with them and nothing to create", async () => {
+    access.isAdmin = false;
+    server.use(
+      http.get(`${base}/dashboards`, () =>
+        HttpResponse.json({ items: [], total: 0, limit: 50, offset: 0 })
+      )
+    );
+    home();
+    expect(await screen.findByText("No dashboards yet.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "All dashboards" })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /New dashboard/i })).toBeNull();
   });
 });

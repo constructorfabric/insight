@@ -13,30 +13,34 @@ import * as customClient from "@/api/custom-client";
 
 import {
   catalogueQuery,
-  dashboardFolderQuery,
   dashboardQuery,
+  dashboardReadQuery,
   dashboardTagsQuery,
+  dashboardWidgetResultQuery,
+  dashboardWidgetsQuery,
   definitionBodyQuery,
+  drilldownPagesQuery,
   definitionPagesQuery,
   foldersQuery,
+  grantsQuery,
   metricResultQuery,
   orphanedPagesQuery,
   pinsQuery,
-  sharesQuery,
   tagsQuery,
+  useAddToFolder,
   useCreateFolder,
   useDeleteFolder,
+  useDeleteGrant,
   useDuplicateDashboard,
-  useMoveDashboard,
+  usePutGrant,
   useRemoveDefinition,
+  useRemoveFromFolder,
   useRenameDefinition,
   useRenameFolder,
   useSetDashboardTags,
   useSetPinned,
-  useShareDashboard,
   useStoreDefinition,
-  useTransferDashboard,
-  useUnshareDashboard,
+  useTransferOrphan,
   widgetQuery,
 } from "./custom";
 
@@ -148,6 +152,8 @@ describe("dashboardQuery", () => {
       tags: ["Ops"],
       ownerPersonId: null,
       access: "ownerless",
+      folders: [],
+      carries: true,
     });
     const queryClient = new QueryClient();
     const wrapper = ({ children }: { children: ReactNode }) =>
@@ -297,20 +303,6 @@ describe("foldersQuery", () => {
   });
 });
 
-describe("dashboardFolderQuery", () => {
-  it("asks for one dashboard's folder and is refreshed with the folders", async () => {
-    vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
-
-    const options = dashboardFolderQuery("delivery");
-    await options.queryFn?.(undefined as never);
-
-    expect(customClient.fetchDashboardFolder).toHaveBeenCalledWith("delivery");
-    expect(options.queryKey.slice(0, foldersQuery().queryKey.length)).toEqual(
-      foldersQuery().queryKey,
-    );
-  });
-});
-
 function rendered<T>(hook: () => T) {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false } },
@@ -361,16 +353,25 @@ describe("the folder mutations", () => {
     expectCountsAndListsRefreshed(invalidated);
   });
 
-  it("moves a dashboard, then refreshes the counts and the lists", async () => {
-    const { result, invalidated } = rendered(() => useMoveDashboard());
+  it.each([
+    ["adds", useAddToFolder, "addToFolder"],
+    ["removes", useRemoveFromFolder, "removeFromFolder"],
+  ] as const)(
+    "%s a dashboard, then refreshes the counts, the lists and its page",
+    async (_verb, hook, call) => {
+      const { result, invalidated } = rendered(() => hook());
 
-    await act(() =>
-      result.current.mutateAsync({ id: "delivery", folder: null }),
-    );
+      await act(async () => {
+        await result.current.mutateAsync({ folder: "f1", dashboard: "delivery" });
+      });
 
-    expect(customClient.moveDashboard).toHaveBeenCalledWith("delivery", null);
-    expectCountsAndListsRefreshed(invalidated);
-  });
+      expect(customClient[call]).toHaveBeenCalledWith("f1", "delivery");
+      expectCountsAndListsRefreshed(invalidated);
+      expect(invalidated).toHaveBeenCalledWith({
+        queryKey: dashboardReadQuery("delivery").queryKey,
+      });
+    },
+  );
 
   it("refreshes the counts and the lists after a taken name is refused", async () => {
     vi.mocked(customClient.createFolder).mockRejectedValueOnce(new Error("taken"));
@@ -381,13 +382,13 @@ describe("the folder mutations", () => {
     expectCountsAndListsRefreshed(invalidated);
   });
 
-  it("refreshes the counts and the lists after a move into a gone folder is refused", async () => {
-    vi.mocked(customClient.moveDashboard).mockRejectedValueOnce(new Error("gone"));
-    const { result, invalidated } = rendered(() => useMoveDashboard());
+  it("refreshes the counts and the lists after an add into a gone folder is refused", async () => {
+    vi.mocked(customClient.addToFolder).mockRejectedValueOnce(new Error("gone"));
+    const { result, invalidated } = rendered(() => useAddToFolder());
 
     await act(() =>
       result.current
-        .mutateAsync({ id: "delivery", folder: "gone" })
+        .mutateAsync({ folder: "gone", dashboard: "delivery" })
         .catch(() => undefined),
     );
 
@@ -735,42 +736,81 @@ describe("useStoreDefinition", () => {
   });
 });
 
-describe("sharing a dashboard", () => {
+describe("grants", () => {
   const PERSON = "00000000-0000-4000-8000-000000000002";
+  const BOARD = { kind: "dashboards", id: "d1" } as const;
+  const FOLDER = { kind: "folders", id: "d1" } as const;
 
-  it("reads the shares of one dashboard under a key of its own", async () => {
-    vi.mocked(customClient.fetchShares).mockResolvedValue([]);
+  it("reads the grants of one dashboard or folder under a key of its own", async () => {
+    vi.mocked(customClient.fetchGrants).mockResolvedValue([]);
 
-    await sharesQuery("d1").queryFn?.(undefined as never);
+    await grantsQuery(BOARD).queryFn?.(undefined as never);
 
-    expect(customClient.fetchShares).toHaveBeenCalledWith("d1");
-    expect(sharesQuery("d1").queryKey).not.toEqual(sharesQuery("d2").queryKey);
+    expect(customClient.fetchGrants).toHaveBeenCalledWith(BOARD);
+    expect(grantsQuery(BOARD).queryKey).not.toEqual(grantsQuery(FOLDER).queryKey);
   });
 
-  it("shares, then refreshes that dashboard's shares", async () => {
-    const { result, invalidated } = rendered(() => useShareDashboard("d1"));
+  it("grants a level, then refreshes those grants", async () => {
+    const { result, invalidated } = rendered(() => usePutGrant(FOLDER));
 
-    await act(() => result.current.mutateAsync(PERSON));
+    await act(() =>
+      result.current.mutateAsync({ grantee: PERSON, level: "editor" }),
+    );
 
-    expect(customClient.shareDashboard).toHaveBeenCalledWith("d1", PERSON);
+    expect(customClient.putGrant).toHaveBeenCalledWith(FOLDER, PERSON, "editor");
     expect(invalidated).toHaveBeenCalledWith({
-      queryKey: sharesQuery("d1").queryKey,
+      queryKey: grantsQuery(FOLDER).queryKey,
     });
   });
 
-  it("withdraws a share, then refreshes that dashboard's shares", async () => {
-    const { result, invalidated } = rendered(() => useUnshareDashboard("d1"));
+  it("withdraws a grant, then refreshes those grants", async () => {
+    const { result, invalidated } = rendered(() => useDeleteGrant(BOARD));
 
-    await act(() => result.current.mutateAsync(PERSON));
+    await act(() => result.current.mutateAsync("everyone"));
 
-    expect(customClient.unshareDashboard).toHaveBeenCalledWith("d1", PERSON);
+    expect(customClient.deleteGrant).toHaveBeenCalledWith(BOARD, "everyone");
     expect(invalidated).toHaveBeenCalledWith({
-      queryKey: sharesQuery("d1").queryKey,
+      queryKey: grantsQuery(BOARD).queryKey,
     });
   });
 });
 
-describe("orphaned dashboards", () => {
+describe("a dashboard's widgets", () => {
+  it("reads them and runs each through the dashboard, keyed by window", async () => {
+    vi.mocked(customClient.fetchDashboardWidgets).mockResolvedValue([]);
+    await dashboardWidgetsQuery("d1").queryFn?.(undefined as never);
+    expect(customClient.fetchDashboardWidgets).toHaveBeenCalledWith("d1");
+
+    const options = { range: "P30D", bucket: true };
+    await dashboardWidgetResultQuery("d1", "w1", options).queryFn?.(
+      undefined as never,
+    );
+    expect(customClient.runDashboardWidget).toHaveBeenCalledWith(
+      "d1",
+      "w1",
+      options,
+    );
+    expect(dashboardWidgetResultQuery("d1", "w1", options).queryKey).not.toEqual(
+      dashboardWidgetResultQuery("d1", "w1").queryKey,
+    );
+  });
+
+  it("reads the rows behind one through the dashboard", async () => {
+    await drilldownPagesQuery("d1", "w1", {}).queryFn?.({
+      pageParam: "c1",
+      signal: undefined,
+    } as never);
+
+    expect(customClient.fetchDashboardDrilldownPage).toHaveBeenCalledWith(
+      "d1",
+      "w1",
+      { limit: 100, cursor: "c1" },
+      undefined,
+    );
+  });
+});
+
+describe("orphans", () => {
   it("are read a page at a time until all are in", async () => {
     const first = {
       items: [
@@ -784,7 +824,7 @@ describe("orphaned dashboards", () => {
       total: 2,
     };
     vi.mocked(customClient.fetchOrphanedDashboards).mockResolvedValue(first);
-    const options = orphanedPagesQuery();
+    const options = orphanedPagesQuery("dashboards");
 
     await options.queryFn?.({ pageParam: 0 } as never);
 
@@ -795,14 +835,34 @@ describe("orphaned dashboards", () => {
     expect(options.getNextPageParam(first, [first], 0, [0])).toBe(1);
   });
 
-  it("refreshes the orphaned list and the dashboard lists after a transfer", async () => {
-    const { result, invalidated } = rendered(() => useTransferDashboard());
+  it("reads orphaned folders under a key of their own", async () => {
+    vi.mocked(customClient.fetchOrphanedFolders).mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    const options = orphanedPagesQuery("folders");
 
-    await act(() => result.current.mutateAsync({ id: "d1", to: "p2" }));
+    await options.queryFn?.({ pageParam: 0 } as never);
 
-    expect(customClient.transferDashboard).toHaveBeenCalledWith("d1", "p2");
+    expect(customClient.fetchOrphanedFolders).toHaveBeenCalledWith({
+      limit: 50,
+      offset: 0,
+    });
+    expect(options.queryKey).not.toEqual(
+      orphanedPagesQuery("dashboards").queryKey,
+    );
+  });
+
+  it("refreshes every orphan list and the dashboard lists after a transfer", async () => {
+    const { result, invalidated } = rendered(() => useTransferOrphan());
+
+    await act(() =>
+      result.current.mutateAsync({ kind: "folders", id: "f1", to: "p2" }),
+    );
+
+    expect(customClient.transferOrphan).toHaveBeenCalledWith("folders", "f1", "p2");
     expect(invalidated).toHaveBeenCalledWith({
-      queryKey: orphanedPagesQuery().queryKey,
+      queryKey: ["custom", "orphaned"],
     });
     expect(invalidated).toHaveBeenCalledWith({ queryKey: ["custom", "names"] });
   });

@@ -1,5 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const role = vi.hoisted(() => ({ isAdmin: false, isPending: true }));
+vi.mock("@/queries/identity-me", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-me")>()),
+  useIsAdmin: () => ({ ...role, isError: false, retry: () => {} }),
+}));
 
 vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
@@ -347,6 +353,28 @@ describe("<CustomWidget>", () => {
     );
     expect(alert).toHaveTextContent("day, total_lines");
     expect(screen.queryByTestId("custom-line-chart")).not.toBeInTheDocument();
+  });
+
+  describe("for a member", () => {
+    afterEach(() => {
+      role.isPending = true;
+    });
+
+    it("says only that the widget cannot be drawn", () => {
+      role.isPending = false;
+      render(
+        <CustomWidget
+          widget={{ type: "line", metric: "lines_per_day", x: "day", y: "lines" }}
+          result={{ columns: ["day", "total_lines"], rows: [["2026-09-01", 132]] }}
+        />,
+        { wrapper }
+      );
+
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Couldn't draw this widget."
+      );
+      expect(screen.getByRole("alert")).not.toHaveTextContent("total_lines");
+    });
   });
 });
 

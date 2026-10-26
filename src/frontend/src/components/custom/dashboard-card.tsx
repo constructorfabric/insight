@@ -5,7 +5,7 @@ import { ChevronRight, LayoutDashboard } from "lucide-react";
 import type { DashboardListed } from "@/api/custom-client";
 import { DashboardMenu } from "@/components/custom/dashboard-menu";
 import { DashboardTags } from "@/components/custom/dashboard-tags";
-import { PersonName } from "@/components/custom/person-name";
+import { OwnerName } from "@/components/custom/person-name";
 import { Card, CardContent } from "@/components/ui/card";
 import { dashboardQuery, dashboardTagsQuery } from "@/queries/custom";
 import { TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
@@ -36,9 +36,10 @@ export function DashboardCard({ dashboard }: { dashboard: DashboardListed }) {
                 <span className={cn(TEXT_LABEL, "truncate")}>{name}</span>
               ) : null}
               {owner ? (
-                <span className={cn(TEXT_LABEL, "truncate font-normal")}>
-                  Owner: <PersonName personId={owner} />
-                </span>
+                <OwnerName
+                  personId={owner}
+                  className={cn(TEXT_LABEL, "truncate font-normal")}
+                />
               ) : null}
             </span>
           </Link>

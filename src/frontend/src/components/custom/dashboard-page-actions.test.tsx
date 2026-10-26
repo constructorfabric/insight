@@ -10,23 +10,24 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     pinDashboard: vi.fn(),
     unpinDashboard: vi.fn(),
     fetchFolders: vi.fn(),
-    fetchDashboardFolder: vi.fn(),
     renameDefinition: vi.fn(),
     duplicateDashboard: vi.fn(),
     deleteDefinition: vi.fn(),
   };
 });
-vi.mock("@/components/custom/share-dashboard", () => ({
-  ShareDashboard: ({
+vi.mock("@/components/custom/share-dialog", () => ({
+  ShareDialog: ({
     open,
+    target,
     ownerPersonId,
   }: {
     open: boolean;
+    target: { kind: string; id: string };
     ownerPersonId: string;
   }) =>
     open ? (
       <div role="dialog" aria-label="Share">
-        {ownerPersonId}
+        {`${target.kind}/${target.id} ${ownerPersonId}`}
       </div>
     ) : null,
 }));
@@ -58,7 +59,6 @@ beforeEach(() => {
     folders: [],
     unfiled: 1,
   });
-  vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
   vi.mocked(customClient.renameDefinition).mockResolvedValue(undefined);
   vi.mocked(customClient.duplicateDashboard).mockResolvedValue("dash-2");
   vi.mocked(customClient.deleteDefinition).mockResolvedValue(undefined);
@@ -108,6 +108,7 @@ describe("<DashboardPageActions>", () => {
 
   it.each([
     ["owner", true, true],
+    ["editor", true, true],
     ["ownerless", false, true],
     ["viewer", false, false],
   ] as const)(
@@ -127,18 +128,21 @@ describe("<DashboardPageActions>", () => {
     }
   );
 
-  it("opens the share dialog for the owner", async () => {
-    const user = userEvent.setup();
-    actions("owner");
+  it.each(["owner", "editor"] as const)(
+    "opens the dashboard's share dialog for an %s",
+    async (access) => {
+      const user = userEvent.setup();
+      actions(access);
 
-    await user.click(screen.getByRole("button", { name: "Share delivery" }));
+      await user.click(screen.getByRole("button", { name: "Share delivery" }));
 
-    expect(await screen.findByRole("dialog", { name: "Share" })).toHaveTextContent(
-      OWNER
-    );
-  });
+      expect(
+        await screen.findByRole("dialog", { name: "Share" })
+      ).toHaveTextContent(`dashboards/${ID} ${OWNER}`);
+    }
+  );
 
-  it("offers pin, rename, duplicate, filing and delete to the owner", async () => {
+  it("offers pin, rename, duplicate, filing, tags and delete to the owner", async () => {
     await openMenu();
 
     await screen.findByRole("menuitem", { name: "Pin" });
@@ -148,13 +152,19 @@ describe("<DashboardPageActions>", () => {
       "Pin",
       "Rename…",
       "Duplicate…",
-      "New folder…",
+      "Add to folder…",
       "Edit tags…",
       "Delete…",
     ]);
+  });
+
+  it("offers an editor everything but delete", async () => {
+    await openMenu("editor");
+
+    await screen.findByRole("menuitem", { name: "Pin" });
     expect(
-      screen.getByRole("menuitemradio", { name: "Unfiled" })
-    ).toBeInTheDocument();
+      screen.getAllByRole("menuitem").map((item) => item.textContent)
+    ).toEqual(["Pin", "Rename…", "Duplicate…", "Add to folder…", "Edit tags…"]);
   });
 
   it("pins the dashboard on screen by its id", async () => {

@@ -116,7 +116,10 @@ export interface Listed {
 }
 
 /** What the caller may do with a dashboard, as the service decides it. */
-export type DashboardAccess = "owner" | "viewer" | "ownerless";
+export type DashboardAccess = "owner" | "editor" | "viewer" | "ownerless";
+
+/** What the caller may do with a folder, as the service decides it. */
+export type FolderAccess = "owner" | "editor" | "viewer" | "ownerless";
 
 export interface DashboardListed extends Listed {
   /** Null for a dashboard nobody owns. */
@@ -137,7 +140,6 @@ export interface DefinitionResponse<T> {
   body: T;
   /** Only a metric has one, and only when a window has a date to select by. */
   clock?: EffectiveClock;
-  folder?: Folder | null;
   tags?: string[];
   updated_at?: string;
   /** Only a dashboard has one. */
@@ -148,6 +150,10 @@ export interface DefinitionResponse<T> {
 export interface DashboardResponse extends DefinitionResponse<Dashboard> {
   owner_person_id: string | null;
   access: DashboardAccess;
+  /** The folders holding it that the caller can see. */
+  folders?: Folder[];
+  /** Whether placing it in a folder would carry that folder's people to it. */
+  carries?: boolean;
 }
 
 export interface DashboardRead {
@@ -157,11 +163,28 @@ export interface DashboardRead {
   updatedAt?: string;
   ownerPersonId: string | null;
   access: DashboardAccess;
+  folders: Folder[];
+  carries: boolean;
 }
 
-/** One person a dashboard is shared with, for viewing. */
-export interface DashboardShare {
-  person_id: string;
+/** One widget a dashboard draws, read through the dashboard. */
+export interface DashboardWidget {
+  id: string;
+  name: string;
+  body: Widget;
+  /** Absent when a window over its metric has no date to select by. */
+  clock?: EffectiveClock | null;
+}
+
+/** How far a grant reaches. */
+export type GrantLevel = "viewer" | "editor";
+
+/** A person id, or `"everyone"` for every signed-in person. */
+export type Grantee = string;
+
+export interface Grant {
+  grantee: Grantee;
+  level: GrantLevel;
   granted_by: string;
   created_at: string;
 }
@@ -170,6 +193,11 @@ export interface DashboardShare {
 export interface OrphanedDashboard extends Listed {
   owner_person_id: string;
   updated_at: string;
+}
+
+/** A shared folder whose owner no longer holds the administrator role. */
+export interface OrphanedFolder extends Listed {
+  owner_person_id: string;
 }
 
 export interface TagSummary {
@@ -189,6 +217,8 @@ export interface Folder {
 export interface FolderSummary extends Folder {
   /** Null for a folder nobody owns, which only ownerless dashboards are filed in. */
   owner_person_id: string | null;
+  access: FolderAccess;
+  /** How many of the dashboards in it the caller can see. */
   dashboards: number;
 }
 

@@ -3,7 +3,8 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   return {
     ...actual,
     fetchOrphanedDashboards: vi.fn(),
-    transferDashboard: vi.fn(),
+    fetchOrphanedFolders: vi.fn(),
+    transferOrphan: vi.fn(),
   };
 });
 vi.mock("@/api/identity-client", async (importOriginal) => {
@@ -62,7 +63,7 @@ import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import * as identityClient from "@/api/identity-client";
 
-import { OrphanedDashboards } from "./orphaned-dashboards";
+import { Orphaned } from "./orphaned";
 
 const { LEAVER, BOB } = people.ids;
 
@@ -79,16 +80,25 @@ function renderPage() {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <OrphanedDashboards />
+      <Orphaned />
     </QueryClientProvider>
   );
 
   return userEvent.setup();
 }
 
-async function openTransfer(user: ReturnType<typeof userEvent.setup>) {
+const ORPHANED_FOLDER = {
+  id: "folder-1",
+  name: "Handover",
+  owner_person_id: LEAVER,
+};
+
+async function openTransfer(
+  user: ReturnType<typeof userEvent.setup>,
+  name = "Release notes"
+) {
   await user.click(
-    await screen.findByRole("button", { name: "Transfer Release notes" })
+    await screen.findByRole("button", { name: `Transfer ${name}` })
   );
   const dialog = await screen.findByRole("dialog");
   await user.type(await within(dialog).findByRole("searchbox"), "an");
@@ -102,14 +112,18 @@ beforeEach(() => {
     items: [ORPHANED],
     total: 1,
   });
-  vi.mocked(customClient.transferDashboard).mockResolvedValue(undefined);
+  vi.mocked(customClient.fetchOrphanedFolders).mockResolvedValue({
+    items: [ORPHANED_FOLDER],
+    total: 1,
+  });
+  vi.mocked(customClient.transferOrphan).mockResolvedValue(undefined);
   vi.mocked(identityClient.listRoleHolders).mockResolvedValue({
     personIds: new Set([BOB]),
     complete: true,
   });
 });
 
-describe("<OrphanedDashboards>", () => {
+describe("<Orphaned>", () => {
   it("lists each orphaned dashboard with its owner and last change", async () => {
     renderPage();
 
@@ -126,7 +140,9 @@ describe("<OrphanedDashboards>", () => {
     });
     renderPage();
 
-    expect(await screen.findByText("No orphaned dashboards")).toBeInTheDocument();
+    expect(
+      await screen.findByText("No orphaned dashboards")
+    ).toBeInTheDocument();
   });
 
   it("offers only current administrators as the new owner", async () => {
@@ -142,7 +158,9 @@ describe("<OrphanedDashboards>", () => {
         `should not offer: ${name}`
       ).toBeNull();
     }
-    expect(within(dialog).getByRole("button", { name: "Transfer" })).toBeDisabled();
+    expect(
+      within(dialog).getByRole("button", { name: "Transfer" })
+    ).toBeDisabled();
   });
 
   it("transfers to the picked administrator and reads the list again", async () => {
@@ -154,7 +172,11 @@ describe("<OrphanedDashboards>", () => {
     await user.click(within(dialog).getByRole("button", { name: "Bob Park" }));
     await user.click(within(dialog).getByRole("button", { name: "Transfer" }));
 
-    expect(customClient.transferDashboard).toHaveBeenCalledWith("dash-1", BOB);
+    expect(customClient.transferOrphan).toHaveBeenCalledWith(
+      "dashboards",
+      "dash-1",
+      BOB
+    );
     await waitFor(() =>
       expect(
         vi.mocked(customClient.fetchOrphanedDashboards).mock.calls.length
@@ -163,8 +185,23 @@ describe("<OrphanedDashboards>", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("transfers an orphaned folder to the picked administrator", async () => {
+    const user = renderPage();
+    const dialog = await openTransfer(user, "Handover");
+
+    await user.click(within(dialog).getByRole("button", { name: "Bob Park" }));
+    await user.click(within(dialog).getByRole("button", { name: "Transfer" }));
+
+    expect(customClient.transferOrphan).toHaveBeenCalledWith(
+      "folders",
+      "folder-1",
+      BOB
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
   it("keeps the dialog open with what the service said when it refuses", async () => {
-    vi.mocked(customClient.transferDashboard).mockRejectedValue(
+    vi.mocked(customClient.transferOrphan).mockRejectedValue(
       new CustomApiError(409, {
         detail: "Failed precondition",
         context: {

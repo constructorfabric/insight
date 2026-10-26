@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import type { DashboardAccess } from "@/api/custom-client";
 import { DashboardMenu } from "@/components/custom/dashboard-menu";
-import { ShareDashboard } from "@/components/custom/share-dashboard";
+import { ShareDialog } from "@/components/custom/share-dialog";
 import { Button } from "@/components/ui/button";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
 
@@ -27,7 +27,7 @@ export function DashboardPageActions({
 
   return (
     <span className="flex shrink-0 items-center gap-1">
-      {allows.share && ownerPersonId ? (
+      {allows.share ? (
         <>
           <Button
             variant="outline"
@@ -38,8 +38,8 @@ export function DashboardPageActions({
           >
             Share
           </Button>
-          <ShareDashboard
-            id={id}
+          <ShareDialog
+            target={{ kind: "dashboards", id }}
             title={title || name}
             ownerPersonId={ownerPersonId}
             open={sharing}
@@ -47,7 +47,7 @@ export function DashboardPageActions({
           />
         </>
       ) : null}
-      {allows.change ? (
+      {allows.edit ? (
         <Button
           variant="outline"
           size="sm"

@@ -3,9 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useViewer } from "@/auth";
 import { zoneHidden } from "@/lib/portal/nav-policy";
 import { ZONES, zoneIsPlanned, type Zone } from "@/lib/portal/nav-model";
-import {
-  usePortalShowPlanned,
-} from "@/lib/portal/portal-store";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useViewerReach } from "@/lib/portal/use-viewer-reach";
 import { useIsAdmin } from "@/queries/identity-me";
@@ -49,13 +47,11 @@ export function useZoneNav(): ZoneNav {
 
   const zones = ZONES.filter((z) => {
     if (zoneHidden(z.id) || (zoneIsPlanned(z) && !showPlanned)) return false;
-    // Custom writes definitions and spends the model budget, so the role
-    // decides on its own: having a cohort does not open it, and the service
-    // refuses the surfaces either way. (Manage keeps its older rule below,
-    // where a viewer with a cohort sees the entry and its view refuses them.)
-    if (z.id === "custom") return isAdmin;
+    if (z.id === "custom") return true;
 
-    return orgZonesVisible || IC_ZONES.has(z.id) || (z.id === "manage" && isAdmin);
+    return (
+      orgZonesVisible || IC_ZONES.has(z.id) || (z.id === "manage" && isAdmin)
+    );
   });
 
   function selectZone(zone: Zone, item?: string) {
@@ -80,7 +76,10 @@ export function useZoneNav(): ZoneNav {
     void navigate({
       ...(entity
         ? {
-            to: zone.kind === "person" ? "/ic/$person/personal" : "/ic/$person/team",
+            to:
+              zone.kind === "person"
+                ? "/ic/$person/personal"
+                : "/ic/$person/team",
             params: { person: me },
           }
         : { to: "/portal" }),

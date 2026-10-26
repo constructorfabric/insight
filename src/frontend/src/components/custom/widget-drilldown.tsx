@@ -39,6 +39,8 @@ type View =
  * without leaving the dashboard.
  */
 export function WidgetDrilldown({
+  dashboard,
+  widgetId,
   widget,
   name,
   label,
@@ -46,6 +48,8 @@ export function WidgetDrilldown({
   onOpenChange,
   options,
 }: {
+  dashboard: string;
+  widgetId: string;
   widget: Widget;
   name: string;
   label: string;
@@ -125,6 +129,8 @@ export function WidgetDrilldown({
         {open && view.kind === "rows" ? (
           <>
             <Rows
+              dashboard={dashboard}
+              widgetId={widgetId}
               metric={widget.detail ?? widget.metric}
               options={options}
               filling={filling}
@@ -223,10 +229,15 @@ function StoredMetric({ id }: { id: string }) {
 const MAX_PAGES = 50;
 
 function Rows({
+  dashboard,
+  widgetId,
   metric,
   options,
   filling,
 }: {
+  dashboard: string;
+  widgetId: string;
+  /** The metric the rows come from, which decides whether they are windowed. */
   metric: string;
   options?: RunOptions;
   /** Filling the window, the dialog scrolls rather than the rows inside it. */
@@ -240,14 +251,17 @@ function Rows({
   // all.
   const windowed = options && Boolean(definition.data?.clock);
   const pages = useInfiniteQuery({
-    ...drilldownPagesQuery(metric, {
+    ...drilldownPagesQuery(dashboard, widgetId, {
       ...(windowed ? options : {}),
       ...(sort ? { sort } : {}),
     }),
     enabled: definition.isSuccess,
   });
 
-  const columns = useMemo(() => pages.data?.pages[0]?.columns ?? [], [pages.data]);
+  const columns = useMemo(
+    () => pages.data?.pages[0]?.columns ?? [],
+    [pages.data]
+  );
   const rows = useMemo(
     () =>
       pages.data?.pages.flatMap((page) =>

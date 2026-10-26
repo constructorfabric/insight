@@ -51,16 +51,46 @@ export async function startUsageTelemetry(session: Session): Promise<void> {
   }
 }
 
+/** The pages under `/portal/custom` whose name is not a dashboard id. */
+const CUSTOM_PAGES = new Set([
+  "metrics",
+  "widgets",
+  "datasets",
+  "alerts",
+  "destinations",
+  "orphaned",
+  "edit",
+  "new",
+]);
+
 /** Adoption counting must not become a record of who read whose profile. */
 export function screenPath(path: string): string {
   const segments = path.split("/");
   return segments
     .map((segment, i) =>
       // The segment after `/ic` is a person key whatever shape it arrives in;
-      // matching on shape alone lets an email through.
-      segments[i - 1] === "ic" || isIdentifier(segment) ? ":id" : segment,
+      // matching on shape alone lets an email through. A dashboard's id is
+      // the name its author gave it, so it goes the same way.
+      segments[i - 1] === "ic" ||
+      isDashboardId(segments, i) ||
+      isIdentifier(segment)
+        ? ":id"
+        : segment,
     )
     .join("/");
+}
+
+function isDashboardId(segments: readonly string[], i: number): boolean {
+  const segment = segments[i] ?? "";
+  if (segment === "") return false;
+
+  const page = segments[i - 2] === "portal" && segments[i - 1] === "custom";
+  const editor =
+    segments[i - 3] === "custom" &&
+    segments[i - 2] === "edit" &&
+    segments[i - 1] === "dashboards";
+
+  return (page && !CUSTOM_PAGES.has(segment)) || editor;
 }
 
 function isIdentifier(segment: string): boolean {
