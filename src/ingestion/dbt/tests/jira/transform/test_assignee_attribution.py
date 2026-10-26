@@ -70,8 +70,10 @@ def user(account: str, email: str | None) -> dict[str, Any]:
 
 @pytest.fixture
 def attribution(warehouse: Warehouse) -> dict[str, dict[str, Any]]:
-    for table in (HISTORY_TABLE, USERS_TABLE):
-        warehouse.execute(f"DELETE FROM {table} WHERE insight_source_id = {{src:String}}", {"src": SOURCE})
+    warehouse.execute(
+        "DELETE FROM silver.class_task_field_history WHERE insight_source_id = {src:String}", {"src": SOURCE}
+    )
+    warehouse.execute("DELETE FROM silver.class_task_users WHERE insight_source_id = {src:String}", {"src": SOURCE})
     warehouse.insert(USERS_TABLE, [user("emailed-acct", EMAIL), user("emailless-acct", None)])
     warehouse.insert(
         HISTORY_TABLE,
