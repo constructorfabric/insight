@@ -23,8 +23,21 @@ fn the_document_covers_every_route_this_service_serves() {
         "/v1/widgets",
         "/v1/dashboards",
         "/v1/dashboards/{id}/duplicate",
-        "/v1/dashboards/{id}/folder",
         "/v1/dashboards/{id}/tags",
+        "/v1/dashboards/{id}/grants",
+        "/v1/dashboards/{id}/grants/{grantee}",
+        "/v1/dashboards/{id}/transfer",
+        "/v1/dashboards/{id}/widgets",
+        "/v1/dashboards/{id}/widgets/{widget_id}/run",
+        "/v1/dashboards/{id}/widgets/{widget_id}/drilldown",
+        "/v1/folders",
+        "/v1/folders/{id}",
+        "/v1/folders/{id}/grants",
+        "/v1/folders/{id}/grants/{grantee}",
+        "/v1/folders/{id}/dashboards/{dashboard_id}",
+        "/v1/folders/{id}/transfer",
+        "/v1/orphaned-dashboards",
+        "/v1/orphaned-folders",
         "/v1/pins/{dashboard_id}",
         "/v1/chat",
     ] {
@@ -38,5 +51,8 @@ fn the_document_covers_every_route_this_service_serves() {
         !paths.iter().any(|path| path.ends_with("/rename")),
         "no definition is renamed by route: {paths:?}"
     );
+    for gone in ["/v1/dashboards/{id}/folder", "/v1/dashboards/{id}/shares"] {
+        assert!(!paths.contains(&gone), "{gone} is still served");
+    }
     assert_eq!(document.info.title, "Insight v3 Core API");
 }

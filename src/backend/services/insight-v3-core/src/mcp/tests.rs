@@ -271,6 +271,7 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
     assert_eq!(
         names,
         [
+            "add_to_folder",
             "arrange_dashboard",
             "create_alert",
             "create_folder",
@@ -287,12 +288,12 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
             "list_folders",
             "list_tables",
             "list_tags",
-            "move_dashboard",
             "preview_alert",
             "put_dashboard",
             "put_dataset",
             "put_metric",
             "put_widget",
+            "remove_from_folder",
             "run_metric",
             "search_definitions",
             "set_alert_enabled",

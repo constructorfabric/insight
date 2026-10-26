@@ -77,6 +77,8 @@ pub(crate) trait ApiErrors {
             CustomError::Store(source) => Self::definition_store_error(source),
             CustomError::Datasets(source) => Self::dataset_store_error(source),
             CustomError::InUse { .. }
+            | CustomError::NotEditor
+            | CustomError::NotOwner
             | CustomError::Widget(_)
             | CustomError::Range(_)
             | CustomError::Unanswerable(_) => {
@@ -164,6 +166,16 @@ pub(crate) trait ApiErrors {
             }
             DefinitionStoreError::Json(source) => {
                 tracing::error!(error = ?source, "definition body serialization failed");
+                CanonicalError::internal("definition store operation failed").create()
+            }
+            DefinitionStoreError::TagsFull => {
+                Self::invalid_field("tags", DefinitionStoreError::TagsFull.to_string())
+            }
+            DefinitionStoreError::UnreadableRow(said) => {
+                tracing::error!(
+                    said,
+                    "a definition row holds a value this service never wrote"
+                );
                 CanonicalError::internal("definition store operation failed").create()
             }
         }

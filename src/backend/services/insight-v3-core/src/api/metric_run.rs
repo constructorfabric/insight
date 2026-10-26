@@ -96,15 +96,7 @@ async fn run_metric(
 
     let id = DefinitionId::parse(&id)
         .map_err(|_| MetricRunApiError::malformed_id(DefinitionKind::Metric, &id))?;
-    let asked = match body {
-        Some(Json(value)) => {
-            serde_json::from_value::<RunBody>(value).map_err(|error| run_body_error(&error))?
-        }
-        None => RunBody::default(),
-    };
-
-    let requested = WindowRequest::parse(asked.range.as_deref(), asked.bucket)
-        .map_err(|error| MetricRunApiError::window_error(&error))?;
+    let requested = window(body)?;
 
     let result = state
         .metric_runs()
@@ -113,6 +105,26 @@ async fn run_metric(
         .map_err(MetricRunApiError::custom_error)?;
 
     Ok(Json(result).into_response())
+}
+
+/// The window a run body asks for; an absent body asks for none.
+pub(super) fn window(
+    body: Option<Json<serde_json::Value>>,
+) -> Result<WindowRequest, CanonicalError> {
+    let asked = match body {
+        Some(Json(value)) => {
+            serde_json::from_value::<RunBody>(value).map_err(|error| run_body_error(&error))?
+        }
+        None => RunBody::default(),
+    };
+
+    WindowRequest::parse(asked.range.as_deref(), asked.bucket)
+        .map_err(|error| MetricRunApiError::window_error(&error))
+}
+
+/// A run's failure as an administrator reads it, the cause and all.
+pub(super) fn run_error(error: crate::domain::surfaces::CustomError) -> CanonicalError {
+    MetricRunApiError::custom_error(error)
 }
 
 fn run_body_error(error: &serde_json::Error) -> CanonicalError {

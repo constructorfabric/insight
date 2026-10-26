@@ -170,16 +170,26 @@ async fn page_metric(
 
     let name = DefinitionId::parse(&id)
         .map_err(|_| DrilldownApiError::malformed_id(DefinitionKind::Metric, &id))?;
+
+    read_page(&state, &name, body).await
+}
+
+/// One page of the metric's rows, as the body asks for it.
+pub(super) async fn read_page(
+    state: &AppState,
+    name: &DefinitionId,
+    body: Result<Option<Json<serde_json::Value>>, JsonRejection>,
+) -> Result<Response, CanonicalError> {
     let asked = asked(body)?;
 
     // INVARIANT: held across the read. The permit is this request's share of
     // MAX_CONCURRENT_PAGES, and the read is what it bounds.
-    let _permit = acquire(&state).await?;
+    let _permit = acquire(state).await?;
     let page = state
         .drilldowns()
-        .page(&name, &asked)
+        .page(name, &asked)
         .await
-        .map_err(|error| drilldown_error(error, &name))?;
+        .map_err(|error| drilldown_error(error, name))?;
 
     Ok(Json(response(name.as_str(), &asked, page)).into_response())
 }
