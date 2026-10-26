@@ -249,7 +249,10 @@ port / user / password, then probes connectivity:
 - **MariaDB** — spins up a transient `mariadb:11.4` container, runs
   `SELECT 1`. Bad credentials abort the wizard.
 - **ClickHouse** — host-side `curl` against the HTTP interface. Same
-  fail-fast.
+  fail-fast. It must be standalone: `./dev-compose.sh up` refuses
+  `CLICKHOUSE_CLUSTER_MODE=true` (`refuse_cluster_mode`); a clustered
+  warehouse is a chart stand, seeded with
+  `src/ingestion/tools/seed/seed-stand.sh`.
 
 When at least one DB is external, the wizard also asks for
 `TENANT_DEFAULT_ID` (UUID in your `persons.insight_tenant_id`) and

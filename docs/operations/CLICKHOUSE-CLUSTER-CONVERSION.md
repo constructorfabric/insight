@@ -10,7 +10,9 @@ such a database, in either direction, and so do the two services that write
 the warehouse themselves. This runbook moves an existing standalone install
 over, with its data, and names the way back. It is Phase 5 of epic #2010.
 
-The cluster rig executes it on every merge:
+The cluster rig executes it in the merge queue, whenever the diff touches a
+creator of a warehouse relation (the `changes` filter of
+[`cluster-mode.yml`](../../.github/workflows/cluster-mode.yml)):
 [`src/ingestion/tests/cluster-rig/convert.sh`](../../src/ingestion/tests/cluster-rig/convert.sh)
 deploys a standalone install onto one replica of a two-replica warehouse,
 converts every database the way steps 4 and 5 say, deploys in cluster mode
@@ -72,23 +74,37 @@ before anything else.
 
 | Guard | The server needs | Check with |
 | --- | --- | --- |
-| `clusterName` exists | a `<remote_servers>` entry of that name on every node, carrying every replica, with `<internal_replication>true</internal_replication>` and an interserver `<secret>`. The standalone node is one of its replicas. The name is a bare identifier (letters, digits, `_`): every creator interpolates it into DDL unquoted. | `SELECT host_name FROM system.clusters WHERE cluster = '<name>' AND database_replica_name = ''` lists every replica |
+| `clusterName` exists | a `<remote_servers>` entry of that name on every node, carrying every replica, with `<internal_replication>true</internal_replication>` and an interserver `<secret>`. The standalone node is one of its replicas. The name is a bare identifier (a letter or `_`, then letters, digits, `_`): every creator interpolates it into DDL unquoted. | `SELECT host_name FROM system.clusters WHERE cluster = '<name>' AND database_replica_name = ''` lists every replica |
 | Keeper is reachable | a `<zookeeper>` (or `<keeper_server>`) section on every node, pointing at one Keeper ensemble | `SELECT count() FROM system.zookeeper WHERE path = '/'` answers on every node |
 | `{shard}` and `{replica}` are defined | `<macros>` on every node, unique per replica | `SELECT * FROM system.macros` on every node |
 | access storage is replicated | step 3 | `SELECT type FROM system.user_directories` lists `replicated` |
-| every bronze table is `Replicated*` | step 5; the probe runs on every replica as the deploy user (`clickhouse.username`), which needs `REMOTE ON *.*` and `SHOW` on every `bronze_*` table (a full-access admin has both) | `SHOW GRANTS` for the deploy user lists `REMOTE ON *.*` and a `SHOW` that covers `bronze_*` |
+| every owned database is `Replicated` or absent | step 4; one of the nine that still stands as `Atomic` is refused by name | `SELECT name, engine FROM system.databases WHERE name IN (<the nine>)` shows `Replicated` or no row |
+| every owned database is complete | step 4 again: a `Replicated` database must have joined every replica the cluster lists, unless its `CREATE DATABASE` is still queued in `system.distributed_ddl_queue` for an inactive host; a replica it never reached answers every read empty | `SELECT count() FROM system.zookeeper WHERE path = '<keeper path>/replicas'` equals the replica count, the path being the first argument of the database's `engine_full` in `system.databases` |
+| every bronze table is `Replicated*` | step 5; the probe runs on every replica as the deploy user (`clickhouse.username`), which needs `REMOTE ON *.*` and `SHOW` on every `bronze_*` table (a full-access admin has both) | `SHOW GRANTS` for the deploy user lists `REMOTE ON *.*` and a `SHOW` that covers `bronze_*`, or `GRANT ALL ON *.*` |
 | — | a load-balancer endpoint for `clickhouse.host` once the install is clustered. Until step 6 every command here reaches the standalone node directly, never the balancer. | — |
-| — | `destination-clickhouse` 2.1.29 or later: the first version that creates replicated engines and `ON CLUSTER`; reconcile refuses an older one | `DESTINATION_CLICKHOUSE_IMAGE` in `src/ingestion/scripts/bootstrap-db/pins.env` |
+| — | `destination-clickhouse` 2.1.29 or later in the install's Airbyte: the first version that creates replicated engines and `ON CLUSTER`. Reconcile resolves the definition by name, so the install runs whatever its Airbyte carries, and refuses one below `MINIMUM_VERSION` in `src/ingestion/reconcile-connectors/python/check_destination_version.py` | the version of the `destination-clickhouse` definition in the install's Airbyte (its definitions API or settings page); `DESTINATION_CLICKHOUSE_IMAGE` in `bootstrap-db/pins.env` is the repo's own CI snapshot pin, not the install's |
 
-The rig's [`config/cluster.xml`](../../src/ingestion/tests/cluster-rig/config/cluster.xml)
-is a complete, minimal example of the server side.
+The rig's server side is a minimal example, split the way its `compose.yaml`
+mounts it: [`config/cluster.xml`](../../src/ingestion/tests/cluster-rig/config/cluster.xml)
+(`<zookeeper>`, `<remote_servers>`, `<user_directories>`, shared by both
+replicas), [`config/macros-ch1.xml`](../../src/ingestion/tests/cluster-rig/config/macros-ch1.xml)
+and [`macros-ch2.xml`](../../src/ingestion/tests/cluster-rig/config/macros-ch2.xml)
+(`<macros>`, one per replica) and [`config/keeper.xml`](../../src/ingestion/tests/cluster-rig/config/keeper.xml)
+(the Keeper).
+
+Adding `<zookeeper>`, `<macros>`, `<remote_servers>` or the access storage of
+step 3 to the standalone node takes a server restart; plan it into the window.
+The other replicas must hold none of the Insight databases, neither one of the
+nine nor a `bronze_*`: the script's `CREATE DATABASE ... ON CLUSTER` has no
+`IF NOT EXISTS`, so a replica that already has the name fails that database's
+conversion.
 
 ### The two-replica trade-off
 
 Every write the release makes in cluster mode is a quorum write
 (`insert_quorum = auto` with `insert_quorum_parallel = 0`, and reads behind it
 `select_sequential_consistency = 1`; `src/ingestion/scripts/lib/ch-exec.sh`,
-`scripts/dbt_profiles.py` and `libs/insight-clickhouse`). `auto` is a majority
+`src/ingestion/scripts/dbt_profiles.py` and `src/backend/libs/insight-clickhouse`). `auto` is a majority
 of the replicas, and the majority of two is both: while one replica of a
 two-replica cluster restarts, every quorum write fails rather than leave one
 replica without the rows. That stops every connector sync's dbt build, the
@@ -112,13 +128,13 @@ NS=insight RELEASE=insight
 # gold; each connector has a CronWorkflow of its own.
 argo -n "$NS" cron suspend "$RELEASE-reconcile-loop" "$RELEASE-data-quality"
 argo -n "$NS" cron list -l app.kubernetes.io/component=connector-sync -o name \
-  | xargs argo -n "$NS" cron suspend
+  | xargs -r argo -n "$NS" cron suspend
 argo -n "$NS" list --running          # wait until this is empty
 
 # identity-resolution publishes persons (and its seed CronJob does, every 15 min);
 # insight-v3-core takes dataset records; analytics writes usage events.
 kubectl -n "$NS" patch cronjob "$RELEASE-identity-resolution-seed" -p '{"spec":{"suspend":true}}'
-kubectl -n "$NS" scale deploy "$RELEASE-identity-resolution" "$RELEASE-insight-v3-core" "$RELEASE-analytics" --replicas=0
+kubectl -n "$NS" scale deploy "$RELEASE-identity-resolution" "$RELEASE-v3-core" "$RELEASE-analytics" --replicas=0
 ```
 
 A gitops install does the same with its own tooling; the point is that no
@@ -180,13 +196,24 @@ export CLICKHOUSE_CLUSTER_MODE=true
 export CLICKHOUSE_CLUSTER_NAME=<clusterName>
 ```
 
+Every replica must be up for the whole conversion: with the flag on, every
+copy is a quorum write (`insert_quorum = auto`, the session settings of
+`lib/ch-exec.sh`), and the bronze probe reads every replica with
+`skip_unavailable_shards = 0`. The user it runs as needs what a standalone
+deploy never exercised: `REMOTE ON *.*` for that probe, `CREATE DATABASE` and
+`DROP DATABASE` on the names it renames and creates, and the `CLUSTER` grant
+where the server requires it for `ON CLUSTER` DDL
+(`on_cluster_queries_require_cluster_grant`). A full-access admin holds them
+all.
+
 Run it over the nine owned databases in this order, which is the order the
 views between them read (a view is validated against what it reads when it is
-created); the last but one is the app database named by `clickhouse.database`:
+created); the last but one is the app database named by `clickhouse.database`,
+substitute it:
 
 ```sh
 src/ingestion/scripts/convert-database-to-cluster.sh \
-  staging silver identity config product_usage ingestion_history insight_datasets insight presentation
+  staging silver identity config product_usage ingestion_history insight_datasets <clickhouse.database> presentation
 ```
 
 For each database, the script:
@@ -195,18 +222,21 @@ For each database, the script:
    unless every relation in the database is a MergeTree-family table or a
    view (it names anything else and moves nothing);
 2. renames the database to `standalone_<name>` — node-local and instant;
-3. creates `<name>` `ON CLUSTER` with `ENGINE = Replicated(...)`, the same
-   statement `create-databases.sh` emits;
+3. creates `<name>` `ON CLUSTER` with `ENGINE = Replicated(...)`, the engine
+   and Keeper path `create-databases.sh` emits, without its `IF NOT EXISTS`;
 4. for every table, issues the table's own `CREATE` with the engine prefixed
    `Replicated`, copies the rows with `INSERT ... SELECT`, and compares the
    two counts; a mismatch stops it there;
 5. creates every view the same way, once the relations it reads stand.
 
-It prints one line per relation with its row count. It is safe to re-run: a
-database already `Replicated` is reported and left alone, a table already
-copied whole is skipped, and a table copied in part is refused by name with
-the statement that clears it. Each table's copy is one HTTP request; the
-ceiling per request is `CH_HTTP_MAX_TIME_S`, six hours unless set.
+It prints one line per relation with its row count. It is safe to re-run.
+While `standalone_<name>` still stands, a re-run resumes: a table already
+copied whole is reported as already converted and skipped, a table copied in
+part is refused by name with the statement that clears it, and a database
+with nothing left ends in "nothing to do". Once the copy is dropped (step 7),
+a database already `Replicated` is reported as such and left alone. Each
+table's copy is one HTTP request; the ceiling per request is
+`CH_HTTP_MAX_TIME_S`, six hours unless set.
 
 The `standalone_<name>` databases stay on the node. They are the rollback
 until step 7 drops them.
@@ -216,7 +246,7 @@ until step 7 drops them.
 The same script converts every bronze database; list them on the standalone
 node and pass them all:
 
-```sh
+```bash
 # The password travels in a header read from a file, never in curl's
 # arguments (the way lib/ch-exec.sh sends it).
 src/ingestion/scripts/convert-database-to-cluster.sh $(
@@ -233,9 +263,9 @@ next sync finds every table with `IF NOT EXISTS`, keeps its cursor and
 carries on, and a stream that gained a column is widened `ON CLUSTER` by the
 destination as before. The reconcile loop rewrites the destination's
 configuration (`use_replicated_engines`, `cluster_name`) on its first run
-after step 6, unless `ingestion.reconcile.destinationId` pins a destination
-the release does not manage; then set the two fields on that destination
-yourself.
+once step 7 resumes it, unless `ingestion.reconcile.destinationId` pins a
+destination the release does not manage; then set the two fields on that
+destination yourself before the syncs resume.
 
 The alternative, where re-syncing a connector is cheaper than copying its
 bronze: drop the database on the standalone node (`DROP DATABASE
@@ -248,7 +278,7 @@ database `ON CLUSTER` with the replicated engines.
 
 ## Step 6 — Deploy with the pair set, and compare the replicas
 
-Set the three values and upgrade:
+Set the three values, keep the writers down, and upgrade:
 
 ```yaml
 clickhouse:
@@ -256,26 +286,50 @@ clickhouse:
   clusterMode: true
   clusterName: <clusterName>
   # provisionAccess: false   # only with operator-provisioned access (step 3)
+identityResolution:
+  replicaCount: 0
+insightV3Core:
+  replicaCount: 0
+analytics:
+  replicaCount: 0
 ```
 
 ```sh
 helm upgrade insight charts/insight -n "$NS" -f my-values.yaml
 ```
 
-An insight-gitops install declares the pair in the environment's
-`inventory.yaml` (`clickhouse.clusterMode` / `clickhouse.clusterName`), from
-where its Makefile passes it to the chart and into the service Secrets it
-composes; the host stays in the environment's `values.yaml`. A gitops flow
-that lacks that pass-through sets the three values in `values.yaml` like
-any other install.
+The three `replicaCount: 0` are not optional: every service Deployment
+templates `replicas: {{ .Values.replicaCount }}`, so an upgrade without them
+undoes the scale-down of step 2 while the post-upgrade hook still runs, ahead
+of the comparison below; scaling down again after `helm upgrade` returns
+leaves that window open. The umbrella addresses each subchart by its alias
+(`identityResolution`, `insightV3Core`, `analytics`), hence the keys. The
+CronJob and CronWorkflows stay suspended: `suspend` is not templated, and the
+three-way merge keeps it.
 
-The upgrade runs the guards first (`clickhouse-databases` Hook, weight 5),
-then `insight-v3-core`'s migrate Job asserts `insight_datasets` is
-`Replicated` (weight 10), then `clickhouse-migrate` re-runs
-`create-databases.sh` — every `CREATE DATABASE IF NOT EXISTS` is a no-op over
-the converted databases, the roles and users are provisioned into the
-replicated directory — and applies the migrations. A guard that refuses names
-the database or table it refused and this runbook.
+The pair reaches identity-resolution and insight-v3-core through their
+`*-config` Secrets, which no Deployment checksums: the two read the flag on
+their next start, which here is the scale-up of step 7. An install that
+flipped the pair with the writers running would have to restart them by hand.
+
+An insight-gitops install declares the pair in the environment's
+`inventory.yaml` (`clickhouse.clusterMode` / `clickhouse.clusterName`); its
+Makefile reads them from there and passes them with `--set`, which overrides
+the same keys in the environment's `values.yaml`, so the inventory is the
+only place they count. The host and the three `replicaCount` go in
+`values.yaml`. A gitops flow that lacks that pass-through sets everything in
+`values.yaml` like any other install.
+
+With `clickhouse.createDatabases: true` (the default) the upgrade runs the
+guards first, in the `clickhouse-databases` pre-upgrade Hook (weight 5),
+before `insight-v3-core`'s migrate Job asserts `insight_datasets` is
+`Replicated` (weight 10). With it off, the first guard run is
+`clickhouse-migrate`, the post-upgrade Hook (weight 200): after that migrate
+Job, and after the Deployments were applied. Either way `clickhouse-migrate`
+re-runs `create-databases.sh` — every `CREATE DATABASE IF NOT EXISTS` is a
+no-op over the converted databases, the roles and users are provisioned into
+the replicated directory — and applies the migrations. A guard that refuses
+names the database or table it refused and this runbook.
 
 Then compare the replicas, the way the rig's `check.py` does: after the
 replication queues drain, every MergeTree table must stand on every replica
@@ -287,7 +341,7 @@ SELECT database, name, groupArray((hostName(), total_rows)) AS rows_per_replica
 FROM clusterAllReplicas('<clusterName>', system.tables)
 WHERE endsWith(engine, 'MergeTree')
   AND (database IN ('staging', 'silver', 'identity', 'config', 'product_usage',
-                    'ingestion_history', 'insight_datasets', 'insight', 'presentation')
+                    'ingestion_history', 'insight_datasets', '<clickhouse.database>', 'presentation')
        OR startsWith(database, 'bronze_'))
 GROUP BY database, name
 HAVING uniqExact(total_rows) > 1
@@ -305,10 +359,30 @@ nothing has written since the copy.
 
 This is the point of decision: with the replicas agreeing and the writers
 still stopped, the install is either kept on the cluster or rolled back by
-rename (below), with nothing lost either way. To keep it, reverse step 2:
-scale the three Deployments back, unsuspend the seed CronJob and the
-CronWorkflows. The first sync of each connector widens nothing and rebuilds
-its models onto the converted tables.
+rename (below), with nothing lost either way. To keep it, reverse step 2, in
+this order: the reconcile loop first, and the connector syncs only once it
+has converged the destination (step 5). A sync that runs before that creates
+a new stream plain on one node, which the bronze guard of the next deploy
+refuses.
+
+```sh
+argo -n "$NS" cron resume "$RELEASE-reconcile-loop"
+argo -n "$NS" list                    # wait for its next run to succeed, then check the
+                                      # destination carries use_replicated_engines / cluster_name
+argo -n "$NS" cron resume "$RELEASE-data-quality"
+argo -n "$NS" cron list -l app.kubernetes.io/component=connector-sync -o name \
+  | xargs -r argo -n "$NS" cron resume
+
+kubectl -n "$NS" patch cronjob "$RELEASE-identity-resolution-seed" -p '{"spec":{"suspend":false}}'
+# Drop the three replicaCount: 0 from the values and upgrade again, or scale
+# by hand; the next upgrade restores the chart's counts either way.
+kubectl -n "$NS" scale deploy "$RELEASE-identity-resolution" "$RELEASE-v3-core" "$RELEASE-analytics" --replicas=<replicaCount>
+```
+
+Reconcile applies the CronWorkflows with `kubectl apply`, which leaves a
+`suspend` it did not set alone, so resuming it resumes no sync. The first sync
+of each connector widens nothing and rebuilds its models onto the converted
+tables.
 
 From the first resumed write on, the standalone copies are behind the
 converted databases, and a rollback by rename loses what was written since.
@@ -342,7 +416,9 @@ clear the connection's state and let the first standalone sync rebuild it —
 or from a backup. The `DROP ... ON CLUSTER` removes the converted database
 and its replicated tables from every replica, Keeper paths included. Then set
 `clickhouse.clusterMode: false`, clear `clickhouse.clusterName`, point
-`clickhouse.host` back at the node, and upgrade. A replicated access directory
+`clickhouse.host` back at the node, keep the three `replicaCount: 0` of step 6
+(this upgrade restores the replicas just as that one would), and upgrade;
+then resume the writers the way step 7 does. A replicated access directory
 may stay: the standalone deploy does not check it.
 
 A conversion that stopped part-way through one database is rolled back the
@@ -359,14 +435,28 @@ the writers are stopped.
 
 The conversion leg of
 [`cluster-mode.yml`](../../.github/workflows/cluster-mode.yml) runs
-[`convert.sh`](../../src/ingestion/tests/cluster-rig/convert.sh) on every
-merge: a standalone install on the first of two replicas (deploy hook, a
+[`convert.sh`](../../src/ingestion/tests/cluster-rig/convert.sh) in the merge
+queue, when the `changes` filter finds a creator of a warehouse relation in
+the diff: a standalone install on the first of two replicas (deploy hook, a
 connector's bronze through the pinned destination, a dbt build, both
 services), the cluster-mode deploy refused over its databases, every owned and
 bronze database converted with the script and the script re-run to find
 nothing to do, then the cluster-mode deploy, a second sync that adds a column,
 a dbt build and both services through the load balancer, the copies dropped,
 and every node held to the standalone install's row counts, engines and
-provisioned user. What it cannot do: switch the access storage mid-run (its
-nodes start with the replicated directory), drive Airbyte (the destination is
-run directly), or stop writers that are not running.
+provisioned user.
+
+What it does not cover:
+
+- the server reconfiguration and restart of steps 1 and 3: its nodes start
+  with the cluster, the macros and the replicated access directory in place;
+- a real `helm upgrade`: it runs the hook's command directly, so the hook
+  order of step 6 and the replica reset the `replicaCount: 0` guard against
+  are untested;
+- the comparison SQL of step 6: `check.py` compares the row counts per node,
+  `FINAL` on a replacing table, after `SYSTEM SYNC REPLICA`, not that query;
+- Airbyte: the destination is run directly, so neither reconcile's rewrite of
+  its configuration nor the bronze drop-and-resync alternative of step 5;
+- `provisionAccess: false`;
+- the rollback;
+- writers that are not running: nothing is stopped or resumed.
