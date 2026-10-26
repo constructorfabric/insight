@@ -4,17 +4,12 @@
 ==============================================================================
 
 Helm Hook Job that applies the schema migrations
-(`src/ingestion/scripts/migrations/*.sql`) against the external ClickHouse.
-
-Why a Hook Job: the migrations used to be applied by `scripts/init.sh`,
-which `kubectl exec`s into a bundled CH StatefulSet. #1428 dropped the
-bundled L2 subcharts (CH is now always external), so that path can no
-longer reach ClickHouse and nothing else applied the migrations — the
-`clickhouse-databases` Hook only creates databases and access. This Job closes
-that gap: it runs the toolbox image (which bundles the migrations and
-`lib/ch-exec.sh`) and dials
-`clickhouse.host` directly over the HTTP interface (CLICKHOUSE_URL selects
-the HTTP backend in lib/ch-exec.sh).
+(`src/ingestion/scripts/migrations/*.sql`) and the guarded heals of
+`apply-ch-migrations.sh` against the external ClickHouse: it runs the
+toolbox image (which bundles the scripts and `lib/ch-exec.sh`) and dials
+`clickhouse.host` over the HTTP interface (CLICKHOUSE_URL selects the HTTP
+backend in lib/ch-exec.sh). The `clickhouse-databases` Hook only creates
+databases and access.
 
 Hook timing: `post-install,post-upgrade`. The post-* phase runs after the
 main release (so the `clickhouse-databases` pre-install Hook has created
@@ -32,15 +27,14 @@ because migration SQL errors are deterministic, not transient: retrying a
 bad statement just delays the inevitable failure.
 
 Idempotent: migrations are re-run on every upgrade and are CREATE OR
-REPLACE / IF NOT EXISTS; placeholders are guarded by `ch_table_exists`.
-No migration ledger — same contract as the legacy init.sh path.
+REPLACE / IF NOT EXISTS; the heals are guarded by `ch_table_exists`. No
+migration ledger.
 
-The script builds no models (#3561). A connector sync rebuilds its own,
-gold included, because every descriptor's dbt selector ends in `+`, so a
-deploy no longer has to widen silver by hand ahead of a gold build. The
-placeholders above still stand every gold relation the snapshot carries up
-empty; the ones it does not carry are absent until the first sync, which
-the analytics service answers as not-ready rather than as a failure.
+The script pre-creates no relation and builds no model (#3559, #3561): every
+staging, silver and gold relation is dbt's, built by the connector sync that
+feeds it, because every descriptor's dbt selector ends in `+`. A relation no
+sync has built yet does not exist, and the analytics service answers it as
+not-ready rather than as a failure.
 
 Gated on `clickhouse.runMigrations` (default true) AND the availability of
 `ingestion.toolboxImage` (the image that ships the migration SQL).

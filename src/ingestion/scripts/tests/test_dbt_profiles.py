@@ -132,7 +132,27 @@ def test_a_clustered_install_reads_what_the_step_before_it_wrote(monkeypatch) ->
         "select_sequential_consistency": 1,
         "allow_nondeterministic_mutations": 1,
         "parallel_distributed_insert_select": 0,
+        "mutations_sync": 2,
+        "alter_sync": 2,
+        "lightweight_deletes_sync": 2,
     }
+
+
+def test_a_clustered_install_waits_for_every_replica_on_a_mutation(monkeypatch) -> None:
+    """The adapter's default is 3 (active replicas), and a lightweight DELETE
+    takes its wait from `lightweight_deletes_sync`, not `mutations_sync`; the
+    session states all three, as scripts/lib/ch-exec.sh does for the hook."""
+    monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", "true")
+
+    settings = _output()["custom_settings"]
+
+    assert (settings["mutations_sync"], settings["alter_sync"], settings["lightweight_deletes_sync"]) == (2, 2, 2)
+
+
+def test_a_single_node_leaves_the_mutation_wait_to_the_adapter() -> None:
+    """On one node every value above 0 waits for that node; the setting is a
+    cluster statement and appears only where the flag is on."""
+    assert "custom_settings" not in _output()
 
 
 def test_a_clustered_install_tells_the_adapter_its_databases_are_replicated(monkeypatch) -> None:

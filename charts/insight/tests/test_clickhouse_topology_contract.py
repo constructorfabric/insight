@@ -27,6 +27,7 @@ CONSUMERS = [
     ("templates/platform-config.yaml", ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME")),
     ("templates/clickhouse-databases-job.yaml", ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME")),
     ("templates/clickhouse-migrate-job.yaml", ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME")),
+    ("templates/clickhouse-field-value-map-job.yaml", ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME")),
     (
         "templates/ingestion/reconcile-cron.yaml",
         ("RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE", "RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME"),
@@ -56,8 +57,9 @@ def _consumer_id(value: str | tuple[str, ...]) -> str:
     return value if isinstance(value, str) else value[0]
 
 
-#: The v3-core Secret only renders for an install that deploys the service.
-BASE = ["--set", "global.insightV3Core.deploy=true"]
+#: The v3-core Secret only renders for an install that deploys the service, and
+#: the field-value-map Job only for one that enables the seed.
+BASE = ["--set", "global.insightV3Core.deploy=true", "--set", "clickhouse.fieldValueMap.enabled=true"]
 CLUSTERED = [*BASE, "--set", "clickhouse.clusterMode=true", "--set", "clickhouse.clusterName=insight_cluster"]
 
 

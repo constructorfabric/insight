@@ -7,20 +7,23 @@ assertions it runs on every node afterwards (#3555, epic #2010).
 RIG_TOPOLOGY=standalone src/ingestion/tests/cluster-rig/run.sh
 RIG_TOPOLOGY=replicated src/ingestion/tests/cluster-rig/run.sh
 RIG_TOPOLOGY=replicated BASE_SHA=<commit> src/ingestion/tests/cluster-rig/warm-upgrade.sh
+RIG_TOPOLOGY=replicated src/ingestion/tests/cluster-rig/convert.sh
 ```
 
 Needs Docker, `helm`, `jq`, `yq`, `curl`, a `python3.12` and `cargo`.
-`RIG_DBT_VENV=<venv>` reuses a venv with the pinned dbt instead of building
-one; `RIG_SERVICES_BIN=<dir>` reuses built `identity-resolution` and
+`RIG_DBT_VENV=<venv>` reuses a venv with the pinned dbt and pytest instead of
+building one; `RIG_SERVICES_BIN=<dir>` reuses built `identity-resolution` and
 `insight-v3-core` binaries instead of building them. `RIG_KEEP=1` leaves the
 containers up.
 
 The lane runs in the merge queue, not on the pull request: its `Cluster rig`
 check is required on `main`, every leg is skipped on a pull request, and a
 `changes` job decides from the merge base whether the diff touched a creator
-of a warehouse relation. Three legs, each on a machine of its own: `run.sh`
-on the standalone and on the replicated warehouse, and `warm-upgrade.sh` on
-the replicated one.
+of a warehouse relation. Four legs, each on a machine of its own: `run.sh`
+on the standalone and on the replicated warehouse, and `warm-upgrade.sh` and
+`convert.sh` on the replicated one. The creators every leg drives — the
+deploy hook, the destination, dbt — are [`creators.sh`](creators.sh); the
+two services are [`services.sh`](services.sh).
 
 ## The deploy hook
 
@@ -73,28 +76,36 @@ A MariaDB beside the warehouse holds the two services' definitions.
    jira bronze is then dropped — the connector's own models are outside the
    dbt selection below, and a silver class whose only contributor is one of
    them cannot be built with the bronze standing;
-4. the first sync: bronze through the destination, configured by reconcile's
+4. the reconcile sweep against `ingestion_history.sync_events`: its end-to-end
+   cases (`reconcile-connectors/tests/test_sweep_against_clickhouse.py`, a
+   stub mover) run through the proxy under the topology the reconcile
+   CronWorkflow hands the sweep, their fixtures taking the engines and the
+   cluster clause the deploy hook renders; on a cluster [`check.py`](check.py)
+   then reads the query log of every node past a boundary taken before them:
+   every ledger insert confirmed on a quorum, every read sequentially
+   consistent, the identity mutation waited for by every replica;
+5. the first sync: bronze through the destination, configured by reconcile's
    `compose_destination_config.py`, in one write: a probe stream with rows,
    the `github` streams with the records
    [`github_records.py`](github_records.py) emits (a repository, its commits,
    file changes, pull requests and the accounts behind them), and every other
    stream the `github` and `github-directory` connectors discover from the
    fake config in `bootstrap-db/connectors-config.yaml`, empty;
-5. the services, first run ([`services.sh`](services.sh)): identity-resolution
+6. the services, first run ([`services.sh`](services.sh)): identity-resolution
    migrates, its persons log is seeded, and `sync` publishes the log into
    `identity.identity_persons` (no live table yet: the staging is renamed into
    place); insight-v3-core migrates and runs, a dataset is declared, filled by
    eight callers posting at once, paged back whole, and dropped;
-6. `dbt run --select tag:github+ tag:sync:always`, the way the Argo dbt-run
+7. `dbt run --select tag:github+ tag:sync:always`, the way the Argo dbt-run
    step runs it: the profile from `dbt_profiles.py`, the unbuildable models
    excluded;
-7. a snapshot of every table's row count on every node;
-8. the second sync: the same records, extracted later, and the commits
+8. a snapshot of every table's row count on every node;
+9. the second sync: the same records, extracted later, and the commits
    carrying a column the connector did not have before;
-9. the deploy hook and the dbt run once more;
-10. the services, second run: the persons sync swaps behind the live table's
+10. the deploy hook and the dbt run once more;
+11. the services, second run: the persons sync swaps behind the live table's
     watermark; another dataset lives and dies;
-11. the deploys the warehouse must refuse — each fails on its guard, in the
+12. the deploys the warehouse must refuse — each fails on its guard, in the
     words the guard documents (`lib/ch-topology.sh`), and before anything is
     created:
     - on `standalone`: the chart rendered with `clusterMode: true` and a
@@ -110,7 +121,7 @@ A MariaDB beside the warehouse holds the two services' definitions.
       ceiling a coordinated statement waits (`CH_DDL_TASK_TIMEOUT_S`) and `ch1`'s
       relations are exactly what they were. With `ch2` back, the hook deploys
       again;
-12. the assertions.
+13. the assertions.
 
 After each service run, [`check.py`](check.py) reads every node directly:
 `identity.identity_persons` and the dataset's table stand there with the
@@ -136,6 +147,35 @@ renders, so on the replicated warehouse they stand as `Replicated*` tables on
 both nodes. Afterwards `check.py nodes` holds every node to the same
 databases, relations, columns, engines and row counts, with nothing dbt
 staged left behind. The base commit must itself be cluster-aware.
+
+## The conversion
+
+[`convert.sh`](convert.sh) executes the standalone-to-cluster runbook
+([`docs/operations/CLICKHOUSE-CLUSTER-CONVERSION.md`](../../../../docs/operations/CLICKHOUSE-CLUSTER-CONVERSION.md))
+on the replicated warehouse. It first makes a standalone installation on
+`ch1` alone — every creator reaches that node directly with `clusterMode`
+off: the deploy hook, the first sync's bronze, a dbt build, the persons sync,
+and a dataset declared and filled — and snapshots the row counts. Then, in
+order:
+
+1. the deploy hook rendered with `clusterMode: true` through the proxy is
+   refused over the standalone databases, before any DDL;
+2. `convert-database-to-cluster.sh` converts the nine owned databases on
+   `ch1`, in the order the views between them read, then every `bronze_*`
+   database; each is renamed to `standalone_<name>`, recreated `ON CLUSTER`
+   (`Replicated`, or `Atomic` for bronze), its tables recreated with the
+   replicated engines and copied, its views recreated;
+3. the script runs again over all of them and must find nothing to do;
+4. `check.py nodes`: both nodes hold the same databases, relations, columns,
+   engines and row counts;
+5. the cluster-mode deploy hook, the second sync (the added column reaches
+   the converted bronze through the destination's `ALTER ... ON CLUSTER`), a
+   dbt build and the services through the proxy: the persons sync swaps
+   behind the watermark the converted table carries, the dataset declared
+   standalone is read whole from its converted table on every node and
+   dropped, another lives and dies;
+6. the `standalone_*` copies are dropped on `ch1`, and the assertions below
+   hold both nodes to the standalone installation's row counts.
 
 ## Assertions
 

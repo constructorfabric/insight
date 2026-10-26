@@ -26,6 +26,9 @@ SELECT
     source_key,
     entity_type,
     entity_id,
+    account_source_type,
+    account_source_id,
+    account_id,
     metric_date,
     sumIf(ifNull(value, 0), measure_key = 'closed_fixed') AS closed_fixed,
     sumIf(ifNull(value, 0), measure_key = 'closed_duplicate') AS closed_duplicate,
@@ -33,5 +36,5 @@ SELECT
     sumIf(ifNull(value, 0), measure_key = 'tasks_closed') AS tasks_closed
 FROM {{ ref('task_metric_observations') }}
 WHERE measure_key IN ('closed_fixed', 'closed_duplicate', 'closed_wontfix', 'tasks_closed')
-GROUP BY tenant_id, source_key, entity_type, entity_id, metric_date
+GROUP BY tenant_id, source_key, entity_type, entity_id, account_source_type, account_source_id, account_id, metric_date
 HAVING closed_fixed + closed_duplicate + closed_wontfix > tasks_closed

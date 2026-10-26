@@ -165,6 +165,39 @@ async fn a_statement_the_warehouse_stopped_waiting_on_is_a_timeout() {
     );
 }
 
+/// A warehouse that takes every connection and never says a word back.
+async fn silent_warehouse() -> Result<String, std::io::Error> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((connection, _)) = listener.accept().await {
+            held.push(connection);
+        }
+    });
+
+    Ok(format!("http://{address}"))
+}
+
+/// A warehouse that never answers is cut off by this service's own bound,
+/// and reported the same way: the statement may still land.
+#[tokio::test]
+async fn a_statement_the_warehouse_never_answers_ends_at_this_services_bound() -> R {
+    let tables = DatasetTables::new(insight_clickhouse::Client::new(
+        insight_clickhouse::Config::new(silent_warehouse().await?, "insight_datasets"),
+    ))
+    .with_ddl_timeout(Duration::from_millis(10));
+
+    let cut_off = tables.drop_table("ds_commits_1").await;
+
+    assert!(
+        matches!(cut_off, Err(DatasetTableError::Timeout)),
+        "{cut_off:?}"
+    );
+
+    Ok(())
+}
+
 /// A client that dials nothing: these pin the statement `provision` would
 /// send, which is decided before any of it reaches a server.
 fn tables_on(database: &str, topology: insight_clickhouse::Topology) -> DatasetTables {

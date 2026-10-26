@@ -57,6 +57,8 @@ with a real `valid_from`, and this loader never touches it.
 Required env (set by the Hook Job):
     CLICKHOUSE_URL       e.g. http://ch-host:8123
     CLICKHOUSE_USER, CLICKHOUSE_PASSWORD
+    CLICKHOUSE_CLUSTER_MODE  true -> every request carries the session a replicated
+                             warehouse needs; unset or false -> the standalone request
 Options:
     FIELD_VALUE_MAP_DIR          directory of *.tsv (default /config/field-value-map)
     FIELD_VALUE_MAP_RECORDED_BY  `recorded_by` stamp (default gitops)
@@ -69,6 +71,7 @@ import csv
 import io
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -586,13 +589,33 @@ def _table_exists(fetch_rows: Callable[[str], Sequence[Sequence[str]]], table: s
     return bool(rows) and rows[0][0] == "1"
 
 
+#: The session a replicated warehouse needs, as `lib/ch-exec.sh` carries it: the
+#: anti-join reads the stored keys through a load balancer that may answer from
+#: a replica still fetching, and a re-run would then write a decision a second
+#: time. INVARIANT: a sequential read means nothing while quorum inserts run in
+#: parallel, so the pair travels with the third.
+CLUSTER_SESSION_SETTINGS: dict[str, str] = {
+    "insert_quorum": "auto",
+    "insert_quorum_parallel": "0",
+    "select_sequential_consistency": "1",
+}
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def cluster_mode() -> bool:
+    """Whether the warehouse replicates, the way `ch-exec.sh` reads the same flag."""
+    return (os.environ.get("CLICKHOUSE_CLUSTER_MODE") or "").strip().lower() in _TRUTHY
+
+
 def _http_client(
     *, urlopen: Callable[..., object] = urllib.request.urlopen
 ) -> tuple[Callable[[str], None], Callable[[str], Sequence[Sequence[str]]]]:
     """Executors over the ClickHouse HTTP interface, mirroring lib/ch-exec.sh.
 
     ClickHouse is always external to the release, so HTTP is the only path. The
-    password travels in a header (not argv) exactly as ch-exec.sh does.
+    password travels in a header (not argv) exactly as ch-exec.sh does, and on a
+    cluster every request carries the session settings as URL parameters.
 
     Every request carries a finite timeout: this runs as a post-upgrade hook, and
     a stalled endpoint would otherwise hold the release open until Helm's own
@@ -610,6 +633,8 @@ def _http_client(
         raise SystemExit(f"{', '.join(missing)} must be set")
 
     endpoint = url.rstrip("/") + "/"
+    if cluster_mode():
+        endpoint += "?" + urllib.parse.urlencode(CLUSTER_SESSION_SETTINGS)
     timeout = _timeout()
 
     def _post(sql: str) -> str:

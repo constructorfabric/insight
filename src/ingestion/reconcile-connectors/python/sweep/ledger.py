@@ -1,7 +1,8 @@
 """Reading from and writing to the sync ledger over ClickHouse's HTTP interface.
 
-Credentials come from the `RECONCILE_DEST_CLICKHOUSE_*` env the reconcile loop
-already requires for the Bronze destination, so the sweep adds no chart value.
+Credentials and the warehouse topology come from the `RECONCILE_DEST_CLICKHOUSE_*`
+env the reconcile loop already requires for the Bronze destination, so the sweep
+adds no chart value.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from . import status as vocab
@@ -41,6 +42,32 @@ _MUTATION_TIMEOUT_SECS = 300
 #: whole retention window.
 LOOKBACK_DAYS = 7
 
+#: The session a replicated warehouse needs, carried as URL parameters on every
+#: request the way `scripts/lib/ch-exec.sh` carries them. A tick reads back what
+#: the tick before it wrote, through a load balancer that may answer from a
+#: replica still fetching: without a quorum on the write and sequential
+#: consistency on the read, the watermark and the closed-job set come from the
+#: lagging replica, and a job is recorded again -- the table is not Replacing --
+#: or the identity mutation re-issued. INVARIANT: a sequential read means nothing
+#: while quorum inserts run in parallel, so the pair travels with the third.
+CLUSTER_SESSION_SETTINGS: dict[str, str] = {
+    "insert_quorum": "auto",
+    "insert_quorum_parallel": "0",
+    "select_sequential_consistency": "1",
+}
+
+#: How far a synchronous mutation waits: for the replica it reached, or for
+#: every replica -- a tick that waited for one would find the rows still
+#: unidentified on the other and issue the mutation again.
+_MUTATION_WAIT_STANDALONE = "1"
+_MUTATION_WAIT_CLUSTER = "2"
+
+#: A replica that cannot answer the catalogue read is left out of it: the rows
+#: are on every replica, and any one that answers says whether they exist.
+_SKIP_UNAVAILABLE_REPLICAS = "SETTINGS skip_unavailable_shards = 1"
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
 #: `LowCardinality(String)` and quoted into SQL below, so the vocabulary is
 #: rendered rather than bound. Everything here is a literal from this module.
 _TERMINAL_LIST = ", ".join(f"'{word}'" for word in sorted(vocab.TERMINAL_STATUSES))
@@ -53,9 +80,7 @@ _TERMINAL_LIST = ", ".join(f"'{word}'" for word in sorted(vocab.TERMINAL_STATUSE
 #: is neither searched for again — the marker would otherwise be written once a
 #: tick for ever — nor allowed to drag the read start back to its own creation
 #: time.
-_OPEN_EXCLUDED = ", ".join(
-    f"'{word}'" for word in sorted({*vocab.TERMINAL_STATUSES, vocab.UNKNOWN})
-)
+_OPEN_EXCLUDED = ", ".join(f"'{word}'" for word in sorted({*vocab.TERMINAL_STATUSES, vocab.UNKNOWN}))
 
 
 class LedgerError(RuntimeError):
@@ -63,10 +88,14 @@ class LedgerError(RuntimeError):
 
 
 class Ledger:
-    def __init__(self, url: str, user: str, password: str) -> None:
+    def __init__(self, url: str, user: str, password: str, *, cluster: str | None = None) -> None:
+        """`cluster` names the cluster of a replicated warehouse; None is a single node."""
         self._url = url.rstrip("/")
         self._user = user
         self._password = password
+        self._cluster = cluster
+        self._session = dict(CLUSTER_SESSION_SETTINGS) if cluster is not None else {}
+        self._mutation_wait = _MUTATION_WAIT_CLUSTER if cluster is not None else _MUTATION_WAIT_STANDALONE
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Ledger:
@@ -84,7 +113,9 @@ class Ledger:
         if missing:
             raise LedgerError(f"ClickHouse env incomplete: {', '.join(missing)}")
         proto_key = "RECONCILE_DEST_CLICKHOUSE_PROTOCOL"
-        protocol = source.get(proto_key, "http")  # RULE-DEFAULTS-OK: chart-rendered constant, same fallback the Bronze destination config uses
+        protocol = source.get(
+            proto_key, "http"
+        )  # RULE-DEFAULTS-OK: chart-rendered constant, same fallback the Bronze destination config uses
         # SAFETY: urllib honours `file://`, so the scheme is pinned rather than
         # taken on trust from the environment.
         if protocol not in ("http", "https"):
@@ -95,14 +126,24 @@ class Ledger:
             f"{protocol}://{host}:{port}",
             source["RECONCILE_DEST_CLICKHOUSE_USERNAME"],
             source["RECONCILE_DEST_CLICKHOUSE_PASSWORD"],
+            cluster=_cluster_from_env(source),
         )
 
     def _post(
-        self, body: bytes, query: str | None = None, timeout: int = _TIMEOUT_SECS
+        self,
+        body: bytes,
+        query: str | None = None,
+        timeout: int = _TIMEOUT_SECS,
+        settings: dict[str, str] | None = None,
     ) -> str:
-        url = self._url + "/"
+        # INVARIANT: a single node sends exactly the request it always has; a
+        # cluster adds the session settings, and a statement its own on top.
+        parameters = {**self._session, **(settings or {})}
         if query is not None:
-            url += "?query=" + urllib.parse.quote(query)
+            parameters["query"] = query
+        url = self._url + "/"
+        if parameters:
+            url += "?" + urllib.parse.urlencode(parameters, quote_via=urllib.parse.quote)
         request = urllib.request.Request(url, data=body, method="POST")
         request.add_header("X-ClickHouse-User", self._user)
         request.add_header("X-ClickHouse-Key", self._password)
@@ -236,21 +277,37 @@ class Ledger:
         """
         if not _IDENTIFIER.match(namespace):
             raise LedgerError(f"unusable relation name: {namespace!r}")
-        tables = self._select(
-            "SELECT name FROM system.tables "
-            f"WHERE database = {_quote(namespace)} AND total_rows > 0 "
-            "ORDER BY total_rows DESC LIMIT 1"
-        )
+        if self._cluster is None:
+            tables = self._select(
+                "SELECT name FROM system.tables "
+                f"WHERE database = {_quote(namespace)} AND total_rows > 0 "
+                "ORDER BY total_rows DESC LIMIT 1"
+            )
+        else:
+            # `total_rows` is what the answering replica holds, and one still
+            # fetching holds nothing yet: ask every replica, and let any that
+            # has the rows say so.
+            tables = self._select(
+                f"SELECT name FROM clusterAllReplicas({_quote(self._cluster)}, system.tables) "
+                f"WHERE database = {_quote(namespace)} AND total_rows > 0 "
+                f"GROUP BY name ORDER BY max(total_rows) DESC LIMIT 1 {_SKIP_UNAVAILABLE_REPLICAS}"
+            )
         if not tables:
             return None
         table = str(tables[0]["name"])
         if not _IDENTIFIER.match(table):
             raise LedgerError(f"unusable relation name: {table!r}")
 
-        # Two rows are enough to know there is more than one answer.
-        found = self._select(
-            f"SELECT DISTINCT tenant_id, source_id FROM {namespace}.{table} LIMIT 2"
-        )
+        # Two rows are enough to know there is more than one answer. Bronze is
+        # written without a quorum, so on a cluster the rows are read from every
+        # replica too: one still fetching could answer with half of them.
+        if self._cluster is None:
+            found = self._select(f"SELECT DISTINCT tenant_id, source_id FROM {namespace}.{table} LIMIT 2")
+        else:
+            found = self._select(
+                f"SELECT tenant_id, source_id FROM clusterAllReplicas({_quote(self._cluster)}, {namespace}.{table}) "
+                f"GROUP BY tenant_id, source_id LIMIT 2 {_SKIP_UNAVAILABLE_REPLICAS}"
+            )
         if len(found) != 1:
             return None
         tenant_id = str(found[0].get("tenant_id") or "")
@@ -269,6 +326,10 @@ class Ledger:
         The predicate is the same one that found the rows, so a second run after
         the first succeeded matches nothing — and an identity already recorded is
         never overwritten by one resolved later.
+
+        The wait rides the request rather than a `SETTINGS` clause: a clause in
+        the statement would override the session's, and on a cluster the wait
+        is for every replica.
         """
         self._post(
             (
@@ -276,10 +337,10 @@ class Ledger:
                 f"UPDATE tenant_id = {_quote(instance.tenant_id)}, "
                 f"source_id = {_quote(instance.source_id)} "
                 f"WHERE connector = {_quote(instance.connector)} "
-                "AND (tenant_id = '' OR source_id = '') "
-                "SETTINGS mutations_sync = 1"
+                "AND (tenant_id = '' OR source_id = '')"
             ).encode(),
             timeout=_MUTATION_TIMEOUT_SECS,
+            settings={"mutations_sync": self._mutation_wait},
         )
 
     def insert(self, rows: Iterable[dict[str, Any]]) -> int:
@@ -289,6 +350,26 @@ class Ledger:
             return 0
         self._post(payload.encode(), query=f"INSERT INTO {TABLE} FORMAT JSONEachRow")
         return payload.count("\n") + 1
+
+
+def _cluster_from_env(source: Mapping[str, str]) -> str | None:
+    """The cluster the reconcile loop was handed, or None for a single node.
+
+    The same pair the Bronze destination is configured from, read the way
+    `ch-exec.sh` reads its flag. The chart refuses the flag without a name, and
+    the name is spliced into `clusterAllReplicas(...)`, so what reaches SQL is
+    checked to be an identifier here rather than trusted.
+    """
+    flag = (source.get("RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE") or "").strip().lower()
+    if flag not in _TRUTHY:
+        return None
+    name = (source.get("RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME") or "").strip()
+    if not _IDENTIFIER.match(name):
+        raise LedgerError(
+            "RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE is on, so RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME "
+            f"must name the cluster as a bare identifier, not {name!r}"
+        )
+    return name
 
 
 def _quote(value: str) -> str:
