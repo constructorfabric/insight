@@ -7,9 +7,11 @@ use crate::domain::dashboards::{DashboardCatalogue as _, DashboardQuery};
 use crate::domain::definition::{
     Change, DefinitionId, DefinitionKind, DefinitionLabel, Definitions, Page,
 };
-use crate::domain::folders::{FolderFilter, FolderId, FolderName, Folders};
+use crate::domain::folders::{
+    FolderError, FolderFilter, FolderId, FolderName, Folders, MAX_FOLDERS,
+};
 use crate::domain::pins::Pins;
-use crate::domain::sharing::{Grants, Handover, Shared};
+use crate::domain::sharing::{Granting, Grants, Handover, Shared, Withdrawal};
 use crate::domain::tags::{TagName, TagSet, Tags};
 use crate::live_mariadb::{database_or_skip, store_or_skip, unique};
 use crate::store::definitions::MariaDefinitions;
@@ -55,11 +57,34 @@ async fn owned(store: &MariaDefinitions, id: &DefinitionId, owner: Owner) {
         .unwrap_or_else(|error| panic!("{error}"));
 }
 
+async fn owner_of(store: &MariaDefinitions, shared: Shared<'_>) -> PersonId {
+    let anyone = Caller::administrator(a_person());
+    let owner = match shared {
+        Shared::Dashboard(id) => store
+            .standing(id, anyone)
+            .await
+            .unwrap_or_else(|error| panic!("{error}"))
+            .map(|standing| standing.owner),
+        Shared::Folder(id) => store
+            .held_folder(id, anyone)
+            .await
+            .unwrap_or_else(|error| panic!("{error}"))
+            .map(|held| held.folder.owner),
+    };
+
+    owner
+        .and_then(Owner::person)
+        .unwrap_or_else(|| panic!("an owned thing is granted"))
+}
+
 async fn granted(store: &MariaDefinitions, shared: Shared<'_>, grantee: Grantee, level: Level) {
-    store
-        .grant(shared, grantee, level, a_person())
+    let by = owner_of(store, shared).await;
+    let granting = store
+        .grant(shared, grantee, level, by)
         .await
-        .unwrap_or_else(|error| panic!("{error}"));
+        .unwrap_or_else(|error| panic!("{error:?}"));
+
+    assert_eq!(granting, Granting::Done, "the owner grants it");
 }
 
 async fn folder_of(store: &MariaDefinitions, owner: PersonId) -> FolderId {
@@ -320,7 +345,7 @@ async fn a_withdrawal_keeps_pins_and_entries_and_demotes_and_a_transfer_moves_on
         .unwrap_or_else(|error| panic!("{error}"));
 
     store
-        .withdraw(shared, Grantee::Person(editor))
+        .withdraw(shared, Grantee::Person(editor), owner)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     let pins = store
@@ -341,7 +366,7 @@ async fn a_withdrawal_keeps_pins_and_entries_and_demotes_and_a_transfer_moves_on
     let editor_entry = carries(&db, theirs, &board).await;
     let owner_entry = carries(&db, mine, &board).await;
     let still_filed = store
-        .remove_entry(theirs, &board)
+        .remove_entry(theirs, &board, Caller::administrator(owner))
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     let moved = store
@@ -461,4 +486,246 @@ async fn a_transfer_moves_the_tags_into_the_new_owners_scope_under_their_spellin
         "the new owner's spelling should win once the tag is in their scope"
     );
     assert_eq!(left_in_former_scope, 0, "the former owner's tag is pruned");
+}
+
+#[derive(Debug, FromQueryResult)]
+struct PlacerRow {
+    placed_by: Option<String>,
+}
+
+async fn placer(
+    db: &sea_orm::DatabaseConnection,
+    folder: FolderId,
+    board: &DefinitionId,
+) -> Option<String> {
+    PlacerRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::MySql,
+        "SELECT placed_by FROM folder_entries WHERE folder_id = ? AND dashboard = ?",
+        [folder.to_string().into(), board.as_str().into()],
+    ))
+    .one(db)
+    .await
+    .unwrap_or_else(|error| panic!("{error}"))
+    .and_then(|row| row.placed_by)
+}
+
+#[tokio::test]
+async fn a_grant_change_lands_only_while_its_maker_stands_to_share_it() {
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let (owner, editor, member) = (a_person(), a_person(), a_person());
+    let board = dashboard(&unique("standing"));
+    owned(&store, &board, Owner::Person(owner)).await;
+    let shared = Shared::Dashboard(&board);
+    granted(&store, shared, Grantee::Person(editor), Level::Viewer).await;
+
+    let as_viewer = store
+        .grant(shared, Grantee::Person(member), Level::Viewer, editor)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let withdrawn_as_viewer = store
+        .withdraw(shared, Grantee::Person(editor), editor)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let to_owner = store
+        .grant(shared, Grantee::Person(owner), Level::Viewer, owner)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    granted(&store, shared, Grantee::Person(editor), Level::Editor).await;
+    let as_editor = store
+        .grant(shared, Grantee::Person(member), Level::Viewer, editor)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let own_withdrawn = store
+        .withdraw(shared, Grantee::Person(editor), editor)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let after_withdrawal = store
+        .withdraw(shared, Grantee::Person(member), editor)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let grants = store
+        .grants_of(shared)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let missing = store
+        .grant(
+            Shared::Dashboard(&dashboard(&unique("missing"))),
+            Grantee::Everyone,
+            Level::Viewer,
+            owner,
+        )
+        .await;
+
+    remove(&store, &[&board]).await;
+    assert_eq!(as_viewer, Granting::NotSharer);
+    assert_eq!(withdrawn_as_viewer, Withdrawal::NotSharer);
+    assert_eq!(to_owner, Granting::ToOwner);
+    assert_eq!(as_editor, Granting::Done);
+    assert_eq!(own_withdrawn, Withdrawal::Done);
+    assert_eq!(after_withdrawal, Withdrawal::NotSharer);
+    assert_eq!(grants.len(), 1, "{grants:?}");
+    assert_eq!(grants[0].grantee, Grantee::Person(member));
+    assert!(missing.is_err(), "{missing:?}");
+}
+
+#[tokio::test]
+async fn an_entry_carries_only_while_its_placer_qualifies_and_answers_what_it_stored() {
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let Some(db) = database_or_skip().await else {
+        return;
+    };
+    let (owner, viewer) = (a_person(), a_person());
+    let board = dashboard(&unique("placed"));
+    owned(&store, &board, Owner::Person(owner)).await;
+    let shared = Shared::Dashboard(&board);
+    granted(&store, shared, Grantee::Person(viewer), Level::Viewer).await;
+    let theirs = folder_of(&store, viewer).await;
+    let as_viewer = Caller::administrator(viewer);
+
+    let asked_to_carry = store
+        .add_entry(theirs, &board, as_viewer, Entry::Carrying)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let carries_before = carries(&db, theirs, &board).await;
+    let by_owner = store
+        .add_entry(
+            theirs,
+            &board,
+            Caller::administrator(owner),
+            Entry::Carrying,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let placed_by_owner = placer(&db, theirs, &board).await;
+    let filed_again = store
+        .add_entry(theirs, &board, as_viewer, Entry::Filing)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let placed_after = placer(&db, theirs, &board).await;
+
+    remove(&store, &[&board]).await;
+    remove_folders(&store, &[theirs]).await;
+    assert_eq!(asked_to_carry, Entry::Filing);
+    assert_eq!(carries_before, 0);
+    assert_eq!(by_owner, Entry::Carrying);
+    assert_eq!(placed_by_owner, Some(owner.to_string()));
+    assert_eq!(filed_again, Entry::Carrying, "a filing never downgrades");
+    assert_eq!(placed_after, Some(owner.to_string()));
+}
+
+#[tokio::test]
+async fn an_owner_s_folders_stop_at_the_cap_however_creations_and_hand_overs_race() {
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let (full, former, member) = (a_person(), a_person(), a_person());
+    let mut made = Vec::with_capacity(MAX_FOLDERS);
+    for _ in 1..MAX_FOLDERS {
+        made.push(folder_of(&store, full).await);
+    }
+    let left = folder_of(&store, former).await;
+    granted(
+        &store,
+        Shared::Folder(left),
+        Grantee::Person(member),
+        Level::Viewer,
+    )
+    .await;
+    let name = || FolderName::parse("Raced").unwrap_or_else(|error| panic!("{error}"));
+
+    let (first, second, handed) = tokio::join!(
+        store.create_folder(full, name()),
+        store.create_folder(full, name()),
+        store.transfer_folder(left, former, full)
+    );
+    let handed = handed.unwrap_or_else(|error| panic!("{error}"));
+
+    let created = [first, second];
+    made.extend(
+        created
+            .iter()
+            .filter_map(|made| made.as_ref().ok().map(|folder| folder.id)),
+    );
+    made.push(left);
+    remove_folders(&store, &made).await;
+    let landed = created.iter().filter(|made| made.is_ok()).count()
+        + usize::from(handed == Handover::Handed);
+    assert_eq!(landed, 1, "{created:?} {handed:?}");
+    for refused in created.iter().filter(|made| made.is_err()) {
+        assert!(matches!(refused, Err(FolderError::TooMany)), "{refused:?}");
+    }
+    assert!(
+        matches!(handed, Handover::Handed | Handover::RecipientFull),
+        "{handed:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_grant_to_the_heir_racing_a_transfer_never_leaves_the_new_owner_a_grant() {
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let (former, editor, heir) = (a_person(), a_person(), a_person());
+    let board = dashboard(&unique("heir"));
+    owned(&store, &board, Owner::Person(former)).await;
+    let shared = Shared::Dashboard(&board);
+    granted(&store, shared, Grantee::Person(editor), Level::Editor).await;
+
+    let (granting, handed) = tokio::join!(
+        store.grant(shared, Grantee::Person(heir), Level::Viewer, editor),
+        store.transfer(&board, former, heir)
+    );
+    let granting = granting.unwrap_or_else(|error| panic!("{error}"));
+    let handed = handed.unwrap_or_else(|error| panic!("{error}"));
+    let grants = store
+        .grants_of(shared)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    remove(&store, &[&board]).await;
+    assert_eq!(handed, Handover::Handed);
+    assert!(
+        matches!(granting, Granting::Done | Granting::ToOwner),
+        "{granting:?}"
+    );
+    assert!(
+        grants
+            .iter()
+            .all(|grant| grant.grantee != Grantee::Person(heir)),
+        "{grants:?}"
+    );
+}
+
+#[tokio::test]
+async fn grants_on_neighbouring_dashboards_land_side_by_side() {
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let owner = a_person();
+    let stem = unique("neighbour");
+    let boards: Vec<DefinitionId> = (0..8)
+        .map(|index| dashboard(&format!("{stem}_{index}")))
+        .collect();
+    for board in &boards {
+        owned(&store, board, Owner::Person(owner)).await;
+    }
+
+    let granted_all = futures::future::join_all(boards.iter().map(|board| {
+        store.grant(
+            Shared::Dashboard(board),
+            Grantee::Everyone,
+            Level::Viewer,
+            owner,
+        )
+    }))
+    .await;
+
+    remove(&store, &boards.iter().collect::<Vec<_>>()).await;
+    for granting in granted_all {
+        assert!(matches!(granting, Ok(Granting::Done)), "{granting:?}");
+    }
 }

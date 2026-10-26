@@ -343,7 +343,7 @@ async fn a_folder_id_that_names_nothing_is_not_found() {
 }
 
 #[tokio::test]
-async fn a_folder_id_that_is_not_a_uuid_is_refused() {
+async fn a_folder_id_that_is_not_a_uuid_names_no_folder() {
     let harness = Harness::new();
 
     let renamed = harness
@@ -355,8 +355,8 @@ async fn a_folder_id_that_is_not_a_uuid_is_refused() {
         .await;
     let removed = harness.send("DELETE", "/v1/folders/platform", None).await;
 
-    assert_eq!(renamed.status, StatusCode::BAD_REQUEST);
-    assert_eq!(removed.status, StatusCode::BAD_REQUEST);
+    assert_eq!(renamed.status, StatusCode::NOT_FOUND);
+    assert_eq!(removed.status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -475,13 +475,13 @@ async fn moving_a_dashboard_that_is_not_there_is_not_found() {
 }
 
 #[tokio::test]
-async fn moving_into_a_folder_id_that_is_not_a_uuid_is_refused() {
+async fn moving_into_a_folder_id_that_is_not_a_uuid_is_not_found() {
     let harness = Harness::new();
     harness.dashboard("delivery").await;
 
     let moved = harness.file("delivery", "platform").await;
 
-    assert_eq!(moved.status, StatusCode::BAD_REQUEST);
+    assert_eq!(moved.status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

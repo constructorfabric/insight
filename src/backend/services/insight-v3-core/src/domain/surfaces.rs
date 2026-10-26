@@ -544,7 +544,7 @@ pub(crate) struct Holder {
 
 fn refusal(refused: Refused) -> CustomError {
     match refused {
-        Refused::NotEditor | Refused::Ownerless => CustomError::NotEditor,
+        Refused::NotEditor | Refused::Ownerless | Refused::EditorByFolder => CustomError::NotEditor,
         Refused::NotOwner => CustomError::NotOwner,
     }
 }

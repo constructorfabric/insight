@@ -2,6 +2,7 @@
 //! dashboard reads and runs them without reaching the library.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path};
@@ -16,8 +17,13 @@ use super::AppState;
 use super::definitions::custom_error;
 use super::errors::ApiErrors;
 use super::{metric_drilldown, metric_run};
+use crate::domain::access::Caller;
 use crate::domain::definition::{DefinitionId, DefinitionKind};
-use crate::domain::surfaces::{DrawnWidget, Reading};
+use crate::domain::surfaces::{CustomError, DrawnWidget, Reading};
+
+pub(crate) const MAX_CONCURRENT_WIDGET_RUNS: usize = 32;
+const WIDGET_RUN_ACQUIRE_TIMEOUT_SECS: u64 = 2;
+const WIDGET_RUNS_BUSY: &str = "every widget run slot is taken; try again shortly";
 
 #[resource_error("gts.cf.insight.insight_v3_core.dashboard_widgets.v1~")]
 struct DashboardWidgetApiError;
@@ -52,6 +58,72 @@ impl ApiErrors for DashboardWidgetApiError {
 
 /// What a member is told when a widget cannot be drawn; the cause is logged.
 const NOT_DRAWN: &str = "this widget could not be drawn";
+
+const NOT_ON_DASHBOARD: &str = "this widget is not on the dashboard";
+
+fn not_drawn() -> CanonicalError {
+    CanonicalError::internal(NOT_DRAWN).create()
+}
+
+fn readying_error(
+    caller: Caller,
+    dashboard: &DefinitionId,
+    widget: &DefinitionId,
+    error: CustomError,
+) -> CanonicalError {
+    if caller.is_administrator() {
+        return custom_error(error);
+    }
+    if let CustomError::NotFound {
+        kind: DefinitionKind::Dashboard,
+        ..
+    } = error
+    {
+        return custom_error(error);
+    }
+    if let CustomError::NotFound {
+        kind: DefinitionKind::Widget,
+        ..
+    } = error
+    {
+        return DashboardWidgetApiError::not_found(NOT_ON_DASHBOARD)
+            .with_resource("widget")
+            .create();
+    }
+
+    tracing::warn!(
+        %error,
+        dashboard_id = dashboard.as_str(),
+        widget_id = widget.as_str(),
+        "a widget could not be readied for a member"
+    );
+    not_drawn()
+}
+
+async fn widget_run_slot(
+    state: &AppState,
+) -> Result<tokio::sync::OwnedSemaphorePermit, CanonicalError> {
+    let slots = state.widget_run_slots();
+    let waited = tokio::time::timeout(
+        Duration::from_secs(WIDGET_RUN_ACQUIRE_TIMEOUT_SECS),
+        Arc::clone(slots).acquire_owned(),
+    )
+    .await;
+    if let Ok(Ok(permit)) = waited {
+        return Ok(permit);
+    }
+
+    tracing::warn!(
+        capacity = MAX_CONCURRENT_WIDGET_RUNS,
+        "dashboard widget run capacity exhausted"
+    );
+    Err(
+        DashboardWidgetApiError::resource_exhausted(WIDGET_RUNS_BUSY)
+            .with_quota_violation("dashboard widget runs", "concurrency limit reached")
+            .with_quota_violation_retry_after_seconds(WIDGET_RUN_ACQUIRE_TIMEOUT_SECS)
+            .create(),
+    )
+}
 
 fn unidentified() -> CanonicalError {
     DashboardWidgetApiError::permission_denied()
@@ -120,6 +192,7 @@ pub(crate) fn register_routes(
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
+        .error_429(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(run_widget)
@@ -183,8 +256,11 @@ async fn run_widget(
         .surfaces(caller)
         .drawn_metric(&dashboard, &widget, Reading::Drawn)
         .await
-        .map_err(custom_error)?;
+        .map_err(|error| readying_error(caller, &dashboard, &widget, error))?;
 
+    // INVARIANT: the permit lives until the run answers; it is what caps
+    // concurrent widget runs at MAX_CONCURRENT_WIDGET_RUNS.
+    let _permit = widget_run_slot(&state).await?;
     match state.metric_runs().run(&metric, &requested).await {
         Ok(result) => Ok(Json(result).into_response()),
         Err(error) if caller.is_administrator() => Err(metric_run::run_error(error)),
@@ -195,7 +271,7 @@ async fn run_widget(
                 widget_id = widget.as_str(),
                 "a widget drawn for a member failed"
             );
-            Err(CanonicalError::internal(NOT_DRAWN).create())
+            Err(not_drawn())
         }
     }
 }

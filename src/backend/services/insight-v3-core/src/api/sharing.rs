@@ -19,7 +19,9 @@ use utoipa::ToSchema;
 use super::AppState;
 use super::definitions::DefinitionApiError;
 use super::errors::ApiErrors;
-use crate::domain::access::{DASHBOARD_NOT_EDITOR, FOLDER_NOT_EDITOR, Grantee, Level, PersonId};
+use crate::domain::access::{
+    DASHBOARD_NOT_EDITOR, DASHBOARD_NOT_SHARER, FOLDER_NOT_EDITOR, Grantee, Level, PersonId,
+};
 use crate::domain::definition::{DefinitionId, DefinitionKind, MAX_PAGE_LIMIT, Page};
 use crate::domain::folders::FolderId;
 use crate::domain::sharing::{
@@ -113,6 +115,9 @@ fn sharing_error(error: SharingError) -> CanonicalError {
         SharingError::NotEditor => DefinitionApiError::permission_denied()
             .with_reason(DASHBOARD_NOT_EDITOR)
             .create(),
+        SharingError::NotSharer => DefinitionApiError::permission_denied()
+            .with_reason(DASHBOARD_NOT_SHARER)
+            .create(),
         SharingError::FolderNotEditor => DefinitionApiError::permission_denied()
             .with_reason(FOLDER_NOT_EDITOR)
             .create(),
@@ -123,6 +128,7 @@ fn sharing_error(error: SharingError) -> CanonicalError {
         SharingError::FolderUnshared => conflict("grants", detail, "not_shared"),
         SharingError::Moved(_) => conflict("owner", detail, "owner_changed"),
         SharingError::RecipientTagsFull => conflict("to", detail, "too_many_tags"),
+        SharingError::RecipientFoldersFull => conflict("to", detail, "too_many_folders"),
         SharingError::GrantToOwner | SharingError::UnknownPerson(_) => {
             DefinitionApiError::invalid_field("grantee", detail)
         }

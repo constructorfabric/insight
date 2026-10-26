@@ -166,9 +166,18 @@ impl Stored {
             })
     }
 
-    /// Stops each carrying entry of the dashboard whose placer no longer
-    /// qualifies from carrying.
+    /// Whether an entry `person` places now carries, as the store's insert
+    /// reads it: an ownerless dashboard's always does.
+    fn may_carry(&self, dashboard: &str, person: PersonId) -> bool {
+        self.owner_of(dashboard) == Owner::Unowned || self.qualifies(dashboard, person)
+    }
+
+    /// Stops each carrying entry of an owned dashboard whose placer no
+    /// longer qualifies from carrying.
     fn demote(&mut self, dashboard: &str) {
+        if self.owner_of(dashboard) == Owner::Unowned {
+            return;
+        }
         let demoted: Vec<(FolderId, String)> = self
             .entries
             .iter()
@@ -395,14 +404,21 @@ impl MemoryDefinitions {
         viewer: PersonId,
         owner: PersonId,
     ) -> Result<(), DefinitionStoreError> {
-        crate::domain::sharing::Grants::grant(
+        let granting = crate::domain::sharing::Grants::grant(
             self,
             crate::domain::sharing::Shared::Dashboard(dashboard),
             Grantee::Person(viewer),
             Level::Viewer,
             owner,
         )
-        .await
+        .await?;
+        assert_eq!(
+            granting,
+            crate::domain::sharing::Granting::Done,
+            "the owner grants it"
+        );
+
+        Ok(())
     }
 
     /// A folder no one owns, as one from before ownership is.
@@ -699,7 +715,7 @@ impl Folders for MemoryDefinitions {
         dashboard: &DefinitionId,
         caller: Caller,
         entry: Entry,
-    ) -> Result<(), FolderError> {
+    ) -> Result<Entry, FolderError> {
         self.writable()?;
         let mut stored = self.lock();
         if !stored.visible(dashboard.as_str(), caller) {
@@ -711,6 +727,7 @@ impl Folders for MemoryDefinitions {
             return Err(FolderError::FolderNotFound(folder));
         }
 
+        let carrying = entry.carries() && stored.may_carry(dashboard.as_str(), caller.person);
         let kept = stored
             .entries
             .entry((folder, dashboard.as_str().to_owned()))
@@ -718,25 +735,33 @@ impl Folders for MemoryDefinitions {
                 placed_by: Some(caller.person),
                 carries: false,
             });
-        if entry.carries() && !kept.carries {
+        if carrying {
             *kept = KeptEntry {
                 placed_by: Some(caller.person),
                 carries: true,
             };
         }
 
-        Ok(())
+        Ok(if kept.carries {
+            Entry::Carrying
+        } else {
+            Entry::Filing
+        })
     }
 
     async fn remove_entry(
         &self,
         folder: FolderId,
         dashboard: &DefinitionId,
+        caller: Caller,
     ) -> Result<bool, FolderError> {
         self.writable()?;
+        let mut stored = self.lock();
+        if !stored.visible(dashboard.as_str(), caller) {
+            return Ok(false);
+        }
 
-        Ok(self
-            .lock()
+        Ok(stored
             .entries
             .remove(&(folder, dashboard.as_str().to_owned()))
             .is_some())

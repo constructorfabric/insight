@@ -5,6 +5,9 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use super::{Harness, MEMBER, OWNER, STRANGER, VIEWER};
+use crate::domain::definition::{DefinitionId, DefinitionKind};
+
+type R = Result<(), Box<dyn std::error::Error>>;
 
 /// A board drawing one widget over one metric, made by `owner`; answers the
 /// board and the widget.
@@ -187,17 +190,103 @@ async fn a_widget_the_dashboard_does_not_draw_is_not_run_through_it() {
     let (board, _) = drawn_board(&harness, OWNER).await;
     let (_, elsewhere) = drawn_board(&harness, OWNER).await;
     harness.share(OWNER, &board, MEMBER).await;
+    harness.share(OWNER, &board, VIEWER).await;
+    let path = format!("/v1/dashboards/{board}/widgets/{elsewhere}/run");
+
+    let by_member = harness.send(MEMBER, "POST", &path, None).await;
+    let by_administrator = harness.send(VIEWER, "POST", &path, None).await;
+
+    assert_eq!(
+        by_member.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        by_member.body
+    );
+    assert!(
+        !by_member.body.to_string().contains(elsewhere.as_str()),
+        "{}",
+        by_member.body
+    );
+    assert_eq!(
+        by_administrator.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        by_administrator.body
+    );
+}
+
+#[tokio::test]
+async fn a_widget_whose_metric_is_gone_reaches_a_member_without_naming_it() -> R {
+    let harness = Harness::new();
+    let widget = "orphaned_widget";
+    harness
+        .definitions
+        .seed(
+            DefinitionKind::Widget,
+            &DefinitionId::parse(widget)?,
+            &json!({ "type": "table", "metric": "gone_metric", "columns": ["total"] }),
+        )
+        .await?;
+    let board = harness
+        .made(
+            OWNER,
+            "dashboards",
+            "Board",
+            json!({ "title": "Board", "items": [{ "widget": widget }] }),
+        )
+        .await;
+    harness.share(OWNER, &board, MEMBER).await;
+
+    let by_member = harness
+        .send(
+            MEMBER,
+            "POST",
+            &format!("/v1/dashboards/{board}/widgets/{widget}/run"),
+            None,
+        )
+        .await;
+
+    assert_eq!(
+        by_member.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        by_member.body
+    );
+    let said = by_member.body.to_string();
+    for named in ["gone_metric", widget] {
+        assert!(!said.contains(named), "{named} reached the member: {said}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_widget_run_waiting_past_its_turn_is_refused_as_busy() -> R {
+    let harness = Harness::new();
+    let (board, widget) = drawn_board(&harness, OWNER).await;
+    harness.share(OWNER, &board, MEMBER).await;
+    let held = std::sync::Arc::clone(harness.state.widget_run_slots())
+        .acquire_many_owned(u32::try_from(
+            crate::api::dashboard_widgets::MAX_CONCURRENT_WIDGET_RUNS,
+        )?)
+        .await?;
 
     let refused = harness
         .send(
             MEMBER,
             "POST",
-            &format!("/v1/dashboards/{board}/widgets/{elsewhere}/run"),
+            &format!("/v1/dashboards/{board}/widgets/{widget}/run"),
             None,
         )
         .await;
+    drop(held);
 
-    assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.body);
+    assert_eq!(
+        refused.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        refused.body
+    );
+    Ok(())
 }
 
 #[tokio::test]

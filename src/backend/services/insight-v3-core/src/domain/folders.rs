@@ -166,7 +166,7 @@ impl From<sea_orm::DbErr> for FolderError {
 impl From<Refused> for FolderError {
     fn from(refused: Refused) -> Self {
         match refused {
-            Refused::NotEditor | Refused::Ownerless => Self::NotEditor,
+            Refused::NotEditor | Refused::Ownerless | Refused::EditorByFolder => Self::NotEditor,
             Refused::NotOwner => Self::NotOwner,
         }
     }
@@ -204,24 +204,31 @@ pub(crate) trait Folders: Send + Sync + fmt::Debug {
         caller: Caller,
     ) -> Result<Vec<Folder>, FolderError>;
 
-    /// Puts the dashboard in the folder as `caller` places it.
+    /// Puts the dashboard in the folder as `caller` places it, answering
+    /// what the stored entry carries.
     ///
     /// INVARIANT: lands only on a dashboard `caller` sees as the row is
-    /// written, so an entry cannot rely on a grant withdrawn meanwhile. An
-    /// entry already there keeps carrying once it does.
+    /// written, and carries only while `caller` owns it or holds an editor
+    /// grant on it, to them or to everyone, so an entry cannot rely on a
+    /// grant withdrawn meanwhile. A carrying one makes the entry already
+    /// there carry as `caller`'s; a filing one changes nothing of it.
     async fn add_entry(
         &self,
         folder: FolderId,
         dashboard: &DefinitionId,
         caller: Caller,
         entry: Entry,
-    ) -> Result<(), FolderError>;
+    ) -> Result<Entry, FolderError>;
 
     /// Takes the dashboard out of the folder, reporting whether it was in.
+    ///
+    /// INVARIANT: removes nothing unless `caller` sees the dashboard as the
+    /// row goes.
     async fn remove_entry(
         &self,
         folder: FolderId,
         dashboard: &DefinitionId,
+        caller: Caller,
     ) -> Result<bool, FolderError>;
 }
 
@@ -278,6 +285,7 @@ pub(crate) async fn delete(
 
 /// Puts a dashboard the caller sees in a folder they may arrange: carrying
 /// where they own it or hold an editor grant on it, filing otherwise.
+/// Answers what the stored entry carries.
 pub(crate) async fn add(
     store: &dyn DefinitionStore,
     caller: Caller,
@@ -291,8 +299,9 @@ pub(crate) async fn add(
         .ok_or_else(|| FolderError::DashboardNotFound(dashboard.as_str().to_owned()))?;
     shelved(seen.access, seen_folder.access).map_err(FolderError::WrongShelf)?;
 
-    let entry = seen.entry;
-    store.add_entry(folder, dashboard, caller, entry).await?;
+    let entry = store
+        .add_entry(folder, dashboard, caller, seen.entry)
+        .await?;
     tracing::info!(
         actor_person_id = %caller.person,
         folder_id = %folder,
@@ -304,9 +313,8 @@ pub(crate) async fn add(
     Ok(entry)
 }
 
-/// Takes a dashboard out of a folder the caller may arrange. An entry goes
-/// whether or not they still see its dashboard; without one, a dashboard
-/// they cannot see is not found.
+/// Takes a dashboard the caller sees out of a folder they may arrange; one
+/// they cannot see is not found, and its entry stays.
 pub(crate) async fn remove(
     store: &dyn DefinitionStore,
     caller: Caller,
@@ -314,8 +322,12 @@ pub(crate) async fn remove(
     dashboard: &DefinitionId,
 ) -> Result<(), FolderError> {
     seen_folder(store, caller, folder).await?.access.arrange()?;
+    let unseen = || FolderError::DashboardNotFound(dashboard.as_str().to_owned());
+    if sight(store, dashboard, caller).await?.is_none() {
+        return Err(unseen());
+    }
 
-    if store.remove_entry(folder, dashboard).await? {
+    if store.remove_entry(folder, dashboard, caller).await? {
         tracing::info!(
             actor_person_id = %caller.person,
             folder_id = %folder,
@@ -325,9 +337,7 @@ pub(crate) async fn remove(
         return Ok(());
     }
     if sight(store, dashboard, caller).await?.is_none() {
-        return Err(FolderError::DashboardNotFound(
-            dashboard.as_str().to_owned(),
-        ));
+        return Err(unseen());
     }
 
     Ok(())

@@ -5,7 +5,9 @@ use std::fmt;
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::access::{Access, Caller, DashboardStanding, Entry, Owner, access};
+use crate::domain::access::{
+    Access, Caller, DashboardStanding, Entry, Level, Owner, Refused, access,
+};
 use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionStoreError, Page};
 use crate::domain::folders::{FolderError, FolderFilter};
 use crate::domain::tags::{TagError, TagFilter};
@@ -17,6 +19,8 @@ pub(crate) struct Seen {
     pub(crate) access: Access,
     /// What an entry the caller adds now carries.
     pub(crate) entry: Entry,
+    /// The strongest of its grants to the caller or to everyone.
+    granted: Option<Level>,
 }
 
 impl Seen {
@@ -27,7 +31,13 @@ impl Seen {
             owner: standing.owner,
             access,
             entry: access.entry(standing.granted),
+            granted: standing.granted,
         })
+    }
+
+    /// Whether the caller may list, add, change and withdraw its grants.
+    pub(crate) fn share(&self) -> Result<(), Refused> {
+        self.access.share(self.granted)
     }
 }
 

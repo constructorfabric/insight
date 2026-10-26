@@ -6,7 +6,7 @@ use super::*;
 use crate::domain::access::{Access, FolderAccess};
 use crate::domain::dashboards::{DashboardCatalogue as _, DashboardPage, DashboardQuery, Owned};
 use crate::domain::folders::{FolderError, FolderFilter, FolderName, Folders};
-use crate::domain::sharing::{Grants as _, Shared};
+use crate::domain::sharing::{Granting, Grants as _, Shared, Withdrawal};
 
 type R = Result<(), Box<dyn Error>>;
 
@@ -67,7 +67,20 @@ async fn with_boards(names: &[&str]) -> MemoryDefinitions {
 }
 
 async fn grant(store: &MemoryDefinitions, shared: Shared<'_>, grantee: Grantee, level: Level) -> R {
-    store.grant(shared, grantee, level, me()).await?;
+    let anyone = admin(me());
+    let owner = match shared {
+        Shared::Dashboard(id) => store.standing(id, anyone).await?.map(|held| held.owner),
+        Shared::Folder(id) => store
+            .held_folder(id, anyone)
+            .await?
+            .map(|held| held.folder.owner),
+    };
+    let by = owner
+        .and_then(Owner::person)
+        .ok_or("an owned thing is granted")?;
+
+    let granting = store.grant(shared, grantee, level, by).await?;
+    assert_eq!(granting, Granting::Done, "the owner grants it");
     Ok(())
 }
 
@@ -328,6 +341,7 @@ async fn withdrawing_an_editor_s_grant_stops_their_entry_carrying() -> R {
         .withdraw(
             Shared::Dashboard(&name("delivery")),
             Grantee::Person(editor),
+            me(),
         )
         .await?;
 
@@ -651,7 +665,9 @@ async fn withdrawing_a_grant_hides_pins_and_entries_and_granting_again_shows_the
     crate::domain::folders::add(&store, caller, personal.id, &name("delivery")).await?;
     store.pin(caller, &name("delivery")).await?;
 
-    store.withdraw(shared, Grantee::Person(a_member())).await?;
+    store
+        .withdraw(shared, Grantee::Person(a_member()), someone_else())
+        .await?;
     let hidden_pins = store.pins_of(caller).await?;
     let hidden_count = counts(&store.list_folders(caller).await?);
     grant(&store, shared, Grantee::Person(a_member()), Level::Viewer).await?;
@@ -1034,5 +1050,52 @@ async fn a_created_definition_is_stamped_and_a_removed_one_is_not() -> R {
 
     assert!(created.is_some());
     assert_eq!((removed, never), (None, None));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_carrying_entry_asked_by_one_who_does_not_qualify_lands_as_a_filing() -> R {
+    let store = with_boards(&["delivery"]).await;
+    let viewer = someone_else();
+    grant(
+        &store,
+        Shared::Dashboard(&name("delivery")),
+        Grantee::Person(viewer),
+        Level::Viewer,
+    )
+    .await?;
+    let theirs = store.create_folder(viewer, folder_name("Theirs")).await?;
+
+    let stored = store
+        .add_entry(theirs.id, &name("delivery"), admin(viewer), Entry::Carrying)
+        .await?;
+
+    assert_eq!(stored, Entry::Filing);
+    assert_eq!(store.carries(theirs.id, &name("delivery")), Some(false));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_grant_change_lands_only_while_its_maker_stands_to_share_it() -> R {
+    let store = with_boards(&["delivery"]).await;
+    let board = name("delivery");
+    let shared = Shared::Dashboard(&board);
+    let viewer = someone_else();
+    grant(&store, shared, Grantee::Person(viewer), Level::Viewer).await?;
+
+    let granted = store
+        .grant(shared, Grantee::Person(a_member()), Level::Viewer, viewer)
+        .await?;
+    let withdrawn = store
+        .withdraw(shared, Grantee::Person(viewer), viewer)
+        .await?;
+    let to_owner = store
+        .grant(shared, Grantee::Person(me()), Level::Viewer, me())
+        .await?;
+
+    assert_eq!(granted, Granting::NotSharer);
+    assert_eq!(withdrawn, Withdrawal::NotSharer);
+    assert_eq!(to_owner, Granting::ToOwner);
+    assert_eq!(store.grants_of(shared).await?.len(), 1);
     Ok(())
 }

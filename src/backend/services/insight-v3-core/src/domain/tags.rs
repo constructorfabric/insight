@@ -156,7 +156,9 @@ pub(crate) async fn retag(
         .await?
         .ok_or_else(|| TagError::DashboardNotFound(dashboard.as_str().to_owned()))?;
     seen.access.change().map_err(|refused| match refused {
-        Refused::NotEditor | Refused::NotOwner | Refused::Ownerless => TagError::NotEditor,
+        Refused::NotEditor | Refused::NotOwner | Refused::Ownerless | Refused::EditorByFolder => {
+            TagError::NotEditor
+        }
     })?;
 
     store.set_tags(dashboard, seen.owner, tags).await

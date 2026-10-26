@@ -276,7 +276,7 @@ async fn a_pin_lands_only_while_the_grant_it_relies_on_stands() {
         .unwrap_or_else(|error| panic!("{error}"));
     let while_granted = store.pin(member, &board).await;
     store
-        .withdraw(shared, Grantee::Person(member.person))
+        .withdraw(shared, Grantee::Person(member.person), owner.person)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     let unpinned = store.unpin(member, &board).await;

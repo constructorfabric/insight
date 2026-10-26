@@ -8,11 +8,12 @@ use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use crate::domain::access::{
-    Caller, DASHBOARD_NOT_EDITOR, FOLDER_NOT_EDITOR, Grantee, Level, Owner, PersonId, Refused,
+    Caller, DASHBOARD_NOT_EDITOR, DASHBOARD_NOT_SHARER, FOLDER_NOT_EDITOR, Grantee, Level, Owner,
+    PersonId, Refused,
 };
 use crate::domain::dashboards::{Seen, sight};
 use crate::domain::definition::{DefinitionId, DefinitionStoreError, Page};
-use crate::domain::folders::{DefinitionStore, FolderId, SeenFolder};
+use crate::domain::folders::{DefinitionStore, FolderId, MAX_FOLDERS, SeenFolder};
 use crate::domain::tags::MAX_TAGS;
 
 /// What a grant is on.
@@ -63,8 +64,30 @@ pub(crate) enum Handover {
     Handed,
     /// The owner read before the hand-over no longer owned it.
     OwnerChanged,
-    /// Its tags would take the new owner's scope past [`MAX_TAGS`].
-    RecipientTagsFull,
+    /// It would take the new owner past their cap: [`MAX_TAGS`] for a
+    /// dashboard's tags, [`MAX_FOLDERS`] for a folder.
+    RecipientFull,
+}
+
+/// What setting a grant came to; only [`Granting::Done`] changed anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Granting {
+    Done,
+    /// The one setting it no longer owns it or holds an editor grant on it,
+    /// to them or to everyone.
+    NotSharer,
+    /// The grantee owns it now.
+    ToOwner,
+}
+
+/// What withdrawing a grant came to; only [`Withdrawal::Done`] changed
+/// anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Withdrawal {
+    Done,
+    /// The one withdrawing it no longer owns it or holds an editor grant on
+    /// it, to them or to everyone.
+    NotSharer,
 }
 
 #[derive(Debug)]
@@ -78,21 +101,31 @@ pub(crate) trait Grants: Send + Sync + fmt::Debug {
     /// Every grant of it, oldest first.
     async fn grants_of(&self, shared: Shared<'_>) -> Result<Vec<Grant>, DefinitionStoreError>;
 
-    /// Grants it to `grantee` at `level`; granting again sets the level.
+    /// Grants it to `grantee` at `level` as `by`; granting again sets the
+    /// level.
+    ///
+    /// INVARIANT: lands only while `by` owns it or holds an editor grant on
+    /// it to them or to everyone, and `grantee` does not own it, as the
+    /// grant is written.
     async fn grant(
         &self,
         shared: Shared<'_>,
         grantee: Grantee,
         level: Level,
-        granted_by: PersonId,
-    ) -> Result<(), DefinitionStoreError>;
+        by: PersonId,
+    ) -> Result<Granting, DefinitionStoreError>;
 
-    /// Withdraws `grantee`'s grant, leaving every pin and entry in place.
+    /// Withdraws `grantee`'s grant as `by`, leaving every pin and entry in
+    /// place.
+    ///
+    /// INVARIANT: lands only while `by` owns it or holds an editor grant on
+    /// it to them or to everyone, as the grant is removed.
     async fn withdraw(
         &self,
         shared: Shared<'_>,
         grantee: Grantee,
-    ) -> Result<(), DefinitionStoreError>;
+        by: PersonId,
+    ) -> Result<Withdrawal, DefinitionStoreError>;
 
     /// Makes `to` the dashboard's owner if `from` still is, dropping any
     /// grant `to` held and moving its tags into `to`'s scope under the same
@@ -104,8 +137,9 @@ pub(crate) trait Grants: Send + Sync + fmt::Debug {
         to: PersonId,
     ) -> Result<Handover, DefinitionStoreError>;
 
-    /// Makes `to` the folder's owner if `from` still is, dropping any grant
-    /// `to` held; its other grants and its entries stay.
+    /// Makes `to` the folder's owner if `from` still is and `to` owns fewer
+    /// than [`MAX_FOLDERS`], dropping any grant `to` held; its other grants
+    /// and its entries stay.
     async fn transfer_folder(
         &self,
         folder: FolderId,
@@ -159,6 +193,8 @@ pub(crate) enum SharingError {
     FolderNotFound(FolderId),
     #[error("{DASHBOARD_NOT_EDITOR}")]
     NotEditor,
+    #[error("{DASHBOARD_NOT_SHARER}")]
+    NotSharer,
     #[error("{FOLDER_NOT_EDITOR}")]
     FolderNotEditor,
     #[error("an ownerless {0} cannot be shared or transferred")]
@@ -179,6 +215,10 @@ pub(crate) enum SharingError {
         "the new owner has too many tags to take this dashboard's; at most {MAX_TAGS} tags can exist per owner"
     )]
     RecipientTagsFull,
+    #[error(
+        "the new owner has too many folders to take this one; at most {MAX_FOLDERS} folders can be theirs"
+    )]
+    RecipientFoldersFull,
     #[error(transparent)]
     Administrators(AdministratorsError),
     #[error(transparent)]
@@ -194,10 +234,18 @@ impl From<AdministratorsError> for SharingError {
 fn refused(shared: Shared<'_>, refused: Refused) -> SharingError {
     match (shared, refused) {
         (Shared::Dashboard(_), Refused::NotEditor | Refused::NotOwner) => SharingError::NotEditor,
-        (Shared::Folder(_), Refused::NotEditor | Refused::NotOwner) => {
+        (Shared::Dashboard(_), Refused::EditorByFolder) => SharingError::NotSharer,
+        (Shared::Folder(_), Refused::NotEditor | Refused::NotOwner | Refused::EditorByFolder) => {
             SharingError::FolderNotEditor
         }
         (shared, Refused::Ownerless) => SharingError::Ownerless(shared.noun()),
+    }
+}
+
+fn no_longer_sharer(shared: Shared<'_>) -> SharingError {
+    match shared {
+        Shared::Dashboard(_) => SharingError::NotSharer,
+        Shared::Folder(_) => SharingError::FolderNotEditor,
     }
 }
 
@@ -245,9 +293,15 @@ impl<'a> Sharing<'a> {
         let owner = self.shareable(shared).await?;
         self.grantable(grantee, owner).await?;
 
-        self.store
+        match self
+            .store
             .grant(shared, grantee, level, self.caller.person)
-            .await?;
+            .await?
+        {
+            Granting::Done => {}
+            Granting::NotSharer => return Err(no_longer_sharer(shared)),
+            Granting::ToOwner => return Err(SharingError::GrantToOwner),
+        }
         tracing::info!(
             actor_person_id = %self.caller.person,
             object = shared.noun(),
@@ -267,7 +321,14 @@ impl<'a> Sharing<'a> {
     ) -> Result<(), SharingError> {
         self.shareable(shared).await?;
 
-        self.store.withdraw(shared, grantee).await?;
+        match self
+            .store
+            .withdraw(shared, grantee, self.caller.person)
+            .await?
+        {
+            Withdrawal::Done => {}
+            Withdrawal::NotSharer => return Err(no_longer_sharer(shared)),
+        }
         tracing::info!(
             actor_person_id = %self.caller.person,
             object = shared.noun(),
@@ -284,7 +345,7 @@ impl<'a> Sharing<'a> {
         let (owner, access) = match shared {
             Shared::Dashboard(id) => {
                 let seen = self.seen_dashboard(id).await?;
-                (seen.owner, seen.access.share())
+                (seen.owner, seen.share())
             }
             Shared::Folder(id) => {
                 let seen = self.seen_folder(id).await?;
@@ -387,7 +448,7 @@ impl<'a> Sharing<'a> {
         match self.store.transfer(dashboard, owner, to).await? {
             Handover::Handed => {}
             Handover::OwnerChanged => return Err(SharingError::Moved("dashboard")),
-            Handover::RecipientTagsFull => return Err(SharingError::RecipientTagsFull),
+            Handover::RecipientFull => return Err(SharingError::RecipientTagsFull),
         }
         tracing::info!(
             actor_person_id = %self.caller.person,
@@ -436,9 +497,8 @@ impl<'a> Sharing<'a> {
 
         match self.store.transfer_folder(folder, owner, to).await? {
             Handover::Handed => {}
-            Handover::OwnerChanged | Handover::RecipientTagsFull => {
-                return Err(SharingError::Moved("folder"));
-            }
+            Handover::OwnerChanged => return Err(SharingError::Moved("folder")),
+            Handover::RecipientFull => return Err(SharingError::RecipientFoldersFull),
         }
         tracing::info!(
             actor_person_id = %self.caller.person,

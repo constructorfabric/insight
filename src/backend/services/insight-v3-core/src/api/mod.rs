@@ -119,6 +119,8 @@ pub(crate) struct AppState {
     /// How many drilldown pages may be read at once.
     drilldown_slots: Arc<tokio::sync::Semaphore>,
     preview_slots: Arc<tokio::sync::Semaphore>,
+    /// How many widgets may be run through their dashboards at once.
+    widget_run_slots: Arc<tokio::sync::Semaphore>,
     /// Absent on an installation that has alerts turned off.
     alerts: Option<Alerts>,
 }
@@ -237,6 +239,9 @@ impl AppState {
                 metric_drilldown::MAX_CONCURRENT_PAGES,
             )),
             preview_slots: Arc::new(tokio::sync::Semaphore::new(alerts::MAX_CONCURRENT_PREVIEWS)),
+            widget_run_slots: Arc::new(tokio::sync::Semaphore::new(
+                dashboard_widgets::MAX_CONCURRENT_WIDGET_RUNS,
+            )),
             alerts: None,
         }
     }
@@ -301,6 +306,10 @@ impl AppState {
 
     pub(crate) fn drilldown_slots(&self) -> &Arc<tokio::sync::Semaphore> {
         &self.drilldown_slots
+    }
+
+    pub(crate) fn widget_run_slots(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.widget_run_slots
     }
 
     #[cfg(test)]

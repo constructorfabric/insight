@@ -7,8 +7,10 @@ use crate::domain::dashboards::{
     DashboardCatalogue, DashboardPage, DashboardQuery, ListedDashboard, Owned, Seen,
 };
 use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionStoreError, Page};
-use crate::domain::folders::FolderId;
-use crate::domain::sharing::{Grant, Grants, Handover, Orphan, OrphanPage, Shared};
+use crate::domain::folders::{FolderId, MAX_FOLDERS};
+use crate::domain::sharing::{
+    Grant, Granting, Grants, Handover, Orphan, OrphanPage, Shared, Withdrawal,
+};
 
 impl Stored {
     fn keeps(&self, dashboard: &str, caller: Caller, query: &DashboardQuery) -> bool {
@@ -48,6 +50,36 @@ impl Stored {
         grants.sort_by_key(|grant| (grant.created_at, grant.grantee));
 
         grants
+    }
+
+    /// Who owns it now, and whether `by` may change its grants, as the
+    /// store's locked read answers it; none when it is not stored.
+    fn sharing_standing(&self, shared: Shared<'_>, by: PersonId) -> Option<(Owner, bool)> {
+        let owner = match shared {
+            Shared::Dashboard(id) => {
+                if !self.has_dashboard(id.as_str()) {
+                    return None;
+                }
+                self.owner_of(id.as_str())
+            }
+            Shared::Folder(id) => self.folders.get(&id)?.owner,
+        };
+        let editor = self.grants(shared).iter().any(|grant| {
+            let reaches = match grant.grantee {
+                Grantee::Person(person) => person == by,
+                Grantee::Everyone => true,
+            };
+            grant.level == Level::Editor && reaches
+        });
+
+        Some((owner, owner == Owner::Person(by) || editor))
+    }
+}
+
+fn missing(shared: Shared<'_>) -> DefinitionStoreError {
+    match shared {
+        Shared::Dashboard(id) => DefinitionStoreError::Missing(id.as_str().to_owned()),
+        Shared::Folder(id) => DefinitionStoreError::Missing(id.to_string()),
     }
 }
 
@@ -128,22 +160,30 @@ impl Grants for MemoryDefinitions {
         shared: Shared<'_>,
         grantee: Grantee,
         level: Level,
-        granted_by: PersonId,
-    ) -> Result<(), DefinitionStoreError> {
+        by: PersonId,
+    ) -> Result<Granting, DefinitionStoreError> {
         self.writable()?;
         let mut stored = self.lock();
+        let (owner, may_share) = stored
+            .sharing_standing(shared, by)
+            .ok_or_else(|| missing(shared))?;
+        if !may_share {
+            return Ok(Granting::NotSharer);
+        }
+        if let Grantee::Person(person) = grantee
+            && owner == Owner::Person(person)
+        {
+            return Ok(Granting::ToOwner);
+        }
         let fresh = Grant {
             grantee,
             level,
-            granted_by,
+            granted_by: by,
             created_at: Utc::now(),
         };
 
         match shared {
             Shared::Dashboard(id) => {
-                if !stored.has_dashboard(id.as_str()) {
-                    return Err(DefinitionStoreError::Missing(id.as_str().to_owned()));
-                }
                 stored
                     .dashboard_grants
                     .entry((id.as_str().to_owned(), grantee))
@@ -152,9 +192,6 @@ impl Grants for MemoryDefinitions {
                 stored.demote(id.as_str());
             }
             Shared::Folder(id) => {
-                if !stored.folders.contains_key(&id) {
-                    return Err(DefinitionStoreError::Missing(id.to_string()));
-                }
                 stored
                     .folder_grants
                     .entry((id, grantee))
@@ -163,16 +200,23 @@ impl Grants for MemoryDefinitions {
             }
         }
 
-        Ok(())
+        Ok(Granting::Done)
     }
 
     async fn withdraw(
         &self,
         shared: Shared<'_>,
         grantee: Grantee,
-    ) -> Result<(), DefinitionStoreError> {
+        by: PersonId,
+    ) -> Result<Withdrawal, DefinitionStoreError> {
         self.writable()?;
         let mut stored = self.lock();
+        let (_, may_share) = stored
+            .sharing_standing(shared, by)
+            .ok_or_else(|| missing(shared))?;
+        if !may_share {
+            return Ok(Withdrawal::NotSharer);
+        }
 
         match shared {
             Shared::Dashboard(id) => {
@@ -186,7 +230,7 @@ impl Grants for MemoryDefinitions {
             }
         }
 
-        Ok(())
+        Ok(Withdrawal::Done)
     }
 
     async fn transfer(
@@ -211,7 +255,7 @@ impl Grants for MemoryDefinitions {
         applied.demote(&key);
         match applied.carry_tags(&key, &key, Owner::Person(to)) {
             Ok(()) => {}
-            Err(DefinitionStoreError::TagsFull) => return Ok(Handover::RecipientTagsFull),
+            Err(DefinitionStoreError::TagsFull) => return Ok(Handover::RecipientFull),
             Err(error) => return Err(error),
         }
         *stored = applied;
@@ -227,11 +271,19 @@ impl Grants for MemoryDefinitions {
     ) -> Result<Handover, DefinitionStoreError> {
         self.writable()?;
         let mut stored = self.lock();
+        let held = stored
+            .folders
+            .values()
+            .filter(|kept| kept.owner == Owner::Person(to))
+            .count();
         let Some(kept) = stored.folders.get_mut(&folder) else {
             return Ok(Handover::OwnerChanged);
         };
         if kept.owner != Owner::Person(from) {
             return Ok(Handover::OwnerChanged);
+        }
+        if held >= MAX_FOLDERS {
+            return Ok(Handover::RecipientFull);
         }
 
         kept.owner = Owner::Person(to);

@@ -5,13 +5,15 @@ use sea_orm::{
     TransactionTrait as _, Value,
 };
 
-use super::dashboards::level_of;
-use super::folders::statement;
+use super::dashboards::{level_of, owner_of};
+use super::folders::{folders_held, lock_folders, statement};
 use super::{MariaDefinitions, TotalRow, tags};
 use crate::domain::access::{Grantee, Level, Owner, PersonId};
 use crate::domain::definition::{DefinitionId, DefinitionStoreError, Page};
-use crate::domain::folders::FolderId;
-use crate::domain::sharing::{Grant, Grants, Handover, Orphan, OrphanPage, Shared};
+use crate::domain::folders::{FolderId, MAX_FOLDERS};
+use crate::domain::sharing::{
+    Grant, Granting, Grants, Handover, Orphan, OrphanPage, Shared, Withdrawal,
+};
 
 const GRANTS_OF: &str = "SELECT grantee, level, granted_by, created_at FROM {table}
 WHERE {key} = ?
@@ -24,13 +26,28 @@ ON DUPLICATE KEY UPDATE level = ?";
 
 const WITHDRAW: &str = "DELETE FROM {table} WHERE {key} = ? AND grantee = ?";
 
-/// Stops each carrying entry of the dashboard whose placer is neither its
-/// owner nor an editor by a grant to them or to everyone from carrying.
-const DEMOTE_ENTRIES: &str = "UPDATE folder_entries SET carries = FALSE
+/// Holds the shared row against every other grant change and hand-over of
+/// it until the transaction ends, reading who owns it now.
+const LOCK_SHARED: &str = "SELECT owner_person_id FROM {owned} WHERE id = ? FOR UPDATE";
+
+/// Whether a person holds an editor grant on it, to them or to everyone.
+///
+/// INVARIANT: read right after [`LOCK_SHARED`], before any other read in the
+/// transaction, so its snapshot starts once every other grant change of it
+/// has committed; a locking read here would gap-lock other dashboards'
+/// grants and deadlock their inserts.
+const EDITOR_GRANTS: &str = "SELECT COUNT(*) AS total FROM {table}
+WHERE {key} = ? AND level = 'editor' AND grantee IN (?, 'everyone')";
+
+/// Stops each carrying entry of an owned dashboard whose placer is neither
+/// its owner nor an editor by a grant to them or to everyone from carrying.
+const DEMOTE_ENTRIES: &str = "UPDATE folder_entries
+JOIN dashboards placed ON placed.id = folder_entries.dashboard
+SET folder_entries.carries = FALSE
 WHERE folder_entries.dashboard = ? AND folder_entries.carries
+AND placed.owner_person_id IS NOT NULL
 AND folder_entries.placed_by IS NOT NULL
-AND NOT EXISTS (SELECT 1 FROM dashboards placed
-WHERE placed.id = folder_entries.dashboard AND placed.owner_person_id = folder_entries.placed_by)
+AND placed.owner_person_id <> folder_entries.placed_by
 AND NOT EXISTS (SELECT 1 FROM dashboard_grants editors
 WHERE editors.dashboard = folder_entries.dashboard AND editors.level = 'editor'
 AND editors.grantee IN (folder_entries.placed_by, 'everyone'))";
@@ -57,6 +74,11 @@ struct GrantRow {
     level: String,
     granted_by: String,
     created_at: NaiveDateTime,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct OwnerRow {
+    owner_person_id: Option<String>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -101,6 +123,13 @@ fn on(template: &str, shared: Shared<'_>) -> String {
     template.replace("{table}", table).replace("{key}", key)
 }
 
+fn owned(shared: Shared<'_>) -> Owned {
+    match shared {
+        Shared::Dashboard(_) => Owned::Dashboards,
+        Shared::Folder(_) => Owned::Folders,
+    }
+}
+
 fn key(shared: Shared<'_>) -> Value {
     match shared {
         Shared::Dashboard(id) => id.as_str().into(),
@@ -110,6 +139,61 @@ fn key(shared: Shared<'_>) -> Value {
 
 fn person(raw: &str) -> Result<PersonId, DefinitionStoreError> {
     PersonId::parse(raw).ok_or(DefinitionStoreError::UnreadableRow("person"))
+}
+
+/// Who stands where on something shared, read under its lock.
+#[derive(Debug)]
+struct Standing {
+    owner: Owner,
+    /// Whether the one changing its grants owns it or holds an editor grant
+    /// on it, to them or to everyone.
+    sharer: bool,
+}
+
+fn lock_statement(shared: Shared<'_>) -> Statement {
+    statement(
+        &LOCK_SHARED.replace("{owned}", owned(shared).table()),
+        vec![key(shared)],
+    )
+}
+
+fn editor_grants_statement(shared: Shared<'_>, by: PersonId) -> Statement {
+    statement(
+        &on(EDITOR_GRANTS, shared),
+        vec![key(shared), by.to_string().into()],
+    )
+}
+
+/// Locks it for the rest of the transaction and reads how `by` stands on
+/// it; none when it is not stored.
+async fn locked_standing(
+    transaction: &DatabaseTransaction,
+    shared: Shared<'_>,
+    by: PersonId,
+) -> Result<Option<Standing>, DefinitionStoreError> {
+    let Some(row) = OwnerRow::find_by_statement(lock_statement(shared))
+        .one(transaction)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let owner = owner_of(row.owner_person_id.as_deref())?;
+    let editor = TotalRow::find_by_statement(editor_grants_statement(shared, by))
+        .one(transaction)
+        .await?
+        .map_or(0, |row| row.total);
+
+    Ok(Some(Standing {
+        owner,
+        sharer: owner == Owner::Person(by) || editor > 0,
+    }))
+}
+
+fn missing(shared: Shared<'_>) -> DefinitionStoreError {
+    match shared {
+        Shared::Dashboard(id) => DefinitionStoreError::Missing(id.as_str().to_owned()),
+        Shared::Folder(id) => DefinitionStoreError::Missing(id.to_string()),
+    }
 }
 
 pub(super) fn grant_statement(
@@ -174,19 +258,6 @@ fn orphaned_count_statement(owned: Owned, administrators: &[PersonId]) -> Statem
         .replace("{orphaned}", &clause);
 
     statement(&sql, values)
-}
-
-fn missing_or(error: DbErr, shared: Shared<'_>) -> DefinitionStoreError {
-    match error.sql_err() {
-        Some(sea_orm::SqlErr::ForeignKeyConstraintViolation(_)) => {
-            let id = match shared {
-                Shared::Dashboard(id) => id.as_str().to_owned(),
-                Shared::Folder(id) => id.to_string(),
-            };
-            DefinitionStoreError::Missing(id)
-        }
-        _ => DefinitionStoreError::Database(error),
-    }
 }
 
 /// Keeps every carrying entry of a dashboard true to its grants and owner.
@@ -277,25 +348,44 @@ impl Grants for MariaDefinitions {
         shared: Shared<'_>,
         grantee: Grantee,
         level: Level,
-        granted_by: PersonId,
-    ) -> Result<(), DefinitionStoreError> {
+        by: PersonId,
+    ) -> Result<Granting, DefinitionStoreError> {
         let transaction = self.db.begin().await?;
+        let standing = locked_standing(&transaction, shared, by)
+            .await?
+            .ok_or_else(|| missing(shared))?;
+        if !standing.sharer {
+            return Ok(Granting::NotSharer);
+        }
+        if let Grantee::Person(person) = grantee
+            && standing.owner == Owner::Person(person)
+        {
+            return Ok(Granting::ToOwner);
+        }
+
         transaction
-            .execute_raw(grant_statement(shared, grantee, level, granted_by))
-            .await
-            .map_err(|error| missing_or(error, shared))?;
+            .execute_raw(grant_statement(shared, grantee, level, by))
+            .await?;
         demote(&transaction, shared).await?;
         transaction.commit().await?;
 
-        Ok(())
+        Ok(Granting::Done)
     }
 
     async fn withdraw(
         &self,
         shared: Shared<'_>,
         grantee: Grantee,
-    ) -> Result<(), DefinitionStoreError> {
+        by: PersonId,
+    ) -> Result<Withdrawal, DefinitionStoreError> {
         let transaction = self.db.begin().await?;
+        let standing = locked_standing(&transaction, shared, by)
+            .await?
+            .ok_or_else(|| missing(shared))?;
+        if !standing.sharer {
+            return Ok(Withdrawal::NotSharer);
+        }
+
         transaction
             .execute_raw(statement(
                 &on(WITHDRAW, shared),
@@ -305,7 +395,7 @@ impl Grants for MariaDefinitions {
         demote(&transaction, shared).await?;
         transaction.commit().await?;
 
-        Ok(())
+        Ok(Withdrawal::Done)
     }
 
     async fn transfer(
@@ -338,7 +428,7 @@ impl Grants for MariaDefinitions {
         demote(&transaction, shared).await?;
         match tags::rescope_tags(&transaction, dashboard, Owner::Person(to)).await {
             Ok(()) => {}
-            Err(DefinitionStoreError::TagsFull) => return Ok(Handover::RecipientTagsFull),
+            Err(DefinitionStoreError::TagsFull) => return Ok(Handover::RecipientFull),
             Err(error) => return Err(error),
         }
         transaction.commit().await?;
@@ -354,8 +444,12 @@ impl Grants for MariaDefinitions {
     ) -> Result<Handover, DefinitionStoreError> {
         let shared = Shared::Folder(folder);
         let transaction = self.db.begin().await?;
+        lock_folders(&transaction).await?;
         if !hand_over(&transaction, Owned::Folders, &folder.to_string(), from, to).await? {
             return Ok(Handover::OwnerChanged);
+        }
+        if folders_held(&transaction, to).await? > MAX_FOLDERS {
+            return Ok(Handover::RecipientFull);
         }
 
         transaction
@@ -383,5 +477,69 @@ impl Grants for MariaDefinitions {
         page: Page,
     ) -> Result<OrphanPage, DefinitionStoreError> {
         self.page_of(Owned::Folders, administrators, page).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::store::definitions::visibility::assert_bound;
+
+    fn board() -> DefinitionId {
+        DefinitionId::parse("delivery").unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    #[test]
+    fn every_sharing_write_binds_a_value_to_each_mark() {
+        let person = PersonId::new(Uuid::from_u128(7));
+        let id = board();
+        let folder = FolderId::new();
+
+        for shared in [Shared::Dashboard(&id), Shared::Folder(folder)] {
+            assert_bound(&lock_statement(shared));
+            assert_bound(&editor_grants_statement(shared, person));
+            assert_bound(&grant_statement(
+                shared,
+                Grantee::Everyone,
+                Level::Viewer,
+                person,
+            ));
+        }
+        assert_bound(&demote_statement(&id));
+    }
+
+    #[test]
+    fn a_grant_change_holds_the_shared_row_and_reads_the_grants_without_gap_locks() {
+        let id = board();
+
+        assert!(
+            lock_statement(Shared::Dashboard(&id))
+                .sql
+                .ends_with("FROM dashboards WHERE id = ? FOR UPDATE")
+        );
+        assert!(
+            lock_statement(Shared::Folder(FolderId::new()))
+                .sql
+                .ends_with("FROM folders WHERE id = ? FOR UPDATE")
+        );
+        assert!(
+            !EDITOR_GRANTS.contains("LOCK IN SHARE MODE") && !EDITOR_GRANTS.contains("FOR UPDATE"),
+            "a locking read of the grants would gap-lock other dashboards': {EDITOR_GRANTS}"
+        );
+    }
+
+    #[test]
+    fn demotion_never_touches_an_ownerless_dashboard_s_entries() {
+        assert!(
+            DEMOTE_ENTRIES
+                .contains("JOIN dashboards placed ON placed.id = folder_entries.dashboard"),
+            "{DEMOTE_ENTRIES}"
+        );
+        assert!(
+            DEMOTE_ENTRIES.contains("AND placed.owner_person_id IS NOT NULL"),
+            "{DEMOTE_ENTRIES}"
+        );
     }
 }

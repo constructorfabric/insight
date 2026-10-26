@@ -133,7 +133,11 @@ fn path_param(name: &str, description: &str) -> ParamSpec {
 
 /// A folder id in a path; one that cannot be an id names nothing.
 fn folder_id(raw: &str) -> Result<FolderId, CanonicalError> {
-    FolderId::parse(raw).map_err(|_| folder_error(FolderError::Id))
+    FolderId::parse(raw).map_err(|_| {
+        FolderApiError::not_found(format!("no folder has the id `{raw}`"))
+            .with_resource(raw)
+            .create()
+    })
 }
 
 pub(crate) fn register_routes(
@@ -199,7 +203,6 @@ pub(crate) fn register_routes(
         .exposed()
         .param(id_param)
         .no_content_response(StatusCode::NO_CONTENT, "Folder removed")
-        .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)

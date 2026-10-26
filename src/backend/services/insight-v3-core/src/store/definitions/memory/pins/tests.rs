@@ -237,7 +237,7 @@ async fn a_withdrawn_viewer_can_neither_pin_nor_file_the_dashboard() -> R {
         )
         .await?;
     store
-        .withdraw(shared, Grantee::Person(BORIS.person))
+        .withdraw(shared, Grantee::Person(BORIS.person), ANNA.person)
         .await?;
 
     let pinned_after = store.pin(BORIS, &board).await;

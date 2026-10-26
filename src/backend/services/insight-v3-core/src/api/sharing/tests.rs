@@ -54,6 +54,7 @@ pub(super) struct Harness {
     clickhouse: Mock,
     router: Router,
     pub(super) definitions: Arc<MemoryDefinitions>,
+    pub(super) state: Arc<AppState>,
 }
 
 #[derive(Debug)]
@@ -104,6 +105,7 @@ impl Harness {
             clickhouse: mock,
             router,
             definitions,
+            state,
         }
     }
 

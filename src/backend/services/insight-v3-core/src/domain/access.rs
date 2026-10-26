@@ -11,6 +11,8 @@ use uuid::Uuid;
 pub(crate) const DASHBOARD_NOT_EDITOR: &str =
     "only the owner or an editor can change this dashboard";
 pub(crate) const DASHBOARD_NOT_OWNER: &str = "only the owner can delete this dashboard";
+pub(crate) const DASHBOARD_NOT_SHARER: &str =
+    "only the owner or an editor granted this dashboard directly or through everyone can share it";
 pub(crate) const FOLDER_NOT_EDITOR: &str = "only the owner or an editor can change this folder";
 pub(crate) const FOLDER_NOT_OWNER: &str = "only the owner can delete this folder";
 
@@ -247,6 +249,9 @@ pub(crate) enum Refused {
     NotEditor,
     /// Only the owner may.
     NotOwner,
+    /// Only the owner or an editor by a grant to them or to everyone may,
+    /// never an editor through a folder.
+    EditorByFolder,
     /// Nobody may, since it predates ownership.
     Ownerless,
 }
@@ -279,12 +284,21 @@ impl Access {
         }
     }
 
-    /// Listing, adding, changing and withdrawing its grants.
-    pub(crate) fn share(self) -> Result<(), Refused> {
-        match self {
-            Self::Owner | Self::Editor => Ok(()),
-            Self::Viewer => Err(Refused::NotEditor),
-            Self::Ownerless => Err(Refused::Ownerless),
+    /// Listing, adding, changing and withdrawing its grants, given the
+    /// strongest of its grants to the caller or to everyone: the standing a
+    /// carrying entry needs.
+    ///
+    /// INVARIANT: the stores check the same standing in the write that
+    /// changes a grant.
+    pub(crate) fn share(self, granted: Option<Level>) -> Result<(), Refused> {
+        match (self, granted) {
+            (Self::Owner, None | Some(Level::Viewer | Level::Editor))
+            | (Self::Editor, Some(Level::Editor)) => Ok(()),
+            (Self::Editor, None | Some(Level::Viewer)) => Err(Refused::EditorByFolder),
+            (Self::Viewer, None | Some(Level::Viewer | Level::Editor)) => Err(Refused::NotEditor),
+            (Self::Ownerless, None | Some(Level::Viewer | Level::Editor)) => {
+                Err(Refused::Ownerless)
+            }
         }
     }
 

@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use sea_orm::{
-    ConnectionTrait as _, DbBackend, FromQueryResult, Statement, TransactionTrait as _, Value,
+    ConnectionTrait as _, DatabaseTransaction, DbBackend, DbErr, FromQueryResult, Statement,
+    TransactionTrait as _, Value,
 };
 
 use super::dashboards::{level_of, owner_of};
@@ -30,6 +31,10 @@ const GRANTS_TO_CALLER: &str =
 const COUNT_UNFILED: &str =
     "SELECT COUNT(*) AS total FROM dashboards WHERE {visible} AND {unfiled}";
 
+/// Folder creations and hand-overs take turns on this row, so no owner's
+/// folders pass the cap between the count and the write.
+const LOCK_FOLDERS: &str = "SELECT id FROM folders_lock WHERE id = 1 FOR UPDATE";
+
 const COUNT_FOLDERS: &str = "SELECT COUNT(*) AS total FROM folders WHERE owner_person_id = ?";
 
 const INSERT_FOLDER: &str =
@@ -54,22 +59,32 @@ ORDER BY holding.name, holding.id";
 
 pub(super) const COUNT_DASHBOARD: &str = "SELECT COUNT(*) AS total FROM dashboards WHERE id = ?";
 
-/// Places nothing unless the caller sees the dashboard as the row lands, so
-/// an entry cannot rely on a grant withdrawn meanwhile. An entry already
-/// there starts carrying, as this placer's, once a carrying one is asked for,
-/// and never stops here.
+/// Places nothing unless the caller sees the dashboard as the row lands, and
+/// carries only while the placer still owns it or holds an editor grant on
+/// it, to them or to everyone, so an entry cannot rely on a grant withdrawn
+/// meanwhile. A carrying one makes the entry already there carry, as this
+/// placer's; a filing one changes nothing of it.
 ///
 /// INVARIANT: the driver reports found rows, so adding an entry already
 /// there still counts one and only an unseen dashboard counts none.
 const ADD_ENTRY: &str =
     "INSERT INTO folder_entries (folder_id, dashboard, placed_by, carries, created_at)
-SELECT ?, dashboards.id, ?, ?, UTC_TIMESTAMP(6) FROM dashboards
+SELECT ?, dashboards.id, ?, ? AND (dashboards.owner_person_id IS NULL
+OR dashboards.owner_person_id = ?
+OR EXISTS (SELECT 1 FROM dashboard_grants qualifying
+WHERE qualifying.dashboard = dashboards.id AND qualifying.level = 'editor'
+AND qualifying.grantee IN (?, 'everyone'))), UTC_TIMESTAMP(6) FROM dashboards
 WHERE dashboards.id = ? AND {visible}
 ON DUPLICATE KEY UPDATE
-placed_by = IF(? AND NOT folder_entries.carries, ?, folder_entries.placed_by),
-carries = folder_entries.carries OR ?";
+placed_by = IF(VALUES(carries), VALUES(placed_by), folder_entries.placed_by),
+carries = folder_entries.carries OR VALUES(carries)";
 
-const REMOVE_ENTRY: &str = "DELETE FROM folder_entries WHERE folder_id = ? AND dashboard = ?";
+const ENTRY_CARRIES: &str = "SELECT COUNT(*) AS total FROM folder_entries
+WHERE folder_id = ? AND dashboard = ? AND carries";
+
+/// Removes nothing unless the caller sees the dashboard as the row goes.
+const REMOVE_ENTRY: &str = "DELETE FROM folder_entries WHERE folder_id = ? AND dashboard = ?
+AND EXISTS (SELECT 1 FROM dashboards WHERE dashboards.id = ? AND {visible})";
 
 #[derive(Debug, FromQueryResult)]
 struct FolderRow {
@@ -149,17 +164,58 @@ pub(super) fn add_entry_statement(
 ) -> Statement {
     let (visible, visible_values): Clause = dashboard_visible(caller);
     let placer: Value = caller.person.to_string().into();
-    let carries: Value = entry.carries().into();
     let mut values: Vec<Value> = vec![
         folder.to_string().into(),
         placer.clone(),
-        carries.clone(),
+        entry.carries().into(),
+        placer.clone(),
+        placer,
         dashboard.as_str().into(),
     ];
     values.extend(visible_values);
-    values.extend([carries.clone(), placer, carries]);
 
     statement(&ADD_ENTRY.replace("{visible}", &visible), values)
+}
+
+pub(super) async fn lock_folders(transaction: &DatabaseTransaction) -> Result<(), DbErr> {
+    let locked = transaction
+        .query_one_raw(statement(LOCK_FOLDERS, vec![]))
+        .await?;
+    if locked.is_none() {
+        return Err(DbErr::RecordNotFound("the folders lock row".to_owned()));
+    }
+
+    Ok(())
+}
+
+pub(super) fn remove_entry_statement(
+    folder: FolderId,
+    dashboard: &DefinitionId,
+    caller: Caller,
+) -> Statement {
+    let (visible, visible_values) = dashboard_visible(caller);
+    let mut values: Vec<Value> = vec![
+        folder.to_string().into(),
+        dashboard.as_str().into(),
+        dashboard.as_str().into(),
+    ];
+    values.extend(visible_values);
+
+    statement(&REMOVE_ENTRY.replace("{visible}", &visible), values)
+}
+
+/// How many folders `owner` holds, read under [`lock_folders`].
+pub(super) async fn folders_held(
+    transaction: &DatabaseTransaction,
+    owner: PersonId,
+) -> Result<usize, DbErr> {
+    let held =
+        TotalRow::find_by_statement(statement(COUNT_FOLDERS, vec![owner.to_string().into()]))
+            .one(transaction)
+            .await?
+            .map_or(0, |row| row.total);
+
+    Ok(usize::try_from(held).unwrap_or(usize::MAX))
 }
 
 /// The strongest grant level per folder among these rows.
@@ -223,12 +279,8 @@ impl Folders for MariaDefinitions {
         name: FolderName,
     ) -> Result<Folder, FolderError> {
         let transaction = self.db.begin().await?;
-        let held =
-            TotalRow::find_by_statement(statement(COUNT_FOLDERS, vec![owner.to_string().into()]))
-                .one(&transaction)
-                .await?
-                .map_or(0, |row| row.total);
-        if usize::try_from(held).unwrap_or(usize::MAX) >= MAX_FOLDERS {
+        lock_folders(&transaction).await?;
+        if folders_held(&transaction, owner).await? >= MAX_FOLDERS {
             return Err(FolderError::TooMany);
         }
 
@@ -326,9 +378,9 @@ impl Folders for MariaDefinitions {
         dashboard: &DefinitionId,
         caller: Caller,
         entry: Entry,
-    ) -> Result<(), FolderError> {
-        let added = self
-            .db
+    ) -> Result<Entry, FolderError> {
+        let transaction = self.db.begin().await?;
+        let added = transaction
             .execute_raw(add_entry_statement(folder, dashboard, caller, entry))
             .await
             .map_err(|error| match error.sql_err() {
@@ -343,20 +395,31 @@ impl Folders for MariaDefinitions {
             ));
         }
 
-        Ok(())
+        let carrying = TotalRow::find_by_statement(statement(
+            ENTRY_CARRIES,
+            vec![folder.to_string().into(), dashboard.as_str().into()],
+        ))
+        .one(&transaction)
+        .await?
+        .map_or(0, |row| row.total);
+        transaction.commit().await?;
+
+        Ok(if carrying > 0 {
+            Entry::Carrying
+        } else {
+            Entry::Filing
+        })
     }
 
     async fn remove_entry(
         &self,
         folder: FolderId,
         dashboard: &DefinitionId,
+        caller: Caller,
     ) -> Result<bool, FolderError> {
         let removed = self
             .db
-            .execute_raw(statement(
-                REMOVE_ENTRY,
-                vec![folder.to_string().into(), dashboard.as_str().into()],
-            ))
+            .execute_raw(remove_entry_statement(folder, dashboard, caller))
             .await?;
 
         Ok(removed.rows_affected() > 0)
