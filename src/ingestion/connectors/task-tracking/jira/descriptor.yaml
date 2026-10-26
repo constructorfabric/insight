@@ -146,7 +146,10 @@ name: jira
 # changelog entry (#3889). MAJOR because rows already written change, and only
 # the full refresh a major dispatches (ADR-0015) re-derives them.
 version: "17.0.0"
-schedule: "0 3 * * *"
+# 22:10 and 10:10 UTC: clear of the 02:00-06:00 daily block and of github's
+# 4-hourly ticks, which rebuild the same task chain; :10 misses the */15
+# reconcile and identity-seed ticks.
+schedule: "10 10,22 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
 # package, not by this connector. The pipeline runs
