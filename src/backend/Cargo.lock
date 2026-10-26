@@ -167,7 +167,7 @@ dependencies = [
  "utoipa",
  "uuid",
  "zeroize",
- "zip",
+ "zip 9.0.5",
 ]
 
 [[package]]
@@ -6237,7 +6237,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34f2d2cda7223168a14fb86bc7411dbc3379bd7d49749ecc53b91ed98585b6b0"
 dependencies = [
  "tempfile",
- "zip",
+ "zip 8.6.0",
 ]
 
 [[package]]
@@ -8873,6 +8873,21 @@ dependencies = [
  "flate2",
  "indexmap 2.14.0",
  "memchr",
+ "typed-path",
+ "zopfli",
+]
+
+[[package]]
+name = "zip"
+version = "9.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "indexmap 2.14.0",
+ "memchr",
+ "nix 0.31.3",
  "typed-path",
  "zopfli",
 ]
