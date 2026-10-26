@@ -103,7 +103,7 @@ Three things on those systems are yours to create:
   GRANT ALL ON `insight`.* TO `insight`@`%`;
   ```
 
-- **ClickHouse: the `clickhouse.username` account, holding CREATE DATABASE.** The pre-install hook creates the Bronze/Silver/Gold databases as that user; the chart has no separate admin account.
+- **ClickHouse: the `clickhouse.username` account, holding CREATE DATABASE.** The pre-install hook creates the nine databases the release owns as that user (`clickhouse.database`, `staging`, `silver`, `identity`, `config`, `presentation`, `product_usage`, `ingestion_history`, `insight_datasets`); `bronze_*` is created by `destination-clickhouse` at sync time. In cluster mode (`clickhouse.clusterMode`) the same user also needs `REMOTE ON *.*`. The chart has no separate admin account.
 - **Argo: an `argo-workflow` ServiceAccount in `insight`,** plus a Role granting create/patch on `workflowtaskresults.argoproj.io`. The chart pins every ingestion workflow to it and ships neither, so without them dbt transforms and data-quality checks fail with `serviceaccount "argo-workflow" not found` (connector provisioning still works).
 
 Run every command below from the directory holding your `values/` and `secrets/` files; Steps 1 and 2 give you their full contents.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Sourced by run.sh and warm-upgrade.sh: the rig's warehouse for one topology —
-# its compose project, the env every creator reads for it, the nodes a check
-# reaches directly — and the venv the checks run in.
+# Sourced by run.sh, warm-upgrade.sh and convert.sh: the rig's warehouse for
+# one topology — its compose project, the env every creator reads for it, the
+# nodes a check reaches directly — and the venv the checks run in.
 #
 # Reads RIG_TOPOLOGY (replicated by default), RIG_DBT_VENV and RIG_KEEP; needs
 # RIG_DIR. Exposes TOPOLOGY, SCRIPTS, PROJECT, COMPOSE, WORKDIR, RIG_NODES,
