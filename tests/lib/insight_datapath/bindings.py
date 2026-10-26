@@ -78,6 +78,22 @@ class Bindings:
             LOG.info("operator decisions applied: %d", len(decisions))
         return len(decisions)
 
+    def detach(self, account: IdentityAccount) -> None:
+        """Move the account to a freshly minted person of its own."""
+        wire = wire_account(
+            account.source_type,
+            hashed_source_id(self.cfg, account.source_id),
+            account.account_id,
+        )
+        response = self._client.post(
+            identity_path("/v1/resolution/detach"),
+            json_body={"account": wire, "comment": "datapath spec detach"},
+        )
+        if response.status_code != 200:
+            raise BindingError(
+                f"detach refused with {response.status_code} for {wire}: {response.text[:500]}"
+            )
+
     def _from_accounts(
         self, accounts: list[IdentityAccount], person_ids: dict[str, str]
     ) -> list[tuple[dict[str, str], str]]:
