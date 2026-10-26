@@ -33,8 +33,9 @@ tick refuses rather than creating the destination, and the log line says which
 version was found. Pinning the definition instead would fight the operator's
 own Airbyte upgrades.
 
-`RECONCILE_DESTINATION_ID` hands that destination's configuration — including
-its version — to whoever set it, and skips both the lookup and the check.
+`RECONCILE_DESTINATION_ID` hands that destination's configuration to whoever
+set it and skips the lookup; the version floor still applies, because the
+catalogues reconcile hands over run on that destination either way.
 
 ## A tenant change
 
@@ -69,6 +70,8 @@ Spec: `docs/components/backend/analytics/specs/connector-health`.
 | INSIGHT_NAMESPACE | `insight` | Namespace for K8s Secrets + CronWorkflows |
 | INSIGHT_RECONCILE_TOKEN_TTL | `600` | Airbyte API token cache TTL (seconds) |
 | RECONCILE_RUN_ID | — | Correlation id stamped on every log line (the chart injects the workflow pod name) |
+| RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE | `false` | Warehouse topology (`clickhouse.clusterMode`): `compose_destination_config.py` sets the destination's `use_replicated_engines`; the sweep's `ledger.py` then writes with quorum session settings and reads the catalogue through `clusterAllReplicas` |
+| RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME | — | The cluster the destination's `ON CLUSTER` and the sweep's `clusterAllReplicas` name; required when `_CLUSTER_MODE` is on, refused empty |
 
 ## Logging
 

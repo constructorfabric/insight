@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# Apply the ClickHouse schema migrations against an EXTERNAL ClickHouse.
+# Apply the ClickHouse schema migrations and the guarded heals against an
+# EXTERNAL ClickHouse, over its HTTP interface via lib/ch-exec.sh (selected by
+# CLICKHOUSE_URL). Invoked by the clickhouse-migrate Helm Hook Job
+# (post-install,post-upgrade).
 #
-# This is the in-cluster, network-mode counterpart to the ClickHouse half
-# of scripts/init.sh. init.sh `kubectl exec`s into a bundled CH StatefulSet
-# (retired in #1428 when the umbrella stopped bundling L2 infra), so it
-# cannot reach an external CH. This script talks to CH over its HTTP
-# interface via lib/ch-exec.sh (selected by CLICKHOUSE_URL) and is invoked
-# by the clickhouse-migrate Helm Hook Job (post-install,post-upgrade).
-#
-# Steps (same order and contract as init.sh):
+# Steps:
 #   1. Run create-databases.sh — every database this release owns, plus the
 #      role/user provisioning that reads them. It is the only creation site:
 #      the migrations below and the dbt hooks assume their database stands.
@@ -24,8 +20,8 @@
 # is answered as not-ready rather than as a failure.
 #
 # Bookkeeping: none — every migration is re-run on every invocation and
-# MUST stay idempotent/re-runnable (CREATE OR REPLACE / IF NOT EXISTS).
-# This matches the existing init.sh contract (see ingestion DESIGN §migrations).
+# MUST stay idempotent/re-runnable (CREATE OR REPLACE / IF NOT EXISTS); see
+# ingestion DESIGN §migrations.
 #
 # Required env (set by the Hook Job from chart values + insight-db-creds):
 #   CLICKHOUSE_URL       e.g. http://ch-host:8123  (selects the HTTP backend)
@@ -189,6 +185,12 @@ SQL
 # the render JSON-encoded a second time, and JSONExtractArrayRaw reads such a
 # value as a scalar — the field-history journal silently skips the row.
 # Idempotent: after one pass no value starts with a quote.
+#
+# INVARIANT: every mutation here runs `mutations_sync = 2` — it returns once
+# EVERY replica applied it (on one node, the same as 1). With a replica down
+# it blocks until the transport ceiling fails the deploy, which is the
+# intended outcome: a replica still holding the old rows is not a healed
+# warehouse.
 heal_jira_history_items_escaping() {
   ch_table_exists bronze_jira jira_issue_history || return 0
   echo "  bronze_jira.jira_issue_history items"
@@ -196,7 +198,7 @@ heal_jira_history_items_escaping() {
 ALTER TABLE bronze_jira.jira_issue_history
     UPDATE items = JSONExtractString(items)
     WHERE startsWith(items, '"')
-    SETTINGS mutations_sync = 1;
+    SETTINGS mutations_sync = 2;
 SQL
 }
 
@@ -244,10 +246,33 @@ _jira_key_count() {
 
 # The original is under the `__rebuild` name after an EXCHANGE; put it back and
 # leave the rejected copy there for inspection (the next run drops it first).
+#
+# INVARIANT: `bronze_*` is an Atomic database (the destination creates it), so
+# its table DDL carries the cluster clause: the database replays nothing.
+# `CREATE TABLE ... AS` copies the engine, Replicated* included, and the
+# clause gives every replica the same table uuid, so the copy replicates.
 _jira_swap_back() {
   run_ch <<SQL
-EXCHANGE TABLES bronze_jira.$1 AND bronze_jira.$1__rebuild;
+EXCHANGE TABLES bronze_jira.$1 AND bronze_jira.$1__rebuild $(ch_on_cluster);
 SQL
+}
+
+# INVARIANT: the copy below takes the source's engine verbatim, so on a cluster
+# a plain source (a table from before clusterMode was turned on) would yield a
+# plain copy that replicates nothing, and the quorum counts would judge one
+# replica. The topology guard refuses such a table before any DDL; this holds
+# the same at the copy.
+_jira_require_replicated_source() {
+  local table="$1" engine
+  ch_cluster_mode || return 0
+  engine="$(ch_table_engine bronze_jira "${table}")" || {
+    echo "  bronze_jira.${table}: could not read its engine — refusing to rebuild" >&2
+    return 1
+  }
+  [[ "${engine}" == Replicated* ]] && return 0
+
+  echo "  bronze_jira.${table}: engine ${engine:-not found on the replica that answered}; a copy of it would not replicate — refusing to rebuild" >&2
+  return 1
 }
 
 # Rebuild one bronze_jira table from `select_sql` and swap the result in.
@@ -270,12 +295,13 @@ _jira_swap_in_rebuilt() {
   local table="$1" expected="$2" select_sql="$3" carry_replace="${4:-}"
   local copy="bronze_jira.${table}__rebuild" before after copied live fault copy_start_ms
 
+  _jira_require_replicated_source "${table}"
   before="$(_jira_key_count "${table}")"
   copy_start_ms="$(ch_scalar "SELECT toUnixTimestamp64Milli(now64(3))")"
 
   run_ch <<SQL
-DROP TABLE IF EXISTS ${copy};
-CREATE TABLE ${copy} AS bronze_jira.${table};
+DROP TABLE IF EXISTS ${copy} $(ch_on_cluster);
+CREATE TABLE ${copy} $(ch_on_cluster) AS bronze_jira.${table};
 INSERT INTO ${copy}
 ${select_sql};
 SQL
@@ -292,13 +318,13 @@ SQL
   if [[ -n "${fault}" ]]; then
     echo "  bronze_jira.${table}: copy holds ${copied} key(s), ${fault} — leaving the table as it is" >&2
     run_ch <<SQL
-DROP TABLE IF EXISTS ${copy};
+DROP TABLE IF EXISTS ${copy} $(ch_on_cluster);
 SQL
     return 1
   fi
 
   run_ch <<SQL
-EXCHANGE TABLES bronze_jira.${table} AND ${copy};
+EXCHANGE TABLES bronze_jira.${table} AND ${copy} $(ch_on_cluster);
 SQL
   # From here on the rebuilt table is live and the original sits under the
   # `__rebuild` name. Every step until the DROP is checked explicitly, and any
@@ -333,7 +359,7 @@ SQL
   fi
 
   run_ch <<SQL
-DROP TABLE IF EXISTS ${copy};
+DROP TABLE IF EXISTS ${copy} $(ch_on_cluster);
 SQL
 }
 
@@ -619,7 +645,7 @@ ALTER TABLE staging.${table}
       AND toUnixTimestamp64Milli(event_at) * 1000000
           + multiIf(event_kind = 'synthetic_initial', 0, event_kind = 'changelog', 1, 2) * 100000
           + _seq != 0
-    SETTINGS mutations_sync = 1;
+    SETTINGS mutations_sync = 2;
 SQL
 }
 
@@ -1064,5 +1090,28 @@ done
 for _task_link_table in github__task_links youtrack__task_links; do
   heal_task_link_ids "${_task_link_table}"
 done
+
+echo "=== Removing Zoom participant device identifiers ==="
+# Connector 3.0.0 stops collecting these; rows already stored still hold them.
+# Dropping a column removes no row. Idempotent: a converged table, or one
+# created after 3.0.0, has none of them.
+heal_zoom_participant_device_columns() {
+  ch_table_exists bronze_zoom participants || return 0
+  echo "  bronze_zoom.participants"
+  run_ch <<SQL
+ALTER TABLE bronze_zoom.participants
+    DROP COLUMN IF EXISTS ip_address,
+    DROP COLUMN IF EXISTS internal_ip_addresses,
+    DROP COLUMN IF EXISTS location,
+    DROP COLUMN IF EXISTS pc_name,
+    DROP COLUMN IF EXISTS domain,
+    DROP COLUMN IF EXISTS mac_addr,
+    DROP COLUMN IF EXISTS harddisk_id,
+    DROP COLUMN IF EXISTS leave_reason,
+    DROP COLUMN IF EXISTS device_name;
+SQL
+}
+
+heal_zoom_participant_device_columns
 
 echo "=== ClickHouse migrations complete ==="

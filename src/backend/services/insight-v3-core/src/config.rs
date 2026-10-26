@@ -302,7 +302,8 @@ pub(crate) struct GearConfig {
     /// How long an abandoned create or removal holds its dataset.
     pub(crate) dataset_lease_secs: i64,
     /// Topology of the warehouse: whether the tables this service creates
-    /// must replicate, and the cluster its DDL is qualified with.
+    /// must replicate. The name is the chart's shared contract and unused
+    /// here: no statement this service emits carries `ON CLUSTER`.
     pub(crate) clickhouse_cluster_mode: bool,
     pub(crate) clickhouse_cluster_name: String,
     pub(crate) clickhouse_user: Option<String>,
@@ -518,7 +519,7 @@ impl ValidatedConfig {
     ) -> insight_clickhouse::Client {
         let mut config =
             insight_clickhouse::Config::new(&self.clickhouse_url, &self.clickhouse_database)
-                .with_topology(self.topology.clone());
+                .with_topology(self.topology);
         if let (Some(user), Some(password)) = (user, password) {
             config = config.with_auth(user, password.expose_secret());
         }
@@ -582,7 +583,7 @@ impl ValidatedConfig {
     pub(crate) fn datasets_client(&self) -> insight_clickhouse::Client {
         let mut config =
             insight_clickhouse::Config::new(&self.clickhouse_url, &self.datasets_database)
-                .with_topology(self.topology.clone());
+                .with_topology(self.topology);
         if let (Some(user), Some(password)) = (
             self.clickhouse_user.as_deref(),
             self.clickhouse_password.as_ref(),

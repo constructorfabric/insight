@@ -45,6 +45,14 @@ function signedInAs({ admin }: { admin: boolean }) {
   });
 }
 
+/**
+ * The assistant starts collapsed to a strip, and its composer is inside the
+ * hidden panel until the reader opens it.
+ */
+async function openAssistant() {
+  await userEvent.click(screen.getByRole("button", { name: "Open assistant" }));
+}
+
 function renderAt(path: string) {
   const router = createRouter({
     routeTree,
@@ -62,6 +70,9 @@ function renderAt(path: string) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  // Opening the assistant is remembered per browser, and jsdom's storage
+  // outlives a test.
+  window.localStorage.clear();
   // The shell measures the viewport to decide whether the context pane is in
   // flow or off-canvas; jsdom implements no media queries.
   vi.stubGlobal(
@@ -146,6 +157,7 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     renderAt("/portal/custom");
     await screen.findByRole("heading", { name: "Custom" }, { timeout: 10000 });
 
+    await openAssistant();
     await userEvent.type(
       screen.getByTestId("chat-input"),
       "a dashboard about delivery"
@@ -196,6 +208,7 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     renderAt("/portal/custom/engineering");
     await screen.findByRole("heading", { name: "Engineering" }, { timeout: 10000 });
 
+    await openAssistant();
     await userEvent.type(
       screen.getByTestId("chat-input"),
       "add revenue tracking"
@@ -203,7 +216,7 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     await userEvent.click(screen.getByTestId("chat-send"));
 
     expect(
-      await screen.findByRole("cell", { name: "100" })
+      await screen.findByRole("cell", { name: "100" }, { timeout: 10000 })
     ).toBeInTheDocument();
   });
 

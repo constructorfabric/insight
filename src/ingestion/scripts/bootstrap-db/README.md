@@ -7,7 +7,7 @@ How it works: for every connector the source image runs `discover` (every connec
 ## Prerequisites
 
 - `docker`, `jq`, `yq` (mikefarah v4)
-- `python3.12` or `python3.11` on `PATH` — `run-dbt.sh` builds a local `.venv` with the pinned dbt from it (parity with the toolbox image; dbt-core 1.10 does not run on newer pythons). A `python -m venv`-capable interpreter is required (uv-managed pythons lack `ensurepip`; with those, pre-build the venv via `uv venv --seed .venv && .venv/bin/pip install dbt-core==<pin> dbt-clickhouse==<pin>`).
+- `python3.12` or `python3.11` on `PATH` — `run-dbt.sh` builds a local `.venv` with the pinned dbt from it (the pin the toolbox and seed images install; the pinned dbt does not run on interpreters newer than 3.12). A `python -m venv`-capable interpreter is required (uv-managed pythons lack `ensurepip`; with those, pre-build the venv via `uv venv --seed .venv && .venv/bin/pip install dbt-core==<pin> dbt-clickhouse==<pin>`).
 - ClickHouse reachable under `CLICKHOUSE_HOST` both from this machine (dbt) and from inside docker containers (destination connector). For a ClickHouse running on this machine use the machine's LAN IP (`ipconfig getifaddr en0`) — `host.docker.internal` resolves inside containers but not on the macOS host itself.
 
 ## Local ClickHouse for testing
@@ -22,7 +22,7 @@ docker run -d --name bootstrap-db-clickhouse -p 8123:8123 \
   "${CLICKHOUSE_SERVER_IMAGE}"
 ```
 
-`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1` lets the `insight` admin manage access (`CREATE ROLE`/`CREATE USER`/`GRANT`) so the run provisions the read-only `presentation_ro` role and the grant-less `presentation` user (`provision-presentation-access.sh` → `presentation-role.sql`, #1963/#1964); the official image disables it by default. The compose stack (`docker-compose.yml`) and the bitnami prod admin already have access-management, and provisioning is guarded (an admin lacking it is skipped with a warning), so this flag is only needed for this bare throwaway container. The `presentation` user is created only when `CLICKHOUSE_PRESENTATION_PASSWORD` is set (unset in this bare run → role only, which is fine for a snapshot); analytics connects as it in the real stacks. The same pattern provisions the SELECT-only `grafana_ro` role and its grant-less `grafana` user for the Grafana ClickHouse datasource (`provision-grafana-access.sh` → `grafana-role.sql`, #2888), gated on `CLICKHOUSE_GRAFANA_PASSWORD`.
+`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1` lets the `insight` admin manage access (`CREATE ROLE`/`CREATE USER`/`GRANT`) so the run provisions the read-only `presentation_ro` role and the grant-less `presentation` user (`provision-presentation-access.sh` → `presentation-role.sql`, #1963/#1964); the official image disables it by default. The compose stack (`docker-compose.yml`) and the bitnami prod admin already have access-management, and provisioning is guarded (an admin lacking it is skipped with a warning), so this flag is only needed for this bare throwaway container. On a clustered warehouse (`CLICKHOUSE_CLUSTER_MODE=true`) the guard is stricter: no replicated access backend is a hard error from `create-databases.sh` unless `CLICKHOUSE_PROVISION_ACCESS=false`. The `presentation` user is created only when `CLICKHOUSE_PRESENTATION_PASSWORD` is set (unset in this bare run → role only, which is fine for a snapshot); analytics connects as it in the real stacks. The same pattern provisions the SELECT-only `grafana_ro` role and its grant-less `grafana` user for the Grafana ClickHouse datasource (`provision-grafana-access.sh` → `grafana-role.sql`, #2888), gated on `CLICKHOUSE_GRAFANA_PASSWORD`.
 
 Point `.env` at it: `CLICKHOUSE_HOST=$(ipconfig getifaddr en0)` (the LAN IP — reachable both for dbt on this machine and for the connector containers; see Prerequisites), `CLICKHOUSE_PORT=8123`, `CLICKHOUSE_PROTOCOL=http`, user/password/database `insight`. Check what got created:
 
@@ -101,6 +101,11 @@ CLICKHOUSE_USER=insight
 CLICKHOUSE_PASSWORD=insight
 CLICKHOUSE_DATABASE=insight
 EOF
+# A clustered warehouse adds CLICKHOUSE_CLUSTER_MODE=true and
+# CLICKHOUSE_CLUSTER_NAME=<cluster>; every step reads the pair.
+# create-databases.sh then requires Keeper, the {shard}/{replica} macros, the
+# named cluster, REMOTE on the user and a replicated access backend; a missing
+# backend is a hard ERROR unless CLICKHOUSE_PROVISION_ACCESS=false.
 
 until curl -sf "http://localhost:8123/ping" >/dev/null; do sleep 1; done
 
@@ -138,7 +143,7 @@ Contributors whose physical table is not owned by dbt would be covered too: an e
 |---|---|
 | `generate-connectors-config.sh [pattern]` | Finds `descriptor.yaml` files, extracts every required config field from the connector spec, writes the config YAML with fake values to stdout. |
 | `seed-connectors.sh <config.yaml>` | Iterates over the config file, resolves `value`/`env` fields into a config JSON, calls `create-connector-tables.sh` per connector. A failing connector does not stop the loop — every one is attempted and every failure is listed — but the script exits non-zero if any failed. |
-| `create-connector-tables.sh <connector-dir> <config.json>` | One connector: `discover` → configured catalog (append_dedup, primary key `unique_key`) → `destination-clickhouse write` with a zero-record stream-status input (creates empty ReplacingMergeTree tables). Set `DOCKER_NETWORK` when `CLICKHOUSE_HOST` is an address only a container on that network can reach — a compose stand, whose published port is the host's, not the destination's. |
+| `create-connector-tables.sh <connector-dir> <config.json>` | One connector: `discover` → configured catalog (append_dedup, primary key `unique_key`) → `destination-clickhouse write` with a zero-record stream-status input (creates empty ReplacingMergeTree tables). The destination config comes from `reconcile-connectors/python/compose_destination_config.py`, the composer reconcile's Airbyte destination and the seed Job also use, so `CLICKHOUSE_CLUSTER_MODE=true` + `CLICKHOUSE_CLUSTER_NAME=<cluster>` (default `false` / empty: a standalone server) creates `ReplicatedReplacingMergeTree` tables `ON CLUSTER`. Set `DOCKER_NETWORK` when `CLICKHOUSE_HOST` is an address only a container on that network can reach — a compose stand, whose published port is the host's, not the destination's. |
 | `lib/connector-catalog.sh` | Sourced, not run. Builds the configured catalogue from a connector's `discover`, and resolves a connector's config block. Needs Docker; needs no ClickHouse — which is what lets a cluster with no Docker apply the same catalogue through a Job (`tools/seed/seed-stand.sh`) instead of a container here. |
 | `bootstrap-db.sh <config.yaml>` | Sources `pins.env` and `.env` (if present), runs `seed-connectors.sh`, runs all dbt models, runs `../apply-ch-migrations.sh`. |
 | `run-dbt.sh [dbt args]` | Helper: writes a profiles.yml from the `CLICKHOUSE_*` variables through `../dbt_profiles.py` — the one writer every dbt step shares — and runs `dbt run` in `src/ingestion/dbt`. Models whose bronze has not arrived yet are asked for first (`dbt run-operation list_unbuildable_models`) and passed to `--exclude`, so a warehouse missing a connector builds what it can instead of failing: silver is a projection of bronze, and a class nobody feeds is not built at all. `src/ingestion/dbt/tests/cold_start` covers that path. |

@@ -21,7 +21,9 @@
 #   SEED_IMAGE                the seeder image — renders the destination config
 #   SEED_DEADLINE_SECONDS     wall-clock ceiling for the pod
 #   SEED_DB_SECRET            Secret with clickhouse-password
-#   SEED_CLICKHOUSE_HOST/_HTTP_PORT/_USER/_DATABASE
+#   SEED_CLICKHOUSE_HOST/_HTTP_PORT/_PROTOCOL/_USER/_DATABASE
+#   SEED_CLICKHOUSE_CLUSTER_MODE/_CLUSTER_NAME
+#                             the stand's topology; "false" / "" is standalone
 #   SEED_PULL_SECRETS         YAML flow sequence of pull secrets, `[]` for none
 apiVersion: batch/v1
 kind: Job
@@ -64,43 +66,38 @@ spec:
         # The destination takes its credentials as a FILE, so the password has
         # to be rendered into one. Rendered here from the Secret the release
         # already holds rather than written into a second object: one copy of
-        # the value, and it dies with the pod.
+        # the value, and it dies with the pod. The composer is the one
+        # reconcile hands Airbyte and bootstrap-db runs, so the topology keys
+        # a cluster needs come from the same place.
         - name: render-destination-config
           image: ${SEED_IMAGE}
           imagePullPolicy: IfNotPresent
-          command: [python3, -c]
+          command: [/bin/sh, -c]
           args:
-            - |
-              import json, os, pathlib
-
-              # json.dumps, not a format string: a password is an arbitrary
-              # byte sequence and the destination parses this as JSON.
-              config = {
-                  "host": os.environ["CLICKHOUSE_HOST"],
-                  "port": os.environ["CLICKHOUSE_HTTP_PORT"],
-                  "protocol": "http",
-                  "database": os.environ["CLICKHOUSE_DATABASE"],
-                  "username": os.environ["CLICKHOUSE_USER"],
-                  "password": os.environ["CLICKHOUSE_PASSWORD"],
-                  "enable_json": False,
-              }
-              path = pathlib.Path("/work/destination_config.json")
-              path.write_text(json.dumps(config))
-              path.chmod(0o640)
+            - >-
+              umask 027 &&
+              exec python3 /ingestion/reconcile-connectors/python/compose_destination_config.py
+              > /work/destination_config.json
           env:
-            - name: CLICKHOUSE_HOST
+            - name: RECONCILE_DEST_CLICKHOUSE_HOST
               value: "${SEED_CLICKHOUSE_HOST}"
-            - name: CLICKHOUSE_HTTP_PORT
+            - name: RECONCILE_DEST_CLICKHOUSE_PORT
               value: "${SEED_CLICKHOUSE_HTTP_PORT}"
-            - name: CLICKHOUSE_USER
+            - name: RECONCILE_DEST_CLICKHOUSE_PROTOCOL
+              value: "${SEED_CLICKHOUSE_PROTOCOL}"
+            - name: RECONCILE_DEST_CLICKHOUSE_USERNAME
               value: "${SEED_CLICKHOUSE_USER}"
-            - name: CLICKHOUSE_PASSWORD
+            - name: RECONCILE_DEST_CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: ${SEED_DB_SECRET}
                   key: clickhouse-password
-            - name: CLICKHOUSE_DATABASE
+            - name: RECONCILE_DEST_CLICKHOUSE_DATABASE
               value: "${SEED_CLICKHOUSE_DATABASE}"
+            - name: RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE
+              value: "${SEED_CLICKHOUSE_CLUSTER_MODE}"
+            - name: RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME
+              value: "${SEED_CLICKHOUSE_CLUSTER_NAME}"
           volumeMounts:
             - {name: work, mountPath: /work}
           resources:

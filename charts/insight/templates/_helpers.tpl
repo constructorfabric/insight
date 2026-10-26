@@ -72,9 +72,12 @@ Contract per dep (all infra is external — out-of-chart L2):
 
 {{/* Topology of the target ClickHouse (epic #2010). One pair of values tells
      every creator in this release which DDL to emit: `clusterMode` turns on
-     `Replicated*` engines, `clusterName` supplies the `ON CLUSTER <name>`
-     clause. The two travel together — see requireNamedCluster below.
-     Defaults render "false" and "", which is today's standalone DDL. */}}
+     the `Replicated` database and `Replicated*` table engines, `clusterName`
+     is the cluster the creators that carry an `ON CLUSTER <name>` clause name
+     (the CREATE DATABASEs, the bronze heals, the destination); dbt and the
+     Rust services read it and emit none. The two travel together — see
+     requireNamedCluster below. Defaults render "false" and "", which is
+     standalone DDL. */}}
 {{- define "insight.clickhouse.clusterMode" -}}
 {{- include "insight.clickhouse.requireNamedCluster" . -}}
 {{- .Values.clickhouse.clusterMode | default false -}}
@@ -89,8 +92,8 @@ Contract per dep (all infra is external — out-of-chart L2):
      the release has created a relation: replicated engines whose DDL reaches
      only the node that answered the connection leave the other replicas
      without the table, which is the failure clusterMode exists to prevent.
-     Checked here alone — every creator downstream is handed the pair by this
-     chart and none of them is configured anywhere else.
+     Checked here first: every creator downstream is handed the pair by this
+     chart, and the ones that interpolate the name re-check it at run time.
      The name is an identifier every creator interpolates into DDL unquoted,
      the way dbt-clickhouse renders its own `cluster:` key, so what is accepted
      here is a bare ClickHouse identifier: a name carrying `-` or `.` parses
@@ -121,6 +124,10 @@ Contract per dep (all infra is external — out-of-chart L2):
   value: {{ include "insight.clickhouse.clusterMode" . | quote }}
 - name: CLICKHOUSE_CLUSTER_NAME
   value: {{ include "insight.clickhouse.clusterName" . | quote }}
+# Whether the script provisions the roles and grant-less users below at all;
+# false leaves them to the operator.
+- name: CLICKHOUSE_PROVISION_ACCESS
+  value: {{ .Values.clickhouse.provisionAccess | quote }}
 - name: CLICKHOUSE_USER
   value: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
 - name: CLICKHOUSE_PASSWORD

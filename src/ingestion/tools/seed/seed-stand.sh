@@ -247,6 +247,11 @@ CLICKHOUSE_HOST="$(cm_value CLICKHOUSE_HOST)"
 CLICKHOUSE_HTTP_PORT="$(cm_value CLICKHOUSE_PORT)"
 CLICKHOUSE_USER="$(cm_value CLICKHOUSE_USER)"
 CLICKHOUSE_DATABASE="$(cm_value CLICKHOUSE_DATABASE)"
+# The topology the bronze tables are created for. Not in the missing-values
+# report: a chart that predates the pair is a standalone stand, which is what
+# empty means to every reader of it.
+CLICKHOUSE_CLUSTER_MODE="$(cm_value CLICKHOUSE_CLUSTER_MODE)"
+CLICKHOUSE_CLUSTER_NAME="$(cm_value CLICKHOUSE_CLUSTER_NAME)"
 
 # Where analytics migrations created the catalogue tables; the Job's own
 # preflight verifies it.
@@ -254,7 +259,8 @@ if [[ -z "$ANALYTICS_DB" ]]; then
   ANALYTICS_DB="$(cm_value MARIADB_DATABASE)"
 fi
 
-# The seeder speaks HTTP to ClickHouse only.
+# The seeder speaks HTTP to ClickHouse only; the bronze Job's destination is
+# told the same protocol.
 platform_ch_url="$(cm_value CLICKHOUSE_URL)"
 case "$platform_ch_url" in
   https://*)
@@ -262,6 +268,7 @@ case "$platform_ch_url" in
        Point it at an HTTP endpoint with --release/--image overrides, or teach
        config.ClickHouse.url a scheme first." ;;
 esac
+CLICKHOUSE_PROTOCOL=http
 
 ir_secret="insight-identity-resolution-config"
 # Unreadable is an access problem, not "pass --tenant".
@@ -508,6 +515,7 @@ fi
 
 echo "==> tenant:    $TENANT"
 echo "==> databases: identity=$IDENTITY_DB analytics=$ANALYTICS_DB clickhouse=$CLICKHOUSE_DATABASE"
+echo "==> topology:  cluster_mode=${CLICKHOUSE_CLUSTER_MODE:-false} cluster_name=${CLICKHOUSE_CLUSTER_NAME:-}"
 echo "==> image:     $IMAGE"
 # Origin printed, not just the value: shows whether the seed follows the
 # realm or overrides it, before anything is written.
@@ -526,8 +534,11 @@ export SEED_IDENTITY_DB="$IDENTITY_DB"
 export SEED_ANALYTICS_DB="$ANALYTICS_DB"
 export SEED_CLICKHOUSE_HOST="$CLICKHOUSE_HOST"
 export SEED_CLICKHOUSE_HTTP_PORT="$CLICKHOUSE_HTTP_PORT"
+export SEED_CLICKHOUSE_PROTOCOL="$CLICKHOUSE_PROTOCOL"
 export SEED_CLICKHOUSE_USER="$CLICKHOUSE_USER"
 export SEED_CLICKHOUSE_DATABASE="$CLICKHOUSE_DATABASE"
+export SEED_CLICKHOUSE_CLUSTER_MODE="$CLICKHOUSE_CLUSTER_MODE"
+export SEED_CLICKHOUSE_CLUSTER_NAME="$CLICKHOUSE_CLUSTER_NAME"
 export SEED_TENANT_ID="$TENANT"
 export SEED_DEV_USER_EMAIL="$DEV_EMAIL"
 export SEED_IDP_SOURCE_TYPE="$IDP_SOURCE_TYPE"
@@ -570,6 +581,7 @@ render_seed_manifest() {
     ${SEED_IDENTITY_DB} ${SEED_ANALYTICS_DB}
     ${SEED_CLICKHOUSE_HOST} ${SEED_CLICKHOUSE_HTTP_PORT} ${SEED_CLICKHOUSE_USER}
     ${SEED_CLICKHOUSE_DATABASE}
+    ${SEED_CLICKHOUSE_CLUSTER_MODE} ${SEED_CLICKHOUSE_CLUSTER_NAME}
     ${SEED_TENANT_ID} ${SEED_DEV_USER_EMAIL} ${SEED_IDP_SOURCE_TYPE}
     ${SEED_CROSS_TENANT} ${SEED_FORCE} ${SEED_WINDOW_DAYS} ${SEED_ANCHOR_DATE}
     ${SEED_ORG_HEADCOUNT}
@@ -793,8 +805,9 @@ render_bronze_manifest() {
     ${BRONZE_JOB_NAME} ${BRONZE_CONNECTOR} ${BRONZE_CATALOG_CONFIGMAP}
     ${BRONZE_DESTINATION_IMAGE}
     ${SEED_NAMESPACE} ${SEED_IMAGE} ${SEED_DEADLINE_SECONDS} ${SEED_DB_SECRET}
-    ${SEED_CLICKHOUSE_HOST} ${SEED_CLICKHOUSE_HTTP_PORT} ${SEED_CLICKHOUSE_USER}
-    ${SEED_CLICKHOUSE_DATABASE}
+    ${SEED_CLICKHOUSE_HOST} ${SEED_CLICKHOUSE_HTTP_PORT} ${SEED_CLICKHOUSE_PROTOCOL}
+    ${SEED_CLICKHOUSE_USER} ${SEED_CLICKHOUSE_DATABASE}
+    ${SEED_CLICKHOUSE_CLUSTER_MODE} ${SEED_CLICKHOUSE_CLUSTER_NAME}
     ${SEED_PULL_SECRETS}
   ' < "$BRONZE_JOB_TEMPLATE"
 }

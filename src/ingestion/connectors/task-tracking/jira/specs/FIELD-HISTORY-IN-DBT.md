@@ -588,6 +588,25 @@ Two consequences worth stating:
   resource. An issue key always carries its project prefix, so an all-digit id
   side identifies these items unambiguously, and `jira_item_is_live` drops them.
 
+`jira__task_links` folds each occurrence's events into intervals, with three
+rules the events alone do not give:
+
+- **an Epic Link change is a parent change.** Before the epic became the
+  issue's `parent`, it was set through the `gh-epic-link` custom field, whose
+  items name the epic by id and key exactly as a parent item does. Read alone,
+  a parent cleared and an Epic Link set to the same epic seconds later ends a
+  parent the issue still has.
+- **within one changelog entry a removal precedes an addition.** An entry can
+  remove and add the same link, in either order of its items; the link holds
+  after it.
+- **the issue's newest read has the last word.** A link can go with no event on
+  either issue — deleting the linked issue logs nothing on this one, and a bulk
+  change can drop links unlogged — and come back the same way. Where the read
+  disagrees with the state the events leave, the occurrence closes at the
+  issue's `updated` when that is after the last event, else at the read, or
+  reopens at its last removal with `valid_from_known = 0`; either row is
+  `evidence = observation`. A read older than the last event is skipped.
+
 ## 4. Value normalization
 
 Value normalization lives in `dbt/macros/jira/jira_field_value.sql`. Every macro
@@ -1069,24 +1088,39 @@ journal never reaches it.
 
 ## 8. Long text in a side table
 
-Status: implemented (`jira__task_field_text`). §5's normalizers
-cover every other kind; this is the remaining one.
+Status: implemented (`jira__task_field_text`, reaching
+`silver.class_task_field_text`). §5's normalizers cover every other kind; this
+is the remaining one.
 
 `long_text` values are large, change often, and are stored per event, so a naive
 layout copies the whole body into every history row.
 
-A second model, `jira__task_field_text`, holds `(text_id, content)` with
-`text_id = sipHash128(content)`; ReplacingMergeTree on `text_id` deduplicates
-identical bodies for free. The history row stores `value_displays =
-[hex(text_id)]` and `value_id_type = 'text_ref'`.
+A second model, `jira__task_field_text`, holds one row per distinct body of a
+source: `(insight_source_id, data_source, text_id, content_form, content)` with
+`text_id = lower(hex(sipHash128(content)))` (the shared `task_text_id` macro),
+keyed by source and `text_id`. ReplacingMergeTree deduplicates identical bodies
+for free. It is tagged into `silver.class_task_field_text`, the source-neutral
+class every task tracker feeds.
 
-One dbt model writes one table, so this is simply a second model over the same
-upstream — no extra orchestration step.
+The history row is a text reference: `value_ids = [text_id]`,
+`value_displays = [the first task_long_text_prefix_chars characters]` (default
+200), and `value_id_type = 'text_ref'`. An empty value has no element and no
+body. A consumer joins `class_task_field_text` on (`insight_source_id`,
+`data_source`, `text_id = value_ids[1]`) for the full body.
+
+`content_form` says which representation a body is: `adf_json` for the current
+body read from the issue JSON, `rendered_text` for a body taken from either
+side of a changelog item. One dbt model writes one table, so this is simply a
+second model over the same upstream — no extra orchestration step.
 
 This makes long text cheap to store. It does not make it accurate: `toString`
-for a long-text field is Jira's rendering and may be truncated, so a
-reconstructed historical body is "as Jira rendered it", not the source text.
-Consumers needing exact bodies must read the issue snapshot, not the history.
+for a long-text field is Jira's rendering, so a reconstructed historical body
+is "as Jira rendered it", not the source text. The history references the
+`adf_json` row only where the field never changed — the initial value comes
+from the issue JSON then; after a change, the newest reference is Jira's
+rendering. The exact current body is `jira__task_field_current_text`
+(`silver.class_task_field_current_text`): one `text_id` per issue and field,
+keyed by the issue's immutable `jira_id`.
 
 ## 9. Failure policy
 

@@ -8,8 +8,11 @@ the identity chain, for good.
 
 from __future__ import annotations
 
+import logging
 import pathlib
 import re
+from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 
@@ -183,3 +186,36 @@ def test_the_scan_follows_a_ref_chain_to_its_bronze() -> None:
     found = _bronze_read_by("example__users_snapshot", models, {"example": "bronze_example"})
 
     assert found == {("bronze_example", "users")}, f"should resolve through the ref: {found!r}"
+
+
+@dataclass
+class _Client:
+    """Answers EXISTS and the source count; records nothing else worth asserting."""
+
+    source_rows: int
+    commands: list[str] = field(default_factory=list)
+
+    def command(self, sql: str, **_: Any) -> int:
+        self.commands.append(sql)
+        return self.source_rows if sql.startswith("SELECT count()") else 1
+
+    def query(self, sql: str, **_: Any) -> Any:
+        return type("Result", (), {"result_rows": []})()
+
+
+@pytest.mark.parametrize(
+    ("source_rows", "warned"), [(0, True), (5, False)], ids=["empty source", "held source"]
+)
+def test_an_empty_source_is_reported_before_its_snapshot_is_pruned(
+    caplog: pytest.LogCaptureFixture, source_rows: int, warned: bool
+) -> None:
+    snapshot = ("staging", "bamboohr__employees_snapshot")
+
+    with caplog.at_level(logging.WARNING, logger=snapshots.LOG.name):
+        snapshots.prune_to_source(
+            _Client(source_rows), snapshot, "00000000-0000-4000-8000-000000000001"
+        )
+
+    assert any("holds nothing" in record.message for record in caplog.records) is warned, (
+        f"should {'warn' if warned else 'stay quiet'} for {source_rows} source rows: {caplog.text}"
+    )

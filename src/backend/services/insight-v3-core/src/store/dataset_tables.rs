@@ -1,14 +1,23 @@
 //! The tables a dataset's records live in.
 //!
 //! Every one of them is in the datasets database and nowhere else, so nothing
-//! this service creates or drops can reach a table the warehouse owns.
+//! this service creates or drops can reach a table the warehouse owns. The
+//! database itself is `create-databases.sh`'s to make; a create first refuses
+//! one whose engine contradicts the configured topology.
+//!
+//! Nothing here reads its own write, so nothing here takes the shared
+//! client's read-after-write pair. A record is stored and never read back by
+//! the request that sent it, and a sequential quorum would refuse the next
+//! SDK client's insert into the same table while this one is unconfirmed. The
+//! preview looks at what arrived, from whichever replica answers: a read
+//! pinned to the quorum would throw on a lagging replica instead.
 
 use std::fmt;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use clickhouse::sql::Identifier;
-use insight_clickhouse::{Ddl, MissingRelation, TableSpec};
+use insight_clickhouse::{Ddl, MissingRelation, TableSpec, Unfinished};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -33,9 +42,12 @@ LIMIT ? OFFSET ?";
 const COUNT_ROWS: &str = "SELECT count() AS total FROM ?";
 const READ_SHAPE: &str = "SELECT sorting_key FROM system.tables
 WHERE database = currentDatabase() AND name = ?";
-/// Creating or dropping a table waits on a cluster-wide lock, so it gets a
-/// wider bound than a read.
-const DDL_TIMEOUT_SECS: u64 = 35;
+/// Creating or dropping a table waits for the replicas, so it gets a wider
+/// bound than a read: the warehouse's own wait, and then some, so that it is
+/// normally the warehouse that reports a statement as unfinished. A statement
+/// cut off here may still land, which is the caller's to allow for.
+const DDL_TIMEOUT: Duration =
+    insight_clickhouse::DDL_TASK_TIMEOUT.saturating_add(Duration::from_secs(5));
 const READ_TIMEOUT_SECS: u64 = 10;
 const INSERT_SEND_TIMEOUT_SECS: u64 = 10;
 const INSERT_END_TIMEOUT_SECS: u64 = 30;
@@ -70,7 +82,7 @@ impl DatasetTables {
     pub(crate) fn new(client: insight_clickhouse::Client) -> Self {
         Self {
             client,
-            ddl_timeout: Duration::from_secs(DDL_TIMEOUT_SECS),
+            ddl_timeout: DDL_TIMEOUT,
             read_timeout: Duration::from_secs(READ_TIMEOUT_SECS),
             insert: InsertTimeouts {
                 send: Duration::from_secs(INSERT_SEND_TIMEOUT_SECS),
@@ -78,6 +90,12 @@ impl DatasetTables {
                 total: Duration::from_secs(INSERT_TOTAL_TIMEOUT_SECS),
             },
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_ddl_timeout(mut self, bound: Duration) -> Self {
+        self.ddl_timeout = bound;
+        self
     }
 
     /// Puts one record into a dataset's table, whole and unread.
@@ -135,7 +153,6 @@ impl DatasetTables {
         let statement = READ_PAGE.replace("{order}", page.order);
         let rows = self
             .client
-            .inner()
             .query(&statement)
             .bind(Identifier(table))
             .bind(page.limit)
@@ -153,7 +170,6 @@ impl DatasetTables {
     pub(crate) async fn count(&self, table: &str) -> Result<u64, DatasetTableError> {
         let rows = self
             .client
-            .inner()
             .query(COUNT_ROWS)
             .bind(Identifier(table))
             .fetch_all::<CountRow>();
@@ -194,6 +210,14 @@ impl DatasetTables {
     /// nothing else to ask. A table of the ingest shape already there is this
     /// attempt repeating itself.
     pub(crate) async fn provision(&self, table: &str) -> Result<(), DatasetTableError> {
+        let database = &self.client.config().database;
+        tokio::time::timeout(
+            self.read_timeout,
+            self.client.assert_database_topology(database),
+        )
+        .await
+        .map_err(|_| DatasetTableError::Timeout)??;
+
         match self.shape_of(table).await? {
             Shape::Foreign => return Err(DatasetTableError::NotOurs(table.to_owned())),
             Shape::Absent | Shape::Ingest => {}
@@ -255,6 +279,10 @@ pub(crate) enum DatasetTableError {
     /// the pair at the point it refuses the spec.
     #[error("the dataset's table was aimed at a database this service does not own")]
     NotOurDatabase,
+    /// The datasets database is missing or its engine contradicts the
+    /// configured topology; the message carries the remedy.
+    #[error("the datasets database is not ready: {0}")]
+    DatabaseTopology(String),
 }
 
 #[derive(Debug, Deserialize, Serialize, clickhouse::Row)]
@@ -326,6 +354,7 @@ impl From<clickhouse::error::Error> for DatasetTableError {
     fn from(error: clickhouse::error::Error) -> Self {
         match error {
             clickhouse::error::Error::TimedOut => Self::Timeout,
+            ref reported if Unfinished::from_error(reported).is_some() => Self::Timeout,
             ref reported if MissingRelation::from_error(reported).is_some() => Self::Vanished,
             error => Self::ClickHouse(error),
         }
@@ -338,6 +367,7 @@ impl From<insight_clickhouse::Error> for DatasetTableError {
             insight_clickhouse::Error::Clickhouse(reported) => Self::from(reported),
             insight_clickhouse::Error::Timeout => Self::Timeout,
             insight_clickhouse::Error::InvalidQuery(_) => Self::NotOurDatabase,
+            insight_clickhouse::Error::Topology(remedy) => Self::DatabaseTopology(remedy),
         }
     }
 }

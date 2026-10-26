@@ -5,10 +5,12 @@
   install declares: the `Replicated*` family where the warehouse replicates,
   the plain one on a single node (epic #2010).
 
-  Every model routes its engine through here rather than spelling a literal,
-  because the adapter copies `engine` into the DDL verbatim — the profile's
-  `cluster:` key only adds `ON CLUSTER`, it never changes the family — so the
-  prefix has nowhere else to come from.
+  Every model, hook and stage routes its engine through here rather than
+  spelling a literal, because the adapter copies `engine` into the DDL verbatim
+  and a `Replicated` database replays the DDL as written: a plain family stands
+  on every replica holding only the rows that reached the node it was created
+  on. No statement carries `ON CLUSTER` — inside a `Replicated` database the
+  server rejects it on table DDL, and the replay is what reaches the replicas.
 
   The replicated family is rendered without ZooKeeper coordinates, leaving the
   server's `default_replica_path` / `default_replica_name` to supply them.
@@ -34,21 +36,4 @@
 -#}
 {% macro insight_cluster_mode() -%}
   {{- return((var('cluster_mode', 'false') | string | trim | lower) in ['1', 'true', 'yes', 'on']) -}}
-{%- endmacro %}
-
-{#-
-  The `ON CLUSTER` clause a hand-written DDL statement carries, or nothing.
-
-  The `on-run-start` hooks emit their DDL through `run_query`, bypassing the
-  adapter — so the profile's `cluster:` key, which is what qualifies every
-  model's DDL, never reaches them and the clause has to be rendered here.
-
-  Empty on a standalone install. A name without the flag names no cluster:
-  the flag is what turns on the replicated engines a clause would qualify. The
-  flag without a name never reaches here — the chart refuses that pair (see
-  charts/insight/README.md, "ClickHouse topology").
--#}
-{% macro insight_on_cluster() -%}
-  {%- set name = var('cluster_name', '') | string | trim -%}
-  {{- 'ON CLUSTER ' ~ name if insight_cluster_mode() and name else '' -}}
 {%- endmacro %}

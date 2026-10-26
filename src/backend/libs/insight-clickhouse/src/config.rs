@@ -26,8 +26,8 @@ pub struct Config {
     /// Per-query memory ceiling in bytes. Applied as `max_memory_usage`
     /// setting. `None` means the `ClickHouse` server default.
     pub query_max_memory_bytes: Option<u64>,
-    /// Topology of the server this config dials. Decides the engines and the
-    /// `ON CLUSTER` clause of any DDL a caller emits through this client.
+    /// Topology of the server this config dials. Decides the engine family of
+    /// any DDL a caller emits through this client.
     pub topology: Topology,
 }
 
@@ -152,7 +152,7 @@ mod tests {
         let cfg = Config::new("http://ch:8123", "insight")
             .with_topology(Topology::new(true, "insight_cluster"));
 
-        assert_eq!(cfg.topology.on_cluster(), Some("insight_cluster"));
+        assert_eq!(cfg.topology, Topology::Replicated);
     }
 
     #[test]

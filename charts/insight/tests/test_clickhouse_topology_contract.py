@@ -27,6 +27,7 @@ CONSUMERS = [
     ("templates/platform-config.yaml", ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME")),
     ("templates/clickhouse-databases-job.yaml", ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME")),
     ("templates/clickhouse-migrate-job.yaml", ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME")),
+    ("templates/clickhouse-field-value-map-job.yaml", ("CLICKHOUSE_CLUSTER_MODE", "CLICKHOUSE_CLUSTER_NAME")),
     (
         "templates/ingestion/reconcile-cron.yaml",
         ("RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE", "RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME"),
@@ -56,8 +57,9 @@ def _consumer_id(value: str | tuple[str, ...]) -> str:
     return value if isinstance(value, str) else value[0]
 
 
-#: The v3-core Secret only renders for an install that deploys the service.
-BASE = ["--set", "global.insightV3Core.deploy=true"]
+#: The v3-core Secret only renders for an install that deploys the service, and
+#: the field-value-map Job only for one that enables the seed.
+BASE = ["--set", "global.insightV3Core.deploy=true", "--set", "clickhouse.fieldValueMap.enabled=true"]
 CLUSTERED = [*BASE, "--set", "clickhouse.clusterMode=true", "--set", "clickhouse.clusterName=insight_cluster"]
 
 
@@ -221,3 +223,27 @@ def test_no_chart_template_creates_a_clickhouse_database() -> None:
     }
 
     assert not offenders, f"a chart template creates a ClickHouse database: {offenders}"
+
+
+#: The two Jobs that run create-databases.sh share one env block, so the
+#: access decision reaches both or neither.
+DDL_JOBS = ["templates/clickhouse-databases-job.yaml", "templates/clickhouse-migrate-job.yaml"]
+
+PROVISION_ACCESS = ("CLICKHOUSE_PROVISION_ACCESS",)
+
+
+@pytest.mark.parametrize("template", DDL_JOBS)
+def test_access_is_provisioned_unless_the_install_says_otherwise(chart_dependencies: None, template: str) -> None:
+    assert _values(_render(template, BASE), PROVISION_ACCESS) == {"CLICKHOUSE_PROVISION_ACCESS": "true"}
+
+
+@pytest.mark.parametrize("template", DDL_JOBS)
+def test_leaving_access_to_the_operator_reaches_every_job_that_provisions_it(
+    chart_dependencies: None, template: str
+) -> None:
+    """The migrate hook runs the same script as the pre-install Job; a value
+    that reached only one would leave the other provisioning onto a cluster
+    whose access storage cannot take it."""
+    found = _values(_render(template, [*CLUSTERED, "--set", "clickhouse.provisionAccess=false"]), PROVISION_ACCESS)
+
+    assert found == {"CLICKHOUSE_PROVISION_ACCESS": "false"}, f"{template} missed the access decision"

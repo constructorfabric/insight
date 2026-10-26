@@ -16,6 +16,8 @@
 #   SEED_IDENTITY_DB          database holding `persons`
 #   SEED_ANALYTICS_DB         database holding `metric_definitions`
 #   SEED_CLICKHOUSE_HOST/_HTTP_PORT/_USER/_DATABASE
+#   SEED_CLICKHOUSE_CLUSTER_MODE/_CLUSTER_NAME
+#                             the stand's topology; "false" / "" is standalone
 #   SEED_TENANT_ID            tenant every seeded row is scoped to
 #   SEED_DEV_USER_EMAIL       persona the dev-lead login resolves to
 #   SEED_IDP_SOURCE_TYPE      identity source_type the login rows are written under
@@ -104,6 +106,12 @@ spec:
                   key: clickhouse-password
             - name: CLICKHOUSE_DATABASE
               value: "${SEED_CLICKHOUSE_DATABASE}"
+            # Topology the chart declared (epic #2010): the seed runs the same
+            # creation scripts as the deploy hook and must emit the same engines.
+            - name: CLICKHOUSE_CLUSTER_MODE
+              value: "${SEED_CLICKHOUSE_CLUSTER_MODE}"
+            - name: CLICKHOUSE_CLUSTER_NAME
+              value: "${SEED_CLICKHOUSE_CLUSTER_NAME}"
             # ── Seed semantics ───────────────────────────────────────────
             - name: TENANT_DEFAULT_ID
               value: "${SEED_TENANT_ID}"

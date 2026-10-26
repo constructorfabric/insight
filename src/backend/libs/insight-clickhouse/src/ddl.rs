@@ -1,13 +1,12 @@
 //! Every statement a service emits that changes what the data layer holds.
 //!
-//! One place, so the shape the warehouse asks for is decided once. Today that
-//! shape is "nothing extra": epic #2010 puts the whole cluster fork on the
-//! `CREATE DATABASE` in `create-databases.sh`, and inside a `Replicated`
-//! database ClickHouse logs each DDL in Keeper, replays it on every replica,
-//! and converts a `MergeTree` table to `ReplicatedMergeTree` on the way in. So
-//! no statement here carries `ON CLUSTER` and no engine here carries the
-//! `Replicated` prefix — both would be a second answer to a question the
-//! database engine has already answered.
+//! Two facts of a `Replicated` database decide the shape rendered here. It
+//! replays each DDL on every replica but does not replicate rows: a table
+//! replicates only when its own engine carries the `Replicated` prefix, so
+//! the family is rendered from the client's [`Topology`] (argument-less, the
+//! server fills the Keeper path). It rejects `ON CLUSTER` on table DDL, so no
+//! statement here carries one; `create-databases.sh` is the one site that
+//! names a cluster, on `CREATE DATABASE`.
 //!
 //! That is also why this module exists rather than four `format!` calls spread
 //! across two services: if the mechanism ever changes, every statement that
@@ -16,13 +15,18 @@
 //! Names and types are written as the caller gave them. This renders DDL, it
 //! does not vet it: a name the warehouse will not take fails at the warehouse.
 //!
-//! Rendered through [`Client::ddl_sql`](crate::Client::ddl_sql), which is where
-//! a statement aimed at a database the connection does not own is refused.
+//! Rendered through [`Client::ddl_sql`](crate::Client::ddl_sql), which knows
+//! the topology and refuses a statement aimed at a database the connection
+//! does not own.
 
 use core::fmt::Write;
 
+use crate::Topology;
+
 /// The engine family, reachable only through [`TableSpec::merge_tree`].
 const MERGE_TREE: &str = "MergeTree";
+/// The prefix the family takes where the warehouse replicates.
+const REPLICATED: &str = "Replicated";
 
 /// What a create does about a name something already holds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -40,13 +44,13 @@ pub struct TableSpec {
     database: String,
     name: String,
     columns: Vec<(String, String)>,
-    family: &'static str,
     sort_key: Vec<String>,
     on_existing: OnExisting,
 }
 
 impl TableSpec {
-    /// A `MergeTree` table of `columns`, sorted by `sort_key`.
+    /// A `MergeTree`-family table of `columns`, sorted by `sort_key`. Whether
+    /// the family is `ReplicatedMergeTree` is the rendering client's topology.
     ///
     /// `columns` are `(name, type)` in the order the DDL declares them, which
     /// is the physical column order the table ends up with.
@@ -64,7 +68,6 @@ impl TableSpec {
                 .iter()
                 .map(|(name, data_type)| ((*name).to_owned(), (*data_type).to_owned()))
                 .collect(),
-            family: MERGE_TREE,
             sort_key: sort_key.iter().map(|column| (*column).to_owned()).collect(),
             on_existing: OnExisting::Fail,
         }
@@ -78,7 +81,7 @@ impl TableSpec {
         self
     }
 
-    fn render(&self) -> String {
+    fn render(&self, topology: Topology) -> String {
         let mut sql = String::from("CREATE TABLE ");
         if self.on_existing == OnExisting::Keep {
             sql.push_str("IF NOT EXISTS ");
@@ -92,10 +95,14 @@ impl TableSpec {
             .collect();
         let _ = write!(sql, " (\n{}\n)", block.join(",\n"));
 
+        let prefix = if topology.is_replicated() {
+            REPLICATED
+        } else {
+            ""
+        };
         let _ = write!(
             sql,
-            " ENGINE = {} ORDER BY {}",
-            self.family,
+            " ENGINE = {prefix}{MERGE_TREE} ORDER BY {}",
             self.sort_key_sql()
         );
 
@@ -183,9 +190,9 @@ impl Ddl {
         }
     }
 
-    pub(crate) fn render(&self) -> String {
+    pub(crate) fn render(&self, topology: Topology) -> String {
         match self {
-            Self::CreateTable(spec) => spec.render(),
+            Self::CreateTable(spec) => spec.render(topology),
             Self::DropTable { database, table } => {
                 format!("DROP TABLE IF EXISTS {}", qualified(database, table))
             }
