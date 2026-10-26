@@ -70,6 +70,8 @@ Spec: `docs/components/backend/analytics/specs/connector-health`.
 | INSIGHT_NAMESPACE | `insight` | Namespace for K8s Secrets + CronWorkflows |
 | INSIGHT_RECONCILE_TOKEN_TTL | `600` | Airbyte API token cache TTL (seconds) |
 | RECONCILE_RUN_ID | — | Correlation id stamped on every log line (the chart injects the workflow pod name) |
+| RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE | `false` | Warehouse topology (`clickhouse.clusterMode`): `compose_destination_config.py` sets the destination's `use_replicated_engines`; the sweep's `ledger.py` then writes with quorum session settings and reads the catalogue through `clusterAllReplicas` |
+| RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME | — | The cluster the destination's `ON CLUSTER` and the sweep's `clusterAllReplicas` name; required when `_CLUSTER_MODE` is on, refused empty |
 
 ## Logging
 

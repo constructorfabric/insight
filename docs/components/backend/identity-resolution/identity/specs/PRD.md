@@ -151,7 +151,7 @@ the tenant context via the same header.
 **Role**: Stores the `persons` journal and the `org_chart` edges that
 the service reads and that the SeaORM migrator migrates. Connection
 target named by the gear config's `database_url`
-(`APP__gears__identity-resolution__config__database_url`).
+(`APP__gears__identity_resolution__config__database_url`).
 
 #### Seed pipeline
 
@@ -1097,10 +1097,10 @@ env prefix is gone.)
 
 **Protocol/Format**: gears-rust host configuration — YAML section
 `gears.identity-resolution.config`, with double-underscore env
-overrides `APP__gears__identity-resolution__config__<field>`.
+overrides `APP__gears__identity_resolution__config__<field>`.
 
 Known fields (snake-case, env override
-`APP__gears__identity-resolution__config__<field>`):
+`APP__gears__identity_resolution__config__<field>`):
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -1110,6 +1110,7 @@ Known fields (snake-case, env override
 | `max_depth` | int | `16` | Hard cap on the recursion depth. |
 | `org_chart_source_type` | string | `bamboohr` | Which `insight_source_type` drives the org-tree projection on `/v1/profiles`. |
 | `clickhouse_url` / `clickhouse_database` / `clickhouse_user` / `clickhouse_password` | strings | — / `identity` / — / — | ClickHouse HTTP coordinates (port 8123) for the persons-seed reader. |
+| `clickhouse_cluster_mode` / `clickhouse_cluster_name` | bool / string | `false` / — | Warehouse topology: whether the relations the persons-sync creates replicate. The name is the chart's shared contract, never emitted as `ON CLUSTER`. |
 | `bootstrap_admin_person_id` | UUID | — | Optional migrate-time first-admin bootstrap. |
 
 The listener bind address (`0.0.0.0:8082`) lives in the host's
@@ -1129,7 +1130,7 @@ the historical name for anchor stability.)
 pod via `envFrom`.
 
 **Protocol/Format**: Kubernetes `Secret` (string data) containing the
-`APP__gears__identity-resolution__config__*` keys
+`APP__gears__identity_resolution__config__*` keys
 (`...__database_url` etc.).
 
 **Compatibility**: Stable across chart minor versions; additive fields
