@@ -73,14 +73,15 @@ v3_core_env() {
 
 # The persons log the sync copies: one tenant, PERSONS people with an e-mail each.
 seed_persons_log() {
-  local values=() i
+  local values=() joined i
   for ((i = 1; i <= PERSONS; i++)); do
     values+=("('email', 'rig', UNHEX(REPLACE('${RIG_SOURCE}', '-', '')), UNHEX(REPLACE('${RIG_TENANT}', '-', '')), \
       'person${i}@example.com', UNHEX(REPLACE('a4d11000-0000-4000-8000-0000000000$(printf '%02x' "${i}")', '-', '')), \
       UNHEX(REPLACE('a4d11000-0000-4000-8000-0000000000$(printf '%02x' "${i}")', '-', '')), 'cluster-rig')")
   done
+  printf -v joined '%s,' "${values[@]}"
   "${COMPOSE[@]}" exec -T mariadb mariadb -uinsight -pinsight identity -e \
-    "INSERT INTO persons (value_type, insight_source_type, insight_source_id, insight_tenant_id, value_id, person_id, author_person_id, reason) VALUES $(IFS=,; echo "${values[*]}")"
+    "INSERT INTO persons (value_type, insight_source_type, insight_source_id, insight_tenant_id, value_id, person_id, author_person_id, reason) VALUES ${joined%,}"
 }
 
 # Round 1 publishes onto an install without the live table (the sync renames
