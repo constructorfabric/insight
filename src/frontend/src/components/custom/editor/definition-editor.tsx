@@ -1,4 +1,4 @@
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
@@ -29,8 +29,6 @@ import {
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
-const KINDS: EditableKind[] = ["datasets", "metrics", "widgets", "dashboards"];
-
 export function DefinitionEditor({
   kind,
   id,
@@ -39,11 +37,9 @@ export function DefinitionEditor({
   onStored,
 }: {
   kind: EditableKind;
-  /** The definition being edited. A new one has no id until it is stored. */
   id?: string;
   name?: string;
   document?: Record<string, unknown>;
-  /** Called with the id the definition is kept under once it is stored. */
   onStored: (id: string) => void;
 }) {
   const description = DESCRIPTIONS[kind];
@@ -54,13 +50,8 @@ export function DefinitionEditor({
   const [view, setView] = useState<"fields" | "text">("fields");
   const store = useStoreDefinition();
 
-  const catalogues = useQueries({
-    queries: KINDS.map((each) => catalogueQuery(each)),
-  });
-  const stored = new Map(
-    KINDS.map((each, index) => [each, catalogues[index]?.data ?? []])
-  );
-  const listed = (of: EditableKind) => stored.get(of) ?? [];
+  const datasetCatalogue = useQuery(catalogueQuery("datasets"));
+  const datasets = () => datasetCatalogue.data?.map((item) => item.id) ?? [];
 
   const reads = held.document.dataset;
   const dataset = useQuery({
@@ -109,8 +100,7 @@ export function DefinitionEditor({
   const creating = id === undefined;
   // SAFETY: writing a dataset replaces the one under its name, so a new one
   // may not take a name the catalogue lists; the catalogue may lag the service.
-  const taken =
-    isDataset && creating && listed(kind).some((item) => item.id === given);
+  const taken = isDataset && creating && datasets().includes(given);
 
   const submit = () => {
     if (given === "" || taken || !sendable(held)) return;
@@ -217,7 +207,7 @@ export function DefinitionEditor({
           editing={{
             document: held.document,
             said: placed.at,
-            listed,
+            datasets,
             declared,
             tables,
             columns,

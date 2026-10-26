@@ -64,7 +64,6 @@ function sharing(client: QueryClient) {
 
 const NO_ITEMS = { items: [], total: 0 };
 
-/** A stored metric as the service reads it back. */
 function storedMetric(body: Record<string, unknown>) {
   return { id: "lines_per_day", name: "Lines per day", body };
 }
@@ -330,7 +329,9 @@ describe("/portal/custom/edit/$kind/$name", () => {
 
       render(<Component />, { wrapper });
 
-      expect(await screen.findByLabelText(label)).toHaveValue(value);
+      await waitFor(() =>
+        expect(screen.getByLabelText(label)).toHaveValue(value)
+      );
     }
   );
 });

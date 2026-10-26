@@ -12,6 +12,14 @@ import {
   useRenameDefinition,
 } from "@/queries/custom";
 
+const COPY_SUFFIX = " copy";
+
+function copyName(name: string): string {
+  const kept = name.slice(0, DEFINITION_NAME_MAX - COPY_SUFFIX.length);
+
+  return `${kept.trimEnd()}${COPY_SUFFIX}`;
+}
+
 interface DialogProps {
   id: string;
   name: string;
@@ -153,7 +161,7 @@ export function DuplicateDashboard({
       title="Duplicate dashboard"
       description={`Copies ${name} with its folder and tags.`}
       confirmLabel="Duplicate"
-      initial={`${name} copy`}
+      initial={copyName(name)}
       fallback="The dashboard could not be duplicated."
       pending={duplicate.isPending}
       onSave={save}

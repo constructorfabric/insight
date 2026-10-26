@@ -72,7 +72,6 @@ const MAX_PAGE = 200;
 
 const DATASET_PREFIX = ["custom", "dataset"] as const;
 
-/** A dataset is kept under its name, so its name is its id. */
 async function fetchDatasetPage(page: PageRequest): Promise<ListedPage> {
   const read = await fetchDatasetNames(page);
 
@@ -124,7 +123,6 @@ export function definitionPagesQuery(
   });
 }
 
-/** A definition as its editor opens it: what it is called, and what it holds. */
 export interface EditedDefinition {
   name: string;
   document: Record<string, unknown>;
@@ -156,10 +154,9 @@ export function definitionBodyQuery(kind: EditableKind, id: string) {
   });
 }
 
-// Every definition of a kind in one answer, for a form to offer a reference from.
 export function catalogueQuery(kind: EditableKind) {
   return queryOptions({
-    queryKey: ["custom", "all-names", kind],
+    queryKey: ["custom", "catalogue", kind],
     queryFn: () => FETCH_PAGE[kind]({ limit: MAX_PAGE }),
     select: (page: ListedPage): Listed[] => page.items,
   });
@@ -374,7 +371,6 @@ export function useRemoveDataset() {
   });
 }
 
-/** What a save stores. A definition with no id yet is created; a dataset is kept under its name. */
 export interface StoredDefinition {
   kind: EditableKind;
   id?: string;
@@ -382,7 +378,6 @@ export interface StoredDefinition {
   body: unknown;
 }
 
-/** Stores a definition and answers with the id it is kept under. */
 async function storeDefinition({
   kind,
   id,

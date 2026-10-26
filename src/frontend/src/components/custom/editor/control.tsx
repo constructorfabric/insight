@@ -79,7 +79,7 @@ export function Control({
             id={id}
             describe={describe}
             value={written}
-            names={editing.listed("datasets").map((item) => item.id)}
+            names={editing.datasets()}
             onChange={(next) => onChange(next === "" ? emptied : next)}
           />
         );

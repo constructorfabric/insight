@@ -28,7 +28,6 @@ function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
-/** Catalogue entries whose ids are the names they are listed under. */
 function listed(...names: string[]) {
   return names.map((name) => ({ id: name, name }));
 }
@@ -53,8 +52,6 @@ describe("/portal/custom", () => {
 
     render(<Component />, { wrapper });
 
-    // The name stands in until a title arrives, so the link is still
-    // reachable when a definition cannot be read.
     expect(
       await screen.findByRole("link", { name: "Engineering" })
     ).toHaveAttribute("href", "/portal/custom/d-1");

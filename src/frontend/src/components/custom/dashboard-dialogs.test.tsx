@@ -78,7 +78,7 @@ async function expectListsReadAgain(before: ReturnType<typeof reads>) {
   });
 }
 
-async function openCardMenu() {
+async function openCardMenu(name = "delivery") {
   const user = userEvent.setup();
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -86,12 +86,12 @@ async function openCardMenu() {
   render(
     <QueryClientProvider client={queryClient}>
       <Lists />
-      <DashboardMenu id="dash-1" name="delivery" title="Delivery" />
+      <DashboardMenu id="dash-1" name={name} title="Delivery" />
     </QueryClientProvider>
   );
   await waitFor(() => expect(reads().pins).toBe(1));
 
-  await user.click(screen.getByRole("button", { name: "More for delivery" }));
+  await user.click(screen.getByRole("button", { name: `More for ${name}` }));
   await screen.findByRole("menu");
 
   return user;
@@ -218,6 +218,20 @@ describe("duplicating from the card", () => {
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await expectListsReadAgain(before);
+  });
+
+  it("offers a copy of a name at the limit cut to fit, still marked as a copy", async () => {
+    const longest = "d".repeat(customClient.DEFINITION_NAME_MAX);
+    const user = await openCardMenu(longest);
+
+    const dialog = await choose(user, "Duplicate…");
+    const offered = within(dialog).getByRole("textbox", {
+      name: "Dashboard name",
+    });
+
+    expect(offered).toHaveValue(
+      `${"d".repeat(customClient.DEFINITION_NAME_MAX - " copy".length)} copy`
+    );
   });
 
   it("will not duplicate under an empty name", async () => {

@@ -8,7 +8,6 @@ import type {
 
 /** What every widget carries, whatever it draws. */
 interface WidgetBase {
-  /** The id of the metric it draws. */
   metric: string;
   /** The heading a reader sees. Without it the card shows the widget's name. */
   title?: string;
@@ -109,13 +108,11 @@ export interface EffectiveClock {
   from: "metric" | "dataset";
 }
 
-/** One definition as a catalogue lists it: the id it is kept under, and what it is called. */
 export interface Listed {
   id: string;
   name: string;
 }
 
-/** One page of a catalogue, and how many definitions it is a page of. */
 export interface ListedPage {
   items: Listed[];
   total: number;

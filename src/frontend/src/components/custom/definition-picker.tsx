@@ -32,13 +32,6 @@ const NOUN: Record<DefinitionKind, { one: string; many: string }> = {
   dashboards: { one: "dashboard", many: "dashboards" },
 };
 
-/**
- * Picks one stored definition, by id, shown by its name.
- *
- * The service does the searching — it matches the stored body as well as the
- * name, so a table name finds every metric that reads it — and the list reads
- * its matches a page at a time as it is scrolled.
- */
 export function DefinitionPicker({
   kind,
   id,
@@ -66,7 +59,7 @@ export function DefinitionPicker({
   );
   const ids = [...labels.keys()];
   const labelOf = (option: string) =>
-    labels.get(option) ?? (option === value ? chosenName : undefined) ?? option;
+    labels.get(option) ?? (option === value ? chosenName : option);
   const list = useRef<HTMLDivElement>(null);
   const marker = useAutoLoadOnScroll({
     hasNextPage: found.hasNextPage,
@@ -149,8 +142,7 @@ export function DefinitionPicker({
   );
 }
 
-/** The chosen definition's name, read through the query its own page uses. */
-function useStoredName(kind: DefinitionKind, id: string): string | undefined {
+function useStoredName(kind: DefinitionKind, id: string): string {
   const asked = id !== "";
   const metric = useQuery({
     ...metricQuery(id),
@@ -167,10 +159,18 @@ function useStoredName(kind: DefinitionKind, id: string): string | undefined {
 
   switch (kind) {
     case "metrics":
-      return metric.data?.name;
+      return shownName(metric, id);
     case "widgets":
-      return widget.data?.name;
+      return shownName(widget, id);
     case "dashboards":
-      return dashboard.data?.name;
+      return shownName(dashboard, id);
   }
+}
+
+function shownName(
+  read: { data?: { name: string }; isError: boolean },
+  id: string
+): string {
+  if (read.data) return read.data.name;
+  return read.isError ? id : "";
 }

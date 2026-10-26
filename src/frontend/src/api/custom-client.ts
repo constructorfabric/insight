@@ -103,7 +103,6 @@ export async function fetchDefinition<T = unknown>(
   return readJson<DefinitionResponse<T>>(res);
 }
 
-/** Stores a new definition and answers with the id the service gave it. */
 export async function createDefinition(
   kind: DefinitionKind,
   name: string,
@@ -119,7 +118,6 @@ export async function createDefinition(
   return made.id;
 }
 
-/** Replaces what a definition is called and what it holds. */
 export async function putDefinition(
   kind: DefinitionKind,
   id: string,
@@ -134,7 +132,6 @@ export async function putDefinition(
   await ensureOk(res);
 }
 
-/** Gives a definition a new name and keeps what it holds. */
 export async function renameDefinition(
   kind: DefinitionKind,
   id: string,
@@ -144,10 +141,8 @@ export async function renameDefinition(
   await putDefinition(kind, id, to, stored.body);
 }
 
-/** The longest name a metric, widget or dashboard may be given. */
 export const DEFINITION_NAME_MAX = 128;
 
-/** One page of a catalogue of names, as the dataset catalogue answers. */
 export interface NamePage {
   names: string[];
   total: number;
@@ -224,7 +219,6 @@ export async function setDashboardTags(
   await ensureOk(res);
 }
 
-/** Copies a dashboard under a new name and answers with the copy's id. */
 export async function duplicateDashboard(
   id: string,
   name: string

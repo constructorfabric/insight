@@ -43,7 +43,6 @@ interface Written {
   name: string;
 }
 
-/** A creation set, in the order it reads: metric, widgets, dashboard. */
 function written(set: ChatCreated | undefined): Written[] {
   if (!set) return [];
 

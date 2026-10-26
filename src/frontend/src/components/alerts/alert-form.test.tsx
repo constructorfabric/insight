@@ -39,9 +39,8 @@ import { portalRouter } from "@/test/portal-router";
 
 import { EditAlertPage, NewAlertPage } from "./alert-form";
 
-/** A catalogue page whose ids are the names they are listed under. */
 function listed(names: string[]) {
-  return names.map((name) => ({ id: name, name }));
+  return names.map((name) => ({ id: `id-${name}`, name }));
 }
 
 const PRS_OPEN = {
@@ -188,7 +187,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     await waitFor(() =>
       expect(alertsClient.createAlert).toHaveBeenCalledWith({
         name: "Too many open PRs",
-        metric: "prs-open",
+        metric: "id-prs-open",
         condition: ABOVE_TEN,
         context_columns: [],
         range: null,
@@ -235,7 +234,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
       await waitFor(() =>
         expect(alertsClient.createAlert).toHaveBeenCalledWith({
           name: "Too many open PRs",
-          metric: "prs-open",
+          metric: "id-prs-open",
           condition: {
             rows: "one",
             where: { column: "total", op: "<", value: 10 },
@@ -255,7 +254,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     await fillNew();
 
     expect(customClient.fetchMetric).toHaveBeenCalledTimes(1);
-    expect(customClient.fetchMetric).toHaveBeenCalledWith("prs-open");
+    expect(customClient.fetchMetric).toHaveBeenCalledWith("id-prs-open");
   });
 
   it("says when the picked metric cannot be read, and reads it again on request", async () => {
@@ -281,22 +280,30 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     expect(customClient.fetchMetric).toHaveBeenCalledTimes(2);
   });
 
-  it("offers each metric by its name and reads the one picked by its id", async () => {
+  it("offers each metric by its name and stores the one picked by its id", async () => {
     vi.mocked(customClient.fetchMetrics).mockResolvedValue({
-      items: [{ id: "m-1", name: "Open pull requests" }],
+      items: [{ id: "m-1", name: "Lines per day" }],
       total: 1,
     });
+    vi.mocked(alertsClient.createAlert).mockResolvedValue(ALERT);
 
     render(<NewAlertPage />, { wrapper });
-    await userEvent.type(await screen.findByLabelText("Metric"), "open");
+    await userEvent.type(await screen.findByLabelText("Name"), "Few lines");
+    await userEvent.type(screen.getByLabelText("Metric"), "lines");
     await userEvent.click(
-      await screen.findByRole("option", { name: "Open pull requests" })
+      await screen.findByRole("option", { name: "Lines per day" })
     );
+    await pickColumn(1, "total");
+    await userEvent.type(condition(1).getByLabelText("Value"), "10");
+    await userEvent.click(screen.getByRole("button", { name: "Create alert" }));
 
+    expect(customClient.fetchMetric).toHaveBeenCalledWith("m-1");
+    expect(screen.getByLabelText("Metric")).toHaveValue("Lines per day");
     await waitFor(() =>
-      expect(customClient.fetchMetric).toHaveBeenCalledWith("m-1")
+      expect(alertsClient.createAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ metric: "m-1" })
+      )
     );
-    expect(screen.getByLabelText("Metric")).toHaveValue("Open pull requests");
   });
 
   it("asks the service for the metrics matching what is typed", async () => {
@@ -476,7 +483,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     expect(screen.getByText("1 of 1 row matches")).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "12" })).toBeInTheDocument();
     expect(alertsClient.previewAlert).toHaveBeenLastCalledWith({
-      metric: "prs-open",
+      metric: "id-prs-open",
       range: null,
       condition: ABOVE_TEN,
       context_columns: [],
@@ -785,8 +792,8 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
         items: listed(["prs-open", "prs-other"]),
         total: 2,
       });
-      vi.mocked(customClient.fetchMetric).mockImplementation(async (name) =>
-        storedMetric(name === "prs-other" ? other : PRS_OPEN)
+      vi.mocked(customClient.fetchMetric).mockImplementation(async (id) =>
+        storedMetric(id === "id-prs-other" ? other : PRS_OPEN)
       );
       vi.mocked(alertsClient.fetchAlert).mockResolvedValue(ALERT);
 
@@ -1021,7 +1028,7 @@ describe("the JSON view", { timeout: 20_000 }, () => {
 
     expect(shownJson()).toEqual({
       name: "Too many open PRs",
-      metric: "prs-open",
+      metric: "id-prs-open",
       condition: ABOVE_TEN,
       context_columns: [],
       range: null,

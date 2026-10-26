@@ -273,14 +273,9 @@ describe("<DefinitionEditor> holding one document", () => {
 
   it("lets a new metric take a name another metric already has", async () => {
     const user = userEvent.setup();
-    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
-      items: [{ id: "m1", name: "Lines per day" }],
-      total: 1,
-    });
 
     render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, { wrapper });
 
-    await waitFor(() => expect(customClient.fetchMetrics).toHaveBeenCalled());
     await user.type(screen.getByLabelText("Name"), "Lines per day");
     await user.type(screen.getByLabelText("Dataset"), "commits");
 
