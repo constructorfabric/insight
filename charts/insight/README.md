@@ -139,11 +139,13 @@ neither. Two chart values carry that one decision to every creator in the
 release, and they are the only place an operator sets it:
 
 - `clickhouse.clusterMode` (bool, default `false`) — created engines replicate.
-- `clickhouse.clusterName` (string, default `""`) — the cluster `ON CLUSTER`
-  names. Required whenever `clusterMode` is on, and `helm template` fails
-  without it: replicated DDL that reaches only the node a creator connected to
-  leaves every other replica without the relation. Every creator downstream
-  reads the pair from this release, so this is the one place it is checked.
+- `clickhouse.clusterName` (string, default `""`) — the cluster the few
+  statements that carry an `ON CLUSTER` clause name: the `CREATE DATABASE`s,
+  the bronze heals and migrations, the destination's bronze DDL. Required
+  whenever `clusterMode` is on, and `helm template` fails without it:
+  replicated DDL that reaches only the node a creator connected to leaves
+  every other replica without the relation. Every creator downstream reads
+  the pair from this release, so this is the one place it is checked.
 
 Reading the pair is not the same as emitting a clause, and the table below says
 which layer does what. The Rust services emit no `ON CLUSTER` and create no
@@ -156,8 +158,8 @@ The same decision under a different name in each layer:
 | --- | --- | --- |
 | Chart values | `clickhouse.clusterMode` / `clickhouse.clusterName` | [`values.yaml`](./values.yaml) |
 | Chart helpers | `insight.clickhouse.clusterMode` / `insight.clickhouse.clusterName` | [`templates/_helpers.tpl`](./templates/_helpers.tpl) |
-| Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-databases` and `clickhouse-migrate` Jobs (one shared env block, `insight.clickhouse.ddlEnv`), `scripts/lib/ch-topology.sh`, which renders the database engine `create-databases.sh` creates with, expands the `/*@@REPLICATED@@*/` and `/*@@ON_CLUSTER@@*/` markers a numbered migration spells its engine and its cluster clause behind, and refuses a deploy the warehouse cannot serve; and `scripts/lib/ch-exec.sh`, whose every request in cluster mode carries the session settings a replicated warehouse needs (`distributed_ddl_output_mode=throw_only_active`, a 60 s `distributed_ddl_task_timeout`, quorum writes with sequential-consistency reads, `allow_nondeterministic_mutations`, `mutations_sync`/`alter_sync` 2) and a 900 s transport ceiling |
-| Reconcile | `RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE` / `RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME` | `reconcile-cron.yaml`, consumed by `compose_destination_config.py` as the destination's `use_replicated_engines` / `cluster_name` |
+| Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-databases` and `clickhouse-migrate` Jobs (one shared env block, `insight.clickhouse.ddlEnv`), `scripts/lib/ch-topology.sh`, which renders the database engine `create-databases.sh` creates with, expands the `/*@@REPLICATED@@*/` and `/*@@ON_CLUSTER@@*/` markers a numbered migration spells its engine and its cluster clause behind, and refuses a deploy the warehouse cannot serve; and `scripts/lib/ch-exec.sh`, whose every request in cluster mode carries the session settings a replicated warehouse needs (`distributed_ddl_output_mode=throw_only_active`, a 60 s `distributed_ddl_task_timeout`, quorum writes with sequential-consistency reads, `allow_nondeterministic_mutations`, `mutations_sync`/`alter_sync` 2) and a 900 s transport ceiling. The `clickhouse-field-value-map` Job carries the same pair to `scripts/load_field_value_map.py`, whose every request on a cluster carries the quorum writes and sequential-consistency reads its anti-join rests on |
+| Reconcile | `RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE` / `RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME` | `reconcile-cron.yaml`, consumed by `compose_destination_config.py` as the destination's `use_replicated_engines` / `cluster_name`, and by the sweep's `sweep/ledger.py`, whose every ledger request on a cluster carries quorum writes and sequential-consistency reads, whose identity mutation waits for every replica (`mutations_sync=2`) and whose catalogue read goes through `clusterAllReplicas(<name>, system.tables)` |
 | dbt | project var `cluster_mode`, read by the `insight_engine` macro every engine is declared through -- the models', the `on-run-start` hooks' raw DDL and the jira journal's stages; the project-level `+engine` default for a model that declares none; the profile's `cluster:`, `database_engine: Replicated` and `cluster_mode: true` keys and the quorum / mutation / CTE `custom_settings`, all written by the one profile writer. No dbt statement carries `ON CLUSTER`: `database_engine: Replicated` is what keeps the adapter from adding it, and the hooks never render it | `dbt_project.yml`, `dbt/macros/insight_engine.sql`, `scripts/dbt_profiles.py` |
 | Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name` (the name is accepted for the shared contract and unused: a service emits no `ON CLUSTER`), decides the engine family every `insight_clickhouse::Ddl` create renders (`ReplicatedMergeTree`, argument-less, or `MergeTree`), the read-after-write settings a swap needs (only identity-resolution's staging count and watermark take them; v3-core's record inserts and preview reads never read their own write) and the wait every `Client::execute_ddl` makes for the active replicas (`throw_only_active`, 30 s). No service creates a database; `Client::assert_database_topology` refuses a missing one (naming `create-databases.sh`) or one whose engine contradicts the topology | `libs/insight-clickhouse` (`topology.rs`, `ddl.rs`, `consistency.rs`, `coordination.rs`), `insight-v3-core` and `identity-resolution` gear config |
 
@@ -202,7 +204,7 @@ carries its own remedy:
 | access storage is replicated | `system.user_directories` | SQL-created roles and users are otherwise node-local, and authentication through the load balancer succeeds or fails by which replica answers. A warehouse that stores access locally takes no role from this release: create them on every replica yourself and set `clickhouse.provisionAccess: false`, which turns this guard into a note and skips every provisioning script |
 | an existing database carries the right engine | `system.databases` | the flag never converts a database that already stands; a standalone deploy is checked in the opposite direction, since it would emit standalone DDL into a `Replicated` database |
 | every `Replicated` database has joined every replica | `system.zookeeper` (`<database keeper path>/replicas`, against the host count of `clusterName` in `system.clusters`), `system.distributed_ddl_queue` | a replica that never ran the `CREATE DATABASE` answers empty; one whose `CREATE` is still queued because it was down is a note, not a refusal, and replays it on return |
-| every `bronze_*` MergeTree table is `Replicated*` | `system.tables` on every replica (`clusterAllReplicas`) | the destination creates with `IF NOT EXISTS`, so a bronze table from before the flip keeps its plain engine on the one replica that created it; the guard lists each such table with its replica and names the remedy (drop the bronze database `ON CLUSTER` and re-sync, or the conversion runbook, #3902). The Jira rebuild asserts the same of its source before copying it. This is the one probe that needs every replica up: the one that is down may hold the table. It runs on the peers as the deploy user, which needs `REMOTE ON *.*` and `SHOW` on every `bronze_*` table (a full-access admin has both) and the cluster's `<remote_servers>` entry to carry an interserver `<secret>` |
+| every `bronze_*` MergeTree table is `Replicated*` | `system.tables` on every replica (`clusterAllReplicas`) | the destination creates with `IF NOT EXISTS`, so a bronze table from before the flip keeps its plain engine on the one replica that created it; the guard lists each such table with its replica and names the remedy (drop the bronze database `ON CLUSTER` and re-sync, or convert the tables in place along the [conversion runbook](../../docs/operations/CLICKHOUSE-CLUSTER-CONVERSION.md)). The Jira rebuild asserts the same of its source before copying it. This is the one probe that needs every replica up: the one that is down may hold the table. It runs on the peers as the deploy user, which needs `REMOTE ON *.*` and `SHOW` on every `bronze_*` table (a full-access admin has both) and the cluster's `<remote_servers>` entry to carry an interserver `<secret>` |
 
 Bronze is the exception to "no `ON CLUSTER` anywhere else": `bronze_*` is an
 Atomic database the Airbyte destination creates, so nothing replays DDL issued
@@ -211,22 +213,42 @@ table there carries the clause.
 
 With a replica down, a deploy does not start: the bronze-engine sweep needs
 every replica to answer, since the absent one may hold the table it looks for.
-Restore the replica, then deploy. A replica that drops out while a deploy runs
-is tolerated by the DDL: coordinated statements wait only for the active
-replicas (`throw_only_active`, 60 s per statement from the hooks, 30 s from a
-service) and the absent one replays its queue when it returns. A write is not:
-quorum inserts and synchronous mutations fail loudly rather than leave one
-replica with the old rows. The two hook Jobs carry an `activeDeadlineSeconds`
-sized from those ceilings.
+Restore the replica, then deploy. A replica that drops out while a deploy
+runs usually fails it, but not through the coordinated DDL: a `CREATE` or
+`DROP` waits for the replicas Keeper still counts active
+(`throw_only_active`, 60 s per statement from the hooks, 30 s from a service)
+and fails only while the departed one is still counted; once its session has
+expired, the statement completes on the others and the absent replica
+replays its queue on return, which the completeness guard reports as a note
+on the next deploy. What does fail outright is every mutation and ALTER,
+which run with `mutations_sync` / `alter_sync` 2 and wait for every replica
+until the transport ceiling fails the deploy, and every quorum insert, which
+fails rather than leave one replica with the old rows. So does a heal whose
+table probe the balancer could not answer: the hook stops there instead of
+skipping the heal as if the table were absent. Nothing is retried around the
+absent replica: restore it and re-run the deploy, which is idempotent. The
+two hook Jobs carry an `activeDeadlineSeconds` sized from those ceilings.
+
+A two-replica cluster loses its quorum writes during a replica restart:
+`insert_quorum = auto` is a majority, and the majority of two is both, so
+each connector sync's dbt build, the deploy hook's heals and the persons
+sync fail until the replica is back. The destination's bronze writes,
+`insight-v3-core`'s dataset records and analytics' usage events carry no
+quorum and keep landing. Three replicas tolerate one down.
 
 Flipping the values converts nothing that already stands: an existing
-standalone install moving to a cluster recreates its databases and bronze
-tables with the replicated engines first (epic #2010), and the guards above
-refuse the deploy until it has. The replicated leg of
+standalone install moving to a cluster converts its databases and bronze
+tables to the replicated engines first, along the
+[conversion runbook](../../docs/operations/CLICKHOUSE-CLUSTER-CONVERSION.md)
+(`src/ingestion/scripts/convert-database-to-cluster.sh`, one database at a
+time, on the node that holds it), and the guards above refuse the deploy
+until it has — in both directions, so the way back is in the runbook too.
+The replicated leg of
 [`cluster-mode.yml`](../../.github/workflows/cluster-mode.yml) runs the full
 deploy hook, a connector's bronze and its dbt build twice on a two-replica
 warehouse, compares every node, and then asserts that a plain bronze table left
-on one replica is refused by name. Its rig
+on one replica is refused by name; its conversion leg executes the runbook on
+a standalone install made on one of the replicas. Its rig
 ([`src/ingestion/tests/cluster-rig`](../../src/ingestion/tests/cluster-rig/README.md))
 also spells out what a clustered ClickHouse must provide before Insight installs
 onto it.
@@ -246,7 +268,7 @@ Key groups:
 - `identityResolution.*` — identity-resolution service (must stay deployed; `rosterSourceType` for email-mode logins)
 - `keycloak.deploy` + `keycloakConfig.*` — the in-stack identity broker and its realms-as-code hook
 - `clickhouse.clusterMode` / `clickhouse.clusterName` — warehouse topology, see [ClickHouse topology](#clickhouse-topology)
-- `clickhouse.createDatabases` — whether the release creates its own ClickHouse databases (see below)
+- `clickhouse.createDatabases` — whether the pre-install Hook creates the release's ClickHouse databases; the post-install Hook converges them either way (see [ClickHouse topology](#clickhouse-topology))
 - `clickhouse.provisionAccess` — whether the release provisions the ClickHouse roles and grant-less users beside them; `false` leaves access to the operator (a cluster without a replicated user directory)
 - `clickhouse.fieldValueMap.*` — insert-only seed of operator-authored `config.field_value_map` / `config.field_value_defaults` rows from a TSV ConfigMap (post-upgrade hook, weight 300)
 - `previews.*`, `gitCliProxy.*`, `frontend.*` — optional services, on by default

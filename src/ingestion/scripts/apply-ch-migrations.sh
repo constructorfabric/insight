@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# Apply the ClickHouse schema migrations against an EXTERNAL ClickHouse.
+# Apply the ClickHouse schema migrations and the guarded heals against an
+# EXTERNAL ClickHouse, over its HTTP interface via lib/ch-exec.sh (selected by
+# CLICKHOUSE_URL). Invoked by the clickhouse-migrate Helm Hook Job
+# (post-install,post-upgrade).
 #
-# This is the in-cluster, network-mode counterpart to the ClickHouse half
-# of scripts/init.sh. init.sh `kubectl exec`s into a bundled CH StatefulSet
-# (retired in #1428 when the umbrella stopped bundling L2 infra), so it
-# cannot reach an external CH. This script talks to CH over its HTTP
-# interface via lib/ch-exec.sh (selected by CLICKHOUSE_URL) and is invoked
-# by the clickhouse-migrate Helm Hook Job (post-install,post-upgrade).
-#
-# Steps (same order and contract as init.sh):
+# Steps:
 #   1. Run create-databases.sh — every database this release owns, plus the
 #      role/user provisioning that reads them. It is the only creation site:
 #      the migrations below and the dbt hooks assume their database stands.
@@ -24,8 +20,8 @@
 # is answered as not-ready rather than as a failure.
 #
 # Bookkeeping: none — every migration is re-run on every invocation and
-# MUST stay idempotent/re-runnable (CREATE OR REPLACE / IF NOT EXISTS).
-# This matches the existing init.sh contract (see ingestion DESIGN §migrations).
+# MUST stay idempotent/re-runnable (CREATE OR REPLACE / IF NOT EXISTS); see
+# ingestion DESIGN §migrations.
 #
 # Required env (set by the Hook Job from chart values + insight-db-creds):
 #   CLICKHOUSE_URL       e.g. http://ch-host:8123  (selects the HTTP backend)

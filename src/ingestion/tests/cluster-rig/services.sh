@@ -153,11 +153,16 @@ v3_core_call() {
 }
 
 # One dataset per round: declared, filled by DATASET_WRITERS callers at once,
-# paged back, found on every node, dropped, gone from every node.
+# paged back, found on every node, dropped, gone from every node. The two
+# halves stand alone for a leg that changes the warehouse between them.
 # INVARIANT: called under `if`, where `set -e` is off: every step returns on
 # its own.
 dataset_lifecycle() {
-  local round="$1" url="http://127.0.0.1:${V3_CORE_PORT}" table total i statuses
+  dataset_declared "$1" && dataset_dropped "$1"
+}
+
+dataset_declared() {
+  local round="$1" url="http://127.0.0.1:${V3_CORE_PORT}" total i statuses
   local name="rig_events_${round}"
   local admin=(--header "authorization: Bearer cluster-rig-administrator")
   v3_core_call 200 "declaring ${name}" --request PUT "${admin[@]}" \
@@ -188,7 +193,12 @@ dataset_lifecycle() {
     return 1
   fi
   echo "  ${name}: ${DATASET_RECORDS} records from ${DATASET_WRITERS} writers at once, paged back whole"
+}
 
+dataset_dropped() {
+  local round="$1" url="http://127.0.0.1:${V3_CORE_PORT}" table
+  local name="rig_events_${round}"
+  local admin=(--header "authorization: Bearer cluster-rig-administrator")
   table="$(curl -fs "${RIG_NODES%%,*}/?user=${CLICKHOUSE_USER}&password=${CLICKHOUSE_PASSWORD}" \
     --data-binary "SELECT name FROM system.tables WHERE database = 'insight_datasets' AND name LIKE 'ds_${name}_%'")" || return 1
   if [[ "$(printf '%s\n' "${table}" | grep -c .)" != 1 ]]; then

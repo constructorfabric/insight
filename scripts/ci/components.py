@@ -246,6 +246,8 @@ COMPONENTS = [
         # The tenant migration's integration suite runs against a real
         # ClickHouse (TENANT_MIGRATION_TEST_CH_URL) and skips without one.
         "live_ch": True,
+        # The ClickHouse is a container, and the small runner has no Docker.
+        "runner": "large",
         "paths": ["src/ingestion/scripts"],
     },
     # Mock-server test rig for NOCODE connectors (feature-connector-mock-tests),
@@ -281,6 +283,8 @@ COMPONENTS = [
         "cov_package": "connector_tests",
         "pytest_args": "--suites-only",
         "cover": False,
+        # 20-40 minutes, unlike every other Python suite (under a minute).
+        "runner": "large",
         "triggered_by": ["connector-tests-harness"],
         # Every nocode connector that ships a tests/ suite belongs here, or a
         # change to that connector does not re-run its own mock tests. CDK

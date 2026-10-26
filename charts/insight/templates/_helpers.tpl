@@ -72,9 +72,12 @@ Contract per dep (all infra is external — out-of-chart L2):
 
 {{/* Topology of the target ClickHouse (epic #2010). One pair of values tells
      every creator in this release which DDL to emit: `clusterMode` turns on
-     `Replicated*` engines, `clusterName` supplies the `ON CLUSTER <name>`
-     clause. The two travel together — see requireNamedCluster below.
-     Defaults render "false" and "", which is today's standalone DDL. */}}
+     the `Replicated` database and `Replicated*` table engines, `clusterName`
+     is the cluster the creators that carry an `ON CLUSTER <name>` clause name
+     (the CREATE DATABASEs, the bronze heals, the destination); dbt and the
+     Rust services read it and emit none. The two travel together — see
+     requireNamedCluster below. Defaults render "false" and "", which is
+     standalone DDL. */}}
 {{- define "insight.clickhouse.clusterMode" -}}
 {{- include "insight.clickhouse.requireNamedCluster" . -}}
 {{- .Values.clickhouse.clusterMode | default false -}}

@@ -28,7 +28,7 @@ from insight_datapath.bindings import Bindings
 from insight_datapath.caller import StandCaller
 from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import DbtRunner
-from insight_datapath.fixture_loader import TestYaml
+from insight_datapath.fixture_loader import IdentityAccount, TestYaml
 from insight_datapath.metric_expect import Ledger, MetricResponse
 from insight_datapath.reset import clear
 from insight_datapath.subjects import SubjectError, Subjects
@@ -151,6 +151,7 @@ class SpecRun:
     to_person_id: dict[str, str]
     to_email: dict[str, str]
     ledger: Ledger
+    bindings: Bindings
     _test_name: str = ""
     _open: list[MetricResponse] = field(default_factory=list)
 
@@ -169,6 +170,14 @@ class SpecRun:
         )
         self._open.append(response)
         return response
+
+    def bind(self, account: IdentityAccount) -> None:
+        """Apply one operator decision after gold is built, as a correction lands in production."""
+        self.bindings.apply([account], {}, self.to_person_id)
+
+    def detach(self, account: IdentityAccount) -> None:
+        """Move the account to a person of its own, undoing whatever this or an earlier run bound."""
+        self.bindings.detach(account)
 
     def end(self) -> None:
         """Every row the test selected must have its view's required fields asserted."""
@@ -242,4 +251,5 @@ def run_spec(
         to_person_id=person_ids,
         to_email=canonical_emails(person_ids, of_record),
         ledger=ledger,
+        bindings=bindings,
     )

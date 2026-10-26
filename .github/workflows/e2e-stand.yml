@@ -76,10 +76,7 @@ env:
   # starts failing with MEMORY_LIMIT_EXCEEDED.
   CLICKHOUSE_MEM_LIMIT: 3g
 
-# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
-# takes a GitHub-hosted runner; otherwise stand-runner takes a whole
-# `persistent` machine and the rest the shared self-hosted pool.
-# INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# Routing: .github/runners/README.md.
 jobs:
   # Stages 2 (CI stand) and 3 (E2E stand) are meant to add a target to
   # `resolve-target` below rather than copy this file.
@@ -94,7 +91,7 @@ jobs:
   changes:
     name: Detect changes
     if: github.event_name != 'pull_request'
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
@@ -236,7 +233,7 @@ jobs:
     name: Resolve target
     needs: changes
     if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.relevant == 'true' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     outputs:
       target: ${{ steps.resolve.outputs.target }}
@@ -271,7 +268,7 @@ jobs:
       && needs.resolve-target.result == 'success'
       && needs.resolve-target.outputs.target == 'compose'
       && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
     outputs:
       api: ${{ steps.results.outputs.api }}
       ui: ${{ steps.results.outputs.ui }}
@@ -594,7 +591,7 @@ jobs:
     name: api-smoke
     needs: [changes, stand-runner]
     if: ${{ !cancelled() && github.event_name != 'pull_request' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:
       - name: Report the API lane
@@ -622,7 +619,7 @@ jobs:
     name: ui-journeys
     needs: [changes, stand-runner]
     if: ${{ !cancelled() && github.event_name != 'pull_request' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:
       - name: Report the UI lane
@@ -655,7 +652,7 @@ jobs:
     name: Stand E2E
     needs: [changes, api-smoke, ui-journeys]
     if: ${{ !cancelled() && github.event_name != 'pull_request' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:
       - name: Require both lanes to have passed, or to have been skipped as irrelevant
