@@ -7,13 +7,13 @@ import { Button } from "@/components/ui/button";
 
 import {
   CustomApiError,
-  type Dashboard,
+  type DashboardRead,
   type RunOptions,
 } from "@/api/custom-client";
 import { DashboardPageActions } from "@/components/custom/dashboard-page-actions";
 import { RangePicker } from "@/components/custom/range-picker";
 import { selectedRange } from "@/lib/custom/board-range";
-import { dashboardNameFromPath } from "@/lib/custom/dashboard-path";
+import { dashboardIdFromPath } from "@/lib/custom/dashboard-path";
 import { drawsBucket } from "@/lib/custom/draws-bucket";
 import {
   useSetPortalSearch,
@@ -28,7 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import {
-  dashboardQuery,
+  dashboardReadQuery,
   metricQuery,
   metricResultQuery,
   widgetQuery,
@@ -42,26 +42,26 @@ export const Route = createFileRoute("/portal/custom/$name")({
 
 function CustomDashboardPage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const name = dashboardNameFromPath(pathname);
+  const id = dashboardIdFromPath(pathname);
   const search = usePortalSearch();
   const setSearch = useSetPortalSearch();
   const {
-    data: dashboard,
+    data: read,
     isLoading,
     isError,
     error,
     refetch,
-  } = useQuery(dashboardQuery(name));
+  } = useQuery(dashboardReadQuery(id));
 
-  const offered = dashboard?.time_ranges;
-  const range = selectedRange(offered, dashboard?.default_range, search.range);
+  const offered = read?.body.time_ranges;
+  const range = selectedRange(offered, read?.body.default_range, search.range);
   return (
     <CustomDashboardBody
-      dashboard={dashboard}
+      read={read}
       isLoading={isLoading}
       isError={isError}
       error={error}
-      name={name}
+      id={id}
       onRetry={() => void refetch()}
       range={range}
       offered={offered}
@@ -71,21 +71,21 @@ function CustomDashboardPage() {
 }
 
 function CustomDashboardBody({
-  dashboard,
+  read,
   isLoading,
   isError,
   error,
-  name,
+  id,
   onRetry,
   range,
   offered,
   onSelectRange,
 }: {
-  dashboard: Dashboard | undefined;
+  read: DashboardRead | undefined;
   isLoading: boolean;
   isError: boolean;
   error: Error | null;
-  name: string;
+  id: string;
   onRetry: () => void;
   range: string | undefined;
   offered: string[] | undefined;
@@ -98,7 +98,7 @@ function CustomDashboardBody({
         <ComingSoon
           variant="card"
           state="empty"
-          label={`No dashboard named "${name}".`}
+          label="That dashboard is not there."
         />
       );
     }
@@ -111,8 +111,9 @@ function CustomDashboardBody({
       />
     );
   }
-  if (!dashboard) return null;
+  if (!read) return null;
 
+  const dashboard = read.body;
   const items = dashboardItems(dashboard);
 
   return (
@@ -127,7 +128,11 @@ function CustomDashboardBody({
               onSelect={onSelectRange}
             />
           ) : null}
-          <DashboardPageActions name={name} title={dashboard.title} />
+          <DashboardPageActions
+            id={id}
+            name={read.name}
+            title={dashboard.title}
+          />
         </div>
       </header>
       {items.length === 0 ? (
@@ -142,7 +147,7 @@ function CustomDashboardBody({
             "widget" in item ? (
               <DashboardWidgetSlot
                 key={`${index}-${item.widget}`}
-                name={item.widget}
+                id={item.widget}
                 range={range}
               />
             ) : "heading" in item ? (
@@ -174,15 +179,16 @@ function CustomDashboardBody({
 }
 
 function DashboardWidgetSlot({
-  name,
+  id,
   range,
 }: {
-  name: string;
+  id: string;
   range: string | undefined;
 }) {
   const [drilldown, setDrilldown] = useState(false);
-  const widgetState = useQuery(widgetQuery(name));
-  const metric = widgetState.data?.metric;
+  const widgetState = useQuery(widgetQuery(id));
+  const widget = widgetState.data?.widget;
+  const metric = widget?.metric;
 
   // Whether a window has a date to select by decides the request, so nothing
   // runs until the definition is in: guessing shows a number the picker does
@@ -195,8 +201,8 @@ function DashboardWidgetSlot({
   const clocked = Boolean(definitionState.data?.clock);
   const known = !range || definitionState.isSuccess;
   const options: RunOptions | undefined =
-    range && clocked && widgetState.data
-      ? { range, bucket: drawsBucket(widgetState.data) }
+    range && clocked && widget
+      ? { range, bucket: drawsBucket(widget) }
       : undefined;
 
   const resultState = useQuery({
@@ -213,6 +219,20 @@ function DashboardWidgetSlot({
       </Card>
     );
   }
+  if (widgetState.isError) {
+    return (
+      <Card>
+        <CardContent>
+          <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
+            {refusal(widgetState.error, "Couldn't read this widget.")}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const { name } = widgetState.data;
+
   // A definition that cannot be read leaves the card unable to say whether its
   // metric is windowed, so it says that rather than running something.
   if (range && definitionState.isError) {
@@ -229,31 +249,13 @@ function DashboardWidgetSlot({
       </Card>
     );
   }
-  if (widgetState.isError) {
-    return (
-      <Card>
-        <CardContent>
-          <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-            {refusal(widgetState.error, `Couldn't read ${name}.`)}
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const heading = widgetState.data.title;
+  const heading = widgetState.data.widget.title ?? name;
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-start gap-2">
-        <CardTitle
-          className={cn(
-            TEXT_HEADING,
-            "min-w-0 flex-1",
-            heading ? "" : "font-mono"
-          )}
-        >
-          {heading ?? name}
+        <CardTitle className={cn(TEXT_HEADING, "min-w-0 flex-1")}>
+          {heading}
         </CardTitle>
         {range && definitionState.isSuccess && !clocked ? (
           <Badge variant="secondary" className="shrink-0">
@@ -263,7 +265,7 @@ function DashboardWidgetSlot({
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label={`Show the data behind ${heading ?? name}`}
+          aria-label={`Show the data behind ${heading}`}
           className="text-muted-foreground"
           onClick={() => setDrilldown(true)}
         >
@@ -273,7 +275,7 @@ function DashboardWidgetSlot({
       <CardContent
         role="button"
         tabIndex={0}
-        aria-label={`Show the data behind ${heading ?? name}`}
+        aria-label={`Show the data behind ${heading}`}
         className="max-h-72 cursor-pointer overflow-auto"
         onClick={() => setDrilldown(true)}
         onKeyDown={(event) => {
@@ -284,7 +286,7 @@ function DashboardWidgetSlot({
         }}
       >
         <CustomWidget
-          widget={widgetState.data}
+          widget={widgetState.data.widget}
           result={resultState.data}
           error={resultState.error}
           windowed={Boolean(options)}
@@ -292,9 +294,9 @@ function DashboardWidgetSlot({
         />
       </CardContent>
       <WidgetDrilldown
-        widget={widgetState.data}
+        widget={widgetState.data.widget}
         name={name}
-        label={heading ?? name}
+        label={heading}
         open={drilldown}
         onOpenChange={setDrilldown}
         options={options}

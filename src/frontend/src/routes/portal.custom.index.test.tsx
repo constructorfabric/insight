@@ -28,53 +28,62 @@ function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
+/** Catalogue entries whose ids are the names they are listed under. */
+function listed(...names: string[]) {
+  return names.map((name) => ({ id: name, name }));
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   portalRouter.reset();
 });
 
 describe("/portal/custom", () => {
-  it("lists every dashboard as a link", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "engineering",
-      "delivery",
-    ], total: 2 });
+  it("lists every dashboard as a link by its id, under its name", async () => {
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: [
+        { id: "d-1", name: "Engineering" },
+        { id: "d-2", name: "Delivery" },
+      ],
+      total: 2,
+    });
     vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(
       new Error("no title today")
     );
 
     render(<Component />, { wrapper });
 
-    // The identifier stands in until a title arrives, so the link is still
+    // The name stands in until a title arrives, so the link is still
     // reachable when a definition cannot be read.
     expect(
-      await screen.findByRole("link", { name: "engineering" })
-    ).toHaveAttribute("href", "/portal/custom/engineering");
+      await screen.findByRole("link", { name: "Engineering" })
+    ).toHaveAttribute("href", "/portal/custom/d-1");
     expect(
-      await screen.findByRole("link", { name: "delivery" })
-    ).toBeInTheDocument();
+      await screen.findByRole("link", { name: "Delivery" })
+    ).toHaveAttribute("href", "/portal/custom/d-2");
   });
 
-  it("titles a card by the dashboard, keeping the identifier beneath it", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "lines_of_code_dashboard",
-    ], total: 1 });
+  it("titles a card by the dashboard, keeping the name beneath it", async () => {
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: listed("Lines of code board"),
+      total: 1,
+    });
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      name: "Lines of code board",
       body: { title: "Lines of Code", widgets: [] },
       tags: [],
     });
 
     render(<Component />, { wrapper });
 
-    // The reader picks a dashboard by its name, not by its slug.
     expect(await screen.findByText("Lines of Code")).toBeInTheDocument();
     expect(
-      await screen.findByText("lines_of_code_dashboard")
+      await screen.findByText("Lines of code board")
     ).toBeInTheDocument();
   });
 
   it("says so when there are no dashboards yet", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [], total: 0 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({ items: listed(), total: 0 });
 
     render(<Component />, { wrapper });
 
@@ -82,7 +91,7 @@ describe("/portal/custom", () => {
   });
 
   it("shows a loading state before the list resolves", () => {
-    vi.mocked(customClient.fetchDashboardNames).mockReturnValue(
+    vi.mocked(customClient.fetchDashboards).mockReturnValue(
       new Promise(() => {})
     );
 
@@ -94,7 +103,7 @@ describe("/portal/custom", () => {
   });
 
   it("shows a retryable error state when the list fails to load", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockRejectedValue(
+    vi.mocked(customClient.fetchDashboards).mockRejectedValue(
       new Error("network down")
     );
 
@@ -118,11 +127,14 @@ describe("/portal/custom in a folder", () => {
   });
 
   const askedFor = () =>
-    vi.mocked(customClient.fetchDashboardNames).mock.calls.map(([page]) => page?.folder);
+    vi.mocked(customClient.fetchDashboards).mock.calls.map(([page]) => page?.folder);
 
   it("lists one folder's dashboards and names it in the heading", async () => {
     portalRouter.set({ folder: "f1" });
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: ["delivery"], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: listed("delivery"),
+      total: 1,
+    });
 
     render(<Component />, { wrapper });
 
@@ -133,7 +145,10 @@ describe("/portal/custom in a folder", () => {
 
   it("lists the unfiled under a heading of their own", async () => {
     portalRouter.set({ folder: "unfiled" });
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: ["hiring"], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: listed("hiring"),
+      total: 1,
+    });
 
     render(<Component />, { wrapper });
 
@@ -144,7 +159,10 @@ describe("/portal/custom in a folder", () => {
 
   it("shows every dashboard for a folder that is not there, and says so", async () => {
     portalRouter.set({ folder: "gone" });
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: ["delivery"], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: listed("delivery"),
+      total: 1,
+    });
 
     render(<Component />, { wrapper });
 
@@ -156,7 +174,7 @@ describe("/portal/custom in a folder", () => {
 
   it("says how to fill an empty folder rather than that nothing exists", async () => {
     portalRouter.set({ folder: "f1" });
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [], total: 0 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({ items: listed(), total: 0 });
 
     render(<Component />, { wrapper });
 
@@ -168,7 +186,7 @@ describe("/portal/custom in a folder", () => {
 
   it("says every dashboard is filed when Unfiled is empty", async () => {
     portalRouter.set({ folder: "unfiled" });
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [], total: 0 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({ items: listed(), total: 0 });
 
     render(<Component />, { wrapper });
 
@@ -176,7 +194,10 @@ describe("/portal/custom in a folder", () => {
   });
 
   it("checks the folder a dashboard is in", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: ["delivery"], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: listed("delivery"),
+      total: 1,
+    });
     vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue({ id: "f1", name: "Platform" });
     const user = userEvent.setup();
 
@@ -191,9 +212,9 @@ describe("/portal/custom in a folder", () => {
 
   it("moves a dashboard out of the folder on screen, and the card leaves", async () => {
     portalRouter.set({ folder: "f1" });
-    vi.mocked(customClient.fetchDashboardNames)
-      .mockResolvedValueOnce({ names: ["delivery"], total: 1 })
-      .mockResolvedValue({ names: [], total: 0 });
+    vi.mocked(customClient.fetchDashboards)
+      .mockResolvedValueOnce({ items: listed("delivery"), total: 1 })
+      .mockResolvedValue({ items: listed(), total: 0 });
     vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue({ id: "f1", name: "Platform" });
     vi.mocked(customClient.moveDashboard).mockResolvedValue(undefined);
     const user = userEvent.setup();
@@ -207,7 +228,10 @@ describe("/portal/custom in a folder", () => {
   });
 
   it("makes a folder and then moves the dashboard into it", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: ["delivery"], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: listed("delivery"),
+      total: 1,
+    });
     vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
     vi.mocked(customClient.createFolder).mockResolvedValue({ id: "f9", name: "Hiring" });
     vi.mocked(customClient.moveDashboard).mockResolvedValue(undefined);
@@ -238,15 +262,15 @@ describe("/portal/custom filtered by tag", () => {
     vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(
       new Error("untitled")
     );
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-      names: ["delivery"],
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: listed("delivery"),
       total: 1,
     });
   });
 
   const askedFor = () =>
     vi
-      .mocked(customClient.fetchDashboardNames)
+      .mocked(customClient.fetchDashboards)
       .mock.calls.map(([page]) => ({ folder: page?.folder, tags: page?.tags }));
 
   async function openFilter(name = "Tags") {
@@ -383,8 +407,8 @@ describe("/portal/custom filtered by tag", () => {
   });
 
   it("says no dashboard carries the picked tags, and clears them", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-      names: [],
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: listed(),
       total: 0,
     });
     portalRouter.set({ tag: ["Ops"] });
@@ -402,11 +426,12 @@ describe("/portal/custom filtered by tag", () => {
 
 describe("/portal/custom cards with tags", () => {
   function carrying(tags: string[]) {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-      names: ["delivery"],
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: listed("delivery"),
       total: 1,
     });
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      name: "delivery",
       body: { title: "Delivery", widgets: [] },
       tags,
     });
@@ -462,21 +487,25 @@ describe("/portal/custom after a card's tags are set", () => {
   const DELIVERY = { title: "Delivery", widgets: [] };
 
   beforeEach(() => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-      names: ["delivery"],
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: listed("delivery"),
       total: 1,
     });
     vi.mocked(customClient.fetchTags).mockResolvedValue({
       tags: [{ name: "Ops", dashboards: 1 }],
     });
     vi.mocked(customClient.fetchDashboardRead)
-      .mockResolvedValueOnce({ body: DELIVERY, tags: ["Ops"] })
-      .mockResolvedValue({ body: DELIVERY, tags: ["Ops", "Hiring"] });
+      .mockResolvedValueOnce({ name: "delivery", body: DELIVERY, tags: ["Ops"] })
+      .mockResolvedValue({
+        name: "delivery",
+        body: DELIVERY,
+        tags: ["Ops", "Hiring"],
+      });
   });
 
   const calls = () => ({
     tags: vi.mocked(customClient.fetchTags).mock.calls.length,
-    lists: vi.mocked(customClient.fetchDashboardNames).mock.calls.length,
+    lists: vi.mocked(customClient.fetchDashboards).mock.calls.length,
   });
 
   async function addHiring() {

@@ -32,23 +32,23 @@ import { usePinToggle } from "@/hooks/use-pin-toggle";
 type Asked = "rename" | "duplicate" | "delete" | "folder" | "tags";
 
 export function DashboardMenu({
+  id,
   name,
   title,
   filing = true,
-  onRenamed,
   onDuplicated,
   onDeleted,
 }: {
+  id: string;
   name: string;
   title?: string;
   filing?: boolean;
-  onRenamed?: (to: string) => void;
-  onDuplicated?: (to: string) => void;
+  onDuplicated?: (id: string) => void;
   onDeleted?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [asked, setAsked] = useState<Asked | null>(null);
-  const pin = usePinToggle(name, open);
+  const pin = usePinToggle(id, open);
 
   const done = () => setAsked(null);
 
@@ -84,7 +84,7 @@ export function DashboardMenu({
           {filing ? (
             <>
               <MoveToFolderItems
-                name={name}
+                id={id}
                 open={open}
                 onNewFolder={() => setAsked("folder")}
               />
@@ -106,19 +106,20 @@ export function DashboardMenu({
         </DropdownMenuContent>
       </DropdownMenu>
       <RenameDashboard
+        id={id}
         name={name}
         open={asked === "rename"}
         onClose={done}
-        onRenamed={onRenamed}
       />
       <DuplicateDashboard
+        id={id}
         name={name}
         open={asked === "duplicate"}
         onClose={done}
         onDuplicated={onDuplicated}
       />
       <DeleteDashboard
-        name={name}
+        id={id}
         title={title || name}
         open={asked === "delete"}
         onClose={done}
@@ -127,11 +128,17 @@ export function DashboardMenu({
       {filing ? (
         <>
           <NewFolderAndMove
+            id={id}
             name={name}
             open={asked === "folder"}
             onClose={done}
           />
-          <EditTags name={name} open={asked === "tags"} onClose={done} />
+          <EditTags
+            id={id}
+            name={name}
+            open={asked === "tags"}
+            onClose={done}
+          />
         </>
       ) : null}
     </>

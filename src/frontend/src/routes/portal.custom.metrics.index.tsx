@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 
+import type { Listed } from "@/api/custom-client";
 import {
   DefinitionActions,
   DefinitionCard,
@@ -30,7 +31,7 @@ function MetricsCatalogue() {
     <DefinitionList
       title="Metrics"
       blurb="Every stored query. A widget draws one of these; the assistant can build more."
-      names={catalogue.names}
+      items={catalogue.items}
       isLoading={catalogue.isLoading}
       isError={catalogue.isError}
       onRetry={catalogue.refetch}
@@ -38,18 +39,20 @@ function MetricsCatalogue() {
       paging={catalogue.paging}
       create={<NewLink kind="metrics" noun="metric" />}
       emptyLabel="No metrics yet. Ask the assistant for one."
-      renderRow={(name) => <MetricRow name={name} />}
+      renderRow={(item) => <MetricRow item={item} />}
     />
   );
 }
 
-function MetricRow({ name }: { name: string }) {
-  const { data, isPending, isError, error } = useQuery(metricQuery(name));
+function MetricRow({ item }: { item: Listed }) {
+  const { data, isPending, isError, error } = useQuery(metricQuery(item.id));
 
   return (
     <DefinitionCard
-      name={name}
-      actions={<DefinitionActions kind="metrics" name={name} />}
+      name={item.name}
+      actions={
+        <DefinitionActions kind="metrics" id={item.id} name={item.name} />
+      }
     >
       {isPending ? (
         <CenteredSpinner className="min-h-24" />

@@ -2,11 +2,26 @@ vi.mock("@tanstack/react-router", async () => {
   const { portalRouterMock } = await import("@/test/portal-router");
   return portalRouterMock();
 });
+vi.mock("@/api/custom-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/custom-client")>();
+  return { ...actual, fetchMetric: vi.fn() };
+});
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { MetricSummary } from "./definition-summary";
+import * as customClient from "@/api/custom-client";
+
+import { MetricSummary, WidgetSummary } from "./definition-summary";
+
+function wrapper({ children }: { children: ReactNode }) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return createElement(QueryClientProvider, { client: queryClient }, children);
+}
 
 describe("<MetricSummary>", () => {
   it("names the dataset a metric reads, and its fields by their declared names", () => {
@@ -72,5 +87,23 @@ describe("<MetricSummary>", () => {
     );
 
     expect(screen.getByText("silver.class_usage")).toBeInTheDocument();
+  });
+});
+
+describe("<WidgetSummary>", () => {
+  it("names the metric it draws and links to it by its id", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "Commits per day",
+      definition: { dataset: "commits", fields: [] },
+    });
+
+    render(
+      <WidgetSummary widget={{ type: "table", metric: "m-1", columns: [] }} />,
+      { wrapper }
+    );
+
+    const link = await screen.findByRole("link", { name: "Commits per day" });
+    expect(link).toHaveAttribute("href", "/portal/custom/metrics/m-1");
+    expect(customClient.fetchMetric).toHaveBeenCalledWith("m-1");
   });
 });

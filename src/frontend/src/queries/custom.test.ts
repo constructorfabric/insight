@@ -12,9 +12,11 @@ vi.mock("@/api/custom-client");
 import * as customClient from "@/api/custom-client";
 
 import {
+  catalogueQuery,
   dashboardFolderQuery,
   dashboardQuery,
   dashboardTagsQuery,
+  definitionBodyQuery,
   definitionPagesQuery,
   foldersQuery,
   metricResultQuery,
@@ -29,20 +31,26 @@ import {
   useRenameFolder,
   useSetDashboardTags,
   useSetPinned,
+  useStoreDefinition,
   widgetQuery,
 } from "./custom";
 
 describe("definitionPagesQuery", () => {
   it("asks for one page at a time, and stops once it has them all", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
-      names: ["a", "b"],
+    const first = [
+      { id: "a", name: "A" },
+      { id: "b", name: "B" },
+    ];
+    const last = [{ id: "c", name: "C" }];
+    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
+      items: first,
       total: 3,
     });
 
     const options = definitionPagesQuery("metrics", "git");
 
     await options.queryFn?.({ pageParam: 0 } as never);
-    expect(customClient.fetchMetricNames).toHaveBeenCalledWith({
+    expect(customClient.fetchMetrics).toHaveBeenCalledWith({
       search: "git",
       limit: 50,
       offset: 0,
@@ -50,16 +58,30 @@ describe("definitionPagesQuery", () => {
 
     // Two of three read, so the next page starts at the third.
     expect(
-      options.getNextPageParam({ names: ["a", "b"], total: 3 }, [
-        { names: ["a", "b"], total: 3 },
+      options.getNextPageParam({ items: first, total: 3 }, [
+        { items: first, total: 3 },
       ], 0, [0]),
     ).toBe(2);
     expect(
-      options.getNextPageParam({ names: ["c"], total: 3 }, [
-        { names: ["a", "b"], total: 3 },
-        { names: ["c"], total: 3 },
+      options.getNextPageParam({ items: last, total: 3 }, [
+        { items: first, total: 3 },
+        { items: last, total: 3 },
       ], 2, [0, 2]),
     ).toBeUndefined();
+  });
+
+  it("lists a dataset under its name, which is its id", async () => {
+    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
+      names: ["commits"],
+      total: 1,
+    });
+
+    await expect(
+      definitionPagesQuery("datasets").queryFn?.({ pageParam: 0 } as never),
+    ).resolves.toEqual({
+      items: [{ id: "commits", name: "commits" }],
+      total: 1,
+    });
   });
 
   it("keys the cache by kind and needle", () => {
@@ -72,8 +94,118 @@ describe("definitionPagesQuery", () => {
   });
 });
 
+describe("catalogueQuery", () => {
+  it("asks for every definition of a kind in one page, and keeps the ids and names", async () => {
+    const items = [{ id: "w1", name: "Commits table" }];
+    vi.mocked(customClient.fetchWidgets).mockResolvedValue({
+      items,
+      total: 1,
+    });
+
+    const options = catalogueQuery("widgets");
+    const page = await options.queryFn?.(undefined as never);
+
+    expect(customClient.fetchWidgets).toHaveBeenCalledWith({ limit: 200 });
+    expect(page && options.select?.(page)).toEqual(items);
+  });
+});
+
+describe("definitionBodyQuery", () => {
+  it("opens a definition by id with its name and body", async () => {
+    vi.mocked(customClient.fetchDefinition).mockResolvedValue({
+      id: "m1",
+      name: "Commits",
+      body: { dataset: "commits" },
+    });
+
+    await expect(
+      definitionBodyQuery("metrics", "m1").queryFn?.(undefined as never),
+    ).resolves.toEqual({ name: "Commits", document: { dataset: "commits" } });
+    expect(customClient.fetchDefinition).toHaveBeenCalledWith("metrics", "m1");
+  });
+
+  it("opens a dataset by its name with its declaration", async () => {
+    vi.mocked(customClient.fetchDataset).mockResolvedValue({
+      name: "commits",
+      declaration: { title: "Commits", fields: [] },
+    });
+
+    await expect(
+      definitionBodyQuery("datasets", "commits").queryFn?.(undefined as never),
+    ).resolves.toEqual({
+      name: "commits",
+      document: { title: "Commits", fields: [] },
+    });
+  });
+});
+
+describe("useStoreDefinition", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("creates a definition with no id yet and answers with the id it was given", async () => {
+    vi.mocked(customClient.createDefinition).mockResolvedValue("m-new");
+    const { result } = rendered(() => useStoreDefinition());
+
+    await expect(
+      act(() =>
+        result.current.mutateAsync({
+          kind: "metrics",
+          name: "Commits",
+          body: { dataset: "commits" },
+        }),
+      ),
+    ).resolves.toBe("m-new");
+    expect(customClient.createDefinition).toHaveBeenCalledWith(
+      "metrics",
+      "Commits",
+      { dataset: "commits" },
+    );
+    expect(customClient.putDefinition).not.toHaveBeenCalled();
+  });
+
+  it("replaces a definition by its id under the name it is given", async () => {
+    const { result } = rendered(() => useStoreDefinition());
+
+    await expect(
+      act(() =>
+        result.current.mutateAsync({
+          kind: "widgets",
+          id: "w1",
+          name: "Renamed",
+          body: { type: "stat" },
+        }),
+      ),
+    ).resolves.toBe("w1");
+    expect(customClient.putDefinition).toHaveBeenCalledWith(
+      "widgets",
+      "w1",
+      "Renamed",
+      { type: "stat" },
+    );
+  });
+
+  it("stores a dataset under its name", async () => {
+    const { result } = rendered(() => useStoreDefinition());
+
+    await expect(
+      act(() =>
+        result.current.mutateAsync({
+          kind: "datasets",
+          name: "commits",
+          body: { title: "Commits" },
+        }),
+      ),
+    ).resolves.toBe("commits");
+    expect(customClient.putDataset).toHaveBeenCalledWith("commits", {
+      title: "Commits",
+    });
+  });
+});
+
 describe("dashboardQuery", () => {
-  it("keys on the dashboard name", () => {
+  it("keys on the dashboard id", () => {
     expect(dashboardQuery("engineering").queryKey).not.toEqual(
       dashboardQuery("delivery").queryKey,
     );
@@ -82,6 +214,7 @@ describe("dashboardQuery", () => {
   it("reads the body and the tags out of one request", async () => {
     const dashboard = { title: "Engineering", widgets: ["commits_table"] };
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      name: "Engineering",
       body: dashboard,
       tags: ["Ops"],
     });
@@ -109,8 +242,11 @@ describe("dashboardQuery", () => {
 });
 
 describe("widgetQuery", () => {
-  it("keys on the widget name and asks fetchWidget", async () => {
-    const widget = { type: "table" as const, metric: "m", columns: ["day"] };
+  it("keys on the widget id and asks fetchWidget", async () => {
+    const widget = {
+      name: "Commits table",
+      widget: { type: "table" as const, metric: "m", columns: ["day"] },
+    };
     vi.mocked(customClient.fetchWidget).mockResolvedValue(widget);
 
     const options = widgetQuery("commits_table");
@@ -123,7 +259,7 @@ describe("widgetQuery", () => {
 });
 
 describe("metricResultQuery", () => {
-  it("keys on the metric name and asks runMetric", async () => {
+  it("keys on the metric id and asks runMetric", async () => {
     const result = { columns: ["day"], rows: [["2026-09-01"]] };
     vi.mocked(customClient.runMetric).mockResolvedValue(result);
 
@@ -170,15 +306,15 @@ describe("metricResultQuery cache identity", () => {
 
 describe("definitionPagesQuery in a folder", () => {
   it("asks for that folder's dashboards and keeps them apart in the cache", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-      names: [],
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: [],
       total: 0,
     });
 
     const options = definitionPagesQuery("dashboards", "", "f1");
     await options.queryFn?.({ pageParam: 0 } as never);
 
-    expect(customClient.fetchDashboardNames).toHaveBeenCalledWith({
+    expect(customClient.fetchDashboards).toHaveBeenCalledWith({
       search: "",
       limit: 50,
       offset: 0,
@@ -272,7 +408,7 @@ describe("the folder mutations", () => {
     const { result, invalidated } = rendered(() => useMoveDashboard());
 
     await act(() =>
-      result.current.mutateAsync({ name: "delivery", folder: null }),
+      result.current.mutateAsync({ id: "delivery", folder: null }),
     );
 
     expect(customClient.moveDashboard).toHaveBeenCalledWith("delivery", null);
@@ -294,7 +430,7 @@ describe("the folder mutations", () => {
 
     await act(() =>
       result.current
-        .mutateAsync({ name: "delivery", folder: "gone" })
+        .mutateAsync({ id: "delivery", folder: "gone" })
         .catch(() => undefined),
     );
 
@@ -305,7 +441,7 @@ describe("the folder mutations", () => {
     const { result, invalidated } = rendered(() => useRemoveDefinition());
 
     await act(() =>
-      result.current.mutateAsync({ kind: "dashboards", name: "delivery" }),
+      result.current.mutateAsync({ kind: "dashboards", id: "delivery" }),
     );
 
     expectCountsAndListsRefreshed(invalidated);
@@ -314,15 +450,15 @@ describe("the folder mutations", () => {
 
 describe("definitionPagesQuery with tags", () => {
   it("asks for the dashboards carrying any of the tags and keeps them apart in the cache", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-      names: [],
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: [],
       total: 0,
     });
 
     const options = definitionPagesQuery("dashboards", "", "f1", ["Ops"]);
     await options.queryFn?.({ pageParam: 0 } as never);
 
-    expect(customClient.fetchDashboardNames).toHaveBeenCalledWith({
+    expect(customClient.fetchDashboards).toHaveBeenCalledWith({
       search: "",
       limit: 50,
       offset: 0,
@@ -339,8 +475,8 @@ describe("definitionPagesQuery with tags", () => {
   });
 
   it("asks without a tag filter when no tag is picked", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-      names: [],
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: [],
       total: 0,
     });
 
@@ -348,7 +484,7 @@ describe("definitionPagesQuery with tags", () => {
       pageParam: 0,
     } as never);
 
-    expect(customClient.fetchDashboardNames).toHaveBeenCalledWith({
+    expect(customClient.fetchDashboards).toHaveBeenCalledWith({
       search: "",
       limit: 50,
       offset: 0,
@@ -386,7 +522,7 @@ describe("setting a dashboard's tags", () => {
     const { result, invalidated } = rendered(() => useSetDashboardTags());
 
     await act(() =>
-      result.current.mutateAsync({ name: "delivery", tags: ["Ops"] }),
+      result.current.mutateAsync({ id: "delivery", tags: ["Ops"] }),
     );
 
     expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", [
@@ -403,7 +539,7 @@ describe("setting a dashboard's tags", () => {
 
     await act(() =>
       result.current
-        .mutateAsync({ name: "delivery", tags: ["Ops"] })
+        .mutateAsync({ id: "delivery", tags: ["Ops"] })
         .catch(() => undefined),
     );
 
@@ -414,7 +550,7 @@ describe("setting a dashboard's tags", () => {
     const { result, invalidated } = rendered(() => useRemoveDefinition());
 
     await act(() =>
-      result.current.mutateAsync({ kind: "dashboards", name: "delivery" }),
+      result.current.mutateAsync({ kind: "dashboards", id: "delivery" }),
     );
 
     expect(invalidated).toHaveBeenCalledWith({
@@ -425,11 +561,12 @@ describe("setting a dashboard's tags", () => {
 
 describe("pinsQuery", () => {
   it("asks fetchPins", async () => {
-    vi.mocked(customClient.fetchPins).mockResolvedValue(["delivery"]);
+    const pins = [{ id: "delivery", name: "Delivery" }];
+    vi.mocked(customClient.fetchPins).mockResolvedValue(pins);
 
-    await expect(pinsQuery().queryFn?.(undefined as never)).resolves.toEqual([
-      "delivery",
-    ]);
+    await expect(pinsQuery().queryFn?.(undefined as never)).resolves.toEqual(
+      pins,
+    );
   });
 });
 
@@ -442,7 +579,7 @@ describe("pinning a dashboard", () => {
     const { result, invalidated } = rendered(() => useSetPinned());
 
     await act(() =>
-      result.current.mutateAsync({ name: "delivery", pinned: true }),
+      result.current.mutateAsync({ id: "delivery", pinned: true }),
     );
 
     expect(customClient.pinDashboard).toHaveBeenCalledWith("delivery");
@@ -454,7 +591,7 @@ describe("pinning a dashboard", () => {
     const { result, invalidated } = rendered(() => useSetPinned());
 
     await act(() =>
-      result.current.mutateAsync({ name: "delivery", pinned: false }),
+      result.current.mutateAsync({ id: "delivery", pinned: false }),
     );
 
     expect(customClient.unpinDashboard).toHaveBeenCalledWith("delivery");
@@ -470,7 +607,7 @@ describe("pinning a dashboard", () => {
 
     await act(() =>
       result.current
-        .mutateAsync({ name: "delivery", pinned: true })
+        .mutateAsync({ id: "delivery", pinned: true })
         .catch(() => undefined),
     );
 
@@ -481,7 +618,7 @@ describe("pinning a dashboard", () => {
     const { result, invalidated } = rendered(() => useRemoveDefinition());
 
     await act(() =>
-      result.current.mutateAsync({ kind: "dashboards", name: "delivery" }),
+      result.current.mutateAsync({ kind: "dashboards", id: "delivery" }),
     );
 
     expect(invalidated).toHaveBeenCalledWith({ queryKey: pinsQuery().queryKey });
@@ -500,31 +637,31 @@ describe("duplicating a dashboard", () => {
   }
 
   it("copies under the new name, then refreshes the lists and the counts", async () => {
-    vi.mocked(customClient.duplicateDashboard).mockResolvedValueOnce(
-      "delivery-copy",
-    );
+    vi.mocked(customClient.duplicateDashboard).mockResolvedValueOnce("d-copy");
     const { result, invalidated } = rendered(() => useDuplicateDashboard());
 
     await expect(
-      act(() => result.current.mutateAsync({ name: "delivery", to: "delivery-copy" })),
-    ).resolves.toBe("delivery-copy");
+      act(() =>
+        result.current.mutateAsync({ id: "delivery", to: "Delivery copy" }),
+      ),
+    ).resolves.toBe("d-copy");
 
     expect(customClient.duplicateDashboard).toHaveBeenCalledWith(
       "delivery",
-      "delivery-copy",
+      "Delivery copy",
     );
     expectListsAndCountsRefreshed(invalidated);
   });
 
-  it("refreshes the lists and the counts after a taken name is refused", async () => {
+  it("refreshes the lists and the counts after a copy is refused", async () => {
     vi.mocked(customClient.duplicateDashboard).mockRejectedValueOnce(
-      new Error("taken"),
+      new Error("gone"),
     );
     const { result, invalidated } = rendered(() => useDuplicateDashboard());
 
     await act(() =>
       result.current
-        .mutateAsync({ name: "delivery", to: "hiring" })
+        .mutateAsync({ id: "delivery", to: "Hiring" })
         .catch(() => undefined),
     );
 
@@ -533,19 +670,13 @@ describe("duplicating a dashboard", () => {
 });
 
 describe("useRenameDefinition", () => {
-  it("drops the old name's cached reads instead of asking for them again", async () => {
-    vi.mocked(customClient.renameDefinition).mockResolvedValue({
-      name: "platform",
-      rewritten: [],
-    });
+  it("renames by id and refreshes what the custom zone has read", async () => {
+    vi.mocked(customClient.renameDefinition).mockResolvedValue(undefined);
     const queryClient = new QueryClient({
       defaultOptions: { mutations: { retry: false } },
     });
-    queryClient.setQueryData(["custom", "dashboard", "engineering"], {
-      body: {},
-      tags: [],
-    });
-    queryClient.setQueryData(["custom", "dashboard", "delivery"], {
+    queryClient.setQueryData(["custom", "dashboard", "d1"], {
+      name: "Engineering",
       body: {},
       tags: [],
     });
@@ -556,16 +687,18 @@ describe("useRenameDefinition", () => {
     await act(() =>
       result.current.mutateAsync({
         kind: "dashboards",
-        name: "engineering",
-        to: "platform",
+        id: "d1",
+        to: "Platform",
       }),
     );
 
+    expect(customClient.renameDefinition).toHaveBeenCalledWith(
+      "dashboards",
+      "d1",
+      "Platform",
+    );
     expect(
-      queryClient.getQueryCache().find({ queryKey: ["custom", "dashboard", "engineering"] }),
-    ).toBeUndefined();
-    expect(
-      queryClient.getQueryState(["custom", "dashboard", "delivery"])?.isInvalidated,
+      queryClient.getQueryState(["custom", "dashboard", "d1"])?.isInvalidated,
     ).toBe(true);
   });
 });

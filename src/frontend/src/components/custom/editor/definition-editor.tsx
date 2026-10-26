@@ -2,7 +2,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
-import type { EditableKind } from "@/api/custom-client";
+import { DEFINITION_NAME_MAX, type EditableKind } from "@/api/custom-client";
 import { FieldsView } from "@/components/custom/editor/fields-view";
 import { TextView } from "@/components/custom/editor/text-view";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,7 @@ import { DESCRIPTIONS } from "@/lib/custom/editor/kinds";
 import { spelled, tableAddress } from "@/lib/custom/editor/source";
 import { place } from "@/lib/custom/editor/violations";
 import {
-  catalogueNamesQuery,
+  catalogueQuery,
   datasetQuery,
   tableQuery,
   tablesQuery,
@@ -33,15 +33,18 @@ const KINDS: EditableKind[] = ["datasets", "metrics", "widgets", "dashboards"];
 
 export function DefinitionEditor({
   kind,
+  id,
   name,
   document,
   onStored,
 }: {
   kind: EditableKind;
-  /** The definition being edited. A new one has no name until it is given. */
+  /** The definition being edited. A new one has no id until it is stored. */
+  id?: string;
   name?: string;
   document?: Record<string, unknown>;
-  onStored: (name: string) => void;
+  /** Called with the id the definition is kept under once it is stored. */
+  onStored: (id: string) => void;
 }) {
   const description = DESCRIPTIONS[kind];
   const [called, setCalled] = useState(name ?? "");
@@ -52,12 +55,12 @@ export function DefinitionEditor({
   const store = useStoreDefinition();
 
   const catalogues = useQueries({
-    queries: KINDS.map((each) => catalogueNamesQuery(each)),
+    queries: KINDS.map((each) => catalogueQuery(each)),
   });
   const stored = new Map(
     KINDS.map((each, index) => [each, catalogues[index]?.data ?? []])
   );
-  const names = (of: EditableKind) => stored.get(of) ?? [];
+  const listed = (of: EditableKind) => stored.get(of) ?? [];
 
   const reads = held.document.dataset;
   const dataset = useQuery({
@@ -71,12 +74,14 @@ export function DefinitionEditor({
   // database, so long as exactly one database has one.
   const overTables = kind === "metrics";
   const catalogue = useQuery({ ...tablesQuery(), enabled: overTables });
-  const listed = catalogue.data?.tables ?? [];
+  const tablesListed = catalogue.data?.tables ?? [];
   const named = tableAddress(held.document, {
     table: "table",
     database: "database",
   });
-  const holders = named ? listed.filter((each) => each.table === named.table) : [];
+  const holders = named
+    ? tablesListed.filter((each) => each.table === named.table)
+    : [];
   const address =
     named === undefined
       ? undefined
@@ -89,7 +94,7 @@ export function DefinitionEditor({
     ...tableQuery(address?.database ?? "", address?.table ?? ""),
     enabled: overTables && address !== undefined,
   });
-  const tables = () => listed.map(spelled);
+  const tables = () => tablesListed.map(spelled);
   const columns = () =>
     table.data?.columns.map((column) => column.name) ?? [];
 
@@ -100,17 +105,18 @@ export function DefinitionEditor({
     "Couldn't store it."
   );
   const given = called.trim();
-  // SAFETY: the service replaces on write. A new definition given a name the
-  // catalogue already holds would write over that one, so the form refuses
-  // what it can see is taken; the catalogue may run a page behind, so this is
-  // a guard against a slip, not the service's own check.
-  const taken = name === undefined && names(kind).includes(given);
+  const isDataset = kind === "datasets";
+  const creating = id === undefined;
+  // SAFETY: writing a dataset replaces the one under its name, so a new one
+  // may not take a name the catalogue lists; the catalogue may lag the service.
+  const taken =
+    isDataset && creating && listed(kind).some((item) => item.id === given);
 
   const submit = () => {
     if (given === "" || taken || !sendable(held)) return;
     store.mutate(
-      { kind, name: given, body: held.document },
-      { onSuccess: () => onStored(given) }
+      { kind, id, name: given, body: held.document },
+      { onSuccess: (storedId) => onStored(storedId) }
     );
   };
 
@@ -128,7 +134,15 @@ export function DefinitionEditor({
         if (event.key === "Enter" && inField) event.preventDefault();
       }}
     >
-      {name === undefined ? (
+      {isDataset && !creating ? (
+        <div className="flex flex-col gap-1">
+          <span className={cn(TEXT_LABEL, "font-medium")}>Name</span>
+          <span className={cn(TEXT_BODY, "font-mono")}>{name}</span>
+          <p className={cn(TEXT_LABEL, "text-muted-foreground")}>
+            A dataset keeps its name: records are sent to it by this name.
+          </p>
+        </div>
+      ) : (
         <div className="flex flex-col gap-1">
           <label
             htmlFor="definition-name"
@@ -139,19 +153,22 @@ export function DefinitionEditor({
           <Input
             id="definition-name"
             value={called}
+            maxLength={isDataset ? undefined : DEFINITION_NAME_MAX}
             aria-invalid={taken || undefined}
-            aria-describedby="definition-name-hint"
-            className="h-9 w-72 font-mono"
+            aria-describedby={isDataset ? "definition-name-hint" : undefined}
+            className={cn("h-9 w-72", isDataset && "font-mono")}
             onChange={(event) => setCalled(event.target.value)}
           />
-          <p
-            id="definition-name-hint"
-            className={cn(TEXT_LABEL, "text-muted-foreground")}
-          >
-            The identifier: what the API path, other definitions and anything
-            sending records call this {description.noun}. Letters, digits,{" "}
-            <code>_</code> and <code>-</code>.
-          </p>
+          {isDataset ? (
+            <p
+              id="definition-name-hint"
+              className={cn(TEXT_LABEL, "text-muted-foreground")}
+            >
+              The identifier: what the API path, metrics and anything sending
+              records call this dataset. Letters, digits, <code>_</code> and{" "}
+              <code>-</code>.
+            </p>
+          ) : null}
           {taken ? (
             <p role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
               A {description.noun} called <code>{given}</code> already exists.{" "}
@@ -165,16 +182,6 @@ export function DefinitionEditor({
               instead of writing over it.
             </p>
           ) : null}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-1">
-          <span className={cn(TEXT_LABEL, "font-medium")}>Name</span>
-          <span className={cn(TEXT_BODY, "font-mono")}>{name}</span>
-          <p className={cn(TEXT_LABEL, "text-muted-foreground")}>
-            {kind === "datasets"
-              ? "A dataset keeps its name: records are sent to it by this name."
-              : "Renamed under Rename, below, so everything that names it follows."}
-          </p>
         </div>
       )}
 
@@ -210,7 +217,7 @@ export function DefinitionEditor({
           editing={{
             document: held.document,
             said: placed.at,
-            names,
+            listed,
             declared,
             tables,
             columns,

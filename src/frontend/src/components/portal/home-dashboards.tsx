@@ -17,8 +17,8 @@ export function HomeDashboards() {
 
 function DashboardSection() {
   const dashboards = useInfiniteQuery(definitionPagesQuery("dashboards"));
-  const names =
-    dashboards.data?.pages.flatMap((page) => page.names).slice(0, 3) ?? [];
+  const shown =
+    dashboards.data?.pages.flatMap((page) => page.items).slice(0, 3) ?? [];
 
   return (
     <section aria-labelledby="home-dashboards" className="flex flex-col gap-4">
@@ -58,14 +58,14 @@ function DashboardSection() {
             Try again
           </Button>
         </div>
-      ) : names.length ? (
+      ) : shown.length ? (
         <ul className="grid gap-4 @2xl:grid-cols-2">
-          {names.map((name) => (
+          {shown.map((dashboard) => (
             <li
-              key={name}
+              key={dashboard.id}
               className="[&_[data-slot=card-content]]:p-0 [&_[data-slot=card]]:p-4"
             >
-              <DashboardCard name={name} />
+              <DashboardCard dashboard={dashboard} />
             </li>
           ))}
         </ul>

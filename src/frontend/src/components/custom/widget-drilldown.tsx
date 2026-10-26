@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Maximize2, Minimize2 } from "lucide-react";
 
 import type { DrilldownSort, Widget } from "@/api/custom-client";
+import { MetricName } from "@/components/custom/metric-name";
 import { refusal } from "@/components/custom/refusal";
 import { MetricEvidenceTable } from "@/components/metric-evidence-table";
 import {
@@ -27,7 +28,7 @@ import { cn } from "@/lib/utils";
 
 /** Which of the dialog's three views is showing. */
 type View =
-  { kind: "rows" } | { kind: "widget" } | { kind: "metric"; name: string };
+  { kind: "rows" } | { kind: "widget" } | { kind: "metric"; id: string };
 
 /**
  * The rows behind a widget, and the definitions that produced them.
@@ -67,7 +68,13 @@ export function WidgetDrilldown({
   }
 
   const heading =
-    view.kind === "rows" ? label : view.kind === "widget" ? name : view.name;
+    view.kind === "rows" ? (
+      label
+    ) : view.kind === "widget" ? (
+      name
+    ) : (
+      <MetricName id={view.id} />
+    );
 
   return (
     <Dialog open={open} onOpenChange={change}>
@@ -90,14 +97,7 @@ export function WidgetDrilldown({
                 <ArrowLeft />
               </Button>
             )}
-            <span
-              className={cn(
-                "min-w-0 truncate",
-                view.kind === "rows" ? "" : "font-mono"
-              )}
-            >
-              {heading}
-            </span>
+            <span className="min-w-0 truncate">{heading}</span>
             {/* Placed as the kit places its close button - over the corner,
                 not in this row - so the two sit on one line, one step apart. */}
             <Button
@@ -135,7 +135,7 @@ export function WidgetDrilldown({
         {view.kind === "widget" ? (
           <WidgetSummary widget={widget} linkMetric={false} />
         ) : null}
-        {view.kind === "metric" ? <StoredMetric name={view.name} /> : null}
+        {view.kind === "metric" ? <StoredMetric id={view.id} /> : null}
       </DialogContent>
     </Dialog>
   );
@@ -176,9 +176,9 @@ function Definitions({
         {metrics.map((metric) => (
           <DefinitionButton
             key={metric}
-            onClick={() => onOpen({ kind: "metric", name: metric })}
+            onClick={() => onOpen({ kind: "metric", id: metric })}
           >
-            {metric}
+            <MetricName id={metric} />
           </DefinitionButton>
         ))}
       </span>
@@ -190,22 +190,22 @@ function DefinitionButton({
   children,
   onClick,
 }: {
-  children: string;
+  children: ReactNode;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="font-mono underline decoration-dotted underline-offset-4"
+      className="underline decoration-dotted underline-offset-4"
     >
       {children}
     </button>
   );
 }
 
-function StoredMetric({ name }: { name: string }) {
-  const definition = useQuery(metricQuery(name));
+function StoredMetric({ id }: { id: string }) {
+  const definition = useQuery(metricQuery(id));
 
   if (definition.isPending) return <CenteredSpinner className="min-h-40" />;
   if (definition.isError || !definition.data) {
