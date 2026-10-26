@@ -1,18 +1,20 @@
-//! Dashboards, folders and tags gain an owner; dashboards gain the people
-//! they are shared with and each person's own filing of them.
+//! Dashboards, folders and tags gain an owner; dashboards and folders gain
+//! grants, and folders hold dashboards through entries, any number each.
 //!
-//! Every row already stored stays ownerless. Folder names stop being unique,
-//! and a tag name is unique within its owner's scope rather than everywhere.
+//! Every row already stored stays ownerless, and a dashboard's legacy folder
+//! becomes a carrying entry of it. Folder names stop being unique, and a tag
+//! name is unique within its owner's scope rather than everywhere.
 //!
 //! INVARIANT: every step is safe to run again. Columns, indexes and tables
-//! are added with `IF NOT EXISTS` and keys dropped with `IF EXISTS`, and the
-//! scoped tag key is in place before the global one goes, so a run stopped
-//! at any step and run again ends where one whole run does.
+//! are added with `IF NOT EXISTS`, keys dropped with `IF EXISTS`, entries
+//! copied with `INSERT IGNORE`, and the scoped tag key is in place before the
+//! global one goes, so a run stopped at any step and run again ends where one
+//! whole run does.
 
 use sea_orm::DbErr;
 use sea_orm_migration::prelude::*;
 
-const STEPS: [&str; 11] = [
+const STEPS: [&str; 13] = [
     "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS owner_person_id CHAR(36) NULL",
     "CREATE INDEX IF NOT EXISTS dashboards_owner ON dashboards (owner_person_id)",
     "ALTER TABLE folders ADD COLUMN IF NOT EXISTS owner_person_id CHAR(36) NULL",
@@ -24,28 +26,43 @@ const STEPS: [&str; 11] = [
     "ALTER TABLE tags ADD COLUMN IF NOT EXISTS owner_scope CHAR(36) AS (COALESCE(RTRIM(owner_person_id), '')) STORED",
     "CREATE UNIQUE INDEX IF NOT EXISTS tags_owner_name ON tags (owner_scope, name)",
     "DROP INDEX IF EXISTS tags_name ON tags",
-    "CREATE TABLE IF NOT EXISTS dashboard_shares (
+    "CREATE TABLE IF NOT EXISTS dashboard_grants (
     dashboard VARCHAR(128) NOT NULL,
-    person CHAR(36) NOT NULL,
+    grantee VARCHAR(36) NOT NULL,
+    level VARCHAR(8) NOT NULL,
     granted_by CHAR(36) NOT NULL,
     created_at DATETIME(6) NOT NULL,
-    PRIMARY KEY (dashboard, person),
-    KEY dashboard_shares_person (person, dashboard),
-    CONSTRAINT dashboard_shares_dashboard FOREIGN KEY (dashboard)
+    PRIMARY KEY (dashboard, grantee),
+    KEY dashboard_grants_grantee (grantee, dashboard),
+    CONSTRAINT dashboard_grants_dashboard FOREIGN KEY (dashboard)
         REFERENCES dashboards (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
-    "CREATE TABLE IF NOT EXISTS dashboard_placements (
-    person CHAR(36) NOT NULL,
-    dashboard VARCHAR(128) NOT NULL,
+    "CREATE TABLE IF NOT EXISTS folder_grants (
     folder_id CHAR(36) NOT NULL,
-    PRIMARY KEY (person, dashboard),
-    KEY dashboard_placements_dashboard (dashboard),
-    KEY dashboard_placements_folder (folder_id),
-    CONSTRAINT dashboard_placements_dashboard FOREIGN KEY (dashboard)
-        REFERENCES dashboards (id) ON DELETE CASCADE,
-    CONSTRAINT dashboard_placements_folder FOREIGN KEY (folder_id)
+    grantee VARCHAR(36) NOT NULL,
+    level VARCHAR(8) NOT NULL,
+    granted_by CHAR(36) NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (folder_id, grantee),
+    KEY folder_grants_grantee (grantee, folder_id),
+    CONSTRAINT folder_grants_folder FOREIGN KEY (folder_id)
         REFERENCES folders (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+    "CREATE TABLE IF NOT EXISTS folder_entries (
+    folder_id CHAR(36) NOT NULL,
+    dashboard VARCHAR(128) NOT NULL,
+    placed_by CHAR(36) NULL,
+    carries BOOLEAN NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (folder_id, dashboard),
+    KEY folder_entries_dashboard (dashboard),
+    CONSTRAINT folder_entries_folder FOREIGN KEY (folder_id)
+        REFERENCES folders (id) ON DELETE CASCADE,
+    CONSTRAINT folder_entries_dashboard FOREIGN KEY (dashboard)
+        REFERENCES dashboards (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+    "INSERT IGNORE INTO folder_entries (folder_id, dashboard, placed_by, carries, created_at)
+SELECT folder_id, id, NULL, TRUE, UTC_TIMESTAMP(6) FROM dashboards WHERE folder_id IS NOT NULL",
 ];
 
 pub struct Migration;
@@ -88,7 +105,9 @@ mod tests {
     #[test]
     fn every_step_is_one_that_runs_again_without_change() {
         for statement in STEPS {
-            let guarded = statement.contains("IF NOT EXISTS") || statement.contains("IF EXISTS");
+            let guarded = statement.contains("IF NOT EXISTS")
+                || statement.contains("IF EXISTS")
+                || statement.starts_with("INSERT IGNORE");
             assert!(guarded, "should be guarded: {statement}");
         }
     }
@@ -122,23 +141,53 @@ mod tests {
     }
 
     #[test]
-    fn shares_and_placements_go_with_their_dashboard_and_folder() {
-        let shares = STEPS[step("CREATE TABLE IF NOT EXISTS dashboard_shares")];
-        let placements = STEPS[step("CREATE TABLE IF NOT EXISTS dashboard_placements")];
+    fn grants_and_entries_go_with_their_dashboard_and_folder() {
+        let cases = [
+            (
+                "CREATE TABLE IF NOT EXISTS dashboard_grants",
+                vec![
+                    "PRIMARY KEY (dashboard, grantee)",
+                    "KEY dashboard_grants_grantee (grantee, dashboard)",
+                    "REFERENCES dashboards (id) ON DELETE CASCADE",
+                ],
+            ),
+            (
+                "CREATE TABLE IF NOT EXISTS folder_grants",
+                vec![
+                    "PRIMARY KEY (folder_id, grantee)",
+                    "KEY folder_grants_grantee (grantee, folder_id)",
+                    "REFERENCES folders (id) ON DELETE CASCADE",
+                ],
+            ),
+            (
+                "CREATE TABLE IF NOT EXISTS folder_entries",
+                vec![
+                    "PRIMARY KEY (folder_id, dashboard)",
+                    "KEY folder_entries_dashboard (dashboard)",
+                    "REFERENCES folders (id) ON DELETE CASCADE",
+                    "REFERENCES dashboards (id) ON DELETE CASCADE",
+                ],
+            ),
+        ];
 
-        for part in [
-            "PRIMARY KEY (dashboard, person)",
-            "KEY dashboard_shares_person (person, dashboard)",
-            "REFERENCES dashboards (id) ON DELETE CASCADE",
-        ] {
-            assert!(shares.contains(part), "{part} is missing: {shares}");
+        for (table, parts) in cases {
+            let created = STEPS[step(table)];
+            for part in parts {
+                assert!(created.contains(part), "{part} is missing: {created}");
+            }
         }
-        for part in [
-            "PRIMARY KEY (person, dashboard)",
-            "REFERENCES dashboards (id) ON DELETE CASCADE",
-            "REFERENCES folders (id) ON DELETE CASCADE",
-        ] {
-            assert!(placements.contains(part), "{part} is missing: {placements}");
-        }
+    }
+
+    #[test]
+    fn a_legacy_folder_becomes_a_carrying_entry_once_the_table_exists() {
+        let copy = step("INSERT IGNORE INTO folder_entries");
+
+        assert!(step("CREATE TABLE IF NOT EXISTS folder_entries") < copy);
+        assert!(STEPS[copy].contains("TRUE"), "{}", STEPS[copy]);
+        assert!(
+            STEPS[copy].contains("WHERE folder_id IS NOT NULL"),
+            "{}",
+            STEPS[copy]
+        );
     }
 }

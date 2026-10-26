@@ -19,7 +19,7 @@ use serde::Deserialize;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::domain::access::{Owner, PersonId};
+use crate::domain::access::{Caller, Owner, PersonId};
 
 const MAX_ID_CHARS: usize = 128;
 const MAX_LABEL_CHARS: usize = 128;
@@ -253,11 +253,12 @@ pub(crate) enum Change {
         dashboard: DefinitionId,
         owner: PersonId,
     },
-    /// Files `to` wherever `person` filed `from`.
-    CarryPlacement {
+    /// Puts `to`, carrying, in each owned folder holding `from` that
+    /// `placer` may arrange.
+    CarryEntries {
         from: DefinitionId,
         to: DefinitionId,
-        person: PersonId,
+        placer: Caller,
     },
     /// Tags `to` with the names `from` carries, as tags of `scope`.
     CarryTags {

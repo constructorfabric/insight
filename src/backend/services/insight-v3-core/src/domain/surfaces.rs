@@ -3,7 +3,7 @@
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::domain::access::{PersonId, Refused};
+use crate::domain::access::{Caller, DASHBOARD_NOT_EDITOR, DASHBOARD_NOT_OWNER, PersonId, Refused};
 use crate::domain::dashboards::{DashboardPage, DashboardQuery, Seen, sight};
 use crate::domain::datasets::{self, Datasets};
 use crate::domain::definition::arriving::Arriving;
@@ -21,18 +21,22 @@ use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, MetricRu
 use crate::domain::query::time_window::WindowError;
 use crate::domain::violation::Violation;
 
+mod drawn;
 mod duplicate;
 mod proposal;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use drawn::{DrawnWidget, Reading};
 pub(crate) use proposal::{Arrival, ProposalError, StoredItem};
 
 #[derive(Debug, Error)]
 pub(crate) enum CustomError {
     #[error("{} `{id}` was not found", kind.singular())]
     NotFound { kind: DefinitionKind, id: String },
-    #[error("only the owner can change this dashboard")]
+    #[error("{DASHBOARD_NOT_EDITOR}")]
+    NotEditor,
+    #[error("{DASHBOARD_NOT_OWNER}")]
     NotOwner,
     #[error("{}", in_use(.used_by, *.hidden))]
     InUse { used_by: Vec<String>, hidden: u64 },
@@ -77,6 +81,7 @@ impl CustomError {
     pub(crate) fn is_about_the_caller(&self) -> bool {
         match self {
             Self::NotFound { .. }
+            | Self::NotEditor
             | Self::NotOwner
             | Self::InUse { .. }
             | Self::Widget(_)
@@ -90,14 +95,14 @@ impl CustomError {
     }
 }
 
-/// The definitions as one administrator reaches them.
+/// The definitions as one caller reaches them.
 #[derive(Debug)]
 pub(crate) struct Surfaces<'a> {
     definitions: &'a dyn DefinitionStore,
     datasets: &'a dyn Datasets,
     /// What a metric is compiled against before it is stored.
     over: CompileAgainst<'a>,
-    caller: PersonId,
+    caller: Caller,
 }
 
 impl<'a> Surfaces<'a> {
@@ -106,7 +111,7 @@ impl<'a> Surfaces<'a> {
         datasets: &'a dyn Datasets,
         datasets_database: &'a str,
         people: &'a People,
-        caller: PersonId,
+        caller: Caller,
     ) -> Self {
         Self {
             definitions,
@@ -119,7 +124,7 @@ impl<'a> Surfaces<'a> {
         }
     }
 
-    pub(crate) fn caller(&self) -> PersonId {
+    pub(crate) fn caller(&self) -> Caller {
         self.caller
     }
 
@@ -162,18 +167,20 @@ impl<'a> Surfaces<'a> {
         sight(self.definitions, id, self.caller)
             .await
             .map_err(CustomError::Store)?
-            .filter(|seen| seen.access.may_open())
             .ok_or_else(|| not_found(DefinitionKind::Dashboard, id))
     }
 
     /// A dashboard the caller may change, or why they may not.
     pub(crate) async fn changeable(&self, id: &DefinitionId) -> Result<Seen, CustomError> {
         let seen = self.seen(id).await?;
-        seen.access.change().map_err(|refused| match refused {
-            Refused::NotOwner | Refused::Ownerless => CustomError::NotOwner,
-        })?;
+        seen.access.change().map_err(refusal)?;
 
         Ok(seen)
+    }
+
+    /// A dashboard the caller may delete, or why they may not.
+    async fn deletable(&self, id: &DefinitionId) -> Result<(), CustomError> {
+        self.seen(id).await?.access.delete().map_err(refusal)
     }
 
     /// Whether this kind's `id` is one the caller may read at all.
@@ -270,7 +277,7 @@ impl<'a> Surfaces<'a> {
         kinds::check(kind, body, self.definitions, self.datasets, self.over).await?;
 
         let id = DefinitionId::generate();
-        let changes = creating(kind, &id, name, body.clone(), self.caller);
+        let changes = creating(kind, &id, name, body.clone(), self.caller.person);
         self.definitions
             .apply(&changes)
             .await
@@ -350,7 +357,10 @@ impl<'a> Surfaces<'a> {
         kind: DefinitionKind,
         id: &DefinitionId,
     ) -> Result<(), CustomError> {
-        self.writable(kind, id).await?;
+        match kind {
+            DefinitionKind::Metric | DefinitionKind::Widget => {}
+            DefinitionKind::Dashboard => self.deletable(id).await?,
+        }
         let dependents = self.dependents_of(kind, id).await?;
         if !dependents.is_empty() {
             return Err(CustomError::InUse {
@@ -530,6 +540,13 @@ pub(crate) struct Holder {
     pub(crate) kind: DefinitionKind,
     pub(crate) id: String,
     pub(crate) name: String,
+}
+
+fn refusal(refused: Refused) -> CustomError {
+    match refused {
+        Refused::NotEditor | Refused::Ownerless => CustomError::NotEditor,
+        Refused::NotOwner => CustomError::NotOwner,
+    }
 }
 
 fn not_found(kind: DefinitionKind, id: &DefinitionId) -> CustomError {

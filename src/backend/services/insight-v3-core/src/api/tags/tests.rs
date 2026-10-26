@@ -13,7 +13,6 @@ use crate::chat::ChatClient;
 use crate::domain::access::PersonId;
 use crate::domain::definition::{DefinitionId, DefinitionKind};
 use crate::domain::query::metric_query::{MetricRunner, People};
-use crate::domain::sharing::Sharing as _;
 use crate::domain::tags::MAX_TAGS;
 use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -155,7 +154,7 @@ impl Harness {
     async fn shared_with(&self, id: &str, viewer: &str, owner: &str) {
         let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{id}: {error}"));
         self.definitions
-            .share(&parsed, person(viewer), person(owner))
+            .seed_viewer(&parsed, person(viewer), person(owner))
             .await
             .unwrap_or_else(|error| panic!("`{id}` must share: {error}"));
     }
@@ -442,8 +441,8 @@ async fn a_list_by_tag_keeps_to_its_folder_and_its_search() {
         harness
             .send(
                 "PUT",
-                &format!("/v1/dashboards/{name}/folder"),
-                Some(json!({ "folder": folder })),
+                &format!("/v1/folders/{folder}/dashboards/{name}"),
+                None,
             )
             .await;
     }
@@ -523,23 +522,22 @@ async fn a_read_of_another_kind_names_no_tags() {
 }
 
 #[tokio::test]
-async fn a_caller_without_the_admin_role_is_refused_on_every_tag_route() {
+async fn a_member_lists_tags_but_is_refused_setting_them() {
     let harness = Harness::build(false, Arc::new(MemoryDefinitions::new()));
-    let routes = [
-        ("GET", "/v1/tags", None),
-        (
+
+    let listed = harness.send("GET", "/v1/tags", None).await;
+    let by_tag = harness.send("GET", "/v1/dashboards?tag=Alpha", None).await;
+    let refused = harness
+        .send(
             "PUT",
             "/v1/dashboards/delivery/tags",
             Some(json!({ "tags": ["Alpha"] })),
-        ),
-        ("GET", "/v1/dashboards?tag=Alpha", None),
-    ];
+        )
+        .await;
 
-    for (method, path, body) in routes {
-        let refused = harness.send(method, path, body).await;
-
-        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{method} {path}");
-    }
+    assert_eq!(listed.body, json!({ "tags": [] }));
+    assert_eq!(by_tag.body["total"], 0, "{}", by_tag.body);
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
 }
 
 #[tokio::test]
@@ -621,7 +619,7 @@ async fn a_viewer_may_not_tag_and_someone_who_cannot_see_it_finds_nothing() {
         as_viewer
             .body
             .to_string()
-            .contains("only the owner can change this dashboard"),
+            .contains("only the owner or an editor can change this dashboard"),
         "{}",
         as_viewer.body
     );

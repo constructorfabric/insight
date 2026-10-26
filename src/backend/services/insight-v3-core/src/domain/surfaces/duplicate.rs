@@ -4,8 +4,8 @@ use crate::domain::definition::{Change, DefinitionId, DefinitionKind, Definition
 
 impl Surfaces<'_> {
     /// Copies a dashboard the caller may change under a fresh id, as theirs:
-    /// filed where they filed it, and carrying its tags' names as their own
-    /// tags.
+    /// in each owned folder holding the original that they may arrange, and
+    /// carrying its tags' names as their own tags.
     pub(crate) async fn duplicate(
         &self,
         from: &DefinitionId,
@@ -15,16 +15,22 @@ impl Surfaces<'_> {
         let body = self.get(DefinitionKind::Dashboard, from).await?;
         let to = DefinitionId::generate();
 
-        let mut changes = creating(DefinitionKind::Dashboard, &to, name, body, self.caller);
-        changes.push(Change::CarryPlacement {
+        let mut changes = creating(
+            DefinitionKind::Dashboard,
+            &to,
+            name,
+            body,
+            self.caller.person,
+        );
+        changes.push(Change::CarryEntries {
             from: from.clone(),
             to: to.clone(),
-            person: self.caller,
+            placer: self.caller,
         });
         changes.push(Change::CarryTags {
             from: from.clone(),
             to: to.clone(),
-            scope: Owner::Person(self.caller),
+            scope: Owner::Person(self.caller.person),
         });
 
         self.definitions

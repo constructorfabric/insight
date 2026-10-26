@@ -225,4 +225,5 @@ async fn admin_only(
             .create()
     })
     .await
+    .map(|caller| caller.person)
 }

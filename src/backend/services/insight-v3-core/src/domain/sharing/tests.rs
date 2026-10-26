@@ -4,6 +4,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::*;
+use crate::domain::access::{Grantee, Level};
 use crate::domain::dashboards::DashboardCatalogue as _;
 use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -21,7 +22,7 @@ struct Racing<'a> {
 }
 
 #[async_trait]
-impl Administrators for Racing<'_> {
+impl Directory for Racing<'_> {
     async fn holds_admin(&self, person: PersonId) -> Result<bool, AdministratorsError> {
         let first = std::mem::replace(
             &mut *self
@@ -43,6 +44,10 @@ impl Administrators for Racing<'_> {
     async fn current(&self) -> Result<Vec<PersonId>, AdministratorsError> {
         Ok(vec![CALLER, RACER])
     }
+
+    async fn knows(&self, _person: PersonId) -> Result<bool, AdministratorsError> {
+        Ok(true)
+    }
 }
 
 #[tokio::test]
@@ -63,13 +68,13 @@ async fn a_transfer_that_loses_the_race_is_refused_and_leaves_the_winner_owning_
         raced: Mutex::new(false),
     };
 
-    let lost = DashboardShares::new(&store, &administrators, CALLER)
+    let lost = Sharing::new(&store, &administrators, Caller::administrator(CALLER))
         .transfer(&dashboard, CALLER)
         .await;
 
-    assert!(matches!(lost, Err(SharingError::Moved)), "{lost:?}");
+    assert!(matches!(lost, Err(SharingError::Moved(_))), "{lost:?}");
     let standing = store
-        .standing(&dashboard, CALLER)
+        .standing(&dashboard, Caller::administrator(CALLER))
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(standing.map(|held| held.owner), Some(Owner::Person(RACER)));
@@ -79,13 +84,17 @@ async fn a_transfer_that_loses_the_race_is_refused_and_leaves_the_winner_owning_
 struct Listed(Vec<PersonId>);
 
 #[async_trait]
-impl Administrators for Listed {
+impl Directory for Listed {
     async fn holds_admin(&self, person: PersonId) -> Result<bool, AdministratorsError> {
         Ok(self.0.contains(&person))
     }
 
     async fn current(&self) -> Result<Vec<PersonId>, AdministratorsError> {
         Ok(self.0.clone())
+    }
+
+    async fn knows(&self, _person: PersonId) -> Result<bool, AdministratorsError> {
+        Ok(true)
     }
 }
 
@@ -109,7 +118,7 @@ async fn a_transferred_dashboard_takes_its_tags_from_the_new_owners_scope() {
             .unwrap_or_else(|error| panic!("{error}"));
     }
 
-    DashboardShares::new(&store, &Listed(vec![CALLER]), CALLER)
+    Sharing::new(&store, &Listed(vec![CALLER]), Caller::administrator(CALLER))
         .transfer(&handed, CALLER)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
@@ -129,7 +138,7 @@ async fn a_transferred_dashboard_takes_its_tags_from_the_new_owners_scope() {
 struct Unreachable;
 
 #[async_trait]
-impl Administrators for Unreachable {
+impl Directory for Unreachable {
     async fn holds_admin(&self, _person: PersonId) -> Result<bool, AdministratorsError> {
         Err(AdministratorsError::Unavailable(
             "identity is down".to_owned(),
@@ -137,6 +146,12 @@ impl Administrators for Unreachable {
     }
 
     async fn current(&self) -> Result<Vec<PersonId>, AdministratorsError> {
+        Err(AdministratorsError::Unavailable(
+            "identity is down".to_owned(),
+        ))
+    }
+
+    async fn knows(&self, _person: PersonId) -> Result<bool, AdministratorsError> {
         Err(AdministratorsError::Unavailable(
             "identity is down".to_owned(),
         ))
@@ -159,10 +174,15 @@ async fn an_identity_failure_is_answered_as_missing_only_where_the_caller_cannot
     let unseen = left_by_former(&store, "unseen").await;
     let seen = left_by_former(&store, "seen").await;
     store
-        .share(&seen, CALLER, FORMER)
+        .grant(
+            Shared::Dashboard(&seen),
+            Grantee::Person(CALLER),
+            Level::Viewer,
+            FORMER,
+        )
         .await
         .unwrap_or_else(|error| panic!("{error}"));
-    let shares = DashboardShares::new(&store, &Unreachable, CALLER);
+    let shares = Sharing::new(&store, &Unreachable, Caller::administrator(CALLER));
 
     let hidden = shares.transfer(&unseen, CALLER).await;
     let failed = shares.transfer(&seen, CALLER).await;
@@ -185,9 +205,15 @@ async fn an_identity_failure_refuses_a_share_and_the_orphaned_listing() {
         .seed_owned(&mine, &json!({ "title": "Mine", "widgets": [] }), CALLER)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
-    let shares = DashboardShares::new(&store, &Unreachable, CALLER);
+    let shares = Sharing::new(&store, &Unreachable, Caller::administrator(CALLER));
 
-    let granted = shares.grant(&mine, RACER).await;
+    let granted = shares
+        .grant(
+            Shared::Dashboard(&mine),
+            Grantee::Person(RACER),
+            Level::Viewer,
+        )
+        .await;
     let page = Page::parse(None, None).unwrap_or_else(|error| panic!("{error}"));
     let orphaned = shares.orphaned(page).await;
 
@@ -200,7 +226,7 @@ async fn an_identity_failure_refuses_a_share_and_the_orphaned_listing() {
         "{orphaned:?}"
     );
     let held = store
-        .shares_of(&mine)
+        .grants_of(Shared::Dashboard(&mine))
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     assert!(held.is_empty(), "{held:?}");
@@ -235,7 +261,7 @@ async fn a_transfer_overfilling_the_new_owners_tags_is_refused_and_leaves_the_ow
         .await
         .unwrap_or_else(|error| panic!("{error}"));
 
-    let refused = DashboardShares::new(&store, &Listed(vec![CALLER]), CALLER)
+    let refused = Sharing::new(&store, &Listed(vec![CALLER]), Caller::administrator(CALLER))
         .transfer(&handed, CALLER)
         .await;
 
@@ -244,7 +270,7 @@ async fn a_transfer_overfilling_the_new_owners_tags_is_refused_and_leaves_the_ow
         "{refused:?}"
     );
     let standing = store
-        .standing(&handed, CALLER)
+        .standing(&handed, Caller::administrator(CALLER))
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(standing.map(|held| held.owner), Some(Owner::Person(FORMER)));

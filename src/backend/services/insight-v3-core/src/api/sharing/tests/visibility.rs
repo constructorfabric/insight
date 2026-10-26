@@ -6,8 +6,9 @@ use serde_json::{Value, json};
 
 use super::{Answer, Harness, OWNER, STRANGER, VIEWER};
 
-/// Each route that addresses one dashboard, with the body it sends.
-fn addressed(id: &str) -> Vec<(&'static str, String, Option<Value>)> {
+/// Each route that addresses one dashboard, with the body it sends; the
+/// entry routes go through `folder`, one of the caller's own.
+fn addressed(id: &str, folder: &str) -> Vec<(&'static str, String, Option<Value>)> {
     let board = json!({ "title": "Taken", "widgets": [] });
 
     vec![
@@ -23,10 +24,22 @@ fn addressed(id: &str) -> Vec<(&'static str, String, Option<Value>)> {
             format!("/v1/dashboards/{id}/duplicate"),
             Some(json!({ "name": "Copy" })),
         ),
+        ("PUT", format!("/v1/folders/{folder}/dashboards/{id}"), None),
         (
-            "PUT",
-            format!("/v1/dashboards/{id}/folder"),
-            Some(json!({ "folder": null })),
+            "DELETE",
+            format!("/v1/folders/{folder}/dashboards/{id}"),
+            None,
+        ),
+        ("GET", format!("/v1/dashboards/{id}/widgets"), None),
+        (
+            "POST",
+            format!("/v1/dashboards/{id}/widgets/{WIDGET}/run"),
+            None,
+        ),
+        (
+            "POST",
+            format!("/v1/dashboards/{id}/widgets/{WIDGET}/drilldown"),
+            None,
         ),
         (
             "PUT",
@@ -36,15 +49,27 @@ fn addressed(id: &str) -> Vec<(&'static str, String, Option<Value>)> {
         ("GET", format!("/v1/dashboards/{id}/dependents"), None),
         ("PUT", format!("/v1/pins/{id}"), None),
         ("DELETE", format!("/v1/pins/{id}"), None),
-        ("GET", format!("/v1/dashboards/{id}/shares"), None),
-        ("PUT", format!("/v1/dashboards/{id}/shares/{VIEWER}"), None),
+        ("GET", format!("/v1/dashboards/{id}/grants"), None),
+        (
+            "PUT",
+            format!("/v1/dashboards/{id}/grants/{VIEWER}"),
+            Some(json!({ "level": "viewer" })),
+        ),
         (
             "DELETE",
-            format!("/v1/dashboards/{id}/shares/{VIEWER}"),
+            format!("/v1/dashboards/{id}/grants/{VIEWER}"),
             None,
+        ),
+        (
+            "POST",
+            format!("/v1/dashboards/{id}/transfer"),
+            Some(json!({ "to": VIEWER })),
         ),
     ]
 }
+
+/// A widget id no dashboard here draws.
+const WIDGET: &str = "0192a1b2-0000-7000-8000-0000000000ee";
 
 fn ids(listed: &Answer) -> Vec<String> {
     listed.body["items"]
@@ -60,9 +85,11 @@ async fn every_route_answers_a_dashboard_the_caller_cannot_see_as_a_missing_one(
     let harness = Harness::new();
     let private = harness.dashboard_of(OWNER, "Private").await;
     let missing = "0192a1b2-0000-7000-8000-0000000000ff";
+    let folder = harness.folder_of(STRANGER, "Mine").await;
 
-    for ((method, path, body), (_, absent, absent_body)) in
-        addressed(&private).into_iter().zip(addressed(missing))
+    for ((method, path, body), (_, absent, absent_body)) in addressed(&private, &folder)
+        .into_iter()
+        .zip(addressed(missing, &folder))
     {
         let unseen = harness.send(STRANGER, method, &path, body).await;
         let gone = harness.send(STRANGER, method, &absent, absent_body).await;
@@ -123,52 +150,48 @@ async fn a_viewer_opens_pins_and_files_a_shared_dashboard_but_changes_nothing() 
     let harness = Harness::new();
     let board = harness.dashboard_of(OWNER, "Board").await;
     harness.share(OWNER, &board, VIEWER).await;
-    let folder = harness
-        .send(
-            VIEWER,
-            "POST",
-            "/v1/folders",
-            Some(json!({ "name": "Mine" })),
-        )
-        .await;
+    let folder = harness.folder_of(VIEWER, "Mine").await;
 
     let read = harness.read(VIEWER, &board).await;
     let pinned = harness
         .send(VIEWER, "PUT", &format!("/v1/pins/{board}"), None)
         .await;
-    let filed = harness
-        .send(
-            VIEWER,
-            "PUT",
-            &format!("/v1/dashboards/{board}/folder"),
-            Some(json!({ "folder": folder.body["id"] })),
-        )
-        .await;
+    let filed = harness.add(VIEWER, &folder, &board).await;
 
     assert_eq!(read.status, StatusCode::OK, "{}", read.body);
     assert_eq!(read.body["access"], json!("viewer"));
+    assert_eq!(read.body["carries"], json!(false));
     assert_eq!(read.body["owner_person_id"], json!(OWNER));
     assert_eq!(pinned.status, StatusCode::NO_CONTENT, "{}", pinned.body);
-    assert_eq!(filed.status, StatusCode::NO_CONTENT, "{}", filed.body);
+    assert_eq!(filed.body, json!({ "carries": false }));
+    let not_editor = "only the owner or an editor can change this dashboard";
     let changes = [
         (
             "PUT",
             format!("/v1/dashboards/{board}"),
             Some(json!({ "name": "Mine now", "body": { "title": "x", "widgets": [] } })),
+            not_editor,
         ),
-        ("DELETE", format!("/v1/dashboards/{board}"), None),
+        (
+            "DELETE",
+            format!("/v1/dashboards/{board}"),
+            None,
+            "only the owner can delete this dashboard",
+        ),
         (
             "POST",
             format!("/v1/dashboards/{board}/duplicate"),
             Some(json!({ "name": "Copy" })),
+            not_editor,
         ),
         (
             "PUT",
             format!("/v1/dashboards/{board}/tags"),
             Some(json!({ "tags": ["Alpha"] })),
+            not_editor,
         ),
     ];
-    for (method, path, body) in changes {
+    for (method, path, body, said) in changes {
         let refused = harness.send(VIEWER, method, &path, body).await;
 
         assert_eq!(
@@ -178,10 +201,7 @@ async fn a_viewer_opens_pins_and_files_a_shared_dashboard_but_changes_nothing() 
             refused.body
         );
         assert!(
-            refused
-                .body
-                .to_string()
-                .contains("only the owner can change this dashboard"),
+            refused.body.to_string().contains(said),
             "{method} {path}: {}",
             refused.body
         );

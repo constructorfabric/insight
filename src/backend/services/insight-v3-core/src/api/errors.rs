@@ -77,6 +77,7 @@ pub(crate) trait ApiErrors {
             CustomError::Store(source) => Self::definition_store_error(source),
             CustomError::Datasets(source) => Self::dataset_store_error(source),
             CustomError::InUse { .. }
+            | CustomError::NotEditor
             | CustomError::NotOwner
             | CustomError::Widget(_)
             | CustomError::Range(_)

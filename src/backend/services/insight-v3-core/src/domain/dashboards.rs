@@ -5,32 +5,28 @@ use std::fmt;
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::access::{Access, Owner, PersonId, access};
+use crate::domain::access::{Access, Caller, DashboardStanding, Entry, Owner, access};
 use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionStoreError, Page};
 use crate::domain::folders::{FolderError, FolderFilter};
 use crate::domain::tags::{TagError, TagFilter};
-
-/// What decides a caller's access to one stored dashboard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Standing {
-    pub(crate) owner: Owner,
-    pub(crate) shared_with_caller: bool,
-}
 
 /// A dashboard the caller sees, and how.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Seen {
     pub(crate) owner: Owner,
     pub(crate) access: Access,
+    /// What an entry the caller adds now carries.
+    pub(crate) entry: Entry,
 }
 
-impl Standing {
-    pub(crate) fn seen_by(self, caller: PersonId) -> Option<Seen> {
-        let access = access(caller, self.owner, self.shared_with_caller)?;
+impl Seen {
+    pub(crate) fn of(caller: Caller, standing: &DashboardStanding) -> Option<Self> {
+        let access = access(caller, standing)?;
 
-        Some(Seen {
-            owner: self.owner,
+        Some(Self {
+            owner: standing.owner,
             access,
+            entry: access.entry(standing.granted),
         })
     }
 }
@@ -40,7 +36,7 @@ impl Standing {
 pub(crate) enum Owned {
     /// The caller's own.
     Me,
-    /// Someone else's, shared with the caller.
+    /// Not the caller's own, reaching them through a grant or a folder.
     Shared,
 }
 
@@ -138,19 +134,19 @@ pub(crate) struct DashboardPage {
 /// counted, listed or told apart from a missing one.
 #[async_trait]
 pub(crate) trait DashboardCatalogue: Send + Sync + fmt::Debug {
-    /// The dashboard's owner and whether it is shared with `caller`, or none
-    /// when no dashboard has the id.
+    /// What decides `caller`'s access to the dashboard, or none when no
+    /// dashboard has the id.
     async fn standing(
         &self,
         dashboard: &DefinitionId,
-        caller: PersonId,
-    ) -> Result<Option<Standing>, DefinitionStoreError>;
+        caller: Caller,
+    ) -> Result<Option<DashboardStanding>, DefinitionStoreError>;
 
     /// One page of the dashboards `caller` sees that match `query`, ordered
     /// by name, then id.
     async fn page_dashboards(
         &self,
-        caller: PersonId,
+        caller: Caller,
         query: &DashboardQuery,
         page: Page,
     ) -> Result<DashboardPage, DefinitionStoreError>;
@@ -161,9 +157,9 @@ pub(crate) trait DashboardCatalogue: Send + Sync + fmt::Debug {
 pub(crate) async fn sight(
     catalogue: &dyn DashboardCatalogue,
     dashboard: &DefinitionId,
-    caller: PersonId,
+    caller: Caller,
 ) -> Result<Option<Seen>, DefinitionStoreError> {
     let standing = catalogue.standing(dashboard, caller).await?;
 
-    Ok(standing.and_then(|standing| standing.seen_by(caller)))
+    Ok(standing.and_then(|standing| Seen::of(caller, &standing)))
 }

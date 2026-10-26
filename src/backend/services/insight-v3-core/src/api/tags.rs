@@ -87,8 +87,8 @@ pub(super) fn tag_error(error: TagError) -> CanonicalError {
         TagError::DashboardNotFound(name) => {
             TagApiError::not_found(detail).with_resource(name).create()
         }
-        TagError::NotOwner => TagApiError::permission_denied()
-            .with_reason(super::definitions::OWNER_ONLY)
+        TagError::NotEditor => TagApiError::permission_denied()
+            .with_reason(crate::domain::access::DASHBOARD_NOT_EDITOR)
             .create(),
         TagError::TooMany => TagApiError::failed_precondition()
             .with_precondition_violation("tags", detail, "too_many")
@@ -101,6 +101,12 @@ pub(super) fn tag_error(error: TagError) -> CanonicalError {
 fn denied() -> CanonicalError {
     TagApiError::permission_denied()
         .with_reason(crate::api::ADMIN_ONLY)
+        .create()
+}
+
+fn unidentified() -> CanonicalError {
+    TagApiError::permission_denied()
+        .with_reason(crate::api::UNIDENTIFIED)
         .create()
 }
 
@@ -149,7 +155,7 @@ async fn list_tags(
     Extension(state): Extension<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    let caller = crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::caller(&state, &headers, unidentified).await?;
 
     let listed = state.tags().list_tags(caller).await.map_err(tag_error)?;
 

@@ -607,7 +607,10 @@ async fn a_dashboard_the_assistant_creates_is_the_callers() {
         .unwrap_or_else(|error| panic!("the id must parse: {error}"));
     let standing = harness
         .definitions
-        .standing(&parsed, chatting())
+        .standing(
+            &parsed,
+            crate::domain::access::Caller::administrator(chatting()),
+        )
         .await
         .unwrap_or_else(|error| panic!("the store must answer: {error}"));
     assert_eq!(
@@ -633,15 +636,13 @@ async fn replacing_a_dashboard_the_caller_cannot_see_is_refused_as_missing() {
 
 #[tokio::test]
 async fn replacing_a_dashboard_shared_with_the_caller_is_refused_to_a_viewer() {
-    use crate::domain::sharing::Sharing as _;
-
     let harness = TestHarness::new(ChatClient::scripted(replacing_their_board)).await;
     harness.owned_by("theirs", someone_else()).await;
     let parsed = crate::domain::definition::DefinitionId::parse("theirs")
         .unwrap_or_else(|error| panic!("the id must parse: {error}"));
     harness
         .definitions
-        .share(&parsed, chatting(), someone_else())
+        .seed_viewer(&parsed, chatting(), someone_else())
         .await
         .unwrap_or_else(|error| panic!("the store must share it: {error}"));
     harness.queue_chat_context();

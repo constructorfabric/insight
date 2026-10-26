@@ -3,7 +3,7 @@ use std::fmt;
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::access::PersonId;
+use crate::domain::access::Caller;
 use crate::domain::dashboards::sight;
 use crate::domain::definition::{DefinitionId, DefinitionStoreError, Listed};
 use crate::domain::folders::DefinitionStore;
@@ -29,23 +29,24 @@ impl From<sea_orm::DbErr> for PinError {
 
 #[async_trait]
 pub(crate) trait Pins: Send + Sync + fmt::Debug {
-    /// The person's pins of dashboards they still see, oldest first.
-    async fn pins_of(&self, person: PersonId) -> Result<Vec<Listed>, PinError>;
+    /// The caller's pins of dashboards they still see, oldest first.
+    async fn pins_of(&self, caller: Caller) -> Result<Vec<Listed>, PinError>;
 
-    async fn pin(&self, person: PersonId, dashboard: &DefinitionId) -> Result<(), PinError>;
+    /// INVARIANT: lands only on a dashboard `caller` sees as the row is
+    /// written, so a pin cannot rely on a grant withdrawn meanwhile.
+    async fn pin(&self, caller: Caller, dashboard: &DefinitionId) -> Result<(), PinError>;
 
     /// Removes the pin, reporting whether there was one.
-    async fn unpin(&self, person: PersonId, dashboard: &DefinitionId) -> Result<bool, PinError>;
+    async fn unpin(&self, caller: Caller, dashboard: &DefinitionId) -> Result<bool, PinError>;
 }
 
 /// Pins a dashboard the caller sees.
 pub(crate) async fn pin(
     store: &dyn DefinitionStore,
-    caller: PersonId,
+    caller: Caller,
     dashboard: &DefinitionId,
 ) -> Result<(), PinError> {
-    let seen = sight(store, dashboard, caller).await?;
-    if !seen.is_some_and(|seen| seen.access.may_open()) {
+    if sight(store, dashboard, caller).await?.is_none() {
         return Err(PinError::DashboardNotFound(dashboard.as_str().to_owned()));
     }
 
@@ -56,7 +57,7 @@ pub(crate) async fn pin(
 /// see the dashboard; without one, a dashboard they cannot see is not found.
 pub(crate) async fn unpin(
     store: &dyn DefinitionStore,
-    caller: PersonId,
+    caller: Caller,
     dashboard: &DefinitionId,
 ) -> Result<(), PinError> {
     if store.unpin(caller, dashboard).await? {

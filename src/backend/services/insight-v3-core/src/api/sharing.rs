@@ -1,4 +1,4 @@
-//! Sharing a dashboard, and handing an orphaned one to a current
+//! Granting dashboards and folders, and handing an orphaned one to a current
 //! administrator.
 
 use std::sync::Arc;
@@ -17,12 +17,13 @@ use toolkit_canonical_errors::{CanonicalError, Http};
 use utoipa::ToSchema;
 
 use super::AppState;
-use super::definitions::{DefinitionApiError, OWNER_ONLY};
+use super::definitions::DefinitionApiError;
 use super::errors::ApiErrors;
-use crate::domain::access::PersonId;
+use crate::domain::access::{DASHBOARD_NOT_EDITOR, FOLDER_NOT_EDITOR, Grantee, Level, PersonId};
 use crate::domain::definition::{DefinitionId, DefinitionKind, MAX_PAGE_LIMIT, Page};
+use crate::domain::folders::FolderId;
 use crate::domain::sharing::{
-    Administrators, AdministratorsError, DashboardShares, Orphan, Share, SharingError,
+    AdministratorsError, Directory, Grant, Orphan, OrphanPage, Shared, Sharing, SharingError,
 };
 use crate::store::identity::{IdentityClient, IdentityError};
 
@@ -34,6 +35,15 @@ struct TransferRequest {
 
 impl toolkit::api::api_dto::RequestApiDto for TransferRequest {}
 
+#[derive(Debug, Deserialize, ToSchema)]
+struct GrantRequest {
+    /// `viewer` or `editor`. An editor who is not an administrator only
+    /// views.
+    level: String,
+}
+
+impl toolkit::api::api_dto::RequestApiDto for GrantRequest {}
+
 #[derive(Debug, Default, Deserialize)]
 struct Paging {
     limit: Option<u64>,
@@ -41,18 +51,22 @@ struct Paging {
 }
 
 /// Identity, asked with the caller's own authorization.
-struct ForwardedAdministrators<'a> {
+struct ForwardedDirectory<'a> {
     identity: &'a IdentityClient,
     authorization: Option<&'a str>,
 }
 
+fn unavailable(error: &IdentityError) -> AdministratorsError {
+    AdministratorsError::Unavailable(error.to_string())
+}
+
 #[async_trait]
-impl Administrators for ForwardedAdministrators<'_> {
+impl Directory for ForwardedDirectory<'_> {
     async fn holds_admin(&self, person: PersonId) -> Result<bool, AdministratorsError> {
         self.identity
             .holds_admin(self.authorization, person)
             .await
-            .map_err(|error| AdministratorsError::Unavailable(error.to_string()))
+            .map_err(|error| unavailable(&error))
     }
 
     async fn current(&self) -> Result<Vec<PersonId>, AdministratorsError> {
@@ -61,10 +75,15 @@ impl Administrators for ForwardedAdministrators<'_> {
             .await
             .map_err(|error| match error {
                 IdentityError::Truncated => AdministratorsError::Truncated,
-                IdentityError::Transport(_) | IdentityError::Refused(_) => {
-                    AdministratorsError::Unavailable(error.to_string())
-                }
+                IdentityError::Transport(_) | IdentityError::Refused(_) => unavailable(&error),
             })
+    }
+
+    async fn knows(&self, person: PersonId) -> Result<bool, AdministratorsError> {
+        self.identity
+            .knows(self.authorization, person)
+            .await
+            .map_err(|error| unavailable(&error))
     }
 }
 
@@ -88,20 +107,31 @@ fn sharing_error(error: SharingError) -> CanonicalError {
         SharingError::NotFound(id) => DefinitionApiError::not_found(detail)
             .with_resource(&id)
             .create(),
-        SharingError::NotOwner => DefinitionApiError::permission_denied()
-            .with_reason(OWNER_ONLY)
+        SharingError::FolderNotFound(id) => DefinitionApiError::not_found(detail)
+            .with_resource(id.to_string())
             .create(),
-        SharingError::Ownerless => conflict("owner", detail, "ownerless"),
-        SharingError::OwnerIsAdministrator => conflict("owner", detail, "owner_is_administrator"),
-        SharingError::Moved => conflict("owner", detail, "owner_changed"),
-        SharingError::RecipientTagsFull => conflict("to", detail, "too_many_tags"),
-        SharingError::SharedWithOwner | SharingError::TargetNotAdministrator => {
-            DefinitionApiError::invalid_field("person_id", detail)
+        SharingError::NotEditor => DefinitionApiError::permission_denied()
+            .with_reason(DASHBOARD_NOT_EDITOR)
+            .create(),
+        SharingError::FolderNotEditor => DefinitionApiError::permission_denied()
+            .with_reason(FOLDER_NOT_EDITOR)
+            .create(),
+        SharingError::Ownerless(_) => conflict("owner", detail, "ownerless"),
+        SharingError::OwnerIsAdministrator(_) => {
+            conflict("owner", detail, "owner_is_administrator")
         }
-        SharingError::RecipientNotAdministrator => DefinitionApiError::invalid_field("to", detail),
+        SharingError::FolderUnshared => conflict("grants", detail, "not_shared"),
+        SharingError::Moved(_) => conflict("owner", detail, "owner_changed"),
+        SharingError::RecipientTagsFull => conflict("to", detail, "too_many_tags"),
+        SharingError::GrantToOwner | SharingError::UnknownPerson(_) => {
+            DefinitionApiError::invalid_field("grantee", detail)
+        }
+        SharingError::RecipientNotAdministrator(_) => {
+            DefinitionApiError::invalid_field("to", detail)
+        }
         SharingError::Administrators(source) => {
-            tracing::error!(error = %source, "the current administrators could not be read");
-            CanonicalError::internal("failed to verify administrators").create()
+            tracing::error!(error = %source, "identity could not be read");
+            CanonicalError::internal("failed to verify people").create()
         }
         SharingError::Store(source) => DefinitionApiError::definition_store_error(source),
     }
@@ -112,16 +142,51 @@ fn dashboard_id(raw: &str) -> Result<DefinitionId, CanonicalError> {
         .map_err(|_| DefinitionApiError::malformed_id(DefinitionKind::Dashboard, raw))
 }
 
+fn folder_id(raw: &str) -> Result<FolderId, CanonicalError> {
+    FolderId::parse(raw).map_err(|_| {
+        DefinitionApiError::not_found(format!("no folder has the id `{raw}`"))
+            .with_resource(raw)
+            .create()
+    })
+}
+
+fn grantee(raw: &str) -> Result<Grantee, CanonicalError> {
+    Grantee::parse(raw).ok_or_else(|| {
+        DefinitionApiError::invalid_field(
+            "grantee",
+            "a grantee is a person id or `everyone`".to_owned(),
+        )
+    })
+}
+
+fn level(raw: &str) -> Result<Level, CanonicalError> {
+    Level::parse(raw).ok_or_else(|| {
+        DefinitionApiError::invalid_field("level", "a level is `viewer` or `editor`".to_owned())
+    })
+}
+
 fn person_id(raw: &str, field: &str) -> Result<PersonId, CanonicalError> {
     PersonId::parse(raw)
         .ok_or_else(|| DefinitionApiError::invalid_field(field, "a person id is a UUID".to_owned()))
 }
 
-fn share_json(share: &Share) -> Value {
+fn grant_json(grant: &Grant) -> Value {
     json!({
-        "person_id": share.person.to_string(),
-        "granted_by": share.granted_by.to_string(),
-        "created_at": share.created_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+        "grantee": grant.grantee.to_string(),
+        "level": grant.level.as_str(),
+        "granted_by": grant.granted_by.to_string(),
+        "created_at": grant.created_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+    })
+}
+
+fn orphans_json(found: &OrphanPage, page: Page) -> Value {
+    let items: Vec<Value> = found.items.iter().map(orphan_json).collect();
+
+    json!({
+        "items": items,
+        "total": found.total,
+        "limit": page.limit(),
+        "offset": page.offset(),
     })
 }
 
@@ -144,175 +209,258 @@ pub(crate) fn register_routes(
     state: &Arc<AppState>,
 ) -> Router {
     router
-        .merge(share_routes(openapi, state))
+        .merge(grant_routes(openapi, state, Object::Dashboard))
+        .merge(grant_routes(openapi, state, Object::Folder))
+        .merge(orphan_routes(openapi, state))
         .merge(transfer_routes(openapi, state))
 }
 
-fn dashboard_param() -> ParamSpec {
-    path_param("id", "Dashboard id")
+/// What a grant route is on.
+#[derive(Debug, Clone, Copy)]
+enum Object {
+    Dashboard,
+    Folder,
 }
 
-fn share_routes(openapi: &dyn OpenApiRegistry, state: &Arc<AppState>) -> Router {
-    let dashboard = dashboard_param;
-    let person = || path_param("person_id", "The person's id");
+impl Object {
+    fn segment(self) -> &'static str {
+        match self {
+            Self::Dashboard => "dashboards",
+            Self::Folder => "folders",
+        }
+    }
 
-    let list = OperationBuilder::get("/v1/dashboards/{id}/shares")
-        .operation_id("insight_v3_core.dashboards.shares.list")
-        .summary("List who the caller's dashboard is shared with")
+    fn noun(self) -> &'static str {
+        match self {
+            Self::Dashboard => "dashboard",
+            Self::Folder => "folder",
+        }
+    }
+}
+
+/// The thing a route's `{id}` names, parsed as its object's id.
+enum Named {
+    Dashboard(DefinitionId),
+    Folder(FolderId),
+}
+
+impl Named {
+    fn parse(object: Object, raw: &str) -> Result<Self, CanonicalError> {
+        match object {
+            Object::Dashboard => dashboard_id(raw).map(Self::Dashboard),
+            Object::Folder => folder_id(raw).map(Self::Folder),
+        }
+    }
+
+    fn shared(&self) -> Shared<'_> {
+        match self {
+            Self::Dashboard(id) => Shared::Dashboard(id),
+            Self::Folder(id) => Shared::Folder(*id),
+        }
+    }
+}
+
+fn grant_routes(openapi: &dyn OpenApiRegistry, state: &Arc<AppState>, object: Object) -> Router {
+    let segment = object.segment();
+    let noun = object.noun();
+    let id = || path_param("id", &format!("The {noun}'s id"));
+    let grantee = || path_param("grantee", "A person id, or `everyone`");
+
+    let list = OperationBuilder::get(format!("/v1/{segment}/{{id}}/grants"))
+        .operation_id(format!("insight_v3_core.{segment}.grants.list"))
+        .summary(format!(
+            "List the grants of a {noun} the caller owns or edits"
+        ))
         .anonymous()
         .exposed()
-        .param(dashboard())
+        .param(id())
         .json_response(
             StatusCode::OK,
-            "Each share: the person, who granted it, and when",
+            "Each grant: who it reaches, its level, who granted it, and when",
         )
         .error_403(openapi)
         .error_404(openapi)
         .error_409(openapi)
         .error_500(openapi)
         .error_504(openapi)
-        .handler(list_shares)
+        .handler(list_grants)
         .register(Router::new(), openapi)
-        .layer(Extension(state.clone()));
+        .layer(Extension(state.clone()))
+        .layer(Extension(object));
 
-    let share = OperationBuilder::put("/v1/dashboards/{id}/shares/{person_id}")
-        .operation_id("insight_v3_core.dashboards.shares.put")
-        .summary("Share the caller's dashboard with a current administrator; sharing again changes nothing")
+    let grant = OperationBuilder::put(format!("/v1/{segment}/{{id}}/grants/{{grantee}}"))
+        .operation_id(format!("insight_v3_core.{segment}.grants.put"))
+        .summary(format!(
+            "Grant a {noun} to a person or to everyone; granting again sets the level"
+        ))
         .anonymous()
         .exposed()
-        .param(dashboard())
-        .param(person())
-        .no_content_response(StatusCode::NO_CONTENT, "Shared")
+        .param(id())
+        .param(grantee())
+        .json_request::<GrantRequest>(openapi, "The level to grant")
+        .no_content_response(StatusCode::NO_CONTENT, "Granted")
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
         .error_409(openapi)
         .error_500(openapi)
         .error_504(openapi)
-        .handler(share_dashboard)
+        .handler(put_grant)
         .register(Router::new(), openapi)
-        .layer(Extension(state.clone()));
+        .layer(Extension(state.clone()))
+        .layer(Extension(object));
 
-    let withdraw = OperationBuilder::delete("/v1/dashboards/{id}/shares/{person_id}")
-        .operation_id("insight_v3_core.dashboards.shares.delete")
-        .summary(
-            "Withdraw a share of the caller's dashboard, with that person's pin and folder for it",
-        )
+    let withdraw = OperationBuilder::delete(format!("/v1/{segment}/{{id}}/grants/{{grantee}}"))
+        .operation_id(format!("insight_v3_core.{segment}.grants.delete"))
+        .summary(format!(
+            "Withdraw a grant of a {noun}; pins and folder entries stay and show again if access returns"
+        ))
         .anonymous()
         .exposed()
-        .param(dashboard())
-        .param(person())
-        .no_content_response(StatusCode::NO_CONTENT, "Not shared")
+        .param(id())
+        .param(grantee())
+        .no_content_response(StatusCode::NO_CONTENT, "Not granted")
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
         .error_409(openapi)
         .error_500(openapi)
         .error_504(openapi)
-        .handler(withdraw_share)
+        .handler(withdraw_grant)
         .register(Router::new(), openapi)
-        .layer(Extension(state.clone()));
+        .layer(Extension(state.clone()))
+        .layer(Extension(object));
 
-    Router::new().merge(list).merge(share).merge(withdraw)
+    Router::new().merge(list).merge(grant).merge(withdraw)
+}
+
+fn orphan_routes(openapi: &dyn OpenApiRegistry, state: &Arc<AppState>) -> Router {
+    let route = |object: Object, summary: &str| {
+        let segment = object.segment();
+
+        OperationBuilder::get(format!("/v1/orphaned-{segment}"))
+            .operation_id(format!("insight_v3_core.orphaned_{segment}.list"))
+            .summary(summary)
+            .anonymous()
+            .exposed()
+            .param(
+                ParamSpec::query("limit")
+                    .description(format!("Page size, 1 to {MAX_PAGE_LIMIT}"))
+                    .param_type("integer"),
+            )
+            .param(
+                ParamSpec::query("offset")
+                    .description(format!("{} to skip", object.noun()))
+                    .param_type("integer"),
+            )
+            .json_response(StatusCode::OK, "One page of them, and how many there are")
+            .error_400(openapi)
+            .error_403(openapi)
+            .error_500(openapi)
+            .error_504(openapi)
+            .handler(list_orphaned)
+            .register(Router::new(), openapi)
+            .layer(Extension(state.clone()))
+            .layer(Extension(object))
+    };
+
+    Router::new()
+        .merge(route(
+            Object::Dashboard,
+            "List the dashboards whose owner is no longer an administrator",
+        ))
+        .merge(route(
+            Object::Folder,
+            "List the folders shared with someone whose owner is no longer an administrator",
+        ))
 }
 
 fn transfer_routes(openapi: &dyn OpenApiRegistry, state: &Arc<AppState>) -> Router {
-    let orphaned = OperationBuilder::get("/v1/orphaned-dashboards")
-        .operation_id("insight_v3_core.orphaned_dashboards.list")
-        .summary("List the dashboards whose owner is no longer an administrator")
-        .anonymous()
-        .exposed()
-        .param(
-            ParamSpec::query("limit")
-                .description(format!("Page size, 1 to {MAX_PAGE_LIMIT}"))
-                .param_type("integer"),
-        )
-        .param(
-            ParamSpec::query("offset")
-                .description("Dashboards to skip")
-                .param_type("integer"),
-        )
-        .json_response(
-            StatusCode::OK,
-            "One page of orphaned dashboards, and how many there are",
-        )
-        .error_400(openapi)
-        .error_403(openapi)
-        .error_500(openapi)
-        .error_504(openapi)
-        .handler(list_orphaned)
-        .register(Router::new(), openapi)
-        .layer(Extension(state.clone()));
+    let route = |object: Object| {
+        let segment = object.segment();
+        let noun = object.noun();
 
-    let transfer = OperationBuilder::post("/v1/dashboards/{id}/transfer")
-        .operation_id("insight_v3_core.dashboards.transfer")
-        .summary("Hand an orphaned dashboard to a current administrator")
-        .anonymous()
-        .exposed()
-        .param(dashboard_param())
-        .json_request::<TransferRequest>(openapi, "Who owns it from now on")
-        .no_content_response(StatusCode::NO_CONTENT, "Transferred")
-        .error_400(openapi)
-        .error_403(openapi)
-        .error_404(openapi)
-        .error_409(openapi)
-        .error_500(openapi)
-        .error_504(openapi)
-        .handler(transfer_dashboard)
-        .register(Router::new(), openapi)
-        .layer(Extension(state.clone()));
+        OperationBuilder::post(format!("/v1/{segment}/{{id}}/transfer"))
+            .operation_id(format!("insight_v3_core.{segment}.transfer"))
+            .summary(format!(
+                "Hand an orphaned {noun} to a current administrator"
+            ))
+            .anonymous()
+            .exposed()
+            .param(path_param("id", &format!("The {noun}'s id")))
+            .json_request::<TransferRequest>(openapi, "Who owns it from now on")
+            .no_content_response(StatusCode::NO_CONTENT, "Transferred")
+            .error_400(openapi)
+            .error_403(openapi)
+            .error_404(openapi)
+            .error_409(openapi)
+            .error_500(openapi)
+            .error_504(openapi)
+            .handler(transfer)
+            .register(Router::new(), openapi)
+            .layer(Extension(state.clone()))
+            .layer(Extension(object))
+    };
 
-    Router::new().merge(orphaned).merge(transfer)
+    Router::new()
+        .merge(route(Object::Dashboard))
+        .merge(route(Object::Folder))
 }
 
-async fn list_shares(
+async fn list_grants(
     Extension(state): Extension<Arc<AppState>>,
+    Extension(object): Extension<Object>,
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
     let caller = crate::api::require_admin(&state, &headers, denied).await?;
-    let administrators = forwarded(&state, &headers);
+    let directory = forwarded(&state, &headers);
 
-    let dashboard = dashboard_id(&id)?;
-    let shares = DashboardShares::new(state.store(), &administrators, caller)
-        .list(&dashboard)
+    let named = Named::parse(object, &id)?;
+    let grants = Sharing::new(state.store(), &directory, caller)
+        .list(named.shared())
         .await
         .map_err(sharing_error)?;
 
-    let items: Vec<Value> = shares.iter().map(share_json).collect();
+    let items: Vec<Value> = grants.iter().map(grant_json).collect();
     Ok(Json(json!({ "items": items })).into_response())
 }
 
-async fn share_dashboard(
+async fn put_grant(
     Extension(state): Extension<Arc<AppState>>,
-    Path((id, person)): Path<(String, String)>,
+    Extension(object): Extension<Object>,
+    Path((id, raw_grantee)): Path<(String, String)>,
     headers: axum::http::HeaderMap,
+    body: Result<Json<GrantRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
     let caller = crate::api::require_admin(&state, &headers, denied).await?;
-    let administrators = forwarded(&state, &headers);
+    let Json(request) = body.map_err(|error| DefinitionApiError::unreadable_body(&error))?;
+    let directory = forwarded(&state, &headers);
 
-    let dashboard = dashboard_id(&id)?;
-    let person = person_id(&person, "person_id")?;
-    DashboardShares::new(state.store(), &administrators, caller)
-        .grant(&dashboard, person)
+    let named = Named::parse(object, &id)?;
+    let grantee = grantee(&raw_grantee)?;
+    let level = level(&request.level)?;
+    Sharing::new(state.store(), &directory, caller)
+        .grant(named.shared(), grantee, level)
         .await
         .map_err(sharing_error)?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-async fn withdraw_share(
+async fn withdraw_grant(
     Extension(state): Extension<Arc<AppState>>,
-    Path((id, person)): Path<(String, String)>,
+    Extension(object): Extension<Object>,
+    Path((id, raw_grantee)): Path<(String, String)>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
     let caller = crate::api::require_admin(&state, &headers, denied).await?;
-    let administrators = forwarded(&state, &headers);
+    let directory = forwarded(&state, &headers);
 
-    let dashboard = dashboard_id(&id)?;
-    let person = person_id(&person, "person_id")?;
-    DashboardShares::new(state.store(), &administrators, caller)
-        .withdraw(&dashboard, person)
+    let named = Named::parse(object, &id)?;
+    let grantee = grantee(&raw_grantee)?;
+    Sharing::new(state.store(), &directory, caller)
+        .withdraw(named.shared(), grantee)
         .await
         .map_err(sharing_error)?;
 
@@ -321,45 +469,44 @@ async fn withdraw_share(
 
 async fn list_orphaned(
     Extension(state): Extension<Arc<AppState>>,
+    Extension(object): Extension<Object>,
     headers: axum::http::HeaderMap,
     Query(paging): Query<Paging>,
 ) -> Result<Response, CanonicalError> {
     let caller = crate::api::require_admin(&state, &headers, denied).await?;
-    let administrators = forwarded(&state, &headers);
+    let directory = forwarded(&state, &headers);
 
     let page = Page::parse(paging.limit, paging.offset)
         .map_err(|error| DefinitionApiError::invalid_field("limit", error.to_string()))?;
-    let found = DashboardShares::new(state.store(), &administrators, caller)
-        .orphaned(page)
-        .await
-        .map_err(sharing_error)?;
+    let sharing = Sharing::new(state.store(), &directory, caller);
+    let found = match object {
+        Object::Dashboard => sharing.orphaned(page).await,
+        Object::Folder => sharing.orphaned_folders(page).await,
+    }
+    .map_err(sharing_error)?;
 
-    let items: Vec<Value> = found.items.iter().map(orphan_json).collect();
-    Ok(Json(json!({
-        "items": items,
-        "total": found.total,
-        "limit": page.limit(),
-        "offset": page.offset(),
-    }))
-    .into_response())
+    Ok(Json(orphans_json(&found, page)).into_response())
 }
 
-async fn transfer_dashboard(
+async fn transfer(
     Extension(state): Extension<Arc<AppState>>,
+    Extension(object): Extension<Object>,
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
     body: Result<Json<TransferRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
     let caller = crate::api::require_admin(&state, &headers, denied).await?;
     let Json(request) = body.map_err(|error| DefinitionApiError::unreadable_body(&error))?;
-    let administrators = forwarded(&state, &headers);
+    let directory = forwarded(&state, &headers);
 
-    let dashboard = dashboard_id(&id)?;
+    let named = Named::parse(object, &id)?;
     let to = person_id(&request.to, "to")?;
-    DashboardShares::new(state.store(), &administrators, caller)
-        .transfer(&dashboard, to)
-        .await
-        .map_err(sharing_error)?;
+    let sharing = Sharing::new(state.store(), &directory, caller);
+    match &named {
+        Named::Dashboard(dashboard) => sharing.transfer(dashboard, to).await,
+        Named::Folder(folder) => sharing.transfer_folder(*folder, to).await,
+    }
+    .map_err(sharing_error)?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -367,8 +514,8 @@ async fn transfer_dashboard(
 fn forwarded<'a>(
     state: &'a AppState,
     headers: &'a axum::http::HeaderMap,
-) -> ForwardedAdministrators<'a> {
-    ForwardedAdministrators {
+) -> ForwardedDirectory<'a> {
+    ForwardedDirectory {
         identity: state.identity(),
         authorization: crate::api::forwarded_authorization(headers),
     }

@@ -5,10 +5,11 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use super::dashboards::{VISIBLE, owner_value, visible_values};
+use super::dashboards::owner_value;
 use super::folders::{COUNT_DASHBOARD, statement};
+use super::visibility::dashboard_visible;
 use super::{MariaDefinitions, TotalRow};
-use crate::domain::access::{Owner, PersonId};
+use crate::domain::access::{Caller, Owner};
 use crate::domain::definition::{DefinitionId, DefinitionStoreError};
 use crate::domain::tags::{MAX_TAGS, TagError, TagName, TagSet, TagSummary, Tags};
 
@@ -66,11 +67,10 @@ pub(super) fn scope_value(scope: Owner) -> Value {
         .into()
 }
 
-pub(super) fn list_statement(caller: PersonId) -> Statement {
-    statement(
-        &LIST_TAGS.replace("{visible}", VISIBLE),
-        visible_values(caller),
-    )
+pub(super) fn list_statement(caller: Caller) -> Statement {
+    let (visible, values) = dashboard_visible(caller);
+
+    statement(&LIST_TAGS.replace("{visible}", &visible), values)
 }
 
 pub(super) async fn lock_tags(transaction: &DatabaseTransaction) -> Result<(), DbErr> {
@@ -247,7 +247,7 @@ impl MariaDefinitions {
 
 #[async_trait]
 impl Tags for MariaDefinitions {
-    async fn list_tags(&self, caller: PersonId) -> Result<Vec<TagSummary>, TagError> {
+    async fn list_tags(&self, caller: Caller) -> Result<Vec<TagSummary>, TagError> {
         let rows = SummaryRow::find_by_statement(list_statement(caller))
             .all(&self.db)
             .await?;

@@ -1,21 +1,12 @@
 use uuid::Uuid;
 
 use super::*;
-use crate::domain::definition::DefinitionKind;
-use crate::store::definitions::{REPLACE_ONE, sql};
+use crate::store::definitions::visibility::assert_bound;
 
-const CALLER: &str = "'0192a1b2-0000-7000-8000-000000000001'";
+fn callers() -> [Caller; 2] {
+    let person = PersonId::new(Uuid::from_u128(7));
 
-fn caller() -> PersonId {
-    PersonId::new(Uuid::from_u128(0x0192_a1b2_0000_7000_8000_0000_0000_0001))
-}
-
-fn bound(statement: &Statement) -> Vec<String> {
-    statement
-        .values
-        .as_ref()
-        .map(|values| values.0.iter().map(ToString::to_string).collect())
-        .unwrap_or_default()
+    [Caller::administrator(person), Caller::member(person)]
 }
 
 fn an_id() -> FolderId {
@@ -28,99 +19,62 @@ fn delivery() -> DefinitionId {
 }
 
 #[test]
-fn a_body_write_names_no_folder_so_a_rewrite_keeps_it() {
-    let replace = sql(REPLACE_ONE, DefinitionKind::Dashboard);
+fn every_folder_query_binds_a_value_to_each_mark() {
+    for caller in callers() {
+        let statements = [
+            list_statement(caller),
+            unfiled_statement(caller),
+            holding_statement(&delivery(), caller),
+            add_entry_statement(an_id(), &delivery(), caller, Entry::Carrying),
+            add_entry_statement(an_id(), &delivery(), caller, Entry::Filing),
+        ];
 
-    assert!(!replace.contains("folder_id"), "{replace}");
+        for statement in &statements {
+            assert_bound(statement);
+        }
+    }
 }
 
 #[test]
-fn the_folder_list_is_the_callers_and_the_ownerless_counting_what_they_see() {
-    let statement = list_statement(caller());
-
-    assert!(
-        statement
-            .sql
-            .contains("WHERE folders.owner_person_id IS NULL OR folders.owner_person_id = ?"),
-        "{}",
-        statement.sql
-    );
-    assert!(statement.sql.contains(VISIBLE), "{}", statement.sql);
-    assert!(
-        statement
-            .sql
-            .contains("dashboard_placements.folder_id = folders.id"),
-        "{}",
-        statement.sql
-    );
-    assert_eq!(bound(&statement), [CALLER, CALLER, CALLER, CALLER]);
-}
-
-#[test]
-fn the_unfiled_count_keeps_what_the_caller_sees_in_none_of_their_folders() {
-    let statement = unfiled_statement(caller());
-
-    assert!(statement.sql.contains(VISIBLE), "{}", statement.sql);
-    assert!(statement.sql.contains(UNFILED), "{}", statement.sql);
-    assert_eq!(bound(&statement), [CALLER, CALLER, CALLER]);
-}
-
-#[test]
-fn filing_writes_the_ownerless_folder_or_the_persons_own_placement() {
-    let folder = "'0192a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b'";
-    let cases = [
-        (
-            Owner::Unowned,
-            Some(an_id()),
-            "UPDATE dashboards SET folder_id",
-            vec![folder, "'delivery'"],
-        ),
-        (
-            Owner::Unowned,
-            None,
-            "UPDATE dashboards SET folder_id",
-            vec!["NULL", "'delivery'"],
-        ),
-        (
-            Owner::Person(caller()),
-            Some(an_id()),
-            "INSERT INTO dashboard_placements",
-            vec![CALLER, folder, "'delivery'", CALLER, CALLER, folder],
-        ),
-        (
-            Owner::Person(caller()),
-            None,
-            "DELETE FROM dashboard_placements",
-            vec![CALLER, "'delivery'"],
-        ),
-    ];
-
-    for (folders_of, folder, starts, expected) in cases {
-        let statement = file_statement(&delivery(), folders_of, folder);
+fn the_folder_list_keeps_the_folders_the_caller_sees_counting_the_dashboards_they_see() {
+    for caller in callers() {
+        let statement = list_statement(caller);
 
         assert!(
-            statement.sql.starts_with(starts),
-            "{folders_of:?} {folder:?}: {}",
+            statement.sql.contains(&folder_visible("folders", caller).0),
+            "{}",
             statement.sql
         );
-        assert_eq!(bound(&statement), expected, "{folders_of:?} {folder:?}");
-    }
-}
-
-#[test]
-fn only_the_callers_own_or_an_ownerless_folder_is_renamed_or_removed() {
-    for template in [RENAME_FOLDER, DELETE_FOLDER] {
-        let scoped = reachable(template);
-
         assert!(
-            scoped.ends_with("(owner_person_id IS NULL OR owner_person_id = ?)"),
-            "{scoped}"
+            statement.sql.contains(&dashboard_visible(caller).0),
+            "{}",
+            statement.sql
         );
     }
 }
 
 #[test]
-fn the_folder_cap_counts_one_persons_folders() {
+fn an_entry_lands_only_on_a_dashboard_the_caller_sees_and_never_stops_carrying_here() {
+    for caller in callers() {
+        let statement = add_entry_statement(an_id(), &delivery(), caller, Entry::Filing);
+
+        assert!(
+            statement.sql.contains(&dashboard_visible(caller).0),
+            "{}",
+            statement.sql
+        );
+        assert!(
+            statement
+                .sql
+                .contains("carries = folder_entries.carries OR ?"),
+            "{}",
+            statement.sql
+        );
+    }
+}
+
+#[test]
+fn the_folder_cap_counts_one_owners_folders() {
     assert!(
         COUNT_FOLDERS.ends_with("WHERE owner_person_id = ?"),
         "{COUNT_FOLDERS}"

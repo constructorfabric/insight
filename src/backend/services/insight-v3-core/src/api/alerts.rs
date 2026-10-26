@@ -675,7 +675,9 @@ async fn create_alert(
     headers: axum::http::HeaderMap,
     body: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    let actor = crate::api::require_admin(&state, &headers, denied).await?;
+    let actor = crate::api::require_admin(&state, &headers, denied)
+        .await?
+        .person;
     let alerts = alerts(&state)?;
     let Json(body) = body.map_err(|error| AlertApiError::unreadable_body(&error))?;
 
@@ -696,7 +698,9 @@ async fn put_alert(
     headers: axum::http::HeaderMap,
     body: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    let actor = crate::api::require_admin(&state, &headers, denied).await?;
+    let actor = crate::api::require_admin(&state, &headers, denied)
+        .await?
+        .person;
     let alerts = alerts(&state)?;
     let Json(body) = body.map_err(|error| AlertApiError::unreadable_body(&error))?;
 

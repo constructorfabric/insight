@@ -3,7 +3,7 @@ use std::fmt;
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::access::{Owner, PersonId, Refused};
+use crate::domain::access::{Caller, DASHBOARD_NOT_EDITOR, Owner, Refused};
 use crate::domain::dashboards::sight;
 use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionStoreError};
 use crate::domain::folders::DefinitionStore;
@@ -106,8 +106,8 @@ pub(crate) enum TagError {
     NotTagged(&'static str),
     #[error("no dashboard has the id `{0}`")]
     DashboardNotFound(String),
-    #[error("only the owner can change this dashboard")]
-    NotOwner,
+    #[error("{DASHBOARD_NOT_EDITOR}")]
+    NotEditor,
     #[error("at most {MAX_TAGS} tags can exist per owner; reuse one that does")]
     TooMany,
     #[error(transparent)]
@@ -130,7 +130,7 @@ impl From<sea_orm::DbErr> for TagError {
 pub(crate) trait Tags: Send + Sync + fmt::Debug {
     /// The names of the tags on dashboards the caller sees, each counting
     /// those dashboards; one name held in several scopes is one entry.
-    async fn list_tags(&self, caller: PersonId) -> Result<Vec<TagSummary>, TagError>;
+    async fn list_tags(&self, caller: Caller) -> Result<Vec<TagSummary>, TagError>;
 
     async fn tags_of(&self, dashboard: &DefinitionId) -> Result<Vec<TagName>, TagError>;
 
@@ -144,10 +144,11 @@ pub(crate) trait Tags: Send + Sync + fmt::Debug {
     ) -> Result<(), TagError>;
 }
 
-/// Sets the tags of a dashboard the caller may change, in its owner's scope.
+/// Sets the tags of a dashboard the caller may change, in its owner's scope
+/// even when an editor sets them.
 pub(crate) async fn retag(
     store: &dyn DefinitionStore,
-    caller: PersonId,
+    caller: Caller,
     dashboard: &DefinitionId,
     tags: &TagSet,
 ) -> Result<(), TagError> {
@@ -155,7 +156,7 @@ pub(crate) async fn retag(
         .await?
         .ok_or_else(|| TagError::DashboardNotFound(dashboard.as_str().to_owned()))?;
     seen.access.change().map_err(|refused| match refused {
-        Refused::NotOwner | Refused::Ownerless => TagError::NotOwner,
+        Refused::NotEditor | Refused::NotOwner | Refused::Ownerless => TagError::NotEditor,
     })?;
 
     store.set_tags(dashboard, seen.owner, tags).await

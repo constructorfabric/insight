@@ -3,14 +3,14 @@ use std::sync::Arc;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::domain::access::PersonId;
+use crate::domain::access::{Caller, PersonId};
 use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionLabel, Definitions};
 use crate::domain::pins::{self, MAX_PINS, PinError, Pins};
 use crate::live_mariadb::{store_or_skip, unique};
 use crate::store::definitions::MariaDefinitions;
 
-fn a_person() -> PersonId {
-    PersonId::new(Uuid::now_v7())
+fn a_person() -> Caller {
+    Caller::administrator(PersonId::new(Uuid::now_v7()))
 }
 
 fn dashboard(name: &str) -> DefinitionId {
@@ -45,14 +45,14 @@ async fn removed(store: &MariaDefinitions, names: &[DefinitionId]) {
     }
 }
 
-async fn pin(store: &MariaDefinitions, person: PersonId, name: &DefinitionId) {
+async fn pin(store: &MariaDefinitions, person: Caller, name: &DefinitionId) {
     store
         .pin(person, name)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
 }
 
-async fn pinned(store: &MariaDefinitions, person: PersonId) -> Vec<String> {
+async fn pinned(store: &MariaDefinitions, person: Caller) -> Vec<String> {
     store
         .pins_of(person)
         .await
@@ -235,4 +235,62 @@ async fn pins_racing_for_the_last_places_never_pass_the_cap() {
     assert!(failures.is_empty(), "{failures:#?}");
     assert_eq!((landed, refused), (3, 5));
     assert_eq!(total, MAX_PINS);
+}
+
+#[tokio::test]
+async fn a_pin_lands_only_while_the_grant_it_relies_on_stands() {
+    use crate::domain::access::{Grantee, Level, Owner};
+    use crate::domain::definition::Change;
+    use crate::domain::sharing::{Grants as _, Shared};
+
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let owner = a_person();
+    let member = Caller::member(PersonId::new(Uuid::now_v7()));
+    let board = dashboard(&unique("granted"));
+    store
+        .apply(&[
+            Change::Create(
+                DefinitionKind::Dashboard,
+                board.clone(),
+                DefinitionLabel::of_id(&board),
+                json!({ "title": "Board", "items": [] }),
+            ),
+            Change::Own {
+                dashboard: board.clone(),
+                owner: owner.person,
+            },
+        ])
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let shared = Shared::Dashboard(&board);
+    store
+        .grant(
+            shared,
+            Grantee::Person(member.person),
+            Level::Viewer,
+            owner.person,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let while_granted = store.pin(member, &board).await;
+    store
+        .withdraw(shared, Grantee::Person(member.person))
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let unpinned = store.unpin(member, &board).await;
+    let after = store.pin(member, &board).await;
+
+    removed(&store, std::slice::from_ref(&board)).await;
+    assert!(while_granted.is_ok(), "{while_granted:?}");
+    assert!(
+        matches!(unpinned, Ok(true)),
+        "the pin stayed through the withdrawal"
+    );
+    assert!(
+        matches!(after, Err(PinError::DashboardNotFound(_))),
+        "{after:?}"
+    );
+    let _ = Owner::Unowned;
 }

@@ -8,6 +8,7 @@ use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl};
 pub(crate) mod admission;
 pub(crate) mod alerts;
 pub(crate) mod chat;
+pub(crate) mod dashboard_widgets;
 pub(crate) mod datasets;
 pub(crate) mod definitions;
 pub(crate) mod duplicate;
@@ -24,7 +25,7 @@ pub(crate) mod tags;
 use admission::IngestAdmission;
 
 use crate::chat::ChatClient;
-use crate::domain::access::PersonId;
+use crate::domain::access::Caller;
 use crate::domain::alerts::delivery::{Deliveries, Provider};
 use crate::domain::alerts::rule::AlertStore;
 use crate::domain::alerts::schedule::AlertSchedule;
@@ -40,6 +41,9 @@ use crate::store::identity::IdentityClient;
 /// What a refused surface says.
 pub(crate) const ADMIN_ONLY: &str = "admin role required for this operation";
 
+/// What a surface open to every signed-in person says to anyone else.
+pub(crate) const UNIDENTIFIED: &str = "the caller could not be identified";
+
 /// The caller's own authorization, as the gateway passed it on.
 pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {
     headers
@@ -47,21 +51,19 @@ pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option
         .and_then(|value| value.to_str().ok())
 }
 
-/// Refuses a caller without the admin role.
+/// Who is asking, and in what role, for a surface open to every signed-in
+/// person.
 ///
-/// The custom surfaces read and write one tenant's definitions and spend the
-/// configured model budget, so they are admin-only. Roles live in the identity
-/// service, so the caller's authorization is forwarded there.
-///
-/// An identity that is absent or unreachable is a server error, never a
-/// permit: a role check that cannot be made has not passed.
-pub(crate) async fn require_admin(
+/// Roles live in the identity service, so the caller's authorization is
+/// forwarded there. An identity that is absent or unreachable is a server
+/// error, never a permit: a check that cannot be made has not passed.
+pub(crate) async fn caller(
     state: &AppState,
     headers: &axum::http::HeaderMap,
     denied: fn() -> toolkit_canonical_errors::CanonicalError,
-) -> Result<PersonId, toolkit_canonical_errors::CanonicalError> {
+) -> Result<Caller, toolkit_canonical_errors::CanonicalError> {
     if !state.identity.is_configured() {
-        tracing::error!("identity service is not configured; admin access cannot be verified");
+        tracing::error!("identity service is not configured; the caller cannot be verified");
         return Err(toolkit_canonical_errors::CanonicalError::internal(
             "failed to verify caller permissions",
         )
@@ -70,21 +72,36 @@ pub(crate) async fn require_admin(
 
     let caller = state
         .identity
-        .admin_caller(forwarded_authorization(headers))
+        .caller(forwarded_authorization(headers))
         .await
         .map_err(|error| {
             if error.is_about_the_caller() {
                 tracing::warn!(error = %error, "the caller could not be identified");
                 return denied();
             }
-            tracing::error!(error = %error, "admin role check failed");
+            tracing::error!(error = %error, "the caller's role could not be read");
             toolkit_canonical_errors::CanonicalError::internal(
                 "failed to verify caller permissions",
             )
             .create()
         })?;
 
-    if let Some(caller) = caller {
+    caller.ok_or_else(denied)
+}
+
+/// Refuses a caller without the administrator role, before anything is
+/// looked up.
+///
+/// The library, authoring and sharing surfaces read and write one tenant's
+/// definitions and spend the configured model budget, so they are
+/// administrator-only.
+pub(crate) async fn require_admin(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    denied: fn() -> toolkit_canonical_errors::CanonicalError,
+) -> Result<Caller, toolkit_canonical_errors::CanonicalError> {
+    let caller = caller(state, headers, denied).await?;
+    if caller.is_administrator() {
         return Ok(caller);
     }
 
@@ -320,7 +337,7 @@ impl AppState {
     }
 
     /// The definitions as `caller` reaches them.
-    pub(crate) fn surfaces(&self, caller: PersonId) -> crate::domain::surfaces::Surfaces<'_> {
+    pub(crate) fn surfaces(&self, caller: Caller) -> crate::domain::surfaces::Surfaces<'_> {
         crate::domain::surfaces::Surfaces::new(
             self.definitions.as_ref(),
             self.datasets(),
@@ -462,6 +479,7 @@ pub(crate) fn register_routes(
     let api = definitions::register_routes(api, openapi, &state);
     let api = duplicate::register_routes(api, openapi, &state);
     let api = sharing::register_routes(api, openapi, &state);
+    let api = dashboard_widgets::register_routes(api, openapi, &state);
     let api = folders::register_routes(api, openapi, &state);
     let api = tags::register_routes(api, openapi, &state);
     let api = pins::register_routes(api, openapi, &state);

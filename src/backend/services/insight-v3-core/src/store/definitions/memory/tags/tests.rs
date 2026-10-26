@@ -2,10 +2,10 @@ use std::error::Error;
 
 use serde_json::json;
 
-use crate::domain::access::{Owner, PersonId};
+use crate::domain::access::{Caller, Owner, PersonId};
 use crate::domain::dashboards::{DashboardCatalogue as _, DashboardPage, DashboardQuery};
 use crate::domain::definition::{Change, DefinitionId, DefinitionKind, Definitions, Page};
-use crate::domain::folders::{FolderFilter, FolderName, Folders};
+use crate::domain::folders::FolderFilter;
 use crate::domain::tags::{MAX_TAGS, TagError, TagFilter, TagSet, Tags};
 use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -70,7 +70,7 @@ async fn with_boards(names: &[&str]) -> MemoryDefinitions {
 
 async fn listed(store: &MemoryDefinitions) -> Vec<(String, u64)> {
     store
-        .list_tags(me())
+        .list_tags(Caller::administrator(me()))
         .await
         .unwrap_or_else(|error| panic!("the tags must list: {error}"))
         .into_iter()
@@ -368,7 +368,11 @@ async fn a_page_by_tag_holds_the_dashboards_carrying_any_of_them() -> R {
     let page = Page::parse(None, None)?;
 
     let found = store
-        .page_dashboards(me(), &tagged("", None, any_of(&["alpha", "BETA"])), page)
+        .page_dashboards(
+            Caller::administrator(me()),
+            &tagged("", None, any_of(&["alpha", "BETA"])),
+            page,
+        )
         .await?;
 
     assert_eq!(ids(&found), ["delivery", "delivery_ai", "hiring"]);
@@ -385,30 +389,32 @@ async fn a_page_by_tag_still_searches_and_keeps_to_its_folder() -> R {
             .set_tags(&name(board), OWNERLESS, &tags(&["Alpha"]))
             .await?;
     }
-    let platform = store
-        .create_folder(me(), FolderName::parse("Platform")?)
-        .await?;
-    store
-        .file(&name("delivery"), Owner::Unowned, Some(platform.id))
-        .await?;
-    store
-        .file(&name("hiring"), Owner::Unowned, Some(platform.id))
-        .await?;
+    let platform = store.seed_ownerless_folder("Platform");
+    store.seed_entry(platform, &name("delivery"));
+    store.seed_entry(platform, &name("hiring"));
     let page = Page::parse(None, None)?;
     let alpha = any_of(&["Alpha"]);
 
     let searched = store
-        .page_dashboards(me(), &tagged("deliv", None, alpha.clone()), page)
+        .page_dashboards(
+            Caller::administrator(me()),
+            &tagged("deliv", None, alpha.clone()),
+            page,
+        )
         .await?;
     let filed = store
         .page_dashboards(
-            me(),
-            &tagged("", Some(FolderFilter::In(platform.id)), alpha.clone()),
+            Caller::administrator(me()),
+            &tagged("", Some(FolderFilter::In(platform)), alpha.clone()),
             page,
         )
         .await?;
     let unfiled = store
-        .page_dashboards(me(), &tagged("", Some(FolderFilter::Unfiled), alpha), page)
+        .page_dashboards(
+            Caller::administrator(me()),
+            &tagged("", Some(FolderFilter::Unfiled), alpha),
+            page,
+        )
         .await?;
 
     assert_eq!(ids(&searched), ["delivery", "delivery_ai"]);
@@ -427,7 +433,7 @@ async fn a_page_by_a_tag_nobody_carries_is_empty() -> R {
 
     let found = store
         .page_dashboards(
-            me(),
+            Caller::administrator(me()),
             &tagged("", None, any_of(&["Omega"])),
             Page::parse(None, None)?,
         )
@@ -466,7 +472,14 @@ async fn two_owners_hold_tags_of_one_name_apart_and_a_filter_finds_both() -> R {
     let store = with_boards(&["mine", "theirs"]).await;
     owned_by(&store, "mine", me()).await?;
     owned_by(&store, "theirs", someone_else()).await?;
-    crate::domain::sharing::Sharing::share(&store, &name("theirs"), me(), someone_else()).await?;
+    crate::domain::sharing::Grants::grant(
+        &store,
+        crate::domain::sharing::Shared::Dashboard(&name("theirs")),
+        crate::domain::access::Grantee::Person(me()),
+        crate::domain::access::Level::Viewer,
+        someone_else(),
+    )
+    .await?;
 
     store
         .set_tags(&name("mine"), Owner::Person(me()), &tags(&["Delivery"]))
@@ -488,7 +501,7 @@ async fn two_owners_hold_tags_of_one_name_apart_and_a_filter_finds_both() -> R {
     assert_eq!(listed(&store).await, [("Delivery".to_owned(), 2)]);
     let found = store
         .page_dashboards(
-            me(),
+            Caller::administrator(me()),
             &tagged("", None, any_of(&["DELIVERY"])),
             Page::parse(None, None)?,
         )

@@ -3,7 +3,7 @@ use std::error::Error;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::domain::access::PersonId;
+use crate::domain::access::{Caller, PersonId};
 use crate::domain::definition::{
     Change, DefinitionId, DefinitionKind, DefinitionLabel, Definitions, Listed,
 };
@@ -12,8 +12,8 @@ use crate::store::definitions::memory::MemoryDefinitions;
 
 type R = Result<(), Box<dyn Error>>;
 
-const ANNA: PersonId = PersonId::new(Uuid::from_u128(1));
-const BORIS: PersonId = PersonId::new(Uuid::from_u128(2));
+const ANNA: Caller = Caller::administrator(PersonId::new(Uuid::from_u128(1)));
+const BORIS: Caller = Caller::administrator(PersonId::new(Uuid::from_u128(2)));
 
 fn name(value: &str) -> DefinitionId {
     DefinitionId::parse(value).unwrap_or_else(|error| panic!("the name must parse: {error}"))
@@ -34,7 +34,7 @@ async fn with_boards(names: &[&str]) -> MemoryDefinitions {
     store
 }
 
-async fn pinned(store: &MemoryDefinitions, person: PersonId) -> Vec<String> {
+async fn pinned(store: &MemoryDefinitions, person: Caller) -> Vec<String> {
     store
         .pins_of(person)
         .await
@@ -203,7 +203,7 @@ async fn a_pin_of_a_dashboard_the_person_no_longer_sees_is_neither_listed_nor_co
     store
         .apply(&[Change::Own {
             dashboard: name(&boards[0]),
-            owner: BORIS,
+            owner: BORIS.person,
         }])
         .await?;
     let room = store.pin(ANNA, &name(&boards[MAX_PINS])).await;
@@ -215,27 +215,34 @@ async fn a_pin_of_a_dashboard_the_person_no_longer_sees_is_neither_listed_nor_co
 
 #[tokio::test]
 async fn a_withdrawn_viewer_can_neither_pin_nor_file_the_dashboard() -> R {
+    use crate::domain::access::{Entry, Grantee, Level};
     use crate::domain::folders::{FolderError, FolderName, Folders as _};
-    use crate::domain::sharing::Sharing as _;
+    use crate::domain::sharing::{Grants as _, Shared};
 
     let store = MemoryDefinitions::new();
     let board = name("delivery");
     store
-        .seed_owned(&board, &json!({ "title": "delivery" }), ANNA)
+        .seed_owned(&board, &json!({ "title": "delivery" }), ANNA.person)
         .await?;
     let folder = store
-        .create_folder(BORIS, FolderName::parse("Mine")?)
+        .create_folder(BORIS.person, FolderName::parse("Mine")?)
         .await?;
-    store.share(&board, BORIS, ANNA).await?;
-    store.withdraw(&board, BORIS).await?;
+    let shared = Shared::Dashboard(&board);
+    store
+        .grant(
+            shared,
+            Grantee::Person(BORIS.person),
+            Level::Viewer,
+            ANNA.person,
+        )
+        .await?;
+    store
+        .withdraw(shared, Grantee::Person(BORIS.person))
+        .await?;
 
     let pinned_after = store.pin(BORIS, &board).await;
     let filed_after = store
-        .file(
-            &board,
-            crate::domain::access::Owner::Person(BORIS),
-            Some(folder.id),
-        )
+        .add_entry(folder.id, &board, BORIS, Entry::Filing)
         .await;
 
     assert!(
@@ -247,6 +254,6 @@ async fn a_withdrawn_viewer_can_neither_pin_nor_file_the_dashboard() -> R {
         "{filed_after:?}"
     );
     assert_eq!(pinned(&store, BORIS).await, Vec::<String>::new());
-    assert_eq!(store.folder_of(&board, BORIS).await?, None);
+    assert!(store.folders_holding(&board, BORIS).await?.is_empty());
     Ok(())
 }

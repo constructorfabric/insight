@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use async_trait::async_trait;
 
 use super::{DASHBOARDS, MemoryDefinitions, Stored, Tagged};
-use crate::domain::access::{Owner, PersonId};
+use crate::domain::access::{Caller, Owner};
 use crate::domain::definition::{DefinitionId, DefinitionStoreError};
 use crate::domain::tags::{MAX_TAGS, TagError, TagFilter, TagName, TagSet, TagSummary, Tags};
 
@@ -83,7 +83,7 @@ impl Stored {
 
 #[async_trait]
 impl Tags for MemoryDefinitions {
-    async fn list_tags(&self, caller: PersonId) -> Result<Vec<TagSummary>, TagError> {
+    async fn list_tags(&self, caller: Caller) -> Result<Vec<TagSummary>, TagError> {
         let stored = self.lock();
         let mut counted: BTreeMap<String, TagSummary> = BTreeMap::new();
 

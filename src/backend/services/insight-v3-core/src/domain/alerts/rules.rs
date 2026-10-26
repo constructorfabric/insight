@@ -180,6 +180,7 @@ impl<'a> AlertRules<'a> {
                 | CustomError::Store(_)
                 | CustomError::Datasets(_)
                 | CustomError::InUse { .. }
+                | CustomError::NotEditor
                 | CustomError::NotOwner
                 | CustomError::Widget(_)
                 | CustomError::Range(_)

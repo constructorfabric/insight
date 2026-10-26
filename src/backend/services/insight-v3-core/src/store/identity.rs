@@ -1,16 +1,16 @@
-//! Identity client: whether the caller holds the admin role.
+//! Identity client: who the caller is, and in which role.
 //!
-//! The custom surfaces are admin-only, and roles live in the identity
-//! service — the gateway JWT carries a subject and a tenant, not roles. So the
-//! caller's own authorization is forwarded to `GET /v1/me` and the answer read
-//! off the roles it returns, exactly as the analytics gear does it.
+//! Roles live in the identity service — the gateway JWT carries a subject and
+//! a tenant, not roles. So the caller's own authorization is forwarded to
+//! `GET /v1/me` and the answer read off the roles it returns, exactly as the
+//! analytics gear does it.
 
 use std::time::Duration;
 
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::domain::access::PersonId;
+use crate::domain::access::{Caller, PersonId, Role};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -34,6 +34,16 @@ struct MeResponse {
 #[derive(Debug, Deserialize)]
 struct MeRole {
     role_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+struct PersonList {
+    items: Vec<PersonSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PersonSummary {
+    person_id: Uuid,
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,6 +78,12 @@ enum Mode {
 struct Fixed {
     /// The caller when the request names none; none refuses every caller.
     caller: Option<Uuid>,
+    /// The role of whoever asks, unless they are among `members`.
+    role: Role,
+    /// People who ask as members whatever `role` says.
+    members: Vec<Uuid>,
+    /// People identity does not know; everyone else exists.
+    strangers: Vec<Uuid>,
     roster: Roster,
 }
 
@@ -80,6 +96,24 @@ enum Roster {
     CutShort(Vec<Uuid>),
     /// Every look at who holds the role fails.
     Unreachable,
+}
+
+#[cfg(test)]
+impl Fixed {
+    fn caller(&self, authorization: Option<&str>) -> Option<Caller> {
+        let fallback = self.caller?;
+        let asking = authorization.and_then(named_in).unwrap_or(fallback);
+        let role = if self.members.contains(&asking) {
+            Role::Member
+        } else {
+            self.role
+        };
+
+        Some(Caller {
+            person: PersonId::new(asking),
+            role,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -104,26 +138,68 @@ impl IdentityClient {
         })
     }
 
-    /// A fixed answer. A request whose authorization is `Bearer <uuid>` is
-    /// that person asking, so one harness can be several administrators.
+    /// A fixed answer: an administrator asking, or a member. A request whose
+    /// authorization is `Bearer <uuid>` is that person asking, so one harness
+    /// can be several people.
     #[cfg(test)]
     pub(crate) fn fixed(is_admin: bool) -> Self {
-        Self {
-            mode: Mode::Fixed(Fixed {
-                caller: is_admin.then_some(FIXED_CALLER),
-                roster: Roster::Whole(vec![FIXED_CALLER]),
-            }),
-        }
+        let role = if is_admin {
+            Role::Administrator
+        } else {
+            Role::Member
+        };
+
+        Self::fixed_as(FIXED_CALLER, role)
     }
 
     #[cfg(test)]
     pub(crate) fn admin(caller: Uuid) -> Self {
+        Self::fixed_as(caller, Role::Administrator)
+    }
+
+    #[cfg(test)]
+    fn fixed_as(caller: Uuid, role: Role) -> Self {
         Self {
             mode: Mode::Fixed(Fixed {
                 caller: Some(caller),
+                role,
+                members: Vec::new(),
+                strangers: Vec::new(),
                 roster: Roster::Whole(vec![caller]),
             }),
         }
+    }
+
+    /// A fixed answer refusing every caller, as identity refusing a token.
+    #[cfg(test)]
+    pub(crate) fn unidentified() -> Self {
+        match Self::fixed(true).mode {
+            Mode::Fixed(fixed) => Self {
+                mode: Mode::Fixed(Fixed {
+                    caller: None,
+                    ..fixed
+                }),
+            },
+            Mode::Live { .. } => unreachable!("a fixed answer is fixed"),
+        }
+    }
+
+    /// The same fixed answer, where these people ask as members.
+    #[cfg(test)]
+    pub(crate) fn with_members(self, people: &[Uuid]) -> Self {
+        self.with(|fixed| Fixed {
+            members: people.to_vec(),
+            ..fixed
+        })
+    }
+
+    /// The same fixed answer, where identity knows none of these people.
+    #[cfg(test)]
+    pub(crate) fn with_strangers(self, people: &[Uuid]) -> Self {
+        self.with(|fixed| Fixed {
+            strangers: people.to_vec(),
+            ..fixed
+        })
     }
 
     /// The same fixed answer, listing exactly these administrators.
@@ -146,9 +222,14 @@ impl IdentityClient {
 
     #[cfg(test)]
     fn with_roster(self, roster: Roster) -> Self {
+        self.with(|fixed| Fixed { roster, ..fixed })
+    }
+
+    #[cfg(test)]
+    fn with(self, change: impl FnOnce(Fixed) -> Fixed) -> Self {
         match self.mode {
             Mode::Fixed(fixed) => Self {
-                mode: Mode::Fixed(Fixed { roster, ..fixed }),
+                mode: Mode::Fixed(change(fixed)),
             },
             Mode::Live { .. } => self,
         }
@@ -162,31 +243,61 @@ impl IdentityClient {
         }
     }
 
-    /// The caller behind `authorization` when they hold the admin role, and
-    /// nothing when they do not.
+    /// The caller behind `authorization`, in the role identity gives them.
     ///
     /// Who asked is answered here rather than left to the caller's word: a
     /// removal takes a dataset's records with it, so "who removed this" has
     /// to have an answer.
-    pub(crate) async fn admin_caller(
+    pub(crate) async fn caller(
         &self,
         authorization: Option<&str>,
-    ) -> Result<Option<PersonId>, IdentityError> {
+    ) -> Result<Option<Caller>, IdentityError> {
+        let (http, base_url) = match &self.mode {
+            Mode::Live { http, base_url } => (http, base_url),
+            #[cfg(test)]
+            Mode::Fixed(fixed) => return Ok(fixed.caller(authorization)),
+        };
+
+        let me: MeResponse = read(http, &format!("{base_url}/v1/me"), authorization).await?;
+        let role = if me.roles.iter().any(|role| role.role_id == ADMIN_ROLE_ID) {
+            Role::Administrator
+        } else {
+            Role::Member
+        };
+
+        Ok(Some(Caller {
+            person: PersonId::new(me.person_id),
+            role,
+        }))
+    }
+
+    /// Whether identity knows a person by this id, asked by id through the
+    /// person search.
+    pub(crate) async fn knows(
+        &self,
+        authorization: Option<&str>,
+        person: PersonId,
+    ) -> Result<bool, IdentityError> {
         let (http, base_url) = match &self.mode {
             Mode::Live { http, base_url } => (http, base_url),
             #[cfg(test)]
             Mode::Fixed(fixed) => {
-                let named = authorization.and_then(named_in);
-                return Ok(fixed
-                    .caller
-                    .map(|caller| PersonId::new(named.unwrap_or(caller))));
+                return match fixed.roster {
+                    Roster::Unreachable => Err(IdentityError::Refused(503)),
+                    Roster::Whole(_) | Roster::CutShort(_) => {
+                        Ok(!fixed.strangers.contains(&person.uuid()))
+                    }
+                };
             }
         };
 
-        let me: MeResponse = read(http, &format!("{base_url}/v1/me"), authorization).await?;
-        let is_admin = me.roles.iter().any(|role| role.role_id == ADMIN_ROLE_ID);
+        let url = format!("{base_url}/v1/persons?q={person}&limit=1");
+        let listed: PersonList = read(http, &url, authorization).await?;
 
-        Ok(is_admin.then_some(PersonId::new(me.person_id)))
+        Ok(listed
+            .items
+            .iter()
+            .any(|found| found.person_id == person.uuid()))
     }
 
     /// Whether `person` holds the admin role right now.

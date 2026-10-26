@@ -269,6 +269,7 @@ fn the_server_announces_exactly_the_eighteen_custom_surface_tools() {
     assert_eq!(
         names,
         [
+            "add_to_folder",
             "arrange_dashboard",
             "create_folder",
             "delete_definition",
@@ -279,11 +280,11 @@ fn the_server_announces_exactly_the_eighteen_custom_surface_tools() {
             "list_folders",
             "list_tables",
             "list_tags",
-            "move_dashboard",
             "put_dashboard",
             "put_dataset",
             "put_metric",
             "put_widget",
+            "remove_from_folder",
             "run_metric",
             "search_definitions",
             "set_dashboard_tags",
@@ -1196,10 +1197,10 @@ fn folder_named(name: &str) -> Parameters<FolderRequest> {
     })
 }
 
-fn moving(dashboard: &str, folder: Option<&str>) -> Parameters<MoveRequest> {
-    Parameters(MoveRequest {
+fn entry(dashboard: &str, folder: &str) -> Parameters<EntryRequest> {
+    Parameters(EntryRequest {
         dashboard: dashboard.to_owned(),
-        folder: folder.map(str::to_owned),
+        folder: folder.to_owned(),
     })
 }
 
@@ -1260,14 +1261,14 @@ async fn made_folder(surfaces: &CustomSurfaces, name: &str) -> String {
         .to_owned()
 }
 
-async fn folder_of(surfaces: &CustomSurfaces, dashboard: &str) -> Value {
+async fn folders_of(surfaces: &CustomSurfaces, dashboard: &str) -> Value {
     let read = assert_accepted(
         &surfaces
             .get_definition(administrator(), named(DefinitionKind::Dashboard, dashboard))
             .await,
     );
 
-    read["folder"].clone()
+    read["folders"].clone()
 }
 
 #[test]
@@ -1277,7 +1278,12 @@ fn the_instructions_name_the_folder_tools() {
     let Some(instructions) = info.instructions else {
         panic!("the server carries instructions");
     };
-    for tool in ["list_folders", "create_folder", "move_dashboard"] {
+    for tool in [
+        "list_folders",
+        "create_folder",
+        "add_to_folder",
+        "remove_from_folder",
+    ] {
         assert!(instructions.contains(tool), "{tool}: {instructions}");
     }
 }
@@ -1293,7 +1299,13 @@ async fn a_made_folder_is_listed_with_what_it_holds() {
     assert_eq!(
         listed,
         json!({
-            "folders": [{ "id": id, "name": "Platform", "owner_person_id": ADMIN, "dashboards": 0 }],
+            "folders": [{
+                "id": id,
+                "name": "Platform",
+                "owner_person_id": ADMIN,
+                "access": "owner",
+                "dashboards": 0
+            }],
             "unfiled": 1
         })
     );
@@ -1323,73 +1335,86 @@ async fn a_folder_name_of_nothing_is_refused() {
 }
 
 #[tokio::test]
-async fn a_dashboard_is_moved_into_a_folder_and_out_again() {
+async fn a_dashboard_is_added_to_folders_and_taken_out_of_one() {
     let surfaces = surfaces();
-    let id = made_folder(&surfaces, "Platform").await;
+    let platform = made_folder(&surfaces, "Platform").await;
+    let product = made_folder(&surfaces, "Product").await;
     board(&surfaces, "delivery").await;
 
-    assert_accepted(
+    let added = assert_accepted(
         &surfaces
-            .move_dashboard(administrator(), moving("delivery", Some(&id)))
+            .add_to_folder(administrator(), entry("delivery", &platform))
             .await,
     );
-    let filed = folder_of(&surfaces, "delivery").await;
     assert_accepted(
         &surfaces
-            .move_dashboard(administrator(), moving("delivery", None))
+            .add_to_folder(administrator(), entry("delivery", &product))
+            .await,
+    );
+    let both = folders_of(&surfaces, "delivery").await;
+    assert_accepted(
+        &surfaces
+            .remove_from_folder(administrator(), entry("delivery", &platform))
             .await,
     );
 
+    assert_eq!(added["carries"], json!(true));
     assert_eq!(
-        filed,
-        json!({ "id": id, "name": "Platform", "owner_person_id": ADMIN })
+        both,
+        json!([
+            { "id": platform, "name": "Platform" },
+            { "id": product, "name": "Product" }
+        ])
     );
-    assert_eq!(folder_of(&surfaces, "delivery").await, Value::Null);
+    assert_eq!(
+        folders_of(&surfaces, "delivery").await,
+        json!([{ "id": product, "name": "Product" }])
+    );
 }
 
 #[tokio::test]
-async fn moving_into_a_folder_that_is_not_there_is_refused() {
+async fn adding_to_a_folder_that_is_not_there_is_refused() {
     let surfaces = surfaces();
     board(&surfaces, "delivery").await;
 
-    let moved = surfaces
-        .move_dashboard(
+    let added = surfaces
+        .add_to_folder(
             administrator(),
-            moving("delivery", Some("0192a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b")),
+            entry("delivery", "0192a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"),
         )
         .await;
 
-    assert_refused(&moved, "no folder has the id");
+    assert_refused(&added, "no folder has the id");
 }
 
 #[tokio::test]
-async fn moving_a_dashboard_that_is_not_there_is_refused() {
+async fn adding_a_dashboard_that_is_not_there_is_refused() {
     let surfaces = surfaces();
     let id = made_folder(&surfaces, "Platform").await;
 
-    let moved = surfaces
-        .move_dashboard(administrator(), moving("nowhere", Some(&id)))
+    let added = surfaces
+        .add_to_folder(administrator(), entry("nowhere", &id))
         .await;
 
-    assert_refused(&moved, "no dashboard has the id `nowhere`");
+    assert_refused(&added, "no dashboard has the id `nowhere`");
 }
 
 #[tokio::test]
-async fn rewriting_a_filed_dashboard_keeps_its_folder_and_a_new_one_lands_unfiled() {
+async fn rewriting_a_dashboard_keeps_its_folders_and_a_new_one_lands_in_none() {
     let surfaces = surfaces();
     let id = made_folder(&surfaces, "Platform").await;
     board(&surfaces, "delivery").await;
     assert_accepted(
         &surfaces
-            .move_dashboard(administrator(), moving("delivery", Some(&id)))
+            .add_to_folder(administrator(), entry("delivery", &id))
             .await,
     );
 
     rewrite(&surfaces, "delivery").await;
     board(&surfaces, "hiring").await;
 
-    assert_eq!(folder_of(&surfaces, "delivery").await["id"], json!(id));
-    assert_eq!(folder_of(&surfaces, "hiring").await, Value::Null);
+    assert_eq!(folders_of(&surfaces, "delivery").await[0]["id"], json!(id));
+    assert_eq!(folders_of(&surfaces, "hiring").await, json!([]));
 }
 
 #[tokio::test]
@@ -1400,7 +1425,7 @@ async fn a_dashboard_listing_narrows_to_one_folder_or_to_the_unfiled() {
     board(&surfaces, "hiring").await;
     assert_accepted(
         &surfaces
-            .move_dashboard(administrator(), moving("delivery", Some(&id)))
+            .add_to_folder(administrator(), entry("delivery", &id))
             .await,
     );
 
@@ -1447,31 +1472,22 @@ async fn a_listing_in_a_folder_that_is_not_an_id_is_refused() {
 }
 
 #[test]
-fn a_move_names_its_folder_even_when_the_folder_is_none() {
+fn an_entry_tool_names_both_its_dashboard_and_its_folder() {
     let tools = CustomSurfaces::tool_router().list_all();
-    let Some(tool) = tools.iter().find(|tool| tool.name == "move_dashboard") else {
-        panic!("move_dashboard is announced");
-    };
 
-    let schema = Value::Object((*tool.input_schema).clone());
+    for name in ["add_to_folder", "remove_from_folder"] {
+        let Some(tool) = tools.iter().find(|tool| tool.name == name) else {
+            panic!("{name} is announced");
+        };
+        let schema = Value::Object((*tool.input_schema).clone());
 
-    assert_eq!(
-        schema["required"],
-        json!(["dashboard", "folder"]),
-        "{schema}"
-    );
-    assert_eq!(
-        schema["properties"]["folder"]["type"],
-        json!(["string", "null"])
-    );
-    assert!(schema["properties"]["folder"]["description"].is_string());
-}
-
-#[test]
-fn a_move_without_its_folder_is_not_read() {
-    let read = serde_json::from_value::<MoveRequest>(json!({ "dashboard": "delivery" }));
-
-    assert!(read.is_err(), "{read:?}");
+        assert_eq!(
+            schema["required"],
+            json!(["dashboard", "folder"]),
+            "{name}: {schema}"
+        );
+    }
+    assert!(tools.iter().all(|tool| tool.name != "move_dashboard"));
 }
 
 fn tagging(id: &str, tags: &[&str]) -> Parameters<TagsRequest> {
@@ -1601,7 +1617,8 @@ async fn a_dashboard_read_answers_its_body_folder_and_tags() {
             "body": { "title": "delivery", "widgets": [] },
             "owner_person_id": ADMIN,
             "access": "owner",
-            "folder": null,
+            "carries": true,
+            "folders": [],
             "tags": ["Alpha", "beta"]
         })
     );
@@ -1709,7 +1726,7 @@ async fn a_dashboard_listing_narrows_to_any_of_the_tags_inside_a_folder() {
     }
     assert_accepted(
         &surfaces
-            .move_dashboard(administrator(), moving("delivery", Some(&id)))
+            .add_to_folder(administrator(), entry("delivery", &id))
             .await,
     );
 
@@ -1845,10 +1862,11 @@ async fn a_viewer_reads_a_shared_dashboard_but_may_not_change_it() {
     let surfaces = surfaces();
     board_of(&surfaces, "theirs", SOMEONE_ELSE).await;
     let parsed = DefinitionId::parse("theirs").unwrap_or_else(|error| panic!("{error}"));
-    crate::domain::sharing::Sharing::share(
+    crate::domain::sharing::Grants::grant(
         surfaces.state.store(),
-        &parsed,
-        person(ADMIN),
+        crate::domain::sharing::Shared::Dashboard(&parsed),
+        crate::domain::access::Grantee::Person(person(ADMIN)),
+        crate::domain::access::Level::Viewer,
         person(SOMEONE_ELSE),
     )
     .await
@@ -1874,8 +1892,11 @@ async fn a_viewer_reads_a_shared_dashboard_but_may_not_change_it() {
         .await;
 
     assert_eq!(read["access"], json!("viewer"));
+    assert_eq!(read["carries"], json!(false));
     assert_eq!(read["owner_person_id"], json!(SOMEONE_ELSE));
-    for refused in [&written, &removed] {
-        assert_refused(refused, "only the owner can change this dashboard");
-    }
+    assert_refused(
+        &written,
+        "only the owner or an editor can change this dashboard",
+    );
+    assert_refused(&removed, "only the owner can delete this dashboard");
 }

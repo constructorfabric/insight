@@ -15,9 +15,9 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use super::folders::{folder_error, folder_json};
+use super::folders::{folder_error, holding_json};
 use super::tags::{names_json, tag_error, tags_in};
-use crate::domain::access::Owner;
+use crate::domain::access::{Caller, DASHBOARD_NOT_EDITOR, DASHBOARD_NOT_OWNER, Owner};
 use crate::domain::dashboards::{DashboardQuery, ListedDashboard, QueryError};
 use crate::domain::definition::{
     DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Listed, MAX_PAGE_LIMIT,
@@ -26,9 +26,6 @@ use crate::domain::definition::{
 use crate::domain::kinds::metric::answerable::EffectiveClock;
 use crate::domain::surfaces::{CustomError, Surfaces};
 use crate::domain::violation::Violation;
-
-/// What a viewer is told when they try to change a dashboard.
-pub(crate) const OWNER_ONLY: &str = "only the owner can change this dashboard";
 
 /// The query string on a list: what to look for, in a name or in a body, and
 /// which page of the matches to answer with.
@@ -224,7 +221,7 @@ fn register_kind(
         .param(id_param.clone())
         .json_response(
             StatusCode::OK,
-            "The definition's id, name and body; a dashboard's owner, the caller's access, folder and tags",
+            "The definition's id, name and body; a dashboard's owner, the caller's access, whether an entry they add carries, the folders they see holding it, and its tags",
         )
         .error_403(openapi)
         .error_404(openapi)
@@ -283,7 +280,10 @@ struct DefinitionResponse {
 struct DashboardMeta {
     owner_person_id: Option<String>,
     access: &'static str,
-    folder: Option<serde_json::Value>,
+    /// Whether an entry the caller adds now carries a folder's audience.
+    carries: bool,
+    /// The folders the caller sees that hold it.
+    folders: Vec<serde_json::Value>,
     tags: serde_json::Value,
     updated_at: String,
 }
@@ -300,9 +300,9 @@ async fn dashboard_meta(
     stored: &StoredDefinition,
 ) -> Result<DashboardMeta, CanonicalError> {
     let seen = surfaces.seen(id).await.map_err(custom_error)?;
-    let folder = state
+    let folders = state
         .folders()
-        .folder_of(id, surfaces.caller())
+        .folders_holding(id, surfaces.caller())
         .await
         .map_err(folder_error)?;
     let tags = state.tags().tags_of(id).await.map_err(tag_error)?;
@@ -310,7 +310,8 @@ async fn dashboard_meta(
     Ok(DashboardMeta {
         owner_person_id: owner_json(seen.owner),
         access: seen.access.as_str(),
-        folder: folder.as_ref().map(folder_json),
+        carries: seen.entry.carries(),
+        folders: folders.iter().map(holding_json).collect(),
         tags: names_json(&tags),
         updated_at: stored
             .updated_at
@@ -327,8 +328,11 @@ pub(super) fn custom_error(error: CustomError) -> CanonicalError {
                 .with_resource(&id)
                 .create()
         }
+        CustomError::NotEditor => DefinitionApiError::permission_denied()
+            .with_reason(DASHBOARD_NOT_EDITOR)
+            .create(),
         CustomError::NotOwner => DefinitionApiError::permission_denied()
-            .with_reason(OWNER_ONLY)
+            .with_reason(DASHBOARD_NOT_OWNER)
             .create(),
         CustomError::InUse { .. } => DefinitionApiError::failed_precondition()
             .with_precondition_violation("name", detail, "in_use")
@@ -413,6 +417,27 @@ fn denied() -> CanonicalError {
     DefinitionApiError::permission_denied()
         .with_reason(crate::api::ADMIN_ONLY)
         .create()
+}
+
+fn unidentified() -> CanonicalError {
+    DefinitionApiError::permission_denied()
+        .with_reason(crate::api::UNIDENTIFIED)
+        .create()
+}
+
+/// Who may read this kind: anyone signed in reads the dashboards they see,
+/// and only an administrator the library.
+async fn reader(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    kind: DefinitionKind,
+) -> Result<Caller, CanonicalError> {
+    match kind {
+        DefinitionKind::Dashboard => crate::api::caller(state, headers, unidentified).await,
+        DefinitionKind::Metric | DefinitionKind::Widget => {
+            crate::api::require_admin(state, headers, denied).await
+        }
+    }
 }
 
 /// Every definition that names this one, so a reader sees what a removal would
@@ -555,7 +580,7 @@ async fn get_definition(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    let caller = crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = reader(&state, &headers, kind).await?;
 
     let Ok(id) = DefinitionId::parse(&id) else {
         return Ok(StatusCode::NOT_FOUND.into_response());
@@ -620,7 +645,7 @@ async fn list_definitions(
     Query(search): Query<Search>,
     RawQuery(query): RawQuery,
 ) -> Result<Response, CanonicalError> {
-    let caller = crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = reader(&state, &headers, kind).await?;
 
     let page = Page::parse(search.limit, search.offset).map_err(page_error)?;
     let tags = tags_in(query.as_deref());

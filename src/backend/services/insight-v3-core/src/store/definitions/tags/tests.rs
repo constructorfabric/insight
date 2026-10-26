@@ -1,4 +1,8 @@
+use uuid::Uuid;
+
 use super::*;
+use crate::domain::access::PersonId;
+use crate::store::definitions::visibility::assert_bound;
 
 fn person() -> PersonId {
     PersonId::new(Uuid::from_u128(0x0192_a1b2_0000_7000_8000_0000_0000_0001))
@@ -28,9 +32,15 @@ fn the_ownerless_scope_is_the_empty_one_and_an_owners_is_their_id() {
 
 #[test]
 fn listing_tags_counts_only_visible_dashboards_and_merges_scopes_by_name() {
-    let statement = list_statement(person());
+    let caller = Caller::member(person());
+    let statement = list_statement(caller);
 
-    assert!(statement.sql.contains(VISIBLE), "{}", statement.sql);
+    assert!(
+        statement.sql.contains(&dashboard_visible(caller).0),
+        "{}",
+        statement.sql
+    );
+    assert_bound(&statement);
     assert!(
         statement.sql.contains("GROUP BY tags.name"),
         "{}",

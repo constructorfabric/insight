@@ -13,13 +13,13 @@ use serde_json::{Value, json};
 use super::auth::McpCaller;
 use crate::api::AppState;
 use crate::api::definitions::{dashboards_json, listed_json, owner_json};
-use crate::api::folders::{folder_json, folders_json};
+use crate::api::folders::{folder_json, folders_json, holding_json};
 use crate::api::tags::{names_json, tags_json};
-use crate::domain::access::PersonId;
+use crate::domain::access::{Caller, FolderAccess, PersonId};
 use crate::domain::dashboards::DashboardQuery;
 use crate::domain::dataset_lifecycle::DatasetChangeError;
 use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionLabel, Page};
-use crate::domain::folders::{self, FolderError, FolderId, FolderName};
+use crate::domain::folders::{self, FolderError, FolderId, FolderName, SeenFolder};
 use crate::domain::kinds::dashboard::Item;
 use crate::domain::metric_run::MetricRuns;
 use crate::domain::query::time_window::WindowRequest;
@@ -50,7 +50,8 @@ pub(crate) struct KindRequest {
     /// carrying any of them. Combines with `folder`.
     pub(crate) tags: Option<Vec<String>>,
     /// Dashboards only: `me` for your own dashboards, `shared` for those
-    /// shared with you. Leave it out to list every one you see.
+    /// that reach you through a grant or a folder. Leave it out to list every
+    /// one you see.
     pub(crate) owned: Option<String>,
 }
 
@@ -126,18 +127,11 @@ pub(crate) struct FolderRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct MoveRequest {
-    /// The id of the dashboard to move.
+pub(crate) struct EntryRequest {
+    /// The id of the dashboard.
     pub(crate) dashboard: String,
-    /// The folder's id from `list_folders`, or null to take the dashboard out
-    /// of every folder.
-    #[serde(deserialize_with = "Option::deserialize")]
-    #[schemars(required, schema_with = "id_or_null")]
-    pub(crate) folder: Option<String>,
-}
-
-fn id_or_null(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    schemars::json_schema!({ "type": ["string", "null"] })
+    /// The folder's id from `list_folders`.
+    pub(crate) folder: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -194,7 +188,7 @@ impl CustomSurfaces {
         &self.state
     }
 
-    fn surfaces(&self, caller: PersonId) -> Surfaces<'_> {
+    fn surfaces(&self, caller: Caller) -> Surfaces<'_> {
         self.state.surfaces(caller)
     }
 
@@ -205,7 +199,7 @@ impl CustomSurfaces {
     /// One page of ids and names, with how many there are to page through.
     async fn read_page(
         &self,
-        caller: PersonId,
+        caller: Caller,
         kind: DefinitionKind,
         asked: Asked<'_>,
     ) -> CallToolResult {
@@ -280,8 +274,8 @@ impl CustomSurfaces {
     }
 
     /// A dashboard as `get_definition` answers it, with how the caller sees
-    /// it, where they filed it and its tags.
-    async fn read_dashboard(&self, caller: PersonId, id: &DefinitionId) -> CallToolResult {
+    /// it, the folders they see holding it and its tags.
+    async fn read_dashboard(&self, caller: Caller, id: &DefinitionId) -> CallToolResult {
         let surfaces = self.surfaces(caller);
         let stored = match surfaces.read(DefinitionKind::Dashboard, id).await {
             Ok(stored) => stored,
@@ -291,8 +285,8 @@ impl CustomSurfaces {
             Ok(seen) => seen,
             Err(error) => return tool_error(&error),
         };
-        let folder = match self.state.folders().folder_of(id, caller).await {
-            Ok(folder) => folder,
+        let folders = match self.state.folders().folders_holding(id, caller).await {
+            Ok(folders) => folders,
             Err(error) => return folder_refusal(&error),
         };
 
@@ -303,7 +297,8 @@ impl CustomSurfaces {
                 "body": stored.body,
                 "owner_person_id": owner_json(seen.owner),
                 "access": seen.access.as_str(),
-                "folder": folder.as_ref().map(folder_json),
+                "carries": seen.entry.carries(),
+                "folders": folders.iter().map(holding_json).collect::<Vec<_>>(),
                 "tags": names_json(&tags),
             })),
             Err(error) => tag_refusal(&error),
@@ -401,7 +396,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "get_definition",
-        description = "Reads one definition by its `id`, answering its `id`, its `name` and its stored `body`, so it can be inspected or amended rather than rewritten from scratch. A dashboard also answers the `folder` it is filed in, or null for none, and the `tags` it carries. Neither is part of the body: move_dashboard changes the folder and set_dashboard_tags the tags."
+        description = "Reads one definition by its `id`, answering its `id`, its `name` and its stored `body`, so it can be inspected or amended rather than rewritten from scratch. A dashboard also answers the `folders` you see holding it and the `tags` it carries. Neither is part of the body: add_to_folder and remove_from_folder change the folders and set_dashboard_tags the tags."
     )]
     async fn get_definition(
         &self,
@@ -468,7 +463,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "list_folders",
-        description = "Your dashboard folders and the ownerless ones, each with its id, its owner (null when ownerless) and how many of the dashboards you see it holds, and how many you see are in none of them. Pass a folder's id to list_definitions to list its dashboards, or to move_dashboard to file one there."
+        description = "The folders you see - your own, those shared with you and the ownerless ones - each with its id, its owner (null when ownerless), your `access` and how many of the dashboards you see it holds, and how many you see are in none of them. Pass a folder's id to list_definitions to list its dashboards, or to add_to_folder to put one there."
     )]
     async fn list_folders(&self, Extension(parts): Extension<Parts>) -> CallToolResult {
         let caller = match subject(&parts) {
@@ -500,35 +495,59 @@ impl CustomSurfaces {
             Err(error) => return folder_refusal(&error),
         };
 
-        match self.state.folders().create_folder(caller, name).await {
-            Ok(folder) => CallToolResult::structured(folder_json(&folder)),
+        match self
+            .state
+            .folders()
+            .create_folder(caller.person, name)
+            .await
+        {
+            Ok(folder) => CallToolResult::structured(folder_json(&SeenFolder {
+                folder,
+                access: FolderAccess::Owner,
+            })),
             Err(error) => folder_refusal(&error),
         }
     }
 
     #[tool(
-        name = "move_dashboard",
-        description = "Files a dashboard, named by its id, in a folder, named by its id from list_folders, or takes it out of every folder with `folder: null`. A dashboard with an owner goes in one of your own folders, an ownerless one in an ownerless folder. You file a dashboard in one folder at most, so this replaces where it was. The dashboard's body is untouched."
+        name = "add_to_folder",
+        description = "Puts a dashboard, named by its id, in a folder, named by its id from list_folders, that you own or edit. A dashboard may sit in any number of folders. Where you own the dashboard or hold an editor grant on it, the entry carries: whoever sees the folder sees the dashboard. Otherwise it only files it there for those who see it anyway. A dashboard with an owner goes in a folder with an owner, an ownerless one in an ownerless folder. Answers whether the entry carries. The dashboard's body is untouched."
     )]
-    async fn move_dashboard(
+    async fn add_to_folder(
         &self,
         Extension(parts): Extension<Parts>,
-        Parameters(MoveRequest { dashboard, folder }): Parameters<MoveRequest>,
+        Parameters(EntryRequest { dashboard, folder }): Parameters<EntryRequest>,
     ) -> CallToolResult {
-        let caller = match subject(&parts) {
-            Ok(caller) => caller,
+        let (caller, parsed, into) = match entry_of(&parts, &dashboard, &folder) {
+            Ok(entry) => entry,
             Err(refusal) => return refusal,
-        };
-        let parsed = match parse_id(DefinitionKind::Dashboard, &dashboard) {
-            Ok(parsed) => parsed,
-            Err(refusal) => return refusal,
-        };
-        let into = match folder.as_deref().map(FolderId::parse).transpose() {
-            Ok(into) => into,
-            Err(error) => return folder_refusal(&error),
         };
 
-        match folders::file(self.state.store(), caller, &parsed, into).await {
+        match folders::add(self.state.store(), caller, into, &parsed).await {
+            Ok(entry) => CallToolResult::structured(json!({
+                "dashboard": dashboard,
+                "folder": folder,
+                "carries": entry.carries(),
+            })),
+            Err(error) => folder_refusal(&error),
+        }
+    }
+
+    #[tool(
+        name = "remove_from_folder",
+        description = "Takes a dashboard, named by its id, out of a folder, named by its id from list_folders, that you own or edit. The dashboard itself, and its place in every other folder, stay."
+    )]
+    async fn remove_from_folder(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(EntryRequest { dashboard, folder }): Parameters<EntryRequest>,
+    ) -> CallToolResult {
+        let (caller, parsed, from) = match entry_of(&parts, &dashboard, &folder) {
+            Ok(entry) => entry,
+            Err(refusal) => return refusal,
+        };
+
+        match folders::remove(self.state.store(), caller, from, &parsed).await {
             Ok(()) => CallToolResult::structured(json!({
                 "dashboard": dashboard,
                 "folder": folder,
@@ -555,7 +574,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "set_dashboard_tags",
-        description = "Replaces every tag a dashboard, named by its `id`, carries with `tags`: at most 10, each 1 to 32 characters. Tags belong to the dashboard's owner: a name equal to one of the owner's tags but for case is that tag, under its stored spelling, so call list_tags first; a new name makes a tag, and a tag no dashboard carries any more goes away. At most 200 tags exist per owner. `[]` removes them all. Only the owner tags a dashboard shared with you. The dashboard's body is untouched. Answers the tags the dashboard now carries."
+        description = "Replaces every tag a dashboard, named by its `id`, carries with `tags`: at most 10, each 1 to 32 characters. Tags belong to the dashboard's owner: a name equal to one of the owner's tags but for case is that tag, under its stored spelling, so call list_tags first; a new name makes a tag, and a tag no dashboard carries any more goes away. At most 200 tags exist per owner. `[]` removes them all. Only its owner or an editor tags a dashboard. The dashboard's body is untouched. Answers the tags the dashboard now carries."
     )]
     async fn set_dashboard_tags(
         &self,
@@ -905,9 +924,9 @@ impl ServerHandler for CustomSurfaces {
                  metric's columns by their as_name; a dashboard names its widgets by id; and a \
                  definition still in use \
                  cannot be deleted until its dependents are. put_dataset declares a dataset for \
-                 metrics to read. Dashboards are filed in folders: list_folders shows \
-                 them, create_folder makes one, and move_dashboard files a dashboard in one or \
-                 takes it out. Dashboards also carry tags: list_tags shows them, and \
+                 metrics to read. Dashboards sit in folders: list_folders shows \
+                 them, create_folder makes one, and add_to_folder and remove_from_folder put a \
+                 dashboard in one or take it out. Dashboards also carry tags: list_tags shows them, and \
                  set_dashboard_tags replaces a dashboard's set. create_alert watches the rows a metric \
                  produces and owes a notification when they meet a condition; \
                  list_alert_destinations names where one may go.",
@@ -918,12 +937,29 @@ impl ServerHandler for CustomSurfaces {
 /// Who is asking, as the token's subject names them. Every call reaches a
 /// tool authenticated, so a subject that is not a person is refused, not
 /// guessed at.
-fn subject(parts: &Parts) -> Result<PersonId, CallToolResult> {
+///
+/// INVARIANT: the MCP surface admits administrators alone, so its caller is
+/// one.
+fn subject(parts: &Parts) -> Result<Caller, CallToolResult> {
     parts
         .extensions
         .get::<McpCaller>()
         .and_then(|McpCaller(subject)| PersonId::parse(subject))
+        .map(Caller::administrator)
         .ok_or_else(|| refuse("only an administrator reaches the definitions"))
+}
+
+/// The caller, dashboard and folder an entry tool names.
+fn entry_of(
+    parts: &Parts,
+    dashboard: &str,
+    folder: &str,
+) -> Result<(Caller, DefinitionId, FolderId), CallToolResult> {
+    let caller = subject(parts)?;
+    let parsed = parse_id(DefinitionKind::Dashboard, dashboard)?;
+    let folder = FolderId::parse(folder).map_err(|error| folder_refusal(&error))?;
+
+    Ok((caller, parsed, folder))
 }
 
 fn parse_name(raw: &str) -> Result<DefinitionId, CallToolResult> {

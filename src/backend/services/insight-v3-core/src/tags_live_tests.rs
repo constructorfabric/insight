@@ -2,12 +2,12 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::domain::access::{Owner, PersonId};
+use crate::domain::access::{Caller, Grantee, Level, Owner, PersonId};
 use crate::domain::dashboards::{DashboardCatalogue as _, DashboardQuery};
 use crate::domain::definition::{
     Change, DefinitionId, DefinitionKind, DefinitionLabel, Definitions, Page,
 };
-use crate::domain::folders::{FolderFilter, FolderName, Folders};
+use crate::domain::folders::{FolderFilter, Folders};
 use crate::domain::tags::{MAX_TAGS, TagError, TagFilter, TagSet, Tags};
 use crate::live_mariadb::{store_or_skip, unique};
 use crate::store::definitions::MariaDefinitions;
@@ -17,6 +17,10 @@ pub(crate) static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
 /// Someone who owns nothing here, so sees exactly the ownerless dashboards.
 fn anyone() -> PersonId {
     PersonId::new(Uuid::now_v7())
+}
+
+fn admin(person: PersonId) -> Caller {
+    Caller::administrator(person)
 }
 
 fn dashboard(name: &str) -> DefinitionId {
@@ -85,6 +89,29 @@ async fn set(store: &MariaDefinitions, name: &DefinitionId, values: &[String]) {
         .unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// A folder no one owns, as one from before ownership is, which is where
+/// ownerless boards go.
+async fn ownerless_folder(
+    store: &MariaDefinitions,
+    name: &str,
+) -> crate::domain::folders::FolderId {
+    use sea_orm::ConnectionTrait as _;
+
+    let id = crate::domain::folders::FolderId::new();
+    store
+        .connection()
+        .execute_raw(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::MySql,
+            "INSERT INTO folders (id, name, owner_person_id, created_at, updated_at)
+VALUES (?, ?, NULL, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
+            [id.to_string().into(), name.into()],
+        ))
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    id
+}
+
 async fn carried(store: &MariaDefinitions, name: &DefinitionId) -> Vec<String> {
     store
         .tags_of(name)
@@ -97,7 +124,7 @@ async fn carried(store: &MariaDefinitions, name: &DefinitionId) -> Vec<String> {
 
 async fn count_of(store: &MariaDefinitions, tag: &str) -> Option<u64> {
     store
-        .list_tags(anyone())
+        .list_tags(admin(anyone()))
         .await
         .unwrap_or_else(|error| panic!("{error}"))
         .into_iter()
@@ -107,7 +134,7 @@ async fn count_of(store: &MariaDefinitions, tag: &str) -> Option<u64> {
 
 async fn total(store: &MariaDefinitions) -> usize {
     store
-        .list_tags(anyone())
+        .list_tags(admin(anyone()))
         .await
         .unwrap_or_else(|error| panic!("{error}"))
         .len()
@@ -193,7 +220,7 @@ async fn paged(
         owned: None,
     };
     let found = store
-        .page_dashboards(anyone(), &query, page)
+        .page_dashboards(admin(anyone()), &query, page)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
 
@@ -226,17 +253,9 @@ async fn a_page_by_tag_matches_any_of_them_ignoring_case_inside_a_folder_and_a_s
         board(&store, name).await;
         set(&store, name, carrying).await;
     }
-    let me = anyone();
-    let platform = store
-        .create_folder(
-            me,
-            FolderName::parse(&unique("Platform")).unwrap_or_else(|error| panic!("{error}")),
-        )
-        .await
-        .unwrap_or_else(|error| panic!("{error}"));
+    let platform = ownerless_folder(&store, &unique("Platform")).await;
     for filed in [named("delivery"), named("hiring")] {
-        store
-            .file(&filed, Owner::Unowned, Some(platform.id))
+        crate::domain::folders::add(&store, admin(anyone()), platform, &filed)
             .await
             .unwrap_or_else(|error| panic!("{error}"));
     }
@@ -248,7 +267,7 @@ async fn a_page_by_tag_matches_any_of_them_ignoring_case_inside_a_folder_and_a_s
         &store,
         &prefix,
         "",
-        Some(FolderFilter::In(platform.id)),
+        Some(FolderFilter::In(platform)),
         &either,
     )
     .await;
@@ -258,7 +277,7 @@ async fn a_page_by_tag_matches_any_of_them_ignoring_case_inside_a_folder_and_a_s
         remove(&store, name).await;
     }
     store
-        .delete_folder(me, platform.id)
+        .delete_folder(platform)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(everywhere.0, ["delivery", "delivery_ai", "hiring"]);
@@ -463,20 +482,26 @@ async fn two_owners_hold_one_tag_name_apart_and_a_listing_merges_what_the_caller
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     let before_sharing = store
-        .list_tags(me)
+        .list_tags(admin(me))
         .await
         .unwrap_or_else(|error| panic!("{error}"));
-    crate::domain::sharing::Sharing::share(&store, &theirs, me, them)
-        .await
-        .unwrap_or_else(|error| panic!("{error}"));
+    crate::domain::sharing::Grants::grant(
+        &store,
+        crate::domain::sharing::Shared::Dashboard(&theirs),
+        Grantee::Person(me),
+        Level::Viewer,
+        them,
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
     let shared = store
-        .list_tags(me)
+        .list_tags(admin(me))
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     let page = Page::parse(None, None).unwrap_or_else(|error| panic!("{error}"));
     let found = store
         .page_dashboards(
-            me,
+            admin(me),
             &DashboardQuery {
                 tags: Some(any_of(&[delivery.to_uppercase()])),
                 ..DashboardQuery::default()

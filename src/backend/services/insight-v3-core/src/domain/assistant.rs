@@ -1,6 +1,6 @@
 //! What the assistant is told before it is asked anything.
 
-use super::access::PersonId;
+use super::access::Caller;
 use super::dashboards::DashboardQuery;
 use super::datasets::{self, Datasets};
 use super::definition::{
@@ -40,7 +40,7 @@ impl<'a> Assistant<'a> {
     /// Everything the model is told, read fresh: a stand gains datasets and
     /// definitions between one question and the next. Of the dashboards, only
     /// those the caller sees.
-    pub(crate) async fn briefing(&self, caller: PersonId) -> Briefing {
+    pub(crate) async fn briefing(&self, caller: Caller) -> Briefing {
         let declared = self.declared().await;
 
         Briefing {
@@ -95,7 +95,7 @@ impl<'a> Assistant<'a> {
     /// What is already stored, so the model can draw it and replace it by id
     /// when the reader asks for a change. A listing failure degrades the hint; it
     /// does not fail the chat.
-    async fn catalogue(&self, caller: PersonId) -> Catalogue {
+    async fn catalogue(&self, caller: Caller) -> Catalogue {
         let mut built = Vec::with_capacity(DefinitionKind::ALL.len());
 
         for kind in DefinitionKind::ALL {
@@ -108,7 +108,7 @@ impl<'a> Assistant<'a> {
     async fn page_of(
         &self,
         kind: DefinitionKind,
-        caller: PersonId,
+        caller: Caller,
         page: Page,
     ) -> Result<ListedPage, DefinitionStoreError> {
         if let Some(library) = kind.library() {
@@ -134,7 +134,7 @@ impl<'a> Assistant<'a> {
     }
 
     /// Every definition of this kind by id and name, a page at a time.
-    async fn listed(&self, kind: DefinitionKind, caller: PersonId) -> Vec<Listed> {
+    async fn listed(&self, kind: DefinitionKind, caller: Caller) -> Vec<Listed> {
         let mut listed = Vec::new();
 
         loop {

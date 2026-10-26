@@ -1,7 +1,7 @@
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::domain::access::{Owner, PersonId};
+use crate::domain::access::{Caller, Entry, Owner, PersonId};
 use crate::domain::dashboards::{DashboardCatalogue as _, DashboardQuery};
 use crate::domain::definition::{
     Change, DefinitionId, DefinitionKind, DefinitionLabel, Definitions, Page,
@@ -40,7 +40,8 @@ async fn created(store: &MariaDefinitions, id: &DefinitionId, owner: PersonId) {
         .unwrap_or_else(|error| panic!("{error}"));
 }
 
-/// A copy of `from` as `owner`'s, filed where they filed it.
+/// A copy of `from` as `owner`'s, in the folders of the original they may
+/// arrange.
 async fn copied(store: &MariaDefinitions, from: &DefinitionId, to: &DefinitionId, owner: PersonId) {
     store
         .apply(&[
@@ -54,10 +55,10 @@ async fn copied(store: &MariaDefinitions, from: &DefinitionId, to: &DefinitionId
                 dashboard: to.clone(),
                 owner,
             },
-            Change::CarryPlacement {
+            Change::CarryEntries {
                 from: from.clone(),
                 to: to.clone(),
-                person: owner,
+                placer: Caller::administrator(owner),
             },
         ])
         .await
@@ -73,12 +74,27 @@ async fn filed_in(store: &MariaDefinitions, person: PersonId, folder: FolderId) 
     };
 
     store
-        .page_dashboards(person, &query, page)
+        .page_dashboards(Caller::administrator(person), &query, page)
         .await
         .unwrap_or_else(|error| panic!("{error}"))
         .items
         .into_iter()
         .map(|listed| listed.id)
+        .collect()
+}
+
+/// The folders `person` sees holding the dashboard.
+async fn holding(
+    store: &MariaDefinitions,
+    board: &DefinitionId,
+    person: PersonId,
+) -> Vec<FolderId> {
+    store
+        .folders_holding(board, Caller::administrator(person))
+        .await
+        .unwrap_or_else(|error| panic!("{error}"))
+        .into_iter()
+        .map(|folder| folder.id)
         .collect()
 }
 
@@ -102,10 +118,15 @@ async fn a_folder_keeps_its_dashboards_through_writes_copies_and_its_own_deletio
         .await;
     assert!(alike.is_ok(), "two folders may share a name: {alike:?}");
 
+    let as_me = Caller::administrator(me);
     store
-        .file(&board, Owner::Person(me), Some(platform.id))
+        .add_entry(platform.id, &board, as_me, Entry::Carrying)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
+    store
+        .add_entry(platform.id, &board, as_me, Entry::Filing)
+        .await
+        .unwrap_or_else(|error| panic!("adding an entry already there is the same entry: {error}"));
     let replaced = store
         .replace(
             DefinitionKind::Dashboard,
@@ -117,13 +138,8 @@ async fn a_folder_keeps_its_dashboards_through_writes_copies_and_its_own_deletio
         .unwrap_or_else(|error| panic!("{error}"));
     assert!(replaced);
     assert_eq!(
-        store
-            .folder_of(&board, me)
-            .await
-            .ok()
-            .flatten()
-            .map(|f| f.id),
-        Some(platform.id),
+        holding(&store, &board, me).await,
+        vec![platform.id],
         "a body write must leave the folder alone"
     );
 
@@ -132,48 +148,43 @@ async fn a_folder_keeps_its_dashboards_through_writes_copies_and_its_own_deletio
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(
-        store
-            .folder_of(&copy, me)
-            .await
-            .ok()
-            .flatten()
-            .map(|f| f.id),
-        Some(platform.id),
-        "a copy must carry the placement"
+        holding(&store, &copy, me).await,
+        vec![platform.id],
+        "a copy must carry the entry"
     );
 
     assert_eq!(filed_in(&store, me, platform.id).await, vec![copy.as_str()]);
     let listed = store
-        .list_folders(me)
+        .list_folders(as_me)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     let counted = listed
         .folders
         .iter()
-        .find(|summary| summary.folder.id == platform.id)
+        .find(|summary| summary.seen.folder.id == platform.id)
         .map(|summary| summary.dashboards);
     assert_eq!(counted, Some(1));
     let elsewhere = store
-        .list_folders(a_person())
+        .list_folders(Caller::administrator(a_person()))
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     assert!(
         elsewhere
             .folders
             .iter()
-            .all(|summary| summary.folder.id != platform.id),
+            .all(|summary| summary.seen.folder.id != platform.id),
         "another person does not see my folder"
     );
 
     assert!(
         store
-            .delete_folder(me, platform.id)
+            .delete_folder(platform.id)
             .await
             .unwrap_or_else(|error| panic!("{error}"))
     );
-    assert_eq!(store.folder_of(&copy, me).await.ok().flatten(), None);
+    assert!(holding(&store, &copy, me).await.is_empty());
     let into_the_gone = store
-        .file(&copy, Owner::Person(me), Some(platform.id))
+        .add_entry(platform.id, &copy, as_me, Entry::Carrying)
         .await;
     assert!(
         matches!(into_the_gone, Err(FolderError::FolderNotFound(_))),
@@ -185,22 +196,36 @@ async fn a_folder_keeps_its_dashboards_through_writes_copies_and_its_own_deletio
         .unwrap_or_else(|error| panic!("{error}"));
     if let Ok(folder) = alike {
         store
-            .delete_folder(me, folder.id)
+            .delete_folder(folder.id)
             .await
             .unwrap_or_else(|error| panic!("{error}"));
     }
 }
 
 #[tokio::test]
-async fn filing_a_dashboard_nobody_holds_is_refused() {
+async fn an_entry_of_a_dashboard_nobody_holds_is_refused() {
     let Some(store) = store_or_skip().await else {
         return;
     };
+    let me = a_person();
+    let folder = store
+        .create_folder(me, folder_name(&unique("empty")))
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
 
     let nowhere = store
-        .file(&dashboard(&unique("nowhere")), Owner::Unowned, None)
+        .add_entry(
+            folder.id,
+            &dashboard(&unique("nowhere")),
+            Caller::administrator(me),
+            Entry::Carrying,
+        )
         .await;
 
+    store
+        .delete_folder(folder.id)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
     assert!(
         matches!(nowhere, Err(FolderError::DashboardNotFound(_))),
         "{nowhere:?}"
@@ -220,23 +245,23 @@ async fn a_folder_renamed_to_its_own_name_in_another_case_keeps_its_id() {
         .unwrap_or_else(|error| panic!("{error}"));
 
     let renamed = store
-        .rename_folder(me, product.id, folder_name(&label.to_uppercase()))
+        .rename_folder(product.id, &folder_name(&label.to_uppercase()))
         .await
         .unwrap_or_else(|error| panic!("{error}"));
-    let by_someone_else = store
-        .rename_folder(a_person(), product.id, folder_name("taken over"))
-        .await;
+    let held = store
+        .held_folder(product.id, Caller::administrator(me))
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
 
-    assert_eq!(renamed.id, product.id);
-    assert_eq!(renamed.owner, Owner::Person(me));
-    assert!(
-        matches!(by_someone_else, Err(FolderError::FolderNotFound(_))),
-        "{by_someone_else:?}"
-    );
     store
-        .delete_folder(me, product.id)
+        .delete_folder(product.id)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
+    assert!(renamed);
+    let held = held.unwrap_or_else(|| panic!("the folder is there"));
+    assert_eq!(held.folder.id, product.id);
+    assert_eq!(held.folder.owner, Owner::Person(me));
+    assert_eq!(held.folder.name.as_str(), label.to_uppercase());
 }
 
 #[tokio::test]
@@ -261,7 +286,7 @@ async fn names_differing_by_accent_or_emoji_are_different_folders() {
         assert!(other.is_ok(), "{second} beside {first}: {other:?}");
         for made in [Some(one), other.ok()].into_iter().flatten() {
             store
-                .delete_folder(me, made.id)
+                .delete_folder(made.id)
                 .await
                 .unwrap_or_else(|error| panic!("{error}"));
         }

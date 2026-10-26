@@ -1,23 +1,31 @@
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use sea_orm::{
     ConnectionTrait as _, DbBackend, FromQueryResult, Statement, TransactionTrait as _, Value,
 };
 
-use super::dashboards::{IN_FOLDER, UNFILED, VISIBLE, owner_of, visible_values};
+use super::dashboards::{level_of, owner_of};
+use super::visibility::{Clause, dashboard_unfiled, dashboard_visible, folder_visible};
 use super::{MariaDefinitions, TotalRow};
-use crate::domain::access::{Owner, PersonId};
-use crate::domain::definition::DefinitionId;
+use crate::domain::access::{Caller, Entry, FolderStanding, Level, Owner, PersonId};
+use crate::domain::definition::{DefinitionId, DefinitionStoreError};
 use crate::domain::folders::{
-    Folder, FolderError, FolderId, FolderList, FolderName, FolderSummary, Folders, MAX_FOLDERS,
+    Folder, FolderError, FolderId, FolderList, FolderName, FolderSummary, Folders, HeldFolder,
+    MAX_FOLDERS, SeenFolder,
 };
 
-/// The caller's folders and the ownerless ones, each counting the dashboards
-/// in it the caller sees.
+/// The folders the caller sees, each counting the dashboards in it they see.
 const LIST_FOLDERS: &str = "SELECT folders.id, folders.name, folders.owner_person_id,
-(SELECT COUNT(*) FROM dashboards WHERE {visible} AND {in_folder}) AS dashboards
+(SELECT COUNT(*) FROM folder_entries counted
+JOIN dashboards ON dashboards.id = counted.dashboard
+WHERE counted.folder_id = folders.id AND {visible}) AS dashboards
 FROM folders
-WHERE folders.owner_person_id IS NULL OR folders.owner_person_id = ?
+WHERE {folder_visible}
 ORDER BY folders.name, folders.id";
+
+const GRANTS_TO_CALLER: &str =
+    "SELECT folder_id, level FROM folder_grants WHERE grantee IN (?, 'everyone')";
 
 const COUNT_UNFILED: &str =
     "SELECT COUNT(*) AS total FROM dashboards WHERE {visible} AND {unfiled}";
@@ -28,52 +36,45 @@ const INSERT_FOLDER: &str =
     "INSERT INTO folders (id, name, owner_person_id, created_at, updated_at)
 VALUES (?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))";
 
-/// A folder the caller reaches: their own, or an ownerless one.
-const REACHABLE: &str = "(owner_person_id IS NULL OR owner_person_id = ?)";
+const FOLDER: &str = "SELECT id, name, owner_person_id FROM folders WHERE id = ?";
+
+const FOLDER_GRANTS_REACHING: &str =
+    "SELECT folder_id, level FROM folder_grants WHERE folder_id = ? AND grantee IN (?, 'everyone')";
 
 const RENAME_FOLDER: &str =
-    "UPDATE folders SET name = ?, updated_at = UTC_TIMESTAMP(6) WHERE id = ? AND {reachable}";
+    "UPDATE folders SET name = ?, updated_at = UTC_TIMESTAMP(6) WHERE id = ?";
 
-const DELETE_FOLDER: &str = "DELETE FROM folders WHERE id = ? AND {reachable}";
+const DELETE_FOLDER: &str = "DELETE FROM folders WHERE id = ?";
 
-const FOLDER_OWNER: &str = "SELECT owner_person_id FROM folders WHERE id = ?";
-
-const FOLDER_OF: &str = "SELECT folders.id, folders.name, folders.owner_person_id
-FROM dashboards JOIN folders ON folders.id = dashboards.folder_id
-WHERE dashboards.id = ? AND dashboards.owner_person_id IS NULL
-UNION ALL
-SELECT folders.id, folders.name, folders.owner_person_id
-FROM dashboards
-JOIN dashboard_placements ON dashboard_placements.dashboard = dashboards.id
-JOIN folders ON folders.id = dashboard_placements.folder_id
-WHERE dashboards.id = ? AND dashboards.owner_person_id IS NOT NULL
-AND dashboard_placements.person = ?";
+const FOLDERS_HOLDING: &str = "SELECT holding.id, holding.name, holding.owner_person_id
+FROM folder_entries held
+JOIN folders holding ON holding.id = held.folder_id
+WHERE held.dashboard = ? AND {folder_visible}
+ORDER BY holding.name, holding.id";
 
 pub(super) const COUNT_DASHBOARD: &str = "SELECT COUNT(*) AS total FROM dashboards WHERE id = ?";
 
-const FILE_DASHBOARD: &str = "UPDATE dashboards SET folder_id = ? WHERE id = ?";
-
-/// Places nothing unless the person sees the dashboard as the row lands, so a
-/// placement cannot outlive the share it relied on being withdrawn meanwhile.
+/// Places nothing unless the caller sees the dashboard as the row lands, so
+/// an entry cannot rely on a grant withdrawn meanwhile. An entry already
+/// there starts carrying, as this placer's, once a carrying one is asked for,
+/// and never stops here.
 ///
-/// INVARIANT: the driver reports found rows, so re-filing into the same
-/// folder still counts one and only an unseen dashboard counts none.
-const PLACE: &str = "INSERT INTO dashboard_placements (person, dashboard, folder_id)
-SELECT ?, dashboards.id, ? FROM dashboards
+/// INVARIANT: the driver reports found rows, so adding an entry already
+/// there still counts one and only an unseen dashboard counts none.
+const ADD_ENTRY: &str =
+    "INSERT INTO folder_entries (folder_id, dashboard, placed_by, carries, created_at)
+SELECT ?, dashboards.id, ?, ?, UTC_TIMESTAMP(6) FROM dashboards
 WHERE dashboards.id = ? AND {visible}
-ON DUPLICATE KEY UPDATE dashboard_placements.folder_id = ?";
+ON DUPLICATE KEY UPDATE
+placed_by = IF(? AND NOT folder_entries.carries, ?, folder_entries.placed_by),
+carries = folder_entries.carries OR ?";
 
-const UNPLACE: &str = "DELETE FROM dashboard_placements WHERE person = ? AND dashboard = ?";
+const REMOVE_ENTRY: &str = "DELETE FROM folder_entries WHERE folder_id = ? AND dashboard = ?";
 
 #[derive(Debug, FromQueryResult)]
 struct FolderRow {
     id: String,
     name: String,
-    owner_person_id: Option<String>,
-}
-
-#[derive(Debug, FromQueryResult)]
-struct OwnerRow {
     owner_person_id: Option<String>,
 }
 
@@ -85,10 +86,18 @@ struct SummaryRow {
     dashboards: i64,
 }
 
-fn folder(id: &str, name: &str, owner: Option<&str>) -> Result<Folder, FolderError> {
+#[derive(Debug, FromQueryResult)]
+struct FolderGrantRow {
+    folder_id: String,
+    level: String,
+}
+
+fn folder(id: &str, name: &str, owner: Option<&str>) -> Result<Folder, DefinitionStoreError> {
+    let unreadable = || DefinitionStoreError::UnreadableRow("folder");
+
     Ok(Folder {
-        id: FolderId::parse(id)?,
-        name: FolderName::parse(name)?,
+        id: FolderId::parse(id).map_err(|_| unreadable())?,
+        name: FolderName::parse(name).map_err(|_| unreadable())?,
         owner: owner_of(owner)?,
     })
 }
@@ -97,84 +106,110 @@ pub(super) fn statement(sql: &str, values: Vec<Value>) -> Statement {
     Statement::from_sql_and_values(DbBackend::MySql, sql, values)
 }
 
-pub(super) fn list_statement(caller: PersonId) -> Statement {
+pub(super) fn list_statement(caller: Caller) -> Statement {
+    let (visible, mut values) = dashboard_visible(caller);
+    let (folders, folder_values) = folder_visible("folders", caller);
+    values.extend(folder_values);
+
     let sql = LIST_FOLDERS
-        .replace("{visible}", VISIBLE)
-        .replace("{in_folder}", &IN_FOLDER.replace("{folder}", "folders.id"));
-    let mut values = visible_values(caller);
-    values.push(caller.to_string().into());
-    values.push(caller.to_string().into());
+        .replace("{visible}", &visible)
+        .replace("{folder_visible}", &folders);
 
     statement(&sql, values)
 }
 
-pub(super) fn unfiled_statement(caller: PersonId) -> Statement {
+pub(super) fn unfiled_statement(caller: Caller) -> Statement {
+    let (visible, mut values) = dashboard_visible(caller);
+    let (unfiled, unfiled_values) = dashboard_unfiled(caller);
+    values.extend(unfiled_values);
+
     let sql = COUNT_UNFILED
-        .replace("{visible}", VISIBLE)
-        .replace("{unfiled}", UNFILED);
-    let mut values = visible_values(caller);
-    values.push(caller.to_string().into());
+        .replace("{visible}", &visible)
+        .replace("{unfiled}", &unfiled);
 
     statement(&sql, values)
 }
 
-/// The write filing a dashboard among `folders_of`.
-pub(super) fn file_statement(
+pub(super) fn holding_statement(dashboard: &DefinitionId, caller: Caller) -> Statement {
+    let (visible, visible_values) = folder_visible("holding", caller);
+    let mut values: Vec<Value> = vec![dashboard.as_str().into()];
+    values.extend(visible_values);
+
+    statement(
+        &FOLDERS_HOLDING.replace("{folder_visible}", &visible),
+        values,
+    )
+}
+
+pub(super) fn add_entry_statement(
+    folder: FolderId,
     dashboard: &DefinitionId,
-    folders_of: Owner,
-    folder: Option<FolderId>,
+    caller: Caller,
+    entry: Entry,
 ) -> Statement {
-    let dashboard: Value = dashboard.as_str().into();
+    let (visible, visible_values): Clause = dashboard_visible(caller);
+    let placer: Value = caller.person.to_string().into();
+    let carries: Value = entry.carries().into();
+    let mut values: Vec<Value> = vec![
+        folder.to_string().into(),
+        placer.clone(),
+        carries.clone(),
+        dashboard.as_str().into(),
+    ];
+    values.extend(visible_values);
+    values.extend([carries.clone(), placer, carries]);
 
-    match (folders_of, folder) {
-        (Owner::Unowned, folder) => {
-            let folder: Value = folder.map(|id| id.to_string()).into();
-            statement(FILE_DASHBOARD, vec![folder, dashboard])
-        }
-        (Owner::Person(person), Some(id)) => {
-            let folder: Value = id.to_string().into();
-            let mut values = vec![person.to_string().into(), folder.clone(), dashboard];
-            values.extend(visible_values(person));
-            values.push(folder);
+    statement(&ADD_ENTRY.replace("{visible}", &visible), values)
+}
 
-            statement(&PLACE.replace("{visible}", VISIBLE), values)
-        }
-        (Owner::Person(person), None) => {
-            statement(UNPLACE, vec![person.to_string().into(), dashboard])
-        }
+/// The strongest grant level per folder among these rows.
+fn strongest(rows: Vec<FolderGrantRow>) -> Result<BTreeMap<String, Level>, DefinitionStoreError> {
+    let mut levels: BTreeMap<String, Level> = BTreeMap::new();
+
+    for row in rows {
+        let level = level_of(&row.level)?;
+        let held = levels.entry(row.folder_id).or_insert(level);
+        *held = (*held).max(level);
     }
-}
 
-/// Whether filing writes the person's own placement, which lands only on a
-/// dashboard they see.
-fn places(folders_of: Owner, folder: Option<FolderId>) -> bool {
-    matches!((folders_of, folder), (Owner::Person(_), Some(_)))
-}
-
-fn reachable(template: &str) -> String {
-    template.replace("{reachable}", REACHABLE)
+    Ok(levels)
 }
 
 #[async_trait]
 impl Folders for MariaDefinitions {
-    async fn list_folders(&self, caller: PersonId) -> Result<FolderList, FolderError> {
+    async fn list_folders(&self, caller: Caller) -> Result<FolderList, FolderError> {
         let rows = SummaryRow::find_by_statement(list_statement(caller))
             .all(&self.db)
             .await?;
+        let grants = FolderGrantRow::find_by_statement(statement(
+            GRANTS_TO_CALLER,
+            vec![caller.person.to_string().into()],
+        ))
+        .all(&self.db)
+        .await?;
         let unfiled = TotalRow::find_by_statement(unfiled_statement(caller))
             .one(&self.db)
             .await?
             .map_or(0, |row| row.total);
 
-        let folders = rows
-            .iter()
-            .map(|row| {
-                Ok(FolderSummary {
-                    folder: folder(&row.id, &row.name, row.owner_person_id.as_deref())?,
-                    dashboards: u64::try_from(row.dashboards).unwrap_or(0),
-                })
-            })
-            .collect::<Result<_, FolderError>>()?;
+        let levels = strongest(grants)?;
+        let mut folders = Vec::with_capacity(rows.len());
+        for row in rows {
+            let held = HeldFolder {
+                standing: FolderStanding {
+                    owner: owner_of(row.owner_person_id.as_deref())?,
+                    granted: levels.get(&row.id).copied(),
+                },
+                folder: folder(&row.id, &row.name, row.owner_person_id.as_deref())?,
+            };
+            let Some(seen) = SeenFolder::of(caller, held) else {
+                continue;
+            };
+            folders.push(FolderSummary {
+                seen,
+                dashboards: u64::try_from(row.dashboards).unwrap_or(0),
+            });
+        }
 
         Ok(FolderList {
             folders,
@@ -217,115 +252,114 @@ impl Folders for MariaDefinitions {
         })
     }
 
-    async fn rename_folder(
+    async fn held_folder(
         &self,
-        caller: PersonId,
         id: FolderId,
-        name: FolderName,
-    ) -> Result<Folder, FolderError> {
-        let result = self
-            .db
-            .execute_raw(statement(
-                &reachable(RENAME_FOLDER),
-                vec![
-                    name.as_str().into(),
-                    id.to_string().into(),
-                    caller.to_string().into(),
-                ],
-            ))
+        caller: Caller,
+    ) -> Result<Option<HeldFolder>, DefinitionStoreError> {
+        let row = FolderRow::find_by_statement(statement(FOLDER, vec![id.to_string().into()]))
+            .one(&self.db)
             .await?;
-        if result.rows_affected() == 0 {
-            return Err(FolderError::FolderNotFound(id));
-        }
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let grants = FolderGrantRow::find_by_statement(statement(
+            FOLDER_GRANTS_REACHING,
+            vec![id.to_string().into(), caller.person.to_string().into()],
+        ))
+        .all(&self.db)
+        .await?;
 
-        let owner = self
-            .folder_owner(id)
-            .await?
-            .ok_or(FolderError::FolderNotFound(id))?;
+        let held = folder(&row.id, &row.name, row.owner_person_id.as_deref())?;
+        let granted = strongest(grants)?.into_values().max();
 
-        Ok(Folder { id, name, owner })
+        Ok(Some(HeldFolder {
+            standing: FolderStanding {
+                owner: held.owner,
+                granted,
+            },
+            folder: held,
+        }))
     }
 
-    async fn delete_folder(&self, caller: PersonId, id: FolderId) -> Result<bool, FolderError> {
+    async fn rename_folder(&self, id: FolderId, name: &FolderName) -> Result<bool, FolderError> {
         let result = self
             .db
             .execute_raw(statement(
-                &reachable(DELETE_FOLDER),
-                vec![id.to_string().into(), caller.to_string().into()],
+                RENAME_FOLDER,
+                vec![name.as_str().into(), id.to_string().into()],
             ))
             .await?;
 
         Ok(result.rows_affected() > 0)
     }
 
-    async fn folder_owner(&self, id: FolderId) -> Result<Option<Owner>, FolderError> {
-        let row = OwnerRow::find_by_statement(statement(FOLDER_OWNER, vec![id.to_string().into()]))
-            .one(&self.db)
+    async fn delete_folder(&self, id: FolderId) -> Result<bool, FolderError> {
+        let result = self
+            .db
+            .execute_raw(statement(DELETE_FOLDER, vec![id.to_string().into()]))
             .await?;
 
-        match row {
-            Some(row) => Ok(Some(owner_of(row.owner_person_id.as_deref())?)),
-            None => Ok(None),
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn folders_holding(
+        &self,
+        dashboard: &DefinitionId,
+        caller: Caller,
+    ) -> Result<Vec<Folder>, FolderError> {
+        let rows = FolderRow::find_by_statement(holding_statement(dashboard, caller))
+            .all(&self.db)
+            .await?;
+
+        let mut folders = Vec::with_capacity(rows.len());
+        for row in rows {
+            folders.push(folder(&row.id, &row.name, row.owner_person_id.as_deref())?);
         }
+
+        Ok(folders)
     }
 
-    async fn folder_of(
+    async fn add_entry(
         &self,
+        folder: FolderId,
         dashboard: &DefinitionId,
-        caller: PersonId,
-    ) -> Result<Option<Folder>, FolderError> {
-        let row = FolderRow::find_by_statement(statement(
-            FOLDER_OF,
-            vec![
-                dashboard.as_str().into(),
-                dashboard.as_str().into(),
-                caller.to_string().into(),
-            ],
-        ))
-        .one(&self.db)
-        .await?;
-
-        row.map(|row| folder(&row.id, &row.name, row.owner_person_id.as_deref()))
-            .transpose()
-    }
-
-    async fn file(
-        &self,
-        dashboard: &DefinitionId,
-        folders_of: Owner,
-        folder: Option<FolderId>,
+        caller: Caller,
+        entry: Entry,
     ) -> Result<(), FolderError> {
-        let transaction = self.db.begin().await?;
-        let held = TotalRow::find_by_statement(statement(
-            COUNT_DASHBOARD,
-            vec![dashboard.as_str().into()],
-        ))
-        .one(&transaction)
-        .await?
-        .map_or(0, |row| row.total);
-        if held == 0 {
-            return Err(FolderError::DashboardNotFound(
-                dashboard.as_str().to_owned(),
-            ));
-        }
-
-        let filed = transaction
-            .execute_raw(file_statement(dashboard, folders_of, folder))
+        let added = self
+            .db
+            .execute_raw(add_entry_statement(folder, dashboard, caller, entry))
             .await
-            .map_err(|error| match (error.sql_err(), folder) {
-                (Some(sea_orm::SqlErr::ForeignKeyConstraintViolation(_)), Some(id)) => {
-                    FolderError::FolderNotFound(id)
+            .map_err(|error| match error.sql_err() {
+                Some(sea_orm::SqlErr::ForeignKeyConstraintViolation(_)) => {
+                    FolderError::FolderNotFound(folder)
                 }
                 _ => error.into(),
             })?;
-        if places(folders_of, folder) && filed.rows_affected() == 0 {
+        if added.rows_affected() == 0 {
             return Err(FolderError::DashboardNotFound(
                 dashboard.as_str().to_owned(),
             ));
         }
-        transaction.commit().await?;
 
         Ok(())
+    }
+
+    async fn remove_entry(
+        &self,
+        folder: FolderId,
+        dashboard: &DefinitionId,
+    ) -> Result<bool, FolderError> {
+        let removed = self
+            .db
+            .execute_raw(statement(
+                REMOVE_ENTRY,
+                vec![folder.to_string().into(), dashboard.as_str().into()],
+            ))
+            .await?;
+
+        Ok(removed.rows_affected() > 0)
     }
 }
 

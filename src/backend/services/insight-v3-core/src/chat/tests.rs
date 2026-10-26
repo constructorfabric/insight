@@ -849,7 +849,7 @@ async fn the_assistant_is_told_only_the_dashboards_the_caller_sees() {
     }
 
     let briefing = crate::domain::assistant::Assistant::new(&store, &datasets)
-        .briefing(me)
+        .briefing(crate::domain::access::Caller::administrator(me))
         .await;
 
     let dashboards: Vec<&str> = briefing

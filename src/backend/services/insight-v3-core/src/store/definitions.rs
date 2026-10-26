@@ -6,6 +6,7 @@ pub(crate) mod migration;
 mod pins;
 mod sharing;
 mod tags;
+mod visibility;
 
 #[cfg(test)]
 pub(crate) mod memory;
@@ -19,6 +20,7 @@ use sea_orm::{
     Statement, TransactionTrait as _,
 };
 
+use crate::domain::access::Caller;
 use crate::domain::definition::{
     Change, DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Definitions,
     LibraryKind, Listed, ListedPage, Lookup, Page, StoredDefinition,
@@ -37,8 +39,17 @@ const DELETE_ONE: &str = "DELETE FROM {table} WHERE id = ?";
 
 const OWN: &str = "UPDATE dashboards SET owner_person_id = ? WHERE id = ?";
 
-const CARRY_PLACEMENT: &str = "INSERT INTO dashboard_placements (person, dashboard, folder_id)
-SELECT person, ?, folder_id FROM dashboard_placements WHERE dashboard = ? AND person = ?";
+/// Each owned folder holding the original that the placer may arrange: their
+/// own, or one granted to them or to everyone as editor while they are an
+/// administrator.
+const CARRY_ENTRIES: &str =
+    "INSERT INTO folder_entries (folder_id, dashboard, placed_by, carries, created_at)
+SELECT kept.folder_id, ?, ?, TRUE, UTC_TIMESTAMP(6) FROM folder_entries kept
+JOIN folders kept_folder ON kept_folder.id = kept.folder_id
+WHERE kept.dashboard = ? AND kept_folder.owner_person_id IS NOT NULL
+AND (kept_folder.owner_person_id = ? OR ({admin} AND EXISTS (SELECT 1 FROM folder_grants kept_grants
+WHERE kept_grants.folder_id = kept_folder.id AND kept_grants.grantee IN (?, 'everyone')
+AND kept_grants.level = 'editor')))";
 
 const SELECT_BODY: &str = "SELECT body FROM {table} WHERE id = ?";
 const SELECT_ONE: &str = "SELECT name, body, updated_at FROM {table} WHERE id = ?";
@@ -107,6 +118,13 @@ impl MariaDefinitions {
         Self { db }
     }
 
+    /// The connection itself, for a live test seeding rows no store method
+    /// writes.
+    #[cfg(test)]
+    pub(crate) fn connection(&self) -> &DatabaseConnection {
+        &self.db
+    }
+
     fn insert_statement(
         kind: DefinitionKind,
         id: &DefinitionId,
@@ -156,15 +174,7 @@ impl MariaDefinitions {
                 OWN,
                 [owner.to_string().into(), dashboard.as_str().into()],
             ),
-            Change::CarryPlacement { from, to, person } => Statement::from_sql_and_values(
-                DbBackend::MySql,
-                CARRY_PLACEMENT,
-                [
-                    to.as_str().into(),
-                    from.as_str().into(),
-                    person.to_string().into(),
-                ],
-            ),
+            Change::CarryEntries { from, to, placer } => carry_entries(from, to, *placer),
             Change::CarryTags { from, to, scope } => {
                 return tags::carry_tags(transaction, from, to, *scope).await;
             }
@@ -365,12 +375,29 @@ fn taken_or(error: sea_orm::DbErr, id: &DefinitionId) -> DefinitionStoreError {
     }
 }
 
+pub(super) fn carry_entries(from: &DefinitionId, to: &DefinitionId, placer: Caller) -> Statement {
+    let person = placer.person.to_string();
+    let sql = CARRY_ENTRIES.replace("{admin}", visibility::administrator_literal(placer));
+
+    Statement::from_sql_and_values(
+        DbBackend::MySql,
+        sql,
+        [
+            to.as_str().into(),
+            person.clone().into(),
+            from.as_str().into(),
+            person.clone().into(),
+            person.into(),
+        ],
+    )
+}
+
 fn refused_or(error: sea_orm::DbErr, change: &Change) -> DefinitionStoreError {
     match change {
         Change::Create(_, id, _, _) => taken_or(error, id),
         Change::Replace(..)
         | Change::Own { .. }
-        | Change::CarryPlacement { .. }
+        | Change::CarryEntries { .. }
         | Change::CarryTags { .. } => DefinitionStoreError::Database(error),
     }
 }

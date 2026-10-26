@@ -471,6 +471,7 @@ async fn admin_only(
             .create()
     })
     .await
+    .map(|caller| caller.person)
 }
 
 fn not_found(name: &str) -> CanonicalError {

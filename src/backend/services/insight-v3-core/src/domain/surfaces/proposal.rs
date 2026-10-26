@@ -123,7 +123,13 @@ impl Surfaces<'_> {
     fn changes_of(&self, item: Landing) -> Vec<Change> {
         match item.arrival {
             Arrival::Replaced => vec![Change::Replace(item.kind, item.id, item.name, item.body)],
-            Arrival::Created => creating(item.kind, &item.id, &item.name, item.body, self.caller),
+            Arrival::Created => creating(
+                item.kind,
+                &item.id,
+                &item.name,
+                item.body,
+                self.caller.person,
+            ),
         }
     }
 }

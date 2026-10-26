@@ -95,13 +95,13 @@ impl Fixture {
         self.surfaces_as(me())
     }
 
-    fn surfaces_as(&self, caller: PersonId) -> Surfaces<'_> {
+    fn surfaces_as(&self, person: PersonId) -> Surfaces<'_> {
         Surfaces::new(
             &self.definitions,
             &self.datasets,
             "insight_datasets",
             self.metrics.people(),
-            caller,
+            Caller::administrator(person),
         )
     }
 }
@@ -1045,15 +1045,19 @@ mod creating_and_replacing {
 
 mod duplicating_a_dashboard {
     use super::*;
-    use crate::domain::access::Owner;
+    use crate::domain::access::{Grantee, Level, Owner};
     use crate::domain::dashboards::DashboardCatalogue as _;
     use crate::domain::folders::{self, FolderName, Folders};
     use crate::domain::pins::{self, Pins};
-    use crate::domain::sharing::Sharing as _;
+    use crate::domain::sharing::{Grants as _, Shared};
     use crate::domain::tags::{self, TagSet, Tags};
 
     fn board_body() -> serde_json::Value {
         json!({"title": "Example board", "widgets": []})
+    }
+
+    fn admin(person: PersonId) -> Caller {
+        Caller::administrator(person)
     }
 
     /// A board of mine, in a folder of mine, tagged and pinned.
@@ -1068,15 +1072,15 @@ mod duplicating_a_dashboard {
             .definitions
             .create_folder(me(), FolderName::parse("Platform")?)
             .await?;
-        folders::file(&fixture.definitions, me(), &board, Some(platform.id)).await?;
+        folders::add(&fixture.definitions, admin(me()), platform.id, &board).await?;
         tags::retag(
             &fixture.definitions,
-            me(),
+            admin(me()),
             &board,
             &TagSet::parse(&["Delivery".to_owned(), "Platform".to_owned()])?,
         )
         .await?;
-        pins::pin(&fixture.definitions, me(), &board).await?;
+        pins::pin(&fixture.definitions, admin(me()), &board).await?;
 
         Ok((board, platform.name))
     }
@@ -1084,12 +1088,15 @@ mod duplicating_a_dashboard {
     async fn placed(
         fixture: &Fixture,
         board: &DefinitionId,
-    ) -> Result<Option<String>, Box<dyn Error>> {
+        person: PersonId,
+    ) -> Result<Vec<String>, Box<dyn Error>> {
         Ok(fixture
             .definitions
-            .folder_of(board, me())
+            .folders_holding(board, admin(person))
             .await?
-            .map(|folder| folder.name.as_str().to_owned()))
+            .into_iter()
+            .map(|folder| folder.name.as_str().to_owned())
+            .collect())
     }
 
     async fn carried(
@@ -1124,15 +1131,43 @@ mod duplicating_a_dashboard {
                 .get(DefinitionKind::Dashboard, held)
                 .await?;
             assert_eq!(body, board_body(), "{held:?}");
-            assert_eq!(
-                placed(&fixture, held).await?.as_deref(),
-                Some(folder.as_str()),
-                "{held:?}"
-            );
+            assert_eq!(placed(&fixture, held, me()).await?, [folder.as_str()]);
             assert_eq!(carried(&fixture, held).await?, ["Delivery", "Platform"]);
         }
-        let standing = fixture.definitions.standing(&copy, me()).await?;
+        let standing = fixture.definitions.standing(&copy, admin(me())).await?;
         assert_eq!(standing.map(|held| held.owner), Some(Owner::Person(me())));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_editor_s_copy_is_theirs_in_the_folders_they_may_arrange_only() -> R {
+        let fixture = Fixture::new().await;
+        let (board, _) = filed_tagged_and_pinned(&fixture).await?;
+        let editor = someone_else();
+        fixture
+            .definitions
+            .grant(
+                Shared::Dashboard(&board),
+                Grantee::Person(editor),
+                Level::Editor,
+                me(),
+            )
+            .await?;
+        let theirs = fixture
+            .definitions
+            .create_folder(editor, FolderName::parse("Theirs")?)
+            .await?;
+        folders::add(&fixture.definitions, admin(editor), theirs.id, &board).await?;
+
+        let copy = fixture
+            .surfaces_as(editor)
+            .duplicate(&board, &copy_name())
+            .await?;
+
+        assert_eq!(placed(&fixture, &copy, editor).await?, ["Theirs"]);
+        assert_eq!(carried(&fixture, &copy).await?, ["Delivery", "Platform"]);
+        let standing = fixture.definitions.standing(&copy, admin(editor)).await?;
+        assert_eq!(standing.map(|held| held.owner), Some(Owner::Person(editor)));
         Ok(())
     }
 
@@ -1149,7 +1184,7 @@ mod duplicating_a_dashboard {
             .await?;
         let pinned: Vec<String> = fixture
             .definitions
-            .pins_of(me())
+            .pins_of(admin(me()))
             .await?
             .into_iter()
             .map(|listed| listed.id)
@@ -1165,19 +1200,21 @@ mod duplicating_a_dashboard {
             .surfaces()
             .stored_as(DefinitionKind::Dashboard, &name("board"), &board_body())
             .await?;
-        let shared = fixture
+        let legacy = fixture.definitions.seed_ownerless_folder("Legacy");
+        folders::add(&fixture.definitions, admin(me()), legacy, &name("board")).await?;
+        let mine = fixture
             .definitions
             .create_folder(me(), FolderName::parse("Mine")?)
             .await?;
         assert!(
-            folders::file(&fixture.definitions, me(), &name("board"), Some(shared.id))
+            folders::add(&fixture.definitions, admin(me()), mine.id, &name("board"))
                 .await
                 .is_err(),
-            "an ownerless dashboard is not filed in a folder of mine"
+            "an ownerless dashboard does not go in a folder of mine"
         );
         tags::retag(
             &fixture.definitions,
-            me(),
+            admin(me()),
             &name("board"),
             &TagSet::parse(&["Delivery".to_owned()])?,
         )
@@ -1188,9 +1225,9 @@ mod duplicating_a_dashboard {
             .duplicate(&name("board"), &copy_name())
             .await?;
 
-        assert_eq!(placed(&fixture, &copy).await?, None);
+        assert!(placed(&fixture, &copy, me()).await?.is_empty());
         assert_eq!(carried(&fixture, &copy).await?, ["Delivery"]);
-        let standing = fixture.definitions.standing(&copy, me()).await?;
+        let standing = fixture.definitions.standing(&copy, admin(me())).await?;
         assert_eq!(standing.map(|held| held.owner), Some(Owner::Person(me())));
         Ok(())
     }
@@ -1200,7 +1237,15 @@ mod duplicating_a_dashboard {
         let fixture = Fixture::new().await;
         let (board, _) = filed_tagged_and_pinned(&fixture).await?;
         let viewer = PersonId::new(uuid::Uuid::from_u128(3));
-        fixture.definitions.share(&board, viewer, me()).await?;
+        fixture
+            .definitions
+            .grant(
+                Shared::Dashboard(&board),
+                Grantee::Person(viewer),
+                Level::Viewer,
+                me(),
+            )
+            .await?;
 
         let by_viewer = fixture
             .surfaces_as(viewer)
@@ -1212,7 +1257,7 @@ mod duplicating_a_dashboard {
             .await;
 
         assert!(
-            matches!(by_viewer, Err(CustomError::NotOwner)),
+            matches!(by_viewer, Err(CustomError::NotEditor)),
             "{by_viewer:?}"
         );
         assert!(
