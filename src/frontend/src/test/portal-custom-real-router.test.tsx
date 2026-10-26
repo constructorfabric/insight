@@ -88,10 +88,6 @@ function renderAt(path: string) {
   );
 }
 
-async function openAssistant() {
-  await userEvent.click(screen.getByRole("button", { name: "Open assistant" }));
-}
-
 beforeEach(() => {
   vi.resetAllMocks();
   // Opening the assistant is remembered per browser, and jsdom's storage
@@ -182,7 +178,6 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     await screen.findByRole("heading", { name: "Custom" }, { timeout: 10000 });
     await openAssistant();
 
-    await openAssistant();
     await userEvent.type(
       screen.getByTestId("chat-input"),
       "a dashboard about delivery"
@@ -244,7 +239,6 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     await screen.findByRole("heading", { name: "Engineering" }, { timeout: 10000 });
     await openAssistant();
 
-    await openAssistant();
     await userEvent.type(
       screen.getByTestId("chat-input"),
       "add revenue tracking"
