@@ -14,7 +14,7 @@
 # change detection diffs the last pinned commit.
 #
 # INVARIANT: an API error, a missing permission or an unparseable response
-# answer `clear=true` — only an observed non-empty queue holds a push back.
+# answer `clear=false` — publication requires a known queue state.
 # Always exits 0.
 #
 # Usage: wait-for-empty-merge-queue.sh <max-wait-minutes>
@@ -54,19 +54,23 @@ while :; do
     -d "$body")"
 
   if [ -z "$resp" ] || ! printf '%s' "$resp" | jq -e . >/dev/null 2>&1; then
-    echo "::warning::merge-queue gate: GraphQL call failed or returned no JSON; not waiting"
-    answer true
+    echo "::warning::merge-queue gate: GraphQL call failed or returned no JSON; publication deferred"
+    answer false
   fi
   if printf '%s' "$resp" | jq -e 'has("errors")' >/dev/null 2>&1; then
-    echo "::warning::merge-queue gate: $(printf '%s' "$resp" | jq -c '.errors'); not waiting"
-    answer true
+    echo "::warning::merge-queue gate: $(printf '%s' "$resp" | jq -c '.errors'); publication deferred"
+    answer false
   fi
   # Bad credentials answer with a bare {"message": ...} and no `data`. jq
   # indexes null silently, so without this the test below reads that as "no
   # queue on this branch" and the gate stops gating.
   if ! printf '%s' "$resp" | jq -e '.data.repository | type == "object"' >/dev/null 2>&1; then
-    echo "::warning::merge-queue gate: unexpected response $(printf '%s' "$resp" | jq -c '{message, data}'); not waiting"
-    answer true
+    echo "::warning::merge-queue gate: unexpected response $(printf '%s' "$resp" | jq -c '{message, data}'); publication deferred"
+    answer false
+  fi
+  if ! printf '%s' "$resp" | jq -e '.data.repository | has("mergeQueue")' >/dev/null 2>&1; then
+    echo "::warning::merge-queue gate: queue state is missing; publication deferred"
+    answer false
   fi
   # `mergeQueue` is null on a branch that has none — every release-** branch,
   # and main itself if the queue is ever turned off. Nothing to wait for.
@@ -81,8 +85,8 @@ while :; do
   # poll out its whole budget over a response carrying no count.
   case "$count" in
     '' | *[!0-9]*)
-      echo "::warning::merge-queue gate: no entry count in response; not waiting"
-      answer true
+      echo "::warning::merge-queue gate: no entry count in response; publication deferred"
+      answer false
       ;;
   esac
   if [ "$count" = "0" ]; then
