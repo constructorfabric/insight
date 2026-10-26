@@ -1,0 +1,40 @@
+spec_version: 1
+description: >
+  Metric: tasks.closed — work on an unbound, email-less account waits in the
+  evidence and counts the moment identity binds it, with no gold rebuild, #1776.
+  How it's computed (bronze → silver → gold):
+    • bronze: one Jira issue closed by a deleted account the tracker shows as
+      "Former user", with no email.
+    • silver: one row per issue keyed by the tracker account.
+    • gold:   the issue keeps its assignee's account, so it stays in the
+      evidence while nothing binds the account; the runtime resolves it at
+      read time, so an operator binding made after the build credits it.
+
+  Cases: before the binding carol has no closures; an operator binds the
+  account to carol and the same build serves her FRM-1 in May.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_jira.jira_user:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-former-user-acct, account_id: former-user-acct, email: null, display_name: Former user}
+
+  bronze_jira.jira_statuses:
+    - $ref: ../templates/jira_task.yaml#/templates/status_open
+    - $ref: ../templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: ../templates/jira_task.yaml#/templates/field_status
+    - $ref: ../templates/jira_task.yaml#/templates/field_assignee
+    - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
+
+  config.field_value_defaults:
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default_unknown
+    - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default_unknown
+
+  bronze_jira.jira_issue:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: "17771", jira_id: "17771", unique_key: jira-test-FRM-1, id_readable: FRM-1, created: "2026-05-04T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"former-user-acct","displayName":"Former user"}}'}
+
+  bronze_jira.jira_issue_history:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: FRM-1, jira_id: "17771", changelog_id: "77701", unique_key: jira-test-FRM1-77701, created_at: "2026-05-06T14:00:00.000+0000", author_account_id: former-user-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"Closed","to":"6"}]'}
