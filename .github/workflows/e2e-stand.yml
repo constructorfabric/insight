@@ -209,6 +209,7 @@ jobs:
     if: github.event_name == 'merge_group'
     permissions:
       contents: write
+      actions: read
       packages: write
       id-token: write
       attestations: write

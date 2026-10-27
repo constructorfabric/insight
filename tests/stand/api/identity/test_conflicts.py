@@ -56,15 +56,16 @@ def _admin_role_id(client: ApiClient) -> str:
     )
 
 
-def _active_admin_assignments(client: ApiClient) -> list[PersonRole]:
+def _up_to_two_active_admin_assignments(client: ApiClient) -> list[PersonRole]:
     role_id = _admin_role_id(client)
-    response = client.get(identity_path("/v1/person-roles"))
+    response = client.get(identity_path(f"/v1/person-roles?role={role_id}&active=true&limit=2"))
     assert response.status_code == 200, f"person-roles: {response.status_code}"
-    return [
-        item
-        for item in response.parse(PersonRoleList).items
-        if str(item.role_id) == role_id and in_force(item)
-    ]
+    assignments = response.parse(PersonRoleList).items
+    assert assignments, "the active admin filter returned no assignments"
+    assert all(str(item.role_id) == role_id and in_force(item) for item in assignments), (
+        "the active admin filter returned a revoked or unrelated assignment"
+    )
+    return assignments
 
 
 @pytest.mark.requires_seed("admin_operator")
@@ -136,9 +137,9 @@ def test_revoking_the_last_active_admin_is_refused(
     stand. A broken guard should cost one red test, not a dead stand.
     """
     client = admin_operator_session.client
-    active = _active_admin_assignments(client)
+    active = _up_to_two_active_admin_assignments(client)
     if len(active) != 1:
-        pytest.skip(f"the stand carries {len(active)} active admin assignments, not 1")
+        pytest.skip("the last-admin guard requires exactly one active admin assignment")
 
     assignment = active[0]
     operator = stand_manifest.fixture("admin_operator")
@@ -152,7 +153,7 @@ def test_revoking_the_last_active_admin_is_refused(
             f"revoking the tenant's only active admin answered {response.status_code} — "
             f"the admin API is now reachable by nobody: {response.text[:300]}"
         )
-        assert len(_active_admin_assignments(client)) == 1, (
+        assert len(_up_to_two_active_admin_assignments(client)) == 1, (
             "the assignment is gone despite the refusal being reported"
         )
     finally:
