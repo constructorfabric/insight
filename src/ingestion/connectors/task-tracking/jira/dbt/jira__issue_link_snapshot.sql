@@ -50,8 +50,7 @@ held_keys AS (
         insight_source_id AS held_source_id,
         issue_id AS held_issue_id,
         kind AS held_kind,
-        link_id AS held_link_id,
-        if(target_id != '', target_id, target_key) AS held_target_ident
+        link_id AS held_link_id
     FROM held
 ),
 
@@ -78,7 +77,6 @@ missing_rows AS (
        AND h.held_issue_id = p.issue_id
        AND h.held_kind = p.kind
        AND h.held_link_id = p.link_id
-       AND h.held_target_ident = if(p.target_id != '', p.target_id, p.target_key)
     {% else %}
     SELECT
         insight_source_id,

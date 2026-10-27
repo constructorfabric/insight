@@ -738,3 +738,63 @@ def test_an_issue_without_a_current_read_keeps_no_retained_links(scenario: Scena
         == []
     )
     assert scenario.links() == []
+
+
+def test_a_fresh_parent_supersedes_an_earlier_parent_that_is_hidden(scenario: Scenario) -> None:
+    scenario.seed(
+        fields=[PARENT_FIELD],
+        issues=[
+            issue("SEEN-1", jira_id="1001", fields={PARENT: {"id": "1002", "key": "GONE-2"}}),
+            issue("GONE-2", jira_id="1002"),
+            issue("SEEN-3", jira_id="1003"),
+        ],
+        events=[
+            event("SEEN-1", 101, "2026-01-06T10:00:00", [item(PARENT, to="1002", to_str="GONE-2")], jira_id="1001")
+        ],
+        census=[census("SEEN-1", "1001"), census("GONE-2", "1002"), census("SEEN-3", "1003")],
+        projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
+    )
+    scenario.build(LINKS_SELECTOR)
+
+    assert _intervals(scenario.links(issue_id="1001")) == [("1001", "parent", "1002", "GONE-2", DAY_6, 1, None, "101")]
+
+    scenario.seed(
+        fields=[],
+        issues=[
+            issue("SEEN-1", jira_id="1001", extracted_at=HIDDEN_READ, fields={PARENT: {"id": "1003", "key": "SEEN-3"}})
+        ],
+        events=[
+            event(
+                "SEEN-1",
+                102,
+                "2026-03-31T10:00:00",
+                [item(PARENT, frm="1002", frm_str="GONE-2", to="1003", to_str="SEEN-3")],
+                jira_id="1001",
+                extracted_at=HIDDEN_READ,
+            )
+        ],
+        census=[
+            census("SEEN-1", "1001", extracted_at=MISSING_CENSUS),
+            census("SEEN-3", "1003", extracted_at=MISSING_CENSUS),
+        ],
+        projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
+    )
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+
+    assert _availability(scenario) == "access_lost"
+    held = scenario.warehouse.rows(
+        "SELECT kind, target_id, target_key FROM staging.jira__issue_link_snapshot FINAL"
+        " WHERE insight_source_id = {src:String} AND issue_id = '1001'",
+        {"src": scenario.source},
+    )
+    assert held == [{"kind": "parent", "target_id": "1003", "target_key": "SEEN-3"}]
+
+    changed_at = "2026-03-31 10:00:00.000"
+    rows = scenario.links()
+    assert _intervals(rows) == [
+        ("1001", "parent", "1002", "GONE-2", DAY_6, 1, changed_at, "101"),
+        ("1001", "parent", "1003", "SEEN-3", changed_at, 1, None, "102"),
+        ("1002", "sub_issue", "1001", "SEEN-1", DAY_6, 1, changed_at, "101"),
+        ("1003", "sub_issue", "1001", "SEEN-1", changed_at, 1, None, "102"),
+    ]
+    assert {row["evidence"] for row in rows} == {"event"}
