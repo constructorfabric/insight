@@ -167,7 +167,7 @@ The portal builds on the FrontX UI kit and its theme. Foundation tokens layer ov
 
 - [ ] `p1` - **ID**: `cpt-insightspec-portal-constraint-utc`
 
-The services bucket every day at UTC midnight; the portal resolves and labels every window in UTC.
+The services bucket every day at UTC midnight; the portal resolves and labels every window in UTC. Today's portal resolver uses local dates and ends rolling ranges yesterday; it moves to the shared UTC rule with ADR-0001.
 
 #### Public Repository
 
@@ -200,7 +200,7 @@ Installation configuration arrives once, when the portal loads; a policy change 
 | NavPolicy | Paths the installation hides or marks planned | [nav-policy.ts](../../../../src/frontend/src/lib/portal/nav-policy.ts) |
 | LensConfig, SectionSpec | A lens and its ordered sections by kind | [lens-configs.ts](../../../../src/frontend/src/lib/portal/lens-configs.ts) |
 | DashboardSummary | A listed dashboard's id, name, owner, change time, visibility and tags. New in this design: today's listing carries only id and name | [custom-types.ts](../../../../src/frontend/src/api/custom-types.ts) |
-| ReadState | A section read's classified outcome: loading, empty, not connected, withheld, refused, failed. New in this design: today each page classifies ad hoc and renders through a placeholder card | [coming-soon.tsx](../../../../src/frontend/src/components/widgets/coming-soon.tsx) |
+| ReadState | A section read's classified outcome: loading, empty, not connected, withheld, refused, failed. A single reading the source does not provide is not a read state: it renders in place as "not tracked". New in this design: today each page classifies ad hoc and renders through a placeholder card | [coming-soon.tsx](../../../../src/frontend/src/components/widgets/coming-soon.tsx) |
 
 **Relationships**:
 - RailItem → PaneGroup: a rail destination owns the pane groups of its zones.
@@ -489,6 +489,7 @@ Loading, empty, not connected, refused and failed must look the same everywhere 
 ##### Responsibility scope
 
 - Spinner with a loading announcement.
+- Inline "not tracked" marker for a single reading a source does not provide.
 - Empty card.
 - Not-connected card naming the missing source.
 - Withheld card stating the group-size reason.

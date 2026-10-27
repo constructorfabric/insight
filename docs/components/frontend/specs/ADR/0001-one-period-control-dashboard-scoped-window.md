@@ -48,7 +48,7 @@ Chosen option: "One control; a portal-wide window plus a window scoped to each o
 ### Consequences
 
 * Good, because every page uses the same control, presets and date resolution.
-* Good, because a dashboard address carries its own window, so a shared link shows the same figures to every reader.
+* Good, because a dashboard address carries its own window, so a shared link opens on the same dashboard and window for every reader; the figures still follow each reader's reach.
 * Good, because changing the window on a dashboard never changes Home or Explore, and the reverse.
 * Bad, because a reader moving from Explore to a dashboard may meet a different window and must read the toolbar to notice.
 * Bad, because navigation code must keep two parameters apart: the portal-wide window and the dashboard window.
@@ -89,7 +89,7 @@ The same control everywhere. Home, Explore, People and Reports share the portal 
 
 ## More Information
 
-Presets resolve on the services, which already resolve every dashboard window from a preset token against the clock. The portal-wide window uses the same tokens, so both resolve identically. `cpt-insightspec-portal-fr-period-semantics` states the window semantics.
+Presets must resolve the same way on the services and in the portal, by `cpt-insightspec-portal-fr-period-semantics`, and the portal window and dashboard windows must use the same preset tokens. Today they differ: the portal resolves its own presets in local time and ends rolling ranges yesterday, and the services have no Last 90 days token. Both converge before this decision ships.
 
 The per-dashboard restriction of which windows a reader may pick is retired: every dashboard offers every preset. The portal labels presets with dates from one rule shared with the services, kept in step by a contract test.
 

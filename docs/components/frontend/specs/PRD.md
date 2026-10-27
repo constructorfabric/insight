@@ -339,7 +339,7 @@ The system **MUST** keep two kinds of reporting window:
 - one portal window, shared by Home, Explore, People and Reports;
 - one window per open dashboard, which opens on the dashboard's own default.
 
-Both are kept in the address, and changing one never changes the other. An address without a window opens on the person's last-used portal window, or Last 30 days on a first visit; that window is then written into the address.
+Both are kept in the address, and changing one never changes the other. An address without a window opens on the dashboard's own default for an open dashboard, and otherwise on the person's last-used portal window, or Last 30 days on a first visit; that window is then written into the address.
 
 **Rationale**: A dashboard is authored for a window and shared by link, while the portal window is the reader's own working context.
 
@@ -464,7 +464,7 @@ The list **MUST** offer search by name and a tag filter, show the matching count
 The system **MUST** offer read-only starter dashboards for the viewer's connected sources. Each starter:
 
 - states the question it answers and the sources it reads, with their connection state;
-- can only be opened from the list;
+- opens from Home or the list, and offers no action besides opening and saving;
 - can be saved as their own dashboard by people who may author.
 
 **Rationale**: A new person needs a working dashboard before they know what to build.
@@ -951,9 +951,9 @@ The system **MUST** show only what the services returned for the viewer, and sho
 
 **Vector**: Efficiency
 
-The system **MUST** show a page of any list (dashboards, catalogue items, people) with work that does not grow with the number of items on the page.
+The system **MUST** fetch a page of any list (dashboards, catalogue items, people) with a fixed number of service requests, independent of how many items the page holds.
 
-**Threshold**: The time and service work to show a list page do not depend on how many items it holds, up to the page size.
+**Threshold**: Service requests per list page do not grow with the number of items on it; items per page are bounded by the page size.
 
 **Rationale**: Per-item requests make the busiest lists the slowest and multiply load on the services.
 
