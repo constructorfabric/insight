@@ -1,0 +1,35 @@
+# Mirrors the bronze_zoom.users table destination-clickhouse creates.
+schemas:
+  bronze_zoom.users:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
+      id: {type: [string, "null"]}
+      pmi: {type: [number, "null"]}
+      dept: {type: [string, "null"]}
+      type: {type: [number, "null"]}
+      email: {type: [string, "null"]}
+      status: {type: [string, "null"]}
+      pic_url: {type: [string, "null"]}
+      role_id: {type: [string, "null"]}
+      language: {type: [string, "null"]}
+      timezone: {type: [string, "null"]}
+      verified: {type: [number, "null"]}
+      group_ids: {type: [string, "null"]}
+      last_name: {type: [string, "null"]}
+      source_id: {type: [string, "null"]}
+      tenant_id: {type: [string, "null"]}
+      created_at: {type: [string, "null"]}
+      first_name: {type: [string, "null"]}
+      unique_key: {type: string}
+      display_name: {type: [string, "null"]}
+      phone_number: {type: [string, "null"]}
+      last_login_time: {type: [string, "null"]}
+      user_created_at: {type: [string, "null"]}
+      employee_unique_id: {type: [string, "null"]}
+      last_client_version: {type: [string, "null"]}

@@ -11,13 +11,13 @@
 
 -- Zoom meeting activity aggregated per user per day.
 --
--- Grain: (tenant, source, email, date). We intentionally filter out participants
--- without an email (guests / anonymous joiners) because:
---   1. Without a stable user identifier, a COALESCE(email, user_name) key is
---      unstable — the same person can flip keys between batches depending on
---      whether Zoom returns their email that run.
---   2. Anonymous participants can't be joined to identity at the Silver layer
---      anyway, so they add noise without enabling any downstream use case.
+-- Grain: (tenant, source, email, date). Zoom reports an email only for a
+-- participant who joined signed in; a joiner without one carries nothing but the
+-- display name. Such a row is attributed through the account's user list when
+-- exactly one Zoom user carries that display name, and dropped otherwise:
+--   1. A shared display name attributes nobody rather than the wrong person.
+--   2. A name no Zoom user carries is an external guest: no identity can bind it
+--      at the Silver layer, so it adds noise without enabling any use case.
 -- If Zoom ever starts exposing a stable participant_id/user_id, switch to that.
 --
 -- Meeting-session stitching (issue #258): the (tenant, source, uuid) →
@@ -110,33 +110,79 @@ meetings_in_scope AS (
 ),
 {%- endif %}
 
-deduped_participants AS (
+zoom_user_emails AS (
+    -- INVARIANT: a display name stands in for an email only when exactly one Zoom
+    -- user of the account carries it; a shared name resolves to nobody.
     SELECT
         tenant_id,
         source_id,
-        meeting_uuid,
-        participant_uuid,
-        email,
-        user_name,
-        camera,
-        share_desktop,
-        share_application,
-        share_whiteboard,
-        parseDateTimeBestEffortOrNull(join_time) AS joined_at,
-        parseDateTimeBestEffortOrNull(leave_time) AS left_at
-    FROM {{ participants }}
-    WHERE parseDateTimeBestEffortOrNull(join_time) IS NOT NULL
-      -- INVARIANT: time spent waiting to be admitted is not time in the meeting.
-      AND coalesce(status, '') != 'in_waiting_room'
-    {%- if is_incremental() %}
-      AND (
-          (SELECT count() FROM {{ this }}) = 0
-          OR meeting_uuid IN (SELECT meeting_uuid FROM meetings_in_scope)
-      )
-    {%- endif %}
-    -- WORKAROUND: Airbyte re-emits identical participant rows; keep the latest one.
-    ORDER BY _airbyte_extracted_at DESC
-    LIMIT 1 BY meeting_uuid, participant_uuid, joined_at
+        name_key,
+        -- WORKAROUND: the output must not reuse the inner column's name, or the
+        -- HAVING below resolves the alias and ClickHouse rejects the nested aggregate.
+        any(email) AS user_email
+    FROM (
+        SELECT
+            tenant_id,
+            source_id,
+            lowerUTF8(trim(display_name)) AS name_key,
+            lower(email) AS email
+        FROM {{ source('bronze_zoom', 'users') }}
+        WHERE email IS NOT NULL AND email != ''
+          AND display_name IS NOT NULL AND trim(display_name) != ''
+        ORDER BY _airbyte_extracted_at DESC
+        LIMIT 1 BY tenant_id, source_id, id
+    )
+    GROUP BY tenant_id, source_id, name_key
+    HAVING uniqExact(email) = 1
+),
+
+deduped_participants AS (
+    SELECT
+        p.tenant_id AS tenant_id,
+        p.source_id AS source_id,
+        p.meeting_uuid AS meeting_uuid,
+        p.participant_uuid AS participant_uuid,
+        if(p.email IS NOT NULL AND p.email != '', p.email, nullIf(u.user_email, '')) AS email,
+        p.user_name AS user_name,
+        p.camera AS camera,
+        p.share_desktop AS share_desktop,
+        p.share_application AS share_application,
+        p.share_whiteboard AS share_whiteboard,
+        p.joined_at AS joined_at,
+        p.left_at AS left_at
+    FROM (
+        SELECT
+            tenant_id,
+            source_id,
+            meeting_uuid,
+            participant_uuid,
+            email,
+            user_name,
+            lowerUTF8(trim(coalesce(user_name, ''))) AS name_key,
+            camera,
+            share_desktop,
+            share_application,
+            share_whiteboard,
+            parseDateTimeBestEffortOrNull(join_time) AS joined_at,
+            parseDateTimeBestEffortOrNull(leave_time) AS left_at
+        FROM {{ participants }}
+        WHERE parseDateTimeBestEffortOrNull(join_time) IS NOT NULL
+          -- INVARIANT: time spent waiting to be admitted is not time in the meeting.
+          AND coalesce(status, '') != 'in_waiting_room'
+        {%- if is_incremental() %}
+          AND (
+              (SELECT count() FROM {{ this }}) = 0
+              OR meeting_uuid IN (SELECT meeting_uuid FROM meetings_in_scope)
+          )
+        {%- endif %}
+        -- WORKAROUND: Airbyte re-emits identical participant rows; keep the latest one.
+        ORDER BY _airbyte_extracted_at DESC
+        LIMIT 1 BY meeting_uuid, participant_uuid, joined_at
+    ) AS p
+    LEFT JOIN zoom_user_emails AS u
+        ON u.tenant_id = p.tenant_id
+        AND u.source_id = p.source_id
+        AND u.name_key = p.name_key
 ),
 
 attendee_sessions AS (
