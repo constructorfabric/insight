@@ -87,6 +87,7 @@ function CustomDashboardIndex() {
     !shown.folder &&
     !shown.pending &&
     !owned &&
+    !tags.pending &&
     tags.picked.length === 0 &&
     !catalogue.paging.searching;
 
