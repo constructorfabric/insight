@@ -1,7 +1,7 @@
 name: Deploy test stand after publish
 on:
   workflow_run:
-    workflows: ["Build & Push Container Images"]
+    workflows: ["Build images and release Helm"]
     types: [completed]
     branches: [main]
 
