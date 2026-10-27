@@ -58,7 +58,6 @@ describe("screenPath", () => {
     ["/portal/custom/datasets", "/portal/custom/datasets"],
     ["/portal/custom/alerts", "/portal/custom/alerts"],
     ["/portal/custom/destinations", "/portal/custom/destinations"],
-    ["/portal/custom/orphaned", "/portal/custom/orphaned"],
     ["/portal/custom/new/dashboards", "/portal/custom/new/dashboards"],
     ["/portal/custom/edit/metrics/m", "/portal/custom/edit/metrics/m"],
     ["/portal/custom/edit/dashboards/q3-plan", "/portal/custom/edit/dashboards/:id"],

@@ -11,6 +11,7 @@ import {
 import { DashboardCard } from "@/components/custom/dashboard-card";
 import { DefinitionSearch } from "@/components/custom/definition-search";
 import { NewLink } from "@/components/custom/editor/edit-link";
+import { OrphanedDashboards } from "@/components/custom/orphaned";
 import { NoTaggedDashboards, TagFilter } from "@/components/custom/tag-filter";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -82,6 +83,12 @@ function CustomDashboardIndex() {
     owned,
     enabled: !shown.pending && !tags.pending,
   });
+  const unnarrowed =
+    !shown.folder &&
+    !shown.pending &&
+    !owned &&
+    tags.picked.length === 0 &&
+    !catalogue.paging.searching;
 
   return (
     <>
@@ -136,6 +143,7 @@ function CustomDashboardIndex() {
           )
         }
       />
+      {isAdmin && unnarrowed ? <OrphanedDashboards /> : null}
     </>
   );
 }

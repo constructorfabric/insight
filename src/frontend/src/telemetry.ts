@@ -57,7 +57,6 @@ const CUSTOM_PAGES = new Set([
   "datasets",
   "alerts",
   "destinations",
-  "orphaned",
   "edit",
   "new",
 ]);

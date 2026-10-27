@@ -3,7 +3,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   return {
     ...actual,
     fetchOrphanedDashboards: vi.fn(),
-    fetchOrphanedFolders: vi.fn(),
     transferOrphan: vi.fn(),
   };
 });
@@ -55,6 +54,7 @@ vi.mock("@/hooks/use-debounced-value", () => ({
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -63,7 +63,7 @@ import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import * as identityClient from "@/api/identity-client";
 
-import { Orphaned } from "./orphaned";
+import { type Orphan, OrphanedDashboards, TransferOrphan } from "./orphaned";
 
 const { LEAVER, BOB } = people.ids;
 
@@ -74,47 +74,41 @@ const ORPHANED = {
   updated_at: "2026-09-01T00:00:00.000Z",
 };
 
-function renderPage() {
+const ORPHANED_FOLDER: Orphan = {
+  kind: "folders",
+  id: "folder-1",
+  name: "Handover",
+  owner_person_id: LEAVER,
+};
+
+function renderWith(ui: ReactNode) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  render(
-    <QueryClientProvider client={queryClient}>
-      <Orphaned />
-    </QueryClientProvider>
-  );
+  render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
 
   return userEvent.setup();
 }
 
-const ORPHANED_FOLDER = {
-  id: "folder-1",
-  name: "Handover",
-  owner_person_id: LEAVER,
-  updated_at: "2026-08-15T00:00:00.000Z",
-};
-
-async function openTransfer(
-  user: ReturnType<typeof userEvent.setup>,
-  name = "Release notes"
-) {
-  await user.click(
-    await screen.findByRole("button", { name: `Transfer ${name}` })
-  );
+async function pickBob(user: ReturnType<typeof userEvent.setup>) {
   const dialog = await screen.findByRole("dialog");
   await user.type(await within(dialog).findByRole("searchbox"), "an");
 
   return dialog;
 }
 
+async function openTransfer(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    await screen.findByRole("button", { name: "Transfer Release notes" })
+  );
+
+  return pickBob(user);
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(customClient.fetchOrphanedDashboards).mockResolvedValue({
     items: [ORPHANED],
-    total: 1,
-  });
-  vi.mocked(customClient.fetchOrphanedFolders).mockResolvedValue({
-    items: [ORPHANED_FOLDER],
     total: 1,
   });
   vi.mocked(customClient.transferOrphan).mockResolvedValue(undefined);
@@ -124,39 +118,46 @@ beforeEach(() => {
   });
 });
 
-describe("<Orphaned>", () => {
-  it("lists each orphaned dashboard with its owner and last change", async () => {
-    renderPage();
+describe("<OrphanedDashboards>", () => {
+  it("lists each orphaned dashboard with its owner and last change, under its own heading", async () => {
+    renderWith(<OrphanedDashboards />);
 
-    const row = (await screen.findByText("Release notes")).closest("tr");
-    expect(row).not.toBeNull();
-    expect(row).toHaveTextContent("Erin Left");
-    expect(row).toHaveTextContent("1 Sep 2026");
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Orphaned" })
+    ).toBeInTheDocument();
+    const card = screen.getByText("Release notes").closest("li");
+    expect(card).not.toBeNull();
+    expect(card).toHaveTextContent("Owner: Erin Left");
+    expect(card).toHaveTextContent("1 Sep 2026");
+    expect(screen.queryByRole("link", { name: /Release notes/ })).toBeNull();
   });
 
-  it("lists each orphaned folder with its owner and last change", async () => {
-    renderPage();
-
-    const row = (await screen.findByText("Handover")).closest("tr");
-    expect(row).not.toBeNull();
-    expect(row).toHaveTextContent("Erin Left");
-    expect(row).toHaveTextContent("15 Aug 2026");
-  });
-
-  it("says so when nothing is orphaned", async () => {
+  it("shows nothing when nothing is orphaned", async () => {
     vi.mocked(customClient.fetchOrphanedDashboards).mockResolvedValue({
       items: [],
       total: 0,
     });
-    renderPage();
+    renderWith(<OrphanedDashboards />);
+
+    await waitFor(() =>
+      expect(customClient.fetchOrphanedDashboards).toHaveBeenCalled()
+    );
+    expect(screen.queryByRole("heading", { name: "Orphaned" })).toBeNull();
+  });
+
+  it("says so when the orphaned dashboards cannot be read", async () => {
+    vi.mocked(customClient.fetchOrphanedDashboards).mockRejectedValue(
+      new Error("boom")
+    );
+    renderWith(<OrphanedDashboards />);
 
     expect(
-      await screen.findByText("No orphaned dashboards")
+      await screen.findByText("Couldn't load the orphaned dashboards.")
     ).toBeInTheDocument();
   });
 
   it("offers only current administrators as the new owner", async () => {
-    const user = renderPage();
+    const user = renderWith(<OrphanedDashboards />);
     const dialog = await openTransfer(user);
 
     expect(
@@ -174,7 +175,7 @@ describe("<Orphaned>", () => {
   });
 
   it("transfers to the picked administrator and reads the list again", async () => {
-    const user = renderPage();
+    const user = renderWith(<OrphanedDashboards />);
     const dialog = await openTransfer(user);
     const reads = vi.mocked(customClient.fetchOrphanedDashboards).mock.calls
       .length;
@@ -195,21 +196,6 @@ describe("<Orphaned>", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("transfers an orphaned folder to the picked administrator", async () => {
-    const user = renderPage();
-    const dialog = await openTransfer(user, "Handover");
-
-    await user.click(within(dialog).getByRole("button", { name: "Bob Park" }));
-    await user.click(within(dialog).getByRole("button", { name: "Transfer" }));
-
-    expect(customClient.transferOrphan).toHaveBeenCalledWith(
-      "folders",
-      "folder-1",
-      BOB
-    );
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  });
-
   it("keeps the dialog open with what the service said when it refuses", async () => {
     vi.mocked(customClient.transferOrphan).mockRejectedValue(
       new CustomApiError(409, {
@@ -225,7 +211,7 @@ describe("<Orphaned>", () => {
         },
       })
     );
-    const user = renderPage();
+    const user = renderWith(<OrphanedDashboards />);
     const dialog = await openTransfer(user);
 
     await user.click(within(dialog).getByRole("button", { name: "Bob Park" }));
@@ -234,5 +220,26 @@ describe("<Orphaned>", () => {
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       "the dashboard's owner is still an administrator"
     );
+  });
+});
+
+describe("<TransferOrphan>", () => {
+  it("transfers an orphaned folder to the picked administrator", async () => {
+    const onClose = vi.fn();
+    const user = renderWith(
+      <TransferOrphan orphan={ORPHANED_FOLDER} onClose={onClose} />
+    );
+    const dialog = await pickBob(user);
+
+    expect(dialog).toHaveTextContent("Transfer Handover");
+    await user.click(within(dialog).getByRole("button", { name: "Bob Park" }));
+    await user.click(within(dialog).getByRole("button", { name: "Transfer" }));
+
+    expect(customClient.transferOrphan).toHaveBeenCalledWith(
+      "folders",
+      "folder-1",
+      BOB
+    );
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 });

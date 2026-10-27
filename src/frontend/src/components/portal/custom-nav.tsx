@@ -7,7 +7,6 @@ import {
   Share2,
   Sigma,
   User,
-  UserX,
   type LucideIcon,
 } from "lucide-react";
 import { useInfiniteQuery } from "@tanstack/react-query";
@@ -35,8 +34,7 @@ const CATALOGUES: readonly {
     | "/portal/custom/metrics"
     | "/portal/custom/widgets"
     | "/portal/custom/datasets"
-    | "/portal/custom/alerts"
-    | "/portal/custom/orphaned";
+    | "/portal/custom/alerts";
   label: string;
   icon: LucideIcon;
 }[] = [
@@ -44,7 +42,6 @@ const CATALOGUES: readonly {
   { to: "/portal/custom/widgets", label: "Widgets", icon: LayoutDashboard },
   { to: "/portal/custom/datasets", label: "Datasets", icon: Database },
   { to: "/portal/custom/alerts", label: "Alerts", icon: Bell },
-  { to: "/portal/custom/orphaned", label: "Orphaned", icon: UserX },
 ];
 
 const OWNED: readonly {

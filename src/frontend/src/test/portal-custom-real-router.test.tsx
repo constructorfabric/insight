@@ -90,6 +90,14 @@ function renderAt(path: string) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(customClient.fetchOrphanedDashboards).mockResolvedValue({
+    items: [],
+    total: 0,
+  });
+  vi.mocked(customClient.fetchOrphanedFolders).mockResolvedValue({
+    items: [],
+    total: 0,
+  });
   // Opening the assistant is remembered per browser, and jsdom's storage
   // outlives a test.
   window.localStorage.clear();
@@ -250,27 +258,46 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     ).toBeInTheDocument();
   });
 
-  it("renders the orphaned page at /portal/custom/orphaned, not a dashboard of that id", async () => {
+  it("lists orphaned dashboards and folders where their live ones are, for an administrator", async () => {
     vi.mocked(customClient.fetchDashboards).mockResolvedValue(LISTING);
     vi.mocked(customClient.fetchOrphanedDashboards).mockResolvedValue({
-      items: [],
-      total: 0,
+      items: [
+        {
+          id: "release",
+          name: "Release notes",
+          owner_person_id: "01900000-0000-7000-8000-0000000000e0",
+          updated_at: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+      total: 1,
     });
     vi.mocked(customClient.fetchOrphanedFolders).mockResolvedValue({
-      items: [],
-      total: 0,
+      items: [
+        {
+          id: "handover",
+          name: "Handover",
+          owner_person_id: "01900000-0000-7000-8000-0000000000e0",
+          updated_at: "2026-08-15T00:00:00.000Z",
+        },
+      ],
+      total: 1,
     });
 
-    renderAt("/portal/custom/orphaned");
+    renderAt("/portal/custom");
 
     expect(
       await screen.findByRole(
         "heading",
-        { level: 1, name: "Orphaned" },
+        { level: 2, name: "Orphaned" },
         { timeout: 10000 },
       )
     ).toBeInTheDocument();
-    expect(customClient.fetchDashboardRead).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Transfer Release notes" })
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /Handover/ })
+    ).toHaveTextContent("Orphaned");
   });
 
   it("opens the dashboard list to a member, without the library or the assistant", async () => {
@@ -298,7 +325,6 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
       /^Widgets$/,
       /^Datasets$/,
       /^Alerts$/,
-      /^Orphaned$/,
     ]) {
       expect(
         screen.queryByRole("link", { name: hidden }),
@@ -337,7 +363,6 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     "/portal/custom/widgets",
     "/portal/custom/datasets",
     "/portal/custom/alerts",
-    "/portal/custom/orphaned",
     "/portal/custom/new/dashboards",
     "/portal/custom/edit/dashboards/engineering",
   ])("refuses %s to a member", async (path) => {
