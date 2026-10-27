@@ -102,5 +102,5 @@ clickhouse = { workspace = true, features = ["test-util"] }
 # the 2 s acquire window elapses instantly instead of being slept through.
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.27"
-zip = { version = "8.6", default-features = false, features = ["deflate"] }
+zip = { version = "9.0", default-features = false, features = ["deflate"] }
 p256 = { version = "0.14", features = ["pkcs8", "pem", "ecdsa", "getrandom"] }
