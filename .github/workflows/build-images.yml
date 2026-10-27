@@ -1919,19 +1919,8 @@ jobs:
         run: |
           echo '- `${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }}:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
-  # ─── Merge-queue drain gate ────────────────────────────────────────────────
-  # bump-descriptors and publish-chart push to the branch, and a push from
-  # outside the branch's own merge queue invalidates every queued merge group:
-  # GitHub rebuilds the queue from position 1, discarding up to
-  # `max_entries_to_build` image matrices, compose stands and e2e runs.
-  #
-  # INVARIANT: a queue still non-empty when the budget ends skips both
-  # pushes (`clear=false`); the next run republishes, since change detection
-  # diffs the last pinned commit. Only that answer holds a push back: an API
-  # error answers `clear=true`, and a failed or cancelled gate answers nothing.
-  #
-  # It idles, so it takes a container runner (insight-small) rather than a VM
-  # the checks it waits on need.
+  # INVARIANT: Branch updates require an explicitly empty queue; API errors
+  # and exhausted wait budgets fail the gate instead of silently deferring.
   queue-gate:
     needs:
       - changes
@@ -1971,8 +1960,7 @@ jobs:
       contents: read
     outputs:
       clear: ${{ steps.wait.outputs.clear }}
-    # Above the script's own budget, so the budget ends the wait and the job
-    # reports success rather than a cancellation.
+    # INVARIANT: Leave time for the script to report an exhausted wait budget.
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2025,7 +2013,8 @@ jobs:
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release-'))
       && needs.discover-images.outputs.any == 'true'
-      && needs.queue-gate.outputs.clear != 'false'
+      && needs.queue-gate.result == 'success'
+      && needs.queue-gate.outputs.clear == 'true'
       && (needs.merge-image.result == 'success' || needs.merge-image.result == 'skipped')
       && (needs.merge-analytics.result == 'success' || needs.merge-analytics.result == 'skipped')
       && (needs.merge-authenticator.result == 'success' || needs.merge-authenticator.result == 'skipped')
@@ -2046,8 +2035,7 @@ jobs:
       # descriptors. This avoids a double umbrella publish (one with stale
       # toolbox content, one with fresh).
       committed: ${{ steps.commit.outputs.committed }}
-      # 'false' when the re-check below skipped the commit; publish-chart
-      # must not publish over the unpatched descriptors either.
+      # INVARIANT: Publication cannot proceed after a failed descriptor queue check.
       queue_clear: ${{ steps.queue.outputs.clear }}
     timeout-minutes: 60
     steps:
@@ -2137,7 +2125,7 @@ jobs:
 
       - name: Commit descriptor patches (no [skip ci])
         id: commit
-        if: steps.queue.outputs.clear != 'false'
+        if: steps.queue.outputs.clear == 'true'
         env:
           MATRIX: ${{ needs.discover-images.outputs.matrix }}
           BUILD_TAG: ${{ needs.changes.outputs.build_tag }}

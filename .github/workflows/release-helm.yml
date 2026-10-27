@@ -50,8 +50,9 @@ jobs:
       && (fromJSON(inputs.build_results).merge-seed.result          == 'success' || fromJSON(inputs.build_results).merge-seed.result          == 'skipped')
       && (fromJSON(inputs.build_results).merge-image.result         == 'success' || fromJSON(inputs.build_results).merge-image.result         == 'skipped')
       && (fromJSON(inputs.build_results).bump-descriptors.result    == 'success' || fromJSON(inputs.build_results).bump-descriptors.result    == 'skipped')
-      && fromJSON(inputs.build_results).bump-descriptors.outputs.committed != 'true'
-      && fromJSON(inputs.build_results).bump-descriptors.outputs.queue_clear != 'false'
+      && (fromJSON(inputs.build_results).bump-descriptors.result == 'skipped'
+        || (fromJSON(inputs.build_results).bump-descriptors.outputs.committed == 'false'
+          && fromJSON(inputs.build_results).bump-descriptors.outputs.queue_clear == 'true'))
       && fromJSON(inputs.build_results).queue-gate.result == 'success'
       && fromJSON(inputs.build_results).queue-gate.outputs.clear == 'true'
       && (
@@ -435,9 +436,11 @@ jobs:
       && (fromJSON(inputs.build_results).merge-seed.result          == 'success' || fromJSON(inputs.build_results).merge-seed.result          == 'skipped')
       && (fromJSON(inputs.build_results).merge-image.result         == 'success' || fromJSON(inputs.build_results).merge-image.result         == 'skipped')
       && (fromJSON(inputs.build_results).bump-descriptors.result    == 'success' || fromJSON(inputs.build_results).bump-descriptors.result    == 'skipped')
-      && fromJSON(inputs.build_results).bump-descriptors.outputs.committed != 'true'
-      && fromJSON(inputs.build_results).bump-descriptors.outputs.queue_clear != 'false'
-      && fromJSON(inputs.build_results).queue-gate.outputs.clear != 'false'
+      && (fromJSON(inputs.build_results).bump-descriptors.result == 'skipped'
+        || (fromJSON(inputs.build_results).bump-descriptors.outputs.committed == 'false'
+          && fromJSON(inputs.build_results).bump-descriptors.outputs.queue_clear == 'true'))
+      && fromJSON(inputs.build_results).queue-gate.result == 'success'
+      && fromJSON(inputs.build_results).queue-gate.outputs.clear == 'true'
       && (
         fromJSON(inputs.build_results).changes.outputs.analytics == 'true'
         || fromJSON(inputs.build_results).changes.outputs.authenticator == 'true'
@@ -634,14 +637,14 @@ jobs:
         run: .github/workflows/scripts/wait-for-empty-merge-queue.sh 10
 
       - name: Helm registry login (GHCR)
-        if: steps.queue.outputs.clear != 'false'
+        if: steps.queue.outputs.clear == 'true'
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" \
             | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Helm push
         id: helm_push
-        if: steps.queue.outputs.clear != 'false'
+        if: steps.queue.outputs.clear == 'true'
         run: |
           set -euo pipefail
           OUT="$(helm push "dist/insight-${{ steps.umbrella.outputs.version }}.tgz" \
@@ -661,7 +664,7 @@ jobs:
       # own config, which the attest action cannot see. Without this login the
       # attest step dies with "No credentials found for registry ghcr.io".
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        if: steps.queue.outputs.clear != 'false'
+        if: steps.queue.outputs.clear == 'true'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -672,7 +675,7 @@ jobs:
       #   gh attestation verify oci://ghcr.io/constructorfabric/charts/insight:<ver> \
       #     --repo constructorfabric/insight
       - name: Attest chart provenance
-        if: steps.queue.outputs.clear != 'false'
+        if: steps.queue.outputs.clear == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/constructorfabric/charts/insight
@@ -680,7 +683,7 @@ jobs:
           push-to-registry: true
 
       - name: Commit version bumps back to the branch
-        if: steps.queue.outputs.clear != 'false'
+        if: steps.queue.outputs.clear == 'true'
         env:
           UMBRELLA_VERSION: ${{ steps.umbrella.outputs.version }}
           BUILD_TAG: ${{ fromJSON(inputs.build_results).changes.outputs.build_tag }}
