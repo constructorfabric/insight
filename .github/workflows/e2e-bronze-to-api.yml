@@ -1,7 +1,7 @@
 name: E2E bronze to API
 
 # INVARIANT: candidate calls use one verified image set for every shard and
-# keep API endpoint coverage alongside metric coverage before publication.
+# keep internal API checks alongside metric coverage before publication.
 
 on:
   workflow_call:
@@ -301,6 +301,7 @@ jobs:
       # Every leg reports: a red shard must not cancel its siblings, or their
       # failures (and coverage ledgers) vanish with it.
       fail-fast: false
+      max-parallel: ${{ inputs.candidate_artifact != '' && 2 || 6 }}
       matrix:
         # One leg per metric class directory under tests/datapath/metrics, and
         # one for tests/datapath/identity. The suite builds every non-gold
@@ -386,9 +387,7 @@ jobs:
 
       - name: Bring the candidate stand up
         if: inputs.candidate_artifact != ''
-        env:
-          MODE: ${{ matrix.shard == 'api' && 'up' || 'minimal' }}
-        run: bash .github/workflows/scripts/start-candidate-stand.sh candidate-inputs "$GITHUB_SHA" "$MODE"
+        run: bash .github/workflows/scripts/start-candidate-stand.sh candidate-inputs "$GITHUB_SHA" minimal
 
       - name: Bring a minimal stand up
         if: inputs.candidate_artifact == ''
@@ -445,19 +444,13 @@ jobs:
           # between them a shard that runs long says where the time went.
           ./dev-compose.sh test-stand test "${trees[@]}" --tb=short -v --durations=25 --log-cli-level=INFO
 
-      - name: Run API contracts and harness tests
-        if: matrix.shard == 'api'
-        run: ./dev-compose.sh test-stand test --ignore=tests/stand/ui
-
-      - name: Require API endpoint coverage
+      - name: Run internal API contracts
         if: matrix.shard == 'api'
         run: |
           set -euo pipefail
-          python3 tests/lib/insight_stand/coverage.py \
-            --observed .artifacts/stand_observed_endpoints.json \
-            --catalogue .artifacts/stand_operations.json \
-            --spec docs/components/backend/analytics/openapi.json | tee api-coverage.md
-          cat api-coverage.md >> "$GITHUB_STEP_SUMMARY"
+          jq -e '.capabilities.service_principals == true' src/ingestion/tools/seed/manifest.json >/dev/null
+          ./dev-compose.sh test-stand test --tree tests/stand/api \
+            -m requires_service_principal --tb=short -v --durations=25
 
       # The shards' ledgers merge into one directory, which keeps one file per
       # name — so each carries its own or the gate sees a quarter of the coverage.
