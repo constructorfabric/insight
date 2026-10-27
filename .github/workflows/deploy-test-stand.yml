@@ -64,9 +64,8 @@ jobs:
     # `environment:` cannot sit on a job that `uses:` a reusable workflow, so
     # it is declared here rather than on the caller.
     environment: insight-test-stand
-    # Above the sum of the step ceilings: deploy (14) + edge (3) + seed, which
-    # runs seed + identity projection + gold rebuild (110) + smoke (5) +
-    # browser install (10) + the full suite (45).
+    # INVARIANT: Candidate validation has a one-hour total budget, including setup.
+    # Runs with seeding allow 210 minutes, above the combined step ceilings.
     timeout-minutes: ${{ inputs.candidate_artifact != '' && 60 || 210 }}
     env:
       ENV_NAME: test-stand

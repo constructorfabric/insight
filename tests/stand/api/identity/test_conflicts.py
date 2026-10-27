@@ -61,6 +61,7 @@ def _up_to_two_active_admin_assignments(client: ApiClient) -> list[PersonRole]:
     response = client.get(identity_path(f"/v1/person-roles?role={role_id}&active=true&limit=2"))
     assert response.status_code == 200, f"person-roles: {response.status_code}"
     assignments = response.parse(PersonRoleList).items
+    assert assignments, "the active admin filter returned no assignments"
     assert all(str(item.role_id) == role_id and in_force(item) for item in assignments), (
         "the active admin filter returned a revoked or unrelated assignment"
     )
