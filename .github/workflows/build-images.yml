@@ -1,5 +1,4 @@
 name: Build images and release Helm
-run-name: ${{ inputs.helm_rehearsal && 'Helm rehearsal (no publication)' || github.workflow }}
 
 on:
   push:
@@ -47,10 +46,6 @@ on:
   # no backend/connector builds, no descriptor bumps, no chart publish.
   workflow_dispatch:
     inputs:
-      helm_rehearsal:
-        description: "Package current pinned images and validate Helm on the test stand; no builds, reseeding or publication"
-        type: boolean
-        default: false
       frontend_only:
         description: "Build and push only the frontend image (skip everything else)"
         type: boolean
@@ -92,7 +87,6 @@ jobs:
   # image. Connector image builds are NOT handled here — see discover-images,
   # which scans every descriptor.yaml's `images:` block (ADR-0016).
   changes:
-    if: ${{ !inputs.helm_rehearsal }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))))) && 'ubuntu-latest' || 'insight-small' }}
     # INVARIANT: read-only, so it fits a container runner (insight-small).
     permissions:
@@ -1955,7 +1949,6 @@ jobs:
       - merge-image
     if: |
       always()
-      && !inputs.helm_rehearsal
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release-'))
       && (
@@ -2029,7 +2022,6 @@ jobs:
     # only safely point at those tags once the merge completes.
     if: |
       always()
-      && !inputs.helm_rehearsal
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release-'))
       && needs.discover-images.outputs.any == 'true'
@@ -2209,7 +2201,7 @@ jobs:
           fi
 
   release-helm:
-    name: ${{ inputs.helm_rehearsal && 'Verify Helm (no publication)' || 'Release Helm' }}
+    name: Release Helm
     needs:
       - changes
       - discover-images
@@ -2238,7 +2230,6 @@ jobs:
     uses: ./.github/workflows/release-helm.yml
     with:
       build_results: ${{ toJSON(needs) }}
-      helm_rehearsal: ${{ inputs.helm_rehearsal || false }}
       frontend_only: ${{ inputs.frontend_only || false }}
     secrets:
       AUTOMATION_APP_PRIVATE_KEY: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}

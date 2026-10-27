@@ -7,9 +7,6 @@ on:
         description: "Results and outputs of the caller's image-build dependencies."
         required: true
         type: string
-      helm_rehearsal:
-        type: boolean
-        default: false
       frontend_only:
         type: boolean
         default: false
@@ -36,44 +33,39 @@ jobs:
   package-chart:
     if: |
       !cancelled()
+      && fromJSON(inputs.build_results).changes.result == 'success'
+      && fromJSON(inputs.build_results).discover-images.result == 'success'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && !(github.event_name == 'workflow_dispatch' && inputs.frontend_only)
+      && github.ref == 'refs/heads/main'
+      && (fromJSON(inputs.build_results).merge-analytics.result == 'success' || fromJSON(inputs.build_results).merge-analytics.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-authenticator.result == 'success' || fromJSON(inputs.build_results).merge-authenticator.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-gateway.result       == 'success' || fromJSON(inputs.build_results).merge-gateway.result       == 'skipped')
+      && (fromJSON(inputs.build_results).merge-identity-resolution.result == 'success' || fromJSON(inputs.build_results).merge-identity-resolution.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-git-cli-proxy.result == 'success' || fromJSON(inputs.build_results).merge-git-cli-proxy.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-insight-v3-core.result == 'success' || fromJSON(inputs.build_results).merge-insight-v3-core.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-previews.result      == 'success' || fromJSON(inputs.build_results).merge-previews.result      == 'skipped')
+      && (fromJSON(inputs.build_results).merge-frontend.result      == 'success' || fromJSON(inputs.build_results).merge-frontend.result      == 'skipped')
+      && (fromJSON(inputs.build_results).merge-toolbox.result       == 'success' || fromJSON(inputs.build_results).merge-toolbox.result       == 'skipped')
+      && (fromJSON(inputs.build_results).merge-seed.result          == 'success' || fromJSON(inputs.build_results).merge-seed.result          == 'skipped')
+      && (fromJSON(inputs.build_results).merge-image.result         == 'success' || fromJSON(inputs.build_results).merge-image.result         == 'skipped')
+      && (fromJSON(inputs.build_results).bump-descriptors.result    == 'success' || fromJSON(inputs.build_results).bump-descriptors.result    == 'skipped')
+      && fromJSON(inputs.build_results).bump-descriptors.outputs.committed != 'true'
+      && fromJSON(inputs.build_results).bump-descriptors.outputs.queue_clear != 'false'
+      && fromJSON(inputs.build_results).queue-gate.result == 'success'
+      && fromJSON(inputs.build_results).queue-gate.outputs.clear == 'true'
       && (
-        (github.event_name == 'workflow_dispatch' && inputs.helm_rehearsal)
-        || (
-          fromJSON(inputs.build_results).changes.result == 'success'
-          && fromJSON(inputs.build_results).discover-images.result == 'success'
-          && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-          && !(github.event_name == 'workflow_dispatch' && inputs.frontend_only)
-          && github.ref == 'refs/heads/main'
-          && (fromJSON(inputs.build_results).merge-analytics.result == 'success' || fromJSON(inputs.build_results).merge-analytics.result == 'skipped')
-          && (fromJSON(inputs.build_results).merge-authenticator.result == 'success' || fromJSON(inputs.build_results).merge-authenticator.result == 'skipped')
-          && (fromJSON(inputs.build_results).merge-gateway.result       == 'success' || fromJSON(inputs.build_results).merge-gateway.result       == 'skipped')
-          && (fromJSON(inputs.build_results).merge-identity-resolution.result == 'success' || fromJSON(inputs.build_results).merge-identity-resolution.result == 'skipped')
-          && (fromJSON(inputs.build_results).merge-git-cli-proxy.result == 'success' || fromJSON(inputs.build_results).merge-git-cli-proxy.result == 'skipped')
-          && (fromJSON(inputs.build_results).merge-insight-v3-core.result == 'success' || fromJSON(inputs.build_results).merge-insight-v3-core.result == 'skipped')
-          && (fromJSON(inputs.build_results).merge-previews.result      == 'success' || fromJSON(inputs.build_results).merge-previews.result      == 'skipped')
-          && (fromJSON(inputs.build_results).merge-frontend.result      == 'success' || fromJSON(inputs.build_results).merge-frontend.result      == 'skipped')
-          && (fromJSON(inputs.build_results).merge-toolbox.result       == 'success' || fromJSON(inputs.build_results).merge-toolbox.result       == 'skipped')
-          && (fromJSON(inputs.build_results).merge-seed.result          == 'success' || fromJSON(inputs.build_results).merge-seed.result          == 'skipped')
-          && (fromJSON(inputs.build_results).merge-image.result         == 'success' || fromJSON(inputs.build_results).merge-image.result         == 'skipped')
-          && (fromJSON(inputs.build_results).bump-descriptors.result    == 'success' || fromJSON(inputs.build_results).bump-descriptors.result    == 'skipped')
-          && fromJSON(inputs.build_results).bump-descriptors.outputs.committed != 'true'
-          && fromJSON(inputs.build_results).bump-descriptors.outputs.queue_clear != 'false'
-          && fromJSON(inputs.build_results).queue-gate.result == 'success'
-          && fromJSON(inputs.build_results).queue-gate.outputs.clear == 'true'
-          && (
-            fromJSON(inputs.build_results).changes.outputs.analytics == 'true'
-            || fromJSON(inputs.build_results).changes.outputs.authenticator == 'true'
-            || fromJSON(inputs.build_results).changes.outputs.gateway      == 'true'
-            || fromJSON(inputs.build_results).changes.outputs.identity_resolution == 'true'
-            || fromJSON(inputs.build_results).changes.outputs.insight_v3_core == 'true'
-            || fromJSON(inputs.build_results).changes.outputs.git_cli_proxy == 'true'
-            || fromJSON(inputs.build_results).changes.outputs.previews     == 'true'
-            || fromJSON(inputs.build_results).changes.outputs.frontend     == 'true'
-            || fromJSON(inputs.build_results).changes.outputs.toolbox      == 'true'
-            || fromJSON(inputs.build_results).changes.outputs.seed         == 'true'
-            || fromJSON(inputs.build_results).changes.outputs.umbrella     == 'true'
-          )
-        )
+        fromJSON(inputs.build_results).changes.outputs.analytics == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.authenticator == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.gateway      == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.identity_resolution == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.insight_v3_core == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.git_cli_proxy == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.previews     == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.frontend     == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.toolbox      == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.seed         == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.umbrella     == 'true'
       )
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small-vm' }}
     timeout-minutes: 60
@@ -86,16 +78,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Require current application and chart sources for a rehearsal
-        if: inputs.helm_rehearsal
-        run: |
-          set -euo pipefail
-          git fetch --no-tags --depth=1 origin main
-          if ! git diff --quiet FETCH_HEAD -- src charts; then
-            echo '::error::Rehearsal reuses pinned images. Rebase onto main; application and chart changes require a full build.'
-            exit 1
-          fi
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
@@ -121,7 +103,6 @@ jobs:
       # bump instead, in its re-triggering commit; this step is the canonical
       # path when no connector changed and bump-descriptors was skipped.
       - name: Bump per-service subchart appVersions
-        if: ${{ !inputs.helm_rehearsal }}
         env:
           BUILD_TAG: ${{ fromJSON(inputs.build_results).changes.outputs.build_tag }}
           FULL_REBUILD: ${{ github.event_name == 'workflow_dispatch' }}
@@ -136,7 +117,6 @@ jobs:
         run: .github/workflows/scripts/bump-service-appversions.sh
 
       - name: Bump ingestion image refs
-        if: ${{ !inputs.helm_rehearsal }}
         env:
           BUILD_TAG: ${{ fromJSON(inputs.build_results).changes.outputs.build_tag }}
           TOOLBOX: ${{ fromJSON(inputs.build_results).changes.outputs.toolbox }}
@@ -172,7 +152,6 @@ jobs:
       # YYYY.MM.DD.HH.MM-shortsha format correctly because the date prefix
       # is lexicographically sortable.
       - name: Bump umbrella version
-        if: ${{ !inputs.helm_rehearsal }}
         id: umbrella
         run: |
           set -euo pipefail
@@ -267,7 +246,7 @@ jobs:
     if: |
       !cancelled()
       && needs.package-chart.result == 'success'
-      && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.helm_rehearsal))
+      && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       actions: read
@@ -284,7 +263,6 @@ jobs:
     needs: [package-chart, validate-chart]
     if: |
       !cancelled()
-      && !inputs.helm_rehearsal
       && needs.package-chart.result == 'success'
       && github.ref == 'refs/heads/main'
       && needs.validate-chart.result == 'success'
@@ -441,7 +419,6 @@ jobs:
   publish-release-chart:
     if: |
       always()
-      && !inputs.helm_rehearsal
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && !(github.event_name == 'workflow_dispatch' && inputs.frontend_only)
       && startsWith(github.ref, 'refs/heads/release-')
