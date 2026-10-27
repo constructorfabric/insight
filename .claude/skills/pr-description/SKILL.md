@@ -1,6 +1,6 @@
 ---
 name: pr-description
-description: "Write the body of a pull request in constructorfabric/insight — the shape a reviewer can decide from in under 30 seconds: bold inline labels for Why / What changed / Out of scope / Verified, a bold-led line per decision the diff cannot show, screenshots for anything visual, and a word cap per block so a three-line fix does not read as a document. Use whenever a PR body is being written or rewritten: 'write the PR description', 'open a PR for this branch', 'the description is too long', 'update the PR body', or right before `gh pr create` and before marking a draft ready. Also use when reviewing someone's description for what it is missing. The repo is PUBLIC and AGENTS.md bans production-derived information from PR bodies, so every number in a description comes from a local stand, a fixture, or a test run. It owns the prose only — `file-bug-insight` owns issues, `drive-ui` owns capturing the screenshots this skill asks for."
+description: "Write the body of a pull request in constructorfabric/insight — the shape a reviewer can decide from in under 30 seconds: bold inline labels for Why / What changed / Out of scope / Verified, What changed as a list of one-sentence changes, one fact per sentence in the active voice, a bold-led line per decision the diff cannot show, screenshots for anything visual, and a word cap per block so a three-line fix does not read as a document. Use whenever a PR body is being written or rewritten: 'write the PR description', 'open a PR for this branch', 'the description is too long', 'update the PR body', or right before `gh pr create` and before marking a draft ready. Also use when reviewing someone's description for what it is missing. The repo is PUBLIC and AGENTS.md bans production-derived information from PR bodies, so every number in a description comes from a local stand, a fixture, or a test run. It owns the prose only — `file-bug-insight` owns issues, `drive-ui` owns capturing the screenshots this skill asks for."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill
@@ -18,8 +18,9 @@ Closes #NNN.
 **Why.** <One sentence, two at most. ≤ 40 words. The symptom or the gap — what
 a reader would notice. The cause belongs in What changed.>
 
-**What changed.** <One sentence, two at most. ≤ 50 words. The change and the
-mechanism.>
+**What changed.**
+- <One change per bullet, one sentence each. ≤ 50 words for the whole list.>
+- <The change and its lever, with the actor as the subject.>
 
 **<Decision.>** <≤ 30 words: why, and how reversible. One per fork, none if the
 branch holds no fork.>
@@ -30,10 +31,12 @@ visual; otherwise one measured number.>
 **Out of scope.** <≤ 30 words. Deliberately not in this branch, and where it is
 tracked.>
 
-**Verified.** <≤ 30 words. What was actually run, and anything that wasn't.>
+**Verified.** <≤ 30 words. What actually ran, and anything that didn't.>
 ```
 
-**Labels are bold inline lead-ins, not headings.** `## Why` renders as an H2 with a rule under it, and four of those turn a three-line fix into a document. The label runs into its own sentence, so each block is one short paragraph and the whole body reads as five lines.
+**Labels are bold inline lead-ins, not headings.** `## Why` renders as an H2 with a rule under it, and four of those turn a three-line fix into a document. The label runs into its own sentence, so each block is one short paragraph. What changed is the one block that holds a list.
+
+**One fact per sentence, in the active voice.** A sentence that joins two facts with a comma, `and` or `so` hides the second one. Split it. Name who acts and make it the subject: *"The legend takes the table's own inset"*, not *"The table's inset is applied to the legend"*.
 
 `Why`, `What changed` and `Verified` are always present. `Out of scope` appears only when something real belongs in it — never a "None" row. Evidence is required whenever the change is visible or measurable.
 
@@ -43,11 +46,11 @@ tracked.>
 
 1. **`Closes #NNN.` first, alone.** A defect branch closes its issue; for a defect with no issue yet, `file-bug-insight` files one first. A small docs or chore PR that tracks nothing simply drops the line — never invent a number.
 2. **Why — the symptom, in one sentence.** What a reader would notice, not what the issue asked for. The cause is not the symptom: it goes next to the fix that answers it.
-3. **What changed — the mechanism, in one sentence.** Name the actual lever when it is small (`the legend now takes the table's own inset — px-3`); a reviewer who learns that reads the diff in seconds. No file list, no bullet per commit — CI already publishes both.
-4. **Decisions, bold-led, inside What changed.** A decision is a fork the reviewer would otherwise guess at: something deliberately left in, deliberately taken out, or changed on purpose beyond the issue. Choice in bold, then the reason, then how reversible it is. *"**Manage now opens on Metric catalog — a deliberate behaviour change.** It previously opened on nothing while a built page sat one click away. Easy to carve back out if that card was load-bearing."*
+3. **What changed — a list, one change per bullet.** Each bullet is one sentence about one change. Name the actual lever when it is small (`the legend now takes the table's own inset — px-3`); a reviewer who learns that reads the diff in seconds. A bullet names a change in behaviour or mechanism, never a file or a commit — CI already publishes both.
+4. **Decisions, bold-led, after the list.** A decision is a fork the reviewer would otherwise guess at: something deliberately left in, deliberately taken out, or changed on purpose beyond the issue. Choice in bold, then the reason, then how reversible it is. *"**Manage now opens on Metric catalog — a deliberate behaviour change.** It previously opened on nothing while a built page sat one click away. Easy to carve back out if that card was load-bearing."*
 5. **Evidence, measured.** UI change → a full-size before/after showing it in its real surroundings, then a `| Before | After |` crop table when the detail is small: the full shot proves it in context, the crop proves the pixels. `drive-ui` captures both. Anything countable → the count: `connectors 27 → 20`, `the row now has 23px to spare`, `zero dangling ref() across 206 models`. A number nobody measured is not evidence.
 6. **Out of scope, when it exists.** A known thing this branch deliberately does not do, and where it is tracked. Omit the label when there is nothing.
-7. **Verified.** Only what actually ran on this branch. Name the gap when there is one: *"`dbt parse` was not run — dbt is unavailable here, so the ref-graph check stands in for it."* CI reports its own jobs; don't transcribe them, and don't claim a job that is still pending.
+7. **Verified.** Only what actually ran on this branch. Name the gap when there is one: *"`dbt parse` did not run: this machine has no dbt. The ref-graph check stands in for it."* CI reports its own jobs; don't transcribe them, and don't claim a job that is still pending.
 
 ## Size
 
@@ -106,6 +109,9 @@ Bot blocks (CodeRabbit release notes, coverage tables) append themselves below t
 | A table long enough to scroll | Tables are for skimming. Enumerations stay in the scan output. |
 | "Lint and typecheck green" while the job is still pending | Run it locally, or cut the claim. |
 | A decision buried mid-paragraph | Own line, bold lead, its own reason. |
+| What changed as one paragraph of several changes | A list, one change per bullet. |
+| Two facts in one sentence — "X moved, so Y now fails less" | Two sentences. |
+| Passive voice — "the token is checked", "the step was rewritten" | Name the actor as the subject: "the gateway checks the token". |
 | Prose describing pixels | Screenshot. |
 | An `##` heading on a five-line body | Bold labels. Headings are for the optional sections. |
 | **Out of scope** reading "None" or "N/A" | Delete the label. |
