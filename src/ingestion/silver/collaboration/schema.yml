@@ -169,7 +169,9 @@ models:
           - not_null
           - unique
       - name: person_key
-        description: "lower(email) with lower(user_name) fallback — cross-source identity join key"
+        description: >
+          lower(email) — the cross-source identity join key; `zoom-guest:<name>`
+          on a Zoom row kept as an account (see account_id)
         tests:
           - not_null
       - name: date
@@ -178,6 +180,23 @@ models:
           - not_null
       - name: data_source
         description: "Source discriminator: insight_m365 | insight_zoom"
+        tests:
+          - not_null
+      - name: account_source_type
+        description: >
+          How the row is keyed: 'email' (person_key is the address, the other two
+          columns are empty) or the identity source type of the account it is
+          keyed on ('zoom-guest')
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['email', 'zoom-guest']
+      - name: account_source_id
+        description: "Raw connector source id of that account; '' on an email-keyed row"
+        tests:
+          - not_null
+      - name: account_id
+        description: "The account's id as identity states it (a normalized display name for zoom-guest); '' on an email-keyed row"
         tests:
           - not_null
       - name: audio_duration_seconds

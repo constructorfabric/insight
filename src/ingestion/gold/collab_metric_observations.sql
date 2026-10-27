@@ -5,9 +5,11 @@ SELECT
     source_key,
     entity_type,
     entity_id,
-    '' AS account_source_type,
-    '' AS account_source_id,
-    '' AS account_id,
+    -- The read-time resolution key: a guest account's rows merge only within
+    -- that account, so a binding moves exactly its contributions.
+    account_source_type,
+    account_source_id,
+    account_id,
     metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     measure_key,
@@ -20,4 +22,4 @@ SELECT
     subject_key,
     dimensions
 FROM {{ ref('collab_metric_evidence') }}
-GROUP BY tenant_id, source_key, entity_type, entity_id, metric_date, measure_key, subject_key, dimensions
+GROUP BY tenant_id, source_key, entity_type, entity_id, account_source_type, account_source_id, account_id, metric_date, measure_key, subject_key, dimensions
