@@ -175,6 +175,13 @@ models:
         description: "The issue's immutable id."
         tests:
           - not_null
+  - name: jira__task_references
+    description: "Per-source staging projection of the issues each Jira issue points at — through a link, a key in a field value, or a key in a live comment — resolving written keys through jira__issue_key_ids. Unioned into silver.class_task_references."
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
   - name: jira__task_links
     description: "Per-source staging projection of Jira issue links and parent changes as intervals, folded from the changelog's add and remove events, with links held before the first event seeded from the snapshot. Unioned into silver.class_task_links."
     columns:
