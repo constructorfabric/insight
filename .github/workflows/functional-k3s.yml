@@ -308,40 +308,85 @@ jobs:
           echo "edge never answered (last status: ${code:-none})" >&2
           exit 1
 
-      - name: Verify Insight v3 Core raw-data admission and routing
+      - name: Verify Insight v3 Core raw-data lifecycle
         run: |
           set -euo pipefail
-          core_token=$(kubectl -n "${INSIGHT_NAMESPACE}" get secret insight-v3-core-token \
+          forward_pids=()
+          hosts_backup=""
+          cleanup() {
+            status=$?
+            trap - EXIT
+            for pid in "${forward_pids[@]}"; do
+              kill "${pid}" 2>/dev/null || true
+              wait "${pid}" 2>/dev/null || true
+            done
+            if [[ -n "${hosts_backup}" ]]; then
+              sudo cp "${hosts_backup}" /etc/hosts || status=1
+              rm -f "${hosts_backup}"
+            fi
+            exit "${status}"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+
+          forward_service() {
+            local namespace="$1" service="$2" ports="$3"
+            local log="${RUNNER_TEMP}/${service}-port-forward.log"
+            kubectl -n "${namespace}" port-forward "svc/${service}" "${ports}" > "${log}" 2>&1 &
+            local pid=$!
+            forward_pids+=("${pid}")
+            for _ in $(seq 1 30); do
+              if grep -q '^Forwarding from ' "${log}"; then
+                return 0
+              fi
+              if ! kill -0 "${pid}" 2>/dev/null; then
+                cat "${log}" >&2
+                return 1
+              fi
+              sleep 1
+            done
+            cat "${log}" >&2
+            return 1
+          }
+
+          values="deploy/gitops/environments/${GITOPS_ENV}/values.yaml"
+          TENANT_DEFAULT_ID=$(yq -e -r '.global.tenantDefaultId' "${values}")
+          DEV_USER_EMAIL=$(yq -r '.keycloak.devUserEmail // "dev@company.nonpresent"' "${values}")
+          MARIADB_DB=$(yq -r '.identityResolution.databaseName // load("charts/insight/values.yaml").identityResolution.databaseName' "${values}")
+          MARIADB_USER=$(yq -e -r '.mariadb.username' "${values}")
+          IDP_SOURCE_TYPE=$(yq -e -r '.authenticator.oidc.sourceType' "${values}")
+          export TENANT_DEFAULT_ID DEV_USER_EMAIL MARIADB_DB MARIADB_USER IDP_SOURCE_TYPE
+          export MARIADB_HOST=127.0.0.1 MARIADB_PORT=13306
+          export SEED_MANIFEST_PATH="${RUNNER_TEMP}/functional-identity-manifest.json"
+          mariadb_host=$(yq -e -r '.mariadb.host' "${values}")
+          mariadb_port=$(yq -e -r '.mariadb.port' "${values}")
+          forward_service "${INFRA_NAMESPACE}" "${mariadb_host%%.*}" "${MARIADB_PORT}:${mariadb_port}"
+          uv run --project src/ingestion/tools/seed insight-seed identity
+
+          keycloak_url=$(yq -e -r '.keycloak.hostname' "${values}")
+          keycloak_authority="${keycloak_url#*://}"
+          keycloak_authority="${keycloak_authority%%/*}"
+          keycloak_host="${keycloak_authority%:*}"
+          keycloak_port="${keycloak_authority##*:}"
+          forward_service "${INSIGHT_NAMESPACE}" "${keycloak_host%%.*}" "${keycloak_port}:${keycloak_port}"
+          backup=$(mktemp)
+          cp /etc/hosts "${backup}"
+          hosts_backup="${backup}"
+          printf '127.0.0.1 %s\n' "${keycloak_host}" | sudo tee -a /etc/hosts >/dev/null
+          export NO_PROXY="${NO_PROXY:+${NO_PROXY},}localhost,127.0.0.1,${keycloak_host}"
+          export no_proxy="${NO_PROXY}"
+
+          INSIGHT_SMOKE_INGEST_TOKEN=$(kubectl -n "${INSIGHT_NAMESPACE}" get secret insight-v3-core-token \
             -o jsonpath='{.data.token}' | base64 -d)
-          test -n "${core_token}"
-
-          response_body=$(mktemp)
-          trap 'rm -f "${response_body}"' EXIT
-          request_body='{"dataset":"functional_ci_undeclared","raw_data":{"source":"functional-ci","value":42}}'
-
-          for expected_status in 401 404; do
-            headers=()
-            if [[ "${expected_status}" == "404" ]]; then
-              headers=(-H "X-Insight-Token: ${core_token}")
-            fi
-
-            status=$(curl -sS -X POST --connect-timeout 5 --max-time 30 \
-              -o "${response_body}" -w '%{http_code}' \
-              -H 'Content-Type: application/json' \
-              "${headers[@]}" \
-              --data "${request_body}" \
-              "http://localhost:${EDGE_PORT}/api/core/v1/raw-data") \
-              || status="curl failed (${status})"
-
-            if [[ "${status}" != "${expected_status}" ]] || {
-              [[ "${expected_status}" == "404" ]] &&
-                ! yq -p=json -e '.context.resource_name == "functional_ci_undeclared"' "${response_body}" >/dev/null
-            }; then
-              printf 'raw-data: expected HTTP %s, got %s\n' "${expected_status}" "${status}" >&2
-              cat "${response_body}" >&2
-              exit 1
-            fi
-          done
+          test -n "${INSIGHT_SMOKE_INGEST_TOKEN}"
+          echo "::add-mask::${INSIGHT_SMOKE_INGEST_TOKEN}"
+          export INSIGHT_SMOKE_INGEST_TOKEN
+          admin_email=$(yq -p=json -e -r '.fixtures.admin_operator.email' "${SEED_MANIFEST_PATH}")
+          uv run --project tests --frozen python scripts/ci/raw_data_smoke.py \
+            --base-url "http://localhost:${EDGE_PORT}" \
+            --realm-path "deploy/gitops/environments/${GITOPS_ENV}/keycloak/realms/realm-insight.generated.json" \
+            --admin-email "${admin_email}"
 
       - name: Dump diagnostics on failure
         if: failure()
