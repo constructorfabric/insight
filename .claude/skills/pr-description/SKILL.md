@@ -15,12 +15,15 @@ A description exists so a reviewer reaches *"I understand the diff, I can decide
 ```
 Closes #NNN.
 
+**Draft — <the blocker>.** <Only on a draft. What stops it, in one or two
+sentences.>
+
 **Why.** <One sentence, two at most. ≤ 40 words. The symptom or the gap — what
 a reader would notice. The cause belongs in What changed.>
 
 **What changed.**
-- <One change per bullet: a sentence for the change and its lever, then a
-  sentence for what it is for. ≤ 25 words per bullet.>
+- **<The problem this change answers.>** <A sentence for the change and its
+  lever, then a sentence for what it is for. ≤ 30 words per bullet.>
 
 **<Decision.>** <≤ 30 words: why, and how reversible. One per fork, none if the
 branch holds no fork.>
@@ -44,9 +47,9 @@ tracked.>
 
 ## The parts
 
-1. **`Closes #NNN.` first, alone.** A defect branch closes its issue; for a defect with no issue yet, `file-bug-insight` files one first. A small docs or chore PR that tracks nothing simply drops the line — never invent a number.
+1. **`Closes #NNN.` first, alone.** A defect branch closes its issue; for a defect with no issue yet, `file-bug-insight` files one first. A small docs or chore PR that tracks nothing simply drops the line — never invent a number. A draft names its blocker next, in a bold-led line, before **Why**.
 2. **Why — the symptom, in one sentence.** What a reader would notice, not what the issue asked for. The cause is not the symptom: it goes next to the fix that answers it.
-3. **What changed — a list, one change per bullet.** Each bullet holds two sentences: the change, then what it is for. Name the actual lever when it is small; a reviewer who learns that reads the diff in seconds. *"The legend takes the table's own inset, `px-3`. That lines it up with the person column."* A bullet names a change in behaviour or mechanism, never a file or a commit — CI already publishes both. A change that runs as a sequence stays one bullet, with its steps numbered under it in the order they run.
+3. **What changed — a list, one change per bullet.** Each bullet opens with the problem it answers, in bold, so the reader pairs every fix with what broke. Two sentences follow: the change, then what it is for. Name the actual lever when it is small; a reviewer who learns that reads the diff in seconds. *"**The legend sat off the grid.** The legend takes the table's own inset, `px-3`. That lines it up with the person column."* Say what an internal name does, or explain it in the same bullet: a reader outside the code does not know a Makefile target or a fixture by name. A bullet names a change in behaviour or mechanism, never a file or a commit — CI already publishes both. A change that runs as a sequence stays one bullet, with its steps numbered under it in the order they run.
 4. **Decisions, bold-led, after the list.** A decision is a fork the reviewer would otherwise guess at: something deliberately left in, deliberately taken out, or changed on purpose beyond the issue. Choice in bold, then the reason, then how reversible it is. *"**Manage now opens on Metric catalog — a deliberate behaviour change.** It previously opened on nothing while a built page sat one click away. Easy to carve back out if that card was load-bearing."*
 5. **Evidence, measured.** UI change → a full-size before/after showing it in its real surroundings, then a `| Before | After |` crop table when the detail is small: the full shot proves it in context, the crop proves the pixels. `drive-ui` captures both. Anything countable → the count: `connectors 27 → 20`, `the row now has 23px to spare`, `zero dangling ref() across 206 models`. A number nobody measured is not evidence.
 6. **Out of scope, when it exists.** A known thing this branch deliberately does not do, and where it is tracked. Omit the label when there is nothing.
@@ -111,6 +114,8 @@ Bot blocks (CodeRabbit release notes, coverage tables) append themselves below t
 | A decision buried mid-paragraph | Own line, bold lead, its own reason. |
 | What changed as one paragraph of several changes | A list, one change per bullet. |
 | A bullet that names a change and stops | Add the sentence that says what it is for. |
+| A bullet that opens with the fix | Open with the problem it answers, in bold. |
+| A draft whose blocker sits at the bottom | Name the blocker right after the `Closes` line. |
 | The steps of one change listed as separate changes | One bullet for the change, its steps numbered under it. |
 | Two facts in one sentence — "X moved, so Y now fails less" | Two sentences. |
 | Passive voice — "the token is checked", "the step was rewritten" | Name the actor as the subject: "the gateway checks the token". |
