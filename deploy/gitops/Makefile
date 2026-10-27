@@ -1086,7 +1086,7 @@ rollback: vpn-up kube-ctx
 
 .PHONY: status
 status: vpn-up kube-ctx
-	@helm status $(RELEASE) --namespace $(NAMESPACE) --show-resources $(HELM_EXTRA_FLAGS) || true
+	@helm status $(RELEASE) --namespace $(NAMESPACE) $(HELM_EXTRA_FLAGS) || true
 	@echo "---"
 	@kubectl -n $(NAMESPACE) rollout status deploy --timeout=30s || true
 
