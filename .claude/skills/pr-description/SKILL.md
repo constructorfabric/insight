@@ -1,6 +1,6 @@
 ---
 name: pr-description
-description: "Write the body of a pull request in constructorfabric/insight — the shape a reviewer can decide from in under 30 seconds: bold inline labels for Why / What changed / Out of scope / Verified, What changed as a list of one-sentence changes, one fact per sentence in the active voice, a bold-led line per decision the diff cannot show, screenshots for anything visual, and a word cap per block so a three-line fix does not read as a document. Use whenever a PR body is being written or rewritten: 'write the PR description', 'open a PR for this branch', 'the description is too long', 'update the PR body', or right before `gh pr create` and before marking a draft ready. Also use when reviewing someone's description for what it is missing. The repo is PUBLIC and AGENTS.md bans production-derived information from PR bodies, so every number in a description comes from a local stand, a fixture, or a test run. It owns the prose only — `file-bug-insight` owns issues, `drive-ui` owns capturing the screenshots this skill asks for."
+description: "Write the body of a pull request in constructorfabric/insight — the shape a reviewer can decide from in under 30 seconds: bold inline labels for Why / What changed / Out of scope / Verified, What changed as a list of changes, each with what it is for, one fact per sentence in the active voice, a bold-led line per decision the diff cannot show, screenshots for anything visual, and a word cap per block so a three-line fix does not read as a document. Use whenever a PR body is being written or rewritten: 'write the PR description', 'open a PR for this branch', 'the description is too long', 'update the PR body', or right before `gh pr create` and before marking a draft ready. Also use when reviewing someone's description for what it is missing. The repo is PUBLIC and AGENTS.md bans production-derived information from PR bodies, so every number in a description comes from a local stand, a fixture, or a test run. It owns the prose only — `file-bug-insight` owns issues, `drive-ui` owns capturing the screenshots this skill asks for."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill
@@ -19,8 +19,8 @@ Closes #NNN.
 a reader would notice. The cause belongs in What changed.>
 
 **What changed.**
-- <One change per bullet, one sentence each. ≤ 50 words for the whole list.>
-- <The change and its lever, with the actor as the subject.>
+- <One change per bullet: a sentence for the change and its lever, then a
+  sentence for what it is for. ≤ 25 words per bullet.>
 
 **<Decision.>** <≤ 30 words: why, and how reversible. One per fork, none if the
 branch holds no fork.>
@@ -46,7 +46,7 @@ tracked.>
 
 1. **`Closes #NNN.` first, alone.** A defect branch closes its issue; for a defect with no issue yet, `file-bug-insight` files one first. A small docs or chore PR that tracks nothing simply drops the line — never invent a number.
 2. **Why — the symptom, in one sentence.** What a reader would notice, not what the issue asked for. The cause is not the symptom: it goes next to the fix that answers it.
-3. **What changed — a list, one change per bullet.** Each bullet is one sentence about one change. Name the actual lever when it is small (`the legend now takes the table's own inset — px-3`); a reviewer who learns that reads the diff in seconds. A bullet names a change in behaviour or mechanism, never a file or a commit — CI already publishes both.
+3. **What changed — a list, one change per bullet.** Each bullet holds two sentences: the change, then what it is for. Name the actual lever when it is small; a reviewer who learns that reads the diff in seconds. *"The legend takes the table's own inset, `px-3`. That lines it up with the person column."* A bullet names a change in behaviour or mechanism, never a file or a commit — CI already publishes both.
 4. **Decisions, bold-led, after the list.** A decision is a fork the reviewer would otherwise guess at: something deliberately left in, deliberately taken out, or changed on purpose beyond the issue. Choice in bold, then the reason, then how reversible it is. *"**Manage now opens on Metric catalog — a deliberate behaviour change.** It previously opened on nothing while a built page sat one click away. Easy to carve back out if that card was load-bearing."*
 5. **Evidence, measured.** UI change → a full-size before/after showing it in its real surroundings, then a `| Before | After |` crop table when the detail is small: the full shot proves it in context, the crop proves the pixels. `drive-ui` captures both. Anything countable → the count: `connectors 27 → 20`, `the row now has 23px to spare`, `zero dangling ref() across 206 models`. A number nobody measured is not evidence.
 6. **Out of scope, when it exists.** A known thing this branch deliberately does not do, and where it is tracked. Omit the label when there is nothing.
@@ -56,8 +56,8 @@ tracked.>
 
 | Change | Budget | Headings |
 |---|---|---|
-| fix, chore, docs, dependency bump | ≤ 100 words | none — bold labels only |
-| feature, behaviour change | ≤ 220 words | at most one `##` heading, from the optional list |
+| fix, chore, docs, dependency bump | ≤ 150 words | none — bold labels only |
+| feature, behaviour change | ≤ 300 words | at most one `##` heading, from the optional list |
 | anything longer | needs a reason you can state | link the issue or the spec instead of inlining it |
 
 Word budgets count prose; images, links and code identifiers don't. The per-block caps hold at every size — a feature spends its larger budget on an optional heading, never on a fatter **Why**.
@@ -110,6 +110,7 @@ Bot blocks (CodeRabbit release notes, coverage tables) append themselves below t
 | "Lint and typecheck green" while the job is still pending | Run it locally, or cut the claim. |
 | A decision buried mid-paragraph | Own line, bold lead, its own reason. |
 | What changed as one paragraph of several changes | A list, one change per bullet. |
+| A bullet that names a change and stops | Add the sentence that says what it is for. |
 | Two facts in one sentence — "X moved, so Y now fails less" | Two sentences. |
 | Passive voice — "the token is checked", "the step was rewritten" | Name the actor as the subject: "the gateway checks the token". |
 | Prose describing pixels | Screenshot. |
