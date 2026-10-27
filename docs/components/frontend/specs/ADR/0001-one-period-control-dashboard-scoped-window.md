@@ -1,0 +1,106 @@
+---
+status: proposed
+date: 2026-10-27
+---
+
+# ADR-0001: One Period Control, with a Window Scoped to Each Open Dashboard
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Drivers](#decision-drivers)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+  - [Consequences](#consequences)
+  - [Confirmation](#confirmation)
+- [Pros and Cons of the Options](#pros-and-cons-of-the-options)
+  - [Keep a separate control per area](#keep-a-separate-control-per-area)
+  - [One control and one portal-wide window that dashboards follow](#one-control-and-one-portal-wide-window-that-dashboards-follow)
+  - [One control; a portal-wide window plus a window scoped to each open dashboard](#one-control-a-portal-wide-window-plus-a-window-scoped-to-each-open-dashboard)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+**ID**: `cpt-insightspec-portal-adr-one-period-control`
+
+## Context and Problem Statement
+
+The portal shows period figures on Home, Explore, People, Reports and custom dashboards. A reader needs one way to pick the reporting window, yet a dashboard is authored for a window and shared by address, while the rest of the portal is the reader's own working context. Which control picks the window, and whose window does an open dashboard read?
+
+## Decision Drivers
+
+* A reader learns one control and one preset list, and sees the same dates for the same preset everywhere.
+* A shared dashboard address opens on the window its author meant, for every reader.
+* Picking a window on one surface must never silently change what another surface shows.
+* Every view stays reproducible from its address (`cpt-insightspec-portal-principle-address-state`).
+
+## Considered Options
+
+* Keep a separate control per area
+* One control and one portal-wide window that dashboards follow
+* One control; a portal-wide window plus a window scoped to each open dashboard
+
+## Decision Outcome
+
+Chosen option: "One control; a portal-wide window plus a window scoped to each open dashboard", because it is the only option that gives readers one control while letting a shared dashboard open on its author's window and keeping each surface's window independent and in its address.
+
+### Consequences
+
+* Good, because every surface uses the same control, presets and date resolution.
+* Good, because a dashboard address carries its own window, so a shared link shows the same figures to every reader.
+* Good, because changing the window on a dashboard never changes Home or Explore, and the reverse.
+* Bad, because a reader moving from Explore to a dashboard may meet a different window and must read the toolbar to notice.
+* Bad, because the portal-wide window and the dashboard window are two parameters to keep apart in navigation code.
+* Bad, because the services must resolve every preset the control offers, including Last 90 days, with the semantics the PRD states; the analytics and definition services own that change.
+* Neutral, because a dashboard's stored list of offered windows is ignored by the portal from this decision on; the definition service keeps accepting it until its own design retires it, and a stored default the control no longer lists opens as a custom range with the same dates.
+* Neutral, because a metric with a maximum window still refuses a longer preset; the widget shows that refusal with its reason instead of a figure.
+
+### Confirmation
+
+Design review of every surface showing period figures confirms it renders the period control component bound to either the portal window or its dashboard's window. A UI journey confirms that changing a dashboard's window leaves the portal window unchanged, and that a dashboard address with a window opens on that window.
+
+## Pros and Cons of the Options
+
+### Keep a separate control per area
+
+Each area keeps its own control and preset list.
+
+* Good, because no surface changes.
+* Bad, because readers learn several controls whose presets resolve to different dates.
+* Bad, because a reader comparing a dashboard with a lens cannot pick the same window in both.
+
+### One control and one portal-wide window that dashboards follow
+
+A single window applies everywhere, dashboards included.
+
+* Good, because one window is the simplest model to explain.
+* Bad, because a shared dashboard opens on whatever window the reader last picked, not the one its author meant.
+* Bad, because changing the window on a dashboard silently changes every other surface.
+
+### One control; a portal-wide window plus a window scoped to each open dashboard
+
+The same control everywhere; Home, Explore, People and Reports share the portal window; an open dashboard reads its own window, opening on its stored default.
+
+* Good, because readers learn one control.
+* Good, because a dashboard's figures are reproducible from its address.
+* Neutral, because the window shown on a dashboard may differ from the one just used elsewhere; the toolbar always states the dates.
+* Bad, because two window parameters must be kept distinct.
+
+## More Information
+
+Presets resolve on the services, which already resolve every dashboard window from a preset token against the clock; the portal-wide window uses the same tokens so both resolve identically. Window semantics — rolling presets include today, calendar presets cover the last complete month or quarter, all days in UTC — are stated in `cpt-insightspec-portal-fr-period-semantics`. The per-dashboard restriction of which windows a reader may pick is retired: every dashboard offers every preset. The portal labels presets with dates from one rule shared with the services and kept in step by a contract test.
+
+Decision owner: the portal's product owner. Revisit if readers need several dashboards to follow one shared window — for example a board of dashboards read together — or if a dashboard must again restrict the windows it can be read over.
+
+## Traceability
+
+- **PRD**: [PRD.md](../PRD.md)
+- **DESIGN**: [DESIGN.md](../DESIGN.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-insightspec-portal-fr-period-control` — one control and preset list on every surface
+* `cpt-insightspec-portal-fr-period-scope` — portal-wide window and per-dashboard window
+* `cpt-insightspec-portal-fr-period-semantics` — identical resolution of a preset everywhere
+* `cpt-insightspec-portal-component-period-control` — the component bound to either window
