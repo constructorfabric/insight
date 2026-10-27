@@ -1,6 +1,6 @@
 ---
 status: draft
-version: "0.5"
+version: "0.6"
 date: 2026-10-27
 ---
 
@@ -66,29 +66,25 @@ The visual layer is one foundation: semantic colour tokens defined once for ligh
 | `cpt-insightspec-portal-fr-share` | Share dialog driven by the sharing service's grant model and the dashboard's may-share flag. |
 | `cpt-insightspec-portal-fr-states` | State components classify each section's read as loading, empty, not connected, refused or failed, each with its own presentation. |
 | `cpt-insightspec-portal-fr-planned` | Navigation policy and the per-person "show planned" preference filter every navigation model; a planned item is never the default. |
-| `cpt-insightspec-portal-fr-a11y` | Shell supplies a skip link and current-destination semantics; components come from an accessible kit; state components announce. |
-| `cpt-insightspec-portal-fr-period-semantics` | Presets are tokens the services resolve. The period control labels each preset with dates from one shared rule, kept in step with the services by a contract test. |
-| `cpt-insightspec-portal-fr-session` | Shell shows a session-ended notice when refresh fails, then starts sign-in; the sign-in error page covers denied and retryable failures. |
-| `cpt-insightspec-portal-fr-not-found` | A catch-all route and unknown-item resolution render the not-found state component instead of redirecting. |
+| `cpt-insightspec-portal-fr-a11y` | Components come from an accessible kit; state components announce. |
+| `cpt-insightspec-portal-fr-period-semantics` | Presets are tokens the services resolve. The period control labels each preset with dates from the rule the services use. |
+| `cpt-insightspec-portal-fr-session` | Shell starts sign-in when no session exists; the sign-in error page covers denied and retryable failures. |
 | `cpt-insightspec-portal-fr-view-as` | Shell shows the view-as banner, with an exit, and the demonstration-data banner above the toolbar. |
 | `cpt-insightspec-portal-fr-dashboards-access`, `cpt-insightspec-portal-fr-open-dashboard`, `cpt-insightspec-portal-fr-create-dashboard`, `cpt-insightspec-portal-fr-widgets`, `cpt-insightspec-portal-fr-orphaned` | Dashboards area renders actions from the definition and sharing services' per-dashboard permissions. Member reads use the dashboard-scoped widget routes, with no drill-down. |
 | `cpt-insightspec-portal-fr-lenses`, `cpt-insightspec-portal-fr-evidence`, `cpt-insightspec-portal-fr-ai-cost` | Explore's lens renderers and evidence dialog. Evidence and cost render only where the analytics service returns them for the viewer's grants. |
 | `cpt-insightspec-portal-fr-person`, `cpt-insightspec-portal-fr-team` | People area; the members grid opens sorted by name. |
-| `cpt-insightspec-portal-fr-manage`, `cpt-insightspec-portal-fr-ingestion-health`, `cpt-insightspec-portal-fr-identities` | Manage area; default item resolution skips placeholders. |
+| `cpt-insightspec-portal-fr-manage`, `cpt-insightspec-portal-fr-ingestion-health`, `cpt-insightspec-portal-fr-identities` | Manage area. |
 | `cpt-insightspec-portal-fr-destructive` | Confirm dialog with destructive styling for deletion; widening warnings in the share and move-to-folder flows. |
 
 #### NFR Allocation
 
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |--------|-------------|--------------|-----------------|----------------------|
-| `cpt-insightspec-portal-nfr-honest-states` | Failed or refused never renders as empty or zero | State components; view-model functions | Every section read is classified before rendering; a missing reading maps to "not tracked", never zero | Component tests per state; fault-injected stand journeys |
+| `cpt-insightspec-portal-nfr-honest-states` | Failed or refused never renders as empty or zero | State components; view-model functions | Every section read is classified before rendering; a missing reading maps to "not tracked", never zero | Frontend component tests per state |
 | `cpt-insightspec-portal-nfr-reach` | Nothing drawn outside the viewer's reach | Service clients; view models | Views render only service responses; refusals render as refusals; navigation hiding is cosmetic | Stand API and UI suites per persona |
-| `cpt-insightspec-portal-nfr-bounded-requests` | Requests per list page constant in item count | List pages; service clients | List responses carry each card's display fields; cards never fetch individually | Network assertions in component tests |
-| `cpt-insightspec-portal-nfr-feedback-latency` | Loading state within 200 ms | Router pending state; state components | Router pending view and per-section spinners appear on any unresolved read | UI journey timing checks |
-| `cpt-insightspec-portal-nfr-accessibility` | WCAG 2.2 AA in both themes | Foundation tokens; kit components; shell | Kit components carry roles and names; shell adds skip link and current markers; token contrast follows the design file | Automated accessibility scan per page and theme; keyboard walkthrough |
-| `cpt-insightspec-portal-nfr-exports` | Exports carry only what is shown | Evidence dialog; report builder | Export writes the rows already on screen; each export records a usage event naming the page | Component tests comparing exported rows with rendered rows |
-| `cpt-insightspec-portal-nfr-screen-widths` | Usable from 360 px with no page scroll | Shell layout tiers; tables and charts | Phone-tier drawer; toolbar scrolls sideways; wide content scrolls in its own frame | Viewport tests at 360, 768 and 1440 px |
-| `cpt-insightspec-portal-nfr-installation-policy` | Hide or plan any page by configuration | Navigation policy | Policy paths per zone, item, direction, lens, section and metric, applied to every navigation model | Policy unit tests; configured stand check |
+| `cpt-insightspec-portal-nfr-bounded-requests` | Requests per list page constant in item count | List pages; service clients | List responses carry each card's display fields; cards never fetch individually | Frontend component tests |
+| `cpt-insightspec-portal-nfr-exports` | Exports carry only what is shown | Evidence dialog; report builder | Export writes the rows already on screen | Frontend component tests |
+| `cpt-insightspec-portal-nfr-installation-policy` | Hide or plan any page by configuration | Navigation policy | Policy paths per zone, item, direction, lens, section and metric, applied to every navigation model | Navigation policy unit tests |
 
 ### 1.3 Architecture Layers
 
@@ -251,7 +247,6 @@ Every page needs the same navigation, view controls, banners and scroll behaviou
   - wide, from 1024 px: rail and pane in flow.
 - Outside Dashboards, holds the toolbar: the cohort control (where the page draws comparisons and the organisation has more than one cohort), followed by the period control. Shows no toolbar in Dashboards.
 - Shows the view-as and demonstration-data banners.
-- Supplies the skip link.
 - Hosts the settings menu and feedback dialog.
 
 ##### Responsibility boundaries
@@ -494,7 +489,6 @@ Loading, empty, not connected, refused and failed must look the same everywhere 
 - Refusal card showing the service's reason.
 - Error card with retry.
 - Planned row and badge.
-- Not-found view and session-ended notice.
 
 Densities: card, chip and row.
 
@@ -545,7 +539,6 @@ Holds no product behaviour.
 | `GET` | `/portal/custom/new/{kind}`, `/portal/custom/edit/{kind}/{item}` | Definition editor: create and edit | stable |
 | `GET` | `/portal/custom/alerts/new`, `/portal/custom/alerts/{alert}/edit` | Alert form: create and edit | stable |
 | `GET` | `/ic/{person}`, `/ic/{person}/personal`, `/ic/{person}/team` | Person page (the bare address opens the personal view) and team view | stable |
-| `GET` | any other path | Not-found view | stable |
 
 Shared view parameters: portal window (preset or from–to), scope and direct-only, cohort. A dashboard window parameter applies only on an open dashboard. Service interfaces are in §3.4; installation configuration is in §3.8.
 
@@ -707,7 +700,6 @@ Colour tokens (light and dark), type roles, spacing, radius, control sizes and s
 |-----------|---------------------|
 | Button | Primary, Outline, Ghost × Default, Hover, Focus, Disabled; Destructive for deletion |
 | Badge | Neutral, Info, Success, Warning, Danger, Outline |
-| Evidence pill | Strong, Directional, Gap, Broken; dot and label |
 | Filter chip | Default, Selected; with count |
 | Source chip | Connected, Partial, Missing; dot and source name |
 | Rail item | Default, Hover, Active, Planned |
@@ -724,17 +716,15 @@ Colour tokens (light and dark), type roles, spacing, radius, control sizes and s
 
 ### 4.4 Cross-Cutting Concerns
 
-**Session**: one browser tab leads session refresh, through a storage lease and a broadcast channel. When refresh fails, the shell shows the session-ended notice, then starts sign-in. A 401 from any service re-probes the session before treating it as ended.
+**Session**: one browser tab leads session refresh, through a storage lease and a broadcast channel. When refresh fails, the shell starts sign-in. A 401 from any service re-probes the session before treating it as ended.
 
-**Untrusted content**: the portal renders service-provided text, including Assistant prose and definition descriptions, as text or restricted markdown, never as raw HTML.
+**Feedback and usage paths**: feedback and usage events carry the redacted path of the screen.
 
-**Feedback and usage paths**: feedback and usage events carry the redacted path of the screen, with person, scope, search and dashboard segments masked.
-
-**Reads and writes**: a failed read shows a retry action. Writes are never retried automatically, so a failed write cannot apply twice. An edit conflict is shown with the option to load the latest version.
+**Reads and writes**: a failed read shows a retry action. An edit conflict is shown with the option to load the latest version.
 
 **Observability**: unhandled errors reach Sentry through the error boundary, which offers try-again and reload. Usage events: page view, window change, scope change, cohort change, drill-down, export, report column.
 
-**Capacity and cost**: the portal is a static bundle with no server-side cost of its own. List pages are fetched 50 items at a time. Beyond a page's own reads, the only per-view load is the Assistant column and per-section reads.
+**Capacity and cost**: the portal is a static bundle with no server-side cost of its own. List pages are fetched 50 items at a time.
 
 ## 5. Traceability
 

@@ -91,7 +91,7 @@ The same control everywhere. Home, Explore, People and Reports share the portal 
 
 Presets must resolve the same way on the services and in the portal, by `cpt-insightspec-portal-fr-period-semantics`, and the portal window and dashboard windows must use the same preset tokens. Today they differ: the portal resolves its own presets in local time and ends rolling ranges yesterday, and the services have no Last 90 days token. Both converge before this decision ships.
 
-The per-dashboard restriction of which windows a reader may pick is retired: every dashboard offers every preset. The portal labels presets with dates from one rule shared with the services, kept in step by a contract test.
+The per-dashboard restriction of which windows a reader may pick is retired: every dashboard offers every preset. The portal labels presets with dates from the rule the services use.
 
 Decision owner: the portal's product owner. Revisit if readers need several dashboards to follow one shared window (for example, a board of dashboards read together), or if a dashboard must again restrict the windows it can be read over.
 

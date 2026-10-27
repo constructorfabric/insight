@@ -1,6 +1,6 @@
 ---
 status: draft
-version: "0.3"
+version: "0.4"
 date: 2026-10-27
 ---
 
@@ -66,7 +66,7 @@ A unified visual design now exists for the shell, Home, the dashboard list, an o
 ### 1.3 Goals (Business Outcomes)
 
 - Every page that shows period figures uses the same reporting-window control. On a given day, a preset resolves to the same dates on every page.
-- Every signed-in person reaches any dashboard shared with them in two clicks from Home. Every dashboard card says whether it is the person's own, shared or a starter.
+- Every signed-in person can find the dashboards shared with them. Every dashboard card says whether it is the person's own, shared or a starter.
 - No page shows a refused, failed, withheld or not-yet-connected read as an empty result or a zero.
 - An installation can hide any navigation item, or mark it planned, by configuration alone, with no rebuild.
 
@@ -248,12 +248,11 @@ The system **MUST** offer a settings menu from the rail. It shows the signed-in 
 - show or hide planned pages;
 - choose a focus mode;
 - turn explanations on or off;
-- open What's new;
-- sign out.
+- open What's new.
 
 Each choice persists on that browser.
 
-**Rationale**: A person must see who they are signed in as and be able to end the session from the product itself.
+**Rationale**: A person must see who they are signed in as and set how the portal behaves for them.
 
 **Actors**: `cpt-insightspec-portal-actor-exec`, `cpt-insightspec-portal-actor-lead`, `cpt-insightspec-portal-actor-ic`, `cpt-insightspec-portal-actor-peer`, `cpt-insightspec-portal-actor-admin`
 
@@ -278,22 +277,11 @@ The system **MUST** let any signed-in person send free-text feedback from the ra
 The system **MUST**:
 
 - show a person without a session nothing but a sign-in transition;
-- tell a person whose sign-in was denied that access was denied, and let them retry where a retry can succeed;
-- when a session ends while the portal is open, say so before returning the person to sign-in.
+- tell a person whose sign-in was denied that access was denied, and let them retry where a retry can succeed.
 
-**Rationale**: A silent redirect mid-reading loses the reader's place and looks like a fault.
+**Rationale**: A person must know whether they are signed out or refused.
 
 **Actors**: `cpt-insightspec-portal-actor-exec`, `cpt-insightspec-portal-actor-lead`, `cpt-insightspec-portal-actor-ic`, `cpt-insightspec-portal-actor-peer`, `cpt-insightspec-portal-actor-admin`
-
-#### Unknown Addresses
-
-- [ ] `p2` - **ID**: `cpt-insightspec-portal-fr-not-found`
-
-When a person opens an address that names no view, or a view that no longer exists, the system **MUST** say the view was not found and offer a way to Home. It **MUST** never silently show a different view.
-
-**Rationale**: A stale shared link that silently lands elsewhere is mistaken for the view it named.
-
-**Actors**: `cpt-insightspec-portal-actor-exec`, `cpt-insightspec-portal-actor-lead`, `cpt-insightspec-portal-actor-viewer`
 
 ### 5.2 Global View Controls
 
@@ -339,7 +327,7 @@ The system **MUST** keep two kinds of reporting window:
 - one portal window, shared by Home, Explore, People and Reports;
 - one window per open dashboard, which opens on the dashboard's own default.
 
-Both are kept in the address, and changing one never changes the other. An address without a window opens on the dashboard's own default for an open dashboard, and otherwise on the person's last-used portal window, or Last 30 days on a first visit; that window is then written into the address.
+Both are kept in the address, and changing one never changes the other. An address without a window opens on the dashboard's own default for an open dashboard, and otherwise on the person's last-used portal window; that window is then written into the address.
 
 **Rationale**: A dashboard is authored for a window and shared by link, while the portal window is the reader's own working context.
 
@@ -739,9 +727,7 @@ For the org scope, the system **MUST** show its size, team-level summary figures
 The system **MUST** list every person the viewer may see, with their title, organisational placement and status. The list:
 
 - is searchable;
-- is grouped by role where its name says so;
-- opens the person page from each entry;
-- says when nobody matches.
+- opens the person page from each entry.
 
 **Rationale**: Finding a person is the most common way into their data.
 
@@ -789,9 +775,9 @@ The system **MUST** group administration as follows:
 - **People & access**: Identities · roles & taxonomy, Access, Group management;
 - **Platform**: Ingestion, Previews, AI assistant config, What's new, Platform usage, MCP servers, Config & setup, Scorecard management.
 
-It **MUST** show each destination only to people who may use it, and open Manage on a working destination.
+It **MUST** show each destination only to people who may use it.
 
-**Rationale**: Administrators need one place for the installation's health and configuration, and landing on a placeholder wastes their first click.
+**Rationale**: Administrators need one place for the installation's health and configuration.
 
 **Actors**: `cpt-insightspec-portal-actor-admin`
 
@@ -898,8 +884,6 @@ The system **MUST** render every page in a light and a dark theme, with colour c
 The system **MUST**:
 
 - let every action be performed from the keyboard, with visible focus;
-- offer a skip to the main content;
-- announce the current destination in both navigation levels;
 - give every control an accessible name;
 - announce loading, refusals and errors.
 
@@ -915,9 +899,9 @@ The system **MUST**:
 |-----------------|---------------------------|-----------|
 | Efficiency | None; covered by `cpt-insightspec-portal-nfr-bounded-requests` | Requests that grow with a list slow readers and load the services, but do not make the portal unusable. |
 | Reliability | The system **MUST** never show a failed, refused or unconnected read as empty or zero (`cpt-insightspec-portal-nfr-honest-states`). | A lead who reads a failed load as "no activity" misjudges named people and stops trusting every other figure. |
-| Performance | None; covered by `cpt-insightspec-portal-nfr-feedback-latency` | The services compute figures; the interface must acknowledge every action promptly so a wait is never mistaken for a fault. |
+| Performance | None — no obligation; Performance is material and 6.2 carries no covering NFR (gap) | Slow pages make readers abandon a review; no performance target has been agreed for the portal. |
 | Security | The system **MUST** never draw or export data, names or destinations outside the viewer's reach and grants (`cpt-insightspec-portal-nfr-reach`, `cpt-insightspec-portal-nfr-exports`). | Showing a person's figures to someone outside their reach is a privacy breach that ends the product's use in an organisation. |
-| Versatility | None; covered by `cpt-insightspec-portal-nfr-accessibility`, `cpt-insightspec-portal-nfr-screen-widths`, `cpt-insightspec-portal-nfr-installation-policy` | Installations differ in sources, organisation shape, devices and needs; each is covered, and none alone makes the portal unviable. |
+| Versatility | None; covered by `cpt-insightspec-portal-nfr-installation-policy` | Installations differ in sources and organisation shape; configuration covers that, and no single difference makes the portal unviable. |
 
 ### 6.2 NFR Inclusions
 
@@ -957,42 +941,6 @@ The system **MUST** fetch a page of any list (dashboards, catalogue items, peopl
 
 **Rationale**: Per-item requests make the busiest lists the slowest and multiply load on the services.
 
-#### Prompt Feedback
-
-- [ ] `p2` - **ID**: `cpt-insightspec-portal-nfr-feedback-latency`
-
-**Vector**: Performance
-
-The system **MUST** acknowledge every action visibly before any wait, and show a loading state for any wait longer than a moment.
-
-**Threshold**: A loading state appears within 200 ms of any action whose result is not yet available. A page-load budget is an open decision owned by the product owner.
-
-**Rationale**: An unacknowledged click is repeated or abandoned.
-
-#### Accessibility
-
-- [ ] `p1` - **ID**: `cpt-insightspec-portal-nfr-accessibility`
-
-**Vector**: Versatility
-
-The system **MUST** meet WCAG 2.2 level AA on every page in both themes.
-
-**Threshold**: WCAG 2.2 AA conformance, including text contrast of at least 4.5:1 and non-text contrast of at least 3:1.
-
-**Rationale**: Colleagues with disabilities must be able to read and act on the same figures.
-
-#### Screen Widths
-
-- [ ] `p2` - **ID**: `cpt-insightspec-portal-nfr-screen-widths`
-
-**Vector**: Versatility
-
-The system **MUST** keep every page usable from a 360 px-wide phone screen to a desktop screen without horizontal page scrolling.
-
-**Threshold**: No horizontal page scroll at widths of 360 px and above; wide tables and charts scroll within their own frame.
-
-**Rationale**: Leads read on phones between meetings.
-
 #### Installation Policy
 
 - [ ] `p2` - **ID**: `cpt-insightspec-portal-nfr-installation-policy`
@@ -1011,9 +959,9 @@ The system **MUST** let an installation hide, or mark as planned, any rail desti
 
 **Vector**: Security
 
-The system **MUST** put into a CSV or Excel export only the rows the reader sees on screen under their grants. It **MUST** record every export as a usage event naming the page, never the export's contents.
+The system **MUST** put into a CSV or Excel export only the rows the reader sees on screen under their grants.
 
-**Threshold**: An export never contains a person, record or figure the reader could not see on screen, and every export appears in portal usage.
+**Threshold**: An export never contains a person, record or figure the reader could not see on screen.
 
 **Rationale**: An exported file leaves the product's access rules, so it must not carry more than the reader already had.
 
@@ -1041,7 +989,7 @@ The system **MUST** put into a CSV or Excel export only the rows the reader sees
 
 **Description**: Every view is named by its address, together with its reporting window, org scope, cohort, folder and tag filters. An address can therefore be bookmarked, shared and reopened.
 
-**Breaking Change Policy**: A shared address keeps opening the view it named, or a not-found view per `cpt-insightspec-portal-fr-not-found`. It never silently opens a different view.
+**Breaking Change Policy**: A shared address keeps opening the view it named.
 
 ### 7.2 External Integration Contracts
 
@@ -1159,9 +1107,8 @@ The system **MUST** put into a CSV or Excel export only the rows the reader sees
 - The person holds the administrator role.
 
 **Main Flow**:
-1. The administrator opens Manage, which opens on a working destination.
-2. The administrator opens Sources & connectors and expands a connector's recent syncs.
-3. The administrator opens Ingestion and drills into the same connector's arrival rate.
+1. The administrator opens Manage, then Sources & connectors, and expands a connector's recent syncs.
+2. The administrator opens Ingestion and drills into the same connector's arrival rate.
 
 **Postconditions**:
 - The administrator knows whether the connector is syncing and how fast rows arrive.
@@ -1194,19 +1141,13 @@ The system **MUST** put into a CSV or Excel export only the rows the reader sees
 - [ ] An open dashboard keeps its own reporting window in its address, and changing it does not change the window on Home.
 - [ ] A person without the administrator role who has a dashboard shared with them finds it under Shared with me and opens it.
 - [ ] Forcing any section's read to fail shows a retryable error, never an empty state.
-- [ ] Every page passes an automated WCAG 2.2 AA check in both themes, and a keyboard-only walkthrough reaches every action.
-- [ ] Manage opens on a working destination for an administrator.
-- [ ] An address naming a removed dashboard shows a not-found view.
 - [ ] Each rolling preset covers its stated number of days up to and including today, and Last month on any day covers exactly the previous calendar month.
 - [ ] A person outside the administrator role sees no create, edit, share, catalogue, Assistant or drill-down action anywhere in Dashboards.
 - [ ] A dashboard card shown to a viewer never names the dashboard's other viewers.
 - [ ] A team or comparison below the group-size threshold shows a withheld state with its reason, never a figure.
 - [ ] The team grid lists members by name until the reader sorts it.
 - [ ] Evidence and exports never include a person or record the reader lacks the grant for.
-- [ ] Ending a session while the portal is open shows a session-ended notice before sign-in.
-- [ ] The settings menu signs the person out.
 - [ ] Viewing as another person shows whose view it is on every screen, with a way back.
-- [ ] Every page at 360 px width shows no horizontal page scroll.
 
 ## 10. Dependencies
 
@@ -1225,7 +1166,6 @@ The system **MUST** put into a CSV or Excel export only the rows the reader sees
 - The services return each person's reach already applied; the portal never filters a broader result down.
 - The services provide starred and starter dashboards; the interface derives neither.
 - The services decide which cohort attributes exist, from the organisation's data.
-- The product owner accepts a WCAG 2.2 AA target; a different target would be recorded as a revision of `cpt-insightspec-portal-nfr-accessibility`.
 
 ## 12. Risks
 
@@ -1235,4 +1175,3 @@ The system **MUST** put into a CSV or Excel export only the rows the reader sees
 | Removing the top-bar scope control hides scope from leads who used it | Leads lose track of which part of the organisation a view covers | Every scoped view names its scope (`cpt-insightspec-portal-fr-org-scope`); the work chart sets it |
 | Existing dashboards carry a window restriction the single control ignores | A dashboard opens on a window its author did not intend | The dashboard's own default window opens first (`cpt-insightspec-portal-fr-period-scope`) |
 | A metric refuses windows longer than its maximum | A widget read over a long preset shows a refusal | The widget shows the refusal with its reason (`cpt-insightspec-portal-fr-states`) |
-| The sharing PRD revision this PRD relies on is not merged yet | Requirements on grants, editors and members describe behaviour not yet available | Ship the dashboard requirements with the sharing release; until then show those actions as planned |
