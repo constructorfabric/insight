@@ -1,6 +1,6 @@
 ---
 status: draft
-version: "0.4"
+version: "0.5"
 date: 2026-10-27
 ---
 
@@ -28,11 +28,9 @@ date: 2026-10-27
   - [3.8 Deployment Topology](#38-deployment-topology)
 - [4. Additional context](#4-additional-context)
   - [4.1 Visual Source](#41-visual-source)
-  - [4.2 Colour Tokens](#42-colour-tokens)
-  - [4.3 Type Roles](#43-type-roles)
-  - [4.4 Scale and Shell Grid](#44-scale-and-shell-grid)
-  - [4.5 Shared Components](#45-shared-components)
-  - [4.6 Cross-Cutting Concerns](#46-cross-cutting-concerns)
+  - [4.2 Foundation Values](#42-foundation-values)
+  - [4.3 Shared Components](#43-shared-components)
+  - [4.4 Cross-Cutting Concerns](#44-cross-cutting-concerns)
 - [5. Traceability](#5-traceability)
 
 <!-- /toc -->
@@ -47,7 +45,7 @@ Browser storage holds only per-person preferences (§3.7), including the last-us
 
 The services enforce reach and compute every figure. The portal turns service responses into view models with pure functions (window labelling, navigation filtering, comparisons, state classification) and draws them with one component library and one token set.
 
-The visual layer is one foundation: semantic colour tokens defined once for light and dark, the type roles in §4.3, a small spacing and radius scale, Lucide icons, and FrontX kit components where the kit has them. The shell fixes a rail, a pane, a pinned toolbar and, in Dashboards, an Assistant column. Every page renders inside that shell.
+The visual layer is one foundation: semantic colour tokens defined once for light and dark, type roles, a small spacing and radius scale, Lucide icons, and FrontX kit components where the kit has them. The shell fixes a rail, a pane, a pinned toolbar and, in Dashboards, an Assistant column. Every page renders inside that shell.
 
 ### 1.2 Architecture Drivers
 
@@ -87,7 +85,7 @@ The visual layer is one foundation: semantic colour tokens defined once for ligh
 | `cpt-insightspec-portal-nfr-reach` | Nothing drawn outside the viewer's reach | Service clients; view models | Views render only service responses; refusals render as refusals; navigation hiding is cosmetic | Stand API and UI suites per persona |
 | `cpt-insightspec-portal-nfr-bounded-requests` | Requests per list page constant in item count | List pages; service clients | List responses carry each card's display fields; cards never fetch individually | Network assertions in component tests |
 | `cpt-insightspec-portal-nfr-feedback-latency` | Loading state within 200 ms | Router pending state; state components | Router pending view and per-section spinners appear on any unresolved read | UI journey timing checks |
-| `cpt-insightspec-portal-nfr-accessibility` | WCAG 2.2 AA in both themes | Foundation tokens; kit components; shell | Kit components carry roles and names; shell adds skip link and current markers; token pairs below AA are an open design decision (§4.2) | Automated accessibility scan per page and theme; keyboard walkthrough |
+| `cpt-insightspec-portal-nfr-accessibility` | WCAG 2.2 AA in both themes | Foundation tokens; kit components; shell | Kit components carry roles and names; shell adds skip link and current markers; token contrast follows the design file | Automated accessibility scan per page and theme; keyboard walkthrough |
 | `cpt-insightspec-portal-nfr-exports` | Exports carry only what is shown | Evidence dialog; report builder | Export writes the rows already on screen; each export records a usage event naming the page | Component tests comparing exported rows with rendered rows |
 | `cpt-insightspec-portal-nfr-screen-widths` | Usable from 360 px with no page scroll | Shell layout tiers; tables and charts | Phone-tier drawer; toolbar scrolls sideways; wide content scrolls in its own frame | Viewport tests at 360, 768 and 1440 px |
 | `cpt-insightspec-portal-nfr-installation-policy` | Hide or plan any page by configuration | Navigation policy | Policy paths per zone, item, direction, lens, section and metric, applied to every navigation model | Policy unit tests; configured stand check |
@@ -135,7 +133,7 @@ The portal renders what the services return for the signed-in person and shows t
 
 - [ ] `p2` - **ID**: `cpt-insightspec-portal-principle-one-foundation`
 
-Colour, type, spacing and radius come only from the foundation tokens and type roles in §4. A component that needs a new value adds a token, never a literal.
+Colour, type, spacing and radius come only from the foundation tokens and type roles (§4.2). A component that needs a new value adds a token, never a literal.
 
 #### Kit First
 
@@ -518,7 +516,7 @@ One set of tokens, type roles and components keeps every page visually consisten
 
 ##### Responsibility scope
 
-Semantic colour tokens for light and dark, type roles, spacing, radius and control sizes, shell dimensions, icon set and stroke, and the shared components with their variants and states, all listed in §4.
+Semantic colour tokens for light and dark, type roles, spacing, radius and control sizes, shell dimensions, icon set and stroke, and the shared components with their variants and states (§4.2, §4.3).
 
 ##### Responsibility boundaries
 
@@ -699,81 +697,11 @@ The foundation and the drawn screens follow the Insight design file:
 
 Pages the design file does not draw follow §3.2 and the PRD.
 
-### 4.2 Colour Tokens
+### 4.2 Foundation Values
 
-| Token | Light | Dark | Use |
-|-------|-------|------|-----|
-| bg-canvas | #f8fafc | #111a2b | Page background |
-| bg-surface | #ffffff | #182236 | Cards, popovers |
-| bg-pane | #f1f5f9 | #0f172a | Pane |
-| bg-rail | #e8edf3 | #0b1220 | Rail |
-| bg-muted | #f1f5f9 | #1e293b | Muted fills, inactive segments |
-| bg-hover | #e9eef4 | #1e293b | Hover fill |
-| sidebar-accent | #ffffff | #1e293b | Active pane item |
-| text-primary | #0f172a | #f8fafc | Body text |
-| text-secondary | #475569 | #cbd5e1 | Secondary text |
-| text-tertiary | #64748b | #94a3b8 | Captions, counts, eyebrows |
-| text-inverse | #ffffff | #0f172a | Text on inverted fills |
-| text-on-accent | #ffffff | #ffffff | Text and icons on accent-default (5.29:1) |
-| border-default | #e2e8f0 | #2a3650 | Card and divider borders |
-| border-strong | #cbd5e1 | #3b4a63 | Emphasised borders |
-| border-input | #cbd5e1 | #334155 | Input borders |
-| accent-default | #0065e3 | #0065e3 | Primary actions |
-| accent-hover | #0057c2 | #1a78f0 | Primary hover |
-| accent-text | #0057c2 | #7ab4ff | Links, selected chip text |
-| accent-soft | #e4eef8 | #1b2e4a | Selected chip and segment fill |
-| focus-ring | #0065e3 | #4d95f0 | Focus outline |
-| status-info-soft | #eff6ff | #172554 | Visibility badges |
-| status-success / -foreground / -soft | #059669 / #047857 / #ecfdf5 | #34d399 / #6ee7b7 / #0b2e26 | Positive status |
-| status-warning / -foreground / -soft | #d97706 / #92400e / #fffbeb | #f6c453 / #fcd980 / #33260a | Caution status |
-| status-danger / -soft | #e11d48 / #fff1f2 | #fb7185 / #3a1220 | Destructive actions, errors |
-| status-danger-foreground | #be123c | — | Danger text on soft fill |
-| evidence-strong fg / soft | #047857 / #ecfdf5 | — | Evidence pill: strong |
-| evidence-directional fg / soft | #92400e / #fffbeb | — | Evidence pill: directional |
-| evidence-gap fg / soft | #475569 / #f1f5f9 | — | Evidence pill: gap |
-| evidence-broken fg / soft | #be123c / #fff1f2 | — | Evidence pill: broken |
+Colour tokens (light and dark), type roles, spacing, radius, control sizes and shell dimensions are defined once in the design file's Foundation page. The code carries them in [insight-theme.css](../../../../src/frontend/src/insight-theme.css) over the FrontX kit theme, and in [type-scale.ts](../../../../src/frontend/src/lib/type-scale.ts). This design does not repeat the values.
 
-The design file gives only light values for status-danger-foreground and the evidence pills. Their dark values are an open design decision owned by the designer, and these tokens do not ship until it is made.
-
-The pairs below fall short of WCAG 2.2 AA. They are an open design decision owned by the designer, which `cpt-insightspec-portal-nfr-accessibility` requires closing before release.
-
-| Pair | Theme | Ratio | Needed |
-|------|-------|-------|--------|
-| text-tertiary on bg-pane | light | 4.34:1 | 4.5:1 for small text (pane counts) |
-| text-tertiary on bg-rail | light | 4.04:1 | 4.5:1 for small text |
-| border-input on bg-surface | light | 1.48:1 | 3:1 for an input's boundary |
-| border-input on bg-surface | dark | 1.54:1 | 3:1 for an input's boundary |
-
-### 4.3 Type Roles
-
-All roles use Inter.
-
-| Role | Size / line | Weight | Tracking | Use |
-|------|-------------|--------|----------|-----|
-| Title | 18 / 28 | 600 | −0.45 px | Page titles |
-| Heading | 14 / 20 | 600 | 0 | Card and section headings |
-| Name | 14 / 20 | 500 | 0 | Item names in lists and cards |
-| Body | 14 / 20 | 400 | 0 | Running text |
-| Label | 12 / 16 | 500 | 0 | Field labels, badges, chips |
-| Caption | 12 / 16 | 400 | 0 | Meta lines, hints |
-| Eyebrow | 12 / 16 | 600 | +0.6 px, uppercase | Pane group labels and page section labels |
-| Figure | 24 / 32 | 600 | 0 | Headline values |
-
-### 4.4 Scale and Shell Grid
-
-| Item | Value |
-|------|-------|
-| Spacing step | 8 px |
-| Radius | md 8 px; lg 12 px; full for chips and pills |
-| Control height | 32 px; small 28 px |
-| Rail | 56 px; label panel 192 px on hover or focus |
-| Pane | 256 px; drawer 288 px on phone |
-| Toolbar | 53 px, pinned above the scroll viewport; not in Dashboards |
-| Dashboard header row | Title, period control, Edit and menu on one row, pinned above the dashboard's widgets |
-| Assistant | 48 px collapsed; 320 px open |
-| Icons | Lucide, 1.5 stroke, 20 px base |
-
-### 4.5 Shared Components
+### 4.3 Shared Components
 
 | Component | Variants and states |
 |-----------|---------------------|
@@ -794,7 +722,7 @@ All roles use Inter.
 | Starter view card | Icon, name, question, source chips, Open, Save as dashboard |
 | State card | Loading, Empty, Not connected, Withheld, Refused, Error with retry |
 
-### 4.6 Cross-Cutting Concerns
+### 4.4 Cross-Cutting Concerns
 
 **Session**: one browser tab leads session refresh, through a storage lease and a broadcast channel. When refresh fails, the shell shows the session-ended notice, then starts sign-in. A 401 from any service re-probes the session before treating it as ended.
 
