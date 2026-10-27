@@ -1,6 +1,6 @@
 ---
 status: draft
-version: "0.2"
+version: "0.3"
 date: 2026-10-27
 ---
 
@@ -242,7 +242,7 @@ Every surface needs the same navigation, view controls, banners and scroll behav
 
 ##### Responsibility scope
 
-Lays out rail, pane and content; titles Home's pane with the product name and every other pane with its rail item's name; owns the scroll container so the toolbar pins above scrolling content; switches layout tier by width — phone below 768 px (no rail, drawer with both navigation levels), narrow 768–1023 px (rail, off-canvas pane), wide from 1024 px (rail and pane in flow); holds in the toolbar the cohort control, where the surface draws comparisons and the organisation has more than one cohort, followed by the period control; shows the impersonation and mock-data banners; supplies the skip link; hosts the settings menu and feedback dialog.
+Lays out rail, pane and content; titles Home's pane with the product name and every other pane with its rail item's name; owns the scroll container so the toolbar pins above scrolling content; switches layout tier by width — phone below 768 px (no rail, drawer with both navigation levels), narrow 768–1023 px (rail, off-canvas pane), wide from 1024 px (rail and pane in flow); holds in the toolbar, on every surface outside Dashboards, the cohort control, where the surface draws comparisons and the organisation has more than one cohort, followed by the period control; shows no toolbar on Dashboards surfaces; shows the impersonation and mock-data banners; supplies the skip link; hosts the settings menu and feedback dialog.
 
 ##### Responsibility boundaries
 
@@ -292,8 +292,8 @@ Does not compute figures; does not decide which window a surface uses — the su
 
 ##### Related components (by ID)
 
-- `cpt-insightspec-portal-component-shell` — hosted by
-- `cpt-insightspec-portal-component-dashboards` — bound to a dashboard window by
+- `cpt-insightspec-portal-component-shell` — hosted in the toolbar by
+- `cpt-insightspec-portal-component-dashboards` — hosted in the open dashboard's header row, bound to that dashboard's window, by
 
 #### Home Surface
 
@@ -326,7 +326,7 @@ The single home of everything a person can view, save, share and author.
 
 ##### Responsibility scope
 
-Pane with Browse (All, My dashboards, Shared with me, Starred, Starter, with counts), Folders, Catalogue (Metrics, Widgets, Datasets, Alerts) and Pinned; list page with search, tag filter, count, browse chips mirroring the pane, and dashboard cards; open dashboard with meta line (owner, visibility, source chips, updated), Edit, menu and widgets in stored order; create dialog (name, visibility, starting point); share dialog; folder, tag and pin actions; catalogue lists and item pages; definition editor in form and text views; alert list, page and form.
+Pane with Browse (All, My dashboards, Shared with me, Starred, Starter, with counts), Folders, Catalogue (Metrics, Widgets, Datasets, Alerts) and Pinned; list page with search, tag filter, count, browse chips mirroring the pane, and dashboard cards; open dashboard with a header row — title, period control bound to the dashboard's window, Edit and menu — pinned above its scrolling widgets, then the meta line (owner, visibility, source chips, updated) and widgets in stored order; create dialog (name, visibility, starting point); share dialog; folder, tag and pin actions; catalogue lists and item pages; definition editor in form and text views; alert list, page and form.
 
 ##### Responsibility boundaries
 
@@ -712,7 +712,8 @@ All roles use Inter.
 | Control height | 32 px; small 28 px |
 | Rail | 56 px; label panel 192 px on hover or focus |
 | Pane | 256 px; drawer 288 px on phone |
-| Toolbar | 53 px, pinned above the scroll viewport |
+| Toolbar | 53 px, pinned above the scroll viewport, outside Dashboards |
+| Dashboard header row | Title, period control, Edit and menu on one row, pinned above the dashboard's widgets |
 | Assistant | 48 px collapsed; 320 px open |
 | Icons | Lucide, 1.5 stroke, 20 px base |
 
