@@ -375,7 +375,7 @@ A proposal replaces a definition by naming its id and creates one by carrying no
 | Folder | folder pane | Its visible dashboards; rename and remove entries for its owner and editors; delete for its owner; share for administrators who own or edit it |
 | Share | dialog on a dashboard or folder | Grants with level and remove; a picker over every person identity knows except the owner, with a level; a separate `Everyone` choice, off until picked |
 | Who gains access | notice before an entry goes into a folder with grants while the dashboard's `carries` is true, or before a grant is added to a folder holding carrying entries | The folder's people who will see the dashboard, or the dashboards they will see; confirm or cancel |
-| Orphaned | `/portal/custom/orphaned` | Orphaned dashboards (name, owner, last change) and folders (name, owner); transfer with an administrator picker |
+| Orphaned | the unfiltered dashboard list and the folder pane, administrators only | An `Orphaned` group after the dashboards, each with owner and last change; orphaned folders after the folders, marked `Orphaned`; neither opens; transfer with an administrator picker |
 | Editors | `/portal/custom/edit/$kind/$name`, `/portal/custom/new/$kind`, metric and widget pages, the `$name` segment holding the id | Free-text names; body pickers store ids, show names |
 
 The picker searches `GET /v1/persons?q=` and offers every person it returns except the owner; the server rechecks that the target exists. For an administrator, owner names come from `GET /v1/persons?q=<person id>`, one read per distinct owner on the page, cached. A member reads `GET /v1/people/{person_id}`, which answers only people their org-chart visibility reaches; an owner it refuses is shown as no owner. `POST /v1/profiles/batch` is not used: it is limited to the caller's org-chart visibility.
@@ -551,7 +551,7 @@ The later retirement step counts dashboards, folders and tags with a null owner,
 - A member walk: every administrator route, the dashboard-scoped drilldown included, answers `permission_denied`; a visible dashboard's widgets draw through the dashboard routes; a widget the dashboard does not hold is `not_found`; a failing widget's message names no warehouse table or column, or dataset; a former administrator who still owns a dashboard neither sees nor changes it unless a grant or folder gives access.
 - Chat: a proposal creating a metric, widgets and a dashboard linked by local keys lands with ids and the caller as owner; replacing a dashboard the caller may not change is refused.
 - Handlers: grant, repeated grant at another level, withdraw, entry add as carrying and as filing, transfer races for dashboards and folders, identity unreachable as `internal`.
-- Portal components: owner column and filters, folder pane, share dialog with level and `Everyone`, the who-gains-access notice, orphaned page, access-hidden actions, the member navigation.
+- Portal components: owner column and filters, folder pane, share dialog with level and `Everyone`, the who-gains-access notice, orphaned dashboards and folders, access-hidden actions, the member navigation.
 
 Grants, level changes, withdrawals, entries added, removed or demoted, and transfers log at info with `actor_person_id`, `dashboard_id` or `folder_id`, `grantee` and `level`. Refusals for invisible dashboards and folders log nothing naming them to the caller.
 

@@ -19,7 +19,6 @@ import { Route as IcPersonIndexRouteImport } from './routes/ic.$person.index'
 import { Route as IcPersonPersonalRouteImport } from './routes/ic.$person.personal'
 import { Route as IcPersonTeamRouteImport } from './routes/ic.$person.team'
 import { Route as PortalCustomIndexRouteImport } from './routes/portal.custom.index'
-import { Route as PortalCustomOrphanedRouteImport } from './routes/portal.custom.orphaned'
 import { Route as PortalCustomNameRouteImport } from './routes/portal.custom.$name'
 import { Route as PortalCustomAlertsIndexRouteImport } from './routes/portal.custom.alerts.index'
 import { Route as PortalCustomAlertsNewRouteImport } from './routes/portal.custom.alerts.new'
@@ -82,11 +81,6 @@ const IcPersonTeamRoute = IcPersonTeamRouteImport.update({
 const PortalCustomIndexRoute = PortalCustomIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => PortalCustomRoute,
-} as any)
-const PortalCustomOrphanedRoute = PortalCustomOrphanedRouteImport.update({
-  id: '/orphaned',
-  path: '/orphaned',
   getParentRoute: () => PortalCustomRoute,
 } as any)
 const PortalCustomNameRoute = PortalCustomNameRouteImport.update({
@@ -171,7 +165,6 @@ export interface FileRoutesByFullPath {
   '/portal/': typeof PortalIndexRoute
   '/ic/$person/personal': typeof IcPersonPersonalRoute
   '/ic/$person/team': typeof IcPersonTeamRoute
-  '/portal/custom/orphaned': typeof PortalCustomOrphanedRoute
   '/portal/custom/$name': typeof PortalCustomNameRoute
   '/ic/$person/': typeof IcPersonIndexRoute
   '/portal/custom/': typeof PortalCustomIndexRoute
@@ -194,7 +187,6 @@ export interface FileRoutesByTo {
   '/portal': typeof PortalIndexRoute
   '/ic/$person/personal': typeof IcPersonPersonalRoute
   '/ic/$person/team': typeof IcPersonTeamRoute
-  '/portal/custom/orphaned': typeof PortalCustomOrphanedRoute
   '/portal/custom/$name': typeof PortalCustomNameRoute
   '/ic/$person': typeof IcPersonIndexRoute
   '/portal/custom': typeof PortalCustomIndexRoute
@@ -221,7 +213,6 @@ export interface FileRoutesById {
   '/portal/': typeof PortalIndexRoute
   '/ic/$person/personal': typeof IcPersonPersonalRoute
   '/ic/$person/team': typeof IcPersonTeamRoute
-  '/portal/custom/orphaned': typeof PortalCustomOrphanedRoute
   '/portal/custom/$name': typeof PortalCustomNameRoute
   '/ic/$person/': typeof IcPersonIndexRoute
   '/portal/custom/': typeof PortalCustomIndexRoute
@@ -249,7 +240,6 @@ export interface FileRouteTypes {
     | '/portal/'
     | '/ic/$person/personal'
     | '/ic/$person/team'
-    | '/portal/custom/orphaned'
     | '/portal/custom/$name'
     | '/ic/$person/'
     | '/portal/custom/'
@@ -272,7 +262,6 @@ export interface FileRouteTypes {
     | '/portal'
     | '/ic/$person/personal'
     | '/ic/$person/team'
-    | '/portal/custom/orphaned'
     | '/portal/custom/$name'
     | '/ic/$person'
     | '/portal/custom'
@@ -298,7 +287,6 @@ export interface FileRouteTypes {
     | '/portal/'
     | '/ic/$person/personal'
     | '/ic/$person/team'
-    | '/portal/custom/orphaned'
     | '/portal/custom/$name'
     | '/ic/$person/'
     | '/portal/custom/'
@@ -393,13 +381,6 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/portal/custom/'
       preLoaderRoute: typeof PortalCustomIndexRouteImport
-      parentRoute: typeof PortalCustomRoute
-    }
-    '/portal/custom/orphaned': {
-      id: '/portal/custom/orphaned'
-      path: '/orphaned'
-      fullPath: '/portal/custom/orphaned'
-      preLoaderRoute: typeof PortalCustomOrphanedRouteImport
       parentRoute: typeof PortalCustomRoute
     }
     '/portal/custom/$name': {
@@ -497,7 +478,6 @@ declare module '@tanstack/react-router' {
 }
 
 interface PortalCustomRouteChildren {
-  PortalCustomOrphanedRoute: typeof PortalCustomOrphanedRoute
   PortalCustomNameRoute: typeof PortalCustomNameRoute
   PortalCustomIndexRoute: typeof PortalCustomIndexRoute
   PortalCustomAlertsNewRoute: typeof PortalCustomAlertsNewRoute
@@ -515,7 +495,6 @@ interface PortalCustomRouteChildren {
 }
 
 const PortalCustomRouteChildren: PortalCustomRouteChildren = {
-  PortalCustomOrphanedRoute: PortalCustomOrphanedRoute,
   PortalCustomNameRoute: PortalCustomNameRoute,
   PortalCustomIndexRoute: PortalCustomIndexRoute,
   PortalCustomAlertsNewRoute: PortalCustomAlertsNewRoute,

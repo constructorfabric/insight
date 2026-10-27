@@ -38,13 +38,15 @@ const mocks = vi.hoisted(() => ({
   deleteFolder: vi.fn(),
   fetchPins: vi.fn(),
   fetchDashboardRead: vi.fn(),
+  fetchOrphanedFolders: vi.fn(),
 }));
 
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
 vi.mock("@/components/org-tree", () => ({
   OrgTree: () => <div data-testid="org-tree" />,
 }));
-vi.mock("@/queries/identity-me", () => ({
+vi.mock("@/queries/identity-me", async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
   useIsAdmin: () => ({ isAdmin: mocks.isAdmin, isPending: false }),
   useVisibilityPolicy: () => ({
     policy: mocks.isFlat ? "flat" : "org_chart",
@@ -85,6 +87,7 @@ vi.mock("@/api/custom-client", async (orig) => ({
   deleteFolder: (id: string) => mocks.deleteFolder(id),
   fetchPins: () => mocks.fetchPins(),
   fetchDashboardRead: (name: string) => mocks.fetchDashboardRead(name),
+  fetchOrphanedFolders: () => mocks.fetchOrphanedFolders(),
 }));
 
 import { CustomApiError } from "@/api/custom-client";
@@ -144,6 +147,7 @@ beforeEach(() => {
   mocks.deleteFolder.mockReset().mockResolvedValue(undefined);
   mocks.fetchPins.mockReset().mockResolvedValue([]);
   mocks.fetchDashboardRead.mockReset().mockReturnValue(new Promise(() => {}));
+  mocks.fetchOrphanedFolders.mockReset().mockResolvedValue({ items: [], total: 0 });
   act(() => {
     portalRouter.reset();
     portalRouter.set({ dir: "dev" });
@@ -541,7 +545,7 @@ describe("Dashboards pane", () => {
 
     expect(await screen.findByText("14")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Shared with me" })).toBeInTheDocument();
-    for (const name of ["Owned by me", "Metrics", "Widgets", "Datasets", "Alerts", "Orphaned"]) {
+    for (const name of ["Owned by me", "Metrics", "Widgets", "Datasets", "Alerts"]) {
       expect(screen.queryByRole("link", { name }), `should not link: ${name}`).toBeNull();
     }
     expect(screen.queryByText("Catalogue")).toBeNull();
@@ -573,10 +577,6 @@ describe("Dashboards pane", () => {
     expect(screen.getByRole("link", { name: "Alerts" })).toHaveAttribute(
       "href",
       "/portal/custom/alerts",
-    );
-    expect(screen.getByRole("link", { name: "Orphaned" })).toHaveAttribute(
-      "href",
-      "/portal/custom/orphaned",
     );
   });
 
@@ -819,6 +819,39 @@ describe("Dashboards pane folders", () => {
     expect(mocks.deleteFolder).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Delete folder" }));
     expect(mocks.deleteFolder).toHaveBeenCalledWith("f1");
+  });
+
+  it("marks an orphaned folder and offers to transfer it", async () => {
+    mocks.fetchOrphanedFolders.mockResolvedValue({
+      items: [
+        {
+          id: "f9",
+          name: "Handover",
+          owner_person_id: "left@x",
+          updated_at: "2026-08-15T00:00:00.000Z",
+        },
+      ],
+      total: 1,
+    });
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    const row = await screen.findByRole("button", { name: /Handover/ });
+    expect(row).toHaveTextContent("Orphaned");
+    expect(screen.queryByRole("link", { name: /Handover/ })).toBeNull();
+    await user.click(row);
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Transfer Handover");
+  });
+
+  it("asks nothing about orphaned folders for a member", async () => {
+    mocks.isAdmin = false;
+    onTheList();
+    pane();
+
+    expect(await screen.findByRole("link", { name: /Platform/ })).toBeInTheDocument();
+    expect(mocks.fetchOrphanedFolders).not.toHaveBeenCalled();
   });
 });
 

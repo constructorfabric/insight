@@ -1,8 +1,9 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   Ellipsis,
   Folder,
+  FolderX,
   Inbox,
   Pencil,
   Plus,
@@ -13,6 +14,11 @@ import { useId, useState } from "react";
 
 import { FOLDER_NAME_MAX, type FolderSummary } from "@/api/custom-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import {
+  type Orphan,
+  OrphanedChip,
+  TransferOrphan,
+} from "@/components/custom/orphaned";
 import { refusal } from "@/components/custom/refusal";
 import { ShareDialog } from "@/components/custom/share-dialog";
 import { CountBadge } from "@/components/portal/pane-nav";
@@ -37,6 +43,7 @@ import { usePortalSearch } from "@/lib/portal/portal-search";
 import { useIsAdmin } from "@/queries/identity-me";
 import {
   foldersQuery,
+  orphanedPagesQuery,
   useCreateFolder,
   useDeleteFolder,
   useRenameFolder,
@@ -107,6 +114,7 @@ export function FoldersGroup() {
               </SidebarMenuItem>
             )
           )}
+          {isAdmin ? <OrphanedFolderRows /> : null}
           {data ? (
             <SidebarMenuItem>
               <SidebarMenuButton
@@ -157,6 +165,51 @@ export function FoldersGroup() {
         />
       ) : null}
     </SidebarGroup>
+  );
+}
+
+/** Administrators only: the orphaned list is refused to anyone else. */
+function OrphanedFolderRows() {
+  const pages = useInfiniteQuery(orphanedPagesQuery("folders"));
+  const [moving, setMoving] = useState<Orphan | null>(null);
+  const orphaned = pages.data?.pages.flatMap((page) => page.items) ?? [];
+
+  return (
+    <>
+      {orphaned.map((folder) => (
+        <SidebarMenuItem key={folder.id}>
+          <SidebarMenuButton
+            aria-haspopup="dialog"
+            className="text-muted-foreground"
+            onClick={() =>
+              setMoving({
+                kind: "folders",
+                id: folder.id,
+                name: folder.name,
+                owner_person_id: folder.owner_person_id,
+              })
+            }
+          >
+            <FolderX />
+            <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+            <OrphanedChip />
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      ))}
+      {pages.hasNextPage ? (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            className="text-muted-foreground"
+            disabled={pages.isFetchingNextPage}
+            onClick={() => void pages.fetchNextPage()}
+          >
+            <Ellipsis />
+            <span>More orphaned folders</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      ) : null}
+      <TransferOrphan orphan={moving} onClose={() => setMoving(null)} />
+    </>
   );
 }
 

@@ -65,6 +65,10 @@ beforeEach(() => {
   vi.resetAllMocks();
   role.isAdmin = true;
   portalRouter.reset();
+  vi.mocked(customClient.fetchOrphanedDashboards).mockResolvedValue({
+    items: [],
+    total: 0,
+  });
 });
 
 describe("/portal/custom", () => {
@@ -574,5 +578,64 @@ describe("/portal/custom narrowed by ownership", () => {
       "href",
       "/portal/custom/0190aaaa-0000-7000-8000-000000000001"
     );
+  });
+});
+
+describe("/portal/custom orphaned dashboards", () => {
+  const ORPHANED = {
+    id: "release",
+    name: "Release notes",
+    owner_person_id: "01900000-0000-7000-8000-0000000000e0",
+    updated_at: "2026-09-01T00:00:00.000Z",
+  };
+
+  beforeEach(() => {
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("delivery"));
+    vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(
+      new Error("untitled")
+    );
+    vi.mocked(customClient.fetchTags).mockResolvedValue({
+      tags: [{ name: "Ops", dashboards: 1 }],
+    });
+    vi.mocked(customClient.fetchOrphanedDashboards).mockResolvedValue({
+      items: [ORPHANED],
+      total: 1,
+    });
+  });
+
+  it("follows the unfiltered list for an administrator", async () => {
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Orphaned" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Transfer Release notes" })
+    ).toBeInTheDocument();
+  });
+
+  it("is never asked for by a member", async () => {
+    role.isAdmin = false;
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByRole("link", { name: "delivery" })).toBeInTheDocument();
+    expect(customClient.fetchOrphanedDashboards).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { folder: "unfiled" },
+    { owned: "me" as const },
+    { owned: "shared" as const },
+    { tag: ["Ops"] },
+  ])("stays off a narrowed list: %o", async (search) => {
+    portalRouter.set(search);
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByRole("link", { name: "delivery" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Orphaned" }),
+      `should hide under ${JSON.stringify(search)}`
+    ).toBeNull();
+    expect(customClient.fetchOrphanedDashboards).not.toHaveBeenCalled();
   });
 });
