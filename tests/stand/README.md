@@ -34,11 +34,16 @@ The stand and the suite are both driven through `./dev-compose.sh
 test-stand`, from the repository root:
 
 ```bash
-./dev-compose.sh test-stand up              # bring the stand up, seed it, wait for dbt
+./dev-compose.sh test-stand up              # build this tree, bring the stand up, seed it, wait for dbt
 ./dev-compose.sh test-stand test             # run the whole suite (uv, on the host)
 ./dev-compose.sh test-stand test tests/stand/api/    # a subset — args pass through to pytest
 ./dev-compose.sh test-stand down             # stop the stand and drop its volumes
 ```
+
+`up` compiles the Rust services and builds the SPA from the checkout, so the
+suite runs the code you changed. `up --pinned` pulls the published images at
+each chart's `appVersion` instead; that is CI's mode, and the fast path when
+nothing under `src/backend/` or `src/frontend/` differs from main.
 
 `test-stand test` requires [`uv`](https://docs.astral.sh/uv/) on the host
 and runs `uv run --project tests --frozen pytest tests/stand <args>`. Run

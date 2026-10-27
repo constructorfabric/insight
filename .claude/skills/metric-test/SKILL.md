@@ -350,7 +350,7 @@ The suite seeds and clears a warehouse, so it needs an instance of its own, rais
 `minimal` (identity and the realm seeded, the warehouse empty):
 
 ```bash
-./dev-compose.sh test-stand minimal --instance=datapath                                 # once
+./dev-compose.sh test-stand minimal --pinned --instance=datapath                        # once; drop --pinned if you changed src/backend
 ./dev-compose.sh test-stand test --tree=tests/datapath/metrics/<class> --instance=datapath -q
 ./dev-compose.sh test-stand test --tree=tests/datapath/metrics/<class> --instance=datapath -q -k <name>
 ./dev-compose.sh test-stand down --instance=datapath                                    # removes volumes: full reset
