@@ -310,7 +310,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: .github/workflows/scripts/wait-for-empty-merge-queue.sh 10
 
-      - name: Defer a candidate whose source branch advanced
+      - name: Require the candidate source to remain current
         id: current
         if: steps.queue.outputs.clear == 'true'
         run: |
@@ -320,7 +320,8 @@ jobs:
             echo 'matches=true' >> "$GITHUB_OUTPUT"
           else
             echo 'matches=false' >> "$GITHUB_OUTPUT"
-            echo '::warning::Branch advanced while validating; publication deferred to the next candidate.'
+            echo '::error::Branch advanced while validating; candidate was not published. Start a new workflow run on the current branch tip; rerunning this candidate will not update its source SHA.'
+            exit 1
           fi
 
       - name: Helm registry login (GHCR)
