@@ -57,9 +57,9 @@ from dbt_profiles import Connection, build_profile  # noqa: E402
 PROD_SELECTOR = "tag:jira,tag:staging"
 
 # What a scenario actually needs: the journal, the side table, and their
-# ancestors. Comment, worklog, availability and project-visibility models are in
-# the prod selector but read none of the three bronze tables these tests seed,
-# so building them per test costs about thirty seconds and proves nothing.
+# ancestors, including availability and project-visibility snapshots for link
+# key resolution. Comment and worklog models remain in the full selector;
+# test_invariants builds that chain once.
 FIELD_HISTORY_SELECTOR = "+jira__field_history_derived +jira__task_field_text +jira__task_field_unclassified"
 
 # The journal and the links producer: a module about links asserts both, because
@@ -315,11 +315,15 @@ class Scenario:
         issues: list[dict[str, Any]],
         events: list[dict[str, Any]] | None = None,
         statuses: list[dict[str, Any]] | None = None,
+        census: list[dict[str, Any]] | None = None,
+        projects: list[dict[str, Any]] | None = None,
     ) -> None:
         self.warehouse.insert("bronze_jira.jira_fields", self._stamp(fields))
         self.warehouse.insert("bronze_jira.jira_issue", self._stamp(issues))
         self.warehouse.insert("bronze_jira.jira_issue_history", self._stamp(events or []))
         self.warehouse.insert("bronze_jira.jira_statuses", self._stamp(statuses or []))
+        self.warehouse.insert("bronze_jira.jira_issue_census", self._stamp(census or []))
+        self.warehouse.insert("bronze_jira.jira_project_visibility", self._stamp(projects or []))
 
     def _stamp(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Re-address the builders' rows to this scenario's source.
@@ -431,6 +435,14 @@ class Scenario:
         return [row["value_ids"] for row in self.journal(issue=issue, field=field) if row["event_kind"] == "changelog"]
 
 
+def clear_stateful_link_inputs(warehouse: Warehouse) -> None:
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_census")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_project_visibility")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS staging.jira__issue_availability_snapshot")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS staging.jira__project_visibility_snapshot")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS staging.jira__issue_link_snapshot")
+
+
 def _truncate_bronze(warehouse: Warehouse) -> None:
     # Spelled out rather than looped over a tuple of names: a table name cannot
     # be bound as a parameter, so a loop would have to format the statement, and
@@ -441,6 +453,7 @@ def _truncate_bronze(warehouse: Warehouse) -> None:
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_statuses")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_comments")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_keys")
+    clear_stateful_link_inputs(warehouse)
     warehouse.generation += 1
 
 

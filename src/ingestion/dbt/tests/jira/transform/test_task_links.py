@@ -13,8 +13,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from conftest import LINKS_SELECTOR, Scenario, case
-from helpers import event, field, issue, item
+from helpers import census, event, field, issue, item, project_visibility
 
 SELECTOR = LINKS_SELECTOR
 
@@ -474,3 +475,266 @@ def test_a_read_older_than_the_last_event_says_nothing(scenario: Scenario) -> No
     scenario.build(LINKS_SELECTOR)
 
     assert _intervals(scenario.links(issue_id="1001")) == [("1001", "blocking", "1002", "TST-2", DAY_6, 1, None, "101")]
+
+
+FIRST_CENSUS = "2026-03-01T12:00:00"
+HIDDEN_READ = "2026-04-01T12:00:00"
+MISSING_CENSUS = "2026-04-01T13:00:00"
+RETURNED_CENSUS = "2026-04-01T14:00:00"
+RETURNED_READ = "2026-04-01T15:00:00"
+HIDDEN_READ_SQL = "2026-04-01 12:00:00.000"
+
+
+def _availability(scenario: Scenario) -> str:
+    rows = scenario.warehouse.rows(
+        "SELECT availability FROM staging.jira__issue_availability_state FINAL"
+        " WHERE source_id = {src:String} AND jira_id = '1002'",
+        {"src": scenario.source},
+    )
+    return rows[0]["availability"]
+
+
+@pytest.mark.parametrize("availability", ["access_lost", "unobserved", "archived", "trashed", "deleted"])
+def test_a_missing_link_only_closes_when_other_issue_availability_allows_it(
+    scenario: Scenario, availability: str
+) -> None:
+    read_at = "2026-03-01T18:00:00" if availability == "access_lost" else HIDDEN_READ
+    census_at = read_at if availability == "access_lost" else MISSING_CENSUS
+    project_time = FIRST_CENSUS if availability == "access_lost" else MISSING_CENSUS
+    project_status = {"archived": "archived", "trashed": "deleted"}.get(availability, "live")
+    peers = [
+        census("GONE-3", "1003", extracted_at=MISSING_CENSUS),
+        census("GONE-4", "1004", extracted_at=MISSING_CENSUS),
+    ]
+    scenario.seed(
+        fields=[LINKS_FIELD],
+        issues=[
+            issue("SEEN-1", jira_id="1001", extracted_at=read_at),
+            issue("GONE-2", jira_id="1002", extracted_at=FIRST_CENSUS),
+        ],
+        events=[event("SEEN-1", 101, "2026-01-06T10:00:00", [_added("GONE-2", "blocks")], jira_id="1001")],
+        census=[
+            census("SEEN-1", "1001", extracted_at=census_at),
+            census("GONE-2", "1002", extracted_at=FIRST_CENSUS),
+            *(peers if availability == "deleted" else []),
+        ],
+        projects=[
+            project_visibility("SEEN", "1", extracted_at=census_at),
+            project_visibility("GONE", "2", status=project_status, extracted_at=project_time),
+        ],
+    )
+    scenario.build(LINKS_SELECTOR)
+
+    if availability == "access_lost":
+        assert _availability(scenario) == "present"
+        scenario.seed(
+            fields=[],
+            issues=[],
+            census=[census("SEEN-1", "1001", extracted_at=MISSING_CENSUS)],
+            projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
+        )
+        scenario.build(LINKS_SELECTOR, full_refresh=False)
+
+    assert _availability(scenario) == availability
+    closes = availability == "deleted"
+    rows = scenario.links(issue_id="1001")
+    assert _intervals(rows) == [
+        ("1001", "blocking", "1002", "GONE-2", DAY_6, 1, HIDDEN_READ_SQL if closes else None, "101")
+    ], availability
+    assert rows[0]["evidence"] == ("observation" if closes else "event"), availability
+    snapshots = scenario.warehouse.rows(
+        "SELECT toDateTime64(_tracked_at, 3) > parseDateTime64BestEffort({read:String}, 3) AS tracked_after_read"
+        " FROM staging.jira__project_visibility_snapshot WHERE source_id = {src:String} AND project_key = 'GONE'",
+        {"src": scenario.source, "read": read_at},
+    )
+    assert snapshots == [{"tracked_after_read": 1}] * (2 if availability == "access_lost" else 1)
+
+
+@pytest.mark.parametrize("target_id", [None, "1002"])
+@pytest.mark.parametrize("project", ["GONE", "SEEN", "NEVER"])
+def test_a_target_without_availability_uses_project_visibility(
+    scenario: Scenario, project: str, target_id: str | None
+) -> None:
+    target_key = f"{project}-2"
+    linked_fields = {LINKS: [_outward("1", BLOCKS, target_id, target_key)]} if target_id is not None else {}
+    scenario.seed(
+        fields=[LINKS_FIELD],
+        issues=[
+            issue("SEEN-1", jira_id="1001", extracted_at=FIRST_CENSUS, fields=linked_fields),
+            issue("SEEN-3", jira_id="1003", extracted_at=FIRST_CENSUS, fields=linked_fields),
+        ],
+        events=[event("SEEN-1", 101, "2026-01-06T10:00:00", [_added(target_key, "blocks")], jira_id="1001")],
+        projects=[
+            project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS),
+            project_visibility("GONE", "2", extracted_at=FIRST_CENSUS),
+        ],
+    )
+    scenario.build(LINKS_SELECTOR)
+    scenario.seed(fields=[], issues=[issue("SEEN-1", jira_id="1001", extracted_at=HIDDEN_READ)])
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+
+    rows = scenario.links(issue_id="1001")
+    assert _intervals(rows) == [
+        ("1001", "blocking", target_id, target_key, DAY_6, 1, None if project == "GONE" else HIDDEN_READ_SQL, "101")
+    ], (project, target_id)
+    assert rows[0]["evidence"] == ("event" if project == "GONE" else "observation")
+
+
+@pytest.mark.parametrize("kind", ["issuelink", "parent"])
+@pytest.mark.parametrize("with_event", [False, True])
+@pytest.mark.parametrize("hidden", [False, True])
+def test_a_read_retains_only_links_whose_other_issue_is_hidden(
+    scenario: Scenario, kind: str, with_event: bool, hidden: bool
+) -> None:
+    fields = {LINKS: [_outward("1", BLOCKS, "1002", "GONE-2")]}
+    addition = _added("GONE-2", "blocks")
+    catalogue = LINKS_FIELD
+    if kind == "parent":
+        fields = {PARENT: {"id": "1002", "key": "GONE-2"}}
+        addition = item(PARENT, to="1002", to_str="GONE-2")
+        catalogue = PARENT_FIELD
+    scenario.seed(
+        fields=[catalogue],
+        issues=[issue("SEEN-1", jira_id="1001", fields=fields), issue("GONE-2", jira_id="1002")],
+        events=[event("SEEN-1", 101, "2026-01-06T10:00:00", [addition], jira_id="1001")] if with_event else [],
+        census=[census("SEEN-1", "1001"), census("GONE-2", "1002")],
+        projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
+    )
+    scenario.build(LINKS_SELECTOR)
+    original = scenario.links()
+    assert len(original) == (2 if kind == "parent" else 1)
+
+    scenario.seed(
+        fields=[],
+        issues=[issue("SEEN-1", jira_id="1001", extracted_at=HIDDEN_READ)],
+        census=[
+            census("SEEN-1", "1001", extracted_at=MISSING_CENSUS),
+            *([] if hidden else [census("GONE-2", "1002", extracted_at=MISSING_CENSUS)]),
+        ],
+        projects=[
+            project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS),
+            *([] if hidden else [project_visibility("GONE", "2", extracted_at=MISSING_CENSUS)]),
+        ],
+    )
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+
+    rows = scenario.links()
+    if hidden:
+        assert rows == original, (kind, with_event)
+    elif with_event:
+        assert len(rows) == len(original)
+        assert {(r["valid_to"], r["evidence"]) for r in rows} == {(HIDDEN_READ_SQL, "observation")}
+    else:
+        assert rows == []
+    held = scenario.warehouse.rows(
+        "SELECT toString(extracted_at) AS extracted_at FROM staging.jira__issue_link_snapshot FINAL"
+        " WHERE insight_source_id = {src:String}",
+        {"src": scenario.source},
+    )
+    assert held == ([{"extracted_at": READ}] if hidden else [])
+
+    if not hidden:
+        return
+
+    scenario.seed(
+        fields=[],
+        issues=[],
+        census=[
+            census("SEEN-1", "1001", extracted_at=RETURNED_CENSUS),
+            census("GONE-2", "1002", extracted_at=RETURNED_CENSUS),
+        ],
+        projects=[
+            project_visibility("SEEN", "1", extracted_at=RETURNED_CENSUS),
+            project_visibility("GONE", "2", extracted_at=RETURNED_CENSUS),
+        ],
+    )
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    assert scenario.links() == original
+
+    scenario.seed(fields=[], issues=[issue("SEEN-1", jira_id="1001", fields=fields, extracted_at=RETURNED_READ)])
+    scenario.build(LINKS_SELECTOR)
+    assert scenario.links() == original
+
+
+@pytest.mark.parametrize("kind", ["issuelink", "parent"])
+def test_hidden_issue_events_still_open_and_close_links(scenario: Scenario, kind: str) -> None:
+    addition = _added("GONE-2", "blocks")
+    removal = _removed("GONE-2", "blocks")
+    catalogue = LINKS_FIELD
+    fields = {LINKS: [_outward("1", BLOCKS, "1002", "GONE-2")]}
+    if kind == "parent":
+        addition = item(PARENT, to="1002", to_str="GONE-2")
+        removal = item(PARENT, frm="1002", frm_str="GONE-2")
+        catalogue = PARENT_FIELD
+        fields = {PARENT: {"id": "1002", "key": "GONE-2"}}
+    scenario.seed(
+        fields=[catalogue],
+        issues=[issue("SEEN-1", jira_id="1001", fields=fields), issue("GONE-2", jira_id="1002")],
+        census=[census("SEEN-1", "1001"), census("GONE-2", "1002")],
+        projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
+    )
+    scenario.build(LINKS_SELECTOR)
+
+    scenario.seed(
+        fields=[],
+        issues=[issue("SEEN-1", jira_id="1001", extracted_at=HIDDEN_READ)],
+        events=[event("SEEN-1", 101, "2026-03-30T10:00:00", [addition], jira_id="1001", extracted_at=HIDDEN_READ)],
+        census=[census("SEEN-1", "1001", extracted_at=MISSING_CENSUS)],
+        projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
+    )
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    rows = scenario.links()
+    assert len(rows) == (2 if kind == "parent" else 1)
+    assert {(r["valid_from"], r["valid_to"], r["evidence"]) for r in rows} == {
+        ("2026-03-30 10:00:00.000", None, "event")
+    }
+
+    scenario.seed(
+        fields=[],
+        issues=[],
+        events=[event("SEEN-1", 102, "2026-03-31T10:00:00", [removal], jira_id="1001", extracted_at=HIDDEN_READ)],
+    )
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    rows = scenario.links()
+    assert len(rows) == (2 if kind == "parent" else 1)
+    assert {(r["valid_from"], r["valid_to"], r["evidence"], r["origin_event_id"]) for r in rows} == {
+        ("2026-03-30 10:00:00.000", "2026-03-31 10:00:00.000", "event", "101")
+    }
+
+
+@pytest.mark.parametrize("kind", ["issuelink", "parent"])
+def test_an_issue_without_a_current_read_keeps_no_retained_links(scenario: Scenario, kind: str) -> None:
+    catalogue = LINKS_FIELD if kind == "issuelink" else PARENT_FIELD
+    fields = (
+        {LINKS: [_outward("1", BLOCKS, "1002", "GONE-2")]}
+        if kind == "issuelink"
+        else {PARENT: {"id": "1002", "key": "GONE-2"}}
+    )
+    scenario.seed(
+        fields=[catalogue],
+        issues=[issue("SEEN-1", jira_id="1001", fields=fields), issue("GONE-2", jira_id="1002")],
+        census=[
+            census("SEEN-1", "1001", extracted_at=MISSING_CENSUS),
+            census("GONE-2", "1002", extracted_at=FIRST_CENSUS),
+        ],
+        projects=[
+            project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS),
+            project_visibility("GONE", "2", extracted_at=FIRST_CENSUS),
+        ],
+    )
+    scenario.build(LINKS_SELECTOR)
+
+    assert _availability(scenario) == "access_lost"
+    assert len(scenario.links()) == (2 if kind == "parent" else 1)
+
+    scenario.warehouse.execute("TRUNCATE TABLE bronze_jira.jira_issue")
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+
+    assert (
+        scenario.warehouse.rows(
+            "SELECT issue_id FROM staging.jira__issue_link_snapshot FINAL WHERE insight_source_id = {src:String}",
+            {"src": scenario.source},
+        )
+        == []
+    )
+    assert scenario.links() == []

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from conftest import LINKS_SELECTOR, Scenario, Warehouse
+from conftest import LINKS_SELECTOR, Scenario, Warehouse, clear_stateful_link_inputs
 from helpers import CREATED_AT, SOURCE_ID, TENANT_ID, event, field, issue, item
 
 SELECTOR = f"{LINKS_SELECTOR} +jira__task_references"
@@ -238,6 +238,7 @@ def _clear(warehouse: Warehouse) -> None:
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_comments")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_projects")
     warehouse.execute("TRUNCATE TABLE IF EXISTS silver.class_task_references")
+    clear_stateful_link_inputs(warehouse)
     warehouse.generation += 1
 
 
