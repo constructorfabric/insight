@@ -481,7 +481,7 @@ export const TestRevalidating: Story = {
     msw: { handlers: [metricResultsHandler({ kind: "data", delayMs: 800 })] },
   },
   play: async ({ canvas, canvasElement }) => {
-    await canvas.findByText("org/repo-a", undefined, { timeout: 5000 });
+    await canvas.findByText("org/repo-a");
 
     await userEvent.click(canvas.getByRole("button", { name: "Source" }));
     await waitFor(() =>
@@ -491,9 +491,8 @@ export const TestRevalidating: Story = {
     // Previous series stay on screen while the new group-by is in flight.
     await expect(canvas.getByText("org/repo-a")).toBeInTheDocument();
 
-    await waitFor(
-      () => expect(canvas.getByText("GitHub")).toBeInTheDocument(),
-      { timeout: 5000 }
+    await waitFor(() =>
+      expect(canvas.getByText("GitHub")).toBeInTheDocument()
     );
     await expect(canvas.getByRole("button", { name: "Export" })).toBeEnabled();
   },
@@ -595,7 +594,7 @@ export const TestXlsxExport: Story = {
     await openExportMenu();
     await userEvent.click(await screen.findByText("Excel (.xlsx)"));
 
-    await waitFor(() => expect(downloads).toHaveLength(1), { timeout: 5000 });
+    await waitFor(() => expect(downloads).toHaveLength(1));
     const download = downloads[0]!;
     await expect(download.filename).toBe(
       "git-output_2026-04-20_2026-05-04.xlsx"
@@ -689,11 +688,9 @@ export const TestNarrowTableKeepsItsScrollControlsOffTheCells: Story = {
     const scrollport = table.parentElement!;
     const controlsNow = () =>
       canvas.getAllByRole("button", { name: /^Show (earlier|later) / });
-    await canvas.findAllByRole(
-      "button",
-      { name: /^Show (earlier|later) / },
-      { timeout: 5000 }
-    );
+    await canvas.findAllByRole("button", {
+      name: /^Show (earlier|later) /,
+    });
 
     await expect(
       controlsNow().length,
