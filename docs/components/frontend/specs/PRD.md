@@ -1,6 +1,6 @@
 ---
 status: draft
-version: "0.1"
+version: "0.2"
 date: 2026-10-27
 ---
 
@@ -329,7 +329,7 @@ The system **MUST** let a lead or executive narrow people views to a part of the
 
 - [ ] `p2` - **ID**: `cpt-insightspec-portal-fr-cohort`
 
-The system **MUST** let a reader in a hierarchical organisation choose the cohort every comparison on screen is made against — the whole org scope, or the people sharing a person's value of an organisation attribute — explain what the choice controls, and offer no choice where only one cohort exists.
+The system **MUST** let a reader in a hierarchical organisation choose, beside the reporting-window control and with it kept in view while content scrolls, the cohort every comparison on screen is made against — the whole org scope, or the people sharing a person's value of an organisation attribute — explain what the choice controls, show it on every surface that draws comparisons, and offer no choice where only one cohort exists.
 
 **Rationale**: "Versus median" is meaningless unless the reader knows, and can change, whom the median is over.
 
@@ -1047,7 +1047,6 @@ The system **MUST** put into a CSV or Excel export only the rows the reader sees
 |------|--------|------------|
 | Starred and starter dashboards have no service support yet | Browse filters and Home sections show nothing to select | Show them as planned per `cpt-insightspec-portal-fr-planned` until the services provide them |
 | Removing the top-bar scope control hides scope from leads who used it | Leads lose track of which part of the organisation a view covers | Every scoped view names its scope (`cpt-insightspec-portal-fr-org-scope`), and the work chart sets it |
-| Placement of the cohort control is not settled by the visual design | The control moves again after release | The product owner decides placement before the cohort requirement is implemented |
 | Existing dashboards carry a window restriction the single control ignores | A dashboard opens on a window its author did not intend | The dashboard's own default window opens first (`cpt-insightspec-portal-fr-period-scope`) |
 | A metric refuses windows longer than its maximum | A widget on a dashboard read over a long preset shows a refusal | The widget shows the refusal with its reason per `cpt-insightspec-portal-fr-states` |
 | The sharing PRD revision this PRD relies on is not yet merged | Requirements on grants, editors and members describe behaviour not yet available | Ship the dashboard requirements with the sharing release; until then show those actions as planned |

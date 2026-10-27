@@ -1,6 +1,6 @@
 ---
 status: draft
-version: "0.1"
+version: "0.2"
 date: 2026-10-27
 ---
 
@@ -60,6 +60,7 @@ The visual layer is one foundation: semantic colour tokens defined once for ligh
 | `cpt-insightspec-portal-fr-narrow-screens` | Shell layout tiers switch the pane between in-flow, off-canvas and a drawer holding both navigation levels; a leaf pick dismisses the drawer. |
 | `cpt-insightspec-portal-fr-period-control` | One period control component with a preset list resolved by the services; used on every surface that shows period figures. |
 | `cpt-insightspec-portal-fr-period-scope` | Portal window and dashboard window are separate address parameters read by separate hooks; both feed the same control. |
+| `cpt-insightspec-portal-fr-cohort` | Toolbar renders the cohort control beside the period control on comparison surfaces, writing the cohort to the address; a help tooltip states what it controls; disabled with its reason when only one cohort exists. |
 | `cpt-insightspec-portal-fr-org-scope` | Scope lives in the address and is written by the work chart and the person page's Team action; scoped views render their scope label. |
 | `cpt-insightspec-portal-fr-browse` | Browse selection lives in the address; the pane group and the chip row both read and write it. |
 | `cpt-insightspec-portal-fr-share` | Share dialog driven by the sharing service's grant model and the dashboard's may-share flag. |
@@ -214,6 +215,7 @@ flowchart LR
   Shell --> Pane
   Shell --> Toolbar
   Toolbar --> PeriodControl
+  Toolbar --> CohortControl
   Shell --> Surfaces
   Surfaces --> Home
   Surfaces --> Dashboards
@@ -240,7 +242,7 @@ Every surface needs the same navigation, view controls, banners and scroll behav
 
 ##### Responsibility scope
 
-Lays out rail, pane and content; titles Home's pane with the product name and every other pane with its rail item's name; owns the scroll container so the toolbar pins above scrolling content; switches layout tier by width — phone below 768 px (no rail, drawer with both navigation levels), narrow 768–1023 px (rail, off-canvas pane), wide from 1024 px (rail and pane in flow); shows the impersonation and mock-data banners; supplies the skip link; hosts the settings menu and feedback dialog.
+Lays out rail, pane and content; titles Home's pane with the product name and every other pane with its rail item's name; owns the scroll container so the toolbar pins above scrolling content; switches layout tier by width — phone below 768 px (no rail, drawer with both navigation levels), narrow 768–1023 px (rail, off-canvas pane), wide from 1024 px (rail and pane in flow); holds in the toolbar the cohort control, where the surface draws comparisons and the organisation has more than one cohort, followed by the period control; shows the impersonation and mock-data banners; supplies the skip link; hosts the settings menu and feedback dialog.
 
 ##### Responsibility boundaries
 
