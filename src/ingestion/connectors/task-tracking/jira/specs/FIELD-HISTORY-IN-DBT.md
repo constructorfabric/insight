@@ -599,13 +599,16 @@ rules the events alone do not give:
 - **within one changelog entry a removal precedes an addition.** An entry can
   remove and add the same link, in either order of its items; the link holds
   after it.
-- **the issue's newest read has the last word.** A link can go with no event on
+- **an observable absence can override the events.** A link can go with no event on
   either issue — deleting the linked issue logs nothing on this one, and a bulk
   change can drop links unlogged — and come back the same way. Where the read
   disagrees with the state the events leave, the occurrence closes at the
   issue's `updated` when that is after the last event, else at the read, or
   reopens at its last removal with `valid_from_known = 0`; either row is
-  `evidence = observation`. A read older than the last event is skipped.
+  `evidence = observation`. An omitted link closes only when the other issue
+  was observable at that read (see DELETION-AND-VISIBILITY.md). A retained
+  earlier observation cannot reopen a removed link. A read older than the last
+  event is skipped.
 
 ## 4. Value normalization
 

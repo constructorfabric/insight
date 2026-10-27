@@ -128,8 +128,79 @@ models:
           - not_null
       - name: occurrence_key
         description: "'type:<type id>:<direction>', 'phrase:<phrase>' for a phrase resolved to no type, or 'parent'."
+  - name: jira__issue_read_current
+    description: >
+      Latest key, creation/update times and read timestamp per issue, materialized once for link
+      retention and interval labels. Rebuilt from bronze on each sync; contains no issue JSON.
+    columns:
+      - name: unique_key
+        description: "Source and immutable issue id."
+        tests:
+          - unique
+          - not_null
+      - name: insight_source_id
+        description: "Connector source instance."
+      - name: issue_id
+        description: "Immutable Jira issue id."
+      - name: current_key
+        description: "Readable key from the issue's newest read."
+      - name: created_at
+        description: "Issue creation time from the newest read carrying a parseable value."
+      - name: updated_at
+        description: "Issue update time from the newest read carrying a parseable value."
+      - name: read_at
+        description: "Newest issue extraction timestamp."
+      - name: _version
+        description: "Model build timestamp in epoch milliseconds."
+  - name: jira__issue_link_current
+    description: >
+      Issue links and parents shown by each issue's newest read, parsed in a single streaming
+      unpivot after raw-id deduplication. Rebuilt on every sync; jira__issue_link_snapshot adds
+      retained observations from earlier reads while the other issue is hidden.
+    columns:
+      - name: unique_key
+        description: "Source, issue, kind, the link's own id and the linked issue."
+        tests:
+          - unique
+          - not_null
+      - name: insight_source_id
+        description: "Connector source instance."
+      - name: issue_id
+        description: "Immutable id of the issue holding the link."
+      - name: id_readable
+        description: "Readable key of the issue holding the link."
+      - name: kind
+        description: "issuelink | parent."
+      - name: link_id
+        description: "The link object's own id; empty for a parent."
+      - name: type_id
+        description: "Immutable link type id; empty for a parent."
+      - name: type_name
+        description: "Link type name; empty for a parent."
+      - name: type_outward
+        description: "Link type's outward phrase; empty for a parent."
+      - name: type_inward
+        description: "Link type's inward phrase; empty for a parent."
+      - name: direction
+        description: "outward | inward; empty for a parent."
+      - name: relation
+        description: "Phrase for this side of the link; parent for a parent."
+      - name: target_id
+        description: "Other issue's id as the read names it; empty when only its key is available."
+      - name: target_key
+        description: "Other issue's readable key as the read names it."
+      - name: extracted_at
+        description: "Issue extraction timestamp of this observation."
+      - name: _version
+        description: "Model build timestamp in epoch milliseconds."
   - name: jira__issue_link_snapshot
-    description: "The issue links and the parent each issue holds now, one row per link object, with the linked issue's immutable id and key and the link type's phrase for this side. Read by jira__task_links and jira__issue_key_ids."
+    description: >
+      Issue links and parents from each issue's newest read, retaining earlier links omitted while the
+      other issue was hidden at that read. Replaces the table while remembering its prior rows, even
+      under full refresh. Supplies occurrence identities, key-to-id mappings and reference labels.
+      Visible versions begin at census last_seen_at; absent or invisible versions begin one millisecond later,
+      without adding the census tolerance to these boundaries;
+      see specs/DELETION-AND-VISIBILITY.md.
     columns:
       - name: unique_key
         description: "Source, issue, kind, the link's own id and the linked issue."
@@ -160,7 +231,7 @@ models:
       - name: target_key
         description: "The linked issue's current key."
       - name: extracted_at
-        description: "When bronze received the issue row this was read from."
+        description: "When bronze received the issue row showing this link; retained rows keep the earlier read's timestamp."
   - name: jira__issue_key_ids
     description: "Every key an issue is known to have had, with its immutable id: the issue's own bronze rows, Key events of moved issues, the links snapshots hold, and parent changes. Resolves the keys the changelog names linked issues by."
     columns:
@@ -183,7 +254,11 @@ models:
           - not_null
           - unique
   - name: jira__task_links
-    description: "Per-source staging projection of Jira issue links and parent changes as intervals, folded from the changelog's add and remove events, with links held before the first event seeded from the snapshot. Unioned into silver.class_task_links."
+    description: >
+      Jira link and parent intervals folded from changelog operations, seeded from retained link snapshots.
+      A newest read can close an event-open interval only when the other issue was observable at that read;
+      a link shown by the newest read can reopen an event-closed interval. Parent intervals mirror as sub_issue.
+      Unioned into silver.class_task_links.
     columns:
       - name: unique_key
         description: "Source, issue, link type, relation, linked issue (its id, or its key when the key resolves to none) and valid_from."
@@ -197,3 +272,7 @@ models:
               values: ['parent', 'sub_issue', 'blocked_by', 'blocking', 'duplicate_of', 'connected']
       - name: target_id
         description: "The linked issue's immutable id; NULL when its key resolves to no id (a project the connector cannot read, an issue deleted before it was read)."
+      - name: evidence
+        description: >
+          event when folded without an observation edge; observation when a newest read reopens a link
+          or closes it while the other issue is observable. Omission during a visibility gap is not an edge.

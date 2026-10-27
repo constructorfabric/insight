@@ -332,7 +332,8 @@ models:
           `event` — folded from the vendor's own add and remove events, exact to the second.
           `observation` — at least one edge is bounded by snapshots rather than stated by an event, so it is
           known only to a sync. A Jira interval opened by an event and closed because the issue's newest read
-          no longer holds the link is `observation`.
+          no longer holds the link is `observation` only when the other issue was observable at that read.
+          Omission during a visibility gap leaves the event-derived state unchanged.
         tests:
           - accepted_values:
               values: ['event', 'observation']
