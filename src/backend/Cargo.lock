@@ -164,7 +164,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "utoipa",
+ "utoipa 6.0.0",
  "uuid",
  "zeroize",
  "zip 9.0.5",
@@ -570,7 +570,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "utoipa",
+ "utoipa 6.0.0",
  "uuid",
 ]
 
@@ -1033,7 +1033,7 @@ dependencies = [
  "tower-http 0.6.11",
  "tracing",
  "ureq",
- "utoipa",
+ "utoipa 5.5.0",
 ]
 
 [[package]]
@@ -1124,7 +1124,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "utoipa",
+ "utoipa 5.5.0",
  "uuid",
 ]
 
@@ -1147,7 +1147,7 @@ dependencies = [
  "tokio",
  "tonic",
  "tracing",
- "utoipa",
+ "utoipa 5.5.0",
  "uuid",
 ]
 
@@ -1318,7 +1318,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "utoipa",
+ "utoipa 5.5.0",
  "uuid",
 ]
 
@@ -1380,7 +1380,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "urlencoding",
- "utoipa",
+ "utoipa 5.5.0",
  "uuid",
 ]
 
@@ -1399,7 +1399,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tracing",
- "utoipa",
+ "utoipa 5.5.0",
 ]
 
 [[package]]
@@ -1527,7 +1527,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tracing",
- "utoipa",
+ "utoipa 5.5.0",
 ]
 
 [[package]]
@@ -1741,7 +1741,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "utoipa",
+ "utoipa 5.5.0",
  "uuid",
 ]
 
@@ -3170,7 +3170,7 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
- "utoipa",
+ "utoipa 6.0.0",
  "uuid",
 ]
 
@@ -3752,7 +3752,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
- "utoipa",
+ "utoipa 6.0.0",
  "uuid",
 ]
 
@@ -3883,7 +3883,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "utoipa",
+ "utoipa 6.0.0",
 ]
 
 [[package]]
@@ -3936,7 +3936,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "utoipa",
+ "utoipa 6.0.0",
  "uuid",
 ]
 
@@ -5360,7 +5360,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "utoipa",
+ "utoipa 6.0.0",
  "uuid",
 ]
 
@@ -8170,7 +8170,19 @@ dependencies = [
  "indexmap 2.14.0",
  "serde",
  "serde_json",
- "utoipa-gen",
+ "utoipa-gen 5.5.0",
+]
+
+[[package]]
+name = "utoipa"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8765fe27aeff71012a3f90fa474cf1df863a7d0dd81ed25de4e63fff2544994f"
+dependencies = [
+ "indexmap 2.14.0",
+ "serde",
+ "serde_json",
+ "utoipa-gen 6.0.1",
 ]
 
 [[package]]
@@ -8182,6 +8194,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+ "uuid",
+]
+
+[[package]]
+name = "utoipa-gen"
+version = "6.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d935f1c83fdf8b88f09bbe050d0cea78ea4afee6d7b0317403228c1200b2c8ab"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
  "uuid",
 ]
 
