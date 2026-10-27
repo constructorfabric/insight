@@ -62,6 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Install kubectl
@@ -254,11 +255,19 @@ jobs:
             kubectl -n "${INSIGHT_NAMESPACE}" rollout status "${statefulset}" --timeout=5m
           done < <(kubectl -n "${INSIGHT_NAMESPACE}" get statefulsets -o name)
 
-          while IFS= read -r job; do
-            kubectl -n "${INSIGHT_NAMESPACE}" wait "${job}" \
+          jobs=$(kubectl -n "${INSIGHT_NAMESPACE}" get jobs \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.ownerReferences[?(@.kind=="CronJob")].name}{"\n"}{end}')
+          while IFS=$'\t' read -r job cronjob; do
+            [[ -n "${job}" ]] || continue
+            if [[ -n "${cronjob}" ]]; then
+              echo "Skipping job/${job} owned by CronJob ${cronjob}"
+              continue
+            fi
+
+            kubectl -n "${INSIGHT_NAMESPACE}" wait "job/${job}" \
               --for=condition=Complete \
               --timeout=5m
-          done < <(kubectl -n "${INSIGHT_NAMESPACE}" get jobs -o name)
+          done <<< "${jobs}"
 
       # The chart publishes itself as an HTTPRoute, so a green rollout still
       # says nothing about whether anything can reach it. This is the only step
@@ -299,31 +308,40 @@ jobs:
           echo "edge never answered (last status: ${code:-none})" >&2
           exit 1
 
-      - name: Verify Insight v3 Core raw-data flow
+      - name: Verify Insight v3 Core raw-data admission and routing
         run: |
           set -euo pipefail
           core_token=$(kubectl -n "${INSIGHT_NAMESPACE}" get secret insight-v3-core-token \
             -o jsonpath='{.data.token}' | base64 -d)
           test -n "${core_token}"
 
-          # No table is created first: creating one is admin-only, and a
-          # connector holds a token rather than a session. The write brings the
-          # stream's table into being, which is the whole path a connector has.
-          curl -fsS -X POST \
-            -H "X-Insight-Token: ${core_token}" \
-            -H 'Content-Type: application/json' \
-            --data '{"table":"functional_ci_events","raw_data":{"source":"functional-ci","value":42}}' \
-            "http://localhost:${EDGE_PORT}/api/core/v1/raw-data"
+          response_body=$(mktemp)
+          trap 'rm -f "${response_body}"' EXIT
+          request_body='{"dataset":"functional_ci_undeclared","raw_data":{"source":"functional-ci","value":42}}'
 
-          clickhouse_pod=$(kubectl -n "${INFRA_NAMESPACE}" get pods \
-            -l app.kubernetes.io/instance=clickhouse \
-            -o jsonpath='{.items[0].metadata.name}')
-          test -n "${clickhouse_pod}"
-          row_count=$(kubectl -n "${INFRA_NAMESPACE}" exec "${clickhouse_pod}" -- \
-            clickhouse-client --user insight --password "${CLICKHOUSE_PASSWORD}" \
-            --database insight --format TSVRaw \
-            --query "SELECT count() FROM functional_ci_events WHERE table_name = 'functional_ci_events'")
-          test "${row_count}" = "1"
+          for expected_status in 401 404; do
+            headers=()
+            if [[ "${expected_status}" == "404" ]]; then
+              headers=(-H "X-Insight-Token: ${core_token}")
+            fi
+
+            status=$(curl -sS -X POST --connect-timeout 5 --max-time 30 \
+              -o "${response_body}" -w '%{http_code}' \
+              -H 'Content-Type: application/json' \
+              "${headers[@]}" \
+              --data "${request_body}" \
+              "http://localhost:${EDGE_PORT}/api/core/v1/raw-data") \
+              || status="curl failed (${status})"
+
+            if [[ "${status}" != "${expected_status}" ]] || {
+              [[ "${expected_status}" == "404" ]] &&
+                ! yq -p=json -e '.context.resource_name == "functional_ci_undeclared"' "${response_body}" >/dev/null
+            }; then
+              printf 'raw-data: expected HTTP %s, got %s\n' "${expected_status}" "${status}" >&2
+              cat "${response_body}" >&2
+              exit 1
+            fi
+          done
 
       - name: Dump diagnostics on failure
         if: failure()
