@@ -12,10 +12,9 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   return {
     ...actual,
     fetchDataset: vi.fn(),
-    fetchTables: vi.fn(),
-    fetchTable: vi.fn(),
     fetchDatasetRecords: vi.fn(),
     fetchDatasetDependents: vi.fn(),
+    fetchMetric: vi.fn(),
     deleteDataset: vi.fn(),
   };
 });
@@ -78,6 +77,9 @@ beforeEach(() => {
     limit: 20,
   });
   vi.mocked(customClient.fetchDatasetDependents).mockResolvedValue([]);
+  vi.mocked(customClient.fetchMetric).mockRejectedValue(
+    new customClient.CustomApiError(404, null)
+  );
   localStorage.clear();
 });
 
@@ -322,6 +324,22 @@ describe("/portal/custom/datasets/$name", () => {
     render(<Component />, { wrapper });
 
     expect(await screen.findByText("lines_per_day")).toBeInTheDocument();
+  });
+
+  it("names a metric that reads it by its stored name, and links it by id", async () => {
+    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
+    vi.mocked(customClient.fetchDatasetDependents).mockResolvedValue(["m-2"]);
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "Lines per day",
+      definition: { dataset: "commits", fields: [] },
+    });
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("link", { name: "Lines per day" })
+    ).toHaveAttribute("href", "/portal/custom/metrics/m-2");
+    expect(customClient.fetchMetric).toHaveBeenCalledWith("m-2");
   });
 
   it("links a metric that reads it to its page", async () => {

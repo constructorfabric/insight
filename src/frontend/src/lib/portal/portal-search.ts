@@ -1,6 +1,7 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback } from "react";
 
+import type { OwnedFilter } from "@/api/custom-client";
 import { validateDateRange } from "@/api/period-to-date-range";
 import { isRangeToken } from "@/lib/custom/time-range";
 import type { PeriodValue } from "@/types/insight";
@@ -71,6 +72,8 @@ export interface PortalSearch {
   range?: string;
   folder?: string;
   tag?: string[];
+  /** Narrows the dashboard list to those the reader owns, or those shared with them. */
+  owned?: OwnedFilter;
   /** Period preset. A custom range rides in `from`/`to` beside it. */
   period?: PeriodValue;
   from?: string;
@@ -149,6 +152,7 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     range: isRangeToken(str(raw.range) ?? "") ? str(raw.range) : undefined,
     folder: str(raw.folder),
     tag: strs(raw.tag),
+    owned: raw.owned === "me" || raw.owned === "shared" ? raw.owned : undefined,
     period: period && PERIODS.has(period) ? (period as PeriodValue) : undefined,
     ...(custom ? { from, to } : {}),
   };

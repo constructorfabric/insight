@@ -51,11 +51,11 @@ known AS (
 
     UNION ALL
 
-    -- COALESCE keeps the key well-defined when a source or issue id is NULL;
-    -- otherwise every such row would collapse into one NULL-key group.
+    -- ifNull keeps the key well-defined when the tenant is NULL; otherwise every
+    -- such row would collapse into one NULL-key group.
     SELECT
-        concat(ifNull(tenant_id, ''), '-', COALESCE(source_id, ''), '-',
-               COALESCE(jira_id, ''))                        AS unique_key,
+        concat(ifNull(tenant_id, ''), '-', CAST(source_id AS String), '-',
+               CAST(jira_id AS String))                      AS unique_key,
         tenant_id,
         source_id,
         jira_id,
@@ -63,14 +63,13 @@ known AS (
         id_readable,
         toDateTime64(0, 3)                                   AS seen_at
     FROM {{ source('bronze_jira', 'jira_issue') }} FINAL
-    WHERE jira_id IS NOT NULL
 
     UNION ALL
 
     -- Jira project keys cannot contain '-', so the key prefix is the project.
     SELECT
-        concat(ifNull(tenant_id, ''), '-', COALESCE(source_id, ''), '-',
-               COALESCE(jira_id, ''))                        AS unique_key,
+        concat(ifNull(tenant_id, ''), '-', CAST(source_id AS String), '-',
+               CAST(jira_id AS String))                      AS unique_key,
         tenant_id,
         source_id,
         jira_id,
@@ -78,7 +77,7 @@ known AS (
         id_readable,
         toDateTime64(0, 3)                                   AS seen_at
     FROM {{ source('bronze_jira', 'jira_issue_keys') }} FINAL
-    WHERE jira_id IS NOT NULL AND id_readable IS NOT NULL
+    WHERE id_readable IS NOT NULL
 ),
 
 issues AS (

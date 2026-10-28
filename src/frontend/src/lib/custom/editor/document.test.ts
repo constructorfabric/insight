@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { spell } from "./describe";
 import { change, hold, read, retype, sendable, written } from "./document";
 
 describe("the document an editor holds", () => {
@@ -130,14 +129,5 @@ describe("the document an editor holds", () => {
 
   it("writes a document a reader can edit by hand", () => {
     expect(written({ a: 1 })).toBe('{\n  "a": 1\n}');
-  });
-});
-
-describe("the path a violation names", () => {
-  it("is spelled the way the service spells it", () => {
-    expect(spell(["title"])).toBe("title");
-    expect(spell(["fields", 0, "type"])).toBe("fields[0].type");
-    expect(spell(["row_identity", 1])).toBe("row_identity[1]");
-    expect(spell([])).toBe("");
   });
 });

@@ -10,9 +10,19 @@ use tower::ServiceExt as _;
 
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::domain::folders::DefinitionStore;
+use crate::domain::access::PersonId;
+use crate::domain::definition::{DefinitionId, DefinitionKind};
 use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::store::definitions::memory::MemoryDefinitions;
+
+/// The administrator the fixed identity answers for a request naming none.
+const ME: &str = "00000000-0000-0000-0000-000000000000";
+
+const SOMEONE_ELSE: &str = "0192a1b2-0000-7000-8000-000000000002";
+
+fn me() -> PersonId {
+    PersonId::new(uuid::Uuid::nil())
+}
 
 fn commits() -> Value {
     json!({
@@ -24,6 +34,7 @@ fn commits() -> Value {
 struct Harness {
     _clickhouse: Mock,
     router: Router,
+    definitions: Arc<MemoryDefinitions>,
 }
 
 struct Answer {
@@ -36,7 +47,16 @@ impl Harness {
         Self::build(true, Arc::new(MemoryDefinitions::new()))
     }
 
-    fn build(is_admin: bool, store: Arc<dyn DefinitionStore>) -> Self {
+    fn build(is_admin: bool, store: Arc<MemoryDefinitions>) -> Self {
+        let identity = crate::store::identity::IdentityClient::fixed(is_admin);
+
+        Self::with_identity(identity, store)
+    }
+
+    fn with_identity(
+        identity: crate::store::identity::IdentityClient,
+        store: Arc<MemoryDefinitions>,
+    ) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
         let url = mock.url();
@@ -46,24 +66,37 @@ impl Harness {
                 insight_clickhouse::Client::new(insight_clickhouse::Config::new(url, "insight")),
                 People::new("identity"),
             ),
-            store,
+            store.clone(),
             ChatClient::keyless(),
-            crate::store::identity::IdentityClient::fixed(is_admin),
+            identity.with_administrators(&[
+                uuid::Uuid::nil(),
+                uuid::Uuid::from_u128(0x0192_a1b2_0000_7000_8000_0000_0000_0002),
+            ]),
             crate::api::Datasets::holding(url, &[("commits", commits())]),
             crate::store::catalog::Catalog::fixed(Vec::new()),
         ));
 
         let router = crate::api::definitions::register_routes(Router::new(), &openapi, &state);
+        let router = crate::api::sharing::register_routes(router, &openapi, &state);
         let router = super::register_routes(router, &openapi, &state);
 
         Self {
             _clickhouse: mock,
             router,
+            definitions: store,
         }
     }
 
     async fn send(&self, method: &str, path: &str, body: Option<Value>) -> Answer {
-        let request = Request::builder().method(method).uri(path);
+        self.send_as(ME, method, path, body).await
+    }
+
+    /// A request from the administrator `person`.
+    async fn send_as(&self, person: &str, method: &str, path: &str, body: Option<Value>) -> Answer {
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("authorization", format!("Bearer {person}"));
         let request = match body {
             Some(body) => request
                 .header("content-type", "application/json")
@@ -107,33 +140,65 @@ impl Harness {
             .to_owned()
     }
 
-    async fn dashboard(&self, name: &str) {
+    /// Stores a dashboard of mine under an id the case chooses, or writes
+    /// its body again through the route when it is already there.
+    async fn dashboard(&self, id: &str) {
+        let path = format!("/v1/dashboards/{id}");
+        let body = json!({ "title": id, "widgets": [] });
+        if self.send("GET", &path, None).await.status == StatusCode::NOT_FOUND {
+            let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{id}: {error}"));
+            self.definitions
+                .seed_owned(&parsed, &body, me())
+                .await
+                .unwrap_or_else(|error| panic!("`{id}` must store: {error}"));
+            return;
+        }
+
         let answer = self
-            .send(
-                "PUT",
-                &format!("/v1/dashboards/{name}"),
-                Some(json!({ "title": name, "widgets": [] })),
-            )
+            .send("PUT", &path, Some(json!({ "name": id, "body": body })))
             .await;
         assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.body);
     }
 
-    async fn file(&self, dashboard: &str, folder: Value) -> Answer {
+    /// Stores a dashboard predating ownership under an id the case chooses.
+    async fn ownerless(&self, id: &str) {
+        let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{id}: {error}"));
+        self.definitions
+            .seed(
+                DefinitionKind::Dashboard,
+                &parsed,
+                &json!({ "title": id, "widgets": [] }),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("`{id}` must store: {error}"));
+    }
+
+    async fn file(&self, dashboard: &str, folder: &str) -> Answer {
         self.send(
             "PUT",
-            &format!("/v1/dashboards/{dashboard}/folder"),
-            Some(json!({ "folder": folder })),
+            &format!("/v1/folders/{folder}/dashboards/{dashboard}"),
+            None,
         )
         .await
     }
 
-    async fn folder_of(&self, dashboard: &str) -> Value {
+    async fn unfile(&self, dashboard: &str, folder: &str) -> Answer {
+        self.send(
+            "DELETE",
+            &format!("/v1/folders/{folder}/dashboards/{dashboard}"),
+            None,
+        )
+        .await
+    }
+
+    /// The folders the caller sees holding the dashboard.
+    async fn folders_of(&self, dashboard: &str) -> Value {
         let answer = self
             .send("GET", &format!("/v1/dashboards/{dashboard}"), None)
             .await;
         assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
 
-        answer.body["folder"].clone()
+        answer.body["folders"].clone()
     }
 }
 
@@ -151,7 +216,13 @@ async fn a_created_folder_is_listed_holding_nothing() {
     assert_eq!(
         listed.body,
         json!({
-            "folders": [{ "id": created.body["id"], "name": "Platform", "dashboards": 0 }],
+            "folders": [{
+                "id": created.body["id"],
+                "name": "Platform",
+                "owner_person_id": ME,
+                "access": "owner",
+                "dashboards": 0
+            }],
             "unfiled": 1
         })
     );
@@ -168,13 +239,15 @@ async fn a_name_is_kept_without_the_spaces_around_it() {
 }
 
 #[tokio::test]
-async fn a_name_differing_only_in_case_is_taken() {
+async fn two_folders_may_share_a_name() {
     let harness = Harness::new();
-    harness.created_id("Platform").await;
+    let first = harness.created_id("Platform").await;
 
-    let clash = harness.create("platform").await;
+    let second = harness.created_id("platform").await;
 
-    assert_eq!(clash.status, StatusCode::CONFLICT, "{}", clash.body);
+    assert_ne!(first, second);
+    let listed = harness.send("GET", "/v1/folders", None).await;
+    assert_eq!(listed.body["folders"].as_array().map(Vec::len), Some(2));
 }
 
 #[tokio::test]
@@ -208,7 +281,7 @@ async fn a_renamed_folder_keeps_its_id_and_its_dashboards() {
     let harness = Harness::new();
     let id = harness.created_id("Platform").await;
     harness.dashboard("delivery").await;
-    harness.file("delivery", json!(id)).await;
+    harness.file("delivery", &id).await;
 
     let renamed = harness
         .send(
@@ -219,20 +292,23 @@ async fn a_renamed_folder_keeps_its_id_and_its_dashboards() {
         .await;
 
     assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.body);
-    assert_eq!(renamed.body, json!({ "id": id, "name": "Platform team" }));
     assert_eq!(
-        harness.folder_of("delivery").await,
-        json!({ "id": id, "name": "Platform team" })
+        renamed.body,
+        json!({ "id": id, "name": "Platform team", "owner_person_id": ME, "access": "owner" })
+    );
+    assert_eq!(
+        harness.folders_of("delivery").await,
+        json!([{ "id": id, "name": "Platform team" }])
     );
 }
 
 #[tokio::test]
-async fn renaming_onto_another_folder_s_name_is_taken() {
+async fn renaming_onto_another_folder_s_name_is_allowed() {
     let harness = Harness::new();
     harness.created_id("Platform").await;
     let product = harness.created_id("Product").await;
 
-    let clash = harness
+    let renamed = harness
         .send(
             "PATCH",
             &format!("/v1/folders/{product}"),
@@ -240,7 +316,7 @@ async fn renaming_onto_another_folder_s_name_is_taken() {
         )
         .await;
 
-    assert_eq!(clash.status, StatusCode::CONFLICT);
+    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.body);
 }
 
 #[tokio::test]
@@ -267,7 +343,7 @@ async fn a_folder_id_that_names_nothing_is_not_found() {
 }
 
 #[tokio::test]
-async fn a_folder_id_that_is_not_a_uuid_is_refused() {
+async fn a_folder_id_that_is_not_a_uuid_names_no_folder() {
     let harness = Harness::new();
 
     let renamed = harness
@@ -279,8 +355,8 @@ async fn a_folder_id_that_is_not_a_uuid_is_refused() {
         .await;
     let removed = harness.send("DELETE", "/v1/folders/platform", None).await;
 
-    assert_eq!(renamed.status, StatusCode::BAD_REQUEST);
-    assert_eq!(removed.status, StatusCode::BAD_REQUEST);
+    assert_eq!(renamed.status, StatusCode::NOT_FOUND);
+    assert_eq!(removed.status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -288,14 +364,14 @@ async fn deleting_a_folder_leaves_its_dashboards_unfiled() {
     let harness = Harness::new();
     let id = harness.created_id("Platform").await;
     harness.dashboard("delivery").await;
-    harness.file("delivery", json!(id)).await;
+    harness.file("delivery", &id).await;
 
     let removed = harness
         .send("DELETE", &format!("/v1/folders/{id}"), None)
         .await;
 
     assert_eq!(removed.status, StatusCode::NO_CONTENT);
-    assert_eq!(harness.folder_of("delivery").await, Value::Null);
+    assert_eq!(harness.folders_of("delivery").await, json!([]));
     assert_eq!(
         harness.send("GET", "/v1/folders", None).await.body,
         json!({ "folders": [], "unfiled": 1 })
@@ -308,11 +384,16 @@ async fn a_dashboard_moved_into_a_folder_reads_back_in_it_with_its_body_intact()
     let id = harness.created_id("Platform").await;
     harness.dashboard("delivery").await;
 
-    let moved = harness.file("delivery", json!(id)).await;
+    let moved = harness.file("delivery", &id).await;
     let read = harness.send("GET", "/v1/dashboards/delivery", None).await;
 
-    assert_eq!(moved.status, StatusCode::NO_CONTENT, "{}", moved.body);
-    assert_eq!(read.body["folder"], json!({ "id": id, "name": "Platform" }));
+    assert_eq!(moved.status, StatusCode::OK, "{}", moved.body);
+    assert_eq!(moved.body, json!({ "carries": true }));
+    assert_eq!(read.body["carries"], json!(true));
+    assert_eq!(
+        read.body["folders"],
+        json!([{ "id": id, "name": "Platform" }])
+    );
     assert_eq!(
         read.body["body"],
         json!({ "title": "delivery", "widgets": [] })
@@ -324,28 +405,31 @@ async fn a_rewritten_dashboard_stays_in_its_folder() {
     let harness = Harness::new();
     let id = harness.created_id("Platform").await;
     harness.dashboard("delivery").await;
-    harness.file("delivery", json!(id)).await;
+    harness.file("delivery", &id).await;
 
     harness.dashboard("delivery").await;
 
-    assert_eq!(harness.folder_of("delivery").await["id"], json!(id));
+    assert_eq!(harness.folders_of("delivery").await[0]["id"], json!(id));
 }
 
 #[tokio::test]
-async fn a_dashboard_moved_to_no_folder_is_unfiled() {
+async fn a_dashboard_taken_out_of_its_only_folder_is_unfiled_and_taking_it_out_again_changes_nothing()
+ {
     let harness = Harness::new();
     let id = harness.created_id("Platform").await;
     harness.dashboard("delivery").await;
-    harness.file("delivery", json!(id)).await;
+    harness.file("delivery", &id).await;
 
-    let moved = harness.file("delivery", Value::Null).await;
+    let removed = harness.unfile("delivery", &id).await;
+    let again = harness.unfile("delivery", &id).await;
 
-    assert_eq!(moved.status, StatusCode::NO_CONTENT);
-    assert_eq!(harness.folder_of("delivery").await, Value::Null);
+    assert_eq!(removed.status, StatusCode::NO_CONTENT);
+    assert_eq!(again.status, StatusCode::NO_CONTENT);
+    assert_eq!(harness.folders_of("delivery").await, json!([]));
 }
 
 #[tokio::test]
-async fn a_move_that_names_no_folder_at_all_is_refused() {
+async fn a_dashboard_has_no_single_folder_to_set() {
     let harness = Harness::new();
     harness.dashboard("delivery").await;
 
@@ -353,11 +437,11 @@ async fn a_move_that_names_no_folder_at_all_is_refused() {
         .send(
             "PUT",
             "/v1/dashboards/delivery/folder",
-            Some(json!({ "folderId": null })),
+            Some(json!({ "folder": null })),
         )
         .await;
 
-    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert_eq!(refused.status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -366,15 +450,18 @@ async fn moving_into_a_folder_that_went_away_is_not_found_and_moves_nothing() {
     let platform = harness.created_id("Platform").await;
     let gone = harness.created_id("Gone").await;
     harness.dashboard("delivery").await;
-    harness.file("delivery", json!(platform)).await;
+    harness.file("delivery", &platform).await;
     harness
         .send("DELETE", &format!("/v1/folders/{gone}"), None)
         .await;
 
-    let moved = harness.file("delivery", json!(gone)).await;
+    let moved = harness.file("delivery", &gone).await;
 
     assert_eq!(moved.status, StatusCode::NOT_FOUND, "{}", moved.body);
-    assert_eq!(harness.folder_of("delivery").await["id"], json!(platform));
+    assert_eq!(
+        harness.folders_of("delivery").await,
+        json!([{ "id": platform, "name": "Platform" }])
+    );
 }
 
 #[tokio::test]
@@ -382,19 +469,19 @@ async fn moving_a_dashboard_that_is_not_there_is_not_found() {
     let harness = Harness::new();
     let id = harness.created_id("Platform").await;
 
-    let moved = harness.file("nowhere", json!(id)).await;
+    let moved = harness.file("nowhere", &id).await;
 
     assert_eq!(moved.status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
-async fn moving_into_a_folder_id_that_is_not_a_uuid_is_refused() {
+async fn moving_into_a_folder_id_that_is_not_a_uuid_is_not_found() {
     let harness = Harness::new();
     harness.dashboard("delivery").await;
 
-    let moved = harness.file("delivery", json!("platform")).await;
+    let moved = harness.file("delivery", "platform").await;
 
-    assert_eq!(moved.status, StatusCode::BAD_REQUEST);
+    assert_eq!(moved.status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -404,7 +491,7 @@ async fn a_dashboard_list_narrows_to_one_folder_or_to_the_unfiled() {
     for name in ["delivery", "delivery_costs", "hiring"] {
         harness.dashboard(name).await;
     }
-    harness.file("delivery", json!(id)).await;
+    harness.file("delivery", &id).await;
 
     let filed = harness
         .send("GET", &format!("/v1/dashboards?folder={id}"), None)
@@ -414,9 +501,20 @@ async fn a_dashboard_list_narrows_to_one_folder_or_to_the_unfiled() {
         .await;
 
     assert_eq!(filed.status, StatusCode::OK);
-    assert_eq!(filed.body["names"], json!(["delivery"]));
+    assert_eq!(
+        filed.body["items"],
+        json!([{ "id": "delivery", "name": "delivery", "owner_person_id": ME, "access": "owner" }])
+    );
     assert_eq!(filed.body["total"], 1);
-    assert_eq!(unfiled.body["names"], json!(["delivery_costs"]));
+    assert_eq!(
+        unfiled.body["items"],
+        json!([{
+            "id": "delivery_costs",
+            "name": "delivery_costs",
+            "owner_person_id": ME,
+            "access": "owner"
+        }])
+    );
     assert_eq!(unfiled.body["total"], 1);
 }
 
@@ -445,26 +543,35 @@ async fn only_dashboards_are_listed_by_folder() {
 #[tokio::test]
 async fn a_read_of_another_kind_names_no_folder() {
     let harness = Harness::new();
-    harness
+    let made = harness
         .send(
-            "PUT",
-            "/v1/metrics/commit_count",
+            "POST",
+            "/v1/metrics",
             Some(json!({
-                "dataset": "commits",
-                "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
+                "name": "Commit count",
+                "body": {
+                    "dataset": "commits",
+                    "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
+                }
             })),
         )
         .await;
+    let id = made.body["id"].as_str().unwrap_or_default();
 
-    let read = harness.send("GET", "/v1/metrics/commit_count", None).await;
+    let read = harness
+        .send("GET", &format!("/v1/metrics/{id}"), None)
+        .await;
 
     assert_eq!(read.status, StatusCode::OK, "{}", read.body);
     assert!(read.body.get("folder").is_none(), "{}", read.body);
 }
 
 #[tokio::test]
-async fn a_caller_without_the_admin_role_is_refused_on_every_folder_route() {
-    let harness = Harness::build(false, Arc::new(MemoryDefinitions::new()));
+async fn a_caller_identity_refuses_is_refused_on_every_folder_route() {
+    let harness = Harness::with_identity(
+        crate::store::identity::IdentityClient::unidentified(),
+        Arc::new(MemoryDefinitions::new()),
+    );
     let id = "0192a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
     let routes = [
         ("GET", "/v1/folders".to_owned(), None),
@@ -479,10 +586,11 @@ async fn a_caller_without_the_admin_role_is_refused_on_every_folder_route() {
             Some(json!({ "name": "Platform" })),
         ),
         ("DELETE", format!("/v1/folders/{id}"), None),
+        ("PUT", format!("/v1/folders/{id}/dashboards/delivery"), None),
         (
-            "PUT",
-            "/v1/dashboards/delivery/folder".to_owned(),
-            Some(json!({ "folder": id })),
+            "DELETE",
+            format!("/v1/folders/{id}/dashboards/delivery"),
+            None,
         ),
         ("GET", "/v1/dashboards?folder=unfiled".to_owned(), None),
     ];
@@ -492,6 +600,18 @@ async fn a_caller_without_the_admin_role_is_refused_on_every_folder_route() {
 
         assert_eq!(refused.status, StatusCode::FORBIDDEN, "{method} {path}");
     }
+}
+
+#[tokio::test]
+async fn a_member_makes_and_lists_folders_of_their_own() {
+    let harness = Harness::build(false, Arc::new(MemoryDefinitions::new()));
+
+    let created = harness.create("Mine").await;
+    let listed = harness.send("GET", "/v1/folders", None).await;
+
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    assert_eq!(created.body["access"], json!("owner"));
+    assert_eq!(listed.body["folders"][0]["id"], created.body["id"]);
 }
 
 #[tokio::test]
@@ -518,4 +638,168 @@ async fn a_folder_past_the_cap_is_refused_and_says_why() {
         "{}",
         refused.body
     );
+}
+
+#[tokio::test]
+async fn an_owned_dashboard_is_filed_in_my_folders_and_an_ownerless_one_in_ownerless_folders() {
+    let harness = Harness::new();
+    let mine = harness.created_id("Mine").await;
+    harness.dashboard("delivery").await;
+    harness.ownerless("legacy").await;
+
+    let owned_in_mine = harness.file("delivery", &mine).await;
+    let ownerless_in_mine = harness.file("legacy", &mine).await;
+
+    assert_eq!(
+        owned_in_mine.status,
+        StatusCode::OK,
+        "{}",
+        owned_in_mine.body
+    );
+    assert_eq!(
+        ownerless_in_mine.status,
+        StatusCode::CONFLICT,
+        "{}",
+        ownerless_in_mine.body
+    );
+    assert!(
+        ownerless_in_mine.body.to_string().contains("folder"),
+        "{}",
+        ownerless_in_mine.body
+    );
+    assert_eq!(harness.folders_of("legacy").await, json!([]));
+}
+
+#[tokio::test]
+async fn someone_elses_folder_is_not_found_to_file_in_rename_or_remove() {
+    let harness = Harness::new();
+    let theirs = harness
+        .send_as(
+            SOMEONE_ELSE,
+            "POST",
+            "/v1/folders",
+            Some(json!({ "name": "Theirs" })),
+        )
+        .await;
+    let theirs = theirs.body["id"].as_str().unwrap_or_default().to_owned();
+    harness.dashboard("delivery").await;
+
+    let filed = harness.file("delivery", &theirs).await;
+    let renamed = harness
+        .send(
+            "PATCH",
+            &format!("/v1/folders/{theirs}"),
+            Some(json!({ "name": "Mine" })),
+        )
+        .await;
+    let removed = harness
+        .send("DELETE", &format!("/v1/folders/{theirs}"), None)
+        .await;
+    let listed = harness.send("GET", "/v1/folders", None).await;
+
+    for (what, answer) in [("file", &filed), ("rename", &renamed), ("remove", &removed)] {
+        assert_eq!(
+            answer.status,
+            StatusCode::NOT_FOUND,
+            "{what}: {}",
+            answer.body
+        );
+    }
+    assert_eq!(listed.body["folders"], json!([]));
+}
+
+#[tokio::test]
+async fn each_administrator_files_a_shared_dashboard_in_their_own_folder() {
+    let harness = Harness::new();
+    harness.dashboard("delivery").await;
+    let shared = harness
+        .send(
+            "PUT",
+            &format!("/v1/dashboards/delivery/grants/{SOMEONE_ELSE}"),
+            Some(json!({ "level": "viewer" })),
+        )
+        .await;
+    let mine = harness.created_id("Mine").await;
+    let theirs = harness
+        .send_as(
+            SOMEONE_ELSE,
+            "POST",
+            "/v1/folders",
+            Some(json!({ "name": "Theirs" })),
+        )
+        .await;
+    let theirs = theirs.body["id"].as_str().unwrap_or_default().to_owned();
+
+    harness.file("delivery", &mine).await;
+    let filed_by_viewer = harness
+        .send_as(
+            SOMEONE_ELSE,
+            "PUT",
+            &format!("/v1/folders/{theirs}/dashboards/delivery"),
+            None,
+        )
+        .await;
+    let seen_by_viewer = harness
+        .send_as(SOMEONE_ELSE, "GET", "/v1/dashboards/delivery", None)
+        .await;
+
+    assert_eq!(shared.status, StatusCode::NO_CONTENT, "{}", shared.body);
+    assert_eq!(filed_by_viewer.body, json!({ "carries": false }));
+    assert_eq!(
+        seen_by_viewer.body["folders"],
+        json!([{ "id": theirs, "name": "Theirs" }])
+    );
+    assert_eq!(
+        harness.folders_of("delivery").await,
+        json!([{ "id": mine, "name": "Mine" }])
+    );
+}
+
+#[tokio::test]
+async fn the_folder_cap_is_per_administrator() {
+    let harness = Harness::new();
+    for index in 0..crate::domain::folders::MAX_FOLDERS {
+        harness.created_id(&format!("f{index}")).await;
+    }
+
+    let mine = harness.create("one more").await;
+    let theirs = harness
+        .send_as(
+            SOMEONE_ELSE,
+            "POST",
+            "/v1/folders",
+            Some(json!({ "name": "one more" })),
+        )
+        .await;
+
+    assert_eq!(mine.status, StatusCode::CONFLICT, "{}", mine.body);
+    assert_eq!(theirs.status, StatusCode::CREATED, "{}", theirs.body);
+}
+
+#[tokio::test]
+async fn a_folder_counts_only_the_dashboards_its_owner_sees() {
+    let harness = Harness::new();
+    let mine = harness.created_id("Mine").await;
+    harness.dashboard("delivery").await;
+    harness.file("delivery", &mine).await;
+    let parsed = DefinitionId::parse("private").unwrap_or_else(|error| panic!("{error}"));
+    let someone = PersonId::parse(SOMEONE_ELSE).unwrap_or_else(|| panic!("a person id"));
+    harness
+        .definitions
+        .seed_owned(
+            &parsed,
+            &json!({ "title": "private", "widgets": [] }),
+            someone,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let listed = harness.send("GET", "/v1/folders", None).await;
+
+    assert_eq!(
+        listed.body["folders"][0]["dashboards"], 1,
+        "{}",
+        listed.body
+    );
+    assert_eq!(listed.body["unfiled"], 0, "{}", listed.body);
 }

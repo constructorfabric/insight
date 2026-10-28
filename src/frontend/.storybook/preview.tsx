@@ -7,6 +7,7 @@
 
 import type { Preview } from "@storybook/react-vite";
 import { initialize, mswLoader } from "msw-storybook-addon";
+import { configure } from "storybook/test";
 
 import "@/index.css";
 import { authStore } from "@/auth/auth-store";
@@ -16,6 +17,12 @@ import { WithProviders } from "@/test/storybook/with-providers";
 // Start the MSW worker once. Unhandled requests pass through so a story
 // without explicit handlers still renders (it just won't see mock data).
 initialize({ onUnhandledRequest: "bypass" });
+
+const STORY_WAIT_MS = 5000;
+
+// WORKAROUND: Testing Library's 1 s default wait is tuned for jsdom; a story's
+// first data arrives through the MSW worker and a query, on a shared runner.
+configure({ asyncUtilTimeout: STORY_WAIT_MS });
 
 const preview: Preview = {
   // Opt-in test model: strip the `test` tag Storybook auto-applies to every

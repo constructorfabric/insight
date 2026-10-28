@@ -218,11 +218,12 @@ fn catalog_error(error: CatalogError) -> CanonicalError {
 async fn admin_only(
     state: &AppState,
     headers: &axum::http::HeaderMap,
-) -> Result<uuid::Uuid, CanonicalError> {
+) -> Result<crate::domain::access::PersonId, CanonicalError> {
     crate::api::require_admin(state, headers, || {
         TableApiError::permission_denied()
             .with_reason(crate::api::ADMIN_ONLY)
             .create()
     })
     .await
+    .map(|caller| caller.person)
 }

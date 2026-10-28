@@ -170,7 +170,11 @@ pub(crate) struct StateResponse {
 pub(crate) struct NotificationResponse {
     id: String,
     rule_revision: u32,
+    /// The id of the metric checked.
     metric: String,
+    /// What the metric was called when the notification was owed; null
+    /// where only its id is known.
+    metric_name: Option<String>,
     /// The condition the notification was owed under.
     #[schema(value_type = ConditionShape)]
     condition: serde_json::Value,
@@ -286,6 +290,7 @@ pub(crate) fn notification_response(notification: &Notification) -> Notification
         id: shown(notification.id),
         rule_revision: notification.rule_revision,
         metric: notification.metric.as_str().to_owned(),
+        metric_name: notification.metric_name.clone(),
         condition: notification.condition.to_json(),
         context_columns: notification.context_columns.clone(),
         witness: witness_response(&notification.witness),
@@ -670,7 +675,9 @@ async fn create_alert(
     headers: axum::http::HeaderMap,
     body: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    let actor = crate::api::require_admin(&state, &headers, denied).await?;
+    let actor = crate::api::require_admin(&state, &headers, denied)
+        .await?
+        .person;
     let alerts = alerts(&state)?;
     let Json(body) = body.map_err(|error| AlertApiError::unreadable_body(&error))?;
 
@@ -678,7 +685,7 @@ async fn create_alert(
         .map_err(|error| AlertApiError::invalid_field("body", error.to_string()))?;
 
     let rule = alerts
-        .create(&draft, Some(actor))
+        .create(&draft, Some(actor.uuid()))
         .await
         .map_err(alerts_error)?;
 
@@ -691,7 +698,9 @@ async fn put_alert(
     headers: axum::http::HeaderMap,
     body: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    let actor = crate::api::require_admin(&state, &headers, denied).await?;
+    let actor = crate::api::require_admin(&state, &headers, denied)
+        .await?
+        .person;
     let alerts = alerts(&state)?;
     let Json(body) = body.map_err(|error| AlertApiError::unreadable_body(&error))?;
 
@@ -700,7 +709,7 @@ async fn put_alert(
         .map_err(|error| AlertApiError::invalid_field("body", error.to_string()))?;
 
     let rule = alerts
-        .replace(id, &draft, Some(actor))
+        .replace(id, &draft, Some(actor.uuid()))
         .await
         .map_err(alerts_error)?;
 

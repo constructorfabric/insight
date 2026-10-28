@@ -2670,6 +2670,11 @@ streams:
                   path: /v1/authors/changes
                   request_parameters:
                     page_size: "500"
+                    # INVARIANT: every feed request carries the start date; the
+                    # proxy keeps the bound in the cursor for later pages. Without
+                    # it a first sync looks up every author in every mirror's
+                    # whole history at the vendor.
+                    committed_since: "{{ config['bitbucket_start_date'] }}"
                 record_selector:
                   type: RecordSelector
                   extractor:

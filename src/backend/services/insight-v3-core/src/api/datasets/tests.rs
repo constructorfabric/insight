@@ -12,7 +12,6 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::domain::definition::Definitions as _;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -536,9 +535,9 @@ async fn a_dataset_names_the_metrics_that_read_it() {
     harness.put("commits", declaration()).await;
     harness
         .definitions
-        .put(
+        .seed(
             crate::domain::definition::DefinitionKind::Metric,
-            &crate::domain::definition::DefinitionName::parse("lines_per_day")
+            &crate::domain::definition::DefinitionId::parse("lines_per_day")
                 .unwrap_or_else(|error| panic!("the name parses: {error}")),
             &json!({
                 "dataset": "commits",
@@ -577,9 +576,9 @@ async fn a_dataset_something_still_reads_answers_a_conflict() {
     harness.put("commits", declaration()).await;
     harness
         .definitions
-        .put(
+        .seed(
             crate::domain::definition::DefinitionKind::Metric,
-            &crate::domain::definition::DefinitionName::parse("lines_per_day")
+            &crate::domain::definition::DefinitionId::parse("lines_per_day")
                 .unwrap_or_else(|error| panic!("the name parses: {error}")),
             &json!({
                 "dataset": "commits",

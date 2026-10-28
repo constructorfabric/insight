@@ -38,13 +38,15 @@ const mocks = vi.hoisted(() => ({
   deleteFolder: vi.fn(),
   fetchPins: vi.fn(),
   fetchDashboardRead: vi.fn(),
+  fetchOrphanedFolders: vi.fn(),
 }));
 
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
 vi.mock("@/components/org-tree", () => ({
   OrgTree: () => <div data-testid="org-tree" />,
 }));
-vi.mock("@/queries/identity-me", () => ({
+vi.mock("@/queries/identity-me", async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
   useIsAdmin: () => ({ isAdmin: mocks.isAdmin, isPending: false }),
   useVisibilityPolicy: () => ({
     policy: mocks.isFlat ? "flat" : "org_chart",
@@ -66,11 +68,17 @@ vi.mock("@/lib/portal/portal-store", async (orig) => ({
 }));
 vi.mock("@/api/custom-client", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
-  fetchDashboardNames: async () => ({ names: ["delivery"], total: 14 }),
+  fetchDashboards: async () => ({
+    items: [
+      { id: "delivery", name: "delivery", owner_person_id: null, access: "ownerless" },
+    ],
+    total: 14,
+  }),
   fetchFolders: async () => ({
     folders: [
-      { id: "f1", name: "Platform", dashboards: 3 },
-      { id: "f2", name: "Product", dashboards: 0 },
+      { id: "f1", name: "Platform", owner_person_id: "me@x", access: "owner", dashboards: 3 },
+      { id: "f2", name: "Product", owner_person_id: null, access: "ownerless", dashboards: 0 },
+      { id: "f3", name: "Shared", owner_person_id: "other@x", access: "viewer", dashboards: 1 },
     ],
     unfiled: 11,
   }),
@@ -79,6 +87,7 @@ vi.mock("@/api/custom-client", async (orig) => ({
   deleteFolder: (id: string) => mocks.deleteFolder(id),
   fetchPins: () => mocks.fetchPins(),
   fetchDashboardRead: (name: string) => mocks.fetchDashboardRead(name),
+  fetchOrphanedFolders: () => mocks.fetchOrphanedFolders(),
 }));
 
 import { CustomApiError } from "@/api/custom-client";
@@ -138,6 +147,7 @@ beforeEach(() => {
   mocks.deleteFolder.mockReset().mockResolvedValue(undefined);
   mocks.fetchPins.mockReset().mockResolvedValue([]);
   mocks.fetchDashboardRead.mockReset().mockReturnValue(new Promise(() => {}));
+  mocks.fetchOrphanedFolders.mockReset().mockResolvedValue({ items: [], total: 0 });
   act(() => {
     portalRouter.reset();
     portalRouter.set({ dir: "dev" });
@@ -173,10 +183,10 @@ describe("Home pane", () => {
     expect(item.result.current).toBe("health");
   });
 
-  it("keeps the Dashboards group from a viewer who cannot open dashboards", () => {
+  it("shows a member the planned Dashboards group too, since every viewer opens dashboards", () => {
     mocks.showPlanned = true;
     pane();
-    expect(screen.queryByText("My dashboards")).toBeNull();
+    expect(buttonFor("My dashboards")).toHaveAttribute("aria-disabled", "true");
   });
 
   it("shows an admin the planned Dashboards group only with planned sections on", () => {
@@ -524,6 +534,23 @@ describe("Reports pane", () => {
 });
 
 describe("Dashboards pane", () => {
+  beforeEach(() => {
+    mocks.isAdmin = true;
+  });
+
+  it("offers a member neither the catalogues nor what they own", async () => {
+    mocks.isAdmin = false;
+    inZone("custom");
+    pane();
+
+    expect(await screen.findByText("14")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Shared with me" })).toBeInTheDocument();
+    for (const name of ["Owned by me", "Metrics", "Widgets", "Datasets", "Alerts"]) {
+      expect(screen.queryByRole("link", { name }), `should not link: ${name}`).toBeNull();
+    }
+    expect(screen.queryByText("Catalogue")).toBeNull();
+  });
+
   it("counts every dashboard beside All dashboards", async () => {
     inZone("custom");
     pane();
@@ -553,6 +580,33 @@ describe("Dashboards pane", () => {
     );
   });
 
+  it("narrows the list to what the reader owns, or what is shared with them", () => {
+    inZone("custom");
+    pane();
+    expect(screen.getByRole("link", { name: "Owned by me" })).toHaveAttribute(
+      "href",
+      "/portal/custom?owned=me",
+    );
+    expect(screen.getByRole("link", { name: "Shared with me" })).toHaveAttribute(
+      "href",
+      "/portal/custom?owned=shared",
+    );
+  });
+
+  it("keeps the picked tags when narrowing by ownership", () => {
+    inZone("custom");
+    act(() => {
+      portalRouter.go("/portal/custom");
+      portalRouter.set({ tag: ["Ops"] });
+    });
+    pane();
+
+    const query = new URLSearchParams(
+      screen.getByRole("link", { name: "Owned by me" }).getAttribute("href")!.split("?")[1],
+    );
+    expect(Object.fromEntries(query)).toEqual({ owned: "me", tag: "Ops" });
+  });
+
   it("no longer lists each saved dashboard", async () => {
     inZone("custom");
     pane();
@@ -560,17 +614,16 @@ describe("Dashboards pane", () => {
     expect(screen.queryByText("delivery")).toBeNull();
   });
 
-  it("shows the planned browse filters only with planned sections on", () => {
+  it("shows the planned browse filter only with planned sections on", () => {
     inZone("custom");
     const { unmount } = pane();
-    expect(screen.queryByText("Shared with me")).toBeNull();
+    expect(screen.queryByText("Starred")).toBeNull();
     unmount();
 
     mocks.showPlanned = true;
     pane();
-    for (const label of ["My dashboards", "Shared with me", "Starred"]) {
-      expect(buttonFor(label)).toHaveAttribute("aria-disabled", "true");
-    }
+    expect(buttonFor("Starred")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByText("My dashboards")).toBeNull();
     expect(screen.queryByText("Starter")).toBeNull();
   });
 });
@@ -603,6 +656,10 @@ describe("ContextPane highlight", () => {
 });
 
 describe("Dashboards pane folders", () => {
+  beforeEach(() => {
+    mocks.isAdmin = true;
+  });
+
   const onTheList = (folder?: string) => {
     inZone("custom");
     act(() => {
@@ -718,7 +775,37 @@ describe("Dashboards pane folders", () => {
     expect(mocks.renameFolder).toHaveBeenCalledWith("f1", "Core");
   });
 
-  it("asks before deleting a folder, and says where its dashboards go", async () => {
+  it("offers each folder only what the caller's access to it allows", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    expect(
+      (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+    ).toEqual(["Rename", "Share…", "Delete"]);
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("button", { name: "More for Product" }));
+    expect(
+      (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+    ).toEqual(["Rename", "Delete"]);
+    expect(screen.queryByRole("button", { name: "More for Shared" })).toBeNull();
+  });
+
+  it("offers a member no sharing of a folder they own", async () => {
+    mocks.isAdmin = false;
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    expect(
+      (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+    ).toEqual(["Rename", "Delete"]);
+  });
+
+  it("asks before deleting a folder, and says its dashboards stay", async () => {
     onTheList();
     pane();
     const user = userEvent.setup();
@@ -727,25 +814,65 @@ describe("Dashboards pane folders", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
     expect(await screen.findByRole("dialog")).toHaveTextContent(
-      "Its 3 dashboards move to Unfiled.",
+      "Its dashboards are not deleted.",
     );
     expect(mocks.deleteFolder).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Delete folder" }));
     expect(mocks.deleteFolder).toHaveBeenCalledWith("f1");
   });
+
+  it("marks an orphaned folder and offers to transfer it", async () => {
+    mocks.fetchOrphanedFolders.mockResolvedValue({
+      items: [
+        {
+          id: "f9",
+          name: "Handover",
+          owner_person_id: "left@x",
+          updated_at: "2026-08-15T00:00:00.000Z",
+        },
+      ],
+      total: 1,
+    });
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    const row = await screen.findByRole("button", { name: /Handover/ });
+    expect(row).toHaveTextContent("Orphaned");
+    expect(screen.queryByRole("link", { name: /Handover/ })).toBeNull();
+    await user.click(row);
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Transfer Handover");
+  });
+
+  it("asks nothing about orphaned folders for a member", async () => {
+    mocks.isAdmin = false;
+    onTheList();
+    pane();
+
+    expect(await screen.findByRole("link", { name: /Platform/ })).toBeInTheDocument();
+    expect(mocks.fetchOrphanedFolders).not.toHaveBeenCalled();
+  });
 });
 
 describe("Dashboards pane pins", () => {
+  beforeEach(() => {
+    mocks.isAdmin = true;
+  });
+
   const TITLES: Record<string, string> = {
     hiring: "Hiring pipeline",
     delivery: "Delivery",
   };
 
-  function pinned(names: string[]) {
-    mocks.fetchPins.mockResolvedValue(names);
-    mocks.fetchDashboardRead.mockImplementation(async (name: string) => ({
-      body: { title: TITLES[name] ?? "", widgets: [] },
+  function pinned(ids: string[]) {
+    mocks.fetchPins.mockResolvedValue(ids.map((id) => ({ id, name: id })));
+    mocks.fetchDashboardRead.mockImplementation(async (id: string) => ({
+      name: id,
+      body: { title: TITLES[id] ?? "", widgets: [] },
       tags: [],
+      ownerPersonId: null,
+      access: "ownerless",
     }));
     inZone("custom");
   }
@@ -780,22 +907,35 @@ describe("Dashboards pane pins", () => {
   });
 
   it("names a pinned dashboard by its name while its title loads or when it has none", async () => {
-    mocks.fetchPins.mockResolvedValue(["loading", "untitled"]);
-    mocks.fetchDashboardRead.mockImplementation((name: string) =>
-      name === "loading"
+    mocks.fetchPins.mockResolvedValue([
+      { id: "d-loading", name: "Loading board" },
+      { id: "d-untitled", name: "Untitled board" },
+    ]);
+    mocks.fetchDashboardRead.mockImplementation((id: string) =>
+      id === "d-loading"
         ? new Promise(() => {})
-        : Promise.resolve({ body: { title: "", widgets: [] }, tags: [] }),
+        : Promise.resolve({
+            name: "Untitled board",
+            body: { title: "", widgets: [] },
+            tags: [],
+            ownerPersonId: null,
+            access: "ownerless",
+          }),
     );
     inZone("custom");
     pane();
 
-    await screen.findByRole("link", { name: "loading" });
+    await screen.findByRole("link", { name: "Loading board" });
     await waitFor(() =>
-      expect(mocks.fetchDashboardRead).toHaveBeenCalledWith("untitled"),
+      expect(mocks.fetchDashboardRead).toHaveBeenCalledWith("d-untitled"),
     );
     expect(pinnedRows().map((row) => row.textContent)).toEqual([
-      "loading",
-      "untitled",
+      "Loading board",
+      "Untitled board",
+    ]);
+    expect(pinnedRows().map((row) => row.getAttribute("href"))).toEqual([
+      "/portal/custom/d-loading",
+      "/portal/custom/d-untitled",
     ]);
   });
 

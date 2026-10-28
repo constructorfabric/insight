@@ -705,6 +705,53 @@ export async function listPersonRoles(
   return held.items as PersonRole[];
 }
 
+/** The service's own ceiling on a role listing, which it answers without a cursor. */
+export const ROLE_HOLDERS_MAX = 500;
+
+/** Who holds a role now, and whether the listing reached all of them. */
+export interface RoleHolders {
+  personIds: ReadonlySet<string>;
+  /** False when the listing filled its one page, so someone may be beyond it. */
+  complete: boolean;
+}
+
+/** Everyone holding one role now (`GET /person-roles?role=`). Admin-gated. */
+export async function listRoleHolders(
+  roleId: string,
+  signal?: AbortSignal
+): Promise<RoleHolders> {
+  const query = new URLSearchParams({
+    role: roleId,
+    active: "true",
+    limit: String(ROLE_HOLDERS_MAX),
+  });
+  const url = `${BASE}/person-roles?${query}`;
+  const res = await fetchWithAuth(url, signal ? { signal } : undefined);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let held: { items?: unknown };
+  try {
+    held = (await res.json()) as { items?: unknown };
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(held.items)) {
+    throw new IdentityApiError(res.status, {
+      error: "malformed_person_roles",
+    });
+  }
+  const assignments = held.items as PersonRole[];
+
+  return {
+    personIds: new Set(
+      assignments.map((role) => normalizePersonId(role.person_id))
+    ),
+    complete: assignments.length < ROLE_HOLDERS_MAX,
+  };
+}
+
 export async function grantPersonRole(args: {
   person_id: string;
   role_id: string;

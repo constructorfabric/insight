@@ -254,7 +254,7 @@ framework types.
 - Registers the route handlers on the gears-rust host's router.
 - Consumes configuration from the gear config
   (`gears.identity-resolution.config` in the host YAML) +
-  `APP__gears__identity-resolution__config__*` env overrides.
+  `APP__gears__identity_resolution__config__*` env overrides.
 - Wires the SeaORM pool, the repositories, and the seed worker into
   the handler state.
 - Structured JSON logging via the host's tracing subscriber
@@ -388,7 +388,7 @@ External contracts:
 - [`cpt-insightspec-contract-identity-env-config`](PRD.md#identity_-env-var-contract) —
   honoured by the gears-rust host's config loader: YAML section
   `gears.identity-resolution.config` with
-  `APP__gears__identity-resolution__config__<field>` env overrides;
+  `APP__gears__identity_resolution__config__<field>` env overrides;
   bound to the strongly-typed `GearConfig` struct.
 - [`cpt-insightspec-contract-identity-config-secret`](PRD.md#insight-identity-config-secret) —
   consumed via `envFrom: secretRef: insight-identity-resolution-config`
@@ -401,7 +401,7 @@ External contracts:
 |-------------------|----------------|---------|
 | `src/domain/` | Profile assembly, display-name split, subchart + seed logic | Lookup orchestration + observation collapse. |
 | `src/infra/` | `persons_repo` + sibling repositories, SeaORM pool, SeaORM migrator | MariaDB persistence + migrations. |
-| `charts/insight/templates/secrets.yaml` (umbrella) | Emits `insight-identity-resolution-config` with `APP__gears__identity-resolution__config__database_url` etc. | Runtime config supply. |
+| `charts/insight/templates/secrets.yaml` (umbrella) | Emits `insight-identity-resolution-config` with `APP__gears__identity_resolution__config__database_url` etc. | Runtime config supply. |
 | `charts/insight/templates/mariadb-initdb-scripts.yaml` (umbrella) | Provisions empty `identity` database + grants on first MariaDB pod boot. | Empty DB substrate for the SeaORM migrator. |
 
 ### 3.5 External Dependencies
@@ -699,11 +699,11 @@ separate aggregate concept, use the suffix exception.
 
 Configuration is the gears-rust host config: YAML section
 `gears.identity-resolution.config` in `config/insight.yaml`, with
-`APP__gears__identity-resolution__config__<field>` env overrides
+`APP__gears__identity_resolution__config__<field>` env overrides
 (bound to `GearConfig`). The listener address lives in the host's
 `api-gateway` gear config (`bind_addr: 0.0.0.0:8082`).
 
-| Config field (env override `APP__gears__identity-resolution__config__<field>`) | Default | Notes |
+| Config field (env override `APP__gears__identity_resolution__config__<field>`) | Default | Notes |
 |---------|---------|-------|
 | `database_url` | _none_ (required) | `mysql://user:pass@host:port/db`; percent-encoding allowed for users / passwords. |
 | `org_chart_source_type` | `bamboohr` | Source instance whose `org_chart` edges populate supervisor/parent fields. |
@@ -711,6 +711,7 @@ Configuration is the gears-rust host config: YAML section
 | `expand_subordinates` | `true` | Recursive subordinates subtree on profile responses. |
 | `max_depth` | `16` | Max org-tree recursion depth (cycle-safe). |
 | `clickhouse_url`, `clickhouse_database`, `clickhouse_user`, `clickhouse_password` | `""` / `identity` / `""` / `""` | ClickHouse HTTP coordinates (port 8123) for reading `identity_inputs` (persons-seed input). |
+| `clickhouse_cluster_mode`, `clickhouse_cluster_name` | `false` / `""` | Warehouse topology: whether the relations the persons-sync creates must replicate (`Replicated*` engines, read-after-write settings on the swap). The name is the chart's shared contract; the service never emits `ON CLUSTER`. |
 | `tenant_default_id` | _empty_ | Optional; opt-in for single-tenant clusters and the bootstrap-admin seed. |
 | `bootstrap_admin_person_id` | _empty_ | Optional; migrate-time first-admin bootstrap. |
 

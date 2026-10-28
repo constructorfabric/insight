@@ -3,6 +3,10 @@ vi.mock("@tanstack/react-router", async () => {
   return portalRouterMock();
 });
 vi.mock("@/api/alerts-client");
+vi.mock("@/api/custom-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/custom-client")>();
+  return { ...actual, fetchMetric: vi.fn() };
+});
 
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -10,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as alertsClient from "@/api/alerts-client";
 import type { Alert, AlertNotification } from "@/api/alerts-types";
+import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import { ALERT, NOTIFICATION, wrapper } from "@/test/alerts";
 import { portalRouter } from "@/test/portal-router";
@@ -30,9 +35,28 @@ function neverLands<T>(): Promise<T> {
 beforeEach(() => {
   vi.resetAllMocks();
   portalRouter.reset("/portal/custom/alerts/a1");
+  vi.mocked(customClient.fetchMetric).mockRejectedValue(
+    new CustomApiError(404, null)
+  );
 });
 
 describe("AlertPage", () => {
+  it("names the rule's metric and links it by its id", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue(ALERT);
+    vi.mocked(alertsClient.fetchAlertNotifications).mockResolvedValue(page([]));
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "Open pull requests",
+      definition: { dataset: "pull_requests", fields: [] },
+    });
+
+    render(<AlertPage id="a1" />, { wrapper });
+
+    expect(
+      await screen.findByRole("link", { name: "Open pull requests" })
+    ).toHaveAttribute("href", `/portal/custom/metrics/${ALERT.metric}`);
+    expect(customClient.fetchMetric).toHaveBeenCalledWith(ALERT.metric);
+  });
+
   it("shows the rule, the latest check and what it owed", async () => {
     vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
       ...ALERT,
@@ -105,11 +129,24 @@ describe("AlertPage", () => {
           id: "n0",
           rule_revision: 2,
           metric: "prs-stale",
+          metric_name: "Stale pull requests",
           condition: {
             rows: "one",
             where: { column: "count", op: ">", value: 5 },
           },
           witness: { matched: 1, answered: 1, columns: ["count"], rows: [[7]] },
+        },
+        {
+          ...NOTIFICATION,
+          id: "n-1",
+          rule_revision: 1,
+          metric: "prs-closed",
+          metric_name: null,
+          condition: {
+            rows: "one",
+            where: { column: "count", op: ">", value: 3 },
+          },
+          witness: null,
         },
       ])
     );
@@ -120,8 +157,11 @@ describe("AlertPage", () => {
     expect(table.getByText("total above 10")).toBeInTheDocument();
     expect(table.getByText("count above 5")).toBeInTheDocument();
     expect(table.getByText("count 7")).toBeInTheDocument();
-    expect(table.getByText("prs-stale")).toBeInTheDocument();
+    expect(table.getByText("Stale pull requests")).toBeInTheDocument();
+    expect(table.queryByText("prs-stale")).toBeNull();
+    expect(table.getByText("prs-closed")).toBeInTheDocument();
     expect(table.queryByText("prs-open")).toBeNull();
+    expect(table.queryByText("Open pull requests")).toBeNull();
   });
 
   it("shows how many rows a notification matched, and which", async () => {

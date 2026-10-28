@@ -23,10 +23,10 @@
 -- union_by_tag concatenates the arms positionally.
 
 SELECT
-    concat(ifNull(h.tenant_id, ''), '-', COALESCE(h.source_id, ''), '-jira-', COALESCE(h.entity_id, ''),
+    concat(ifNull(h.tenant_id, ''), '-', CAST(h.source_id AS String), '-jira-', COALESCE(h.entity_id, ''),
            '-availability-', event_id)                          AS unique_key,
     ifNull(h.tenant_id, '')                                     AS tenant_id,
-    COALESCE(h.source_id, '')                                   AS insight_source_id,
+    CAST(h.source_id AS String)                                 AS insight_source_id,
     CAST('jira' AS String)                                      AS data_source,
     COALESCE(h.entity_id, '')                                   AS issue_id,
     COALESCE(st.id_readable, '')                                AS id_readable,
