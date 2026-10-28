@@ -4,13 +4,13 @@ Services compute every figure and decide what each person sees. The portal shows
 
 ## Terms
 
-- **Reach**: whose data a person may see; decided by the services from reporting lines and grants.
-- **Grant**: permission for one kind of data: person-level figures, underlying records, cost. Each granted separately.
+- **Reach**: whose data a person may see; decided by the services from reporting lines and data grants.
+- **Data grant**: permission for one kind of data: person-level figures, underlying records, cost. Each granted separately. A dashboard share is not a data grant and does not change reach.
 - **Member**: signed-in person without the administrator role. **Administrator**: with it. "May edit" / "may share" below: per-dashboard flags from the services.
 - **Hierarchical organisation**: has reporting lines. **Flat**: none; everyone is a peer.
 - **Direction**: Development, Collaboration, Knowledge / Wiki, Sales / CRM, Support. **Lens**: one view of a direction, e.g. Flow, Quality.
 - **Org scope**: the part of the organisation a lead's people views cover; also the group each person is compared against.
-- **Starter dashboard**: read-only dashboard Insight provides per connected source, refreshed nightly.
+- **Starter dashboard**: read-only dashboard Insight provides for each connected source, refreshed nightly.
 - **Planned**: shown in navigation, not built.
 
 ## Shell
@@ -56,7 +56,7 @@ Presets are the server's tokens; portal and services resolve them identically.
 
 In order:
 
-1. **Starter dashboards for your sources**: one card per connected source. Question it answers; chip per source read, with connection state (connected / partial / missing). Actions: Open; Save as dashboard (administrators).
+1. **Starter dashboards for your sources** (planned): one card for each connected source. Question it answers; chip per source read, with connection state (connected / partial / missing). Actions: Open; Save as dashboard (administrators).
 2. **My dashboards · recent**: three most recently changed dashboards the viewer owns; New dashboard button (administrators). Cards as in the Dashboards list.
 3. **Per person**: six tiles: commits, pull requests merged, tasks closed, messages sent, AI cost, AI extra usage cost. Each: change vs previous period of the same length (none for All time); "team total · N per active person".
 4. **Needs attention**: collapsible rows, one per metric, with people count.
@@ -76,7 +76,7 @@ Open to every signed-in person; each sees only what the services return for them
 
 ### List
 
-- Title "Dashboards"; filled New dashboard button with plus icon.
+- Title "Dashboards"; filled New dashboard button with plus icon (administrators).
 - Search; Tags filter; matching count; chip row mirroring Browse (pane and chips always agree).
 - Cards in two columns; more load on scroll.
 - Card: name; owner (if identity lets the viewer read that person) and "N ago"; visibility badge (Private / Shared with people / Shared with everyone); tags; open chevron; `···` menu with what this person may do.
@@ -98,7 +98,7 @@ Open to every signed-in person; each sees only what the services return for them
 
 ### Sharing
 
-- May share → grant to named people or everyone, viewer or editor; change level; withdraw. Everyone never preselected. Share shown only where permitted.
+- May share → share with named people or everyone, viewer or editor; change level; withdraw. Everyone never preselected. Share shown only where permitted.
 - Administrators: list of dashboards and folders whose owner lost the administrator role (name, owner, last change); hand over to a current administrator.
 
 ### Folders, tags, pins, stars
@@ -122,10 +122,10 @@ As the services allow: create / rename / delete folders; put a dashboard in fold
 
 - Pane: directions with lens counts; AI & Cost: Overview, AI adoption, Cost.
 - **Lens**: sections over org scope and portal period: headline with change, trends, distributions, concentration, composition, others as defined. States people covered. Source not connected → says so, no empty charts. Not built → planned card.
-- **Evidence**: from any figure, band, trend point or cell: people behind it (person-level grant); records (underlying-records grant); drill from a person to their records in place; export CSV / Excel. No grant → "not available".
+- **Evidence**: from any figure, band, trend point or cell: people behind it (person-level data grant); records (underlying-records data grant); drill from a person to their records in place; export CSV / Excel. No grant → "not available".
 - **Repository drill-down**: row in the repositories table → that repository's headline, contributors, activity by hour, composition by branch, ownership, event histogram; breadcrumb back.
 - **Organisation-grain lenses** (e.g. CI): no roster. Metrics not enabled on the installation → says so.
-- **AI & Cost** (cost grant): potential cost, active users, accepted lines, average cost per active user; cost by tool; cost and usage per person; adoption funnel; breakdown by unit or role. Seat-based and usage-based cost kept apart. Missing reading → "not tracked", never zero.
+- **AI & Cost** (cost data grant): potential cost, active users, accepted lines, average cost per active user; cost by tool; cost and usage per person; adoption funnel; breakdown by unit or role. Seat-based and usage-based cost kept apart. Missing reading → "not tracked", never zero.
 
 ## People
 
@@ -159,7 +159,7 @@ Data visibility is reach. This table is dashboards.
 | Open shared dashboards; pin; file | yes | yes |
 | Star (planned) | yes | yes |
 | Create, edit, duplicate, rename, delete, tag | no | owned, or editor level |
-| Share; change or withdraw grants | no | owned, or editor level via a grant to them or to everyone (not via a folder) |
+| Share; change or withdraw shares | no | owned, or editor level via a share to them or to everyone (not via a folder) |
 | Rows behind a widget | no | yes |
 | Catalogue, editor, alerts, Assistant | no | yes |
 | Take over orphaned dashboards and folders | no | yes |
@@ -187,7 +187,7 @@ Every page and every independently loaded section distinguishes:
 ## Not yet
 
 - Starred, Starter: no backend; shown as planned.
-- Period control: portal resolves presets in local time and ends rolling ranges yesterday; services lack a Last 90 days token. Both change together with the control.
+- Period control: the rules above are the target. Today the portal resolves presets in local time and ends rolling ranges yesterday, and the services have no Last 90 days token. The services add the token and the UTC rules first; the portal switches to them when it ships the control, and until then does not offer Last 90 days.
 - Chart visuals (line style, legends, widget header actions): separate work.
 - Four colour pairs below contrast guidance (muted text on pane and rail; input borders): designer.
 - Planned: Export snapshot, Schedule report; Reports Snapshots, PDF / HTML export, Templates; Manage Access, Data exclusions, Org snapshots, Group management, MCP servers, Config & setup, Scorecard management.
