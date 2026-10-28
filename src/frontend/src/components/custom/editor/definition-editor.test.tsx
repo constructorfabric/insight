@@ -16,8 +16,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchDashboards: vi.fn(),
     fetchDatasetNames: vi.fn(),
     fetchDataset: vi.fn(),
-    fetchTables: vi.fn(),
-    fetchTable: vi.fn(),
   };
 });
 
@@ -27,12 +25,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as customClient from "@/api/custom-client";
 
-import {
-  mockCatalogues,
-  offeredBy,
-  showText,
-  wrapper,
-} from "./editor-test-helpers";
+import { mockCatalogues, wrapper, writeText } from "./editor-test-helpers";
 import { DefinitionEditor } from "./definition-editor";
 
 beforeEach(() => {
@@ -54,8 +47,7 @@ describe("<DefinitionEditor> holding one document", () => {
     render(<DefinitionEditor kind="metrics" onStored={stored} />, { wrapper });
 
     await user.type(screen.getByLabelText("Name"), "Lines per day");
-    await user.type(screen.getByLabelText("Dataset"), "commits");
-    await user.type(screen.getByLabelText("Limit"), "100");
+    await writeText(user, '{"dataset": "commits", "limit": 100}');
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
@@ -69,29 +61,28 @@ describe("<DefinitionEditor> holding one document", () => {
     await waitFor(() => expect(stored).toHaveBeenCalledWith("m-new"));
   });
 
-  it("shows what the fields wrote as text, because they are one document", async () => {
-    const user = userEvent.setup();
-
-    render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, { wrapper });
-
-    await user.type(screen.getByLabelText("Dataset"), "commits");
-
-    expect(JSON.parse((await showText(user)).value)).toEqual({
-      dataset: "commits",
+  it("begins a new definition as an empty object", () => {
+    render(<DefinitionEditor kind="widgets" onStored={vi.fn()} />, {
+      wrapper,
     });
+
+    expect(screen.getByLabelText(/as text/i)).toHaveValue("{}");
   });
 
-  it("believes the text once it parses, and shows it in the fields", async () => {
-    const user = userEvent.setup();
+  it("shows a stored definition as its text", () => {
+    render(
+      <DefinitionEditor
+        kind="metrics"
+        id="m1"
+        name="Stored"
+        document={{ dataset: "commits", limit: 5 }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
 
-    render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, { wrapper });
-
-    const text = await showText(user);
-    await user.clear(text);
-    await user.type(text, '{{"dataset": "pull_requests"}');
-    await user.click(screen.getByRole("button", { name: "Editor" }));
-
-    expect(screen.getByLabelText("Dataset")).toHaveValue("pull_requests");
+    const text = screen.getByLabelText(/as text/i) as HTMLTextAreaElement;
+    expect(JSON.parse(text.value)).toEqual({ dataset: "commits", limit: 5 });
   });
 
   it("will not send text that does not parse", async () => {
@@ -107,15 +98,13 @@ describe("<DefinitionEditor> holding one document", () => {
       { wrapper }
     );
 
-    const text = await showText(user);
-    await user.clear(text);
-    await user.type(text, "{{not json");
+    await writeText(user, "{not json");
 
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(await screen.findByRole("alert")).toBeInTheDocument();
   });
 
-  it("sends a property it has no field for", async () => {
+  it("sends every property the text holds", async () => {
     const user = userEvent.setup();
 
     render(
@@ -123,13 +112,16 @@ describe("<DefinitionEditor> holding one document", () => {
         kind="metrics"
         id="kept"
         name="Kept"
-        document={{ dataset: "commits", something_new: 7 }}
+        document={{ dataset: "commits" }}
         onStored={vi.fn()}
       />,
       { wrapper }
     );
 
-    await user.type(screen.getByLabelText("Limit"), "5");
+    await writeText(
+      user,
+      '{"dataset": "commits", "something_new": 7, "limit": 5}'
+    );
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
@@ -202,40 +194,13 @@ describe("<DefinitionEditor> holding one document", () => {
     });
 
     await user.type(screen.getByLabelText("Name"), "commits");
-    await user.type(screen.getByLabelText("Title"), "Commits");
+    await writeText(user, '{"title": "Commits"}');
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
       expect(customClient.putDataset).toHaveBeenCalledWith("commits", {
         title: "Commits",
       })
-    );
-  });
-
-  it("sends no number at all for one that was not written", async () => {
-    const user = userEvent.setup();
-
-    render(
-      <DefinitionEditor
-        kind="metrics"
-        id="unlimited"
-        name="Unlimited"
-        document={{ dataset: "commits" }}
-        onStored={vi.fn()}
-      />,
-      { wrapper }
-    );
-
-    await user.type(screen.getByLabelText("Limit"), "1e");
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() =>
-      expect(customClient.putDefinition).toHaveBeenCalledWith(
-        "metrics",
-        "unlimited",
-        "Unlimited",
-        { dataset: "commits" }
-      )
     );
   });
 
@@ -249,12 +214,8 @@ describe("<DefinitionEditor> holding one document", () => {
     render(<DefinitionEditor kind="datasets" onStored={vi.fn()} />, {
       wrapper,
     });
-    await screen
-      .findByText("", { selector: "option[value='commits']" })
-      .catch(() => undefined);
 
     await user.type(screen.getByLabelText("Name"), "commits");
-    await user.type(screen.getByLabelText("Title"), "Commits");
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "A dataset called commits already exists."
@@ -277,7 +238,7 @@ describe("<DefinitionEditor> holding one document", () => {
     render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, { wrapper });
 
     await user.type(screen.getByLabelText("Name"), "Lines per day");
-    await user.type(screen.getByLabelText("Dataset"), "commits");
+    await writeText(user, '{"dataset": "commits"}');
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
@@ -319,80 +280,6 @@ describe("<DefinitionEditor> holding one document", () => {
         "Ready",
         { dataset: "commits" }
       )
-    );
-  });
-
-  it("offers the names already stored for a reference", async () => {
-    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
-      names: ["commits", "pull_requests"],
-      total: 2,
-    });
-
-    render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, { wrapper });
-
-    await screen.findByText("", { selector: "option[value='commits']" });
-    expect(offeredBy(screen.getByLabelText("Dataset"))).toEqual([
-      "commits",
-      "pull_requests",
-    ]);
-  });
-
-  it("offers a reference by its name and stores its id", async () => {
-    const user = userEvent.setup();
-    vi.mocked(customClient.fetchMetrics).mockResolvedValue({
-      items: [
-        { id: "0192f0aa-0000-7000-8000-000000000001", name: "Commits" },
-        { id: "0192f0aa-0000-7000-8000-000000000002", name: "Reviews" },
-      ],
-      total: 2,
-    });
-
-    render(
-      <DefinitionEditor
-        kind="widgets"
-        id="w1"
-        name="Commits table"
-        document={{ type: "stat", metric: "", value: "total" }}
-        onStored={vi.fn()}
-      />,
-      { wrapper }
-    );
-
-    await user.click(screen.getByLabelText("Metric"));
-    expect(
-      await screen.findByRole("option", { name: "Reviews" })
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("option", { name: "Commits" }));
-
-    expect(screen.getByLabelText("Metric")).toHaveValue("Commits");
-    expect(JSON.parse((await showText(user)).value)).toMatchObject({
-      metric: "0192f0aa-0000-7000-8000-000000000001",
-    });
-  });
-
-  it("shows the reference already chosen by its name", async () => {
-    vi.mocked(customClient.fetchMetric).mockResolvedValue({
-      name: "Commits",
-      definition: { dataset: "commits", fields: [] },
-    });
-
-    render(
-      <DefinitionEditor
-        kind="widgets"
-        id="w1"
-        name="Commits table"
-        document={{
-          type: "stat",
-          metric: "0192f0aa-0000-7000-8000-000000000001",
-          value: "total",
-        }}
-        onStored={vi.fn()}
-      />,
-      { wrapper }
-    );
-
-    await waitFor(() =>
-      expect(screen.getByLabelText("Metric")).toHaveValue("Commits")
     );
   });
 });

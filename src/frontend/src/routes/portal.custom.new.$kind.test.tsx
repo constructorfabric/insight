@@ -12,8 +12,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     putDataset: vi.fn(),
     createDefinition: vi.fn(),
     fetchDataset: vi.fn(),
-    fetchTables: vi.fn(),
-    fetchTable: vi.fn(),
     fetchMetrics: vi.fn(),
     fetchWidgets: vi.fn(),
     fetchDashboards: vi.fn(),
@@ -81,7 +79,9 @@ describe("/portal/custom/new/$kind", () => {
     render(<Component />, { wrapper });
 
     await user.type(screen.getByLabelText("Name"), "deployments");
-    await user.type(screen.getByLabelText("Title"), "Deployments");
+    await user.click(screen.getByLabelText(/as text/i));
+    await user.clear(screen.getByLabelText(/as text/i));
+    await user.paste('{"title": "Deployments"}');
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
@@ -112,7 +112,6 @@ describe("/portal/custom/new/$kind", () => {
 
     const text = { metrics: "Commits", widgets: "Commits", dashboards: "Board" };
     await user.type(screen.getByLabelText("Name"), text[kind as keyof typeof text]);
-    await user.click(screen.getByRole("button", { name: "JSON" }));
     const document = screen.getByLabelText(/as text/i);
     await user.clear(document);
     await user.type(document, '{{"title": "Board"}');
