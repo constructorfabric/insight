@@ -23,7 +23,7 @@ lower ones can't cover.
 ```sh
 # fast local loop
 cd src/backend && cargo test                        # Rust unit + integration (all services, incl. identity-resolution)
-./dev-compose.sh test-stand minimal --instance=datapath          # an instance of your own, identity seeded
+./dev-compose.sh test-stand minimal --pinned --instance=datapath # an instance of your own, identity seeded; drop --pinned if you changed src/backend
 ./dev-compose.sh test-stand test --tree=tests/datapath/metrics/ai --instance=datapath -q   # one metric class
 ```
 
@@ -94,7 +94,7 @@ Components against a real store, and the API contract:
 > API (no UI). The workflow file `e2e-bronze-to-api.yml` keeps its name because a required check is named after it.
 
 ```sh
-./dev-compose.sh test-stand minimal --instance=datapath
+./dev-compose.sh test-stand minimal --pinned --instance=datapath   # published backend images; drop --pinned if you changed src/backend
 ./dev-compose.sh test-stand test --tree=tests/datapath/metrics/tasks --instance=datapath -q
 ./dev-compose.sh test-stand down --instance=datapath   # full reset: volumes go too
 ```
@@ -116,6 +116,15 @@ require an isolation review.
 its own, and a blocking metric-coverage gate (`tests/lib/insight_datapath/metric_coverage.py`: every builtin
 metric the catalogue serves is asserted by some spec). OpenAPI drift is a unit test in each service crate (`ci.yml`);
 the HTTP contract lanes live on the deployed stand (`e2e-stand.yml`) with the endpoint coverage gate.
+
+**CI:** `cluster-mode.yml` — the cluster rig (`src/ingestion/tests/cluster-rig`): the deploy hook, a connector's
+bronze, its dbt build and the two warehouse-writing services on a two-replica ClickHouse and on a single node, plus
+a warm upgrade and a standalone-to-cluster conversion. Merge queue only; the umbrella check "Cluster rig" is
+required and skips on pull requests.
+
+**CI:** `warm-upgrade.yml` — **non-required**: the base commit's deploy and last sync on a single node, then this
+branch's `apply-ch-migrations.sh` and whole dbt graph, proving a contract change ships its heal (AGENTS.md,
+"Warehouse contract changes"). Pull requests touching the warehouse path, every push to `main`.
 
 ---
 

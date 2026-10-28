@@ -140,6 +140,7 @@ export interface AlertNotification {
   id: string;
   rule_revision: number;
   metric: string;
+  metric_name: string | null;
   condition: Condition;
   /** The columns the rule asked the witness to keep beside the condition's. */
   context_columns: string[];

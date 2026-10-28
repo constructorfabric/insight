@@ -145,6 +145,13 @@ name: jira
 # is a parent change, and a removal sorts before an addition within one
 # changelog entry (#3889). MAJOR because rows already written change, and only
 # the full refresh a major dispatches (ADR-0015) re-derives them.
+# 17.1.0: every stream declares `tenant_id` and `source_id` required, and the
+# issue-level streams (`jira_issue`, `jira_issue_keys`, `jira_issue_census`)
+# also `jira_id`: the connector stamps them on every record, so the schema no
+# longer says they can be absent. The bronze columns stay `Nullable(String)` —
+# destination-clickhouse makes every column outside the sort key nullable.
+# MINOR per ADR-0015: reconcile republishes the manifest and nothing stored
+# changes meaning.
 # 18.0.0 (major): every Jira producer of a task class carries `tenant_id` after
 # `unique_key` and leads its key with the tenant, and the journal derives,
 # deletes and batches per tenant. MAJOR because rows already written change

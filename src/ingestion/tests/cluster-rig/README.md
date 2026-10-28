@@ -10,7 +10,9 @@ RIG_TOPOLOGY=replicated BASE_SHA=<commit> src/ingestion/tests/cluster-rig/warm-u
 RIG_TOPOLOGY=replicated src/ingestion/tests/cluster-rig/convert.sh
 ```
 
-Needs Docker, `helm`, `jq`, `yq`, `curl`, a `python3.12` and `cargo`.
+Needs Docker, `helm`, `jq`, `yq` (mikefarah's, 4.54.1 or later: the chart's
+Job is read with `if ... then ... else ... end`), `curl`, a `python3.12` and
+`cargo`; `warm-upgrade.sh` needs neither `helm` nor `cargo`.
 `RIG_DBT_VENV=<venv>` reuses a venv with the pinned dbt and pytest instead of
 building one; `RIG_SERVICES_BIN=<dir>` reuses built `identity-resolution` and
 `insight-v3-core` binaries instead of building them. `RIG_KEEP=1` leaves the
@@ -47,18 +49,20 @@ The proxy picks a replica per request. Keep-alive pinning would hide every
 failure where DDL or data reaches only one replica.
 
 The replicated nodes `ch1` (`127.0.0.1:18124`) and `ch2` (`127.0.0.1:18125`)
-carry what a clustered ClickHouse must provide before Insight installs onto it
-([`config/cluster.xml`](config/cluster.xml)):
+carry what a clustered ClickHouse must provide before Insight installs onto it,
+mounted from `config/` the way `compose.yaml` lists:
 
-- a Keeper (`<zookeeper>`);
-- the cluster `CLICKHOUSE_CLUSTER_NAME` names (`<remote_servers>`), with an
-  interserver `<secret>` so a distributed query runs on the peer as the user
-  who sent it;
-- `<shard>` / `<replica>` macros, which fill the argument-less `Replicated*`
-  engines every creator emits;
+- a Keeper ([`keeper.xml`](config/keeper.xml)), which both nodes point at
+  (`<zookeeper>` in [`cluster.xml`](config/cluster.xml));
+- the cluster `CLICKHOUSE_CLUSTER_NAME` names (`<remote_servers>` in
+  `cluster.xml`), with an interserver `<secret>` so a distributed query runs
+  on the peer as the user who sent it;
+- `<shard>` / `<replica>` macros, one file per node
+  ([`macros-ch1.xml`](config/macros-ch1.xml), [`macros-ch2.xml`](config/macros-ch2.xml)),
+  which fill the argument-less `Replicated*` engines every creator emits;
 - SQL-created access stored in Keeper (`<user_directories>` with
-  `<replicated>`), so a role or user provisioned through one replica exists on
-  all of them.
+  `<replicated>`, in `cluster.xml`), so a role or user provisioned through one
+  replica exists on all of them.
 
 ## Steps
 
@@ -155,8 +159,9 @@ staged left behind. The base commit must itself be cluster-aware.
 on the replicated warehouse. It first makes a standalone installation on
 `ch1` alone — every creator reaches that node directly with `clusterMode`
 off: the deploy hook, the first sync's bronze, a dbt build, the persons sync,
-and a dataset declared and filled — and snapshots the row counts. Then, in
-order:
+then a snapshot of the row counts on `ch1`, then a dataset declared and
+filled. The snapshot is what check 7 holds `ch1` to at the end; `ch2` is held
+to `ch1` by check 5. Then, in order:
 
 1. the deploy hook rendered with `clusterMode: true` through the proxy is
    refused over the standalone databases, before any DDL;

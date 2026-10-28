@@ -91,12 +91,13 @@ impl TestHarness {
         asked: Option<serde_json::Value>,
     ) -> TestResponse {
         if let Some(body) = stored {
-            let parsed = crate::domain::definition::DefinitionName::parse(name)
+            let parsed = crate::domain::definition::DefinitionId::parse(name)
                 .unwrap_or_else(|error| panic!("test name must parse: {error}"));
             self.definitions
-                .put(
+                .create(
                     crate::domain::definition::DefinitionKind::Metric,
                     &parsed,
+                    &crate::domain::definition::DefinitionLabel::of_id(&parsed),
                     &body,
                 )
                 .await
@@ -303,7 +304,7 @@ async fn an_uncompilable_metric_is_a_bad_request() -> R {
 }
 
 #[tokio::test]
-async fn a_name_outside_the_charset_is_rejected() -> R {
+async fn an_id_that_cannot_be_one_is_not_found() -> R {
     let harness = TestHarness::new("http://127.0.0.1:1").await;
 
     let request = Request::builder()
@@ -312,7 +313,7 @@ async fn a_name_outside_the_charset_is_rejected() -> R {
         .body(Body::empty())?;
     let response = harness.router.clone().oneshot(request).await?;
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
     Ok(())
 }
 

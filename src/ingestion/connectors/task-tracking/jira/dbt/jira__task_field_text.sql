@@ -57,14 +57,13 @@ issue_winner AS (
     -- hold several rows per issue, and `unique_key` exists for the merge alone.
     SELECT tenant_id, source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE jira_id IS NOT NULL
     GROUP BY tenant_id, source_id, jira_id
 ),
 
 from_snapshot AS (
     SELECT
         i.tenant_id                                       AS tenant_id,
-        COALESCE(i.source_id, '')                         AS insight_source_id,
+        CAST(i.source_id AS String)                       AS insight_source_id,
         kv.2                                              AS content,
         CAST('adf_json' AS String)                        AS content_form
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
@@ -72,7 +71,7 @@ from_snapshot AS (
     ARRAY JOIN JSONExtractKeysAndValuesRaw(COALESCE(i.custom_fields_json, '{}')) AS kv
     INNER JOIN long_text_fields AS f
         ON f.tenant_id = i.tenant_id
-       AND f.insight_source_id = COALESCE(i.source_id, '')
+       AND f.insight_source_id = CAST(i.source_id AS String)
        AND f.field_id = kv.1
     WHERE kv.2 NOT IN ('', 'null', '""', '{}')
 ),

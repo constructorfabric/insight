@@ -2,6 +2,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Pin } from "lucide-react";
 
+import type { Listed } from "@/api/custom-client";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -10,13 +11,13 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { dashboardNameFromPath } from "@/lib/custom/dashboard-path";
+import { dashboardIdFromPath } from "@/lib/custom/dashboard-path";
 import { dashboardQuery, pinsQuery } from "@/queries/custom";
 
 export function PinnedGroup() {
   const { data: pins } = useQuery(pinsQuery());
   const open = useRouterState({
-    select: (s) => dashboardNameFromPath(s.location.pathname),
+    select: (s) => dashboardIdFromPath(s.location.pathname),
   });
 
   if (!pins || pins.length === 0) return null;
@@ -26,8 +27,8 @@ export function PinnedGroup() {
       <SidebarGroupLabel>Pinned</SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
-          {pins.map((name) => (
-            <PinnedRow key={name} name={name} active={name === open} />
+          {pins.map((pin) => (
+            <PinnedRow key={pin.id} pin={pin} active={pin.id === open} />
           ))}
         </SidebarMenu>
       </SidebarGroupContent>
@@ -35,17 +36,17 @@ export function PinnedGroup() {
   );
 }
 
-function PinnedRow({ name, active }: { name: string; active: boolean }) {
-  const { data } = useQuery(dashboardQuery(name));
+function PinnedRow({ pin, active }: { pin: Listed; active: boolean }) {
+  const { data } = useQuery(dashboardQuery(pin.id));
 
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
         isActive={active}
-        render={<Link to="/portal/custom/$name" params={{ name }} />}
+        render={<Link to="/portal/custom/$name" params={{ name: pin.id }} />}
       >
         <Pin />
-        <span>{data?.title || name}</span>
+        <span>{data?.title || pin.name}</span>
       </SidebarMenuButton>
     </SidebarMenuItem>
   );

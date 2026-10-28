@@ -80,8 +80,7 @@ issue_winner AS (
     -- hold several rows per issue, and `unique_key` exists for the merge alone.
     SELECT tenant_id, source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE jira_id IS NOT NULL
-      AND {{ jira_journal_in_batch("ifNull(tenant_id, '')", "COALESCE(source_id, '')", "COALESCE(toString(jira_id), '')") }}
+    WHERE {{ jira_journal_in_batch("ifNull(tenant_id, '')", "CAST(source_id AS String)", "CAST(jira_id AS String)") }}
     GROUP BY tenant_id, source_id, jira_id
 ),
 
@@ -91,8 +90,8 @@ issue_winner AS (
 issues AS (
     SELECT
         ifNull(i.tenant_id, '')                           AS tenant_id,
-        COALESCE(i.source_id, '')                         AS insight_source_id,
-        COALESCE(toString(i.jira_id), '')                 AS issue_id,
+        CAST(i.source_id AS String)                       AS insight_source_id,
+        CAST(i.jira_id AS String)                         AS issue_id,
         COALESCE(toString(i.id_readable), '')             AS id_readable,
         COALESCE(parseDateTime64BestEffortOrNull(i.created, 3),
                  toDateTime64(0, 3))                      AS created_at,
@@ -100,7 +99,7 @@ issues AS (
         toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
-    WHERE {{ jira_journal_in_batch("ifNull(i.tenant_id, '')", "COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
+    WHERE {{ jira_journal_in_batch("ifNull(i.tenant_id, '')", "CAST(i.source_id AS String)", "CAST(i.jira_id AS String)") }}
 ),
 
 -- The same winning bronze row, carrying the payload and the moment it was
@@ -109,8 +108,8 @@ issues AS (
 issue_json AS (
     SELECT
         ifNull(i.tenant_id, '')                           AS tenant_id,
-        COALESCE(i.source_id, '')                         AS insight_source_id,
-        COALESCE(toString(i.jira_id), '')                 AS issue_id,
+        CAST(i.source_id AS String)                       AS insight_source_id,
+        CAST(i.jira_id AS String)                         AS issue_id,
         COALESCE(i.custom_fields_json, '{}')              AS custom_fields_json,
         toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at,
         parseDateTime64BestEffortOrNull(
@@ -118,7 +117,7 @@ issue_json AS (
                                                           AS resolved_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
-    WHERE {{ jira_journal_in_batch("ifNull(i.tenant_id, '')", "COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
+    WHERE {{ jira_journal_in_batch("ifNull(i.tenant_id, '')", "CAST(i.source_id AS String)", "CAST(i.jira_id AS String)") }}
 ),
 
 changelog_items AS (

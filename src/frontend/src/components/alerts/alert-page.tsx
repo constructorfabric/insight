@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useId, type ReactNode } from "react";
 
 import type { Alert, AlertState } from "@/api/alerts-client";
+import { MetricName } from "@/components/custom/metric-name";
 import { AlertSwitch } from "@/components/alerts/alert-switch";
 import { NotificationsTable } from "@/components/alerts/notifications-table";
 import { ConfirmRemove } from "@/components/custom/confirm-remove";
@@ -170,9 +171,9 @@ function Rule({ alert }: { alert: Alert }) {
             <Link
               to="/portal/custom/metrics/$name"
               params={{ name: alert.metric }}
-              className="font-mono underline-offset-4 hover:underline"
+              className="underline-offset-4 hover:underline"
             >
-              {alert.metric}
+              <MetricName id={alert.metric} />
             </Link>
           </Fact>
           <Fact term="Condition" wide>

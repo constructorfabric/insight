@@ -7,6 +7,7 @@ import type {
   MetricRead,
   Widget,
 } from "@/api/custom-client";
+import { MetricName } from "@/components/custom/metric-name";
 import { Badge } from "@/components/ui/badge";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -186,18 +187,19 @@ export function WidgetSummary({
         <Row label="Metric">
           {linkMetric ? (
             <Link
-              to="/portal/custom/metrics"
-              className="font-mono underline decoration-dotted underline-offset-4"
+              to="/portal/custom/metrics/$name"
+              params={{ name: widget.metric }}
+              className="underline decoration-dotted underline-offset-4"
             >
-              {widget.metric}
+              <MetricName id={widget.metric} />
             </Link>
           ) : (
-            <span className="font-mono">{widget.metric}</span>
+            <MetricName id={widget.metric} />
           )}
         </Row>
         {widget.detail ? (
           <Row label="Rows behind it">
-            <span className="font-mono">{widget.detail}</span>
+            <MetricName id={widget.detail} />
           </Row>
         ) : null}
         <Row label={drawnLabel(widget)}>

@@ -14,7 +14,7 @@ use utoipa::ToSchema;
 use super::AppState;
 use super::admission::{self, IngestAdmission};
 use crate::domain::dataset_ingest::IngestError;
-use crate::domain::definition::DefinitionName;
+use crate::domain::definition::DefinitionId;
 
 #[resource_error("gts.cf.insight.insight_v3_core.raw_data.v1~")]
 struct RawDataApiError;
@@ -63,8 +63,7 @@ async fn ingest_raw_data(
     body: Result<Json<RawDataRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
     let Json(request) = body.map_err(|error| request_rejection(&error))?;
-    let dataset =
-        DefinitionName::parse(&request.dataset).map_err(|_| not_ready(&request.dataset))?;
+    let dataset = DefinitionId::parse(&request.dataset).map_err(|_| not_ready(&request.dataset))?;
 
     state
         .dataset_ingest()
@@ -108,7 +107,7 @@ fn not_ready(named: &str) -> CanonicalError {
     .create()
 }
 
-fn ingest_error(dataset: &DefinitionName, error: IngestError) -> CanonicalError {
+fn ingest_error(dataset: &DefinitionId, error: IngestError) -> CanonicalError {
     match error {
         IngestError::NotReady => not_ready(dataset.as_str()),
         IngestError::Table(crate::store::dataset_tables::DatasetTableError::Timeout) => {

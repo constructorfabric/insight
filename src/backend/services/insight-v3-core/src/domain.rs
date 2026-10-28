@@ -1,7 +1,9 @@
 //! Rules and computation: everything decidable without reaching another system.
 
+pub(crate) mod access;
 pub(crate) mod alerts;
 pub(crate) mod assistant;
+pub(crate) mod dashboards;
 pub(crate) mod dataset_ingest;
 pub(crate) mod dataset_lifecycle;
 pub(crate) mod dataset_records;
@@ -13,6 +15,7 @@ pub(crate) mod kinds;
 pub(crate) mod metric_run;
 pub(crate) mod pins;
 pub(crate) mod query;
+pub(crate) mod sharing;
 pub(crate) mod surfaces;
 pub(crate) mod tags;
 pub(crate) mod violation;

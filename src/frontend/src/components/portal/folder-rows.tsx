@@ -1,11 +1,26 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { Ellipsis, Folder, Inbox, Pencil, Plus, Trash2 } from "lucide-react";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import {
+  Ellipsis,
+  Folder,
+  FolderX,
+  Inbox,
+  Pencil,
+  Plus,
+  Share2,
+  Trash2,
+} from "lucide-react";
 import { useId, useState } from "react";
 
 import { FOLDER_NAME_MAX, type FolderSummary } from "@/api/custom-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import {
+  type Orphan,
+  OrphanedChip,
+  TransferOrphan,
+} from "@/components/custom/orphaned";
 import { refusal } from "@/components/custom/refusal";
+import { ShareDialog } from "@/components/custom/share-dialog";
 import { CountBadge } from "@/components/portal/pane-nav";
 import {
   DropdownMenu,
@@ -23,9 +38,12 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { folderAllows, type FolderAllows } from "@/lib/custom/dashboard-access";
 import { usePortalSearch } from "@/lib/portal/portal-search";
+import { useIsAdmin } from "@/queries/identity-me";
 import {
   foldersQuery,
+  orphanedPagesQuery,
   useCreateFolder,
   useDeleteFolder,
   useRenameFolder,
@@ -36,6 +54,7 @@ const NEW_FOLDER = "new";
 
 export function FoldersGroup() {
   const { data } = useQuery(foldersQuery());
+  const { isAdmin } = useIsAdmin();
   const { folder: shown, tag } = usePortalSearch();
   const onList = useRouterState({
     select: (s) => LIST_PATH.test(s.location.pathname),
@@ -43,6 +62,11 @@ export function FoldersGroup() {
   const [editing, setEditing] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<FolderSummary | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [sharing, setSharing] = useState<FolderSummary | null>(null);
+  // INVARIANT: the share dialog plays a close transition after `sharing` is
+  // gone, so it keeps the last folder rather than unmounting mid-transition.
+  const [shared, setShared] = useState(sharing);
+  if (sharing !== null && sharing !== shared) setShared(sharing);
   const create = useCreateFolder();
   const rename = useRenameFolder();
 
@@ -67,7 +91,10 @@ export function FoldersGroup() {
                   isActive={isShown(folder.id)}
                   className="group-has-data-[sidebar=menu-action]/menu-item:pe-14"
                   render={
-                    <Link to="/portal/custom" search={{ folder: folder.id, tag }} />
+                    <Link
+                      to="/portal/custom"
+                      search={{ folder: folder.id, tag }}
+                    />
                   }
                 >
                   <Folder />
@@ -76,7 +103,9 @@ export function FoldersGroup() {
                 <CountBadge>{folder.dashboards}</CountBadge>
                 <FolderMenu
                   name={folder.name}
+                  allows={folderAllows(folder.access, isAdmin)}
                   onRename={() => setEditing(folder.id)}
+                  onShare={() => setSharing(folder)}
                   onDelete={() => {
                     setDeleting(folder);
                     setConfirming(true);
@@ -85,12 +114,16 @@ export function FoldersGroup() {
               </SidebarMenuItem>
             )
           )}
+          {isAdmin ? <OrphanedFolderRows /> : null}
           {data ? (
             <SidebarMenuItem>
               <SidebarMenuButton
                 isActive={isShown("unfiled")}
                 render={
-                  <Link to="/portal/custom" search={{ folder: "unfiled", tag }} />
+                  <Link
+                    to="/portal/custom"
+                    search={{ folder: "unfiled", tag }}
+                  />
                 }
               >
                 <Inbox />
@@ -122,19 +155,79 @@ export function FoldersGroup() {
         open={confirming}
         onClose={() => setConfirming(false)}
       />
+      {shared ? (
+        <ShareDialog
+          target={{ kind: "folders", id: shared.id }}
+          title={shared.name}
+          ownerPersonId={shared.owner_person_id}
+          open={sharing !== null}
+          onClose={() => setSharing(null)}
+        />
+      ) : null}
     </SidebarGroup>
+  );
+}
+
+/** Administrators only: the orphaned list is refused to anyone else. */
+function OrphanedFolderRows() {
+  const pages = useInfiniteQuery(orphanedPagesQuery("folders"));
+  const [moving, setMoving] = useState<Orphan | null>(null);
+  const orphaned = pages.data?.pages.flatMap((page) => page.items) ?? [];
+
+  return (
+    <>
+      {orphaned.map((folder) => (
+        <SidebarMenuItem key={folder.id}>
+          <SidebarMenuButton
+            aria-haspopup="dialog"
+            className="text-muted-foreground"
+            onClick={() =>
+              setMoving({
+                kind: "folders",
+                id: folder.id,
+                name: folder.name,
+                owner_person_id: folder.owner_person_id,
+              })
+            }
+          >
+            <FolderX />
+            <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+            <OrphanedChip />
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      ))}
+      {pages.hasNextPage ? (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            className="text-muted-foreground"
+            disabled={pages.isFetchingNextPage}
+            onClick={() => void pages.fetchNextPage()}
+          >
+            <Ellipsis />
+            <span>More orphaned folders</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      ) : null}
+      <TransferOrphan orphan={moving} onClose={() => setMoving(null)} />
+    </>
   );
 }
 
 function FolderMenu({
   name,
+  allows,
   onRename,
+  onShare,
   onDelete,
 }: {
   name: string;
+  allows: FolderAllows;
   onRename: () => void;
+  onShare: () => void;
   onDelete: () => void;
 }) {
+  if (!allows.edit && !allows.share && !allows.remove) return null;
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -149,14 +242,24 @@ function FolderMenu({
         <Ellipsis />
       </DropdownMenuTrigger>
       <DropdownMenuContent side="right" align="start" finalFocus={false}>
-        <DropdownMenuItem onClick={onRename}>
-          <Pencil />
-          Rename
-        </DropdownMenuItem>
-        <DropdownMenuItem variant="destructive" onClick={onDelete}>
-          <Trash2 />
-          Delete
-        </DropdownMenuItem>
+        {allows.edit ? (
+          <DropdownMenuItem onClick={onRename}>
+            <Pencil />
+            Rename
+          </DropdownMenuItem>
+        ) : null}
+        {allows.share ? (
+          <DropdownMenuItem onClick={onShare}>
+            <Share2 />
+            Share…
+          </DropdownMenuItem>
+        ) : null}
+        {allows.remove ? (
+          <DropdownMenuItem variant="destructive" onClick={onDelete}>
+            <Trash2 />
+            Delete
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -227,10 +330,10 @@ function FolderNameField({
   );
 }
 
-function whatMoves(count: number): string {
+function whatStays(count: number): string {
   if (count === 0) return "It holds no dashboards.";
-  if (count === 1) return "Its 1 dashboard moves to Unfiled.";
-  return `Its ${count} dashboards move to Unfiled.`;
+  if (count === 1) return "Its dashboard is not deleted.";
+  return "Its dashboards are not deleted.";
 }
 
 function DeleteFolder({
@@ -253,7 +356,7 @@ function DeleteFolder({
         onClose();
       }}
       title={`Delete “${folder?.name ?? ""}”?`}
-      description={folder ? whatMoves(folder.dashboards) : undefined}
+      description={folder ? whatStays(folder.dashboards) : undefined}
       confirmLabel="Delete folder"
       destructive
       isPending={remove.isPending}

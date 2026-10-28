@@ -63,6 +63,18 @@ updates:
     ignore:
       - dependency-name: reqwest
         versions: [">=0.13"]
+      # cf-gears-toolkit pins opentelemetry 0.32 and utoipa 5: a different
+      # opentelemetry major registers a second global meter provider, and the
+      # toolkit's OperationBuilder only accepts utoipa 5 schemas. Lift when a
+      # released toolkit moves.
+      - dependency-name: opentelemetry
+        versions: [">=0.33"]
+      - dependency-name: opentelemetry_sdk
+        versions: [">=0.33"]
+      - dependency-name: opentelemetry-otlp
+        versions: [">=0.33"]
+      - dependency-name: utoipa
+        versions: [">=6"]
 
   - package-ecosystem: pip
     directory: /src/ingestion/tools/seed

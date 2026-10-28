@@ -1,4 +1,4 @@
-# Reusable Zoom records (bronze_zoom.meetings, bronze_zoom.participants).
+# Reusable Zoom records (bronze_zoom.meetings, bronze_zoom.participants, bronze_zoom.users).
 # Bases list every schema field (unused = null). _airbyte_extracted_at sits in the future on purpose:
 # zoom__meeting_sessions only stitches meetings extracted within its lookback window of now().
 templates:
@@ -107,3 +107,33 @@ templates:
     $ref: "#/templates/zoom_participant"
     email: carol@example.com
     user_name: Carol
+
+  zoom_user:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2030-01-01T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    id: null
+    pmi: null
+    dept: null
+    type: null
+    email: null
+    status: active
+    pic_url: null
+    role_id: null
+    language: null
+    timezone: null
+    verified: null
+    group_ids: null
+    last_name: null
+    source_id: "zoom-test"
+    tenant_id: "{{ tenant }}"
+    created_at: null
+    first_name: null
+    unique_key: null
+    display_name: null
+    phone_number: null
+    last_login_time: null
+    user_created_at: null
+    employee_unique_id: null
+    last_client_version: null

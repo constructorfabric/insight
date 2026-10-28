@@ -4,7 +4,7 @@ use super::anthropic::{Message, MessagesResponse};
 use super::conversation::{ModelTransport, converse, thread};
 use super::prompt::system_prompt;
 use super::tools::{
-    ANSWER_TOOL, CREATE_TOOL, LOOK_UP_TOOL, NAME_PATTERN, metric_query_schema, proposal_tools,
+    ANSWER_TOOL, CREATE_TOOL, ID_PATTERN, LOOK_UP_TOOL, metric_query_schema, proposal_tools,
 };
 use super::*;
 
@@ -184,15 +184,53 @@ fn the_prompt_names_what_is_already_built() {
     let prompt = system_prompt(
         "commits: Commits\n  - day (date and time), the record's main date\n",
         &Catalogue::new(vec![
-            (DefinitionKind::Metric, vec!["lines_per_day".to_owned()]),
-            (DefinitionKind::Widget, vec!["lines_chart".to_owned()]),
-            (DefinitionKind::Dashboard, vec!["engineering".to_owned()]),
+            (DefinitionKind::Metric, vec![listed("m-1", "Lines per day")]),
+            (DefinitionKind::Widget, vec![listed("w-1", "Lines chart")]),
+            (
+                DefinitionKind::Dashboard,
+                vec![listed("d-1", "Engineering")],
+            ),
         ]),
     );
 
-    assert!(prompt.contains("lines_per_day"), "{prompt}");
-    assert!(prompt.contains("lines_chart"), "{prompt}");
-    assert!(prompt.contains("engineering"), "{prompt}");
+    for line in [
+        "- m-1: Lines per day",
+        "- w-1: Lines chart",
+        "- d-1: Engineering",
+    ] {
+        assert!(prompt.contains(line), "should list {line:?}: {prompt}");
+    }
+}
+
+fn listed(id: &str, name: &str) -> crate::domain::definition::Listed {
+    crate::domain::definition::Listed {
+        id: id.to_owned(),
+        name: name.to_owned(),
+    }
+}
+
+#[test]
+fn a_proposed_item_may_carry_the_id_it_replaces() {
+    let reply = r#"{"intent":"create","reply":"Changed","dashboard":{"id":"d-1","name":"Engineering","body":{"title":"Engineering","items":[]}}}"#;
+
+    match Proposal::parse(reply, &people()).unwrap_or_else(|error| panic!("parses: {error}")) {
+        Proposal::Create { dashboard, .. } => {
+            let dashboard = dashboard.unwrap_or_else(|| panic!("a dashboard was proposed"));
+            assert_eq!(dashboard.id.as_deref(), Some("d-1"));
+            assert_eq!(dashboard.name, "Engineering");
+        }
+        Proposal::Answer { .. } => panic!("expected a creation"),
+    }
+}
+
+#[test]
+fn two_widgets_of_one_create_sharing_a_name_are_refused() {
+    let reply = r#"{"intent":"create","reply":"x","widgets":[{"name":"Chart","body":{"type":"table","metric":"m","columns":[]}},{"name":"Chart","body":{"type":"table","metric":"m","columns":[]}}]}"#;
+
+    assert!(matches!(
+        Proposal::parse(reply, &people()),
+        Err(ChatError::SharedName { .. })
+    ));
 }
 
 #[test]
@@ -625,16 +663,17 @@ fn one_tool_per_intent_carries_the_name_charset() {
         );
     }
 
-    // Every name the model invents carries the charset DefinitionName
-    // enforces, stated where the model reads it.
     let created = tool(CREATE_TOOL);
     let create = &created["input_schema"]["properties"];
-    for path in [
-        &create["metric"]["properties"]["name"],
-        &create["dashboard"]["properties"]["name"],
-        &create["widgets"]["items"]["properties"]["name"],
+    for item in [
+        &create["metric"],
+        &create["dashboard"],
+        &create["widgets"]["items"],
     ] {
-        assert_eq!(path["pattern"], json!(NAME_PATTERN), "missing name pattern");
+        let properties = &item["properties"];
+        assert_eq!(properties["id"]["pattern"], json!(ID_PATTERN), "{item}");
+        assert!(properties["name"].get("pattern").is_none(), "{item}");
+        assert_eq!(item["required"], json!(["name", "body"]), "{item}");
     }
 }
 
@@ -780,4 +819,45 @@ fn a_refusal_names_a_handful_of_datasets_rather_than_every_one() {
     };
     assert!(known.contains("dataset_11"), "{known}");
     assert!(!known.contains("dataset_12"), "{known}");
+}
+
+#[tokio::test]
+async fn the_assistant_is_told_only_the_dashboards_the_caller_sees() {
+    use crate::domain::access::PersonId;
+    use crate::domain::definition::DefinitionId;
+
+    let store = crate::store::definitions::memory::MemoryDefinitions::new();
+    let datasets = crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now());
+    let me = PersonId::new(uuid::Uuid::from_u128(1));
+    let them = PersonId::new(uuid::Uuid::from_u128(2));
+    for (id, owner) in [("mine", Some(me)), ("theirs", Some(them)), ("legacy", None)] {
+        let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{error}"));
+        let body = json!({ "title": id, "widgets": [] });
+        let stored = match owner {
+            Some(owner) => store.seed_owned(&parsed, &body, owner).await,
+            None => {
+                store
+                    .seed(
+                        crate::domain::definition::DefinitionKind::Dashboard,
+                        &parsed,
+                        &body,
+                    )
+                    .await
+            }
+        };
+        stored.unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    let briefing = crate::domain::assistant::Assistant::new(&store, &datasets)
+        .briefing(crate::domain::access::Caller::administrator(me))
+        .await;
+
+    let dashboards: Vec<&str> = briefing
+        .catalogue
+        .built()
+        .iter()
+        .filter(|(kind, _)| *kind == crate::domain::definition::DefinitionKind::Dashboard)
+        .flat_map(|(_, listed)| listed.iter().map(|one| one.id.as_str()))
+        .collect();
+    assert_eq!(dashboards, ["legacy", "mine"]);
 }

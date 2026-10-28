@@ -15,9 +15,10 @@ Env:
   PACKAGES   whitespace-separated container package names
   DRY_RUN    anything but "false" reports without deleting (default: true)
 
-Stdout: per-package summary. Exit: non-zero, deleting nothing further, on API
-errors other than a package that was never published (404 → logged, skipped),
-and on an implausibly small live-branch set.
+Stdout: per-package summary. Exit: non-zero on an implausibly small
+live-branch set (nothing is deleted), on a listing error other than a package
+that was never published (404 → logged, skipped), and — after every package
+has been swept — if any single delete failed (logged, counted per package).
 """
 
 from __future__ import annotations
@@ -122,12 +123,15 @@ def delete_version(package: str, version_id: int) -> None:
     gh_api(f"/orgs/{ORG}/packages/container/{encoded}/versions/{version_id}", "-X", "DELETE")
 
 
-def sweep_package(package: str, live: set[str], dry_run: bool) -> None:
-    """Classify one package's versions and delete the orphans (unless dry_run)."""
+def sweep_package(package: str, live: set[str], dry_run: bool) -> int:
+    """Classify one package's versions and delete the orphans (unless dry_run).
+
+    Returns the number of orphans whose delete failed.
+    """
     versions = list_versions(package)
     if versions is None:
         emit(f"{package}: never published (404), skipping")
-        return
+        return 0
 
     kept = 0
     skipped = 0
@@ -148,13 +152,22 @@ def sweep_package(package: str, live: set[str], dry_run: bool) -> None:
         else:
             kept += 1
 
+    failed = 0
     for version_id, tags in orphans:
         action = "would delete" if dry_run else "deleting"
         emit(f"{package}: {action} version {version_id} tags {tags}")
-        if not dry_run:
+        if dry_run:
+            continue
+        try:
             delete_version(package, version_id)
+        except RuntimeError as err:
+            # One undeletable version (e.g. the token lacks delete rights on
+            # this package) must not block the sweep of everything after it.
+            emit(f"{package}: FAILED to delete version {version_id}: {err}")
+            failed += 1
 
-    emit(f"{package}: kept={kept} orphaned={len(orphans)} skipped={skipped}")
+    emit(f"{package}: kept={kept} orphaned={len(orphans)} skipped={skipped} failed={failed}")
+    return failed
 
 
 def main() -> int:
@@ -173,8 +186,10 @@ def main() -> int:
         return 1
     emit(f"live branch suffixes: {len(live)}; dry_run={dry_run}")
 
-    for package in packages:
-        sweep_package(package, live, dry_run)
+    failed = sum(sweep_package(package, live, dry_run) for package in packages)
+    if failed:
+        sys.stderr.write(f"{failed} orphaned version(s) could not be deleted\n")
+        return 1
     return 0
 
 
