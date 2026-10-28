@@ -3,29 +3,19 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { DEFINITION_NAME_MAX, type EditableKind } from "@/api/custom-client";
-import { FieldsView } from "@/components/custom/editor/fields-view";
 import { TextView } from "@/components/custom/editor/text-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import type { Path } from "@/lib/custom/editor/describe";
 import {
-  change,
   hold,
   retype,
   sendable,
   type Held,
 } from "@/lib/custom/editor/document";
-import { DESCRIPTIONS } from "@/lib/custom/editor/kinds";
-import { spelled, tableAddress } from "@/lib/custom/editor/source";
-import { place } from "@/lib/custom/editor/violations";
-import {
-  catalogueQuery,
-  datasetQuery,
-  tableQuery,
-  tablesQuery,
-  useStoreDefinition,
-} from "@/queries/custom";
+import { NOUNS } from "@/lib/custom/editor/kinds";
+import { refusals } from "@/lib/custom/editor/violations";
+import { catalogueQuery, useStoreDefinition } from "@/queries/custom";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -42,59 +32,15 @@ export function DefinitionEditor({
   document?: Record<string, unknown>;
   onStored: (id: string) => void;
 }) {
-  const description = DESCRIPTIONS[kind];
+  const noun = NOUNS[kind];
   const [called, setCalled] = useState(name ?? "");
-  const [held, setHeld] = useState<Held>(() =>
-    hold(document ?? description.starting)
-  );
-  const [view, setView] = useState<"fields" | "text">("fields");
+  const [held, setHeld] = useState<Held>(() => hold(document));
   const store = useStoreDefinition();
 
   const datasetCatalogue = useQuery(catalogueQuery("datasets"));
   const datasets = () => datasetCatalogue.data?.map((item) => item.id) ?? [];
 
-  const reads = held.document.dataset;
-  const dataset = useQuery({
-    ...datasetQuery(typeof reads === "string" ? reads : ""),
-    enabled: typeof reads === "string" && reads !== "",
-  });
-  const declared = () => dataset.data?.declaration.fields ?? [];
-
-  // A metric over a table is offered the catalogue, and the columns of the
-  // table it names. A bare table is looked up in the catalogue for its
-  // database, so long as exactly one database has one.
-  const overTables = kind === "metrics";
-  const catalogue = useQuery({ ...tablesQuery(), enabled: overTables });
-  const tablesListed = catalogue.data?.tables ?? [];
-  const named = tableAddress(held.document, {
-    table: "table",
-    database: "database",
-  });
-  const holders = named
-    ? tablesListed.filter((each) => each.table === named.table)
-    : [];
-  const address =
-    named === undefined
-      ? undefined
-      : named.database !== ""
-        ? named
-        : holders.length === 1 && holders[0]
-          ? { database: holders[0].database, table: named.table }
-          : undefined;
-  const table = useQuery({
-    ...tableQuery(address?.database ?? "", address?.table ?? ""),
-    enabled: overTables && address !== undefined,
-  });
-  const tables = () => tablesListed.map(spelled);
-  const columns = () =>
-    table.data?.columns.map((column) => column.name) ?? [];
-
-  const placed = place(
-    store.error,
-    description.fields,
-    held.document,
-    "Couldn't store it."
-  );
+  const refused = refusals(store.error, "Couldn't store it.");
   const given = called.trim();
   const isDataset = kind === "datasets";
   const creating = id === undefined;
@@ -146,7 +92,7 @@ export function DefinitionEditor({
             maxLength={isDataset ? undefined : DEFINITION_NAME_MAX}
             aria-invalid={taken || undefined}
             aria-describedby={isDataset ? "definition-name-hint" : undefined}
-            className={cn("h-9 w-72", isDataset && "font-mono")}
+            className={cn("h-9 w-full max-w-72", isDataset && "font-mono")}
             onChange={(event) => setCalled(event.target.value)}
           />
           {isDataset ? (
@@ -161,7 +107,7 @@ export function DefinitionEditor({
           ) : null}
           {taken ? (
             <p role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
-              A {description.noun} called <code>{given}</code> already exists.{" "}
+              A {noun} called <code>{given}</code> already exists.{" "}
               <Link
                 to="/portal/custom/edit/$kind/$name"
                 params={{ kind, name: given }}
@@ -175,71 +121,26 @@ export function DefinitionEditor({
         </div>
       )}
 
-      {placed.loose.map((said) => (
-        <p
-          key={said}
-          role="alert"
-          className={cn(TEXT_BODY, "text-destructive")}
-        >
-          {said}
-        </p>
-      ))}
-
-      <div className="flex items-center gap-2">
-        {(["fields", "text"] as const).map((each) => (
-          <Button
-            key={each}
-            type="button"
-            variant={view === each ? "secondary" : "ghost"}
-            size="sm"
-            aria-pressed={view === each}
-            onClick={() => setView(each)}
-          >
-            {each === "fields" ? "Editor" : "JSON"}
-          </Button>
-        ))}
-      </div>
-
-      {view === "fields" ? (
-        <FieldsView
-          fields={description.fields}
-          at={[]}
-          editing={{
-            document: held.document,
-            said: placed.at,
-            datasets,
-            declared,
-            tables,
-            columns,
-            onChange: (path: Path, value: unknown) =>
-              setHeld((was) => change(was, path, value)),
-          }}
+      <div className="flex flex-col gap-1">
+        <TextView
+          id="definition-text"
+          label={`${noun} as text`}
+          text={held.text}
+          unparsed={held.unparsed}
+          onChange={(text) => setHeld((was) => retype(was, text))}
         />
-      ) : (
-        <div className="flex flex-col gap-1">
-          <TextView
-            id="definition-text"
-            label={`${description.noun} as text`}
-            text={held.text}
-            unparsed={held.unparsed}
-            onChange={(text) => setHeld((was) => retype(was, text))}
-          />
-          {placed.at.size === 0 ? null : (
-            <ul
-              className={cn(
-                TEXT_LABEL,
-                "flex flex-col gap-0.5 text-destructive"
-              )}
-            >
-              {[...placed.at].map(([path, said]) => (
-                <li key={path} role="alert">
-                  <span className="font-mono">{path}</span>: {said}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+        {refused.length === 0 ? null : (
+          <ul
+            className={cn(TEXT_LABEL, "flex flex-col gap-0.5 text-destructive")}
+          >
+            {refused.map((said, index) => (
+              <li key={`${index}:${said}`} role="alert">
+                {said}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <div className="flex items-center gap-2">
         <Button
