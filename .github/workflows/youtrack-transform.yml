@@ -20,7 +20,6 @@ on:
       - src/ingestion/connectors/task-tracking/youtrack/descriptor.yaml
       - src/ingestion/scripts/bootstrap-db/**
       - src/ingestion/scripts/dbt_profiles.py
-      - src/ingestion/scripts/connectors-ddl/silver.sql
       - .github/workflows/youtrack-transform.yml
       - .github/workflows/scripts/start-clickhouse.sh
   push:
@@ -40,7 +39,6 @@ on:
       - src/ingestion/connectors/task-tracking/youtrack/descriptor.yaml
       - src/ingestion/scripts/bootstrap-db/**
       - src/ingestion/scripts/dbt_profiles.py
-      - src/ingestion/scripts/connectors-ddl/silver.sql
       - .github/workflows/youtrack-transform.yml
       - .github/workflows/scripts/start-clickhouse.sh
   workflow_dispatch:
@@ -52,10 +50,11 @@ concurrency:
 permissions:
   contents: read
 
+# Routing: .github/runners/README.md.
 jobs:
   transformations:
     name: transformations
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 45
     env:
       CLICKHOUSE_CONTAINER: youtrack-transform-clickhouse
@@ -85,7 +84,7 @@ jobs:
           # WORKAROUND: the destination container cannot reach the runner's loopback.
           echo "CLICKHOUSE_CONTAINER_HOST=$(docker network inspect bridge -f '{{ (index .IPAM.Config 0).Gateway }}')" >> "$GITHUB_ENV"
           # INVARIANT: the dbt project's on-run-start hooks need these before the first run.
-          for db in staging silver config insight; do
+          for db in staging silver config identity insight; do
             curl -sSf "http://${CLICKHOUSE_HOST}:${CLICKHOUSE_HTTP_PORT}/" \
               -u "${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}" \
               --data-binary "CREATE DATABASE IF NOT EXISTS ${db}"
