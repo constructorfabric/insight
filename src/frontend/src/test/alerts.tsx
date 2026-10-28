@@ -44,6 +44,7 @@ export const NOTIFICATION: AlertNotification = {
   id: "n1",
   rule_revision: ALERT.revision,
   metric: ALERT.metric,
+  metric_name: "Open pull requests",
   condition: ALERT.condition,
   context_columns: [],
   witness: { matched: 1, answered: 1, columns: ["total"], rows: [[12]] },

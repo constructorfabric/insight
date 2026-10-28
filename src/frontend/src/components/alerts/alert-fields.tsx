@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import type { AlertDestination } from "@/api/alerts-types";
 import { ConditionBuilder } from "@/components/alerts/condition-builder";
 import { FieldSelect } from "@/components/alerts/field-select";
-import { MetricPicker } from "@/components/alerts/metric-picker";
+import { DefinitionPicker } from "@/components/custom/definition-picker";
 import { Row } from "@/components/custom/editor/controls";
 import { refusal } from "@/components/custom/refusal";
 import { Button } from "@/components/ui/button";
@@ -166,7 +166,8 @@ export function AlertFields({
       <div className="grid gap-4 sm:grid-cols-2">
         <Row id="alert-metric" label="Metric" required said={metricProblem}>
           <div className="flex flex-col items-start gap-1">
-            <MetricPicker
+            <DefinitionPicker
+              kind="metrics"
               id="alert-metric"
               value={metric}
               describe={describing("alert-metric", {

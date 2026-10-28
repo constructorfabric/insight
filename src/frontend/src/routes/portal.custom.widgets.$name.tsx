@@ -24,7 +24,7 @@ export const Route = createFileRoute("/portal/custom/widgets/$name")({
 /** The windows a card may be drawn over: the board's presets, without all time, which is the run with no window. */
 const WINDOWS = RANGE_PRESETS.filter(({ token }) => token !== "inf");
 
-function widgetNameFromPath(pathname: string): string {
+function widgetIdFromPath(pathname: string): string {
   const match = pathname.match(/^\/portal\/custom\/widgets\/([^/]+)/);
 
   return match ? decodeURIComponent(match[1]) : "";
@@ -32,15 +32,15 @@ function widgetNameFromPath(pathname: string): string {
 
 function WidgetPage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const name = widgetNameFromPath(pathname);
-  const widget = useQuery(widgetQuery(name));
+  const id = widgetIdFromPath(pathname);
+  const widget = useQuery(widgetQuery(id));
 
   if (widget.isPending) return <CenteredSpinner className="min-h-40" />;
 
   if (widget.isError) {
     return (
       <div className="flex flex-col gap-2 p-4 md:p-6">
-        <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>
+        <h1 className={cn(TEXT_HEADING, "font-mono")}>{id}</h1>
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(widget.error, "That widget is not there.")}
         </p>
@@ -61,7 +61,7 @@ function WidgetPage() {
     <div className="flex flex-col gap-4 p-4 md:p-6">
       <header className="flex flex-wrap items-baseline gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>
+          <h1 className={TEXT_HEADING}>{widget.data.name}</h1>
           <Link
             to="/portal/custom/widgets"
             className={cn(
@@ -73,7 +73,7 @@ function WidgetPage() {
           </Link>
         </div>
         <span className="ms-auto">
-          <EditLink kind="widgets" name={name} />
+          <EditLink kind="widgets" id={id} name={widget.data.name} />
         </span>
       </header>
 
@@ -82,13 +82,13 @@ function WidgetPage() {
           <CardTitle className={TEXT_HEADING}>Definition</CardTitle>
         </CardHeader>
         <CardContent>
-          <WidgetSummary widget={widget.data} />
+          <WidgetSummary widget={widget.data.widget} />
         </CardContent>
       </Card>
 
-      <Drawn name={name} widget={widget.data} />
+      <Drawn name={widget.data.name} widget={widget.data.widget} />
 
-      <HeldBy kind="widgets" name={name} />
+      <HeldBy kind="widgets" id={id} />
     </div>
   );
 }

@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::domain::folders::DefinitionStore;
+use crate::domain::definition::{DefinitionId, DefinitionKind};
 use crate::domain::pins::MAX_PINS;
 use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::store::definitions::memory::MemoryDefinitions;
@@ -23,6 +23,17 @@ const BORIS: Uuid = Uuid::from_u128(2);
 struct Harness {
     _clickhouse: Mock,
     router: Router,
+    definitions: Arc<MemoryDefinitions>,
+}
+
+/// A pinned list as the route answers it: each pin by id, named after it.
+fn listed(ids: &[&str]) -> Value {
+    let pins: Vec<Value> = ids
+        .iter()
+        .map(|id| json!({ "id": id, "name": id }))
+        .collect();
+
+    json!({ "pins": pins })
 }
 
 struct Answer {
@@ -38,7 +49,7 @@ impl Harness {
         )
     }
 
-    fn build(identity: IdentityClient, store: Arc<dyn DefinitionStore>) -> Self {
+    fn build(identity: IdentityClient, store: Arc<MemoryDefinitions>) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
         let url = mock.url();
@@ -48,7 +59,7 @@ impl Harness {
                 insight_clickhouse::Client::new(insight_clickhouse::Config::new(url, "insight")),
                 People::new("identity"),
             ),
-            store,
+            store.clone(),
             ChatClient::keyless(),
             identity,
             crate::api::Datasets::holding(url, &[]),
@@ -61,6 +72,7 @@ impl Harness {
         Self {
             _clickhouse: mock,
             router,
+            definitions: store,
         }
     }
 
@@ -94,15 +106,18 @@ impl Harness {
         Answer { status, body }
     }
 
-    async fn dashboard(&self, name: &str) {
-        let answer = self
-            .send(
-                "PUT",
-                &format!("/v1/dashboards/{name}"),
-                Some(json!({ "title": name, "widgets": [] })),
+    /// Stores a dashboard under an id the case chooses, named after it.
+    async fn dashboard(&self, id: &str) {
+        let parsed = DefinitionId::parse(id).unwrap_or_else(|error| panic!("{id}: {error}"));
+
+        self.definitions
+            .seed(
+                DefinitionKind::Dashboard,
+                &parsed,
+                &json!({ "title": id, "widgets": [] }),
             )
-            .await;
-        assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.body);
+            .await
+            .unwrap_or_else(|error| panic!("`{id}` must store: {error}"));
     }
 
     async fn pin(&self, name: &str) -> Answer {
@@ -138,15 +153,12 @@ async fn a_caller_is_listed_the_pins_they_made_oldest_first() {
         harness.pinned(name).await;
     }
 
-    assert_eq!(
-        harness.pins().await,
-        json!({ "pins": ["gamma", "alpha", "beta"] })
-    );
+    assert_eq!(harness.pins().await, listed(&["gamma", "alpha", "beta"]));
 }
 
 #[tokio::test]
 async fn one_caller_s_pins_never_show_for_another() {
-    let store: Arc<dyn DefinitionStore> = Arc::new(MemoryDefinitions::new());
+    let store = Arc::new(MemoryDefinitions::new());
     let anna = Harness::build(IdentityClient::admin(ANNA), Arc::clone(&store));
     let boris = Harness::build(IdentityClient::admin(BORIS), store);
     anna.dashboard("alpha").await;
@@ -155,15 +167,15 @@ async fn one_caller_s_pins_never_show_for_another() {
     anna.pinned("alpha").await;
     boris.pinned("beta").await;
 
-    assert_eq!(anna.pins().await, json!({ "pins": ["alpha"] }));
-    assert_eq!(boris.pins().await, json!({ "pins": ["beta"] }));
+    assert_eq!(anna.pins().await, listed(&["alpha"]));
+    assert_eq!(boris.pins().await, listed(&["beta"]));
 }
 
 #[tokio::test]
 async fn a_caller_with_no_pins_is_listed_none() {
     let harness = Harness::new();
 
-    assert_eq!(harness.pins().await, json!({ "pins": [] }));
+    assert_eq!(harness.pins().await, listed(&[]));
 }
 
 #[tokio::test]
@@ -176,7 +188,7 @@ async fn pinning_a_pinned_dashboard_again_keeps_its_place() {
 
     harness.pinned("alpha").await;
 
-    assert_eq!(harness.pins().await, json!({ "pins": ["alpha", "beta"] }));
+    assert_eq!(harness.pins().await, listed(&["alpha", "beta"]));
 }
 
 #[tokio::test]
@@ -193,7 +205,7 @@ async fn an_unpin_answers_no_content_whether_or_not_it_was_pinned() {
         assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.body);
         assert_eq!(answer.body, Value::Null);
     }
-    assert_eq!(harness.pins().await, json!({ "pins": [] }));
+    assert_eq!(harness.pins().await, listed(&[]));
 }
 
 #[tokio::test]
@@ -232,14 +244,14 @@ async fn a_pin_past_the_cap_is_a_conflict_that_says_why() {
 }
 
 #[tokio::test]
-async fn a_name_no_dashboard_could_have_is_refused() {
+async fn an_id_no_dashboard_could_have_is_not_found() {
     let harness = Harness::new();
 
     for refused in [
-        harness.pin("not%20a%20name").await,
-        harness.unpin("not%20a%20name").await,
+        harness.pin("not%20an%20id").await,
+        harness.unpin("not%20an%20id").await,
     ] {
-        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+        assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.body);
     }
 }
 
@@ -253,16 +265,22 @@ async fn a_renamed_dashboard_is_listed_under_its_new_name_in_its_place() {
 
     let renamed = harness
         .send(
-            "POST",
-            "/v1/dashboards/beta/rename",
-            Some(json!({ "to": "delta" })),
+            "PUT",
+            "/v1/dashboards/beta",
+            Some(json!({ "name": "Delta", "body": { "title": "beta", "widgets": [] } })),
         )
         .await;
 
-    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.body);
+    assert_eq!(renamed.status, StatusCode::NO_CONTENT, "{}", renamed.body);
     assert_eq!(
         harness.pins().await,
-        json!({ "pins": ["alpha", "delta", "gamma"] })
+        json!({
+            "pins": [
+                { "id": "alpha", "name": "alpha" },
+                { "id": "beta", "name": "Delta" },
+                { "id": "gamma", "name": "gamma" }
+            ]
+        })
     );
 }
 
@@ -277,13 +295,13 @@ async fn a_deleted_dashboard_leaves_the_pinned_list() {
     let removed = harness.send("DELETE", "/v1/dashboards/alpha", None).await;
 
     assert_eq!(removed.status, StatusCode::NO_CONTENT);
-    assert_eq!(harness.pins().await, json!({ "pins": ["beta"] }));
+    assert_eq!(harness.pins().await, listed(&["beta"]));
 }
 
 #[tokio::test]
-async fn a_caller_without_the_admin_role_is_refused_on_every_pin_route() {
+async fn a_caller_identity_refuses_is_refused_on_every_pin_route() {
     let harness = Harness::build(
-        IdentityClient::fixed(false),
+        IdentityClient::unidentified(),
         Arc::new(MemoryDefinitions::new()),
     );
 

@@ -52,6 +52,8 @@ const FOUND: Witness = {
 };
 
 const BY_TEAM_METRIC = {
+  id: "prs-open",
+  name: "prs-open",
   body: {
     dataset: "pull-requests",
     fields: [
@@ -153,9 +155,14 @@ const handlers = [
     HttpResponse.json({ destinations: [{ name: "ops", provider: "zulip" }] })
   ),
   http.get("*/api/v3/v1/metrics", () =>
-    HttpResponse.json({ names: ["prs-open"], total: 1 })
+    HttpResponse.json({
+      items: [{ id: "prs-open", name: "prs-open" }],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    })
   ),
-  http.get("*/api/v3/v1/metrics/:name", () =>
+  http.get("*/api/v3/v1/metrics/:id", () =>
     HttpResponse.json(BY_TEAM_METRIC)
   ),
   http.get("*/api/v3/v1/datasets/:name", () =>

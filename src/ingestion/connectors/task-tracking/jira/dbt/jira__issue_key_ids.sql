@@ -29,18 +29,18 @@
 WITH issue_rows AS (
     -- Every row, not the newest: bronze keeps one per key the connector saw.
     SELECT
-        COALESCE(source_id, '')                                       AS insight_source_id,
+        CAST(source_id AS String)                                     AS insight_source_id,
         COALESCE(toString(id_readable), '')                           AS issue_key,
-        COALESCE(toString(jira_id), '')                               AS issue_id,
+        CAST(jira_id AS String)                                       AS issue_id,
         toUInt8(1)                                                    AS precedence
     FROM {{ source('bronze_jira', 'jira_issue') }}
 
     UNION ALL
 
     SELECT
-        COALESCE(source_id, '')                                       AS insight_source_id,
+        CAST(source_id AS String)                                     AS insight_source_id,
         COALESCE(toString(id_readable), '')                           AS issue_key,
-        COALESCE(toString(jira_id), '')                               AS issue_id,
+        CAST(jira_id AS String)                                       AS issue_id,
         toUInt8(1)                                                    AS precedence
     FROM {{ source('bronze_jira', 'jira_issue_keys') }}
 {%- if census_has_keys %}
@@ -50,9 +50,9 @@ WITH issue_rows AS (
     -- The census lists every issue a visible project holds, whatever its last
     -- update, so a key outside the sync window still resolves.
     SELECT
-        COALESCE(source_id, '')                                       AS insight_source_id,
+        CAST(source_id AS String)                                     AS insight_source_id,
         COALESCE(toString(id_readable), '')                           AS issue_key,
-        COALESCE(toString(jira_id), '')                               AS issue_id,
+        CAST(jira_id AS String)                                       AS issue_id,
         toUInt8(2)                                                    AS precedence
     FROM {{ source('bronze_jira', 'jira_issue_census') }}
 {%- endif %}
@@ -74,7 +74,7 @@ moves AS (
         toUInt8(3)                                                    AS precedence
     FROM (
         SELECT
-            COALESCE(source_id, '')                                   AS insight_source_id,
+            CAST(source_id AS String)                                 AS insight_source_id,
             COALESCE(toString(jira_id), '')                           AS issue_id,
             arrayJoin(JSONExtractArrayRaw(COALESCE(items, '[]')))     AS item
         FROM {{ source('bronze_jira', 'jira_issue_history') }}

@@ -233,26 +233,31 @@ def test_person_role_grant_and_revoke_round_trip(
     )
     assert created.status_code == 201, f"grant role: {created.status_code} {created.text[:300]}"
     assignment = created.parse(PersonRole)
-    assert str(assignment.person_id) == subject.uuid
-    assert in_force(assignment), f"a fresh assignment is already revoked: {assignment}"
     assignment_id = scratch.track(
         identity_path("/v1/person-roles"), "person_role_id", str(assignment.person_role_id)
     )
+    assignment_path = identity_path(f"/v1/person-roles/{assignment_id}")
+    try:
+        assert str(assignment.person_id) == subject.uuid
+        assert in_force(assignment), "a fresh assignment is already revoked"
 
-    listed = client.get(identity_path("/v1/person-roles")).parse(PersonRoleList)
-    assert assignment_id in {str(item.person_role_id) for item in listed.items}, (
-        "the grant is not listed"
-    )
+        listed = client.get(identity_path("/v1/person-roles")).parse(PersonRoleList)
+        assert assignment_id in {str(item.person_role_id) for item in listed.items}, (
+            "the grant is not listed"
+        )
 
-    revoked = client.delete(identity_path(f"/v1/person-roles/{assignment_id}"))
-    assert revoked.status_code == 204, f"revoke: {revoked.status_code} {revoked.text[:300]}"
+        revoked = client.delete(assignment_path)
+        assert revoked.status_code == 204, f"revoke: {revoked.status_code}"
 
-    journal = client.get(identity_path("/v1/person-roles")).parse(PersonRoleList)
-    after = [item for item in journal.items if str(item.person_role_id) == assignment_id]
-    assert len(after) == 1, f"the revoked assignment vanished from the journal: {after}"
-    assert not in_force(after[0]), (
-        f"the assignment is still in force after a 204 revoke: {after[0]}"
-    )
+        journal = client.get(identity_path("/v1/person-roles")).parse(PersonRoleList)
+        after = [item for item in journal.items if str(item.person_role_id) == assignment_id]
+        assert len(after) == 1, "the revoked assignment vanished from the journal"
+        assert not in_force(after[0]), "the assignment is still in force after a 204 revoke"
+    finally:
+        cleanup = client.delete(assignment_path)
+        assert cleanup.status_code in {204, 404}, (
+            f"cleanup of the test's admin assignment failed ({cleanup.status_code})"
+        )
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead")

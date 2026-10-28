@@ -16,6 +16,9 @@ pub struct ChangesCursor {
     pub after_us: i64,
     #[serde(rename = "e")]
     pub after_email: String,
+    /// The walk's `committed_since`, carried so every page applies one bound.
+    #[serde(rename = "m", default)]
+    pub committed_since_us: Option<i64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -25,7 +28,7 @@ pub struct MalformedCursor;
 impl ChangesCursor {
     #[must_use]
     pub fn encode(&self) -> String {
-        // Serialising four plain fields cannot fail.
+        // Serialising plain fields cannot fail.
         URL_SAFE_NO_PAD.encode(serde_json::to_vec(self).unwrap_or_default())
     }
 
@@ -52,8 +55,9 @@ pub fn format_stamp(stamp_us: i64) -> String {
     )
 }
 
-/// An RFC 3339 instant — or the colon-less offset Python's `%z` renders — as
-/// microseconds since the UNIX epoch.
+/// An RFC 3339 instant — or the colon-less offset Python's `%z` renders, or a
+/// bare `YYYY-MM-DD` read as midnight UTC — as microseconds since the UNIX
+/// epoch.
 #[must_use]
 pub fn parse_instant_us(raw: &str) -> Option<i64> {
     let raw = raw.trim();
@@ -61,6 +65,19 @@ pub fn parse_instant_us(raw: &str) -> Option<i64> {
         .or_else(|_| chrono::DateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S%.f%z"))
         .ok()
         .map(|at| at.timestamp_micros())
+        .or_else(|| {
+            chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+                .ok()
+                .and_then(|day| day.and_hms_opt(0, 0, 0))
+                .map(|at| at.and_utc().timestamp_micros())
+        })
+}
+
+/// An instant as the fixed-width UTC ordinal the index orders commits by.
+#[must_use]
+pub fn ordinal_of_us(stamp_us: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp_micros(stamp_us)
+        .map(|at| at.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string())
 }
 
 #[cfg(test)]
@@ -74,6 +91,7 @@ mod tests {
             since_us: Some(1_600_000_000_000_000),
             after_us: 1_700_000_000_000_000,
             after_email: "dev@example.com".to_owned(),
+            committed_since_us: Some(1_500_000_000_000_000),
         };
         assert_eq!(ChangesCursor::decode(&cursor.encode()).ok(), Some(cursor));
 
@@ -97,5 +115,16 @@ mod tests {
             parse_instant_us("2026-01-01T02:00:00.000001+0200")
         );
         assert_eq!(parse_instant_us("yesterday"), None);
+    }
+
+    #[test]
+    fn a_bare_date_is_midnight_utc_and_matches_the_index_ordinal() {
+        let day = parse_instant_us("2024-01-01");
+        assert_eq!(day, parse_instant_us("2024-01-01T00:00:00Z"));
+        assert_eq!(
+            day.and_then(ordinal_of_us).as_deref(),
+            Some(crate::engine::read::commits::ordinal_of("2024-01-01T00:00:00+00:00").as_str()),
+            "the bound and the commit ordinals must compare in one format"
+        );
     }
 }

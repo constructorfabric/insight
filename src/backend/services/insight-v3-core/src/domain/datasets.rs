@@ -12,7 +12,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::Value;
 use thiserror::Error;
 
-use super::definition::{DefinitionName, NamePage, Page};
+use super::definition::{DefinitionId, NamePage, Page};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::dataset::state::{DatasetState, Operation};
 
@@ -57,7 +57,7 @@ impl OperationToken {
     /// It carries the dataset's name so a reader recognises it, and this
     /// attempt's generation so that two attempts at one dataset never address
     /// one table.
-    pub(crate) fn table(&self, dataset: &DefinitionName) -> String {
+    pub(crate) fn table(&self, dataset: &DefinitionId) -> String {
         let readable: String = dataset.as_str().chars().take(TABLE_NAME_CHARS).collect();
 
         format!("{TABLE_PREFIX}{readable}_{}", self.0)
@@ -75,7 +75,7 @@ pub(crate) struct Held {
 /// A dataset as its row records it.
 #[derive(Debug, Clone)]
 pub(crate) struct Dataset {
-    pub(crate) name: DefinitionName,
+    pub(crate) name: DefinitionId,
     pub(crate) declaration: Value,
     pub(crate) state: DatasetState,
     /// The table holding its records, absent until one is provisioned.
@@ -115,7 +115,7 @@ pub(crate) async fn ready(
     datasets: &dyn Datasets,
     named: &str,
 ) -> Result<Option<Ready>, DatasetStoreError> {
-    let Ok(name) = DefinitionName::parse(named) else {
+    let Ok(name) = DefinitionId::parse(named) else {
         return Ok(None);
     };
     let Some(held) = datasets.get(&name).await? else {
@@ -290,7 +290,7 @@ pub(crate) fn finishing(held: Option<&Dataset>, token: &OperationToken) -> Ownin
 #[async_trait]
 pub(crate) trait Datasets: Send + Sync + fmt::Debug {
     /// The dataset as it stands, or nothing if the name is free.
-    async fn get(&self, name: &DefinitionName) -> Result<Option<Dataset>, DatasetStoreError>;
+    async fn get(&self, name: &DefinitionId) -> Result<Option<Dataset>, DatasetStoreError>;
 
     /// Every dataset name, whatever state it is in.
     async fn list(&self) -> Result<Vec<String>, DatasetStoreError>;
@@ -307,19 +307,19 @@ pub(crate) trait Datasets: Send + Sync + fmt::Debug {
     /// taking over an abandoned create does not publish the abandoned body.
     async fn take_create(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<Taken, DatasetStoreError>;
 
     /// Takes a removal for a fresh attempt.
-    async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError>;
+    async fn take_remove(&self, name: &DefinitionId) -> Result<Attempt, DatasetStoreError>;
 
     /// Replaces the declaration of a dataset that stands, in one transaction:
     /// no table changes, so nothing may interleave with it. Answers whether
     /// there was still one standing to replace.
     async fn replace(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<bool, DatasetStoreError>;
 
@@ -327,7 +327,7 @@ pub(crate) trait Datasets: Send + Sync + fmt::Debug {
     /// the dataset.
     async fn finish(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         token: &OperationToken,
         finish: Finish,
     ) -> Result<Owning, DatasetStoreError>;

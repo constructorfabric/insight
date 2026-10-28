@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useZoneNav } from "@/lib/portal/use-zone-nav";
 import { TEXT_EYEBROW } from "@/lib/type-scale";
 import { definitionPagesQuery } from "@/queries/custom";
+import { useIsAdmin } from "@/queries/identity-me";
 
 export function HomeDashboards() {
   const { zones } = useZoneNav();
@@ -17,8 +18,9 @@ export function HomeDashboards() {
 
 function DashboardSection() {
   const dashboards = useInfiniteQuery(definitionPagesQuery("dashboards"));
-  const names =
-    dashboards.data?.pages.flatMap((page) => page.names).slice(0, 3) ?? [];
+  const { isAdmin } = useIsAdmin();
+  const shown =
+    dashboards.data?.pages.flatMap((page) => page.items).slice(0, 3) ?? [];
 
   return (
     <section aria-labelledby="home-dashboards" className="flex flex-col gap-4">
@@ -35,7 +37,7 @@ function DashboardSection() {
           >
             All dashboards
           </Button>
-          <NewLink kind="dashboards" noun="dashboard" />
+          {isAdmin ? <NewLink kind="dashboards" noun="dashboard" /> : null}
         </div>
       </div>
       {dashboards.isPending ? (
@@ -58,14 +60,14 @@ function DashboardSection() {
             Try again
           </Button>
         </div>
-      ) : names.length ? (
+      ) : shown.length ? (
         <ul className="grid gap-4 @2xl:grid-cols-2">
-          {names.map((name) => (
+          {shown.map((dashboard) => (
             <li
-              key={name}
+              key={dashboard.id}
               className="[&_[data-slot=card-content]]:p-0 [&_[data-slot=card]]:p-4"
             >
-              <DashboardCard name={name} />
+              <DashboardCard dashboard={dashboard} />
             </li>
           ))}
         </ul>

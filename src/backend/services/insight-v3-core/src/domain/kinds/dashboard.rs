@@ -83,6 +83,19 @@ fn widgets(body: &Value) -> Vec<String> {
     names
 }
 
+/// The widgets a board draws, each once, in the order it draws them.
+pub(crate) fn drawn(body: &Value) -> Vec<String> {
+    let mut drawn: Vec<String> = Vec::new();
+
+    for widget in widgets(body) {
+        if !drawn.contains(&widget) {
+            drawn.push(widget);
+        }
+    }
+
+    drawn
+}
+
 /// The same body, with every item drawing `from` drawing `to` instead.
 fn renamed(mut body: Value, from: &str, to: &str) -> Value {
     if let Some(Value::Array(items)) = body.get_mut("items") {

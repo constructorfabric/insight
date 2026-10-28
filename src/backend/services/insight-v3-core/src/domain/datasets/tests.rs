@@ -8,8 +8,8 @@ fn at(second: u32) -> DateTime<Utc> {
         .unwrap_or_else(|| panic!("the fixture time exists"))
 }
 
-fn name() -> DefinitionName {
-    DefinitionName::parse("commits").unwrap_or_else(|error| panic!("the name parses: {error}"))
+fn name() -> DefinitionId {
+    DefinitionId::parse("commits").unwrap_or_else(|error| panic!("the name parses: {error}"))
 }
 
 fn row(state: DatasetState, held: Option<Held>) -> Dataset {

@@ -38,6 +38,7 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 const CLOCKED = {
+  name: "Lines by author",
   definition: {
     dataset: "commits",
     fields: [
@@ -51,8 +52,11 @@ const CLOCKED = {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  portalRouter.reset("/portal/custom/metrics/lines_by_author");
-  vi.mocked(customClient.fetchDependents).mockResolvedValue([]);
+  portalRouter.reset("/portal/custom/metrics/m-7");
+  vi.mocked(customClient.fetchDependents).mockResolvedValue({
+    holders: [],
+    hidden: 0,
+  });
   vi.mocked(customClient.runMetric).mockResolvedValue({
     columns: ["author", "lines"],
     rows: [
@@ -82,10 +86,7 @@ describe("/portal/custom/metrics/$name", () => {
 
     expect(await screen.findByText("ada")).toBeInTheDocument();
     expect(screen.getByText("2 rows")).toBeInTheDocument();
-    expect(customClient.runMetric).toHaveBeenCalledWith(
-      "lines_by_author",
-      undefined
-    );
+    expect(customClient.runMetric).toHaveBeenCalledWith("m-7", undefined);
     expect(
       screen.getByText("Windowed by day, the dataset's main date.")
     ).toBeInTheDocument();
@@ -101,7 +102,7 @@ describe("/portal/custom/metrics/$name", () => {
     await user.click(screen.getByRole("button", { name: "Last 30 days" }));
 
     await waitFor(() =>
-      expect(customClient.runMetric).toHaveBeenCalledWith("lines_by_author", {
+      expect(customClient.runMetric).toHaveBeenCalledWith("m-7", {
         range: "P30D",
       })
     );
@@ -113,6 +114,7 @@ describe("/portal/custom/metrics/$name", () => {
   // A window needs a date to select by; a metric with none has nothing to offer.
   it("offers no windows for a metric nothing dates", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: CLOCKED.name,
       definition: CLOCKED.definition,
     });
 
@@ -128,19 +130,48 @@ describe("/portal/custom/metrics/$name", () => {
   });
 
   // What a removal would break, before a reader asks for one.
-  it("names what draws it", async () => {
+  it("names what draws it, and links each by its id", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
-    vi.mocked(customClient.fetchDependents).mockResolvedValue([
-      { kind: "widgets", name: "lines_table" },
-    ]);
+    vi.mocked(customClient.fetchDependents).mockResolvedValue({
+      holders: [{ kind: "widgets", id: "w-3", name: "Lines table" }],
+      hidden: 0,
+    });
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText("lines_table")).toBeInTheDocument();
-    expect(customClient.fetchDependents).toHaveBeenCalledWith(
-      "metrics",
-      expect.any(String)
-    );
+    expect(
+      await screen.findByRole("link", { name: "Lines table" })
+    ).toHaveAttribute("href", "/portal/custom/widgets/w-3");
+    expect(customClient.fetchDependents).toHaveBeenCalledWith("metrics", "m-7");
+    expect(screen.queryByText(/you can't see/)).toBeNull();
+  });
+
+  it("counts the dashboards that draw it which the reader cannot see", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
+    vi.mocked(customClient.fetchDependents).mockResolvedValue({
+      holders: [],
+      hidden: 2,
+    });
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByText("2 dashboards you can't see")
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nothing draws it yet.")).toBeNull();
+  });
+
+  it("heads the page with the stored name and edits it by its id", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("heading", { name: "Lines by author" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Edit Lines by author" })
+    ).toHaveAttribute("href", "/portal/custom/edit/metrics/m-7");
   });
 
   it("says when nothing draws it", async () => {

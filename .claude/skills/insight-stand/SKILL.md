@@ -9,8 +9,9 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 # Working the Insight compose stand
 
 `tests/stand/` tests a **deployed** Insight: real Keycloak login, the gateway
-BFF, pinned ghcr images for all four backend services and the frontend, over a
-compose stack seeded deterministically by `src/ingestion/tools/seed`.
+BFF, all four backend services and the frontend built from the checkout (or
+pulled at their chart pins under `--pinned`), over a compose stack seeded
+deterministically by `src/ingestion/tools/seed`.
 
 ## The one rule that shapes everything
 
@@ -38,12 +39,13 @@ Two consequences you will meet immediately:
 ./dev-compose.sh test-stand down    # stop AND remove volumes
 ```
 
-`up` pulls the frontend and each backend service pinned to its own chart's
-`appVersion` — never `:latest`, never compiled here. To test a local change
-pass `--build` (the backend compiled from source AND the frontend pnpm-built,
-served by the front-built nginx); `up` otherwise refuses when the tree differs
-from `origin/main` under `src/backend/` or `src/frontend/`, since the pinned
-images would not be what ran.
+`up` compiles the backend from source AND pnpm-builds the frontend (served by
+the front-built nginx), so the stand runs the checkout. `up --pinned` pulls the
+frontend and each backend service at its own chart's `appVersion` instead —
+never `:latest`. That is CI's mode, where the `changes` job adds `--build-backend`
+/ `--build-frontend` for whatever the ref touches; by hand it is only safe when
+nothing under `src/backend/` or `src/frontend/` differs from main, because the
+pinned images would not be what ran.
 
 **A path argument does not narrow the run.** The verb appends it to a hardcoded
 `tests/stand` and pytest unions path arguments, so `test-stand test

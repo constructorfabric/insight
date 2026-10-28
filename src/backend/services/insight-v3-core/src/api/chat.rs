@@ -17,8 +17,9 @@ use super::AppState;
 use super::errors::ApiErrors;
 use crate::chat::{Ask, ChatError, Proposal, Turn};
 use crate::domain::assistant::DatasetSchemas;
-use crate::domain::definition::{Change, Definition, DefinitionKind, DefinitionName};
+use crate::domain::definition::DefinitionKind;
 use crate::domain::query::metric_query::{MetricQuery, RunResult};
+use crate::domain::surfaces::{Arrival, ProposalError, StoredItem};
 
 #[resource_error("gts.cf.insight.insight_v3_core.chat.v1~")]
 struct ChatApiError;
@@ -71,16 +72,22 @@ struct ChatAnswerResponse {
 #[derive(Debug, Serialize)]
 struct ChatCreatedResponse {
     reply: String,
-    created: CreatedNames,
-    /// What already existed under these names and now holds something else.
-    updated: CreatedNames,
+    created: Written,
+    /// What already existed under these ids and now holds something else.
+    updated: Written,
 }
 
 #[derive(Debug, Default, Serialize)]
-struct CreatedNames {
-    metric: Option<String>,
-    widgets: Vec<String>,
-    dashboard: Option<String>,
+struct Written {
+    metric: Option<WrittenOne>,
+    widgets: Vec<WrittenOne>,
+    dashboard: Option<WrittenOne>,
+}
+
+#[derive(Debug, Serialize)]
+struct WrittenOne {
+    id: String,
+    name: String,
 }
 
 pub(crate) fn register_routes(
@@ -111,7 +118,7 @@ async fn handle_chat(
     headers: axum::http::HeaderMap,
     request: Result<Json<ChatRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    crate::api::require_admin(&state, &headers, || {
+    let caller = crate::api::require_admin(&state, &headers, || {
         ChatApiError::permission_denied()
             .with_reason(crate::api::ADMIN_ONLY)
             .create()
@@ -119,8 +126,8 @@ async fn handle_chat(
     .await?;
     let Json(request) = request.map_err(|error| ChatApiError::unreadable_body(&error))?;
 
-    let briefing = state.assistant().briefing().await;
-    let schemas = DatasetSchemas::new(state.datasets(), state.definitions());
+    let briefing = state.assistant().briefing(caller).await;
+    let schemas = DatasetSchemas::new(state.datasets(), state.store());
     let proposal = state
         .chat()
         .propose(&Ask {
@@ -154,94 +161,46 @@ async fn handle_chat(
             metric,
             widgets,
             dashboard,
-        } => store_proposed(&state, reply, metric, widgets, dashboard).await,
+        } => {
+            let stored = state
+                .surfaces(caller)
+                .store_proposal(metric, widgets, dashboard)
+                .await
+                .map_err(proposal_error)?;
+            let (created, updated) = reported(&stored);
+
+            Ok(Json(ChatCreatedResponse {
+                reply,
+                created,
+                updated,
+            })
+            .into_response())
+        }
     }
 }
 
-/// Stores what the assistant proposed, or none of it.
-///
-/// Every name is parsed and every body checked before anything is written, so
-/// one refusal leaves the reader what they had rather than half a dashboard.
-async fn store_proposed(
-    state: &AppState,
-    reply: String,
-    metric: Option<(String, serde_json::Value)>,
-    widgets: Vec<(String, serde_json::Value)>,
-    dashboard: Option<(String, serde_json::Value)>,
-) -> Result<Response, CanonicalError> {
-    let mut asked = Vec::new();
-    if let Some((name, body)) = metric {
-        asked.push((DefinitionKind::Metric, name, body));
-    }
-    for (name, body) in widgets {
-        asked.push((DefinitionKind::Widget, name, body));
-    }
-    if let Some((name, body)) = dashboard {
-        asked.push((DefinitionKind::Dashboard, name, body));
-    }
+/// What was created and what was replaced, by id and name.
+fn reported(stored: &[StoredItem]) -> (Written, Written) {
+    let mut created = Written::default();
+    let mut updated = Written::default();
 
-    let mut writes = Vec::with_capacity(asked.len());
-    for (kind, name, body) in asked {
-        let parsed = DefinitionName::parse(&name).map_err(ChatApiError::definition_error)?;
-        writes.push(Definition::new(kind, parsed, body));
-    }
-
-    state
-        .surfaces()
-        .check_batch(&writes)
-        .await
-        .map_err(crate::api::definitions::custom_error)?;
-
-    let (created, updated) = named_by_novelty(state, &writes).await?;
-
-    let batch: Vec<_> = writes
-        .into_iter()
-        .map(|write| Change::Put(write.kind, write.name, write.body))
-        .collect();
-    state
-        .definitions()
-        .apply(&batch)
-        .await
-        .map_err(ChatApiError::definition_store_error)?;
-
-    Ok(Json(ChatCreatedResponse {
-        reply,
-        created,
-        updated,
-    })
-    .into_response())
-}
-
-/// Which of these names the store does not hold yet, and which it does.
-///
-/// Read before the write, so a name another writer takes in between is
-/// reported as created rather than replaced. The write itself is one
-/// transaction either way.
-async fn named_by_novelty(
-    state: &AppState,
-    writes: &[Definition],
-) -> Result<(CreatedNames, CreatedNames), CanonicalError> {
-    let mut created = CreatedNames::default();
-    let mut updated = CreatedNames::default();
-
-    for write in writes {
-        let held = state
-            .definitions()
-            .get(write.kind, &write.name)
-            .await
-            .map_err(ChatApiError::definition_store_error)?
-            .is_some();
-
-        let reported = if held { &mut updated } else { &mut created };
-        let held_name = write.name.as_str().to_owned();
-        match write.kind {
-            DefinitionKind::Metric => reported.metric = Some(held_name),
-            DefinitionKind::Widget => reported.widgets.push(held_name),
-            DefinitionKind::Dashboard => reported.dashboard = Some(held_name),
+    for item in stored {
+        let reported = match item.arrival {
+            Arrival::Created => &mut created,
+            Arrival::Replaced => &mut updated,
+        };
+        let one = WrittenOne {
+            id: item.id.as_str().to_owned(),
+            name: item.name.as_str().to_owned(),
+        };
+        match item.kind {
+            DefinitionKind::Metric => reported.metric = Some(one),
+            DefinitionKind::Widget => reported.widgets.push(one),
+            DefinitionKind::Dashboard => reported.dashboard = Some(one),
         }
     }
 
-    Ok((created, updated))
+    (created, updated)
 }
 
 /// What an answer says when its query found nothing.
@@ -277,6 +236,15 @@ async fn answered_with(
     Ok(Some(answered))
 }
 
+fn proposal_error(error: ProposalError) -> CanonicalError {
+    match error {
+        ProposalError::Name(source) => ChatApiError::definition_error(source),
+        ProposalError::MalformedId { kind, raw } => ChatApiError::malformed_id(kind, &raw),
+        ProposalError::Refused(source) => crate::api::definitions::custom_error(source),
+        ProposalError::Store(source) => ChatApiError::definition_store_error(source),
+    }
+}
+
 fn chat_error(error: ChatError) -> CanonicalError {
     match error {
         ChatError::Json(source) => ChatApiError::invalid_argument()
@@ -294,8 +262,8 @@ fn chat_error(error: ChatError) -> CanonicalError {
             tracing::warn!("the model exhausted its schema lookups without answering");
             CanonicalError::internal("the model did not answer").create()
         }
-        ChatError::EmptyCreate => ChatApiError::invalid_argument()
-            .with_field_violation("reply", ChatError::EmptyCreate.to_string(), "INVALID")
+        ChatError::EmptyCreate | ChatError::SharedName { .. } => ChatApiError::invalid_argument()
+            .with_field_violation("reply", error.to_string(), "INVALID")
             .create(),
         ChatError::TokenRejected => {
             tracing::error!("the configured anthropic token was rejected upstream");

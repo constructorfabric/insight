@@ -9,9 +9,10 @@ use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
 
 use super::AppState;
+use super::definitions::listed_json;
 use super::errors::ApiErrors;
-use crate::domain::definition::DefinitionName;
-use crate::domain::pins::PinError;
+use crate::domain::definition::{DefinitionId, DefinitionKind};
+use crate::domain::pins::{self, PinError};
 
 #[resource_error("gts.cf.insight.insight_v3_core.pins.v1~")]
 struct PinApiError;
@@ -59,14 +60,18 @@ fn pin_error(error: PinError) -> CanonicalError {
     }
 }
 
-fn denied() -> CanonicalError {
+fn unidentified() -> CanonicalError {
     PinApiError::permission_denied()
-        .with_reason(crate::api::ADMIN_ONLY)
+        .with_reason(crate::api::UNIDENTIFIED)
         .create()
 }
 
-fn name_param() -> ParamSpec {
-    ParamSpec::path("name").description("Dashboard name")
+fn id_param() -> ParamSpec {
+    ParamSpec::path("dashboard_id").description("Dashboard id")
+}
+
+fn dashboard_id(raw: &str) -> Result<DefinitionId, CanonicalError> {
+    DefinitionId::parse(raw).map_err(|_| PinApiError::malformed_id(DefinitionKind::Dashboard, raw))
 }
 
 pub(crate) fn register_routes(
@@ -76,12 +81,12 @@ pub(crate) fn register_routes(
 ) -> Router {
     let list = OperationBuilder::get("/v1/pins")
         .operation_id("insight_v3_core.pins.list")
-        .summary("List the dashboards the caller pinned")
+        .summary("List the dashboards the caller pinned and still sees")
         .anonymous()
         .exposed()
         .json_response(
             StatusCode::OK,
-            "The caller's pinned dashboard names, oldest pin first",
+            "The caller's pinned dashboards by id and name, oldest pin first",
         )
         .error_403(openapi)
         .error_500(openapi)
@@ -90,12 +95,12 @@ pub(crate) fn register_routes(
         .register(Router::new(), openapi)
         .layer(Extension(state.clone()));
 
-    let pin = OperationBuilder::put("/v1/pins/{name}")
+    let pin = OperationBuilder::put("/v1/pins/{dashboard_id}")
         .operation_id("insight_v3_core.pins.pin")
         .summary("Pin a dashboard for the caller; a pinned one keeps its place")
         .anonymous()
         .exposed()
-        .param(name_param())
+        .param(id_param())
         .no_content_response(StatusCode::NO_CONTENT, "Pinned")
         .error_400(openapi)
         .error_403(openapi)
@@ -107,12 +112,12 @@ pub(crate) fn register_routes(
         .register(Router::new(), openapi)
         .layer(Extension(state.clone()));
 
-    let unpin = OperationBuilder::delete("/v1/pins/{name}")
+    let unpin = OperationBuilder::delete("/v1/pins/{dashboard_id}")
         .operation_id("insight_v3_core.pins.unpin")
         .summary("Unpin a dashboard for the caller, whether or not it was pinned")
         .anonymous()
         .exposed()
-        .param(name_param())
+        .param(id_param())
         .no_content_response(StatusCode::NO_CONTENT, "Not pinned")
         .error_400(openapi)
         .error_403(openapi)
@@ -130,24 +135,22 @@ async fn list_pins(
     Extension(state): Extension<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    let caller = crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::caller(&state, &headers, unidentified).await?;
 
     let pins = state.pins().pins_of(caller).await.map_err(pin_error)?;
 
-    Ok(Json(json!({ "pins": pins })).into_response())
+    Ok(Json(json!({ "pins": listed_json(&pins) })).into_response())
 }
 
 async fn pin_dashboard(
     Extension(state): Extension<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    let caller = crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::caller(&state, &headers, unidentified).await?;
 
-    let dashboard = DefinitionName::parse(&name).map_err(PinApiError::definition_error)?;
-    state
-        .pins()
-        .pin(caller, &dashboard)
+    let dashboard = dashboard_id(&id)?;
+    pins::pin(state.store(), caller, &dashboard)
         .await
         .map_err(pin_error)?;
 
@@ -156,15 +159,13 @@ async fn pin_dashboard(
 
 async fn unpin_dashboard(
     Extension(state): Extension<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    let caller = crate::api::require_admin(&state, &headers, denied).await?;
+    let caller = crate::api::caller(&state, &headers, unidentified).await?;
 
-    let dashboard = DefinitionName::parse(&name).map_err(PinApiError::definition_error)?;
-    state
-        .pins()
-        .unpin(caller, &dashboard)
+    let dashboard = dashboard_id(&id)?;
+    pins::unpin(state.store(), caller, &dashboard)
         .await
         .map_err(pin_error)?;
 
