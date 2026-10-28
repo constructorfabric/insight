@@ -73,7 +73,7 @@ pub fn worth_purging(size_bytes: u64, skeleton_bytes: u64) -> bool {
 /// threshold. Well under git's own `gc.autoPackLimit` default (50), since
 /// auto-maintenance is disabled on our invocations and this is what replaces
 /// it.
-const PACK_CONSOLIDATION_LIMIT: usize = 24;
+pub(super) const PACK_CONSOLIDATION_LIMIT: usize = 24;
 
 /// Whether the serve-path purge should repack: byte drift over the skeleton,
 /// or pack-count growth that byte drift cannot see.
