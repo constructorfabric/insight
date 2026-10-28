@@ -92,8 +92,8 @@ Contract per dep (all infra is external — out-of-chart L2):
      the release has created a relation: replicated engines whose DDL reaches
      only the node that answered the connection leave the other replicas
      without the table, which is the failure clusterMode exists to prevent.
-     Checked here alone — every creator downstream is handed the pair by this
-     chart and none of them is configured anywhere else.
+     Checked here first: every creator downstream is handed the pair by this
+     chart, and the ones that interpolate the name re-check it at run time.
      The name is an identifier every creator interpolates into DDL unquoted,
      the way dbt-clickhouse renders its own `cluster:` key, so what is accepted
      here is a bare ClickHouse identifier: a name carrying `-` or `.` parses

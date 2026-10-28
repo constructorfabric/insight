@@ -45,6 +45,14 @@ pub(crate) async fn store_or_skip() -> Option<MariaDefinitions> {
     Some(MariaDefinitions::new(connect(&url).await))
 }
 
+/// A connection of its own to the migrated database, for a case that writes
+/// tables no store owns.
+pub(crate) async fn database_or_skip() -> Option<sea_orm::DatabaseConnection> {
+    store_or_skip().await?;
+
+    Some(connect(&std::env::var(URL_VAR).unwrap_or_default()).await)
+}
+
 pub(crate) fn unique(prefix: &str) -> String {
     format!("{prefix}_{}", Uuid::now_v7().simple())
 }

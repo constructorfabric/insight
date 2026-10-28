@@ -1,44 +1,48 @@
 use async_trait::async_trait;
-use uuid::Uuid;
 
 use super::{MemoryDefinitions, Stored};
-use crate::domain::definition::DefinitionName;
+use crate::domain::access::Caller;
+use crate::domain::definition::{DefinitionId, DefinitionKind, Listed};
 use crate::domain::pins::{MAX_PINS, PinError, Pins};
 
 impl Stored {
-    pub(super) fn carry_pins(&mut self, from: &DefinitionName, to: &DefinitionName) {
-        for pins in self.pinned.values_mut() {
-            if let Some(place) = pins.iter().position(|held| held == from.as_str()) {
-                pins.insert(place + 1, to.as_str().to_owned());
-            }
-        }
-    }
-
     pub(super) fn drop_pins(&mut self, dashboard: &str) {
         for pins in self.pinned.values_mut() {
             pins.retain(|held| held != dashboard);
         }
     }
+
+    fn visible_pins(&self, caller: Caller) -> Vec<Listed> {
+        let Some(pins) = self.pinned.get(&caller.person) else {
+            return Vec::new();
+        };
+
+        pins.iter()
+            .filter(|id| self.visible(id, caller))
+            .filter_map(|id| self.listed(DefinitionKind::Dashboard, id))
+            .collect()
+    }
 }
 
 #[async_trait]
 impl Pins for MemoryDefinitions {
-    async fn pins_of(&self, person: Uuid) -> Result<Vec<String>, PinError> {
-        Ok(self.lock().pinned.get(&person).cloned().unwrap_or_default())
+    async fn pins_of(&self, caller: Caller) -> Result<Vec<Listed>, PinError> {
+        Ok(self.lock().visible_pins(caller))
     }
 
-    async fn pin(&self, person: Uuid, dashboard: &DefinitionName) -> Result<(), PinError> {
+    async fn pin(&self, caller: Caller, dashboard: &DefinitionId) -> Result<(), PinError> {
         self.writable()?;
         let mut stored = self.lock();
-        if !stored.has_dashboard(dashboard) {
+        if !stored.visible(dashboard.as_str(), caller) {
             return Err(PinError::DashboardNotFound(dashboard.as_str().to_owned()));
         }
 
-        let pins = stored.pinned.entry(person).or_default();
-        if pins.iter().any(|held| held == dashboard.as_str()) {
+        let held = stored.visible_pins(caller).len();
+        let pins = stored.pinned.entry(caller.person).or_default();
+        if pins.iter().any(|pinned| pinned == dashboard.as_str()) {
             return Ok(());
         }
-        if pins.len() >= MAX_PINS {
+        if held >= MAX_PINS {
             return Err(PinError::TooMany);
         }
         pins.push(dashboard.as_str().to_owned());
@@ -46,18 +50,16 @@ impl Pins for MemoryDefinitions {
         Ok(())
     }
 
-    async fn unpin(&self, person: Uuid, dashboard: &DefinitionName) -> Result<(), PinError> {
+    async fn unpin(&self, caller: Caller, dashboard: &DefinitionId) -> Result<bool, PinError> {
         self.writable()?;
         let mut stored = self.lock();
-        if !stored.has_dashboard(dashboard) {
-            return Err(PinError::DashboardNotFound(dashboard.as_str().to_owned()));
-        }
+        let Some(pins) = stored.pinned.get_mut(&caller.person) else {
+            return Ok(false);
+        };
+        let before = pins.len();
+        pins.retain(|held| held != dashboard.as_str());
 
-        if let Some(pins) = stored.pinned.get_mut(&person) {
-            pins.retain(|held| held != dashboard.as_str());
-        }
-
-        Ok(())
+        Ok(pins.len() < before)
     }
 }
 

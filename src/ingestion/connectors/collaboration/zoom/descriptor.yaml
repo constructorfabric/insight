@@ -19,7 +19,11 @@ name: zoom
 #   listed with inactive accounts so a deactivation reaches identity. MAJOR so
 #   reconcile republishes the manifest and runs the one-shot `dbt --full-refresh`
 #   that recomputes history without the waiting room.
-version: "3.0.0"
+# 4.0.0 (major): a participant who joined without signing in is attributed through
+#   the account's user list when exactly one Zoom user carries the display name.
+#   MAJOR so reconcile runs the one-shot `dbt --full-refresh` that recomputes the
+#   history those joiners were dropped from.
+version: "4.0.0"
 schedule: 0 3 * * *
 dbt_select: tag:zoom+
 workflow: sync

@@ -5,6 +5,7 @@ import type { MetricDrilldownRequest } from "@/api/metric-drilldown-client";
 import type { MetricResultsRequest } from "@/api/metric-results-client";
 import { isPersonId } from "@/lib/metrics/entity";
 
+import { ADMIN_ASSIGNMENTS } from "./admin-assignments";
 import { buildMetricDefinitions } from "./metric-definitions-factory";
 import { dashboardHandlers } from "./dashboard-handlers";
 import {
@@ -16,42 +17,6 @@ import { buildIngestionIntensity } from "./ingestion-factory";
 import { buildIdentityTree, PEOPLE, PEOPLE_BY_EMAIL } from "./registry";
 
 const defaultPerson = PEOPLE[0];
-
-const ADMIN_ROLE_ID = "a4d11000-0000-4000-8000-000000000001";
-
-interface MockPersonRole {
-  person_role_id: string;
-  insight_tenant_id: string;
-  person_id: string;
-  role_id: string;
-  valid_from: string;
-  valid_to: string | null;
-  author_person_id: string;
-  reason: string | null;
-  created_at: string;
-}
-
-/** Seeded so the tenant is never admin-less. */
-const ADMIN_ASSIGNMENTS = new Map<string, MockPersonRole>(
-  defaultPerson
-    ? [
-        [
-          defaultPerson.person_id.toLowerCase(),
-          {
-            person_role_id: "019e27bc-0000-7000-8000-000000000001",
-            insight_tenant_id: "00000000-0000-4000-8000-00000000c0de",
-            person_id: defaultPerson.person_id,
-            role_id: ADMIN_ROLE_ID,
-            valid_from: "2026-09-01T09:00:00Z",
-            valid_to: null,
-            author_person_id: defaultPerson.person_id,
-            reason: null,
-            created_at: "2026-09-01T09:00:00Z",
-          },
-        ],
-      ]
-    : []
-);
 
 function peopleItem(person: (typeof PEOPLE)[number]) {
   const [firstName, ...lastName] = person.name.split(" ");
@@ -513,7 +478,17 @@ export const handlers = [
         );
   }),
   http.get("/api/identity/v1/person-roles", ({ request }) => {
-    const personId = new URL(request.url).searchParams.get("person") ?? "";
+    const params = new URL(request.url).searchParams;
+    const personId = params.get("person");
+    if (personId === null) {
+      const role = params.get("role");
+      return HttpResponse.json({
+        items: [...ADMIN_ASSIGNMENTS.values()].filter(
+          (assignment) => role === null || assignment.role_id === role
+        ),
+        next_cursor: null,
+      });
+    }
     const assignment = ADMIN_ASSIGNMENTS.get(personId.toLowerCase());
     return HttpResponse.json({
       items: assignment ? [assignment] : [],

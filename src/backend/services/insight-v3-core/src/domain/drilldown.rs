@@ -12,7 +12,7 @@ mod paged;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::definition::DefinitionName;
+use super::definition::DefinitionId;
 use super::metric_run::{MetricRuns, Source};
 use super::query::metric_query::{ColumnKind, MetricRunner};
 use super::query::time_window::WindowRequest;
@@ -97,7 +97,7 @@ impl<'a> Drilldowns<'a> {
     /// more.
     pub(crate) async fn page(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         asked: &Asked,
     ) -> Result<Page, DrilldownError> {
         if asked.limit == 0 || asked.limit > MAX_PAGE_ROWS {

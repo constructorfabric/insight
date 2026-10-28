@@ -57,8 +57,8 @@ async fn a_body_that_cannot_be_written_says_nothing_about_the_store() {
 }
 
 #[tokio::test]
-async fn a_name_someone_holds_is_a_conflict_that_names_it() {
-    let taken = DefinitionStoreError::NameTaken("by_actor".to_owned());
+async fn an_id_someone_holds_is_a_conflict_that_names_it() {
+    let taken = DefinitionStoreError::IdTaken("by_actor".to_owned());
 
     let (status, body) = said(DefinitionApiError::definition_store_error(taken)).await;
 
@@ -67,8 +67,20 @@ async fn a_name_someone_holds_is_a_conflict_that_names_it() {
 }
 
 #[tokio::test]
-async fn a_name_the_store_cannot_hold_is_the_callers_to_fix() {
-    let (status, _) = said(DefinitionApiError::definition_error(DefinitionError::Name)).await;
+async fn a_name_or_id_the_store_cannot_hold_is_the_callers_to_fix() {
+    for refused in [DefinitionError::Id, DefinitionError::Label] {
+        let (status, _) = said(DefinitionApiError::definition_error(refused)).await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(status, StatusCode::BAD_REQUEST, "for {refused:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_replace_of_an_id_that_is_gone_is_not_found() {
+    let missing = DefinitionStoreError::Missing("gone_board".to_owned());
+
+    let (status, body) = said(DefinitionApiError::definition_store_error(missing)).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body.contains("gone_board"), "{body}");
 }

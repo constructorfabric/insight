@@ -122,6 +122,7 @@ is no manifest to hand-edit and no tenant UUID to copy:
 | Value | Read from |
 |-------|-----------|
 | MariaDB + ClickHouse host, port, user | ConfigMap `<release>-platform` |
+| warehouse topology (`CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME`) | ConfigMap `<release>-platform`, passed to every Job it renders, so a clustered install seeds the same way |
 | database holding the analytics catalogue | ConfigMap `<release>-platform`, `MARIADB_DATABASE` |
 | database holding `persons` | Secret `insight-identity-resolution-config`, `…database_url` |
 | the stand's tenant | Secret `insight-identity-resolution-config`, `…tenant_default_id` |

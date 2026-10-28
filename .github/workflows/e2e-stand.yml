@@ -6,12 +6,13 @@ name: E2E compose stand
 # the data-path suite on minimal stands of its own and carries the metric
 # coverage gate — that workflow is untouched by this one.
 #
-# Nothing here builds by default: `test-stand up` pulls the frontend and the
-# four backend services at their charts' appVersions, which name main's build.
-# A ref that changes one of those trees has to run it or the lane reports on
-# code it never tested. Merge-queue runs load backend images already built for
-# the same commit; events without that image workflow retain the source-build path.
-# Frontend changes continue to build the SPA in this job.
+# Nothing here builds unless the ref changed it: the stand is raised with
+# --pinned, so `test-stand up` pulls the frontend and the four backend services
+# at their charts' appVersions, which name main's build. The `changes` job adds
+# a build flag for each tree the ref touches, or the lane would report on code
+# it never tested. Merge-queue runs load backend images already built for the
+# same commit; events without that image workflow retain the source-build path.
+# Frontend changes build the SPA in this job.
 #
 # INVARIANT: Both lane checks report independently from one stand lifecycle.
 #
@@ -208,6 +209,7 @@ jobs:
     if: github.event_name == 'merge_group'
     permissions:
       contents: write
+      actions: read
       packages: write
       id-token: write
       attestations: write
@@ -351,8 +353,9 @@ jobs:
           fi
           docker ps -q --filter "publish=8123" | xargs -r docker rm -f >/dev/null 2>&1 || true
 
-      # `up` writes .env.compose.test-stand, forces the pinned frontend and
-      # Keycloak, seeds, and then blocks until EVERY gold observation table the
+      # `up --pinned` writes .env.compose.test-stand, pulls every tree the
+      # `changes` job did not flag for a build, forces Keycloak, seeds, and
+      # then blocks until EVERY gold observation table the
       # seed populates proves dbt rebuilt it for THIS run and left a positive
       # observation in it. It does not return success before that, so no
       # separate readiness wait belongs here — and no separate `seed` step
@@ -377,7 +380,7 @@ jobs:
           set -euo pipefail
           # `if` blocks, not `[ … ] && flags+=(…)`: under set -e a false test as
           # the last command of an && list ends the step.
-          flags=()
+          flags=(--pinned)
           if [ "$PREBUILT_BACKEND" = "true" ]; then
             flags+=(--prebuilt-backend)
           elif [ "$BUILD_BACKEND" = "true" ]; then

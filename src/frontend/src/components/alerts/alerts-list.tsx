@@ -3,6 +3,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import type { AlertSummary } from "@/api/alerts-client";
+import { MetricName } from "@/components/custom/metric-name";
 import { AlertSwitch } from "@/components/alerts/alert-switch";
 import {
   DefinitionCount,
@@ -126,10 +127,10 @@ function AlertRow({ alert }: { alert: AlertSummary }) {
           params={{ name: alert.metric }}
           className={cn(
             TEXT_BODY,
-            "block truncate font-mono text-muted-foreground underline-offset-4 hover:underline"
+            "block truncate text-muted-foreground underline-offset-4 hover:underline"
           )}
         >
-          {alert.metric}
+          <MetricName id={alert.metric} />
         </Link>
       </TableCell>
       <TableCell className="text-end">

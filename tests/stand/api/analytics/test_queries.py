@@ -194,10 +194,17 @@ def test_a_read_of_the_usage_records_is_refused_without_the_admin_grant(
     response = api.post(
         QUERIES, json_body={"name": scratch_name("usage-store"), "sql": USAGE_RECORDS_SQL}
     )
-    assert response.status_code == 403, (
-        f"a caller holding no admin grant stored a usage read "
-        f"({response.status_code}): {response.text[:300]}"
-    )
+    try:
+        assert response.status_code == 403, (
+            f"a caller holding no admin grant stored a usage read ({response.status_code})"
+        )
+    finally:
+        if response.status_code == 201:
+            created = response.parse(SavedQuery)
+            deleted = api.delete(_query_path(created.id))
+            assert deleted.status_code == 204, (
+                f"cleanup of an unexpectedly accepted usage query failed ({deleted.status_code})"
+            )
 
 
 @pytest.mark.requires_seed("admin_operator")

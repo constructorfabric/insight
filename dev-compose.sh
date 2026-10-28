@@ -1697,40 +1697,41 @@ cmd_test_stand_help() {
   cat <<'EOF'
 usage: dev-compose.sh test-stand <up|minimal|env|seed|test|down> [args]
 
-The stack in test configuration: pinned ghcr images for the frontend and all
-four backend services, real Keycloak login, and a readiness gate that waits
-for dbt-built gold data rather than for containers to report healthy.
+The stack in test configuration: real Keycloak login and a readiness gate
+that waits for dbt-built gold data rather than for containers to report
+healthy. Built from this tree by default; --pinned pulls published images
+instead, which is CI's mode.
 
   up      Generate .env.compose.test-stand, bring the stack up, seed it, and
           block until EVERY gold observation table the seed populates proves
           dbt rebuilt it for this run and left a positive observation in it.
 
-          The backend services (analytics, authenticator,
-          identity-resolution, gateway, insight-v3-core) and the frontend are
-          PULLED, each pinned to its own chart's appVersion — never :latest.
+          By default the Rust services (analytics, authenticator,
+          identity-resolution, gateway, insight-v3-core) are compiled from
+          this tree (~28 min, measured across CI's build-path runs) and the
+          SPA is built from it with pnpm, served by the front-built nginx.
+          So a stand raised by hand runs the checkout it was raised from.
 
-          An appVersion names what main released, so pass the flag for whatever
-          tree this checkout changes, or the stand will not run it:
-
-          --build-backend    Compile the Rust services from this tree. Adds
-                             ~28 min (measured across CI's build-path runs).
+          --pinned           PULL every tree no other flag names, each image
+                             pinned to its own chart's appVersion — never
+                             :latest. An appVersion names what main released,
+                             so this is for a checkout that matches it: CI
+                             passes it, plus a build flag for whatever tree
+                             the ref changes.
+          --build-backend    Compile the Rust services even under --pinned.
           --prebuilt-backend Use backend images already loaded under the
                              *_IMAGE environment variables. Never builds or
                              pulls a fallback image.
-          --build-frontend   Build the SPA from this tree with pnpm, served by
-                             the front-built nginx. Backend stays pinned.
-          --build            Both.
-          --skip-build       With --build-backend: mount binaries already in
-                             deploy/compose/build/ instead of compiling, over
-                             runtime images taken from the chart pins. The
-                             gateway and insight-v3-core run a locally loaded
-                             image named by GATEWAY_IMAGE / INSIGHT_V3_CORE_IMAGE,
-                             or bake from this tree when those are unset. The
-                             caller owns the binaries' and images' freshness.
-
-          `up` refuses to pin a tree that differs from origin/main and names
-          the flag to pass — but only when origin/main is in the checkout. A
-          shallow clone says so on stderr and defers to its caller.
+          --build-frontend   Build the SPA even under --pinned.
+          --build            Both of the above; what no flags at all means.
+          --skip-build       With a source-built backend: mount binaries
+                             already in deploy/compose/build/ instead of
+                             compiling, over runtime images taken from the
+                             chart pins. The gateway and insight-v3-core run a
+                             locally loaded image named by GATEWAY_IMAGE /
+                             INSIGHT_V3_CORE_IMAGE, or bake from this tree when
+                             those are unset. The caller owns the binaries'
+                             and images' freshness.
   minimal Bring the stand up seeded with identity and the Keycloak realm
           only, and gate on the services answering rather than on gold
           holding rows. For a suite that writes its own bronze: the silver
@@ -1815,7 +1816,7 @@ TEST_STAND_PINNED_BACKENDS=(
 # a 26-minute compile comes back invisibly.
 test_stand_pull_backends() {
   local entry var chart name image
-  echo "=== Pinning the backend to published images (skip with --build) ==="
+  echo "=== Pinning the backend to published images (--pinned) ==="
   for entry in "${TEST_STAND_PINNED_BACKENDS[@]}"; do
     IFS='|' read -r var chart name <<<"$entry"
     image="$(test_stand_pinned_image "$chart" "$name")" || return 1
@@ -1823,8 +1824,8 @@ test_stand_pull_backends() {
     with_retries docker pull --quiet "$image" >/dev/null || {
       echo "ERROR: cannot pull $image (pinned by $chart's appVersion)." >&2
       echo "       Not falling back to a source build — that would report a pass" >&2
-      echo "       for an image this run never ran. Check ghcr access, or pass" >&2
-      echo "       --build to build from source deliberately." >&2
+      echo "       for an image this run never ran. Check ghcr access, or drop" >&2
+      echo "       --pinned to build from source deliberately." >&2
       return 1; }
     update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
     # WORKAROUND: compose lets the process environment override --env-file,
@@ -1921,48 +1922,61 @@ for name, svc in sorted(services.items()):
   printf '%s' "$offenders" >&2
   echo "       Every backend service must run a published image here. Add the" >&2
   echo "       service's \"<VAR>|<chart path>|<name>\" entry to" >&2
-  echo "       TEST_STAND_PINNED_BACKENDS, or pass --build to build from source" >&2
-  echo "       deliberately." >&2
+  echo "       TEST_STAND_PINNED_BACKENDS, or drop --pinned to build from" >&2
+  echo "       source deliberately." >&2
   return 1
 }
 
-# Refuse to pin when the working tree differs from what a chart describes.
-#
-# The appVersions track main. A branch that edits the given source tree and
-# then runs against published images would report green for code it never
-# executed. The PR path filter makes this unreachable in the normal lane; this
-# covers workflow_dispatch and local runs, which bypass it.
-test_stand_tree_matches_charts() {
-  local subtree="$1" flag="$2"
-  git rev-parse --git-dir >/dev/null 2>&1 || return 0
-  git remote get-url origin >/dev/null 2>&1 || return 0
-  # Inert on a depth-1 checkout (every CI runner). Say so, so a log reader does
-  # not read the silence as a passed check.
-  git rev-parse --verify --quiet origin/main >/dev/null || {
-    echo "NOTE: no origin/main here — ${subtree}/ unchecked, ${flag} is the caller's call." >&2
-    return 0; }
+# How each tree gets into the stand. Source build is the default, so a stand
+# raised by hand runs the checkout it was raised from. --pinned pulls every
+# tree no other flag names at its chart's appVersion: CI's mode, where the
+# changes job names the trees the ref touches and the rest provably match
+# main. The verbs share these, so the default lives in one place.
+TEST_STAND_BACKEND_MODE=""   # source | prebuilt | pinned
+TEST_STAND_BUILD_FRONTEND="" # true | false
+TEST_STAND_SKIP_BUILD=false
+TEST_STAND_PINNED=false
 
-  # A service's own test tree is compiled by `cargo test`, never by the image
-  # build, so a change there cannot make the published image describe this tree
-  # any less well.
-  local changed
-  changed="$(git diff --name-only origin/main -- "$subtree" ":(exclude)$subtree/services/*/tests/**" 2>/dev/null | head -5)"
-  [[ -z "$changed" ]] && return 0
-
-  echo "ERROR: this tree changes ${subtree}/ relative to origin/main:" >&2
-  printf '         %s\n' $changed >&2
-  echo "       The stand pins each published image to its chart's appVersion, which" >&2
-  echo "       tracks main — so those changes would NOT be what runs. Pass" >&2
-  echo "       ${flag} to build this tree instead." >&2
-  return 1
+# Consume one build flag into the TEST_STAND_* mode variables. Returns 1 when
+# $1 is not one, so a verb's own loop handles it.
+test_stand_build_flag() {
+  case "$1" in
+    --pinned)           TEST_STAND_PINNED=true ;;
+    --build)            TEST_STAND_BACKEND_MODE=source; TEST_STAND_BUILD_FRONTEND=true ;;
+    --build-backend)    TEST_STAND_BACKEND_MODE=source ;;
+    --prebuilt-backend) TEST_STAND_BACKEND_MODE=prebuilt ;;
+    --build-frontend)   TEST_STAND_BUILD_FRONTEND=true ;;
+    --skip-build)       TEST_STAND_SKIP_BUILD=true ;;
+    *) return 1 ;;
+  esac
 }
 
-test_stand_backend_matches_charts() {
-  test_stand_tree_matches_charts src/backend --build-backend
+# Settle the trees no flag named: pulled under --pinned, built otherwise.
+test_stand_resolve_build_modes() {
+  local backend=source frontend=true
+  if [[ "$TEST_STAND_PINNED" == true ]]; then backend=pinned; frontend=false; fi
+  TEST_STAND_BACKEND_MODE="${TEST_STAND_BACKEND_MODE:-$backend}"
+  TEST_STAND_BUILD_FRONTEND="${TEST_STAND_BUILD_FRONTEND:-$frontend}"
 }
 
-test_stand_frontend_matches_chart() {
-  test_stand_tree_matches_charts src/frontend --build-frontend
+# Pin, load or build the backend as the resolved mode says. Pinning writes the
+# *_IMAGE vars, and that is the only thing keeping cmd_up off the compiler —
+# so this has to run before cmd_up reads the env file.
+test_stand_provide_backend() {
+  case "$TEST_STAND_BACKEND_MODE" in
+    source)
+      if [[ "$TEST_STAND_SKIP_BUILD" == true ]]; then
+        test_stand_prime_dev_images || return 1
+        echo "=== the backend runs binaries from deploy/compose/build/, not pulled ==="
+      else
+        echo "=== the backend is compiled from this tree, not pulled ==="
+      fi
+      return 0
+      ;;
+    prebuilt) test_stand_use_prebuilt_backends || return 1 ;;
+    pinned)   test_stand_pull_backends || return 1 ;;
+  esac
+  test_stand_assert_no_source_bakes
 }
 
 # Derive the test env file from the committed example, overriding only the
@@ -1976,7 +1990,6 @@ test_stand_prepare_env() {
     echo "=== the frontend is built from this tree (pnpm), not pulled ==="
     return 0
   fi
-  test_stand_frontend_matches_chart || return 1
   image="$(test_stand_frontend_image)" || return 1
   test_stand_write_env ghcr "$image"
 }
@@ -2332,48 +2345,21 @@ cmd_test_stand() {
 
   case "$verb" in
     up)
-      # Each tree is pinned to its chart's appVersion or built from this one,
-      # asked separately: --build is the both-axes alias.
-      local backend_mode=pinned build_frontend=false skip_build=false
       while [[ $# -gt 0 ]]; do
+        if test_stand_build_flag "$1"; then shift; continue; fi
         case "$1" in
-          --build)          backend_mode=source; build_frontend=true; shift ;;
-          --build-backend)  backend_mode=source; shift ;;
-          --prebuilt-backend) backend_mode=prebuilt; shift ;;
-          --build-frontend) build_frontend=true; shift ;;
-          --skip-build)     skip_build=true; shift ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand up option: $1" >&2; return 2 ;;
         esac
       done
+      test_stand_resolve_build_modes
 
-      test_stand_prepare_env "$build_frontend" || return 1
-
-      # INVARIANT: pinning writes the *_IMAGE vars, and that is the only thing
-      # keeping cmd_up off the compiler — so it has to run before cmd_up reads
-      # the env file.
-      case "$backend_mode" in
-        source)
-          if [[ "$skip_build" == "true" ]]; then
-            test_stand_prime_dev_images || return 1
-          fi
-          echo "=== the backend is compiled from this tree, not pulled ==="
-          ;;
-        prebuilt)
-          test_stand_use_prebuilt_backends || return 1
-          ;;
-        pinned)
-          test_stand_backend_matches_charts || return 1
-          test_stand_pull_backends || return 1
-          ;;
-      esac
-      if [[ "$backend_mode" != "source" ]]; then
-        test_stand_assert_no_source_bakes || return 1
-      fi
+      test_stand_prepare_env "$TEST_STAND_BUILD_FRONTEND" || return 1
+      test_stand_provide_backend || return 1
 
       local up_args=(--env-file "$TEST_STAND_ENV_FILE"
                      --authenticator-redirect "$(test_stand_origin)/auth/callback")
-      [[ "$skip_build" == "true" ]] && up_args+=(--skip-build)
+      [[ "$TEST_STAND_SKIP_BUILD" == true ]] && up_args+=(--skip-build)
       cmd_up "${up_args[@]}" || return 1
 
       # cmd_up resolved and exported the issuer for this run; persist what it
@@ -2397,16 +2383,15 @@ cmd_test_stand() {
       ;;
 
     env)
-      local build_frontend=false
       while [[ $# -gt 0 ]]; do
+        if test_stand_build_flag "$1"; then shift; continue; fi
         case "$1" in
-          --build|--build-frontend) build_frontend=true; shift ;;
-          --build-backend|--prebuilt-backend) shift ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand env option: $1" >&2; return 2 ;;
         esac
       done
-      test_stand_prepare_env "$build_frontend"
+      test_stand_resolve_build_modes
+      test_stand_prepare_env "$TEST_STAND_BUILD_FRONTEND"
       ;;
 
     minimal)
@@ -2414,38 +2399,21 @@ cmd_test_stand() {
       # and nothing the suite is about to delete. Its silver generators do not
       # run, so gold is empty and the gold gate would never pass -- readiness
       # is the services answering instead.
-      local mbackend_mode=pinned mbuild_frontend=false mskip_build=false
       while [[ $# -gt 0 ]]; do
+        if test_stand_build_flag "$1"; then shift; continue; fi
         case "$1" in
-          --build)          mbackend_mode=source; mbuild_frontend=true; shift ;;
-          --build-backend)  mbackend_mode=source; shift ;;
-          --prebuilt-backend) mbackend_mode=prebuilt; shift ;;
-          --build-frontend) mbuild_frontend=true; shift ;;
-          --skip-build)     mskip_build=true; shift ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand minimal option: $1" >&2; return 2 ;;
         esac
       done
+      test_stand_resolve_build_modes
 
-      test_stand_prepare_env "$mbuild_frontend" || return 1
-      case "$mbackend_mode" in
-        source)
-          if [[ "$mskip_build" == "true" ]]; then
-            test_stand_prime_dev_images || return 1
-          fi
-          echo "=== the backend is compiled from this tree, not pulled ==="
-          ;;
-        prebuilt) test_stand_use_prebuilt_backends || return 1 ;;
-        pinned)   test_stand_backend_matches_charts || return 1
-                  test_stand_pull_backends || return 1 ;;
-      esac
-      if [[ "$mbackend_mode" != "source" ]]; then
-        test_stand_assert_no_source_bakes || return 1
-      fi
+      test_stand_prepare_env "$TEST_STAND_BUILD_FRONTEND" || return 1
+      test_stand_provide_backend || return 1
 
       local mup_args=(--env-file "$TEST_STAND_ENV_FILE" --seed-target identity
                       --authenticator-redirect "$(test_stand_origin)/auth/callback")
-      [[ "$mskip_build" == "true" ]] && mup_args+=(--skip-build)
+      [[ "$TEST_STAND_SKIP_BUILD" == true ]] && mup_args+=(--skip-build)
       cmd_up "${mup_args[@]}" || return 1
 
       update_env_var "$TEST_STAND_ENV_FILE" AUTHENTICATOR_OIDC_ISSUER "${AUTHENTICATOR_OIDC_ISSUER:-}"
@@ -2601,10 +2569,11 @@ Subcommands:
   test-stand <up|seed|test|down>
           The stack in TEST configuration, driven from its own
           .env.compose.test-stand so your .env.compose is untouched:
-          pinned ghcr frontend, real Keycloak login, and a readiness
-          gate that waits for dbt-built gold data rather than for
-          containers to report healthy. `test-stand test` runs
-          tests/stand against the running stand.
+          built from this tree (--pinned pulls published images, CI's
+          mode), real Keycloak login, and a readiness gate that waits
+          for dbt-built gold data rather than for containers to report
+          healthy. `test-stand test` runs tests/stand against the
+          running stand.
 
   help    Print this message.
 

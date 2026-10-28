@@ -6,6 +6,19 @@ vi.mock("@tanstack/react-router", async () => {
   };
 });
 vi.mock("@/api/custom-client");
+vi.mock("@/queries/person-name", () => ({
+  usePersonName: () => ({ isPending: false, data: "Jane Doe" }),
+}));
+const role = vi.hoisted(() => ({ isAdmin: true }));
+vi.mock("@/queries/identity-me", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-me")>()),
+  useIsAdmin: () => ({
+    isAdmin: role.isAdmin,
+    isPending: false,
+    isError: false,
+    retry: () => {},
+  }),
+}));
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -14,6 +27,7 @@ import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as customClient from "@/api/custom-client";
+import type { DashboardAccess, DashboardListed } from "@/api/custom-client";
 import { portalRouter } from "@/test/portal-router";
 
 import { Route } from "./portal.custom.index";
@@ -28,25 +42,44 @@ function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
+function item(
+  name: string,
+  access: DashboardAccess = "ownerless"
+): DashboardListed {
+  return { id: name, name, owner_person_id: null, access };
+}
+
+function listing(...names: string[]) {
+  return { items: names.map((name) => item(name)), total: names.length };
+}
+
+const READ = {
+  name: "delivery",
+  ownerPersonId: null,
+  access: "ownerless" as const,
+  folders: [],
+  carries: true,
+};
+
 beforeEach(() => {
   vi.resetAllMocks();
+  role.isAdmin = true;
   portalRouter.reset();
+  vi.mocked(customClient.fetchOrphanedDashboards).mockResolvedValue({
+    items: [],
+    total: 0,
+  });
 });
 
 describe("/portal/custom", () => {
   it("lists every dashboard as a link", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "engineering",
-      "delivery",
-    ], total: 2 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("engineering", "delivery"));
     vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(
       new Error("no title today")
     );
 
     render(<Component />, { wrapper });
 
-    // The identifier stands in until a title arrives, so the link is still
-    // reachable when a definition cannot be read.
     expect(
       await screen.findByRole("link", { name: "engineering" })
     ).toHaveAttribute("href", "/portal/custom/engineering");
@@ -55,14 +88,9 @@ describe("/portal/custom", () => {
     ).toBeInTheDocument();
   });
 
-  it("titles a card by the dashboard, keeping the identifier beneath it", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
-      "lines_of_code_dashboard",
-    ], total: 1 });
-    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
-      body: { title: "Lines of Code", widgets: [] },
-      tags: [],
-    });
+  it("titles a card by the dashboard, keeping its name beneath it", async () => {
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("lines_of_code_dashboard"));
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({ ...READ, body: { title: "Lines of Code", widgets: [] }, tags: [] });
 
     render(<Component />, { wrapper });
 
@@ -74,15 +102,29 @@ describe("/portal/custom", () => {
   });
 
   it("says so when there are no dashboards yet", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [], total: 0 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing());
 
     render(<Component />, { wrapper });
 
     expect(await screen.findByText(/no dashboards yet/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New dashboard" })).toBeInTheDocument();
+  });
+
+  it("offers a member nothing to create, and says nothing is shared yet", async () => {
+    role.isAdmin = false;
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing());
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByText("Nothing is shared with you yet.")
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New dashboard" })).toBeNull();
+    expect(screen.queryByText(/ask the assistant/i)).toBeNull();
   });
 
   it("shows a loading state before the list resolves", () => {
-    vi.mocked(customClient.fetchDashboardNames).mockReturnValue(
+    vi.mocked(customClient.fetchDashboards).mockReturnValue(
       new Promise(() => {})
     );
 
@@ -94,7 +136,7 @@ describe("/portal/custom", () => {
   });
 
   it("shows a retryable error state when the list fails to load", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockRejectedValue(
+    vi.mocked(customClient.fetchDashboards).mockRejectedValue(
       new Error("network down")
     );
 
@@ -107,7 +149,13 @@ describe("/portal/custom", () => {
 });
 
 describe("/portal/custom in a folder", () => {
-  const PLATFORM = { id: "f1", name: "Platform", dashboards: 1 };
+  const PLATFORM = {
+    id: "f1",
+    name: "Platform",
+    owner_person_id: null,
+    access: "ownerless" as const,
+    dashboards: 1,
+  };
 
   beforeEach(() => {
     vi.mocked(customClient.fetchFolders).mockResolvedValue({
@@ -118,11 +166,11 @@ describe("/portal/custom in a folder", () => {
   });
 
   const askedFor = () =>
-    vi.mocked(customClient.fetchDashboardNames).mock.calls.map(([page]) => page?.folder);
+    vi.mocked(customClient.fetchDashboards).mock.calls.map(([page]) => page?.folder);
 
   it("lists one folder's dashboards and names it in the heading", async () => {
     portalRouter.set({ folder: "f1" });
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: ["delivery"], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("delivery"));
 
     render(<Component />, { wrapper });
 
@@ -133,7 +181,7 @@ describe("/portal/custom in a folder", () => {
 
   it("lists the unfiled under a heading of their own", async () => {
     portalRouter.set({ folder: "unfiled" });
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: ["hiring"], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("hiring"));
 
     render(<Component />, { wrapper });
 
@@ -144,7 +192,7 @@ describe("/portal/custom in a folder", () => {
 
   it("shows every dashboard for a folder that is not there, and says so", async () => {
     portalRouter.set({ folder: "gone" });
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: ["delivery"], total: 1 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("delivery"));
 
     render(<Component />, { wrapper });
 
@@ -154,76 +202,25 @@ describe("/portal/custom in a folder", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Custom" })).toBeInTheDocument();
   });
 
-  it("says how to fill an empty folder rather than that nothing exists", async () => {
+  it("says an empty folder is empty rather than that nothing exists", async () => {
     portalRouter.set({ folder: "f1" });
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [], total: 0 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing());
 
     render(<Component />, { wrapper });
 
     expect(
-      await screen.findByText("No dashboards in this folder yet. Move one here from its ··· menu."),
+      await screen.findByText("No dashboards in this folder yet."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/no dashboards yet\. describe/i)).toBeNull();
   });
 
   it("says every dashboard is filed when Unfiled is empty", async () => {
     portalRouter.set({ folder: "unfiled" });
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [], total: 0 });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing());
 
     render(<Component />, { wrapper });
 
     expect(await screen.findByText("Every dashboard is in a folder.")).toBeInTheDocument();
-  });
-
-  it("checks the folder a dashboard is in", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: ["delivery"], total: 1 });
-    vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue({ id: "f1", name: "Platform" });
-    const user = userEvent.setup();
-
-    render(<Component />, { wrapper });
-    await user.click(await screen.findByRole("button", { name: "More for delivery" }));
-
-    await waitFor(() =>
-      expect(screen.getByRole("menuitemradio", { name: /Platform/ })).toHaveAttribute("aria-checked", "true"),
-    );
-    expect(screen.getByRole("menuitemradio", { name: /Unfiled/ })).toHaveAttribute("aria-checked", "false");
-  });
-
-  it("moves a dashboard out of the folder on screen, and the card leaves", async () => {
-    portalRouter.set({ folder: "f1" });
-    vi.mocked(customClient.fetchDashboardNames)
-      .mockResolvedValueOnce({ names: ["delivery"], total: 1 })
-      .mockResolvedValue({ names: [], total: 0 });
-    vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue({ id: "f1", name: "Platform" });
-    vi.mocked(customClient.moveDashboard).mockResolvedValue(undefined);
-    const user = userEvent.setup();
-
-    render(<Component />, { wrapper });
-    await user.click(await screen.findByRole("button", { name: "More for delivery" }));
-    await user.click(await screen.findByRole("menuitemradio", { name: /Unfiled/ }));
-
-    expect(customClient.moveDashboard).toHaveBeenCalledWith("delivery", null);
-    await waitFor(() => expect(screen.queryByRole("link", { name: "delivery" })).toBeNull());
-  });
-
-  it("makes a folder and then moves the dashboard into it", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: ["delivery"], total: 1 });
-    vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
-    vi.mocked(customClient.createFolder).mockResolvedValue({ id: "f9", name: "Hiring" });
-    vi.mocked(customClient.moveDashboard).mockResolvedValue(undefined);
-    const user = userEvent.setup();
-
-    render(<Component />, { wrapper });
-    await user.click(await screen.findByRole("button", { name: "More for delivery" }));
-    await user.click(await screen.findByRole("menuitem", { name: /New folder/ }));
-    await user.type(await screen.findByRole("textbox", { name: "Folder name" }), "Hiring");
-    await user.click(screen.getByRole("button", { name: "Create and move" }));
-
-    await waitFor(() => expect(customClient.moveDashboard).toHaveBeenCalledWith("delivery", "f9"));
-    expect(customClient.createFolder).toHaveBeenCalledWith("Hiring");
-    expect(vi.mocked(customClient.createFolder).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(customClient.moveDashboard).mock.invocationCallOrder[0],
-    );
   });
 });
 
@@ -238,15 +235,12 @@ describe("/portal/custom filtered by tag", () => {
     vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(
       new Error("untitled")
     );
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-      names: ["delivery"],
-      total: 1,
-    });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("delivery"));
   });
 
   const askedFor = () =>
     vi
-      .mocked(customClient.fetchDashboardNames)
+      .mocked(customClient.fetchDashboards)
       .mock.calls.map(([page]) => ({ folder: page?.folder, tags: page?.tags }));
 
   async function openFilter(name = "Tags") {
@@ -320,7 +314,15 @@ describe("/portal/custom filtered by tag", () => {
 
   it("combines the picked tags with the folder", async () => {
     vi.mocked(customClient.fetchFolders).mockResolvedValue({
-      folders: [{ id: "f1", name: "Platform", dashboards: 1 }],
+      folders: [
+        {
+          id: "f1",
+          name: "Platform",
+          owner_person_id: null,
+          access: "ownerless",
+          dashboards: 1,
+        },
+      ],
       unfiled: 0,
     });
     portalRouter.set({ folder: "f1", tag: ["Ops", "Platform"] });
@@ -383,10 +385,7 @@ describe("/portal/custom filtered by tag", () => {
   });
 
   it("says no dashboard carries the picked tags, and clears them", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-      names: [],
-      total: 0,
-    });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing());
     portalRouter.set({ tag: ["Ops"] });
     const user = userEvent.setup();
 
@@ -402,14 +401,8 @@ describe("/portal/custom filtered by tag", () => {
 
 describe("/portal/custom cards with tags", () => {
   function carrying(tags: string[]) {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-      names: ["delivery"],
-      total: 1,
-    });
-    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
-      body: { title: "Delivery", widgets: [] },
-      tags,
-    });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("delivery"));
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({ ...READ, body: { title: "Delivery", widgets: [] }, tags });
   }
 
   const chips = async () =>
@@ -462,21 +455,18 @@ describe("/portal/custom after a card's tags are set", () => {
   const DELIVERY = { title: "Delivery", widgets: [] };
 
   beforeEach(() => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-      names: ["delivery"],
-      total: 1,
-    });
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("delivery"));
     vi.mocked(customClient.fetchTags).mockResolvedValue({
       tags: [{ name: "Ops", dashboards: 1 }],
     });
     vi.mocked(customClient.fetchDashboardRead)
-      .mockResolvedValueOnce({ body: DELIVERY, tags: ["Ops"] })
-      .mockResolvedValue({ body: DELIVERY, tags: ["Ops", "Hiring"] });
+      .mockResolvedValueOnce({ ...READ, body: DELIVERY, tags: ["Ops"] })
+      .mockResolvedValue({ ...READ, body: DELIVERY, tags: ["Ops", "Hiring"] });
   });
 
   const calls = () => ({
     tags: vi.mocked(customClient.fetchTags).mock.calls.length,
-    lists: vi.mocked(customClient.fetchDashboardNames).mock.calls.length,
+    lists: vi.mocked(customClient.fetchDashboards).mock.calls.length,
   });
 
   async function addHiring() {
@@ -525,5 +515,127 @@ describe("/portal/custom after a card's tags are set", () => {
     ).toBeInTheDocument();
     await waitFor(() => expect(calls().tags).toBeGreaterThan(before.tags));
     expect(calls().lists).toBeGreaterThan(before.lists);
+  });
+});
+
+describe("/portal/custom narrowed by ownership", () => {
+  beforeEach(() => {
+    vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(
+      new Error("untitled")
+    );
+  });
+
+  const askedFor = () =>
+    vi.mocked(customClient.fetchDashboards).mock.calls.map(([page]) => page?.owned);
+
+  it.each([
+    ["me", "Owned by me", "You own no dashboards yet."],
+    ["shared", "Shared with me", "Nothing is shared with you yet."],
+  ] as const)(
+    "asks for owned=%s, heads the list %s, and says %s when it is empty",
+    async (owned, heading, empty) => {
+      portalRouter.set({ owned });
+      vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing());
+
+      render(<Component />, { wrapper });
+
+      expect(
+        await screen.findByRole("heading", { level: 1, name: heading })
+      ).toBeInTheDocument();
+      expect(await screen.findByText(empty)).toBeInTheDocument();
+      expect(askedFor()).toEqual([owned]);
+    }
+  );
+
+  it("asks for everything visible when the link names no ownership", async () => {
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("delivery"));
+
+    render(<Component />, { wrapper });
+
+    await screen.findByRole("link", { name: "delivery" });
+    expect(askedFor()).toEqual([undefined]);
+  });
+
+  it("names the owner on a card that has one", async () => {
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue({
+      items: [
+        {
+          id: "0190aaaa-0000-7000-8000-000000000001",
+          name: "delivery",
+          owner_person_id: "01900000-0000-7000-8000-00000000000a",
+          access: "viewer",
+        },
+      ],
+      total: 1,
+    });
+
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByText("Owner: Jane Doe")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open delivery" })
+    ).toHaveAttribute(
+      "href",
+      "/portal/custom/0190aaaa-0000-7000-8000-000000000001"
+    );
+  });
+});
+
+describe("/portal/custom orphaned dashboards", () => {
+  const ORPHANED = {
+    id: "release",
+    name: "Release notes",
+    owner_person_id: "01900000-0000-7000-8000-0000000000e0",
+    updated_at: "2026-09-01T00:00:00.000Z",
+  };
+
+  beforeEach(() => {
+    vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("delivery"));
+    vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(
+      new Error("untitled")
+    );
+    vi.mocked(customClient.fetchTags).mockResolvedValue({
+      tags: [{ name: "Ops", dashboards: 1 }],
+    });
+    vi.mocked(customClient.fetchOrphanedDashboards).mockResolvedValue({
+      items: [ORPHANED],
+      total: 1,
+    });
+  });
+
+  it("follows the unfiltered list for an administrator", async () => {
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Orphaned" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Transfer Release notes" })
+    ).toBeInTheDocument();
+  });
+
+  it("is never asked for by a member", async () => {
+    role.isAdmin = false;
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByRole("link", { name: "delivery" })).toBeInTheDocument();
+    expect(customClient.fetchOrphanedDashboards).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { folder: "unfiled" },
+    { owned: "me" as const },
+    { owned: "shared" as const },
+    { tag: ["Ops"] },
+  ])("stays off a narrowed list: %o", async (search) => {
+    portalRouter.set(search);
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByRole("link", { name: "delivery" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Orphaned" }),
+      `should hide under ${JSON.stringify(search)}`
+    ).toBeNull();
+    expect(customClient.fetchOrphanedDashboards).not.toHaveBeenCalled();
   });
 });
