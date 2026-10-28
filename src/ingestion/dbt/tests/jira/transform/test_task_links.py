@@ -491,3 +491,24 @@ def test_a_linked_issue_outside_the_sync_window_resolves_through_the_census(scen
     assert _intervals(scenario.links()) == [("1001", "connected", "9007", "ARC-7", DAY_6, 1, DAY_7, "101")]
     assert scenario.changelog_states(LINKS, issue="TST-1") == [["9007"], []]
     assert scenario.round_trip_holds()
+
+
+def test_a_key_the_census_names_later_reaches_the_journal_without_a_full_refresh(scenario: Scenario) -> None:
+    """The journal derives only the issues bronze moved. When the census later
+    names the id of a key a link still holds, the owning issue has not moved,
+    yet its element must become the id on the next ordinary run."""
+    scenario.seed(
+        fields=[LINKS_FIELD],
+        issues=[issue("TST-1", jira_id="1001")],
+        events=[
+            event("TST-1", 101, "2026-01-06T10:00:00", [_added("ARC-7", "relates to")], jira_id="1001"),
+            event("TST-1", 102, "2026-01-07T10:00:00", [_removed("ARC-7", "relates to")], jira_id="1001"),
+        ],
+    )
+    scenario.build(LINKS_SELECTOR)
+    assert scenario.changelog_states(LINKS, issue="TST-1") == [["ARC-7"], []]
+
+    scenario.warehouse.insert("bronze_jira.jira_issue_census", [census_entry("ARC-7", jira_id="9007")])
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+
+    assert scenario.changelog_states(LINKS, issue="TST-1") == [["9007"], []]
