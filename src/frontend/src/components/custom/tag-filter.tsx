@@ -1,4 +1,4 @@
-import { Tag } from "lucide-react";
+import { Tag, X } from "lucide-react";
 
 import type { TagSummary } from "@/api/custom-client";
 import { Button } from "@/components/ui/button";
@@ -12,8 +12,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { TEXT_LABEL } from "@/lib/type-scale";
-import { cn } from "@/lib/utils";
 
 export function TagFilter({
   tags,
@@ -61,25 +59,46 @@ export function TagFilter({
           disabled={picked.length === 0}
           onClick={() => onPick([])}
         >
-          Clear filters
+          Clear tags
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
 
-export function NoTaggedDashboards({ onClear }: { onClear: () => void }) {
+export function PickedTags({
+  picked,
+  onPick,
+}: {
+  picked: string[];
+  onPick: (next: string[]) => void;
+}) {
+  if (picked.length === 0) return null;
+
   return (
-    <div
-      role="status"
-      className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-6 text-center"
+    <ul
+      aria-label="Picked tags"
+      className="flex flex-wrap items-center gap-1.5"
     >
-      <span className={cn(TEXT_LABEL, "text-muted-foreground")}>
-        No dashboard carries these tags.
-      </span>
-      <Button type="button" variant="outline" size="sm" onClick={onClear}>
-        Clear filters
-      </Button>
-    </div>
+      {picked.map((name) => (
+        <li
+          key={name}
+          className="inline-flex h-6 max-w-48 items-center gap-1 rounded-sm border ps-1.5 text-xs text-muted-foreground"
+        >
+          <Tag className="size-3 shrink-0" aria-hidden />
+          <span className="truncate" title={name}>
+            {name}
+          </span>
+          <button
+            type="button"
+            aria-label={`Remove tag ${name}`}
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            onClick={() => onPick(picked.filter((one) => one !== name))}
+          >
+            <X className="size-3" aria-hidden />
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }

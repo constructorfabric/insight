@@ -315,6 +315,10 @@ function FolderNameField({
           onKeyDown={(event) => {
             if (event.key === "Escape") onDone();
           }}
+          onBlur={() => {
+            if (saving) return;
+            if (value.trim() === "" || value === initial) onDone();
+          }}
         />
         {error ? (
           <p

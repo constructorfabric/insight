@@ -3,6 +3,7 @@ import { http, HttpResponse } from "msw";
 import type {
   Dashboard,
   DashboardAccess,
+  DashboardVisibility,
   DashboardWidget,
   FolderAccess,
   Grant,
@@ -180,6 +181,12 @@ function accessOf(id: string): DashboardAccess | null {
   ]);
 }
 
+function visibilityOf(grants: readonly Grant[]): DashboardVisibility {
+  if (grants.some((grant) => grant.grantee === EVERYONE)) return "everyone";
+
+  return grants.length > 0 ? "people" : "private";
+}
+
 function carriesFor(id: string): boolean {
   const dashboard = dashboards[id];
   if (!dashboard) return false;
@@ -209,7 +216,14 @@ function listed(id: string) {
   const access = accessOf(id);
   if (!dashboard || !access) return null;
 
-  return { id, name: dashboard.name, owner_person_id: dashboard.owner, access };
+  return {
+    id,
+    name: dashboard.name,
+    owner_person_id: dashboard.owner,
+    access,
+    updated_at: UPDATED_AT,
+    visibility: visibilityOf(dashboard.grants),
+  };
 }
 
 function page<T>(items: T[], query: URLSearchParams) {

@@ -11,6 +11,7 @@ import { MetricSummary } from "@/components/custom/definition-summary";
 import { NewLink } from "@/components/custom/editor/edit-link";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
+import { useAssistantAvailable } from "@/lib/portal/use-assistant-available";
 import { metricQuery } from "@/queries/custom";
 import { TEXT_BODY } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -26,11 +27,16 @@ export const Route = createFileRoute("/portal/custom/metrics/")({
 
 function MetricsCatalogue() {
   const catalogue = useDefinitionCatalogue("metrics");
+  const assistant = useAssistantAvailable();
 
   return (
     <DefinitionList
       title="Metrics"
-      blurb="Every stored query. A widget draws one of these; the assistant can build more."
+      blurb={
+        assistant
+          ? "Every stored query. A widget draws one of these; the assistant can build more."
+          : "Every stored query. A widget draws one of these."
+      }
       items={catalogue.items}
       isLoading={catalogue.isLoading}
       isError={catalogue.isError}
@@ -38,7 +44,9 @@ function MetricsCatalogue() {
       search={{ label: "Search metrics", ...catalogue.search }}
       paging={catalogue.paging}
       create={<NewLink kind="metrics" noun="metric" />}
-      emptyLabel="No metrics yet. Ask the assistant for one."
+      emptyLabel={
+        assistant ? "No metrics yet. Ask the assistant for one." : "No metrics yet."
+      }
       renderRow={(item) => <MetricRow item={item} />}
     />
   );

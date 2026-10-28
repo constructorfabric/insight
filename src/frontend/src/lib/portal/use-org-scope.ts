@@ -15,6 +15,7 @@ import type { PeopleListItem } from "@/api/identity-client";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
+import { rollsUpWholeRoster } from "@/lib/portal/whole-roster";
 import type { IdentityPerson } from "@/types/insight";
 
 /** One option in the scope picker: a manager, their depth, and their team size. */
@@ -29,7 +30,7 @@ export interface ManagerNode {
   directMemberCount: number;
 }
 
-/** The scope resolved against the viewer's own subtree — the permission boundary. */
+/** Who the org zones look at: the viewer's own subtree, or everyone they may see. */
 export interface ResolvedScope {
   /** The scope pivot (root manager node); null while the tree loads. */
   pivot: IdentityPerson | null;
@@ -40,7 +41,7 @@ export interface ResolvedScope {
   rosterCount: number;
   /** Number of people represented by the scope selector, pivot included. */
   scopeMemberCount: number;
-  /** All manager nodes of the viewer's tree, for the ScopeSelect picker. */
+  /** All manager nodes of the viewer's tree. */
   managerNodes: ManagerNode[];
   /** Whether directOnly can change anything at this pivot. */
   canDirectOnly: boolean;
@@ -50,7 +51,8 @@ export interface ResolvedScope {
 export const WHOLE_ORG_LABEL = "Whole organisation";
 
 /**
- * Scope resolution for an organisation with no reporting lines.
+ * Scope resolution over everyone the viewer may see: under a flat policy, or
+ * for a viewer who manages no one (see `rollsUpWholeRoster`).
  *
  * There is one cohort — everyone the viewer may see — so there is no pivot to
  * pick and nothing for `directOnly` to narrow. The viewer stays in: this scope
@@ -183,7 +185,7 @@ export function useOrgScope(): ResolvedScope & {
 
   const resolved = useMemo(
     () =>
-      isFlat
+      rollsUpWholeRoster(isFlat, visibleRoster.roster, personId)
         ? flatOrgScope(visibleRoster.isPending ? null : visibleRoster.roster)
         : resolveScopeRoster(tree, personId, scope),
     [isFlat, visibleRoster.isPending, visibleRoster.roster, tree, personId, scope],

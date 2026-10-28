@@ -118,10 +118,19 @@ export type DashboardAccess = "owner" | "editor" | "viewer" | "ownerless";
 
 export type FolderAccess = "owner" | "editor" | "viewer" | "ownerless";
 
+/** Who a dashboard's own grants reach besides its owner. */
+export type DashboardVisibility = "private" | "people" | "everyone";
+
 export interface DashboardListed extends Listed {
   /** Null for a dashboard nobody owns. */
   owner_person_id: string | null;
   access: DashboardAccess;
+  /** RFC 3339. Absent, as are the fields below, from a service that predates them. */
+  updated_at?: string;
+  visibility?: DashboardVisibility;
+  /** The body's title; null when it names none. */
+  title?: string | null;
+  tags?: string[];
 }
 
 export interface ListedPage<T extends Listed = Listed> {

@@ -39,6 +39,9 @@ vi.mock("@/queries/identity-me", () => ({
 vi.mock("@/lib/portal/use-viewer-is-manager", () => ({
   useViewerIsManager: () => ({ isManager: mocks.isManager, isPending: mocks.isPending }),
 }));
+vi.mock("@/lib/portal/whole-roster", () => ({
+  useWholeRoster: () => ({ wholeRoster: false, isPending: mocks.isPending }),
+}));
 vi.mock("@/lib/portal/use-active-zone", () => ({
   useActiveZone: () => mocks.zone,
 }));

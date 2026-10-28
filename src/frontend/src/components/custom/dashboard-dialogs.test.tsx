@@ -6,7 +6,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchFolders: vi.fn(),
     fetchTags: vi.fn(),
     fetchDashboards: vi.fn(),
-    renameDefinition: vi.fn(),
+    renameDashboard: vi.fn(),
     duplicateDashboard: vi.fn(),
     deleteDefinition: vi.fn(),
   };
@@ -52,6 +52,8 @@ beforeEach(() => {
         name: "delivery",
         owner_person_id: null,
         access: "ownerless",
+        updated_at: "2026-09-01T00:00:00Z",
+        visibility: "private",
       },
     ],
     total: 1,
@@ -132,21 +134,20 @@ describe("the card's ··· menu", () => {
 
 describe("renaming from the card", () => {
   it("renames the dashboard by its id, closes, and reads the lists again", async () => {
-    vi.mocked(customClient.renameDefinition).mockResolvedValue(undefined);
+    vi.mocked(customClient.renameDashboard).mockResolvedValue(undefined);
     const user = await openCardMenu();
 
     const dialog = await choose(user, "Rename…");
     const field = within(dialog).getByRole("textbox", {
       name: "Dashboard name",
     });
-    expect(field).toHaveValue("delivery");
+    expect(field).toHaveValue("Delivery");
     await user.clear(field);
     await user.type(field, "shipping");
     const before = reads();
     await user.click(within(dialog).getByRole("button", { name: "Rename" }));
 
-    expect(customClient.renameDefinition).toHaveBeenCalledWith(
-      "dashboards",
+    expect(customClient.renameDashboard).toHaveBeenCalledWith(
       "dash-1",
       "shipping"
     );
@@ -161,11 +162,11 @@ describe("renaming from the card", () => {
     await user.click(within(dialog).getByRole("button", { name: "Rename" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(customClient.renameDefinition).not.toHaveBeenCalled();
+    expect(customClient.renameDashboard).not.toHaveBeenCalled();
   });
 
   it("says why a name was refused, keeps the field, and reads the lists again", async () => {
-    vi.mocked(customClient.renameDefinition).mockRejectedValue(
+    vi.mocked(customClient.renameDashboard).mockRejectedValue(
       new CustomApiError(400, { detail: "name must be 1 to 128 characters" })
     );
     const user = await openCardMenu();
@@ -202,8 +203,8 @@ describe("renaming from the card", () => {
 
     expect(
       within(dialog).getByRole("textbox", { name: "Dashboard name" })
-    ).toHaveValue("delivery");
-    expect(customClient.renameDefinition).not.toHaveBeenCalled();
+    ).toHaveValue("Delivery");
+    expect(customClient.renameDashboard).not.toHaveBeenCalled();
   });
 });
 

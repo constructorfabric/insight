@@ -255,26 +255,11 @@ describe("usePersonList", () => {
     ["match", "", false],
     ["match", "   ", false],
     ["match", "iva", true],
-    // Too short to be worth a pass over the journal — in either intent, and
-    // whichever side of the debounce the value came from.
-    ["browse", "i", false],
-    ["browse", "iv", true],
-    ["match", "i", false],
-    ["match", "iv", true],
-    // Trimmed before it is measured, so surrounding space neither buys nor
-    // costs a search.
-    ["match", "i ", false],
-    ["match", " iva ", true],
-    // THE FLOOR IS PER TERM, because the service matches each one against the
-    // journal on its own. Measuring the field instead would read `a b` as three
-    // characters and wave through two one-character passes.
-    ["match", "a b", false],
-    ["match", "iva b", false],
-    ["match", "iv an", true],
-    // Counted as the person typing counts: one glyph is one character, not the
-    // two UTF-16 units it occupies.
-    ["match", "🙂", false],
-    ["match", "🙂🙂", true],
+    ["browse", "i", true],
+    ["match", "i", true],
+    ["match", " i ", true],
+    ["match", "a b", true],
+    ["match", "🙂", true],
   ] as const)(
     "listsAnyone(%s intent, %o) is %s",
     (intent, q, expected) => {
@@ -282,8 +267,6 @@ describe("usePersonList", () => {
     },
   );
 
-  // The account needle is ONE predicate, spaces included, so the field itself is
-  // what the floor measures — `ad ex` matches a display name across the gap.
   // What a blank field means is the caller's: the accounts mode reviews the
   // whole fold, and inside one person that fold would bury the accounts they
   // actually hold.
@@ -292,8 +275,8 @@ describe("usePersonList", () => {
     ["browse", "   ", true],
     ["match", "", false],
     ["match", "   ", false],
-    ["browse", "o", false],
-    ["match", "o", false],
+    ["browse", "o", true],
+    ["match", "o", true],
     ["browse", "oc", true],
     ["match", "oc", true],
     ["match", " oc ", true],

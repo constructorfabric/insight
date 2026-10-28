@@ -1,10 +1,8 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Pencil, Share2 } from "lucide-react";
-import { useState } from "react";
+import { Pencil } from "lucide-react";
 
 import type { DashboardAccess } from "@/api/custom-client";
 import { DashboardMenu } from "@/components/custom/dashboard-menu";
-import { ShareDialog } from "@/components/custom/share-dialog";
 import { Button } from "@/components/ui/button";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
 
@@ -24,34 +22,12 @@ export function DashboardPageActions({
   carries: boolean;
 }) {
   const navigate = useNavigate();
-  const [sharing, setSharing] = useState(false);
   const allows = dashboardAllows(access);
 
   return (
     <span className="flex shrink-0 items-center gap-1">
-      {allows.share && carries ? (
-        <>
-          <Button
-            variant="outline"
-            size="sm"
-            icon={<Share2 />}
-            aria-label={`Share ${name}`}
-            onClick={() => setSharing(true)}
-          >
-            Share
-          </Button>
-          <ShareDialog
-            target={{ kind: "dashboards", id }}
-            title={title || name}
-            ownerPersonId={ownerPersonId}
-            open={sharing}
-            onClose={() => setSharing(false)}
-          />
-        </>
-      ) : null}
       {allows.edit ? (
         <Button
-          variant="outline"
           size="sm"
           icon={<Pencil />}
           aria-label={`Edit ${name}`}
@@ -71,6 +47,7 @@ export function DashboardPageActions({
         name={name}
         title={title}
         access={access}
+        share={allows.share && carries ? { ownerPersonId } : undefined}
         onDuplicated={(copy) =>
           void navigate({ to: "/portal/custom/$name", params: { name: copy } })
         }

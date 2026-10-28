@@ -62,7 +62,7 @@ import {
   putDefinition,
   putGrant,
   removeFromFolder,
-  renameDefinition,
+  renameDashboard,
   renameFolder,
   runDashboardWidget,
   runMetric,
@@ -164,6 +164,15 @@ export function definitionPagesQuery<K extends EditableKind>(
       const read = pages.reduce((count, page) => count + page.items.length, 0);
       return read < last.total ? read : undefined;
     },
+  });
+}
+
+/** The caller's own dashboards, most recently changed first. */
+export function recentDashboardsQuery(count: number) {
+  return queryOptions({
+    queryKey: [...NAME_PAGES_PREFIX, "dashboards", "recent", count],
+    queryFn: () =>
+      fetchDashboards({ owned: "me", sort: "recent", limit: count }),
   });
 }
 
@@ -497,19 +506,12 @@ export function useStoreDefinition() {
   });
 }
 
-export function useRenameDefinition() {
+export function useRenameDashboard() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      kind,
-      id,
-      to,
-    }: {
-      kind: DefinitionKind;
-      id: string;
-      to: string;
-    }) => renameDefinition(kind, id, to),
+    mutationFn: ({ id, to }: { id: string; to: string }) =>
+      renameDashboard(id, to),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["custom"] }),
   });
 }

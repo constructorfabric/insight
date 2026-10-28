@@ -30,7 +30,6 @@ import {
   Star,
   Ticket,
   TrendingUp,
-  User,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -79,7 +78,7 @@ export const ZONES: readonly Zone[] = [
   { id: "people", label: "People", kind: "people" },
   { id: "aicost", label: "AI & Cost", kind: "theme" },
   { id: "reports", label: "Reports", kind: "theme" },
-  { id: "custom", label: "Custom", kind: "custom" },
+  { id: "custom", label: "Dashboards", kind: "custom" },
   { id: "manage", label: "Manage", kind: "manage" },
 ];
 
@@ -312,15 +311,16 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
   ],
 };
 
-const MY_DASHBOARDS: PaneItem = { id: "mine", label: "My dashboards", icon: User, unbuilt: true };
-
 export const DASHBOARD_BROWSE_PLANNED: readonly PaneItem[] = [
   { id: "starred", label: "Starred", icon: Star, unbuilt: true },
+  { id: "starter", label: "Starter", icon: Sparkles, unbuilt: true },
 ];
 
-export const HOME_DASHBOARD_GROUP: PaneGroup = {
-  label: "Dashboards",
-  items: [{ ...MY_DASHBOARDS, icon: LayoutGrid }],
+export const STARTER_DASHBOARDS: PaneItem = {
+  id: "starter-dashboards",
+  label: "Starter dashboards",
+  icon: Sparkles,
+  unbuilt: true,
 };
 
 /* ── People zone ─────────────────────────────────────────────────────── */
@@ -343,10 +343,10 @@ const FLAT_PEOPLE_ITEMS: readonly PaneItem[] = [
 ];
 
 export function peopleItemsFor(
-  isFlat: boolean,
-  policy: InstanceNavPolicy = navPolicy(),
+  wholeRoster: boolean,
+  policy: InstanceNavPolicy = navPolicy()
 ): readonly PaneItem[] {
-  const items = isFlat ? FLAT_PEOPLE_ITEMS : PEOPLE_ITEMS;
+  const items = wholeRoster ? FLAT_PEOPLE_ITEMS : PEOPLE_ITEMS;
   return items
     .filter((item) => !itemHidden("people", item.id, policy))
     .map((item) => withConfigReadiness("people", item, policy));

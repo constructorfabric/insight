@@ -9,7 +9,7 @@ import {
   invalidateDashboardList,
   useDuplicateDashboard,
   useRemoveDefinition,
-  useRenameDefinition,
+  useRenameDashboard,
 } from "@/queries/custom";
 
 const COPY_SUFFIX = " copy";
@@ -52,7 +52,7 @@ function NameDialog({
 }: {
   open: boolean;
   title: string;
-  description: string;
+  description?: string;
   confirmLabel: string;
   initial: string;
   fallback: string;
@@ -118,19 +118,18 @@ function NameDialog({
 }
 
 export function RenameDashboard({ id, name, open, onClose }: DialogProps) {
-  const rename = useRenameDefinition();
+  const rename = useRenameDashboard();
 
   async function save(to: string) {
     if (to === name) return;
 
-    await rename.mutateAsync({ kind: "dashboards", id, to });
+    await rename.mutateAsync({ id, to });
   }
 
   return (
     <NameDialog
       open={open}
       title="Rename dashboard"
-      description="Its title stays."
       confirmLabel="Rename"
       initial={name}
       fallback="The dashboard could not be renamed."
@@ -202,6 +201,7 @@ export function DeleteDashboard({
         if (!next) close();
       }}
       title={`Delete ${title}?`}
+      description="It is removed for everyone it is shared with, and from every folder holding it. This can't be undone."
       confirmLabel="Delete dashboard"
       destructive
       isPending={remove.isPending}

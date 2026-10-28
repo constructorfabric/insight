@@ -68,11 +68,11 @@ vi.mock("@/lib/portal/portal-store", async (orig) => ({
 }));
 vi.mock("@/api/custom-client", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
-  fetchDashboards: async () => ({
+  fetchDashboards: async (page?: { owned?: string }) => ({
     items: [
       { id: "delivery", name: "delivery", owner_person_id: null, access: "ownerless" },
     ],
-    total: 14,
+    total: page?.owned === "me" ? 3 : page?.owned === "shared" ? 2 : 14,
   }),
   fetchFolders: async () => ({
     folders: [
@@ -183,32 +183,29 @@ describe("Home pane", () => {
     expect(item.result.current).toBe("health");
   });
 
-  it("shows a member the planned Dashboards group too, since every viewer opens dashboards", () => {
-    mocks.showPlanned = true;
+  it("links an admin to their own dashboards", () => {
+    mocks.isAdmin = true;
     pane();
-    expect(buttonFor("My dashboards")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("link", { name: /My dashboards/ })).toHaveAttribute(
+      "href",
+      expect.stringContaining("owned=me")
+    );
   });
 
-  it("shows an admin the planned Dashboards group only with planned sections on", () => {
+  it("offers a member no My dashboards, since only administrators own dashboards", () => {
+    pane();
+    expect(screen.queryByText("My dashboards")).toBeNull();
+  });
+
+  it("shows Starter dashboards as planned only with planned sections on", () => {
     mocks.isAdmin = true;
     const { unmount } = pane();
-    expect(screen.queryByText("My dashboards")).toBeNull();
+    expect(screen.queryByText("Starter dashboards")).toBeNull();
     unmount();
 
     mocks.showPlanned = true;
     pane();
-    expect(buttonFor("My dashboards")).toHaveAttribute("aria-disabled", "true");
-    expect(screen.queryByText("Starter dashboards")).toBeNull();
-  });
-
-  it("goes nowhere from a planned row", async () => {
-    mocks.isAdmin = true;
-    mocks.showPlanned = true;
-    pane();
-
-    await userEvent.click(screen.getByText("My dashboards"));
-
-    expect(portalRouter.navigations).toHaveLength(0);
+    expect(buttonFor("Starter dashboards")).toHaveAttribute("aria-disabled", "true");
   });
 });
 
@@ -545,7 +542,7 @@ describe("Dashboards pane", () => {
 
     expect(await screen.findByText("14")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Shared with me" })).toBeInTheDocument();
-    for (const name of ["Owned by me", "Metrics", "Widgets", "Datasets", "Alerts"]) {
+    for (const name of ["My dashboards", "Metrics", "Widgets", "Datasets", "Alerts"]) {
       expect(screen.queryByRole("link", { name }), `should not link: ${name}`).toBeNull();
     }
     expect(screen.queryByText("Catalogue")).toBeNull();
@@ -583,7 +580,7 @@ describe("Dashboards pane", () => {
   it("narrows the list to what the reader owns, or what is shared with them", () => {
     inZone("custom");
     pane();
-    expect(screen.getByRole("link", { name: "Owned by me" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "My dashboards" })).toHaveAttribute(
       "href",
       "/portal/custom?owned=me",
     );
@@ -602,7 +599,7 @@ describe("Dashboards pane", () => {
     pane();
 
     const query = new URLSearchParams(
-      screen.getByRole("link", { name: "Owned by me" }).getAttribute("href")!.split("?")[1],
+      screen.getByRole("link", { name: "My dashboards" }).getAttribute("href")!.split("?")[1],
     );
     expect(Object.fromEntries(query)).toEqual({ owned: "me", tag: "Ops" });
   });
@@ -623,8 +620,7 @@ describe("Dashboards pane", () => {
     mocks.showPlanned = true;
     pane();
     expect(buttonFor("Starred")).toHaveAttribute("aria-disabled", "true");
-    expect(screen.queryByText("My dashboards")).toBeNull();
-    expect(screen.queryByText("Starter")).toBeNull();
+    expect(buttonFor("Starter")).toHaveAttribute("aria-disabled", "true");
   });
 });
 
@@ -740,6 +736,22 @@ describe("Dashboards pane folders", () => {
     await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Hir{Escape}");
 
     expect(screen.queryByRole("textbox", { name: "Folder name" })).toBeNull();
+    expect(mocks.createFolder).not.toHaveBeenCalled();
+  });
+
+  it("drops an unnamed new folder when focus leaves it, but keeps a typed name", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /New folder/ }));
+    await user.tab();
+    expect(screen.queryByRole("textbox", { name: "Folder name" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /New folder/ }));
+    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Hir");
+    await user.tab();
+    expect(screen.getByRole("textbox", { name: "Folder name" })).toHaveValue("Hir");
     expect(mocks.createFolder).not.toHaveBeenCalled();
   });
 

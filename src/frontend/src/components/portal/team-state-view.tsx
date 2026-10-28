@@ -14,6 +14,7 @@ import {
 } from "@/components/widgets/dashboard/members-grid";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { formatMetricValue } from "@/lib/format";
 import {
@@ -33,6 +34,7 @@ import {
 } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import {
+  usePortalNavActions,
   usePortalScope,
   usePortalSlice,
 } from "@/lib/portal/portal-nav";
@@ -97,14 +99,15 @@ function TeamMembersSection({ members, ...gridProps }: MembersGridProps) {
  *   • decline — a member's metric materially worse than last period;
  *   • collapse — zero on an activity the team otherwise shows.
  * The AI summary is rule-based for now (a real insights endpoint would slot in).
- * The roster is the active org scope (topbar) — the view owns no scoping of its
- * own.
+ * The roster is the active org scope, picked in the work chart; the view only
+ * narrows it to direct reports.
  */
 export function TeamStateView() {
   const { period, dateRange } = usePortalPeriod();
 
   const orgScope = useOrgScope();
   const portalScope = usePortalScope();
+  const { setScope } = usePortalNavActions();
   const { pivot, roster } = orgScope;
 
   // INVARIANT: People evaluates the selected manager with the reports-only org scope.
@@ -274,13 +277,24 @@ export function TeamStateView() {
 
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
-      <div>
-        <h1 className="text-lg font-semibold tracking-tight">
-          {teamName ? `${teamName}'s team` : "Team"}
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          {members.length} people · state &amp; attention
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight">
+            {teamName ? `${teamName}'s team` : "Team"}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            {members.length} people · state &amp; attention
+          </p>
+        </div>
+        {orgScope.canDirectOnly ? (
+          <label className="flex cursor-pointer items-center gap-2 text-sm select-none">
+            <span>Direct reports only</span>
+            <Switch
+              checked={portalScope.directOnly}
+              onCheckedChange={(directOnly) => setScope({ directOnly })}
+            />
+          </label>
+        ) : null}
       </div>
 
       {/* Team state at a glance */}

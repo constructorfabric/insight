@@ -60,75 +60,85 @@ beforeEach(() => {
 });
 
 describe("Home dashboards", () => {
+  const region = () =>
+    screen.getByRole("region", { name: "My dashboards · recent" });
+
   it("does not request dashboards when navigation excludes them", () => {
     access.dashboards = false;
     home();
-    expect(screen.queryByRole("region", { name: "Dashboards" })).toBeNull();
+    expect(screen.queryByRole("region")).toBeNull();
   });
 
-  it("shows at most three dashboards with existing open, menu and creation actions", async () => {
+  it("shows a member nothing, since only administrators own dashboards", () => {
+    access.isAdmin = false;
+    home();
+    expect(screen.queryByRole("region")).toBeNull();
+  });
+
+  it("asks the service for the three own dashboards changed most recently, in its order", async () => {
+    const asked: URLSearchParams[] = [];
     server.use(
-      http.get(`${base}/dashboards`, () =>
-        HttpResponse.json({
-          items: ["one", "two", "three", "four"].map((id) => ({
+      http.get(`${base}/dashboards`, ({ request }) => {
+        asked.push(new URL(request.url).searchParams);
+        return HttpResponse.json({
+          items: ["two", "three", "four"].map((id) => ({
             id,
             name: id,
-            owner_person_id: null,
-            access: "ownerless",
+            owner_person_id: "p1",
+            access: "owner",
+            updated_at: "2026-09-01T00:00:00Z",
+            visibility: "private",
+            title: `Board ${id}`,
+            tags: [],
           })),
-          total: 4,
-          limit: 50,
+          total: 7,
+          limit: 3,
           offset: 0,
-        })
-      ),
-      http.get(`${base}/dashboards/:id`, ({ params }) =>
-        HttpResponse.json({
-          id: params.id,
-          name: params.id,
-          body: { title: `Board ${params.id}`, widgets: [] },
-          tags: [],
-          owner_person_id: null,
-          access: "ownerless",
-          folders: [],
-        })
-      )
+        });
+      })
     );
     home();
-    const section = screen.getByRole("region", { name: "Dashboards" });
-    await within(section).findByText("Board three");
-    expect(within(section).getAllByRole("listitem")).toHaveLength(3);
-    expect(within(section).queryByText("Board four")).toBeNull();
+    await within(region()).findByText("Board two");
+    const shown = within(region())
+      .getAllByRole("listitem")
+      .map((item) =>
+        within(item)
+          .getByRole("link", { name: /^Open / })
+          .getAttribute("href")
+      );
+    expect(shown).toEqual([
+      "/portal/custom/two",
+      "/portal/custom/three",
+      "/portal/custom/four",
+    ]);
     expect(
-      within(section).getByRole("link", { name: "Open one" })
-    ).toHaveAttribute("href", "/portal/custom/one");
+      asked.map((params) => [
+        params.get("owned"),
+        params.get("sort"),
+        params.get("limit"),
+      ])
+    ).toEqual([["me", "recent", "3"]]);
     expect(
-      within(section).getByRole("button", { name: "More for one" })
+      within(region()).getByRole("button", { name: /New dashboard/i })
     ).toBeInTheDocument();
-    expect(
-      within(section).getByRole("button", { name: /New dashboard/i })
-    ).toHaveAttribute("href", "/portal/custom/new/dashboards");
-    expect(
-      within(section).getByRole("button", { name: "All dashboards" })
-    ).toHaveAttribute("href", "/portal/custom");
-    expect(
-      screen.queryByText(/starter|private|shared with|recent/i)
-    ).toBeNull();
   });
 
-  it("keeps creation available when no dashboards exist", async () => {
+  it("keeps creation available when the viewer owns no dashboards", async () => {
     server.use(
       http.get(`${base}/dashboards`, () =>
         HttpResponse.json({ items: [], total: 0, limit: 50, offset: 0 })
       )
     );
     home();
-    expect(await screen.findByText("No dashboards yet.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("You own no dashboards yet.")
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /New dashboard/i })
     ).toBeInTheDocument();
   });
 
-  it("retries a failed listing without blocking the creation link", async () => {
+  it("retries a failed listing without blocking creation", async () => {
     server.use(
       http.get(
         `${base}/dashboards`,
@@ -148,7 +158,9 @@ describe("Home dashboards", () => {
       )
     );
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByText("No dashboards yet.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("You own no dashboards yet.")
+    ).toBeInTheDocument();
   });
 
   it("keeps creation available while the listing loads", () => {
@@ -158,20 +170,5 @@ describe("Home dashboards", () => {
     expect(
       screen.getByRole("button", { name: /New dashboard/i })
     ).toBeInTheDocument();
-  });
-
-  it("offers a member the dashboards shared with them and nothing to create", async () => {
-    access.isAdmin = false;
-    server.use(
-      http.get(`${base}/dashboards`, () =>
-        HttpResponse.json({ items: [], total: 0, limit: 50, offset: 0 })
-      )
-    );
-    home();
-    expect(await screen.findByText("No dashboards yet.")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "All dashboards" })
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /New dashboard/i })).toBeNull();
   });
 });

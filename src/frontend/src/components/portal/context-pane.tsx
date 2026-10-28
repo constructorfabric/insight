@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
 import { useFeedbackDialog } from "@/components/feedback-context";
-import { CustomNav } from "@/components/portal/custom-nav";
+import { CustomNav, HomeDashboardsGroup } from "@/components/portal/custom-nav";
 import { ExploreNav } from "@/components/portal/explore-nav";
 import { GroupsNav } from "@/components/portal/pane-nav";
 import { PeopleNav } from "@/components/portal/people-nav";
@@ -25,7 +25,6 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import {
-  HOME_DASHBOARD_GROUP,
   manageGroupsFor,
   resolveZoneItem,
   zoneSections,
@@ -212,13 +211,10 @@ function RailPane({ rail, nav }: { rail: RailId; nav: ZoneNav }) {
   switch (rail) {
     case "home":
       return (
-        <GroupsNav
-          groups={[
-            ...zoneSections("overview"),
-            ...(visibleZones.has("custom") ? [HOME_DASHBOARD_GROUP] : []),
-          ]}
-          active={active}
-        />
+        <>
+          <GroupsNav groups={zoneSections("overview")} active={active} />
+          {visibleZones.has("custom") ? <HomeDashboardsGroup /> : null}
+        </>
       );
     case "dashboards":
       return <CustomNav />;

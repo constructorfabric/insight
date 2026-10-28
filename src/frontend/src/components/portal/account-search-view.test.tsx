@@ -167,26 +167,12 @@ describe("AccountSearchView", () => {
     );
   });
 
-  it("asks for a second character instead of searching on one", async () => {
+  it("searches on a single character", async () => {
     hooks.search.data = page([match()]);
     render(<AccountSearchView />);
 
     await userEvent.type(screen.getByRole("searchbox"), "o");
 
-    expect(screen.getByText(/at least 2 characters/i)).toBeInTheDocument();
-    expect(screen.queryByText("octocat")).not.toBeInTheDocument();
-    // Neither emptiness applies while the field is still being typed into.
-    expect(screen.queryByText(/nothing to list here yet/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/carries that/i)).not.toBeInTheDocument();
-  });
-
-  it("searches, and drops the notice, on the second character", async () => {
-    hooks.search.data = page([match()]);
-    render(<AccountSearchView />);
-
-    await userEvent.type(screen.getByRole("searchbox"), "oc");
-
-    expect(screen.queryByText(/at least 2 characters/i)).not.toBeInTheDocument();
     expect(screen.getByText("octocat")).toBeInTheDocument();
   });
 
@@ -198,7 +184,6 @@ describe("AccountSearchView", () => {
 
     await userEvent.type(screen.getByRole("searchbox"), "a b");
 
-    expect(screen.queryByText(/at least 2 characters/i)).not.toBeInTheDocument();
     expect(screen.getByText("octocat")).toBeInTheDocument();
   });
 

@@ -35,7 +35,7 @@ import {
   usePutGrant,
   useRemoveDefinition,
   useRemoveFromFolder,
-  useRenameDefinition,
+  useRenameDashboard,
   useRenameFolder,
   useSetDashboardTags,
   useSetPinned,
@@ -631,9 +631,9 @@ describe("duplicating a dashboard", () => {
   });
 });
 
-describe("useRenameDefinition", () => {
+describe("useRenameDashboard", () => {
   it("renames by id and refreshes every cached read, keeping the id's entries", async () => {
-    vi.mocked(customClient.renameDefinition).mockResolvedValue(undefined);
+    vi.mocked(customClient.renameDashboard).mockResolvedValue(undefined);
     const queryClient = new QueryClient({
       defaultOptions: { mutations: { retry: false } },
     });
@@ -643,21 +643,13 @@ describe("useRenameDefinition", () => {
     });
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(QueryClientProvider, { client: queryClient }, children);
-    const { result } = renderHook(() => useRenameDefinition(), { wrapper });
+    const { result } = renderHook(() => useRenameDashboard(), { wrapper });
 
     await act(() =>
-      result.current.mutateAsync({
-        kind: "dashboards",
-        id: "d1",
-        to: "Platform",
-      }),
+      result.current.mutateAsync({ id: "d1", to: "Platform" }),
     );
 
-    expect(customClient.renameDefinition).toHaveBeenCalledWith(
-      "dashboards",
-      "d1",
-      "Platform",
-    );
+    expect(customClient.renameDashboard).toHaveBeenCalledWith("d1", "Platform");
     expect(
       queryClient.getQueryState(["custom", "dashboard", "d1"])?.isInvalidated,
     ).toBe(true);

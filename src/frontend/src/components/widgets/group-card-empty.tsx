@@ -1,10 +1,3 @@
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty";
-
 /**
  * Empty body for a dashboard group card. `min-h` is the footprint floor so an
  * empty card holds a populated card's height even when its grid row has no
@@ -18,17 +11,17 @@ import {
  */
 export function GroupCardEmpty({ notReady = false }: { notReady?: boolean }) {
   return (
-    <Empty className="min-h-28 gap-1 p-0">
-      <EmptyHeader>
-        <EmptyTitle className="text-sm">
+    <div className="flex min-h-28 w-full min-w-0 flex-1 flex-col items-center justify-center text-center text-balance">
+      <div className="flex max-w-sm flex-col items-center gap-2">
+        <p className="text-sm font-medium tracking-tight">
           {notReady ? "No data yet" : "No data"}
-        </EmptyTitle>
-        <EmptyDescription className="text-xs">
+        </p>
+        <p className="text-xs/relaxed text-muted-foreground">
           {notReady
             ? "Nothing is collected here yet — this fills in after the connector behind it syncs."
             : "No metrics with data for this period."}
-        </EmptyDescription>
-      </EmptyHeader>
-    </Empty>
+        </p>
+      </div>
+    </div>
   );
 }

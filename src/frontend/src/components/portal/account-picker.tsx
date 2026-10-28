@@ -26,9 +26,7 @@ import { accountKey } from "@/lib/identities/account-key";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
 import {
-  belowAccountFloor,
   listsAnyAccount,
-  MIN_SEARCH_CHARS,
   SEARCH_DEBOUNCE_MS,
   useAccountList,
 } from "@/queries/identity-resolution";
@@ -59,11 +57,6 @@ export function AccountPicker({
         .filter((item) => !excluded.has(accountKey(item)))
     : [];
   const loading = search.isFetching && !search.isFetchingNextPage;
-  // Reads the live field rather than the debounced one: the answer to "why is
-  // nothing happening" should not wait for the debounce to expire. Only while
-  // nothing is listed, though — for one debounce the rows still answer the
-  // shorter term, and a notice above them contradicts them.
-  const tooShort = items.length === 0 && belowAccountFloor(query);
   // These rows answer the term the query key carries, not the one in the field,
   // until the debounce fires AND the fetch lands. Marked rather than hidden, so
   // the list does not blank between keystrokes — and never read as the answer.
@@ -85,7 +78,10 @@ export function AccountPicker({
         <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="search"
-          className="ps-8"
+          className={cn(
+            "ps-8",
+            loading && "pe-8 [&::-webkit-search-cancel-button]:hidden"
+          )}
           placeholder={placeholder}
           aria-label={placeholder}
           value={query}
@@ -95,11 +91,6 @@ export function AccountPicker({
           <Spinner className="absolute end-2.5 top-1/2 size-4 -translate-y-1/2" />
         ) : null}
       </div>
-      {tooShort ? (
-        <p className="text-sm text-muted-foreground">
-          {t("identities.accounts.min_chars", { min: MIN_SEARCH_CHARS })}
-        </p>
-      ) : null}
       {asked && search.isError ? (
         <p className="text-sm text-destructive">
           {t("identities.accounts.failed")}

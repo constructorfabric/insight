@@ -12,6 +12,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  takeAssistantDraft,
+  useAssistantDraft,
+  type AssistantDraft,
+} from "@/lib/custom/assistant-draft";
 import { useSendChat } from "@/queries/custom";
 import { TEXT_BODY, TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";
 
@@ -60,6 +65,23 @@ export function CustomChat({ onCreated }: CustomChatProps) {
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const sendChat = useSendChat();
   const threadEnd = useRef<HTMLDivElement | null>(null);
+  const input = useRef<HTMLTextAreaElement | null>(null);
+  const asked = useAssistantDraft();
+  const [placedDraft, setPlacedDraft] = useState<AssistantDraft | null>(null);
+
+  if (asked !== null && asked !== placedDraft) {
+    setPlacedDraft(asked);
+    setMessage(asked.text);
+  }
+
+  useEffect(() => {
+    if (asked === null) return;
+
+    takeAssistantDraft(asked);
+    const field = input.current;
+    field?.focus();
+    field?.setSelectionRange(field.value.length, field.value.length);
+  }, [asked]);
 
   // A thread that grows below the fold reads as a dead panel.
   useEffect(() => {
@@ -169,6 +191,7 @@ export function CustomChat({ onCreated }: CustomChatProps) {
           first send. */}
       <div className="flex items-center gap-2 border-t p-3">
         <Textarea
+          ref={input}
           data-testid="chat-input"
           value={message}
           rows={2}

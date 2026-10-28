@@ -278,7 +278,7 @@ function DashboardWidgetSlot({
       <Card>
         <CardContent>
           <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-            {`Couldn't read ${name}.`}
+            This widget is no longer on the dashboard.
           </p>
         </CardContent>
       </Card>

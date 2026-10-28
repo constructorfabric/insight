@@ -203,7 +203,9 @@ describe("/portal/custom/$name", () => {
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText("Couldn't read gone.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("This widget is no longer on the dashboard.")
+    ).toBeInTheDocument();
     expect(customClient.runDashboardWidget).not.toHaveBeenCalled();
   });
 

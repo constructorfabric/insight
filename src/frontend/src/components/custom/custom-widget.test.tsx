@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const role = vi.hoisted(() => ({ isAdmin: false, isPending: true }));
@@ -406,6 +406,27 @@ describe("<CustomWidget>", () => {
         "Couldn't draw this widget."
       );
       expect(screen.getByRole("alert")).not.toHaveTextContent("total_lines");
+    });
+
+    it("hides the service's refusal behind a generic failure with a retry", () => {
+      role.isPending = false;
+      const onRetry = vi.fn();
+      render(
+        <CustomWidget
+          widget={{ type: "table", metric: "m", columns: ["day"] }}
+          error={
+            new CustomApiError(400, {
+              detail: "a metric reads a dataset, so it may not name a `table`",
+            })
+          }
+          onRetry={onRetry}
+        />
+      );
+
+      expect(screen.getByText("This widget couldn't be loaded.")).toBeInTheDocument();
+      expect(screen.queryByText(/may not name a `table`/)).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /retry|try again/i }));
+      expect(onRetry).toHaveBeenCalled();
     });
   });
 });

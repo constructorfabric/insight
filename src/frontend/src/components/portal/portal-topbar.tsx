@@ -1,6 +1,5 @@
 import { HelpCircle } from "lucide-react";
 
-import { ScopeSelect } from "@/components/portal/scope-select";
 import { SliceSelect } from "@/components/portal/slice-select";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
@@ -14,7 +13,7 @@ import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useCohortOptions } from "@/lib/portal/use-cohort-options";
-import { useVisibilityPolicy } from "@/queries/identity-me";
+import { useWholeRoster } from "@/lib/portal/whole-roster";
 import { cn } from "@/lib/utils";
 
 /**
@@ -58,12 +57,6 @@ export function PortalTopBar() {
  */
 function ViewFilters() {
   const { period, customRange, setPeriod, setCustomRange } = usePortalPeriod();
-  // The Person zone is about ONE person, and it reads nothing from the org
-  // scope. Leaving the control up meant the bar named a different person than
-  // the page — a reader saw two names and had to work out which one the
-  // numbers belonged to.
-  const { activeZone } = useActiveZone();
-  const scoped = activeZone !== "person";
   // The server's catalog when it has one, the viewer's roster until then —
   // decided in `useCohortOptions`, which also owns which selection is in
   // effect so this control and the comparison cannot disagree.
@@ -72,9 +65,9 @@ function ViewFilters() {
   // on the roster there is nothing to compare people within, so the control
   // would offer a single choice and the tooltip would describe a cut that
   // cannot be made.
-  const { isFlat } = useVisibilityPolicy();
+  const { wholeRoster } = useWholeRoster();
   const showPlanned = usePortalShowPlanned();
-  const cohortShown = showPlanned && !isFlat;
+  const cohortShown = showPlanned && !wholeRoster;
 
   return (
     // Narrow screens keep the three controls on ONE scrollable row: wrapped,
@@ -83,13 +76,12 @@ function ViewFilters() {
     //
     // `justify-end` only once there is room to wrap: inside a horizontal
     // scroller it pushes the overflow off the START edge, where no scroll
-    // gesture can reach it — Scope and Slice became unreachable.
+    // gesture can reach it, so the cohort control became unreachable.
     <div
       role="group"
       aria-label="View filters"
       className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto md:flex-wrap md:justify-end md:overflow-x-visible"
     >
-      {scoped ? <ScopeSelect /> : null}
       {cohortShown ? (
         <span className="flex shrink-0 items-center gap-1.5">
           <span className="hidden text-xs text-muted-foreground md:inline">

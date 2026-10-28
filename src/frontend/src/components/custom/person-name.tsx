@@ -5,8 +5,17 @@ import { usePersonName } from "@/queries/person-name";
  * back to the id; read through the roster, a person the caller may not see or
  * who has no name renders as nothing.
  */
-export function PersonName({ personId }: { personId: string }) {
-  return useShownName(personId);
+export function PersonName({
+  personId,
+  className,
+}: {
+  personId: string;
+  className?: string;
+}) {
+  const name = useShownName(personId);
+  if (name === null) return null;
+
+  return <span className={className}>{name}</span>;
 }
 
 /** "Owner: name", or nothing when the caller may not learn who that is. */

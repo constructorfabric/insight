@@ -1,44 +1,34 @@
-import { Link } from "@tanstack/react-router";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import { DashboardCard } from "@/components/custom/dashboard-card";
 import { NewLink } from "@/components/custom/editor/edit-link";
 import { Button } from "@/components/ui/button";
 import { useZoneNav } from "@/lib/portal/use-zone-nav";
 import { TEXT_EYEBROW } from "@/lib/type-scale";
-import { definitionPagesQuery } from "@/queries/custom";
+import { recentDashboardsQuery } from "@/queries/custom";
 import { useIsAdmin } from "@/queries/identity-me";
+
+const RECENT_COUNT = 3;
 
 export function HomeDashboards() {
   const { zones } = useZoneNav();
-  if (!zones.some((zone) => zone.id === "custom")) return null;
+  const { isAdmin } = useIsAdmin();
+  if (!isAdmin || !zones.some((zone) => zone.id === "custom")) return null;
 
   return <DashboardSection />;
 }
 
 function DashboardSection() {
-  const dashboards = useInfiniteQuery(definitionPagesQuery("dashboards"));
-  const { isAdmin } = useIsAdmin();
-  const shown =
-    dashboards.data?.pages.flatMap((page) => page.items).slice(0, 3) ?? [];
+  const dashboards = useQuery(recentDashboardsQuery(RECENT_COUNT));
+  const shown = dashboards.data?.items ?? [];
 
   return (
     <section aria-labelledby="home-dashboards" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="home-dashboards" className={TEXT_EYEBROW}>
-          Dashboards
+          My dashboards · recent
         </h2>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            nativeButton={false}
-            render={<Link to="/portal/custom" />}
-          >
-            All dashboards
-          </Button>
-          {isAdmin ? <NewLink kind="dashboards" noun="dashboard" /> : null}
-        </div>
+        <NewLink kind="dashboards" noun="dashboard" />
       </div>
       {dashboards.isPending ? (
         <p role="status" className="text-sm text-muted-foreground">
@@ -73,7 +63,7 @@ function DashboardSection() {
         </ul>
       ) : (
         <p className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
-          No dashboards yet.
+          You own no dashboards yet.
         </p>
       )}
     </section>

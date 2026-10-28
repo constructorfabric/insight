@@ -11,6 +11,7 @@ import { WidgetSummary } from "@/components/custom/definition-summary";
 import { NewLink } from "@/components/custom/editor/edit-link";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
+import { useAssistantAvailable } from "@/lib/portal/use-assistant-available";
 import { widgetQuery } from "@/queries/custom";
 import { TEXT_BODY } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,7 @@ export const Route = createFileRoute("/portal/custom/widgets/")({
 
 function WidgetsCatalogue() {
   const catalogue = useDefinitionCatalogue("widgets");
+  const assistant = useAssistantAvailable();
 
   return (
     <DefinitionList
@@ -34,7 +36,9 @@ function WidgetsCatalogue() {
       search={{ label: "Search widgets", ...catalogue.search }}
       paging={catalogue.paging}
       create={<NewLink kind="widgets" noun="widget" />}
-      emptyLabel="No widgets yet. Ask the assistant for one."
+      emptyLabel={
+        assistant ? "No widgets yet. Ask the assistant for one." : "No widgets yet."
+      }
       renderRow={(item) => <WidgetRow item={item} />}
     />
   );

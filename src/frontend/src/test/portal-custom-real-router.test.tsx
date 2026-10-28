@@ -20,7 +20,7 @@ import {
   createMemoryHistory,
   createRouter,
 } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -42,6 +42,8 @@ const LISTING = {
       id: "engineering",
       name: "engineering",
       owner_person_id: null,
+      updated_at: "2026-09-01T00:00:00Z",
+      visibility: "private" as const,
       access: "ownerless" as const,
     },
   ],
@@ -186,7 +188,7 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     });
 
     renderAt("/portal/custom");
-    await screen.findByRole("heading", { name: "Custom" }, { timeout: 10000 });
+    await screen.findByRole("heading", { name: "Dashboards" }, { timeout: 10000 });
     await openAssistant();
 
     await userEvent.type(
@@ -321,9 +323,14 @@ describe("the /portal/custom routes, through the real router", { timeout: 20_000
     expect(
       await screen.findByRole("link", { name: "engineering" }, { timeout: 10000 })
     ).toHaveAttribute("href", "/portal/custom/engineering");
-    expect(screen.getByRole("link", { name: /Shared with me/ })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("navigation", { name: "Browse dashboards" })).getByRole(
+        "link",
+        { name: /Shared with me/ }
+      )
+    ).toBeInTheDocument();
     for (const hidden of [
-      /Owned by me/,
+      /My dashboards/,
       /^Metrics$/,
       /^Widgets$/,
       /^Datasets$/,
