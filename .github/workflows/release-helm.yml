@@ -98,10 +98,14 @@ jobs:
 
       - name: Reuse the published chart for CI-only validation
         if: env.RELEASE_REQUESTED == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           chart="oci://ghcr.io/constructorfabric/charts/insight"
-          version="$(helm show chart "$chart" | yq -er '.version')"
+          version="$(gh api "repos/$GITHUB_REPOSITORY/contents/deploy/gitops/.insight-version?ref=main" \
+            --jq '.content' | base64 --decode | tr -d '[:space:]')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '::error::Invalid published chart version recorded on main.'; exit 1; }
           mkdir -p dist
           helm pull "$chart" --version "$version" --destination dist
           printf '%s\n' "$GITHUB_SHA" > dist/source-sha
