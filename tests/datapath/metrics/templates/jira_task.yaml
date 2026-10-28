@@ -16,6 +16,7 @@ templates:
   jira_issue:
     id: null
     source_id: jira-test
+    tenant_id: "{{ tenant }}"
     jira_id: null
     unique_key: null
     id_readable: null
@@ -115,6 +116,7 @@ templates:
   jira_field:
     unique_key: null
     source_id: jira-test
+    tenant_id: "{{ tenant }}"
     field_id: null
     name: null
     schema_type: ""
@@ -183,6 +185,7 @@ templates:
   jira_worklog:
     unique_key: null
     source_id: jira-test
+    tenant_id: "{{ tenant }}"
     worklog_id: null
     id_readable: null
     jira_id: null
@@ -271,6 +274,7 @@ templates:
   jira_status:
     unique_key: null
     source_id: jira-test
+    tenant_id: "{{ tenant }}"
     status_id: null
     name: null
     category_id: null

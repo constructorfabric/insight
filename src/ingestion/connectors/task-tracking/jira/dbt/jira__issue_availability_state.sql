@@ -55,8 +55,8 @@ known AS (
     -- COALESCE keeps the key well-defined when a stamp column is NULL;
     -- otherwise every unstamped row would collapse into one NULL-key group.
     SELECT
-        concat(COALESCE(tenant_id, ''), '-', COALESCE(source_id, ''), '-',
-               COALESCE(jira_id, ''))                        AS unique_key,
+        concat(CAST(tenant_id AS String), '-', CAST(source_id AS String), '-',
+               CAST(jira_id AS String))                      AS unique_key,
         tenant_id,
         source_id,
         jira_id,
@@ -64,14 +64,13 @@ known AS (
         id_readable,
         toDateTime64(0, 3)                                   AS seen_at
     FROM {{ source('bronze_jira', 'jira_issue') }} FINAL
-    WHERE jira_id IS NOT NULL
 
     UNION ALL
 
     -- Jira project keys cannot contain '-', so the key prefix is the project.
     SELECT
-        concat(COALESCE(tenant_id, ''), '-', COALESCE(source_id, ''), '-',
-               COALESCE(jira_id, ''))                        AS unique_key,
+        concat(CAST(tenant_id AS String), '-', CAST(source_id AS String), '-',
+               CAST(jira_id AS String))                      AS unique_key,
         tenant_id,
         source_id,
         jira_id,
@@ -79,7 +78,7 @@ known AS (
         id_readable,
         toDateTime64(0, 3)                                   AS seen_at
     FROM {{ source('bronze_jira', 'jira_issue_keys') }} FINAL
-    WHERE jira_id IS NOT NULL AND id_readable IS NOT NULL
+    WHERE id_readable IS NOT NULL
 ),
 
 issues AS (

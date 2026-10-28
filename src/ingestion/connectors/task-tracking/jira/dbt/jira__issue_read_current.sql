@@ -9,14 +9,13 @@
 
 WITH issues AS (
     SELECT
-        COALESCE(source_id, '')                                       AS insight_source_id,
-        COALESCE(toString(jira_id), '')                               AS issue_id,
+        CAST(source_id AS String)                                     AS insight_source_id,
+        CAST(jira_id AS String)                                       AS issue_id,
         argMax(COALESCE(toString(id_readable), ''), _airbyte_extracted_at) AS current_key,
         argMax(parseDateTime64BestEffortOrNull(created, 3), _airbyte_extracted_at) AS created_at,
         argMax(parseDateTime64BestEffortOrNull(updated, 3), _airbyte_extracted_at) AS updated_at,
         toDateTime64(max(_airbyte_extracted_at), 3)                   AS read_at
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE jira_id IS NOT NULL
     GROUP BY insight_source_id, issue_id
 )
 
