@@ -71,6 +71,9 @@ LEFT JOIN {{ source('bronze_zulip_proxy', 'users') }} AS u FINAL
     AND u.source_id = m.source_id
     AND u.id = m.sender_id
 WHERE u.email IS NOT NULL AND u.email != ''
+  -- INVARIANT: the class holds organization members only — a guest (Zulip role 600)
+  -- is dropped, an unknown role keeps the row.
+  AND coalesce(u.role, 0) != 600
 {% if is_incremental() %}
   -- Watermark on the source EXTRACT time, not the business date (see zoom model header
   -- for the backfill-strand failure mode this fixes). Re-pulled rows carry a fresh

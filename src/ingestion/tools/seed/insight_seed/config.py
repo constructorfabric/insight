@@ -144,7 +144,7 @@ def parse_analytics_database(env: Mapping[str, str]) -> str:
         raise EnvContractError(
             (
                 f"{ANALYTICS_DB_ENV} is not set. It names the database holding the "
-                "analytics catalogue tables (metric_definitions, metric_catalog), which "
+                "analytics catalogue tables (metric_definitions, metric_sources), which "
                 "differs per stand: the compose stack uses a separate `analytics` "
                 "database, a chart-deployed stand keeps them in `mariadb.database`.",
             )

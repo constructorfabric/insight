@@ -603,6 +603,19 @@ ab_delete_connection() {
 }
 
 # ---------------------------------------------------------------------------
+# ab_rename_connection <connection_id> <name>
+# POST /api/v1/connections/update with the name alone — every other field,
+# the sync state included, stays as it is.
+# ---------------------------------------------------------------------------
+ab_rename_connection() {
+  local connection_id="$1" name="$2"
+  local body
+  body="$(python3 -c 'import sys, json; print(json.dumps({"connectionId": sys.argv[1], "name": sys.argv[2]}))' \
+    "${connection_id}" "${name}")"
+  ab__curl POST /api/v1/connections/update "${body}"
+}
+
+# ---------------------------------------------------------------------------
 # ab_list_connections <workspace_id>
 # Returns JSON array of connections in workspace.
 # ---------------------------------------------------------------------------
@@ -717,12 +730,33 @@ ab_destination_definition_by_name() {
 }
 
 # ---------------------------------------------------------------------------
+# ab_destination_version <destination_id>
+# Echoes the dockerImageTag of the definition an existing destination runs on;
+# non-zero when Airbyte cannot describe the destination. Reconcile applies the
+# version floor through this when RECONCILE_DESTINATION_ID names the
+# destination instead of reconcile creating it.
+# ---------------------------------------------------------------------------
+ab_destination_version() {
+  local destination_id="$1"
+  local definition_id
+  definition_id="$(ab__curl POST /api/v1/destinations/get \
+    "$(printf '{"destinationId":"%s"}' "${destination_id}")" \
+    | python3 -c 'import sys, json; print(json.load(sys.stdin)["destinationDefinitionId"])')" || return 1
+  [[ -n "${definition_id}" ]] || return 1
+  ab__curl POST /api/v1/destination_definitions/get \
+    "$(printf '{"destinationDefinitionId":"%s"}' "${definition_id}")" \
+    | python3 -c 'import sys, json; print(json.load(sys.stdin)["dockerImageTag"])'
+}
+
+# ---------------------------------------------------------------------------
 # ab_ensure_destination <name> <definition_id> <config_json>
-# Idempotent: list destinations, find by name, return its destinationId.
-# If absent — create with the given destinationDefinitionId + connection
-# configuration; return the new destinationId. Used by reconcile to own
-# the Bronze ClickHouse destination on a fresh Airbyte instance so the
-# operator never sees a UUID.
+# Converges the destination named <name> on <config_json> and echoes its
+# destinationId: created when absent, updated through destinations/update
+# when its stored connectionConfiguration differs. Airbyte lists a secret as
+# "**********", so the comparison skips every key it returns masked: a
+# rotated password alone is not seen, every other key is — which is what lets
+# a topology flag flipped on an installed system reach Airbyte. One decision
+# line on stderr per call.
 # ---------------------------------------------------------------------------
 ab_ensure_destination() {
   local name="$1"
@@ -731,22 +765,54 @@ ab_ensure_destination() {
   local workspace_id
   workspace_id="$(ab_workspace_id)"
 
-  local list_resp existing_id
+  local list_resp found
   list_resp="$(ab__curl POST /api/v1/destinations/list \
     "$(printf '{"workspaceId":"%s"}' "${workspace_id}")")"
-  existing_id="$(printf '%s' "${list_resp}" | python3 -c '
+  # "<destinationId>\t<drifted keys>" for the named destination, or nothing.
+  found="$(printf '%s' "${list_resp}" | python3 -c '
 import sys, json
-target = sys.argv[1]
+target, desired = sys.argv[1], json.loads(sys.argv[2])
+MASK = "**********"
 for d in json.load(sys.stdin).get("destinations", []):
-    if d.get("name") == target:
-        print(d["destinationId"]); sys.exit(0)
-' "${name}")"
-  if [[ -n "${existing_id}" ]]; then
+    if d.get("name") != target:
+        continue
+    current = d.get("connectionConfiguration") or {}
+    masked = {k for k, v in current.items() if v == MASK}
+    drift = sorted(k for k in set(current) | set(desired)
+                   if k not in masked and current.get(k, MASK) != desired.get(k, MASK))
+    print(d["destinationId"] + "\t" + " ".join(drift))
+    break
+' "${name}" "${config_json}")"
+
+  local body resp dest_id
+  if [[ -n "${found}" ]]; then
+    local existing_id drift
+    IFS=$'\t' read -r existing_id drift <<<"${found}"
+    if [[ -z "${drift}" ]]; then
+      printf 'ab_ensure_destination: destination "%s" (%s) already carries the composed configuration\n' \
+        "${name}" "${existing_id}" >&2
+      printf '%s' "${existing_id}"
+      return 0
+    fi
+    body=$(python3 -c '
+import sys, json
+print(json.dumps({
+  "destinationId": sys.argv[1],
+  "name": sys.argv[2],
+  "connectionConfiguration": json.loads(sys.argv[3]),
+}))
+' "${existing_id}" "${name}" "${config_json}")
+    if ! resp="$(ab__curl POST /api/v1/destinations/update "${body}")"; then
+      printf 'ab_ensure_destination: destinations/update failed for "%s" (%s; drifted: %s).\nAirbyte response: %s\n' \
+        "${name}" "${existing_id}" "${drift}" "${resp}" >&2
+      return 1
+    fi
+    printf 'ab_ensure_destination: destination "%s" (%s) updated: %s\n' \
+      "${name}" "${existing_id}" "${drift}" >&2
     printf '%s' "${existing_id}"
     return 0
   fi
 
-  local body
   body=$(python3 -c '
 import sys, json
 print(json.dumps({
@@ -759,7 +825,6 @@ print(json.dumps({
   # Capture the response so a non-2xx (e.g. 422 schema-validation) surfaces
   # the Airbyte error body — which names the offending config field — instead
   # of a bare `KeyError: 'destinationId'` from piping straight into the parser.
-  local resp dest_id
   if ! resp="$(ab__curl POST /api/v1/destinations/create "${body}")"; then
     printf 'ab_ensure_destination: destinations/create failed for "%s" (definitionId %s).\nAirbyte response: %s\n' \
       "${name}" "${definition_id}" "${resp}" >&2
@@ -776,6 +841,7 @@ except Exception:
       "${name}" "${resp}" >&2
     return 1
   fi
+  printf 'ab_ensure_destination: destination "%s" (%s) created\n' "${name}" "${dest_id}" >&2
   printf '%s' "${dest_id}"
 }
 

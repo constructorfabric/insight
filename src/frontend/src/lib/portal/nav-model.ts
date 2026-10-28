@@ -7,6 +7,7 @@ import {
   Clock,
   Copy,
   DollarSign,
+  Eye,
   FileSpreadsheet,
   FileText,
   Filter,
@@ -22,7 +23,6 @@ import {
   MessageSquare,
   Plug,
   Radar,
-  ScanEye,
   Server,
   Settings2,
   Share2,
@@ -260,7 +260,7 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
         { id: "by-direction", label: "By direction", icon: Layers },
         { id: "trend", label: "Trend", icon: TrendingUp },
         { id: "attention", label: "Attention needed", icon: AlertTriangle },
-        { id: "health", label: "Data coverage", icon: ScanEye },
+        { id: "health", label: "Data coverage", icon: Eye },
         { id: "contribution", label: "Contribution breakdown", icon: Users },
       ],
     },
@@ -315,8 +315,6 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
 const MY_DASHBOARDS: PaneItem = { id: "mine", label: "My dashboards", icon: User, unbuilt: true };
 
 export const DASHBOARD_BROWSE_PLANNED: readonly PaneItem[] = [
-  MY_DASHBOARDS,
-  { id: "shared", label: "Shared with me", icon: Share2, unbuilt: true },
   { id: "starred", label: "Starred", icon: Star, unbuilt: true },
 ];
 

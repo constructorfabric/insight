@@ -3,7 +3,15 @@ import { Link } from "@tanstack/react-router";
 import type { EditableKind } from "@/api/custom-client";
 import { Button } from "@/components/ui/button";
 
-export function EditLink({ kind, name }: { kind: EditableKind; name: string }) {
+export function EditLink({
+  kind,
+  id,
+  name,
+}: {
+  kind: EditableKind;
+  id: string;
+  name: string;
+}) {
   return (
     <Button
       variant="ghost"
@@ -12,7 +20,10 @@ export function EditLink({ kind, name }: { kind: EditableKind; name: string }) {
       aria-label={`Edit ${name}`}
       nativeButton={false}
       render={
-        <Link to="/portal/custom/edit/$kind/$name" params={{ kind, name }} />
+        <Link
+          to="/portal/custom/edit/$kind/$name"
+          params={{ kind, name: id }}
+        />
       }
     >
       Edit
@@ -44,9 +55,11 @@ export type PreviewedKind = keyof typeof PREVIEWED;
 
 export function PreviewLink({
   kind,
+  id,
   name,
 }: {
   kind: PreviewedKind;
+  id: string;
   name: string;
 }) {
   return (
@@ -56,7 +69,7 @@ export function PreviewLink({
       className="text-muted-foreground"
       aria-label={`Preview ${name}`}
       nativeButton={false}
-      render={<Link to={PREVIEWED[kind]} params={{ name }} />}
+      render={<Link to={PREVIEWED[kind]} params={{ name: id }} />}
     >
       Preview
     </Button>

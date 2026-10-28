@@ -1,30 +1,57 @@
-# Fires after a main build finishes, OUTSIDE its concurrency slot: a slow
-# stand deploy must never queue the next merge's image build or chart
-# publish behind it (deploy-test-stand.yml has its own coalescing group).
-# The version is resolved from the OCI registry's newest published tag —
-# which IS the chart that run just published; the downgrade guard refuses
-# anything older than what is deployed.
 name: Deploy test stand after publish
 on:
   workflow_run:
-    workflows: ["Build & Push Container Images"]
+    workflows: ["Build images and release Helm"]
     types: [completed]
     branches: [main]
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  deploy:
-    # The whole run must be green: publish-chart sits at its end, so a red
-    # run either never published or published amid other failures — neither
-    # is a state to install.
+  publication:
     if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.chart.outputs.version }}
+      validated: ${{ steps.chart.outputs.validated }}
+    steps:
+      - name: Resolve the exact published chart
+        id: chart
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          artifact="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" \
+            --jq '.artifacts[] | select(.name == "published-helm" and .expired == false) | .id')"
+          if [ -z "$artifact" ]; then
+            echo 'No publication receipt; no deployment requested.'
+            exit 0
+          fi
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name published-helm --dir published
+          test "$(jq -er '.source_sha' published/chart.json)" = "$SOURCE_SHA"
+          version="$(jq -er '.version' published/chart.json)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          validated="$(jq -r '.validated_on_stand' published/chart.json)"
+          [[ "$validated" == true || "$validated" == false ]]
+          printf 'version=%s\nvalidated=%s\n' "$version" "$validated" >> "$GITHUB_OUTPUT"
+          if [ "$validated" = true ]; then
+            echo 'This exact chart passed on the shared stand before publication; no repeated deploy or seed.'
+          fi
+
+  deploy:
+    needs: publication
+    if: needs.publication.outputs.version != '' && needs.publication.outputs.validated == 'false'
     permissions:
       contents: read
+      actions: read
     uses: ./.github/workflows/deploy-test-stand.yml
-    # TEST_STAND_SEED_EMAIL is withheld on purpose: on this path the dev-lead
-    # address must come from the realm this deploy applies, never an override.
+    with:
+      chart_version: ${{ needs.publication.outputs.version }}
     secrets:
       TEST_STAND_KUBECONFIG: ${{ secrets.TEST_STAND_KUBECONFIG }}
       TEST_STAND_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD }}

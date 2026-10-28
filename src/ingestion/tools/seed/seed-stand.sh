@@ -8,6 +8,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JOB_TEMPLATE="$SCRIPT_DIR/seed-job.yaml.tpl"
+BRONZE_JOB_TEMPLATE="$SCRIPT_DIR/bronze-job.yaml.tpl"
+# tools/seed -> tools -> ingestion
+BOOTSTRAP_DIR="$(cd "$SCRIPT_DIR/../../scripts/bootstrap-db" && pwd)"
+CONNECTORS_DIR="$(cd "$SCRIPT_DIR/../../connectors" && pwd)"
 
 # RULE-DEFAULTS-OK: the seeder's own documented default; every step is
 # idempotent, so seeding everything is the safe reading of "seed this stand".
@@ -19,6 +23,9 @@ NAMESPACE=""
 # The durable copy of the manifest; deliberately outside the chart's name
 # prefix so a future chart template cannot fail to adopt it.
 MANIFEST_CONFIGMAP="seed-stand-manifest"
+# Marks the per-connector catalogue ConfigMaps, so a later run can reap any a
+# previous one left behind.
+BRONZE_LABEL="app.kubernetes.io/component=bronze-tables"
 SEED_MANIFEST_SENTINEL=""
 LOCAL_MANIFEST=""
 CONTEXT=""
@@ -39,6 +46,7 @@ CROSS_TENANT="0"
 FORCE="0"
 DRY_RUN=0
 FOLLOW=1
+BRONZE=1
 
 usage() {
   cat <<'USAGE'
@@ -88,6 +96,14 @@ Seed options:
       --cross-tenant       also write the second-tenant refusal fixture
       --force              seed a tenant that already holds foreign person rows
       --deadline <secs>    pod wall-clock ceiling                  [default: 3600]
+      --no-bronze          do not create the connectors' bronze tables first.
+                           A silver seed writes bronze and lets dbt build the
+                           rest, so by default this script stands every
+                           connector's tables up the way a first sync does —
+                           running each connector's `discover` HERE, since the
+                           cluster has no Docker, and applying the catalogue to
+                           it as a Job. Pass this on a stand whose connectors
+                           have already synced.
 
 Output:
       --dry-run            print the rendered Job manifest and exit
@@ -151,6 +167,7 @@ while [[ $# -gt 0 ]]; do
     --force)             FORCE="1"; shift ;;
     --dry-run)           DRY_RUN=1; shift ;;
     --no-follow)         FOLLOW=0; shift ;;
+    --no-bronze)         BRONZE=0; shift ;;
     -h|--help)           usage; exit 0 ;;
     *)                   usage >&2; die "unknown argument: $1" ;;
   esac
@@ -162,7 +179,18 @@ need envsubst
 # render-only run does none of that.
 need jq
 [[ "$DRY_RUN" -eq 1 ]] || need uv
+# Only the catalogue build needs these, and only for a step that writes bronze.
+if [[ "$DRY_RUN" -eq 0 && "$BRONZE" -eq 1 ]]; then
+  case "$STEP" in
+    all|silver)
+      need yq
+      need docker
+      docker info >/dev/null 2>&1 || die \
+        "the Docker daemon is not reachable. Creating a stand's bronze tables runs each connector's \`discover\` here — the cluster has no Docker — so this script needs one. Pass --no-bronze if this stand's connectors have already synced." ;;
+  esac
+fi
 [[ -f "$JOB_TEMPLATE" ]] || die "Job template not found at $JOB_TEMPLATE."
+[[ -f "$BRONZE_JOB_TEMPLATE" ]] || die "Job template not found at $BRONZE_JOB_TEMPLATE."
 [[ -n "$NAMESPACE" ]] || { usage >&2; die "--namespace is required."; }
 [[ -z "$MANIFEST_OUT" || "$DRY_RUN" -eq 0 ]] \
   || die "--manifest-out has nothing to write with --dry-run."
@@ -219,6 +247,11 @@ CLICKHOUSE_HOST="$(cm_value CLICKHOUSE_HOST)"
 CLICKHOUSE_HTTP_PORT="$(cm_value CLICKHOUSE_PORT)"
 CLICKHOUSE_USER="$(cm_value CLICKHOUSE_USER)"
 CLICKHOUSE_DATABASE="$(cm_value CLICKHOUSE_DATABASE)"
+# The topology the bronze tables are created for. Not in the missing-values
+# report: a chart that predates the pair is a standalone stand, which is what
+# empty means to every reader of it.
+CLICKHOUSE_CLUSTER_MODE="$(cm_value CLICKHOUSE_CLUSTER_MODE)"
+CLICKHOUSE_CLUSTER_NAME="$(cm_value CLICKHOUSE_CLUSTER_NAME)"
 
 # Where analytics migrations created the catalogue tables; the Job's own
 # preflight verifies it.
@@ -226,7 +259,8 @@ if [[ -z "$ANALYTICS_DB" ]]; then
   ANALYTICS_DB="$(cm_value MARIADB_DATABASE)"
 fi
 
-# The seeder speaks HTTP to ClickHouse only.
+# The seeder speaks HTTP to ClickHouse only; the bronze Job's destination is
+# told the same protocol.
 platform_ch_url="$(cm_value CLICKHOUSE_URL)"
 case "$platform_ch_url" in
   https://*)
@@ -234,6 +268,7 @@ case "$platform_ch_url" in
        Point it at an HTTP endpoint with --release/--image overrides, or teach
        config.ClickHouse.url a scheme first." ;;
 esac
+CLICKHOUSE_PROTOCOL=http
 
 ir_secret="insight-identity-resolution-config"
 # Unreadable is an access problem, not "pass --tenant".
@@ -480,6 +515,7 @@ fi
 
 echo "==> tenant:    $TENANT"
 echo "==> databases: identity=$IDENTITY_DB analytics=$ANALYTICS_DB clickhouse=$CLICKHOUSE_DATABASE"
+echo "==> topology:  cluster_mode=${CLICKHOUSE_CLUSTER_MODE:-false} cluster_name=${CLICKHOUSE_CLUSTER_NAME:-}"
 echo "==> image:     $IMAGE"
 # Origin printed, not just the value: shows whether the seed follows the
 # realm or overrides it, before anything is written.
@@ -498,8 +534,11 @@ export SEED_IDENTITY_DB="$IDENTITY_DB"
 export SEED_ANALYTICS_DB="$ANALYTICS_DB"
 export SEED_CLICKHOUSE_HOST="$CLICKHOUSE_HOST"
 export SEED_CLICKHOUSE_HTTP_PORT="$CLICKHOUSE_HTTP_PORT"
+export SEED_CLICKHOUSE_PROTOCOL="$CLICKHOUSE_PROTOCOL"
 export SEED_CLICKHOUSE_USER="$CLICKHOUSE_USER"
 export SEED_CLICKHOUSE_DATABASE="$CLICKHOUSE_DATABASE"
+export SEED_CLICKHOUSE_CLUSTER_MODE="$CLICKHOUSE_CLUSTER_MODE"
+export SEED_CLICKHOUSE_CLUSTER_NAME="$CLICKHOUSE_CLUSTER_NAME"
 export SEED_TENANT_ID="$TENANT"
 export SEED_DEV_USER_EMAIL="$DEV_EMAIL"
 export SEED_IDP_SOURCE_TYPE="$IDP_SOURCE_TYPE"
@@ -542,6 +581,7 @@ render_seed_manifest() {
     ${SEED_IDENTITY_DB} ${SEED_ANALYTICS_DB}
     ${SEED_CLICKHOUSE_HOST} ${SEED_CLICKHOUSE_HTTP_PORT} ${SEED_CLICKHOUSE_USER}
     ${SEED_CLICKHOUSE_DATABASE}
+    ${SEED_CLICKHOUSE_CLUSTER_MODE} ${SEED_CLICKHOUSE_CLUSTER_NAME}
     ${SEED_TENANT_ID} ${SEED_DEV_USER_EMAIL} ${SEED_IDP_SOURCE_TYPE}
     ${SEED_CROSS_TENANT} ${SEED_FORCE} ${SEED_WINDOW_DAYS} ${SEED_ANCHOR_DATE}
     ${SEED_ORG_HEADCOUNT}
@@ -759,6 +799,97 @@ project_identity() {
   }
 }
 
+# Renders the bronze Job for the connector in $BRONZE_CONNECTOR.
+render_bronze_manifest() {
+  envsubst '
+    ${BRONZE_JOB_NAME} ${BRONZE_CONNECTOR} ${BRONZE_CATALOG_CONFIGMAP}
+    ${BRONZE_DESTINATION_IMAGE}
+    ${SEED_NAMESPACE} ${SEED_IMAGE} ${SEED_DEADLINE_SECONDS} ${SEED_DB_SECRET}
+    ${SEED_CLICKHOUSE_HOST} ${SEED_CLICKHOUSE_HTTP_PORT} ${SEED_CLICKHOUSE_PROTOCOL}
+    ${SEED_CLICKHOUSE_USER} ${SEED_CLICKHOUSE_DATABASE}
+    ${SEED_CLICKHOUSE_CLUSTER_MODE} ${SEED_CLICKHOUSE_CLUSTER_NAME}
+    ${SEED_PULL_SECRETS}
+  ' < "$BRONZE_JOB_TEMPLATE"
+}
+
+# create_bronze_tables — stand every connector's bronze tables up, the way a
+# first sync does: destination-clickhouse over the connector's own `discover`.
+# The catalogue is built HERE because that half needs Docker and a cluster has
+# none; only the destination runs in the cluster. Idempotent — the destination
+# issues CREATE TABLE IF NOT EXISTS, so a re-seed keeps the rows it finds.
+create_bronze_tables() {
+  local stamp config_file name path config_json workdir cm job
+  local -a applied=() failed=()
+
+  config_file="$BOOTSTRAP_DIR/connectors-config.yaml"
+  [[ -f "$config_file" ]] || die "connector config not found at $config_file."
+
+  # shellcheck source=../../scripts/bootstrap-db/lib/connector-catalog.sh
+  source "$BOOTSTRAP_DIR/lib/connector-catalog.sh"
+  # shellcheck source=../../scripts/bootstrap-db/pins.env
+  set -a; source "$BOOTSTRAP_DIR/pins.env"; set +a
+  export BRONZE_DESTINATION_IMAGE="$DESTINATION_CLICKHOUSE_IMAGE"
+
+  stamp="$(date -u +%Y%m%d%H%M%S)"
+  echo "==> creating bronze tables from every connector's catalogue"
+  # A run interrupted before its wait leaks one ConfigMap per connector, and
+  # nothing else reaps them: the Job's TTL does not reach a separate object.
+  kube -n "$NAMESPACE" delete configmap -l "$BRONZE_LABEL" --ignore-not-found >/dev/null 2>&1 || true
+
+  while IFS= read -r name; do
+    path="$(connector_path "$config_file" "$name")"
+    config_json="$(mktemp)"
+    workdir="$(allocate_connector_workdir)"
+    cm="insight-bronze-catalog-${name}-${stamp}"
+    job="insight-bronze-${name}-${stamp}"
+
+    if connector_config_json "$config_file" "$name" > "$config_json" \
+        && build_configured_catalog "$CONNECTORS_DIR/$path" "$config_json" "$workdir" >/dev/null \
+        && kube -n "$NAMESPACE" create configmap "$cm" \
+             --from-file=configured_catalog.json="$workdir/configured_catalog.json" \
+             --from-file=traces.jsonl="$workdir/traces.jsonl" >/dev/null \
+        && kube -n "$NAMESPACE" label configmap "$cm" "$BRONZE_LABEL" >/dev/null; then
+      export BRONZE_CONNECTOR="$name" BRONZE_CATALOG_CONFIGMAP="$cm" BRONZE_JOB_NAME="$job"
+      if render_bronze_manifest | kube apply -f - >/dev/null; then
+        applied+=("$name:$job:$cm")
+      else
+        echo "[$name] could not apply the bronze Job" >&2
+        failed+=("$name")
+      fi
+    else
+      echo "[$name] could not build a catalogue to create tables from" >&2
+      failed+=("$name")
+    fi
+    rm -f "$config_json"
+    rm -rf "$workdir"
+  done < <(connector_names "$config_file")
+
+  # Applied together and waited on afterwards: the Jobs are independent, so the
+  # cost is the slowest one rather than their sum. A stand too small to run
+  # them at once leaves the rest Pending, which the verdict loop sits through.
+  local entry
+  for entry in ${applied[@]+"${applied[@]}"}; do
+    name="${entry%%:*}"
+    job="${entry#*:}"; cm="${job#*:}"; job="${job%%:*}"
+    if wait_for_job "$job"; then
+      echo "[$name] bronze OK"
+    else
+      failed+=("$name")
+    fi
+    kube -n "$NAMESPACE" delete configmap "$cm" --ignore-not-found >/dev/null 2>&1 || true
+  done
+
+  # Every connector is attempted before this reports, so one run names every
+  # failure — the same contract seed-connectors.sh owes the compose path.
+  if (( ${#failed[@]} > 0 )); then
+    echo "ERROR: bronze tables were not created for: ${failed[*]}" >&2
+    echo "       The seed writes bronze and lets dbt build silver from it, so a" >&2
+    echo "       missing table surfaces as 'has no columns' mid-run." >&2
+    return 1
+  fi
+  echo "==> bronze tables ready (${#applied[@]} connectors)"
+}
+
 # --dry-run: print the requested step's manifest and exit, writing nothing.
 if [[ "$DRY_RUN" -eq 1 ]]; then
   dry_job_name="insight-seed-${STEP}-$(date -u +%Y%m%d%H%M%S)"
@@ -824,6 +955,19 @@ LOCAL_MANIFEST="$(compute_local_manifest)" || die "could not compute the seed ma
 # instead of a null for every person — the k8s analogue of dev-compose.sh's
 # cmd_seed, which does the same for the compose stand.
 clear_manifest_configmap
+
+# Before the seed Job: the generators write bronze, so the tables have to be
+# there. Skipped for `identity`, which writes MariaDB alone, and by
+# --no-bronze on a stand whose connectors have already synced.
+case "$STEP" in
+  all|silver)
+    if [[ "$BRONZE" -eq 1 ]]; then
+      create_bronze_tables || exit 1
+    else
+      echo "==> --no-bronze: assuming this stand's connectors have already synced"
+    fi ;;
+esac
+
 run_seed_step "$STEP" || exit 1
 
 case "$STEP" in

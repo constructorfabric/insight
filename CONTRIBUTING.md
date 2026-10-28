@@ -249,7 +249,10 @@ port / user / password, then probes connectivity:
 - **MariaDB** — spins up a transient `mariadb:11.4` container, runs
   `SELECT 1`. Bad credentials abort the wizard.
 - **ClickHouse** — host-side `curl` against the HTTP interface. Same
-  fail-fast.
+  fail-fast. It must be standalone: `./dev-compose.sh up` refuses
+  `CLICKHOUSE_CLUSTER_MODE=true` (`refuse_cluster_mode`); a clustered
+  warehouse is a chart stand, seeded with
+  `src/ingestion/tools/seed/seed-stand.sh`.
 
 When at least one DB is external, the wizard also asks for
 `TENANT_DEFAULT_ID` (UUID in your `persons.insight_tenant_id`) and
@@ -469,11 +472,12 @@ the BambooHR org-chart source so per-caller `/v1/persons/{email}`
 lookups resolve correctly — dev lead sees their 5 reports, CEO sees
 the whole tree.
 
-**Silver content (after `seed silver`):** bronze + silver placeholder
-tables, every `src/ingestion/scripts/migrations/*.sql` applied
-(produces the `insight.*` gold views), ~29k rows across 19 silver
-tables profile-typed per team (`class_git_*` for devs, `class_crm_*`
-for sales, …). The full per-team activity table is in
+**Silver content (after `seed silver`):** the bronze each vendor would
+have delivered, profile-typed per team (`git_*` for devs, `crm_*` for
+sales, …), every `src/ingestion/scripts/migrations/*.sql` applied, and
+then a dbt build over that bronze — so the staging, silver and
+`insight.*` gold relations are the ones the pipeline itself produces,
+not rows the seed asserts. The full per-team activity table is in
 [`insight_seed/profiles.py`](src/ingestion/tools/seed/insight_seed/profiles.py). analytics's
 schema validator flips from "80 metrics error" to "80 ok".
 

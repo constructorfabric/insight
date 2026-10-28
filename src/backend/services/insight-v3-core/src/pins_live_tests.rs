@@ -3,30 +3,33 @@ use std::sync::Arc;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::domain::definition::{DefinitionKind, DefinitionName, Definitions};
-use crate::domain::pins::{MAX_PINS, PinError, Pins};
-use crate::domain::query::metric_query::People;
-use crate::domain::surfaces::Surfaces;
+use crate::domain::access::{Caller, PersonId};
+use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionLabel, Definitions};
+use crate::domain::pins::{self, MAX_PINS, PinError, Pins};
 use crate::live_mariadb::{store_or_skip, unique};
-use crate::store::datasets::memory::MemoryDatasets;
 use crate::store::definitions::MariaDefinitions;
 
-fn dashboard(name: &str) -> DefinitionName {
-    DefinitionName::parse(name).unwrap_or_else(|error| panic!("{error}"))
+fn a_person() -> Caller {
+    Caller::administrator(PersonId::new(Uuid::now_v7()))
 }
 
-fn boards(prefix: &str, count: usize) -> Vec<DefinitionName> {
+fn dashboard(name: &str) -> DefinitionId {
+    DefinitionId::parse(name).unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn boards(prefix: &str, count: usize) -> Vec<DefinitionId> {
     (0..count)
         .map(|index| dashboard(&unique(&format!("{prefix}{index}"))))
         .collect()
 }
 
-async fn stored(store: &MariaDefinitions, names: &[DefinitionName]) {
+async fn stored(store: &MariaDefinitions, names: &[DefinitionId]) {
     for name in names {
         store
-            .put(
+            .create(
                 DefinitionKind::Dashboard,
                 name,
+                &DefinitionLabel::of_id(name),
                 &json!({ "title": "Board", "items": [] }),
             )
             .await
@@ -34,7 +37,7 @@ async fn stored(store: &MariaDefinitions, names: &[DefinitionName]) {
     }
 }
 
-async fn removed(store: &MariaDefinitions, names: &[DefinitionName]) {
+async fn removed(store: &MariaDefinitions, names: &[DefinitionId]) {
     for name in names {
         Definitions::delete(store, DefinitionKind::Dashboard, name)
             .await
@@ -42,21 +45,24 @@ async fn removed(store: &MariaDefinitions, names: &[DefinitionName]) {
     }
 }
 
-async fn pin(store: &MariaDefinitions, person: Uuid, name: &DefinitionName) {
+async fn pin(store: &MariaDefinitions, person: Caller, name: &DefinitionId) {
     store
         .pin(person, name)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
 }
 
-async fn pinned(store: &MariaDefinitions, person: Uuid) -> Vec<String> {
+async fn pinned(store: &MariaDefinitions, person: Caller) -> Vec<String> {
     store
         .pins_of(person)
         .await
         .unwrap_or_else(|error| panic!("{error}"))
+        .into_iter()
+        .map(|listed| listed.id)
+        .collect()
 }
 
-fn spelled(names: &[DefinitionName]) -> Vec<String> {
+fn spelled(names: &[DefinitionId]) -> Vec<String> {
     names.iter().map(|name| name.as_str().to_owned()).collect()
 }
 
@@ -65,7 +71,7 @@ async fn each_person_sees_their_own_pins_oldest_first() {
     let Some(store) = store_or_skip().await else {
         return;
     };
-    let (anna, boris) = (Uuid::now_v7(), Uuid::now_v7());
+    let (anna, boris) = (a_person(), a_person());
     let named = boards("own", 3);
     stored(&store, &named).await;
 
@@ -89,7 +95,7 @@ async fn a_repin_keeps_its_place_and_an_unpin_takes_only_that_one_off() {
     let Some(store) = store_or_skip().await else {
         return;
     };
-    let (anna, boris) = (Uuid::now_v7(), Uuid::now_v7());
+    let (anna, boris) = (a_person(), a_person());
     let named = boards("repin", 3);
     stored(&store, &named).await;
     for person in [anna, boris] {
@@ -118,7 +124,7 @@ async fn a_person_pins_twenty_dashboards_and_no_more() {
     let Some(store) = store_or_skip().await else {
         return;
     };
-    let (anna, boris) = (Uuid::now_v7(), Uuid::now_v7());
+    let (anna, boris) = (a_person(), a_person());
     let named = boards("cap", MAX_PINS + 1);
     stored(&store, &named).await;
     for name in &named[..MAX_PINS] {
@@ -144,8 +150,8 @@ async fn pinning_or_unpinning_a_dashboard_that_is_not_there_is_refused() {
     };
     let nowhere = dashboard(&unique("nowhere"));
 
-    let pinned_nothing = store.pin(Uuid::now_v7(), &nowhere).await;
-    let unpinned_nothing = store.unpin(Uuid::now_v7(), &nowhere).await;
+    let pinned_nothing = store.pin(a_person(), &nowhere).await;
+    let unpinned_nothing = pins::unpin(&store, a_person(), &nowhere).await;
 
     for refused in [pinned_nothing, unpinned_nothing] {
         assert!(
@@ -156,41 +162,37 @@ async fn pinning_or_unpinning_a_dashboard_that_is_not_there_is_refused() {
 }
 
 #[tokio::test]
-async fn a_rename_carries_every_pin_in_place_and_a_delete_drops_them() {
+async fn a_pin_answers_the_name_and_a_delete_drops_it() {
     let Some(store) = store_or_skip().await else {
         return;
     };
-    let (anna, boris) = (Uuid::now_v7(), Uuid::now_v7());
-    let named = boards("carried", 3);
-    let renamed = dashboard(&unique("renamed"));
+    let anna = a_person();
+    let named = boards("listed", 2);
     stored(&store, &named).await;
-    for person in [anna, boris] {
-        for name in &named {
-            pin(&store, person, name).await;
-        }
+    for name in &named {
+        pin(&store, anna, name).await;
     }
-    let people = People::new("identity");
-    let datasets = MemoryDatasets::at(chrono::Utc::now());
-    let surfaces = Surfaces::new(&store, &datasets, "insight_datasets", &people);
 
-    surfaces
-        .rename(DefinitionKind::Dashboard, &named[1], &renamed)
+    let listed = store
+        .pins_of(anna)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
-    let carried = [pinned(&store, anna).await, pinned(&store, boris).await];
-    removed(&store, &[named[0].clone(), renamed.clone()]).await;
-    let left = [pinned(&store, anna).await, pinned(&store, boris).await];
+    removed(&store, &named[..1]).await;
+    let left = pinned(&store, anna).await;
 
-    removed(&store, &named[2..]).await;
-    for held in carried {
-        assert_eq!(
-            held,
-            spelled(&[named[0].clone(), renamed.clone(), named[2].clone()])
-        );
-    }
-    for held in left {
-        assert_eq!(held, spelled(&named[2..]));
-    }
+    removed(&store, &named[1..]).await;
+    let answered: Vec<(&str, &str)> = listed
+        .iter()
+        .map(|one| (one.id.as_str(), one.name.as_str()))
+        .collect();
+    assert_eq!(
+        answered,
+        [
+            (named[0].as_str(), named[0].as_str()),
+            (named[1].as_str(), named[1].as_str())
+        ]
+    );
+    assert_eq!(left, spelled(&named[1..]));
 }
 
 #[tokio::test]
@@ -199,7 +201,7 @@ async fn pins_racing_for_the_last_places_never_pass_the_cap() {
         return;
     };
     let store = Arc::new(store);
-    let anna = Uuid::now_v7();
+    let anna = a_person();
     let held = boards("held", MAX_PINS - 3);
     let racing = boards("racing", 8);
     stored(&store, &held).await;
@@ -233,4 +235,62 @@ async fn pins_racing_for_the_last_places_never_pass_the_cap() {
     assert!(failures.is_empty(), "{failures:#?}");
     assert_eq!((landed, refused), (3, 5));
     assert_eq!(total, MAX_PINS);
+}
+
+#[tokio::test]
+async fn a_pin_lands_only_while_the_grant_it_relies_on_stands() {
+    use crate::domain::access::{Grantee, Level, Owner};
+    use crate::domain::definition::Change;
+    use crate::domain::sharing::{Grants as _, Shared};
+
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let owner = a_person();
+    let member = Caller::member(PersonId::new(Uuid::now_v7()));
+    let board = dashboard(&unique("granted"));
+    store
+        .apply(&[
+            Change::Create(
+                DefinitionKind::Dashboard,
+                board.clone(),
+                DefinitionLabel::of_id(&board),
+                json!({ "title": "Board", "items": [] }),
+            ),
+            Change::Own {
+                dashboard: board.clone(),
+                owner: owner.person,
+            },
+        ])
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let shared = Shared::Dashboard(&board);
+    store
+        .grant(
+            shared,
+            Grantee::Person(member.person),
+            Level::Viewer,
+            owner.person,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let while_granted = store.pin(member, &board).await;
+    store
+        .withdraw(shared, Grantee::Person(member.person), owner.person)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    let unpinned = store.unpin(member, &board).await;
+    let after = store.pin(member, &board).await;
+
+    removed(&store, std::slice::from_ref(&board)).await;
+    assert!(while_granted.is_ok(), "{while_granted:?}");
+    assert!(
+        matches!(unpinned, Ok(true)),
+        "the pin stayed through the withdrawal"
+    );
+    assert!(
+        matches!(after, Err(PinError::DashboardNotFound(_))),
+        "{after:?}"
+    );
+    let _ = Owner::Unowned;
 }

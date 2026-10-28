@@ -35,39 +35,28 @@
     {%- set models = [] -%}
     {%- for node in graph.nodes.values() -%}
       {%- if tag_name in node.tags and node.resource_type == 'model' and node.unique_id != model.unique_id -%}
-        {%- if node.config.materialized == 'ephemeral' -%}
-          {#- Ephemeral models have no DB relation; dbt inlines them as CTE on ref(). -#}
+        {#- Readable, not merely there: a stale view over bronze that has gone
+            still has a relation, and unioning it fails the whole class. The
+            rule is `unbuildable_models`' own, so an arm this run excludes is
+            the same arm the union leaves out. -#}
+        {%- if relation_is_readable(node) -%}
           {%- do models.append(node) -%}
         {%- else -%}
-          {%- set rel = adapter.get_relation(database=none, schema=node.schema, identifier=node.alias or node.name) -%}
-          {%- if rel -%}
-            {%- do models.append(node) -%}
-          {%- else -%}
-            {{ log("union_by_tag: skipping " ~ node.name ~ " (staging table not yet materialised)", info=True) }}
-          {%- endif -%}
+          {{ log("union_by_tag: skipping " ~ node.name ~ " (not materialised, or it reads a relation that is gone)", info=True) }}
         {%- endif -%}
       {%- endif -%}
     {%- endfor -%}
 
     {%- if models | length == 0 -%}
-      {%- set this_rel = adapter.get_relation(database=this.database, schema=this.schema, identifier=this.identifier) -%}
-      {%- if this_rel -%}
-        {#- No source staging tables exist for this tag, but the silver target
-            was materialised by a previous run. Emit an empty SELECT against
-            the existing target so the surrounding model SQL stays
-            schema-compatible (the outer "SELECT * FROM (...) WHERE _version > ..."
-            keeps working because we hand it the real target schema, just with
-            zero rows). The silver materialise becomes a no-op; downstream
-            keeps running smoothly. -#}
-        {{ log("union_by_tag: no source tables for tag '" ~ tag_name ~ "' — emitting empty select from existing target to preserve schema", info=True) }}
-        SELECT * FROM {{ this }} WHERE 1 = 0
-      {%- else -%}
-        {{ exceptions.raise_compiler_error(
-            "union_by_tag: no source tables for tag '" ~ tag_name ~ "' and target " ~ this ~
-            " has not been materialised yet. First run requires at least one configured connector with materialised staging — "
-            "configure a connector that contributes to this silver target, or exclude this model from the run."
-        ) }}
-      {%- endif -%}
+      {#- No source staging tables for this tag: hand the surrounding model SQL
+          the target's own schema with zero rows, so the materialise is a no-op
+          and the outer "WHERE _version > ..." still compiles.
+
+          A class nobody feeds and no earlier run materialised has no shape to
+          emit at all — `unbuildable_models` keeps it out of the run, and
+          reaching here means something selected it by hand. -#}
+      {{ log("union_by_tag: no source tables for tag '" ~ tag_name ~ "' — emitting empty select from the target to preserve schema", info=True) }}
+      SELECT * FROM {{ this }} WHERE 1 = 0
     {%- else -%}
       SELECT * FROM (
       {%- for m in models %}

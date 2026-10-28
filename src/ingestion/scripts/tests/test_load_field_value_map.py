@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import urllib.error
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from load_field_value_map import (
+    CLUSTER_SESSION_SETTINGS,
     DEFAULT_TIMEOUT,
     Default,
     Mapping,
@@ -411,6 +413,59 @@ class TestTsvEscaping:
         ]
         body = insert_statement(mappings, recorded_by="gitops").partition("FORMAT TSV\n")[2]
         assert body.count("\n") == 2
+
+
+class TestHttpTopology:
+    """The anti-join reads the stored keys back through whichever replica answers,
+    so on a cluster every request carries a quorum on the write and sequential
+    consistency on the read; a single node sends the request it always has."""
+
+    @pytest.fixture(autouse=True)
+    def _credentials(self, monkeypatch):
+        monkeypatch.setenv("CLICKHOUSE_URL", "http://ch:8123")
+        monkeypatch.setenv("CLICKHOUSE_USER", "insight")
+        monkeypatch.setenv("CLICKHOUSE_PASSWORD", "secret")
+        monkeypatch.delenv("CLICKHOUSE_CLUSTER_MODE", raising=False)
+
+    @staticmethod
+    def _recorder(seen):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return b""
+
+        def urlopen(request, timeout=None):
+            seen.append(request.full_url)
+            return Response()
+
+        return urlopen
+
+    @staticmethod
+    def _settings(url: str) -> dict[str, str]:
+        return {name: values[0] for name, values in urllib.parse.parse_qs(urllib.parse.urlparse(url).query).items()}
+
+    @pytest.mark.parametrize("flag", ["true", "True", " yes ", "1", "on"])
+    def test_every_request_on_a_cluster_carries_the_session(self, monkeypatch, flag):
+        monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", flag)
+        seen: list[str] = []
+        execute, fetch_rows = _http_client(urlopen=self._recorder(seen))
+        execute("INSERT INTO config.field_value_map VALUES ('x')")
+        fetch_rows("SELECT 1")
+        assert [self._settings(url) for url in seen] == [CLUSTER_SESSION_SETTINGS] * 2, f"flag {flag!r}"
+
+    @pytest.mark.parametrize("flag", [None, "false", "", "0", "off"])
+    def test_a_single_node_gets_the_bare_request(self, monkeypatch, flag):
+        if flag is not None:
+            monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", flag)
+        seen: list[str] = []
+        execute, _ = _http_client(urlopen=self._recorder(seen))
+        execute("SELECT 1")
+        assert seen == ["http://ch:8123/"], f"flag {flag!r}"
 
 
 class TestHttpTimeout:

@@ -1,13 +1,16 @@
-//! One check of one rule: run the metric as an on-demand run would, read the
-//! number, record what was found.
+//! One check of one rule: run the metric as an on-demand run would, judge
+//! the condition over its rows, record what was found.
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use super::condition::{Condition, evaluate};
 use super::rule::{AlertRule, AlertStore, AlertStoreError, Recorded, Recording};
-use super::scalar::{Outcome, UnknownReason, classify};
+use super::scalar::{Outcome, UnknownReason};
+use crate::domain::definition::DefinitionId;
 use crate::domain::metric_run::MetricRuns;
 use crate::domain::query::metric_query::MetricRunError;
+use crate::domain::query::time_window::WindowRequest;
 use crate::domain::surfaces::CustomError;
 
 /// The check a scheduler hands a worker: which rule, at which revision.
@@ -69,52 +72,105 @@ impl<'a> Evaluator<'a> {
             return Ok(Evaluated::Skipped(Skipped::RevisionReplaced));
         }
 
-        let outcome = self.observe(&rule).await;
+        let evaluated_at = Utc::now();
+        let observed = self.observe(&rule, evaluated_at).await;
         let recorded = self
             .store
             .record(Recording {
                 rule_id: rule.id,
                 revision: rule.revision,
-                outcome,
-                evaluated_at: Utc::now(),
+                outcome: observed.outcome,
+                metric_name: observed.metric_name,
+                evaluated_at,
             })
             .await?;
 
         Ok(Evaluated::Recorded(recorded))
     }
 
-    async fn observe(&self, rule: &AlertRule) -> Outcome {
+    async fn observe(&self, rule: &AlertRule, evaluated_at: DateTime<Utc>) -> Observed {
+        let label = rule.spec.name.as_str();
         let window = match rule.spec.window() {
             Ok(window) => window,
             Err(error) => {
-                tracing::warn!(rule = %rule.spec.name.as_str(), %error, "an alert's range no longer parses");
-                return Outcome::Unknown(UnknownReason::CompileFailed);
+                tracing::warn!(rule = %label, %error, "an alert's range no longer parses");
+                return Observed {
+                    outcome: Outcome::Unknown(UnknownReason::CompileFailed),
+                    metric_name: None,
+                };
             }
         };
 
-        match self.runs.run(&rule.spec.metric, &window).await {
-            Ok(result) => classify(&result, &rule.spec.column, &rule.spec.condition),
-            Err(error) => Outcome::Unknown(unknown_because(&rule.spec.name, &error)),
-        }
+        observe(
+            &self.runs,
+            label,
+            &rule.spec.metric,
+            &window,
+            &rule.spec.condition,
+            &rule.spec.context_columns,
+            evaluated_at,
+        )
+        .await
+    }
+}
+
+/// What one check found, and what the metric was called when it was read.
+#[derive(Debug)]
+pub(crate) struct Observed {
+    pub(crate) outcome: Outcome,
+    /// None when the metric could not be run.
+    pub(crate) metric_name: Option<String>,
+}
+
+/// What a check of `metric` over `window` finds now: the run judged by the
+/// condition, or the unknown a run that did not answer is. The groups, the
+/// row bound and the name come from the same definition the rows did.
+/// `label` names the rule, or what asked, in the log; `context` the columns
+/// the witness keeps beside the condition's.
+pub(crate) async fn observe(
+    runs: &MetricRuns<'_>,
+    label: &str,
+    metric: &DefinitionId,
+    window: &WindowRequest,
+    condition: &Condition,
+    context: &[String],
+    evaluated_at: DateTime<Utc>,
+) -> Observed {
+    match runs.run_named(metric, window).await {
+        Ok(run) => Observed {
+            outcome: evaluate(
+                &run.result,
+                condition,
+                &run.columns.groups,
+                context,
+                run.columns.imposed_limit,
+                evaluated_at,
+            ),
+            metric_name: Some(run.name),
+        },
+        Err(error) => Observed {
+            outcome: Outcome::Unknown(unknown_because(label, &error)),
+            metric_name: None,
+        },
     }
 }
 
 /// Which unknown a failed run is. What the warehouse said is logged here,
 /// where the rule is known, and never stored.
-fn unknown_because(rule: &super::rule::AlertName, error: &CustomError) -> UnknownReason {
+fn unknown_because(rule: &str, error: &CustomError) -> UnknownReason {
     match error {
         CustomError::NotFound { .. } => UnknownReason::MetricMissing,
         CustomError::Run(MetricRunError::Timeout) => UnknownReason::Timeout,
         CustomError::Run(source) => {
-            tracing::error!(rule = %rule.as_str(), error = ?source, "an alert's metric did not run");
+            tracing::error!(rule = %rule, error = ?source, "an alert's metric did not run");
             UnknownReason::RunFailed
         }
         CustomError::Store(source) => {
-            tracing::error!(rule = %rule.as_str(), error = ?source, "an alert's metric could not be read");
+            tracing::error!(rule = %rule, error = ?source, "an alert's metric could not be read");
             UnknownReason::RunFailed
         }
         CustomError::Datasets(source) => {
-            tracing::error!(rule = %rule.as_str(), error = ?source, "an alert's dataset could not be read");
+            tracing::error!(rule = %rule, error = ?source, "an alert's dataset could not be read");
             UnknownReason::RunFailed
         }
         CustomError::Body(_)
@@ -123,8 +179,10 @@ fn unknown_because(rule: &super::rule::AlertName, error: &CustomError) -> Unknow
         | CustomError::DatasetNotReady(_)
         | CustomError::Unanswerable(_)
         | CustomError::InUse { .. }
+        | CustomError::NotEditor
+        | CustomError::NotOwner
         | CustomError::Widget(_) => {
-            tracing::warn!(rule = %rule.as_str(), %error, "an alert's metric does not compile");
+            tracing::warn!(rule = %rule, %error, "an alert's metric does not compile");
             UnknownReason::CompileFailed
         }
     }

@@ -44,15 +44,12 @@ permissions:
   contents: read
   actions: read
 
-# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
-# from a branch of this repository takes the ephemeral ARC scale set, a fork's
-# takes a GitHub-hosted runner, everything else takes the shared self-hosted
-# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# Routing: .github/runners/README.md.
 jobs:
   # routegen unit/golden tests + committed-config up-to-date assertion + nginx -t.
   config:
     name: routegen + nginx -t
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -146,7 +143,7 @@ jobs:
   # needs python + pytest (+ uv for the realm generator).
   e2e:
     name: e2e (5 scenarios)
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -160,7 +157,7 @@ jobs:
       # conftest.py generates the Keycloak import realm through
       # `uv run --project`: the generator is a console script of the seed
       # package, and uv resolves and installs it on first use.
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           save-cache: ${{ github.event_name == 'push' }}
 

@@ -1,0 +1,145 @@
+"""The relations the `on-run-start` hooks create follow the install's topology.
+
+Three hooks registered in `dbt_project.yml` create the operator-authored `config`
+relations and `identity.identity_persons` by handing raw DDL to `run_query`. That
+bypasses the adapter, so the one thing the adapter does for a model's engine never
+reaches them: the `Replicated` prefix. A hand-spelled engine here would create a
+local table on one replica of a cluster -- the failure epic #2010 exists to remove
+-- while every model around it replicated correctly.
+
+The renderer lives in `dbt/macros/insight_engine.sql`, and the source rules below
+are what keeps the hooks using it. No hook names a cluster: the relations live in
+`Replicated` databases, which replay DDL on every replica and reject `ON CLUSTER`
+on table DDL. The warehouse rules then read what a dbt run actually created, which
+is what a broken interpolation would show up in.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+from insight_datapath import clickhouse as ch
+from insight_datapath.dbt_runner import DbtRunner
+from insight_datapath.instance import InstanceConfig
+from insight_datapath.topology import Topology, from_environment
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+#: The `on-run-start` hooks that emit DDL.
+RAW_DDL_MACROS = sorted((REPO_ROOT / "src/ingestion/dbt/macros").glob("create_*.sql"))
+
+#: Any member of the MergeTree family, spelled out.
+MERGE_TREE_FAMILY = re.compile(r"\b\w*MergeTree\b")
+
+#: The DDL keyword a table's engine follows.
+ENGINE_CLAUSE = re.compile(r"\bENGINE\s*=")
+
+#: The clause a Replicated database rejects on table DDL, however it is spelled or
+#: interpolated.
+CLUSTER_CLAUSE = re.compile(r"ON\s+CLUSTER|on_cluster", re.IGNORECASE)
+
+#: The name a macro interpolates its engine under, and the renderer it is bound to.
+ENGINE_NAME, ENGINE_RENDERER = "engine", "insight_engine("
+
+#: Every relation the hooks alone create, and the family each is created with.
+HOOK_RELATIONS = {
+    "config.ai_credit_pricing": "ReplacingMergeTree",
+    "config.ai_seat_tier_map": "ReplacingMergeTree",
+    "config.field_value_defaults": "ReplacingMergeTree",
+    "config.field_value_map": "ReplacingMergeTree",
+    "config.task_field_roles": "ReplacingMergeTree",
+    "config.task_value_map": "ReplacingMergeTree",
+    "identity.identity_persons": "MergeTree",
+}
+
+
+def _lines(macro: Path) -> list[tuple[int, str]]:
+    return list(enumerate(macro.read_text(encoding="utf-8").splitlines(), start=1))
+
+
+@pytest.fixture(scope="session")
+def topology() -> Topology:
+    """The topology this instance's creators were configured with."""
+    return from_environment()
+
+
+@pytest.fixture(scope="session")
+def hook_engines(instance_cfg: InstanceConfig, dbt_runner: DbtRunner) -> dict[str, str]:
+    """The engine family ClickHouse reports for each relation the hooks created.
+
+    Taken after a dbt run rather than after the schema fixture: `on-run-start` is
+    the only thing that creates these, so without one there would be nothing here
+    and every rule below would pass on an empty warehouse.
+    """
+    wanted = ", ".join(f"'{relation}'" for relation in HOOK_RELATIONS)
+    rows = ch.query(
+        instance_cfg,
+        "SELECT concat(database, '.', name) AS relation, engine FROM system.tables "
+        f"WHERE relation IN ({wanted})",
+    )
+    return {str(relation): str(engine) for relation, engine in rows}
+
+
+def test_the_hooks_are_the_macros_this_file_reads() -> None:
+    """A rename would otherwise leave every source rule below passing vacuously."""
+    assert [macro.name for macro in RAW_DDL_MACROS] == [
+        "create_ai_config_tables.sql",
+        "create_identity_persons.sql",
+        "create_task_config_tables.sql",
+    ]
+
+
+@pytest.mark.parametrize("macro", RAW_DDL_MACROS, ids=lambda macro: macro.name)
+def test_a_hook_never_spells_a_merge_tree_family_in_its_ddl(macro: Path) -> None:
+    """A literal family is invisible to the topology: it stays plain on a cluster,
+    where a plain tree replicates nothing and lives on the one replica that ran it."""
+    literals = [
+        f"{macro.relative_to(REPO_ROOT)}:{number}"
+        for number, line in _lines(macro)
+        if ENGINE_CLAUSE.search(line) and MERGE_TREE_FAMILY.search(line)
+    ]
+
+    assert not literals, f"engine spelled into the DDL rather than interpolated: {literals}"
+
+
+@pytest.mark.parametrize("macro", RAW_DDL_MACROS, ids=lambda macro: macro.name)
+def test_a_hook_never_names_a_cluster(macro: Path) -> None:
+    """Inside a Replicated database the server rejects ON CLUSTER on table DDL, and
+    with one replica down the clause waits out the distributed DDL timeout first."""
+    qualified = [
+        f"{macro.relative_to(REPO_ROOT)}:{number}"
+        for number, line in _lines(macro)
+        if CLUSTER_CLAUSE.search(line)
+    ]
+
+    assert not qualified, f"DDL names a cluster: {qualified}"
+
+
+@pytest.mark.parametrize("macro", RAW_DDL_MACROS, ids=lambda macro: macro.name)
+def test_what_a_hook_interpolates_comes_from_the_shared_renderer(macro: Path) -> None:
+    """The rule above only checks that a name is interpolated; this is what makes the
+    name mean what the rest of the release renders for the same topology."""
+    source = macro.read_text(encoding="utf-8")
+
+    assert f"{ENGINE_NAME} = {ENGINE_RENDERER}" in source, (
+        f"{macro.name} binds engine to something else"
+    )
+
+
+def test_a_dbt_run_creates_every_operator_authored_relation(hook_engines: dict[str, str]) -> None:
+    """A model reads an operator's bindings as a source, so a hook that failed to
+    create one fails the build rather than reporting an unmapped value."""
+    assert set(hook_engines) == set(HOOK_RELATIONS)
+
+
+def test_an_operator_authored_relation_carries_the_family_its_topology_calls_for(
+    hook_engines: dict[str, str], topology: Topology
+) -> None:
+    """Read as the family name alone: a `Replicated*` engine also names its keeper
+    path and replica, and both are an operator's choice no test may pin."""
+    prefix = "Replicated" if topology is Topology.REPLICATED else ""
+    expected = {name: f"{prefix}{family}" for name, family in HOOK_RELATIONS.items()}
+
+    assert hook_engines == expected

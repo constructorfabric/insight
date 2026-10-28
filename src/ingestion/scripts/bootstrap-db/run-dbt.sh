@@ -36,4 +36,15 @@ trap 'rm -rf "${PROFILES_DIR}"' EXIT
   --correlated-subqueries --profiles-dir "${PROFILES_DIR}"
 
 cd "${DBT_DIR}"
-"${DBT_BIN}" run --profiles-dir "${PROFILES_DIR}" "$@"
+
+# A model whose bronze has not arrived yet cannot be built, and dbt fixes its
+# node set before the first model runs — so the skip is decided here, not in the
+# model. On a warehouse that has everything this resolves to nothing.
+UNBUILDABLE="$("${DBT_BIN}" --quiet run-operation list_unbuildable_models --profiles-dir "${PROFILES_DIR}")"
+read -r -a _unbuildable <<< "${UNBUILDABLE}"
+_exclude=()
+if [[ ${#_unbuildable[@]} -gt 0 ]]; then
+  _exclude=(--exclude "${_unbuildable[@]}")
+fi
+
+"${DBT_BIN}" run --profiles-dir "${PROFILES_DIR}" ${_exclude[@]+"${_exclude[@]}"} "$@"

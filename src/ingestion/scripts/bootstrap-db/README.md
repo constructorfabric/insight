@@ -7,7 +7,7 @@ How it works: for every connector the source image runs `discover` (every connec
 ## Prerequisites
 
 - `docker`, `jq`, `yq` (mikefarah v4)
-- `python3.12` or `python3.11` on `PATH` — `run-dbt.sh` builds a local `.venv` with the pinned dbt from it (parity with the toolbox image; dbt-core 1.10 does not run on newer pythons). A `python -m venv`-capable interpreter is required (uv-managed pythons lack `ensurepip`; with those, pre-build the venv via `uv venv --seed .venv && .venv/bin/pip install dbt-core==<pin> dbt-clickhouse==<pin>`).
+- `python3.12` or `python3.11` on `PATH` — `run-dbt.sh` builds a local `.venv` with the pinned dbt from it (the pin the toolbox and seed images install; the pinned dbt does not run on interpreters newer than 3.12). A `python -m venv`-capable interpreter is required (uv-managed pythons lack `ensurepip`; with those, pre-build the venv via `uv venv --seed .venv && .venv/bin/pip install dbt-core==<pin> dbt-clickhouse==<pin>`).
 - ClickHouse reachable under `CLICKHOUSE_HOST` both from this machine (dbt) and from inside docker containers (destination connector). For a ClickHouse running on this machine use the machine's LAN IP (`ipconfig getifaddr en0`) — `host.docker.internal` resolves inside containers but not on the macOS host itself.
 
 ## Local ClickHouse for testing
@@ -22,7 +22,7 @@ docker run -d --name bootstrap-db-clickhouse -p 8123:8123 \
   "${CLICKHOUSE_SERVER_IMAGE}"
 ```
 
-`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1` lets the `insight` admin manage access (`CREATE ROLE`/`CREATE USER`/`GRANT`) so the run provisions the read-only `presentation_ro` role and the grant-less `presentation` user (`provision-presentation-access.sh` → `presentation-role.sql`, #1963/#1964); the official image disables it by default. The compose stack (`docker-compose.yml`) and the bitnami prod admin already have access-management, and provisioning is guarded (an admin lacking it is skipped with a warning), so this flag is only needed for this bare throwaway container. The `presentation` user is created only when `CLICKHOUSE_PRESENTATION_PASSWORD` is set (unset in this bare run → role only, which is fine for a snapshot); analytics connects as it in the real stacks. The same pattern provisions the SELECT-only `grafana_ro` role and its grant-less `grafana` user for the Grafana ClickHouse datasource (`provision-grafana-access.sh` → `grafana-role.sql`, #2888), gated on `CLICKHOUSE_GRAFANA_PASSWORD`.
+`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1` lets the `insight` admin manage access (`CREATE ROLE`/`CREATE USER`/`GRANT`) so the run provisions the read-only `presentation_ro` role and the grant-less `presentation` user (`provision-presentation-access.sh` → `presentation-role.sql`, #1963/#1964); the official image disables it by default. The compose stack (`docker-compose.yml`) and the bitnami prod admin already have access-management, and provisioning is guarded (an admin lacking it is skipped with a warning), so this flag is only needed for this bare throwaway container. On a clustered warehouse (`CLICKHOUSE_CLUSTER_MODE=true`) the guard is stricter: no replicated access backend is a hard error from `create-databases.sh` unless `CLICKHOUSE_PROVISION_ACCESS=false`. The `presentation` user is created only when `CLICKHOUSE_PRESENTATION_PASSWORD` is set (unset in this bare run → role only, which is fine for a snapshot); analytics connects as it in the real stacks. The same pattern provisions the SELECT-only `grafana_ro` role and its grant-less `grafana` user for the Grafana ClickHouse datasource (`provision-grafana-access.sh` → `grafana-role.sql`, #2888), gated on `CLICKHOUSE_GRAFANA_PASSWORD`.
 
 Point `.env` at it: `CLICKHOUSE_HOST=$(ipconfig getifaddr en0)` (the LAN IP — reachable both for dbt on this machine and for the connector containers; see Prerequisites), `CLICKHOUSE_PORT=8123`, `CLICKHOUSE_PROTOCOL=http`, user/password/database `insight`. Check what got created:
 
@@ -101,19 +101,23 @@ CLICKHOUSE_USER=insight
 CLICKHOUSE_PASSWORD=insight
 CLICKHOUSE_DATABASE=insight
 EOF
+# A clustered warehouse adds CLICKHOUSE_CLUSTER_MODE=true and
+# CLICKHOUSE_CLUSTER_NAME=<cluster>; every step reads the pair.
+# create-databases.sh then requires Keeper, the {shard}/{replica} macros, the
+# named cluster, REMOTE on the user and a replicated access backend; a missing
+# backend is a hard ERROR unless CLICKHOUSE_PROVISION_ACCESS=false.
 
 until curl -sf "http://localhost:8123/ping" >/dev/null; do sleep 1; done
 
 ./bootstrap-db.sh connectors-config.yaml
 
-set -a; source .env; set +a   # dump-ddl.sh expects the CLICKHOUSE_* vars exported
-./dump-ddl.sh              # refresh ../connectors-ddl/*.sql; commit the diff if any
+set -a; source .env; set +a   # check-field-parity.py expects the CLICKHOUSE_* vars exported
 ./check-field-parity.py    # exit 1 on field-contract failures
 
 docker rm -f bootstrap-db-clickhouse
 ```
 
-Roughly 15–20 minutes end to end, most of it connector `discover` pulls and dbt. Skip the last `docker rm` to keep the warehouse around for poking at (`dump-ddl.sh` and `check-field-parity.py` can be re-run against it as long as the container lives).
+Roughly 15–20 minutes end to end, most of it connector `discover` pulls and dbt. Skip the last `docker rm` to keep the warehouse around for poking at (`check-field-parity.py` can be re-run against it as long as the container lives).
 
 ## Auditing staging → silver field parity
 
@@ -123,7 +127,7 @@ A silver `class_*` model is a `UNION ALL` of every staging model tagged `silver:
 ./check-field-parity.py
 ```
 
-`.github/workflows/connectors-ddl.yml` runs this audit on every PR against `main` that touches `src/ingestion/**` (fork PRs included — every connector discovers on fake values, so the lane needs no secrets) and on every commit that lands on `main`, over a warehouse the lane rebuilds from scratch with `bootstrap-db.sh` — the same run whose re-dump gates the committed snapshot. The push run catches what a PR cannot: two PRs green apart can still leave `main` drifted, since each was validated against its own merge-base.
+`.github/workflows/field-parity.yml` runs this audit on every PR against `main` that touches `src/ingestion/**` (fork PRs included — every connector discovers on fake values, so the lane needs no secrets) and on every commit that lands on `main`, over a warehouse the lane rebuilds from scratch with `bootstrap-db.sh`. The push run catches what a PR cannot: two PRs green apart can still leave `main` drifted, since each was validated against its own merge-base.
 
 Like `bootstrap-db.sh`, it sources the `.env` next to it and lets those values win over the inherited environment — a stale `CLICKHOUSE_HOST` exported in the current shell would otherwise beat the file the rest of the pipeline runs on. Pass `--no-env-file` to audit another cluster (say dev) from the exported variables instead.
 
@@ -139,11 +143,11 @@ Contributors whose physical table is not owned by dbt would be covered too: an e
 |---|---|
 | `generate-connectors-config.sh [pattern]` | Finds `descriptor.yaml` files, extracts every required config field from the connector spec, writes the config YAML with fake values to stdout. |
 | `seed-connectors.sh <config.yaml>` | Iterates over the config file, resolves `value`/`env` fields into a config JSON, calls `create-connector-tables.sh` per connector. A failing connector does not stop the loop — every one is attempted and every failure is listed — but the script exits non-zero if any failed. |
-| `create-connector-tables.sh <connector-dir> <config.json>` | One connector: `discover` → configured catalog (append_dedup, primary key `unique_key`) → `destination-clickhouse write` with a zero-record stream-status input (creates empty ReplacingMergeTree tables). Set `DOCKER_NETWORK` when `CLICKHOUSE_HOST` is an address only a container on that network can reach — a compose stand, whose published port is the host's, not the destination's. |
+| `create-connector-tables.sh <connector-dir> <config.json>` | One connector: `discover` → configured catalog (append_dedup, primary key `unique_key`) → `destination-clickhouse write` with a zero-record stream-status input (creates empty ReplacingMergeTree tables). The destination config comes from `reconcile-connectors/python/compose_destination_config.py`, the composer reconcile's Airbyte destination and the seed Job also use, so `CLICKHOUSE_CLUSTER_MODE=true` + `CLICKHOUSE_CLUSTER_NAME=<cluster>` (default `false` / empty: a standalone server) creates `ReplicatedReplacingMergeTree` tables `ON CLUSTER`. Set `DOCKER_NETWORK` when `CLICKHOUSE_HOST` is an address only a container on that network can reach — a compose stand, whose published port is the host's, not the destination's. |
+| `lib/connector-catalog.sh` | Sourced, not run. Builds the configured catalogue from a connector's `discover`, and resolves a connector's config block. Needs Docker; needs no ClickHouse — which is what lets a cluster with no Docker apply the same catalogue through a Job (`tools/seed/seed-stand.sh`) instead of a container here. |
 | `bootstrap-db.sh <config.yaml>` | Sources `pins.env` and `.env` (if present), runs `seed-connectors.sh`, runs all dbt models, runs `../apply-ch-migrations.sh`. |
-| `run-dbt.sh [dbt args]` | Helper: writes a profiles.yml from the `CLICKHOUSE_*` variables through `../dbt_profiles.py` — the one writer every dbt step shares — and runs `dbt run` in `src/ingestion/dbt`. |
+| `run-dbt.sh [dbt args]` | Helper: writes a profiles.yml from the `CLICKHOUSE_*` variables through `../dbt_profiles.py` — the one writer every dbt step shares — and runs `dbt run` in `src/ingestion/dbt`. Models whose bronze has not arrived yet are asked for first (`dbt run-operation list_unbuildable_models`) and passed to `--exclude`, so a warehouse missing a connector builds what it can instead of failing: silver is a projection of bronze, and a class nobody feeds is not built at all. `src/ingestion/dbt/tests/cold_start` covers that path. |
 | `check-field-parity.py [--manifest PATH]` | Audits every staging contributor against its silver union target (column set, positional order, exact type) plus manifest-vs-warehouse coverage. Same `CLICKHOUSE_*` env contract as the other scripts. Non-zero exit on any finding. |
-| `dump-ddl.sh` | Dumps `SHOW CREATE` for the `identity`/`silver`/`insight` databases (tables and views) and the gold-referenced `staging` tables into `../connectors-ddl/*.sql` — the committed snapshot that `../create-warehouse-placeholders.sh` applies on fresh clusters. **Bronze is deliberately not dumped:** `destination-clickhouse` is its only creator, and a pre-created table would win the `CREATE ... IF NOT EXISTS` race and keep whatever shape the snapshot gave it. **Run it manually** after `bootstrap-db.sh` (see step above) whenever a schema changes, and commit the diff. `.github/workflows/connectors-ddl.yml` re-runs the whole pipeline on every `src/ingestion/**` PR and on every commit to `main`, and fails loudly when the committed snapshot no longer matches, with the full diff inline and as the `connectors-ddl-drift` artifact. Regenerate with the one-block recipe above (no credentials needed) and commit the result. |
 
 ## Image pins (pins.env)
 

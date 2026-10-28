@@ -27,6 +27,24 @@ traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
 kind = "PRD"
+path = "docs/domain/insight-v3/specs/sharing/PRD.md"
+name = "Insight v3 Dashboard Ownership and Sharing PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/insight-v3/specs/sharing/DESIGN.md"
+name = "Insight v3 Dashboard Ownership and Sharing Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/insight-v3/specs/ADR/0010-definitions-are-addressed-by-generated-identity.md"
+name = "ADR-0010: Definitions Are Addressed by Generated Identity, Names Are Labels"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
 path = "docs/components/backend/authenticator/PRD.md"
 name = "Authenticator Service PRD"
 traceability = "DOCS-ONLY"

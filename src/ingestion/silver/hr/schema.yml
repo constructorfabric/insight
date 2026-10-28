@@ -146,7 +146,9 @@ models:
     description: >
       Daily pre-aggregation of focus_time_pct and dev_time_h per active employee.
       Joins class_collab_meeting_activity (Zoom + M365 Teams meetings) with class_hr_working_hours.
-      One row per person per working day. Incremental with 3-day lookback for late events.
+      One row per person per working day. Incremental: rebuilds the last three days and
+      every older day with a meeting row newer than its source_version. A working-hours
+      change reaches older days only on a full refresh.
       Users without HR working hours data default to 8h/day.
     columns:
       - name: insight_tenant_id
@@ -167,7 +169,7 @@ models:
         tests:
           - not_null
       - name: meetings_count
-        description: "Number of Zoom meeting participation events on this day"
+        description: "Meetings and one-to-one calls attended on this day, across Teams and Zoom"
         tests:
           - not_null
       - name: meeting_hours
@@ -184,5 +186,9 @@ models:
           - not_null
       - name: dev_time_h
         description: "working_hours_per_day - meeting_hours, capped at 0 minimum"
+        tests:
+          - not_null
+      - name: source_version
+        description: "Newest class_collab_meeting_activity _version this row was derived from"
         tests:
           - not_null

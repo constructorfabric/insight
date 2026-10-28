@@ -1,7 +1,9 @@
 {% macro snapshot(source_ref, unique_key_col, check_cols, check_raw_data_cols=[], check_raw_data_all=false, raw_data_exclude_keys=[]) %}
+{{ config(tags=['history'], full_refresh=false) }}
 {#
   Incremental append-only SCD2 snapshot.
-  Appends a new row only when tracked columns change.
+  Appends a new row only when tracked columns change. Refuses a full refresh:
+  earlier versions exist nowhere else, so a rebuild from the source loses them.
 
   Args:
     source_ref:           source() or ref() to the raw table
@@ -65,7 +67,10 @@ WITH source_data AS (
         'snapshot(): column drift between ' ~ source_ref ~ ' and persisted ' ~ this ~ '. ' ~
         'Missing in source: [' ~ missing_in_source | join(', ') ~ ']. ' ~
         'New in source: [' ~ missing_in_target | join(', ') ~ ']. ' ~
-        'Migrate or rebuild the snapshot table before appending — a blind append would corrupt it.'
+        'A blind append would corrupt it, and a --full-refresh does not rebuild a snapshot: ' ~
+        'add the new columns to the persisted table with ALTER TABLE ... ADD COLUMN (a guarded heal in ' ~
+        'apply-ch-migrations.sh) and drop the vanished ones only once nothing reads them; dropping the ' ~
+        'table loses the history it alone holds.'
     ) }}
 {%- endif %}
 

@@ -13,6 +13,7 @@ import type {
   MetricResultViewKind,
   MetricResultsRequest,
   MetricViewRequest,
+  NotReadyReason,
   PeerView,
   PeriodView,
   PersonAbsenceContext,
@@ -155,6 +156,12 @@ export type NormalizedMetricResult = {
   histogram?: HistogramView;
   /** Set when a view's computation failed server-side (first error wins). */
   error?: Pick<MetricErrorView, "code" | "message">;
+  /**
+   * Set when the data behind a view has not been built yet. Neither a failure
+   * nor a reading: a card showing `0` here would report a measurement nobody
+   * took, so the card renders "no data yet" instead.
+   */
+  notReady?: NotReadyReason;
   drilldown?: MetricResult["drilldown"];
   selection?: MetricResult["selection"];
 };
@@ -264,6 +271,11 @@ export function normalizeMetricResult(
         // unset and downstream reads are optional-chained already. First
         // error wins — one message per metric is enough to render.
         normalized.error ??= { code: view.code, message: view.message };
+        break;
+      case "not_ready":
+        // Same slot discipline as a failure, but it is not one: the relation
+        // behind the view has not been built yet.
+        normalized.notReady ??= view.reason;
         break;
       default:
         // Forward-compat: the server may ship new view kinds before this
@@ -497,6 +509,7 @@ export function mergeNormalizedResults(
         existing.peer = { ...result.peer, values: [...result.peer.values] };
       }
       existing.error ??= result.error;
+      existing.notReady ??= result.notReady;
     }
   }
   return out;

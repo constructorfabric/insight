@@ -76,8 +76,8 @@ mod log_leak_tests;
 /// Every wait a handler can make is individually bounded (git budgets, the
 /// in-connection preparation wait, the read-lock wait), but a hold that is
 /// never released — a leaked guard, a wedged permit holder — turns the NEXT
-/// request's wait into forever: the connector has no client timeout, so one
-/// such request froze a multi-day sync invisibly. This ceiling converts that
+/// request's wait into forever, and the connector has no client timeout to
+/// cut it off. This ceiling converts that
 /// class into a bounded, retryable answer. It must stay above every legal
 /// inline duration; the longest is [`crate::engine::store::PREPARATION_WAIT`].
 const HANDLER_BUDGET: Duration = Duration::from_hours(1);
@@ -107,7 +107,7 @@ async fn answer_within(budget: Duration, request: Request, next: Next) -> Respon
     error::handler_timed_out()
 }
 
-/// Record §4.3's per-endpoint histograms for every request that reached a
+/// Record the per-endpoint request histograms for every request that reached a
 /// route, and log the request line.
 ///
 /// The metric label is the matched ROUTE, not the request path: a path would
@@ -151,7 +151,6 @@ async fn observe(request: Request, next: Next) -> Response {
     response
 }
 
-/// Title/version/description of the emitted document.
 fn openapi_info() -> OpenApiInfo {
     OpenApiInfo {
         title: "Insight Git CLI Proxy API".to_owned(),
@@ -349,6 +348,47 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(data::list_authors)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/v1/authors/changes")
+        .operation_id("git_cli_proxy.authors.changes")
+        .summary("Commit authors changed since a point, across the source's repositories")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed(
+            "changed_since",
+            false,
+            "Exclusive lower bound on changed_at (RFC 3339); absent reads from the beginning",
+            "string",
+        )
+        .query_param_typed(
+            "committed_since",
+            false,
+            "An author whose newest readable commit predates this instant (RFC 3339, or YYYY-MM-DD as midnight UTC) is omitted",
+            "string",
+        )
+        .query_param_typed(
+            "page_size",
+            false,
+            "1..=1000, default 1000; larger values are clamped",
+            "integer",
+        )
+        .query_param_typed(
+            "page_token",
+            false,
+            "Cursor from a previous page; fixes the walk's high-water mark",
+            "string",
+        )
+        .json_response_with_schema::<data::AuthorChangesPage>(
+            openapi,
+            StatusCode::OK,
+            "One page of changed authors",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_429(openapi)
+        .error_500(openapi)
+        .handler(data::list_author_changes)
+        .register(router, openapi);
+
     OperationBuilder::get("/v1/branches")
         .operation_id("git_cli_proxy.branches.list")
         .summary("Branch heads, ascending by name")
@@ -488,6 +528,7 @@ mod tests {
             "git_cli_proxy.commits.list",
             "git_cli_proxy.file_changes.list",
             "git_cli_proxy.branches.list",
+            "git_cli_proxy.authors.changes",
         ] {
             assert!(
                 ids.iter().any(|id| id == expected),
@@ -502,6 +543,7 @@ mod tests {
             "/v1/commits?repo=x",
             "/v1/file-changes?repo=x",
             "/v1/branches?repo=x",
+            "/v1/authors/changes",
         ] {
             assert_eq!(
                 status_of(uri, None, true).await,
@@ -522,6 +564,7 @@ mod tests {
             "/v1/commits?repo=x",
             "/v1/file-changes?repo=x",
             "/v1/branches?repo=x",
+            "/v1/authors/changes",
         ] {
             assert_eq!(
                 status_of(uri, Some("t0ken"), false).await,
@@ -548,10 +591,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_change_feed_refuses_a_malformed_instant_or_cursor() {
+        for uri in [
+            "/v1/authors/changes?changed_since=yesterday",
+            "/v1/authors/changes?committed_since=last-year",
+            "/v1/authors/changes?page_token=!!!",
+        ] {
+            assert_eq!(
+                status_of(uri, Some("t0ken"), true).await,
+                StatusCode::BAD_REQUEST,
+                "must refuse: {uri}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_change_feed_of_a_source_nobody_fetched_is_an_empty_page() {
+        let response = response_for(
+            "/v1/authors/changes?changed_since=2026-01-01T00:00:00Z",
+            Some("t0ken"),
+            true,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let Ok(body) = axum::body::to_bytes(response.into_body(), usize::MAX).await else {
+            panic!("body must be readable")
+        };
+        let page: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        assert_eq!(
+            page,
+            serde_json::json!({"items": [], "next_page_token": null}),
+            "an empty index answers an empty page, not an error"
+        );
+    }
+
+    #[tokio::test]
     async fn every_rejection_carries_the_problem_envelope() {
-        // §4.4 promises one envelope for every failure. Two paths used to
-        // escape it: the bearer layer answered with an empty body, and axum
-        // rejected a bad query string as text/plain before any handler ran.
+        // Every failure carries the problem envelope, including the bearer
+        // layer's rejection and axum's query-string rejection, which both
+        // answer before any handler runs.
         let cases: Vec<(&str, &str, Option<&str>, bool)> = vec![
             ("no bearer", "/v1/commits?repo=x", None, true),
             ("wrong bearer", "/v1/commits?repo=x", Some("wrong"), true),

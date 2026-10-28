@@ -754,6 +754,7 @@ models:
                   - total_chat_messages
                   - channel_posts
                   - direct_and_group_messages
+                  - split_chat_messages
                   - emails_sent
                   - emails_received
                   - emails_read
@@ -766,7 +767,7 @@ models:
                   - meetings_organized
                   - adhoc_meetings_attended
                   - scheduled_meetings_attended
-                  - focus_hours
+                  - workday_meeting_hours
                   - working_hours
                   - chat_active_day
                   - meeting_free_day
@@ -782,15 +783,15 @@ models:
           - not_null
       - name: subject_key
         description: >
-          Distinct-count subject: the date for active_day, the modality for
-          active_modality. NULL for sum and presence measures.
+          Distinct-count subject: the date for active_day and chat_active_day,
+          the modality for active_modality. NULL for sum and presence measures.
       - name: dimensions
         description: >
           Array(Tuple(key, value, label)). `tool` carries the collaboration
           tool discriminator (data_source with the insight_ prefix stripped)
           with static product labels; `scope` (files_shared only) carries the
           recipient scope (internal/external). Empty for whole-person
-          measures (focus_hours, working_hours, meeting_free_day,
+          measures (workday_meeting_hours, working_hours, meeting_free_day,
           active_modality).
 
   - name: task_metric_observations
@@ -825,19 +826,28 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Source identity of the measured entity — `entity_type + entity_id`
-          identifies it, and for a person that is the normalized source email.
-          The analytics runtime resolves it to a canonical person through
-          `identity.person_map` at query time; identity_resolution_coverage
-          reports how much of this relation currently resolves.
+          Normalized email of the assignee or worklog author, '' when the
+          tracker states none for the account. The analytics runtime resolves
+          the row account-first, falling back to `identity.person_map` on this
+          email; identity_resolution_coverage reports how much of this relation
+          currently resolves.
         tests:
           - not_null
       - name: account_source_type
-        description: "Account-binding source family; '' — no account-keyed facts here"
+        description: >
+          Tracker account family in the identity store's vocabulary (jira,
+          youtrack, github); '' for a tracker with no account bindings.
+        tests:
+          - not_null
       - name: account_source_id
-        description: "Raw connector source id of the account binding; '' here"
+        description: >
+          Raw connector source id of the tracker account; the runtime hashes it
+          in lockstep with identity's `insight_source_id` minting.
       - name: account_id
-        description: "Source-native account id; '' keeps resolution on the email path"
+        description: >
+          Tracker account id of the assignee or worklog author. Rows resolve
+          account-first through `identity.account_assignment`; an account
+          bound to the excluded person attributes to nobody.
       - name: metric_date
         description: >
           Observation date: close date for closed-issue measures, transition
@@ -928,17 +938,32 @@ models:
   - name: task_issue_state
     description: >
       Per-issue lifecycle state for the task-delivery observation pipeline:
-      one row per assignee-resolved issue with tenant/email attribution, the
-      current status category, the close time, and the scalar fields the
-      observation measures read. Materialized so the field-history pivot runs
-      once per build instead of once per measure branch.
+      one row per assigned issue with the assignee's tracker account and email,
+      the current status category, the close time, and the scalar fields the
+      observation measures read. The per-person attribution root, not a census:
+      unassigned and deleted issues have no row; an assignee missing from the
+      user directory keeps its issues under the account. Materialized so the
+      field-history pivot runs once per build instead of once per measure
+      branch.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
         tests:
           - not_null
       - name: entity_id
-        description: "Lowercased assignee email"
+        description: >
+          Normalized assignee email; '' when the tracker states none for the
+          account (deleted, deactivated or app accounts).
+        tests:
+          - not_null
+      - name: account_source_type
+        description: "Assignee account family in the identity store's vocabulary; '' when it has no bindings"
+        tests:
+          - not_null
+      - name: account_source_id
+        description: "Raw connector source id of the assignee account"
+      - name: account_id
+        description: "Tracker account id of the assignee"
         tests:
           - not_null
       - name: issue_id
@@ -991,19 +1016,28 @@ models:
   - name: task_worklog_flow
     description: >
       Per-person per-day time flow for the task-delivery observation pipeline:
-      in-progress seconds split from the status spans by calendar day, full
-      outer joined with the worklog seconds logged per author. One row per
-      (tenant, entity, date); either figure is 0 on a day the other side has
-      no rows for.
+      in-progress seconds split from the status spans by calendar day, summed
+      with the worklog seconds logged per author. One row per person-day: per
+      (tenant, email, date) where the tracker states an email, per (tenant,
+      account, date) where it states none; either figure is 0 on a day the
+      other side has no rows for. The account columns are set only on a day
+      a single account made, so the row resolves account-first; a day several
+      accounts of one email made resolves through the email.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
         tests:
           - not_null
       - name: entity_id
-        description: "Lowercased email of the assignee or worklog author"
+        description: "Normalized email of the assignee or worklog author; '' when the account has none"
         tests:
           - not_null
+      - name: account_source_type
+        description: "Tracker account family in the identity store's vocabulary"
+      - name: account_source_id
+        description: "Raw connector source id of the tracker account"
+      - name: account_id
+        description: "Tracker account id of the assignee or worklog author"
       - name: metric_date
         description: "Calendar day the seconds fall on"
         tests:

@@ -60,7 +60,8 @@ alerts:
   #   APP__gears__insight_v3_core__config__alerts__destinations__<name>__provider
   #   APP__gears__insight_v3_core__config__alerts__destinations__<name>__<field>
   # Discord: webhook_url. Telegram: bot_token, chat_id.
-  # Zulip: site_url, bot_email, api_key, stream, topic.
+  # Slack: bot_token, channel. Zulip: site_url, bot_email, api_key, stream,
+  # topic.
   existingSecret: ""
 
 # Optional hook Secret for fresh umbrella installs. GitOps deployments

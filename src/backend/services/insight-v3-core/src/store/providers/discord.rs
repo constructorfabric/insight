@@ -32,7 +32,7 @@ impl Provider for Discord {
             .post(self.webhook_url.expose_secret())
             .query(&[("wait", "true")])
             .json(&serde_json::json!({
-                "content": message.text,
+                "content": message.markdown,
                 "allowed_mentions": { "parse": [] },
             }))
             .send()

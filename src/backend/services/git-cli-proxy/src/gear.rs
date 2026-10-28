@@ -6,7 +6,7 @@
 //! `api-gateway` gear, because that gear wraps every route in a hardcoded 30s
 //! `tower` timeout with no config knob — and a page read legitimately runs for
 //! minutes fetching blobs from origin ([`crate::engine::runner::Timeouts`]),
-//! so under that host a working request returned `504` and lost its work.
+//! so under that host a working request would answer `504` and lose its work.
 //! Re-adding the gear silently reinstates the ceiling.
 
 use std::path::Path;
@@ -49,7 +49,6 @@ impl GitCliProxyGear {
             .ok_or_else(|| anyhow::anyhow!("git-cli-proxy gear not initialized"))
     }
 
-    /// Lifecycle entry: bind, report ready, serve until cancelled.
     async fn serve(
         self: Arc<Self>,
         cancel: CancellationToken,
@@ -100,7 +99,7 @@ impl Gear for GitCliProxyGear {
             )
         })?;
 
-        // §4.3: the gauges observe a cached snapshot the store refreshes on
+        // The gauges observe a cached snapshot the store refreshes on
         // every admission check, so the collector's callback does no I/O.
         crate::engine::metrics::register_disk_gauges(store.gauges());
 

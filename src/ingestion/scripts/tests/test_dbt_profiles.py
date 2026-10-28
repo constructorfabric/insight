@@ -2,7 +2,7 @@
 
 Each step picks a target name and a warehouse; everything else — the timeouts,
 the session settings, the adapter's `cluster` key — comes from here, so a
-topology decision reaches the deploy hook, bootstrap, the seeder and both test
+topology decision reaches the gold build, bootstrap, the seeder and both test
 rigs without being restated in any of them.
 
 Run: pytest src/ingestion/scripts/tests
@@ -110,9 +110,9 @@ def test_a_cluster_name_without_the_flag_names_no_cluster(monkeypatch) -> None:
     assert "cluster" not in _output()
 
 
-def test_a_replicated_database_needs_no_clause(monkeypatch) -> None:
-    """The epic's chosen mechanism: the database engine distributes the DDL,
-    so the flag stands alone and no clause is written."""
+def test_a_flag_without_a_name_writes_no_clause(monkeypatch) -> None:
+    """The chart refuses that pair, so this records only that the writer neither
+    invents a cluster nor half-writes one if it is ever reached."""
     monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", "true")
 
     assert on_cluster() == ""
@@ -121,14 +121,75 @@ def test_a_replicated_database_needs_no_clause(monkeypatch) -> None:
 
 def test_a_clustered_install_reads_what_the_step_before_it_wrote(monkeypatch) -> None:
     """Without a quorum on the write and sequential consistency on the read, a
-    replica that has not caught up answers the next model with a partial table."""
+    replica that has not caught up answers the next model with a partial table;
+    a parallel quorum voids that read, a Replicated table refuses a mutation
+    with a subquery, and CH 25.7.5 loses a CTE on INSERT ... SELECT."""
     monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", "true")
 
-    assert _output()["custom_settings"] == {"insert_quorum": "auto", "select_sequential_consistency": 1}
+    assert _output()["custom_settings"] == {
+        "insert_quorum": "auto",
+        "insert_quorum_parallel": 0,
+        "select_sequential_consistency": 1,
+        "allow_nondeterministic_mutations": 1,
+        "parallel_distributed_insert_select": 0,
+        "mutations_sync": 2,
+        "alter_sync": 2,
+        "lightweight_deletes_sync": 2,
+    }
 
 
-def test_a_single_node_waits_for_no_quorum() -> None:
+def test_a_clustered_install_waits_for_every_replica_on_a_mutation(monkeypatch) -> None:
+    """The adapter's default is 3 (active replicas), and a lightweight DELETE
+    takes its wait from `lightweight_deletes_sync`, not `mutations_sync`; the
+    session states all three, as scripts/lib/ch-exec.sh does for the hook."""
+    monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", "true")
+
+    settings = _output()["custom_settings"]
+
+    assert (settings["mutations_sync"], settings["alter_sync"], settings["lightweight_deletes_sync"]) == (2, 2, 2)
+
+
+def test_a_single_node_leaves_the_mutation_wait_to_the_adapter() -> None:
+    """On one node every value above 0 waits for that node; the setting is a
+    cluster statement and appears only where the flag is on."""
     assert "custom_settings" not in _output()
+
+
+def test_a_clustered_install_tells_the_adapter_its_databases_are_replicated(monkeypatch) -> None:
+    """The adapter decides ON CLUSTER from this key alone, never from the server:
+    without it every model's DDL carries the clause a Replicated database rejects."""
+    monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", "true")
+
+    assert _output()["database_engine"] == "Replicated"
+
+
+def test_a_clustered_install_skips_the_exchange_probe(monkeypatch) -> None:
+    """The probe's CREATE / EXCHANGE / DROP reach different replicas behind a
+    load balancer and leak its tables there; `cluster_mode` is the adapter's
+    switch for it."""
+    monkeypatch.setenv("CLICKHOUSE_CLUSTER_MODE", "true")
+
+    output = _output()
+
+    assert output["cluster_mode"] is True
+    assert "check_exchange" not in output
+
+
+def test_a_single_node_writes_the_connection_and_nothing_else() -> None:
+    """The standalone profile is the one every install runs today; the topology
+    keys appear only where the flag is on."""
+    assert set(_output()) == {
+        "type",
+        "threads",
+        "host",
+        "port",
+        "schema",
+        "user",
+        "password",
+        "secure",
+        "send_receive_timeout",
+        "connect_timeout",
+    }
 
 
 def test_the_connection_comes_from_host_and_port() -> None:
@@ -156,7 +217,7 @@ def test_a_step_that_speaks_https_connects_securely(monkeypatch) -> None:
 def test_a_step_that_knows_only_a_url_reads_the_connection_out_of_it(
     monkeypatch, url: str, expected_port: int, expected_secure: bool
 ) -> None:
-    """The deploy hook and the seeder carry `CLICKHOUSE_URL`, not a host/port pair."""
+    """The gold build and the seeder carry `CLICKHOUSE_URL`, not a host/port pair."""
     monkeypatch.setenv("CLICKHOUSE_URL", url)
 
     connection = connection_from_env()

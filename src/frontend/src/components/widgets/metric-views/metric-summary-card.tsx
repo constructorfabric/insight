@@ -20,6 +20,7 @@ import {
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
 import { breakdownHeading } from "@/lib/metrics/dimension-labels";
+import { displayedParts } from "@/lib/metrics/shares";
 import { seriesColors } from "@/lib/series-colors";
 import { evidenceSelection } from "@/api/metric-drilldown-client";
 import { TEXT_FIGURE } from "@/lib/type-scale";
@@ -71,6 +72,14 @@ export function MetricSummaryCard({
       value: row.value ?? 0,
     }))
     .sort((a, b) => b.value - a.value);
+  const shownValues =
+    value == null
+      ? rows.map((row) => row.value)
+      : displayedParts(
+          rows.map((row) => row.value),
+          value,
+          metric.format
+        );
   const colorsBySeed = seriesColors(rows.map((row) => row.colorSeed));
   const rowsTotal = rows.reduce((sum, row) => sum + row.value, 0) || 1;
   const breakdownLabel = breakdownHeading(metric.breakdown?.dimensions ?? []);
@@ -139,7 +148,7 @@ export function MetricSummaryCard({
                   ))}
                 </div>
                 <ul className="flex flex-col gap-1 text-xs">
-                  {rows.map((row) => (
+                  {rows.map((row, index) => (
                     <li
                       key={row.key}
                       className="flex items-center justify-between gap-2"
@@ -156,7 +165,7 @@ export function MetricSummaryCard({
                       </span>
                       <span className="shrink-0 text-muted-foreground tabular-nums">
                         {formatMetricValue(
-                          row.value,
+                          shownValues[index],
                           metric.format,
                           metric.unit
                         )}

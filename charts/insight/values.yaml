@@ -218,14 +218,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.10.08.10.09-1e40c10" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.10.27.16.26-59c61a7" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.10.08.10.09-1e40c10" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.10.27.16.26-59c61a7" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   airbyteSync:
     pollIntervalSeconds: 30
     statusUnreadableThresholdSeconds: 1800
@@ -287,14 +287,30 @@ clickhouse:
   protocol: http # http|https for the Bronze airbyte/destination-clickhouse 2.x connection
   # Topology of the target ClickHouse (epic #2010). The single pair of values
   # every creator in this release reads to decide the DDL it emits.
-  #   clusterMode: true  -> `Replicated*` table engines instead of the plain
-  #                         MergeTree family, so DDL and data reach every
-  #                         replica. Requires ClickHouse Keeper.
-  #   clusterName:       -> the cluster the `ON CLUSTER <name>` clause names.
-  # The two are independent: a database created with the `Replicated` engine
-  # replicates DDL on its own, so an empty clusterName under clusterMode: true
-  # is a valid clustered install.
-  # Defaults are a standalone single node, which is the DDL shipped today.
+  #   clusterMode: true  -> `Replicated` database engines and `Replicated*`
+  #                         table engines, so DDL and data reach every replica.
+  #   clusterName:       -> the cluster the `ON CLUSTER <name>` clause names,
+  #                         where one is emitted (the CREATE DATABASEs, the
+  #                         bronze heals, the destination); a bare identifier.
+  # The two travel together: clusterMode without a clusterName is refused at
+  # template time, because replicated DDL that reaches one node leaves every
+  # other replica without the relation.
+  # What the cluster must provide, each checked by the deploy before any DDL
+  # (README "ClickHouse topology"): Keeper; the named cluster in every node's
+  # <remote_servers>, with an interserver secret; {shard} / {replica} macros;
+  # SQL-created access stored in Keeper (<user_directories> <replicated>), or
+  # provisionAccess: false below; `host` at a load-balancer endpoint, and the
+  # deploy user holding REMOTE ON *.*. createDatabases: false changes none of
+  # it: with runMigrations on, the post-install Hook creates and checks the
+  # databases either way.
+  # The dbt builds, the hook's heals and the persons sync write with a
+  # quorum: with two replicas, a replica restart stops those until it is
+  # back (the destination's, dataset and usage-event writes carry no quorum
+  # and keep landing); three replicas tolerate one down.
+  # Flipping the pair converts nothing that already stands: an existing
+  # install converts its databases first (docs/operations/
+  # CLICKHOUSE-CLUSTER-CONVERSION.md), and the deploy refuses until it has.
+  # Defaults are a standalone single node.
   clusterMode: false
   clusterName: ""
   database: "" # MUST be set
@@ -303,27 +319,30 @@ clickhouse:
     # Fixed Secret name — chart convention (one Insight per namespace).
     name: "insight-db-creds"
     key: "clickhouse-password"
-  # Databases the chart's pre-install Hook Job (clickhouse-init-svcdbs-job)
-  # creates against the external ClickHouse via CREATE DATABASE IF NOT
-  # EXISTS. Connector-specific bronze schemas (bronze_jira, bronze_slack, …)
-  # are created by ingestion pipelines themselves; only schemas required
-  # at startup live here.
-  initDatabases:
-    - insight
-    # Empty writable namespace for new gold / saved-query results / scratch
-    # (#1964). The read-only presentation_ro role + grant-less `presentation`
-    # user are provisioned by the clickhouse-migrate Hook (apply-ch-migrations
-    # -> provision-presentation-access.sh).
-    - presentation
-    # Adoption events (#2573). Here rather than in the migration alone because
-    # the presentation_ro grant references it before that migration runs.
-    - product_usage
-    # Dataset record tables (insight-v3-core). The service's migrate step
-    # creates it too; listed so the database stands before the first deploy.
-    - insight_datasets
+  # When true (default), a pre-install/pre-upgrade Hook Job
+  # (clickhouse-databases-job) runs src/ingestion/scripts/create-databases.sh
+  # against the external ClickHouse: every database the release holds, plus the
+  # roles and grant-less users that read them, before the app pods roll. WHICH
+  # databases is not an operator decision — the script names them, and it is
+  # the only site that creates one (#3556). Connector bronze databases
+  # (bronze_jira, bronze_slack, …) are not among them: the Airbyte destination
+  # creates those at sync time.
+  # Set false where the warehouse is provisioned out of band. The deploy hook
+  # still converges them later (clickhouse-migrate -> apply-ch-migrations.sh),
+  # so the service user needs CREATE DATABASE either way.
+  createDatabases: true
+  # When true (default), create-databases.sh also provisions the roles and
+  # grant-less users that read those databases (presentation, grafana, the
+  # MCP explorer and the custom assistant's reader), from both Jobs that run
+  # it. Set false where access is the operator's: a cluster whose ClickHouse
+  # stores access entities locally (no `<replicated>` user directory) cannot
+  # take them from one deploy, so the operator creates them on every replica
+  # and this release creates, grants and revokes nothing. The topology guard
+  # then only notes the missing replicated directory instead of refusing.
+  provisionAccess: true
   # When true (default), a post-install/post-upgrade Hook Job
-  # (clickhouse-migrate-job) applies the gold-view migrations
-  # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against
+  # (clickhouse-migrate-job) applies the schema migrations
+  # (src/ingestion/scripts/migrations/*.sql) and the guarded heals against
   # the external ClickHouse, using ingestion.toolboxImage. Set false to own
   # CH migrations out-of-band (e.g. a managed-warehouse change process).
   # The Job also no-ops if an overlay explicitly clears ingestion.toolboxImage.
@@ -684,7 +703,8 @@ insightV3Core:
   # joins it to the URL itself, so it may hold any character.
   # Destinations are named and referenced by rules. Each names its provider
   # and carries what that provider needs. Discord: webhook_url. Telegram:
-  # bot_token, chat_id. Zulip: site_url, bot_email, api_key, stream, topic.
+  # bot_token, chat_id. Slack: bot_token, channel. Zulip: site_url,
+  # bot_email, api_key, stream, topic.
   # Names are lowercase (a-z, 0-9, _ and -): the service lowercases every
   # environment key before it reads it, and the render refuses a name that
   # would come out different.

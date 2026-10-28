@@ -1,7 +1,7 @@
 # The service is consumed ONLY by Airbyte connector pods: it is never routed
 # through the platform gateway, never called by another service, and never by a
-# user. Two things enforce that — the NetworkPolicy below and the service's own
-# bearer token (`proxy_token` in the config Secret).
+# user. The service's own bearer token (`proxy_token` in the config Secret)
+# enforces that; the optional NetworkPolicy below adds defence in depth.
 
 # Must be 1. The chart refuses to render anything else: the per-repository
 # locks, the LRU state and the single-flight map live in one process, so a
@@ -99,8 +99,8 @@ cache:
   # an operator anyway for egress and DNS.
   allowedRepoHosts: []
 
-# CA bundle mounted for git's TLS verification. Set `secretName` to a Secret
-# holding `ca.pem` and point cache.caCertPath at the mounted file.
+# Name of a Secret holding `ca.pem`, mounted at /etc/insight/git-ca for git's
+# TLS verification; point cache.caCertPath at /etc/insight/git-ca/ca.pem.
 caCertSecret: ""
 
 # Pre-provisioned Secret carrying the gears-rust host's leaf-config overrides

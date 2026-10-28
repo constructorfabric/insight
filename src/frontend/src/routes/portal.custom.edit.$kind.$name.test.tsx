@@ -9,18 +9,14 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
   return {
     ...actual,
+    fetchDefinition: vi.fn(),
     fetchMetric: vi.fn(),
-    fetchWidget: vi.fn(),
-    fetchDashboard: vi.fn(),
     fetchDataset: vi.fn(),
-    fetchTables: vi.fn(),
-    fetchTable: vi.fn(),
     deleteDataset: vi.fn(),
-    renameDefinition: vi.fn(),
     putDefinition: vi.fn(),
-    fetchMetricNames: vi.fn(),
-    fetchWidgetNames: vi.fn(),
-    fetchDashboardNames: vi.fn(),
+    fetchMetrics: vi.fn(),
+    fetchWidgets: vi.fn(),
+    fetchDashboards: vi.fn(),
     fetchDatasetNames: vi.fn(),
   };
 });
@@ -64,19 +60,32 @@ function sharing(client: QueryClient) {
     createElement(QueryClientProvider, { client }, children);
 }
 
-const NO_NAMES = { names: [], total: 0 };
+const NO_ITEMS = { items: [], total: 0 };
+
+/** The document the editor holds, once it has opened. */
+async function shownDocument(): Promise<unknown> {
+  const text = await screen.findByLabelText(/as text/i);
+  return JSON.parse((text as HTMLTextAreaElement).value);
+}
+
+function storedMetric(body: Record<string, unknown>) {
+  return { id: "lines_per_day", name: "Lines per day", body };
+}
 
 beforeEach(() => {
   vi.resetAllMocks();
   portalRouter.reset("/portal/custom/edit/metrics/lines_per_day");
-  for (const names of [
-    customClient.fetchMetricNames,
-    customClient.fetchWidgetNames,
-    customClient.fetchDashboardNames,
-    customClient.fetchDatasetNames,
+  for (const page of [
+    customClient.fetchMetrics,
+    customClient.fetchWidgets,
+    customClient.fetchDashboards,
   ]) {
-    vi.mocked(names).mockResolvedValue(NO_NAMES);
+    vi.mocked(page).mockResolvedValue(NO_ITEMS);
   }
+  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
+    names: [],
+    total: 0,
+  });
   vi.mocked(customClient.putDefinition).mockResolvedValue(undefined);
   vi.mocked(customClient.fetchDataset).mockImplementation(async (name) => ({
     name,
@@ -85,33 +94,47 @@ beforeEach(() => {
 });
 
 describe("/portal/custom/edit/$kind/$name", () => {
-  it("opens the stored definition in the fields its kind admits", async () => {
-    vi.mocked(customClient.fetchMetric).mockResolvedValue({
-      definition: {
-        dataset: "commits",
-        fields: [{ field: "lines", type: "int", agg: "sum", as_name: "total" }],
-        limit: 25,
-      },
-    });
+  it("opens the stored definition as its text", async () => {
+    const body = {
+      dataset: "commits",
+      fields: [{ field: "lines", type: "int", agg: "sum", as_name: "total" }],
+      limit: 25,
+    };
+    vi.mocked(customClient.fetchDefinition).mockResolvedValue(
+      storedMetric(body)
+    );
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByLabelText("Dataset")).toHaveValue("commits");
-    expect(screen.getByLabelText("Limit")).toHaveValue(25);
-    expect(customClient.fetchMetric).toHaveBeenCalledWith("lines_per_day");
+    expect(await shownDocument()).toEqual(body);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      "Lines per day"
+    );
+    expect(customClient.fetchDefinition).toHaveBeenCalledWith(
+      "metrics",
+      "lines_per_day"
+    );
   });
 
   it("returns to the catalogue once it is stored", async () => {
     const user = userEvent.setup();
-    vi.mocked(customClient.fetchMetric).mockResolvedValue({
-      definition: { dataset: "commits", fields: [] },
-    });
+    vi.mocked(customClient.fetchDefinition).mockResolvedValue(
+      storedMetric({ dataset: "commits", fields: [] })
+    );
 
     render(<Component />, { wrapper });
-    await screen.findByLabelText("Dataset");
+    await screen.findByLabelText(/as text/i);
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
+    await waitFor(() =>
+      expect(customClient.putDefinition).toHaveBeenCalledWith(
+        "metrics",
+        "lines_per_day",
+        "Lines per day",
+        { dataset: "commits", fields: [] }
+      )
+    );
     await waitFor(() =>
       expect(portalRouter.navigations).toContainEqual({
         to: "/portal/custom/metrics",
@@ -122,7 +145,7 @@ describe("/portal/custom/edit/$kind/$name", () => {
   // A definition may be gone by the time its editor is opened, and an empty
   // form would store a new one over the reader's back.
   it("says so rather than offering an empty form when it is not there", async () => {
-    vi.mocked(customClient.fetchMetric).mockRejectedValue(
+    vi.mocked(customClient.fetchDefinition).mockRejectedValue(
       new CustomApiError(404, { detail: "no such metric" })
     );
 
@@ -131,7 +154,7 @@ describe("/portal/custom/edit/$kind/$name", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "no such metric"
     );
-    expect(screen.queryByLabelText("Dataset")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/as text/i)).not.toBeInTheDocument();
   });
 
   it("says so for a path naming a kind there is no editor for", () => {
@@ -153,23 +176,23 @@ describe("/portal/custom/edit/$kind/$name", () => {
         defaultOptions: { queries: { retry: false, staleTime: 60 * 60_000 } },
       })
     );
-    vi.mocked(customClient.fetchMetric).mockResolvedValueOnce({
-      definition: { dataset: "commits", fields: [] },
-    });
+    vi.mocked(customClient.fetchDefinition).mockResolvedValueOnce(
+      storedMetric({ dataset: "commits", fields: [] })
+    );
 
     const first = render(<Component />, { wrapper: session });
-    expect(await screen.findByLabelText("Dataset")).toHaveValue("commits");
+    expect(await shownDocument()).toMatchObject({ dataset: "commits" });
     first.unmount();
 
-    vi.mocked(customClient.fetchMetric).mockResolvedValueOnce({
-      definition: { dataset: "pull_requests", fields: [] },
-    });
+    vi.mocked(customClient.fetchDefinition).mockResolvedValueOnce(
+      storedMetric({ dataset: "pull_requests", fields: [] })
+    );
 
     render(<Component />, { wrapper: session });
 
-    expect(await screen.findByLabelText("Dataset")).toHaveValue(
-      "pull_requests"
-    );
+    expect(await shownDocument()).toMatchObject({
+      dataset: "pull_requests",
+    });
   });
 
   it("asks before taking a dataset away, and says what still reads it", async () => {
@@ -214,33 +237,30 @@ describe("/portal/custom/edit/$kind/$name", () => {
     expect(screen.getByRole("button", { name: "Keep" })).toBeInTheDocument();
   });
 
-  it("follows a metric to its new name once renamed", async () => {
+  it("renames a metric by saving it under the new name, keeping its id", async () => {
     const user = userEvent.setup();
-    vi.mocked(customClient.fetchMetric).mockResolvedValue({
-      definition: { dataset: "commits", fields: [] },
-    });
-    vi.mocked(customClient.renameDefinition).mockResolvedValue({
-      name: "lines_daily",
-      rewritten: [],
-    });
+    vi.mocked(customClient.fetchDefinition).mockResolvedValue(
+      storedMetric({ dataset: "commits", fields: [] })
+    );
 
     render(<Component />, { wrapper });
-    await screen.findByLabelText("Dataset");
-    await user.click(
-      screen.getByRole("button", { name: "Rename lines_per_day" })
-    );
-    const field = screen.getByRole("textbox", {
-      name: "New name for lines_per_day",
-    });
+    await screen.findByLabelText(/as text/i);
+    expect(
+      screen.queryByRole("button", { name: /^Rename/ })
+    ).not.toBeInTheDocument();
+
+    const field = screen.getByRole("textbox", { name: "Name" });
     await user.clear(field);
-    await user.type(field, "lines_daily");
-    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.type(field, "Lines daily");
+    await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
-      expect(portalRouter.navigations).toContainEqual({
-        to: "/portal/custom/edit/$kind/$name",
-        params: { kind: "metrics", name: "lines_daily" },
-      })
+      expect(customClient.putDefinition).toHaveBeenCalledWith(
+        "metrics",
+        "lines_per_day",
+        "Lines daily",
+        { dataset: "commits", fields: [] }
+      )
     );
   });
 
@@ -276,39 +296,41 @@ describe("/portal/custom/edit/$kind/$name", () => {
           name: "commits",
           declaration: { title: "Commits", fields: [] },
         }),
-      label: "Title",
-      value: "Commits",
+      shown: { title: "Commits" },
     },
     {
       kind: "widgets",
-      arrange: () =>
-        vi.mocked(customClient.fetchWidget).mockResolvedValue({
-          type: "stat",
-          metric: "commits",
-          value: "total",
-        }),
-      label: "Metric",
-      value: "commits",
+      arrange: () => {
+        vi.mocked(customClient.fetchDefinition).mockResolvedValue({
+          id: "thing",
+          name: "Thing",
+          body: { type: "stat", metric: "commits", value: "total" },
+        });
+        vi.mocked(customClient.fetchMetric).mockRejectedValue(
+          new CustomApiError(404, null)
+        );
+      },
+      shown: { type: "stat", metric: "commits", value: "total" },
     },
     {
       kind: "dashboards",
       arrange: () =>
-        vi.mocked(customClient.fetchDashboard).mockResolvedValue({
-          title: "Board",
-          items: [],
+        vi.mocked(customClient.fetchDefinition).mockResolvedValue({
+          id: "thing",
+          name: "Thing",
+          body: { title: "Board", items: [] },
         }),
-      label: "Title",
-      value: "Board",
+      shown: { title: "Board", items: [] },
     },
   ])(
     "opens a stored $kind body as the document",
-    async ({ kind, arrange, label, value }) => {
+    async ({ kind, arrange, shown }) => {
       portalRouter.reset(`/portal/custom/edit/${kind}/thing`);
       arrange();
 
       render(<Component />, { wrapper });
 
-      expect(await screen.findByLabelText(label)).toHaveValue(value);
+      expect(await shownDocument()).toMatchObject(shown);
     }
   );
 });

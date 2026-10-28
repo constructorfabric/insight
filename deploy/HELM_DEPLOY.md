@@ -103,7 +103,7 @@ Three things on those systems are yours to create:
   GRANT ALL ON `insight`.* TO `insight`@`%`;
   ```
 
-- **ClickHouse: the `clickhouse.username` account, holding CREATE DATABASE.** The pre-install hook creates the Bronze/Silver/Gold databases as that user; the chart has no separate admin account.
+- **ClickHouse: the `clickhouse.username` account, holding CREATE DATABASE.** The pre-install hook creates the nine databases the release owns as that user (`clickhouse.database`, `staging`, `silver`, `identity`, `config`, `presentation`, `product_usage`, `ingestion_history`, `insight_datasets`); `bronze_*` is created by `destination-clickhouse` at sync time. In cluster mode (`clickhouse.clusterMode`) the same user also needs `REMOTE ON *.*`. The chart has no separate admin account.
 - **Argo: an `argo-workflow` ServiceAccount in `insight`,** plus a Role granting create/patch on `workflowtaskresults.argoproj.io`. The chart pins every ingestion workflow to it and ships neither, so without them dbt transforms and data-quality checks fail with `serviceaccount "argo-workflow" not found` (connector provisioning still works).
 
 Run every command below from the directory holding your `values/` and `secrets/` files; Steps 1 and 2 give you their full contents.
@@ -376,7 +376,7 @@ helm upgrade --install insight oci://ghcr.io/constructorfabric/charts/insight \
 
 - Add `--version <x.y.z>` to pin a chart release; omit it for the latest published one.
 - `--wait --timeout 15m` blocks until every resource is ready, giving a pass/fail signal instead of a detached rollout.
-- The install also runs the `insight-clickhouse-migrate` hook Job. It creates the staging/silver/app databases, seeds bronze placeholders, ALTERs bronze/silver tables, applies `src/ingestion/scripts/migrations/*.sql`, then rebuilds the gold models with dbt — that last part dominates on a cluster with real data, so raise `--timeout` if it runs close. It fires on **every** upgrade (gated by `clickhouse.runMigrations`, default `true`) and a failure fails the upgrade. Because it drops and recreates every gold object each run, a failure points at Bronze/Silver schema or data, not a stale-object conflict.
+- The install also runs the `insight-clickhouse-migrate` hook Job. It applies `src/ingestion/scripts/migrations/*.sql` and the guarded heals that ALTER an already-created bronze, staging or silver table; the `insight-clickhouse-databases` hook creates the databases themselves. It pre-creates nothing and builds no dbt models — a connector sync does that, gold included — so it stays short on a cluster with real data. It fires on **every** upgrade (gated by `clickhouse.runMigrations`, default `true`) and a failure fails the upgrade; a failure points at Bronze/Silver schema or data.
 - If `--wait` stalls with the authenticator and analytics in `ContainerCreating`, the cert-manager Certificate `insight-authenticator-authn-tls` has not issued — `--wait` does not wait on Certificates. Check `kubectl -n insight describe certificate insight-authenticator-authn-tls`.
 
 ## Step 5 — Verify the install

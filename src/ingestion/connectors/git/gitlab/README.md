@@ -3,7 +3,8 @@
 Declarative GitLab connector that extracts commit-level data through the
 git-cli-proxy
 instead of the vendor API, and everything git does not hold — projects, merge
-requests and their review history, pipelines, deployments, members — through the
+requests and their review history, pipelines and their jobs, deployments,
+members — through the
 GitLab REST v4 and GraphQL APIs. Works against gitlab.com and self-managed
 instances alike.
 
@@ -95,6 +96,7 @@ kubectl apply -f src/ingestion/secrets/connectors/gitlab.yaml
 | `pull_request_state_events` | `/merge_requests/{iid}/resource_state_events` | windowed MR parent | `created_at` |
 | `pull_request_label_events` | `/merge_requests/{iid}/resource_label_events` | windowed MR parent | `created_at` |
 | `pipelines` | GraphQL `project.pipelines` | incremental, per project | `updatedAt` |
+| `jobs` | GraphQL `pipeline.jobs` | pipeline parent | parent `updatedAt` |
 | `environments` | `/projects/{id}/environments` | full refresh, per project | — |
 | `deployments` | `/projects/{id}/deployments` | incremental, per project | `updated_at` |
 | `group_members` | `/groups/{g}/members/all`, `/projects/{p}/members/all` | full refresh, per configured scope | — |
@@ -200,6 +202,11 @@ type-for-type.
 | `pull_request_state_events` + `pull_request_label_events` | `gitlab__item_events` | `class_git_item_events` |
 | `pipelines` | `gitlab__ci_runs` | `class_git_ci_runs` |
 | `deployments`, `environments` | `gitlab__deployments`, `gitlab__deployment_events` | `class_git_deployments`, `class_git_deployment_events` |
+
+`jobs` stays in bronze: no class contract carries CI jobs. `kind` is `build`,
+`bridge` (triggers a downstream pipeline) or `external` (a status posted by
+another CI system). `manual_job` marks a job declared `when: manual`; it was
+started by hand when its `status` is past `manual`, `created` and `skipped`.
 
 Identity: `gitlab__account_emails` collects every (account, e-mail) pair from
 the author lookup, the user directory, the rosters and the

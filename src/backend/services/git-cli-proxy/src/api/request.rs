@@ -23,7 +23,7 @@ pub const SIZE_HINT_HEADER: &str = "x-repo-size-hint";
 
 /// Ceiling and default are the same on purpose. Every memory bound on the
 /// request path scales linearly with the page, so headroom above the default
-/// is pure exposure: nothing has ever needed a larger page, `page_size` is a
+/// is pure exposure: `page_size` is a
 /// service-to-connector knob rather than tenant configuration, and the row
 /// caps cut an oversized page at emit time anyway — after the memory was
 /// already spent reading it. Smaller pages remain available for debugging.
@@ -38,7 +38,7 @@ const MIN_SHA_PREFIX: usize = 7;
 const MAX_SHA_PREFIX: usize = 64;
 
 /// Explicit commit selection: full ids or hex prefixes of at least
-/// [`MIN_SHA_PREFIX`] characters, comma separated (§4.2). A prefix selects
+/// [`MIN_SHA_PREFIX`] characters, comma separated. A prefix selects
 /// every commit it matches — it is not required to be unique, and the service
 /// does not resolve it against the repository. A debugging and incident-review
 /// affordance; the sync path pages by cursor instead.
@@ -115,6 +115,8 @@ pub enum BadRequest {
     BadRepoUrl(#[from] CloneUrlError),
     #[error("query parameters could not be parsed")]
     MalformedQuery,
+    #[error("{0} is not an RFC 3339 instant or a YYYY-MM-DD date")]
+    MalformedInstant(&'static str),
 }
 
 /// `Query<T>`, but a rejection leaves through [`ApiError`] like every other
@@ -191,6 +193,32 @@ impl RequestContext {
             creds: GitCredentials { username, token },
             max_staleness: staleness(headers)?,
             size_hint: optional_u64(headers, SIZE_HINT_HEADER)?,
+        })
+    }
+}
+
+/// Who is asking, for a route that spans every repository of a source rather
+/// than naming one.
+#[derive(Debug)]
+pub struct Caller {
+    pub tenant_id: String,
+    pub source_id: String,
+    pub creds: GitCredentials,
+}
+
+impl Caller {
+    /// # Errors
+    ///
+    /// [`BadRequest::MissingHeader`] when an identity or credential header is
+    /// absent or empty.
+    pub fn from_headers(headers: &HeaderMap) -> Result<Self, BadRequest> {
+        Ok(Self {
+            tenant_id: required_header(headers, TENANT_HEADER)?,
+            source_id: required_header(headers, SOURCE_HEADER)?,
+            creds: GitCredentials {
+                username: required_header(headers, GIT_USER_HEADER)?,
+                token: required_header(headers, GIT_TOKEN_HEADER)?,
+            },
         })
     }
 }
@@ -418,8 +446,8 @@ mod tests {
             ("not hex", "zzzzzzzz"),
             ("only separators", ",,"),
             ("empty", ""),
-            // Longer than any object id: it can never prefix-match, so it
-            // used to be accepted and then silently return no rows.
+            // Longer than any object id: it can never prefix-match, so
+            // accepting it would silently return no rows.
             ("longer than an object id", long.as_str()),
         ];
         for (name, raw) in cases {

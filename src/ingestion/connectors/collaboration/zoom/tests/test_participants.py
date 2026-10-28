@@ -138,6 +138,46 @@ def test_transformations_stamping_and_schema(http_mocker: HttpMocker) -> None:
     assert_records_conform(output.records, _CONNECTOR, _STREAM)
 
 
+_DEVICE_FIELDS = (
+    "ip_address",
+    "internal_ip_addresses",
+    "location",
+    "pc_name",
+    "domain",
+    "mac_addr",
+    "harddisk_id",
+    "leave_reason",
+    "device_name",
+)
+
+
+@freezegun.freeze_time(_NOW)
+def test_device_and_network_identifiers_are_not_stored(http_mocker: HttpMocker) -> None:
+    """Zoom sends a participant's addresses, machine and leave reason; none of them is kept."""
+    config = ZoomConfigBuilder().build()
+    mock_token(http_mocker)
+    _mock_parent(http_mocker, [_meeting("mtg-uuid-1==", "2026-06-15T10:30:00Z")])
+    sent = {
+        **_participant("part-uuid-1", "alice@example.com"),
+        "internal_ip_addresses": ["192.0.2.10"],
+        "pc_name": "EXAMPLE-PC",
+        "domain": "example.local",
+        "mac_addr": "00-00-5E-00-53-01",
+        "harddisk_id": "EXAMPLE-DISK",
+        "leave_reason": "Example User left the meeting.",
+        "device_name": "Example Laptop",
+    }
+    http_mocker.get(
+        HttpRequest(_participants_url("mtg-uuid-1%3D%3D"), query_params=_CHILD_PARAMS), _participants_page([sent])
+    )
+
+    output = read_stream(_CONNECTOR, _STREAM, config)
+
+    rec = output.records[0].record.data
+    for field in _DEVICE_FIELDS:
+        assert field not in rec, f"should not store: {field!r}"
+
+
 @freezegun.freeze_time(_NOW)
 def test_pagination_multi_page(http_mocker: HttpMocker) -> None:
     config = ZoomConfigBuilder().build()

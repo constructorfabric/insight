@@ -102,7 +102,7 @@ def _dbt_run_script(docs: list[dict]) -> str:
 
 
 def _run_script(
-    tmp_path: Path, script: str, *, selected: str, remaining: str, select: str, exclude: str
+    tmp_path: Path, script: str, *, selected: str, remaining: str, select: str, exclude: str, unbuildable: str = ""
 ) -> tuple[int, str]:
     """Execute the rendered script with a stub `dbt` on PATH."""
     stub = tmp_path / "bin"
@@ -116,6 +116,7 @@ def _run_script(
         'case "$*" in\n'
         '  *" ls "*--exclude*) printf "%s" "$STUB_LS_REMAINING" ;;\n'
         '  *" ls "*) printf "%s" "$STUB_LS_SELECTED" ;;\n'
+        '  *run-operation*) printf "%s" "$STUB_UNBUILDABLE" ;;\n'
         '  *) echo "DBT_RUN_INVOKED $*" ;;\n'
         "esac\n"
         "exit 0\n"
@@ -140,6 +141,7 @@ def _run_script(
         "PATH": f"{stub}:{os.environ['PATH']}",
         "STUB_LS_SELECTED": selected,
         "STUB_LS_REMAINING": remaining,
+        "STUB_UNBUILDABLE": unbuildable,
         "DBT_SELECT": select,
         "DBT_EXCLUDE": exclude,
         "DBT_FULL_REFRESH": "false",
@@ -188,6 +190,22 @@ def test_a_normal_connector_runs_with_both_flags(docs, tmp_path) -> None:
     assert rc == 0, output
     assert "--select tag:github+" in output
     assert "--exclude tag:github identity_inputs" in output
+
+
+def test_a_model_whose_bronze_is_absent_is_excluded_alongside_the_steps_own_exclusion(docs, tmp_path) -> None:
+    """A `tag:X+` walk reaches gold models reading classes no connector here
+    feeds; the pipeline's own dedup must not be what drops them."""
+    rc, output = _run_script(
+        tmp_path,
+        _dbt_run_script(docs),
+        selected="model.a\nmodel.b",
+        remaining="model.b",
+        select="tag:github+",
+        exclude="tag:github identity_inputs",
+        unbuildable="class_crm_users hubspot__crm_users",
+    )
+    assert rc == 0, output
+    assert "--exclude tag:github identity_inputs class_crm_users hubspot__crm_users" in output
 
 
 def test_an_empty_selector_still_runs_everything(docs, tmp_path) -> None:

@@ -1,29 +1,39 @@
 //! The tables a dataset's records live in.
 //!
 //! Every one of them is in the datasets database and nowhere else, so nothing
-//! this service creates or drops can reach a table the warehouse owns.
+//! this service creates or drops can reach a table the warehouse owns. The
+//! database itself is `create-databases.sh`'s to make; a create first refuses
+//! one whose engine contradicts the configured topology.
+//!
+//! Nothing here reads its own write, so nothing here takes the shared
+//! client's read-after-write pair. A record is stored and never read back by
+//! the request that sent it, and a sequential quorum would refuse the next
+//! SDK client's insert into the same table while this one is unconfirmed. The
+//! preview looks at what arrived, from whichever replica answers: a read
+//! pinned to the quorum would throw on a lagging replica instead.
 
 use std::fmt;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use clickhouse::sql::Identifier;
+use insight_clickhouse::{Ddl, MissingRelation, TableSpec, Unfinished};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
 /// The shape every dataset's table has. A table of any other shape in the
 /// datasets database belongs to something else and is never touched.
+const COLUMNS: [(&str, &str); 4] = [
+    ("id", "UUID"),
+    ("table_name", "String"),
+    ("raw_data", "String"),
+    ("received_at", "DateTime64(3, 'UTC')"),
+];
+const SORT_KEY: [&str; 3] = ["table_name", "received_at", "id"];
+/// The same key as `system.tables` reads it back, which is how a table is
+/// recognised as one of ours. A test pins the two together.
 const INGEST_SORTING_KEY: &str = "table_name, received_at, id";
-const CREATE_TABLE: &str = "CREATE TABLE IF NOT EXISTS ? (
-    id UUID,
-    table_name String,
-    raw_data String,
-    received_at DateTime64(3, 'UTC')
-)
-ENGINE = MergeTree
-ORDER BY (table_name, received_at, id)";
-const DROP_TABLE: &str = "DROP TABLE IF EXISTS ?";
 /// One page of records. The id breaks an equal ordering value so that two
 /// reads of the same page agree on what is in it.
 const READ_PAGE: &str = "SELECT id, received_at, raw_data FROM ?
@@ -32,17 +42,16 @@ LIMIT ? OFFSET ?";
 const COUNT_ROWS: &str = "SELECT count() AS total FROM ?";
 const READ_SHAPE: &str = "SELECT sorting_key FROM system.tables
 WHERE database = currentDatabase() AND name = ?";
-/// Creating or dropping a table waits on a cluster-wide lock, so it gets a
-/// wider bound than a read.
-const DDL_TIMEOUT_SECS: u64 = 35;
+/// Creating or dropping a table waits for the replicas, so it gets a wider
+/// bound than a read: the warehouse's own wait, and then some, so that it is
+/// normally the warehouse that reports a statement as unfinished. A statement
+/// cut off here may still land, which is the caller's to allow for.
+const DDL_TIMEOUT: Duration =
+    insight_clickhouse::DDL_TASK_TIMEOUT.saturating_add(Duration::from_secs(5));
 const READ_TIMEOUT_SECS: u64 = 10;
 const INSERT_SEND_TIMEOUT_SECS: u64 = 10;
 const INSERT_END_TIMEOUT_SECS: u64 = 30;
 const INSERT_TOTAL_TIMEOUT_SECS: u64 = 35;
-/// `ClickHouse` reports a missing relation as error 60 inside a message rather
-/// than as a variant, and only the code is stable across a real server's text
-/// and a header-only reply.
-const UNKNOWN_TABLE_CODE: &str = "Code: 60";
 
 /// What a table of that name in the datasets database is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +82,7 @@ impl DatasetTables {
     pub(crate) fn new(client: insight_clickhouse::Client) -> Self {
         Self {
             client,
-            ddl_timeout: Duration::from_secs(DDL_TIMEOUT_SECS),
+            ddl_timeout: DDL_TIMEOUT,
             read_timeout: Duration::from_secs(READ_TIMEOUT_SECS),
             insert: InsertTimeouts {
                 send: Duration::from_secs(INSERT_SEND_TIMEOUT_SECS),
@@ -81,6 +90,12 @@ impl DatasetTables {
                 total: Duration::from_secs(INSERT_TOTAL_TIMEOUT_SECS),
             },
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_ddl_timeout(mut self, bound: Duration) -> Self {
+        self.ddl_timeout = bound;
+        self
     }
 
     /// Puts one record into a dataset's table, whole and unread.
@@ -138,7 +153,6 @@ impl DatasetTables {
         let statement = READ_PAGE.replace("{order}", page.order);
         let rows = self
             .client
-            .inner()
             .query(&statement)
             .bind(Identifier(table))
             .bind(page.limit)
@@ -156,7 +170,6 @@ impl DatasetTables {
     pub(crate) async fn count(&self, table: &str) -> Result<u64, DatasetTableError> {
         let rows = self
             .client
-            .inner()
             .query(COUNT_ROWS)
             .bind(Identifier(table))
             .fetch_all::<CountRow>();
@@ -197,21 +210,34 @@ impl DatasetTables {
     /// nothing else to ask. A table of the ingest shape already there is this
     /// attempt repeating itself.
     pub(crate) async fn provision(&self, table: &str) -> Result<(), DatasetTableError> {
+        let database = &self.client.config().database;
+        tokio::time::timeout(
+            self.read_timeout,
+            self.client.assert_database_topology(database),
+        )
+        .await
+        .map_err(|_| DatasetTableError::Timeout)??;
+
         match self.shape_of(table).await? {
             Shape::Foreign => return Err(DatasetTableError::NotOurs(table.to_owned())),
             Shape::Absent | Shape::Ingest => {}
         }
 
-        let create = self
-            .client
-            .inner()
-            .query(CREATE_TABLE)
-            .bind(Identifier(table));
-        tokio::time::timeout(self.ddl_timeout, create.execute())
+        let create = self.ingest_spec(table);
+        tokio::time::timeout(self.ddl_timeout, self.client.execute_ddl(&create))
             .await
             .map_err(|_| DatasetTableError::Timeout)??;
 
         Ok(())
+    }
+
+    /// The ingest shape, in the one database this service creates tables in.
+    /// Naming any other is refused by the client the spec is rendered through.
+    fn ingest_spec(&self, table: &str) -> Ddl {
+        Ddl::create_table(
+            TableSpec::merge_tree(&self.client.config().database, table, &COLUMNS, &SORT_KEY)
+                .keep_existing(),
+        )
     }
 
     /// Drops a table this service made.
@@ -220,12 +246,8 @@ impl DatasetTables {
     /// declaration names it, or this attempt made it moments ago and lost the
     /// dataset before anything could point at it.
     pub(crate) async fn drop_table(&self, table: &str) -> Result<(), DatasetTableError> {
-        let drop = self
-            .client
-            .inner()
-            .query(DROP_TABLE)
-            .bind(Identifier(table));
-        tokio::time::timeout(self.ddl_timeout, drop.execute())
+        let drop = Ddl::drop_table(&self.client.config().database, table);
+        tokio::time::timeout(self.ddl_timeout, self.client.execute_ddl(&drop))
             .await
             .map_err(|_| DatasetTableError::Timeout)??;
 
@@ -253,6 +275,14 @@ pub(crate) enum DatasetTableError {
     Timeout,
     #[error("the datasets database did not answer")]
     ClickHouse(clickhouse::error::Error),
+    /// A create aimed outside the datasets database. The shared client logs
+    /// the pair at the point it refuses the spec.
+    #[error("the dataset's table was aimed at a database this service does not own")]
+    NotOurDatabase,
+    /// The datasets database is missing or its engine contradicts the
+    /// configured topology; the message carries the remedy.
+    #[error("the datasets database is not ready: {0}")]
+    DatabaseTopology(String),
 }
 
 #[derive(Debug, Deserialize, Serialize, clickhouse::Row)]
@@ -324,12 +354,20 @@ impl From<clickhouse::error::Error> for DatasetTableError {
     fn from(error: clickhouse::error::Error) -> Self {
         match error {
             clickhouse::error::Error::TimedOut => Self::Timeout,
-            clickhouse::error::Error::BadResponse(ref message)
-                if message.contains(UNKNOWN_TABLE_CODE) =>
-            {
-                Self::Vanished
-            }
+            ref reported if Unfinished::from_error(reported).is_some() => Self::Timeout,
+            ref reported if MissingRelation::from_error(reported).is_some() => Self::Vanished,
             error => Self::ClickHouse(error),
+        }
+    }
+}
+
+impl From<insight_clickhouse::Error> for DatasetTableError {
+    fn from(error: insight_clickhouse::Error) -> Self {
+        match error {
+            insight_clickhouse::Error::Clickhouse(reported) => Self::from(reported),
+            insight_clickhouse::Error::Timeout => Self::Timeout,
+            insight_clickhouse::Error::InvalidQuery(_) => Self::NotOurDatabase,
+            insight_clickhouse::Error::Topology(remedy) => Self::DatabaseTopology(remedy),
         }
     }
 }

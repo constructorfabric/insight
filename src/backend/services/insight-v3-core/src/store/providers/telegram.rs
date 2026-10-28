@@ -61,7 +61,8 @@ impl Provider for Telegram {
             .post(url)
             .json(&serde_json::json!({
                 "chat_id": self.chat_id,
-                "text": message.text,
+                "text": message.html,
+                "parse_mode": "HTML",
                 "disable_web_page_preview": true,
             }))
             .send()

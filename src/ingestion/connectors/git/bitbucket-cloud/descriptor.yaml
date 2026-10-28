@@ -46,7 +46,25 @@ name: bitbucket-cloud
 #   shape and the RMT promotion step is gone (#2877). MINOR per ADR-0015:
 #   reconcile must republish this connector so the connection catalog is
 #   refreshed; nothing already stored changes meaning.
-version: "7.7.0"
+# 7.8.0: `branches` is incremental, so its repository listing is bounded by
+#   the cursor it persists and a sync reads heads only for repositories pushed
+#   to since the last one; its rows carry the repository's updated_on as the
+#   cursor. MINOR per ADR-0015: the catalog gains a cursor and bronze a
+#   column, so reconcile must republish the connection; stored rows keep
+#   their meaning.
+# 7.9.0: `commit_authors` reads the proxy's source-wide author change feed
+#   instead of each repository's author list, so its parent state is one
+#   change cursor rather than one entry per repository, and an author is
+#   resolved once rather than once per repository. Rows are keyed per author
+#   (`repo_full_name` names the sample's repository) and gain `changed_at`.
+#   MINOR per ADR-0015: staging reads only the account, the e-mail, the
+#   tenant and the source, so its grain does not change; earlier per-repository
+#   rows stay in bronze, deduplicated on their own key.
+# 7.10.0: the author change feed is bounded by the start date: an author whose
+#   newest commit predates it is not looked up at the vendor. MINOR per
+#   ADR-0015: the catalog is unchanged in shape and nothing stored changes
+#   meaning; republished so the request carries the bound.
+version: "7.10.0"
 # Every four hours, off the hours other connectors use: replication pods sharing
 # a slot with other connector syncs can be starved of workers, which surfaces as
 # startup and activity timeouts rather than as a connector error.

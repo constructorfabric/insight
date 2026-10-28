@@ -304,6 +304,9 @@ definitions:
       # The proxy reserves cache headroom from the repository's reported size
       # instead of its per-repository cap.
       X-Repo-Size-Hint: "{{ stream_slice.extra_fields.get('size') or '' }}"
+      # INVARIANT: below the sync interval, so a repository pushed to since the
+      # last sync is fetched rather than served from that sync's mirror.
+      X-Max-Staleness: "3600"
     error_handler: *proxy_error_handler
 
 check:
@@ -872,6 +875,7 @@ streams:
           head_sha: {type: [string, "null"]}
           head_committed_date: {type: [string, "null"]}
           is_default: {type: [boolean, "null"]}
+          repository_updated_on: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -909,12 +913,24 @@ streams:
             partition_field: repo_clone_url
             extra_fields:
               - [size]
-            # No `incremental_dependency` here: this stream is full refresh, so
-            # the CDK persists no parent state and the listing opens at the
-            # start date every sync. Branch heads are cheap and must be re-read
-            # for every repository each sync.
+              - [updated_on]
+            incremental_dependency: true
             stream:
               $ref: "#/streams/0"
+    # INVARIANT: the cursor exists only so the listing's state persists, and it
+    # reads the vendor's clock: a head's own date can lie in the future and
+    # would close every later slice.
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: repository_updated_on
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['bitbucket_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields:
@@ -930,6 +946,9 @@ streams:
           - type: AddedFieldDefinition
             path: [repository]
             value: "{{ stream_partition.repo_clone_url }}"
+          - type: AddedFieldDefinition
+            path: [repository_updated_on]
+            value: "{{ stream_slice.extra_fields.get('updated_on') or '' }}"
           # No head_sha in the key: the key identifies the BRANCH, so the RMT
           # collapses to its latest state and a head move is a change the
           # downstream snapshot macro can see.
@@ -2518,9 +2537,10 @@ streams:
           - [deployable]
   # ── Commit authors (git-cli-proxy + Bitbucket API) ──────────────────────
   # A commit names an e-mail and no account, so it reaches a person only once
-  # something claims that e-mail for one. The proxy enumerates a repository's
-  # distinct authors from the clone it already holds, and this stream asks
-  # Bitbucket who each of them is — one call per AUTHOR, not per commit.
+  # something claims that e-mail for one. The proxy reports the authors that
+  # changed across every repository it fetched for this source, and this stream
+  # asks Bitbucket who each of them is — one call per AUTHOR, not per commit or
+  # per repository.
   #
   # `/commit/{sha}` answers with `author.raw` (the git ident) beside
   # `author.user` (the account), which is the pairing neither side has alone:
@@ -2551,6 +2571,7 @@ streams:
           author_display_name: {type: [string, "null"]}
           sample_sha: {type: [string, "null"]}
           last_committed_date: {type: [string, "null"]}
+          changed_at: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -2613,17 +2634,18 @@ streams:
           - type: ParentStreamConfig
             parent_key: sample_sha
             partition_field: commit_sha
-            # `incremental_dependency` keeps the sync proportional to activity:
-            # the author list's `since` persists only because this child is
-            # itself incremental.
+            # INVARIANT: the parent's state is one cursor, so the CDK's copy of
+            # it per lookup in flight costs bytes, not the per-repository state
+            # a repository-scoped author list would carry.
             incremental_dependency: true
             extra_fields:
               - [repo_full_name]
               - [author_email]
               - [last_committed_date]
+              - [changed_at]
             stream:
               type: DeclarativeStream
-              name: repository_authors
+              name: author_changes
               primary_key:
                 - author_email
               schema_loader:
@@ -2634,19 +2656,25 @@ streams:
                   properties:
                     author_email: {type: [string, "null"]}
                     author_name: {type: [string, "null"]}
-                    sample_sha: {type: [string, "null"]}
+                    changed_at: {type: [string, "null"]}
+                    first_seen_at: {type: [string, "null"]}
                     last_committed_date: {type: [string, "null"]}
-                    commit_count: {type: [integer, "null"]}
+                    sample: {type: [object, "null"]}
+                    sample_sha: {type: [string, "null"]}
                     repo_full_name: {type: [string, "null"]}
                   additionalProperties: true
               retriever:
                 type: SimpleRetriever
                 requester:
                   <<: *proxy_requester
-                  path: /v1/authors
+                  path: /v1/authors/changes
                   request_parameters:
-                    repo: "{{ stream_partition.repo_clone_url }}"
                     page_size: "500"
+                    # INVARIANT: every feed request carries the start date; the
+                    # proxy keeps the bound in the cursor for later pages. Without
+                    # it a first sync looks up every author in every mirror's
+                    # whole history at the vendor.
+                    committed_since: "{{ config['bitbucket_start_date'] }}"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -2662,72 +2690,56 @@ streams:
                     type: RequestOption
                     field_name: page_token
                     inject_into: request_parameter
-                pagination_reset:
-                  type: PaginationReset
-                  action: RESET
-                partition_router:
-                  type: SubstreamPartitionRouter
-                  parent_stream_configs:
-                    - type: ParentStreamConfig
-                      parent_key: clone_url
-                      partition_field: repo_clone_url
-                      extra_fields:
-                        - [full_name]
-                        - [size]
-                      incremental_dependency: true
-                      stream:
-                        $ref: "#/streams/0"
+              # The proxy stamps a change when it observes it, on its own
+              # clock: a back-dated or imported commit still moves the cursor
+              # forward, and a commit dated ahead cannot push it past now.
               incremental_sync:
                 type: DatetimeBasedCursor
-                cursor_field: last_committed_date
-                datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+                cursor_field: changed_at
+                datetime_format: "%Y-%m-%dT%H:%M:%S.%fZ"
                 cursor_datetime_formats:
-                  - "%Y-%m-%dT%H:%M:%S%z"
-                  - "%Y-%m-%dT%H:%M:%SZ"
-                # A future-dated commit would otherwise become the cursor and silence the
-                # stream: a `since` past now yields no slice on every later sync. Bounding
-                # records client-side drops such a row before the cursor observes it.
-                is_client_side_incremental: true
-                # An author's last commit can predate its push by days, and another
-                # author's push moves `since` past it in the meantime. Re-listing one
-                # window each sync recovers them; bronze dedups the re-read rows. Every
-                # author listed costs one vendor lookup per repository, so the window
-                # is as short as a late push allows.
-                lookback_window: "P7D"
-                # An author already resolved keeps their claim, so a later sync
-                # only needs the ones who have committed since — which is what
-                # keeps this O(active authors) rather than O(authors).
+                  - "%Y-%m-%dT%H:%M:%S.%fZ"
+                # Not the connector's start date: the feed is not a history,
+                # it is every author the proxy has seen, from its beginning.
                 start_datetime:
                   type: MinMaxDatetime
-                  datetime: "{{ config['bitbucket_start_date'] }}"
-                  datetime_format: "%Y-%m-%d"
+                  datetime: "1970-01-01T00:00:00.000000Z"
+                  datetime_format: "%Y-%m-%dT%H:%M:%S.%fZ"
                 start_time_option:
                   type: RequestOption
-                  field_name: since
+                  field_name: changed_since
                   inject_into: request_parameter
               transformations:
                 - type: AddFields
                   fields:
                     - type: AddedFieldDefinition
+                      path: [sample_sha]
+                      value: "{{ record['sample']['sha'] }}"
+                      value_type: string
+                    # The proxy names the repository by the clone URL the
+                    # listing produced (`https://<host>/<workspace>/<slug>.git`);
+                    # the commit endpoint takes the workspace/slug path.
+                    - type: AddedFieldDefinition
                       path: [repo_full_name]
-                      value: "{{ stream_slice.extra_fields['full_name'] }}"
+                      value: >-
+                        {%- set path = record['sample']['repo_url'].split('//', 1)[1].split('/', 1)[1] -%}
+                        {{ path[:-4] if path.endswith('.git') else path }}
                       value_type: string
     incremental_sync:
       type: DatetimeBasedCursor
-      cursor_field: last_committed_date
-      datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      cursor_field: changed_at
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%fZ"
       cursor_datetime_formats:
-        - "%Y-%m-%dT%H:%M:%S%z"
-        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S.%fZ"
       # The partition is one author's sample commit and changes with every
-      # commit, so per-partition state would grow by one entry per (repository,
-      # author) and never shrink. Nothing reads this cursor's value; it exists so
-      # the parent's `since` persists.
+      # change, so per-partition state would grow by one entry per author and
+      # never shrink. Nothing reads this cursor's value; it exists so the
+      # parent's cursor persists.
       global_substream_cursor: true
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config['bitbucket_start_date'] }}"
-        datetime_format: "%Y-%m-%d"
+        datetime: "1970-01-01T00:00:00.000000Z"
+        datetime_format: "%Y-%m-%dT%H:%M:%S.%fZ"
     transformations:
       - type: AddFields
         fields:
@@ -2763,6 +2775,10 @@ streams:
             value: "{{ stream_slice.extra_fields['last_committed_date'] }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [changed_at]
+            value: "{{ stream_slice.extra_fields['changed_at'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
             path: [author_account_id]
             value: "{{ ((record.get('author') or {}).get('user') or {}).get('account_id') or '' }}"
             value_type: string
@@ -2781,7 +2797,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:author:{{ stream_slice.extra_fields['author_email'] | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:author:{{ stream_slice.extra_fields['author_email'] | replace(':', '%3A') }}
       - type: RemoveFields
         # Hoisted above; the commit payload itself belongs to the proxy streams.
         field_pointers:

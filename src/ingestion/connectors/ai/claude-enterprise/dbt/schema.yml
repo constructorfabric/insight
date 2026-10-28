@@ -120,11 +120,6 @@ models:
       emitted as its own row per gist Q2 resolution). One Bronze row per
       (date, user_email) can produce up to 5 staging rows — one per non-empty
       surface.
-
-      Replaces the deprecated claude_enterprise__ai_api_usage model, which
-      incorrectly routed engagement data to class_ai_api_usage. Enterprise
-      engagement data represents human ↔ Claude assistant interaction, not
-      programmatic API consumption.
     columns:
       - name: insight_tenant_id
         tests:

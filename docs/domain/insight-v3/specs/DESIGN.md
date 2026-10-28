@@ -57,6 +57,7 @@ Functional requirements and their IDs are in [PRD §5](./PRD.md#5-functional-req
 | `cpt-insightspec-v3-adr-static-ingest-token` | A static per-environment ingest token rather than the platform OIDC path |
 | `cpt-insightspec-v3-adr-frontend-left-untouched` | The existing frontend is left alone; the new pages sit beside it |
 | `cpt-insightspec-v3-adr-schema-driven-widgets` | Widgets are described by a schema, not written as code |
+| `cpt-insightspec-v3-adr-definitions-addressed-by-identity` | Definitions are keyed by a generated identity; names are labels ([sharing design](./sharing/DESIGN.md)) |
 
 #### NFR Allocation
 

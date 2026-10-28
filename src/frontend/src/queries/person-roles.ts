@@ -3,13 +3,16 @@ import {
   useQuery,
   useQueryClient,
   type UseMutationResult,
+  type UseQueryResult,
 } from "@tanstack/react-query";
 
 import {
   grantPersonRole,
   listPersonRoles,
+  listRoleHolders,
   revokePersonRole,
   type PersonRole,
+  type RoleHolders,
 } from "@/api/identity-client";
 
 import { ADMIN_ROLE_ID } from "./identity-me";
@@ -21,6 +24,16 @@ const ME_KEY = ["identity", "me"] as const;
 
 const personRolesKey = (personId: string) =>
   [...PERSON_ROLES_KEY, personId] as const;
+
+const ROLE_HOLDERS_KEY = [...PERSON_ROLES_KEY, "holders"] as const;
+
+/** Everyone who holds the administrator role now. */
+export function useAdmins(): UseQueryResult<RoleHolders> {
+  return useQuery({
+    queryKey: [...ROLE_HOLDERS_KEY, ADMIN_ROLE_ID],
+    queryFn: ({ signal }) => listRoleHolders(ADMIN_ROLE_ID, signal),
+  });
+}
 
 export interface PersonAdminRole {
   isAdmin: boolean;
@@ -61,7 +74,10 @@ export function useGrantAdmin(
       grantPersonRole({ person_id: personId, role_id: ADMIN_ROLE_ID }),
     // Returned: keeps the mutation pending until the re-read lands.
     onSuccess: () =>
-      client.invalidateQueries({ queryKey: personRolesKey(personId) }),
+      Promise.all([
+        client.invalidateQueries({ queryKey: personRolesKey(personId) }),
+        client.invalidateQueries({ queryKey: ROLE_HOLDERS_KEY }),
+      ]),
   });
 }
 
@@ -76,6 +92,7 @@ export function useRevokeAdmin(
     onSuccess: () =>
       Promise.all([
         client.invalidateQueries({ queryKey: personRolesKey(personId) }),
+        client.invalidateQueries({ queryKey: ROLE_HOLDERS_KEY }),
         client.invalidateQueries({ queryKey: ME_KEY }),
       ]),
   });

@@ -1870,3 +1870,58 @@ fn an_authored_limit_over_a_table_orders_by_its_columns_and_never_by_the_twin_nu
         compiled.sql
     );
 }
+
+/// Over a dataset a plain read's kind follows the declaration, so the runner
+/// must parse its quoted cells by the declaration too, whatever `type` the
+/// metric wrote beside the field.
+#[test]
+fn over_a_dataset_column_types_follow_the_declaration_as_column_kinds_do() {
+    let declaration: crate::domain::kinds::dataset::declaration::Declaration =
+        serde_json::from_value(json!({
+            "title": "Changes",
+            "fields": [
+                { "name": "lines", "path": "lines", "type": "int" },
+                { "name": "ratio", "path": "ratio", "type": "float" },
+                { "name": "team", "path": "team", "type": "string" },
+                { "name": "merged", "path": "merged", "type": "bool" }
+            ]
+        }))
+        .unwrap_or_else(|error| panic!("the declaration parses: {error}"));
+    let over = over::Over {
+        declaration: &declaration,
+        database: "insight_datasets",
+        table: "ds_changes_1",
+    };
+    let metric = query(json!({
+        "dataset": "changes",
+        "fields": [
+            { "field": "lines", "type": "string", "as_name": "lines" },
+            { "field": "ratio", "type": "string", "as_name": "ratio" },
+            { "field": "team", "type": "int", "as_name": "team" },
+            { "field": "merged", "type": "float", "as_name": "merged" },
+            { "agg": "max", "field": "lines", "type": "string", "as_name": "most_lines" }
+        ],
+        "group_by": ["lines", "ratio", "team", "merged"]
+    }));
+
+    let compiled = metric
+        .compile_over(&people(), &Window::legacy(), over)
+        .unwrap_or_else(|error| panic!("compiles: {error}"));
+    let kinds = metric.column_kinds(Some(&declaration), false);
+
+    assert_eq!(kinds.len(), 5);
+    for (name, kind) in kinds {
+        let field_type = compiled.column_types[name.as_str()];
+        let numeric = matches!(field_type, FieldType::Int | FieldType::Float);
+        assert_eq!(
+            kind == ColumnKind::Number,
+            numeric,
+            "should agree on `{name}`: kind {kind:?}, type {field_type:?}"
+        );
+    }
+    assert_eq!(
+        coerce_value(json!("5"), compiled.column_types["lines"]),
+        json!(5),
+        "a quoted Int64 from a declared int arrives as a number"
+    );
+}

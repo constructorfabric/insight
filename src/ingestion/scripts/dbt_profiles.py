@@ -1,7 +1,7 @@
 """The one writer of every throwaway dbt profiles.yml.
 
-Each step that runs dbt — the Argo dbt-run and data-quality steps, the deploy
-hook, bootstrap, the sample seeder, the two transform rigs, the data-path
+Each step that runs dbt — the Argo dbt-run and data-quality steps, the gold
+build, bootstrap, the sample seeder, the two transform rigs, the data-path
 harness — picks its own target name and warehouse and takes the body from here,
 so the connection shape and the ClickHouse topology (epic #2010) are stated
 once instead of once per step.
@@ -57,10 +57,10 @@ def cluster_mode() -> bool:
 def on_cluster() -> str:
     """The cluster the adapter's `cluster` key names, or nothing.
 
-    Empty on a standalone install, and on a cluster whose database carries the
-    `Replicated` engine: that one distributes DDL itself and needs no
-    `ON CLUSTER` clause. A name without the flag names no cluster — the flag
-    is what turns on the replicated engines the clause would qualify.
+    Empty on a standalone install. A name without the flag names no cluster —
+    the flag is what turns on the replicated engines the clause would qualify.
+    The flag without a name is refused by the chart, so no name arrives here
+    while one is needed.
     """
     if not cluster_mode():
         return ""
@@ -90,6 +90,22 @@ def session_settings(*, correlated_subqueries: bool) -> dict[str, object]:
         # has not caught up answers the next model with a partial table.
         settings["insert_quorum"] = "auto"
         settings["select_sequential_consistency"] = 1
+        # INVARIANT: the sequential read above means nothing while quorum
+        # inserts run in parallel (as insight-clickhouse's consistency.rs).
+        settings["insert_quorum_parallel"] = 0
+        # A Replicated table refuses a DELETE / UPDATE with a subquery without it.
+        settings["allow_nondeterministic_mutations"] = 1
+        # WORKAROUND: CH 25.7.5 loses the CTE of `INSERT INTO <replicated>
+        # WITH c AS (...) SELECT ... FROM c` unless this is off; fixed by 26.9.
+        settings["parallel_distributed_insert_select"] = 0
+        # INVARIANT: a mutation returns once EVERY replica applied it, the
+        # session every other creator runs (scripts/lib/ch-exec.sh, the sweep's
+        # ledger). The adapter's own default is 3, and a lightweight DELETE
+        # ignores mutations_sync for lightweight_deletes_sync, so all three are
+        # stated here rather than in any statement.
+        settings["mutations_sync"] = 2
+        settings["alter_sync"] = 2
+        settings["lightweight_deletes_sync"] = 2
 
     return settings
 
@@ -112,6 +128,14 @@ def build_output(connection: Connection, *, correlated_subqueries: bool, threads
     cluster_name = on_cluster()
     if cluster_name:
         output["cluster"] = cluster_name
+
+    if cluster_mode():
+        # INVARIANT: the adapter decides ON CLUSTER from this key, never from
+        # the server; a Replicated database rejects the clause on table DDL.
+        output["database_engine"] = "Replicated"
+        # WORKAROUND: the adapter's connect-time EXCHANGE probe spreads its
+        # CREATE/DROP over replicas behind a load balancer and leaks the tables.
+        output["cluster_mode"] = True
 
     settings = session_settings(correlated_subqueries=correlated_subqueries)
     if settings:

@@ -29,24 +29,13 @@
 //!   audit-survives-deletion-of-parent semantics; an FK would break that
 //!   contract. If a future revision tightens this, amend §3.7 first via
 //!   ADR — adding the FK silently is the wrong move.
-//! - CHECK names below match `REQUIRED_CHECKS` and the startup probe.
 
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
-/// Names of every CHECK constraint this migration adds. The startup probe
-/// asserts each one is present in `INFORMATION_SCHEMA.CHECK_CONSTRAINTS`.
-pub const REQUIRED_CHECKS: &[&str] = &[
-    "chk_metric_threshold_lock_reason_when_locked",
-    "chk_metric_threshold_lock_scope_v1",
-    "chk_metric_threshold_lock_reason_length",
-    "chk_metric_threshold_role_slug_shape",
-    "chk_metric_threshold_team_id_shape",
-];
-
-/// CHECK clause SQL, ordered to match [`REQUIRED_CHECKS`].
+/// CHECK clause SQL.
 const CHECK_CLAUSES: &[(&str, &str)] = &[
     (
         "chk_metric_threshold_lock_reason_when_locked",
@@ -280,17 +269,6 @@ mod tests {
             panic!("CHECK {name} not registered in CHECK_CLAUSES");
         };
         p
-    }
-
-    #[test]
-    fn check_clauses_match_required_list() {
-        let clause_names: Vec<&str> = CHECK_CLAUSES.iter().map(|(n, _)| *n).collect();
-        assert_eq!(
-            clause_names.as_slice(),
-            REQUIRED_CHECKS,
-            "CHECK_CLAUSES names must equal REQUIRED_CHECKS in the same order — \
-             the startup probe relies on this list to detect drops"
-        );
     }
 
     #[test]

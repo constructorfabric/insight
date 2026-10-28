@@ -1,0 +1,21 @@
+spec_version: 1
+description: >
+  Metric: collab.emails_sent — a re-synced report day serves its latest version.
+  How it's computed (bronze → silver → gold):
+    • bronze: the daily M365 email-activity report per mailbox. A re-sync stores a
+      new version of a day under the same key; until the background merge runs,
+      both versions sit in the table side by side.
+    • staging: reads bronze with FINAL, so only the latest version of a day enters,
+      whatever the merge state. The same holds for every M365 report feeder.
+    • gold:   per-person sum of the kept versions.
+
+  Cast (Engineering): alice reports 0 sent on Dec 2. The test re-syncs that day as 9
+  with merges stopped, then writes the earlier version again, and expects 9.
+  Cases: the latest version wins before any merge.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+
+  bronze_m365.email_activity:
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-02", unique_key: revised-alice-20261202, sendCount: 0, _airbyte_extracted_at: "2026-12-03T00:00:00" }

@@ -78,6 +78,11 @@ pub struct RunSavedQueryRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RunResponse {
     pub rows: Vec<serde_json::Value>,
+    /// Set when `rows` is empty because a relation the query names has not been
+    /// built yet. Absent on every answered run, including one that matched
+    /// nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_ready: Option<crate::domain::not_ready::NotReadyReason>,
 }
 
 /// Deserialize a field that can be absent, null, or a value.

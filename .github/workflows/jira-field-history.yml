@@ -59,13 +59,11 @@ concurrency:
 permissions:
   contents: read
 
-# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
-# takes a GitHub-hosted runner, everything else a whole `persistent` machine,
-# and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# Routing: .github/runners/README.md.
 jobs:
   transformations:
     name: transformations + dbt tests
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
     # The lane grows by a scenario with most changes and a runner varies by a
     # third between runs; 74 scenarios took 31 to 42 minutes, so 45 was the
     # edge, and a timeout reads as `cancelled` rather than as a failing test.
@@ -93,7 +91,7 @@ jobs:
           set -euo pipefail
           # pins.env is plain KEY=VALUE, so it doubles as a $GITHUB_ENV fragment:
           # the server image and both dbt versions stay pinned in one committed
-          # place, shared with bootstrap-db and connectors-ddl.
+          # place, shared with bootstrap-db and the field-parity lane.
           cat src/ingestion/scripts/bootstrap-db/pins.env >> "$GITHUB_ENV"
           . src/ingestion/scripts/bootstrap-db/pins.env
           export CLICKHOUSE_SERVER_IMAGE
@@ -106,7 +104,7 @@ jobs:
           # The dbt project's on-run-start hooks write into `staging`, so the
           # databases have to exist before the first dbt invocation — including
           # the unit-test step, which otherwise fails before reading a fixture.
-          for db in staging silver config insight; do
+          for db in staging silver config identity insight; do
             curl -sSf "http://${CLICKHOUSE_HOST}:${CLICKHOUSE_HTTP_PORT}/" \
               -u "${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}" \
               --data-binary "CREATE DATABASE IF NOT EXISTS ${db}"

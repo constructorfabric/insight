@@ -100,29 +100,44 @@ impl Harness {
         answer.body
     }
 
-    async fn filed_tagged_and_pinned(&self, name: &str) {
-        self.sent(
-            "PUT",
-            &format!("/v1/dashboards/{name}"),
-            Some(json!({ "title": "Delivery", "widgets": [] })),
-        )
-        .await;
+    /// A dashboard filed in a folder, tagged and pinned, by the id it was
+    /// given.
+    async fn filed_tagged_and_pinned(&self) -> String {
+        let made = self
+            .sent(
+                "POST",
+                "/v1/dashboards",
+                Some(json!({
+                    "name": "Delivery",
+                    "body": { "title": "Delivery", "widgets": [] }
+                })),
+            )
+            .await;
+        let id = made["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a create answers its id: {made}"))
+            .to_owned();
         let folder = self
             .sent("POST", "/v1/folders", Some(json!({ "name": "Platform" })))
             .await;
+        let folder = folder["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a folder answers its id: {folder}"));
         self.sent(
             "PUT",
-            &format!("/v1/dashboards/{name}/folder"),
-            Some(json!({ "folder": folder["id"] })),
+            &format!("/v1/folders/{folder}/dashboards/{id}"),
+            None,
         )
         .await;
         self.sent(
             "PUT",
-            &format!("/v1/dashboards/{name}/tags"),
+            &format!("/v1/dashboards/{id}/tags"),
             Some(json!({ "tags": ["Delivery", "Platform"] })),
         )
         .await;
-        self.sent("PUT", &format!("/v1/pins/{name}"), None).await;
+        self.sent("PUT", &format!("/v1/pins/{id}"), None).await;
+
+        id
     }
 
     async fn duplicate(&self, from: &str, body: Value) -> Answer {
@@ -135,72 +150,65 @@ impl Harness {
     }
 }
 
+fn answered_id(answer: &Answer) -> String {
+    answer.body["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a copy answers its id: {}", answer.body))
+        .to_owned()
+}
+
 #[tokio::test]
-async fn a_duplicate_is_created_under_its_new_name_with_the_body_folder_and_tags() {
+async fn a_duplicate_is_created_under_a_fresh_id_with_the_body_folder_and_tags() {
     let harness = Harness::new();
-    harness.filed_tagged_and_pinned("delivery").await;
-    let source = harness.sent("GET", "/v1/dashboards/delivery", None).await;
+    let source_id = harness.filed_tagged_and_pinned().await;
+    let source_path = format!("/v1/dashboards/{source_id}");
+    let source = harness.sent("GET", &source_path, None).await;
 
     let created = harness
-        .duplicate("delivery", json!({ "name": "delivery-copy" }))
+        .duplicate(&source_id, json!({ "name": "Delivery copy" }))
         .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let copy_id = answered_id(&created);
     let copy = harness
-        .sent("GET", "/v1/dashboards/delivery-copy", None)
+        .sent("GET", &format!("/v1/dashboards/{copy_id}"), None)
         .await;
 
-    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
-    assert_eq!(created.body, json!({ "name": "delivery-copy" }));
-    for field in ["body", "folder", "tags"] {
+    assert_ne!(copy_id, source_id);
+    assert_eq!(copy["name"], "Delivery copy");
+    for field in ["body", "folders", "tags"] {
         assert_eq!(copy[field], source[field], "{field}");
     }
-    assert_eq!(
-        harness.sent("GET", "/v1/dashboards/delivery", None).await,
-        source
-    );
+    assert_eq!(harness.sent("GET", &source_path, None).await, source);
 }
 
 #[tokio::test]
 async fn a_duplicate_is_not_pinned() {
     let harness = Harness::new();
-    harness.filed_tagged_and_pinned("delivery").await;
+    let source_id = harness.filed_tagged_and_pinned().await;
 
     let created = harness
-        .duplicate("delivery", json!({ "name": "delivery-copy" }))
+        .duplicate(&source_id, json!({ "name": "Delivery copy" }))
         .await;
 
     assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
     assert_eq!(
         harness.sent("GET", "/v1/pins", None).await,
-        json!({ "pins": ["delivery"] })
+        json!({ "pins": [{ "id": source_id, "name": "Delivery" }] })
     );
 }
 
 #[tokio::test]
-async fn a_duplicate_onto_a_name_already_held_is_a_conflict_that_names_it() {
+async fn a_duplicate_may_share_its_source_s_name() {
     let harness = Harness::new();
-    harness.filed_tagged_and_pinned("delivery").await;
-    harness
-        .sent(
-            "PUT",
-            "/v1/dashboards/hiring",
-            Some(json!({ "title": "Hiring", "widgets": [] })),
-        )
+    let source_id = harness.filed_tagged_and_pinned().await;
+
+    let created = harness
+        .duplicate(&source_id, json!({ "name": "Delivery" }))
         .await;
 
-    for onto in ["hiring", "delivery"] {
-        let refused = harness.duplicate("delivery", json!({ "name": onto })).await;
-
-        assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
-        assert!(
-            refused.body.to_string().contains(&format!("`{onto}`")),
-            "{}",
-            refused.body
-        );
-    }
-    let hiring = harness.sent("GET", "/v1/dashboards/hiring", None).await;
-    assert_eq!(hiring["body"]["title"], "Hiring");
-    assert_eq!(hiring["folder"], Value::Null);
-    assert_eq!(hiring["tags"], json!([]));
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let listed = harness.sent("GET", "/v1/dashboards", None).await;
+    assert_eq!(listed["total"], json!(2));
 }
 
 #[tokio::test]
@@ -208,52 +216,50 @@ async fn a_duplicate_of_a_dashboard_that_is_not_there_is_not_found() {
     let harness = Harness::new();
 
     let refused = harness
-        .duplicate("nowhere", json!({ "name": "nowhere-copy" }))
+        .duplicate("nowhere", json!({ "name": "Nowhere copy" }))
+        .await;
+    let malformed = harness
+        .duplicate("not%20an%20id", json!({ "name": "Nowhere copy" }))
         .await;
 
-    assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.body);
+    for answer in [&refused, &malformed] {
+        assert_eq!(answer.status, StatusCode::NOT_FOUND, "{}", answer.body);
+    }
     assert!(
         refused.body.to_string().contains("`nowhere`"),
         "{}",
         refused.body
     );
-    assert_eq!(
-        harness
-            .send("GET", "/v1/dashboards/nowhere-copy", None)
-            .await
-            .status,
-        StatusCode::NOT_FOUND
-    );
+    let listed = harness.sent("GET", "/v1/dashboards", None).await;
+    assert_eq!(listed["total"], json!(0));
 }
 
 #[tokio::test]
 async fn a_new_name_that_is_missing_or_not_a_name_is_refused() {
     let harness = Harness::new();
-    harness.filed_tagged_and_pinned("delivery").await;
+    let source_id = harness.filed_tagged_and_pinned().await;
 
     for body in [
         json!({}),
         json!({ "name": null }),
         json!({ "name": 5 }),
         json!({ "name": "" }),
-        json!({ "name": "not a name" }),
+        json!({ "name": "   " }),
         json!({ "name": "x".repeat(129) }),
     ] {
-        let refused = harness.duplicate("delivery", body.clone()).await;
+        let refused = harness.duplicate(&source_id, body.clone()).await;
 
         assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{body}");
     }
-    assert_eq!(
-        harness.sent("GET", "/v1/dashboards", None).await["names"],
-        json!(["delivery"])
-    );
+    let listed = harness.sent("GET", "/v1/dashboards", None).await;
+    assert_eq!(listed["total"], json!(1));
 }
 
 #[tokio::test]
 async fn a_caller_without_the_admin_role_is_refused() {
     let harness = Harness::build(IdentityClient::fixed(false));
 
-    for body in [json!({ "name": "delivery-copy" }), json!({})] {
+    for body in [json!({ "name": "Delivery copy" }), json!({})] {
         let refused = harness.duplicate("delivery", body.clone()).await;
 
         assert_eq!(refused.status, StatusCode::FORBIDDEN, "{body}");

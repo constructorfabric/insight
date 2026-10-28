@@ -104,7 +104,7 @@ Ordered roughly by how badly the failure misleads.
 | # | Setting (correct value) | What breaks / how it presents |
 |---|---|---|
 | 1 | **`maxUserConnections: 100`** on MariaDB `User/insight` (operator default is 10) | One account backs four pools + the bundled Keycloak's own 100. Identity-Resolution and the analytics `migrate` hook Job crash-loop on `1226 … max_user_connections`; the **deploy** dies with a misleading `client rate limiter … context deadline exceeded`. If a deploy times out mentioning a rate limiter, read `insight-identity-resolution` logs first. |
-| 2 | **`clickhouse.host` = the per-pod Service** `chi-clickhouse-clickhouse-0-0…` (not the fan-out `clickhouse-clickhouse`) | The chart is not cluster-aware (no `ON CLUSTER`, all `*MergeTree`/`View`). DDL through a fan-out Service scatters across servers that then disagree; migration fails part-way with `UNKNOWN_TABLE`→`HTTP 404`. Per-pod name used even at one replica. |
+| 2 | **`clickhouse.host` = the per-pod Service** `chi-clickhouse-clickhouse-0-0…` (not the fan-out `clickhouse-clickhouse`) | The stand runs standalone (`clickhouse.clusterMode` off: Atomic databases, plain `*MergeTree`). DDL through a fan-out Service scatters across servers that then disagree; migration fails part-way with `UNKNOWN_TABLE`→`HTTP 404`. Per-pod name used even at one replica. A clustered stand sets `clusterMode` + `clusterName`, moves `clickhouse.host` to the cluster-wide Service and converts first (`docs/operations/CLICKHOUSE-CLUSTER-CONVERSION.md`). |
 | 3 | **`redis.host` = replication primary** `redis-master.redis…` (not Redis Cluster, not Sentinel) | The authenticator's Rust client has no `cluster` feature; a clustered Redis answers `MOVED` it can't follow. `/auth/login` → 500 for everyone, pods Ready. `-master` selects the operator's `redis-role=master` label, so it survives failover. |
 | 4 | **Argo `singleNamespace: false` + matching `instanceID`** (`argo-workflows-argo`) | With `true` the controller watches only `argo` while the CronWorkflows live in `insight`; a mismatched/empty instanceID makes labelled objects invisible. CronWorkflows sit with `status: {}` forever, zero Workflows — reads as "nothing triggered yet". |
 | 5 | **Argo `controller.workflowNamespaces` stays `[argo]`** — do not add `insight` | That list only controls where the chart *creates* the workflow SA/Role; `insight` already has one applied by `kubectl`. Adding it → Argo upgrade fails `invalid ownership metadata`. Cross-namespace *watch* comes from the ClusterRole `singleNamespace: false` renders. |
@@ -130,7 +130,7 @@ Ordered roughly by how badly the failure misleads.
 | 25 | **Config-Secret changes don't roll pods — accepted gap, manual restart** | Analytics/Authenticator/Identity-Resolution read `insight-<svc>-config` via `envFrom`; `checksum/config` hashes only each subchart's ConfigMap, not the Secret. A changed Secret leaves the pod spec identical → stale config on Ready pods. After a deliberate change: `kubectl -n insight rollout restart deploy/insight-analytics deploy/insight-authenticator deploy/insight-identity-resolution`. |
 | 26 | **Post-deploy HTTPRoute `Accepted` check** — `helm --wait` doesn't wait on route status | A route the Gateway rejects leaves the release `deployed` and the site dark; `Accepted` alone still 503s if the `backendRef` is missing. The deploy/workflow assert `Accepted`+`ResolvedRefs` after the upgrade. |
 | 27 | **Helm 4 `--server-side=true --force-conflicts`** named explicitly | Helm 4.2+ defaults `--server-side` to `auto` (= whatever the last revision used), so a release whose last apply went client-side breaks with `forceConflicts enabled when serverSideApply disabled` — inherited from *how someone ran the previous upgrade*. |
-| 28 | **Sizing values that move together** | CH + Keeper `replicasCount` in lockstep with the wait counts (and CH not scaled until cluster-wide DDL is issued, §2); `MARIADB_BUFFER_POOL` with the MariaDB memory request (InnoDB never exceeds the buffer pool). Broken → a wait that never fires, or DB that ignores its memory. |
+| 28 | **Sizing values that move together** | CH + Keeper `replicasCount` in lockstep with the wait counts (and CH not scaled without the cluster-mode conversion, §2); `MARIADB_BUFFER_POOL` with the MariaDB memory request (InnoDB never exceeds the buffer pool). Broken → a wait that never fires, or DB that ignores its memory. |
 | 29 | **Template placeholders (`__INSIGHT_HOST__` etc.) rendered only via deploy scripts** | A literal `__FOO__` is valid YAML; it reaches the API server as a hostname/quantity and fails at admission naming neither stand nor file. The repo fails a deploy on any leftover placeholder AND if a literal creeps back into a template. |
 
 ## Incidents that shaped this environment
@@ -157,7 +157,8 @@ rebuilding from the rendered release alone will miss all of it.
   users. The rest are created **in-server by the umbrella's own hook Jobs**:
   `insight-mariadb-init-svcdbs` (as root, using `insight-db-creds`'s
   `mariadb-root-password`, `CREATE DATABASE` for `identity`+`keycloak` + grant)
-  and `insight-clickhouse-init-svcdbs` (`insight`+`presentation`). That is why
+  and `insight-clickhouse-databases` (every ClickHouse database the release
+  holds, plus the roles and grant-less users that read them). That is why
   the root password must be in `insight-db-creds` even though no DSN uses it.
   Other hooks: `insight-keycloak-config` (drift-reverting realm apply) and
   `insight-clickhouse-migrate`. Every hook has `ttlSecondsAfterFinished: 600` —

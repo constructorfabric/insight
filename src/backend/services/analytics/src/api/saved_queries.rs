@@ -17,6 +17,7 @@ use axum::Json;
 use axum::extract::{Extension, Path};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
+use insight_clickhouse::MissingRelation;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, NotSet, QueryFilter, Set};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
@@ -24,12 +25,14 @@ use uuid::Uuid;
 
 use super::error::SavedQueryError;
 use super::{AppState, is_admin_caller};
+use crate::domain::not_ready::NotReadyReason;
 use crate::domain::query_gate::{admin_only_database, validate_single_select};
 use crate::domain::saved_query::{
     CreateSavedQueryRequest, RunResponse, RunSavedQueryRequest, SavedQuery, SavedQuerySummary,
     UpdateSavedQueryRequest,
 };
 use crate::infra::db::entities::saved_queries;
+use crate::infra::not_ready;
 
 // ── CRUD ────────────────────────────────────────────────────
 
@@ -162,7 +165,7 @@ pub async fn run_saved_query(
     // server-side parameter interface, so a value can never alter the SQL. The
     // injected tenant-row *filter* (#1967) is a separate concern.
     let period = body.and_then(|Json(b)| b.period);
-    let rows = execute_read(
+    let run = execute_read(
         &state,
         id,
         &saved.sql,
@@ -170,7 +173,24 @@ pub async fn run_saved_query(
         period.as_deref(),
     )
     .await?;
-    Ok(Json(RunResponse { rows }))
+    Ok(Json(match run {
+        QueryRun::Rows(rows) => RunResponse {
+            rows,
+            not_ready: None,
+        },
+        QueryRun::NotReady(reason) => RunResponse {
+            rows: Vec::new(),
+            not_ready: Some(reason),
+        },
+    }))
+}
+
+/// What a run answered: the records, or that a relation it names has not been
+/// built yet. A saved query over a warehouse nothing has filled is the same
+/// "nothing yet" every other read answers, not a server fault.
+enum QueryRun {
+    Rows(Vec<serde_json::Value>),
+    NotReady(NotReadyReason),
 }
 
 /// Execute a single read statement against ClickHouse and parse the
@@ -182,7 +202,7 @@ async fn execute_read(
     sql: &str,
     tenant_id: Uuid,
     period: Option<&str>,
-) -> Result<Vec<serde_json::Value>, CanonicalError> {
+) -> Result<QueryRun, CanonicalError> {
     tracing::debug!(sql = %sql, "executing saved query");
 
     // `.param` sets `param_<name>` on the request; the SQL references it as
@@ -193,20 +213,34 @@ async fn execute_read(
         query = query.param("period", period);
     }
 
-    let mut cursor = query.fetch_bytes("JSONEachRow").map_err(|e| {
-        tracing::error!(error = %e, sql = %sql, "ClickHouse query failed");
-        classify_run_error(id, &e.to_string())
-    })?;
+    let mut cursor = match query.fetch_bytes("JSONEachRow") {
+        Ok(cursor) => cursor,
+        Err(e) => return run_outcome(id, sql, &e.to_string()),
+    };
 
-    let raw_bytes = cursor.collect().await.map_err(|e| {
-        tracing::error!(error = %e, sql = %sql, "ClickHouse fetch failed");
-        classify_run_error(id, &e.to_string())
-    })?;
+    let raw_bytes = match cursor.collect().await {
+        Ok(bytes) => bytes,
+        Err(e) => return run_outcome(id, sql, &e.to_string()),
+    };
 
-    parse_json_each_row(&raw_bytes).map_err(|e| {
-        tracing::error!(error = %e, "failed to parse ClickHouse JSON response");
-        CanonicalError::internal("failed to parse query results").create()
-    })
+    parse_json_each_row(&raw_bytes)
+        .map(QueryRun::Rows)
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to parse ClickHouse JSON response");
+            CanonicalError::internal("failed to parse query results").create()
+        })
+}
+
+/// What a run that produced no rows answers: a relation nothing has built yet
+/// is an empty result with the marker, everything else is the error it is.
+fn run_outcome(id: Uuid, sql: &str, message: &str) -> Result<QueryRun, CanonicalError> {
+    if MissingRelation::from_message(message).is_some() {
+        not_ready::warn_throttled(message, "saved-query:run");
+        return Ok(QueryRun::NotReady(NotReadyReason::SourceRelationMissing));
+    }
+
+    tracing::error!(error = %message, sql = %sql, "ClickHouse saved-query run failed");
+    Err(classify_run_error(id, message))
 }
 
 /// Map a ClickHouse run error to a canonical error. A query that references a
@@ -330,7 +364,9 @@ fn model_to_summary(m: saved_queries::Model) -> SavedQuerySummary {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_run_error, missing_param_name, parse_json_each_row};
+    use super::{
+        QueryRun, classify_run_error, missing_param_name, parse_json_each_row, run_outcome,
+    };
     use serde_json::json;
     use toolkit_canonical_errors::Problem;
     use uuid::Uuid;
@@ -400,12 +436,41 @@ mod tests {
     #[test]
     fn other_ch_errors_stay_500() -> R {
         for msg in [
-            "bad response: Code: 60. DB::Exception: Unknown table",
+            "Code: 47. DB::Exception: Unknown expression identifier (UNKNOWN_IDENTIFIER)",
             "network error: connection refused",
         ] {
             let p = problem_of(classify_run_error(Uuid::now_v7(), msg))?;
             assert_eq!(p["status"], 500, "should be a 500: {msg:?}");
         }
+        Ok(())
+    }
+
+    /// A relation nothing has built yet is an empty answer, not a 500: the
+    /// console shows "no data yet" the same way every other read does. Code 47
+    /// is NOT that — the relation is there and its columns disagree with the
+    /// deployed code.
+    #[test]
+    fn an_absent_relation_runs_to_an_empty_answer() -> R {
+        for msg in [
+            "bad response: Code: 60. DB::Exception: Table insight.x does not exist.",
+            "Code: 81. DB::Exception: Database insight does not exist. (UNKNOWN_DATABASE)",
+        ] {
+            let run = run_outcome(Uuid::now_v7(), "SELECT 1", msg);
+            assert!(
+                matches!(run, Ok(QueryRun::NotReady(_))),
+                "should answer not-ready: {msg:?}"
+            );
+        }
+
+        let failed = run_outcome(
+            Uuid::now_v7(),
+            "SELECT 1",
+            "Code: 47. DB::Exception: Unknown expression identifier (UNKNOWN_IDENTIFIER)",
+        );
+        let Err(error) = failed else {
+            panic!("a column the relation does not have must fail");
+        };
+        assert_eq!(problem_of(error)?["status"], 500);
         Ok(())
     }
 

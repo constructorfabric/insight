@@ -1,0 +1,96 @@
+:root {
+  color-scheme: light dark;
+}
+
+[data-theme="light"],
+.light {
+  color-scheme: light;
+}
+
+[data-theme="dark"],
+.dark {
+  color-scheme: dark;
+}
+
+:root:not([data-theme]),
+:root[data-theme],
+[data-theme="light"],
+[data-theme="dark"] {
+  --background: light-dark(#f8fafc, #111a2b);
+  --foreground: light-dark(#0f172a, #f8fafc);
+  --surface: light-dark(#ffffff, #182236);
+  --surface-elevated: light-dark(#ffffff, #1e2a40);
+  --card: var(--surface);
+  --card-foreground: var(--foreground);
+  --card-hover: light-dark(#e9eef4, #1e293b);
+  --popover: var(--surface-elevated);
+  --popover-foreground: var(--foreground);
+  --primary: #0065e3;
+  --primary-hover: light-dark(#0057c2, #1a78f0);
+  --primary-foreground: #ffffff;
+  --primary-ring: light-dark(#0065e3, #4d95f0);
+  --secondary: light-dark(#f1f5f9, #1e293b);
+  --secondary-foreground: light-dark(#475569, #cbd5e1);
+  --muted: light-dark(#f1f5f9, #1e293b);
+  --muted-foreground: light-dark(#64748b, #94a3b8);
+  --selection-subtle: light-dark(#e2e8f0, #26384b);
+  --accent: var(--primary);
+  --accent-foreground: var(--primary-foreground);
+  --accent-soft: light-dark(#e4eef8, #1b2e4a);
+  --accent-text: light-dark(#0057c2, #7ab4ff);
+  --destructive: light-dark(#e11d48, #fb7185);
+  --destructive-soft: light-dark(#fff1f2, #3a1220);
+  --success: light-dark(#059669, #34d399);
+  --success-foreground: light-dark(#047857, #6ee7b7);
+  --success-soft: light-dark(#ecfdf5, #0b2e26);
+  --warning: light-dark(#d97706, #f6c453);
+  --warning-foreground: light-dark(#92400e, #fcd980);
+  --warning-soft: light-dark(#fffbeb, #33260a);
+  --blue: light-dark(#2563eb, #60a5fa);
+  --border: light-dark(#e2e8f0, #2a3650);
+  --border-strong: light-dark(#cbd5e1, #3b4a63);
+  --input: light-dark(#cbd5e1, #334155);
+  --ring: light-dark(#0065e3, #4d95f0);
+  --rail: light-dark(#e8edf3, #0b1220);
+  --sidebar: light-dark(#f1f5f9, #0f172a);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-accent: light-dark(#ffffff, #1e2a40);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --chart-1: light-dark(#e86a33, #f08a5d);
+  --chart-2: light-dark(#499894, #5db3ae);
+  --chart-3: light-dark(#4e79a7, #7aa3d0);
+  --chart-4: light-dark(#b07aa1, #c99bbe);
+  --chart-5: light-dark(#9c755f, #b8957f);
+  --radius: 0.5rem;
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+}
+
+@layer base {
+  .lucide {
+    stroke-width: 1.5;
+  }
+}
+
+@layer utilities {
+  .home-metrics [data-slot="headline-grid"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  @container (min-width: 28rem) {
+    .home-metrics [data-slot="headline-grid"] {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @container (min-width: 42rem) {
+    .home-metrics [data-slot="headline-grid"] {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+}

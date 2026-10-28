@@ -72,17 +72,114 @@ Contract per dep (all infra is external — out-of-chart L2):
 
 {{/* Topology of the target ClickHouse (epic #2010). One pair of values tells
      every creator in this release which DDL to emit: `clusterMode` turns on
-     `Replicated*` engines, `clusterName` supplies the `ON CLUSTER <name>`
-     clause. They are independent — a database on the `Replicated` engine
-     replicates without any `ON CLUSTER`, so an empty name under
-     `clusterMode: true` is a valid clustered install.
-     Defaults render "false" and "", which is today's standalone DDL. */}}
+     the `Replicated` database and `Replicated*` table engines, `clusterName`
+     is the cluster the creators that carry an `ON CLUSTER <name>` clause name
+     (the CREATE DATABASEs, the bronze heals, the destination); dbt and the
+     Rust services read it and emit none. The two travel together — see
+     requireNamedCluster below. Defaults render "false" and "", which is
+     standalone DDL. */}}
 {{- define "insight.clickhouse.clusterMode" -}}
+{{- include "insight.clickhouse.requireNamedCluster" . -}}
 {{- .Values.clickhouse.clusterMode | default false -}}
 {{- end -}}
 
 {{- define "insight.clickhouse.clusterName" -}}
+{{- include "insight.clickhouse.requireNamedCluster" . -}}
 {{- default "" .Values.clickhouse.clusterName -}}
+{{- end -}}
+
+{{/* Refuses the half-configured topology at render time, before anything in
+     the release has created a relation: replicated engines whose DDL reaches
+     only the node that answered the connection leave the other replicas
+     without the table, which is the failure clusterMode exists to prevent.
+     Checked here first: every creator downstream is handed the pair by this
+     chart, and the ones that interpolate the name re-check it at run time.
+     The name is an identifier every creator interpolates into DDL unquoted,
+     the way dbt-clickhouse renders its own `cluster:` key, so what is accepted
+     here is a bare ClickHouse identifier: a name carrying `-` or `.` parses
+     only in quotes, and would be a syntax error in every statement it reached. */}}
+{{- define "insight.clickhouse.requireNamedCluster" -}}
+{{- if .Values.clickhouse.clusterMode -}}
+{{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" (trim (default "" .Values.clickhouse.clusterName))) -}}
+{{- fail (printf "clickhouse.clusterMode is true, so clickhouse.clusterName must name the cluster its DDL reaches, as a bare ClickHouse identifier — letters, digits and '_', starting with a letter or '_'. Got %q" .Values.clickhouse.clusterName) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The environment a toolbox Job needs to issue ClickHouse DDL: the
+     connection, the topology, and the password of every grant-less user
+     create-databases.sh provisions. Shared by the two Jobs that run it — the
+     pre-install `clickhouse-databases` Hook and the post-install
+     `clickhouse-migrate` Hook, which reaches it through apply-ch-migrations.sh
+     — so neither can drift into provisioning a different set of users. */}}
+{{- define "insight.clickhouse.ddlEnv" -}}
+# CLICKHOUSE_URL selects the HTTP backend in lib/ch-exec.sh.
+- name: CLICKHOUSE_URL
+  value: {{ include "insight.clickhouse.url" . | quote }}
+- name: CLICKHOUSE_DATABASE
+  value: {{ include "insight.clickhouse.database" . | quote }}
+# Topology of the target ClickHouse (epic #2010) — what the DDL emitted here
+# must be shaped for. Defaults render "false" / "", which is standalone.
+- name: CLICKHOUSE_CLUSTER_MODE
+  value: {{ include "insight.clickhouse.clusterMode" . | quote }}
+- name: CLICKHOUSE_CLUSTER_NAME
+  value: {{ include "insight.clickhouse.clusterName" . | quote }}
+# Whether the script provisions the roles and grant-less users below at all;
+# false leaves them to the operator.
+- name: CLICKHOUSE_PROVISION_ACCESS
+  value: {{ .Values.clickhouse.provisionAccess | quote }}
+- name: CLICKHOUSE_USER
+  value: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+- name: CLICKHOUSE_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+      key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+# Grant-less `presentation` user's password (#1964). Optional: unset on a
+# Secret predating this key -> the script provisions the role only.
+- name: CLICKHOUSE_PRESENTATION_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ default "insight-db-creds" .Values.clickhouse.passwordSecret.name | quote }}
+      key:  "clickhouse-presentation-password"
+      optional: true
+- name: MCP_ENABLED
+  value: {{ .Values.global.mcp.enabled | quote }}
+- name: SQL_API_ENABLED
+  value: {{ .Values.global.sqlApi.enabled | quote }}
+# Whether the custom assistant's ClickHouse reader is provisioned at all. Its
+# role holds SELECT on every table, so it follows the service (#3558).
+- name: INSIGHT_V3_CORE_ENABLED
+  value: {{ (((.Values.global).insightV3Core).deploy) | default false | quote }}
+{{- if or .Values.global.mcp.enabled .Values.global.sqlApi.enabled }}
+- name: CLICKHOUSE_MCP_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ required "analytics.mcp.credentialsSecret is required when MCP is enabled" .Values.analytics.mcp.credentialsSecret | quote }}
+      key: {{ required "analytics.mcp.clickhousePasswordKey is required when MCP is enabled" .Values.analytics.mcp.clickhousePasswordKey | quote }}
+{{- end }}
+{{- if (((.Values.global).insightV3Core).deploy) }}
+# Grant-less `insight_v3_reader`'s password. Optional: unset on a
+# Secret predating this key -> the script provisions the role only,
+# and the service queries as its own user.
+- name: CLICKHOUSE_V3_READER_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ default "insight-db-creds" .Values.clickhouse.passwordSecret.name | quote }}
+      key:  "clickhouse-v3-reader-password"
+      optional: true
+- name: CLICKHOUSE_V3_READER_USER
+  value: {{ required "insightV3Core.clickhouseReaderUsername is required" .Values.insightV3Core.clickhouseReaderUsername | quote }}
+{{- end }}
+# Grant-less SELECT-only `grafana` user's password (#2888), shared
+# with the Grafana datasource secret in insight-infra. Optional:
+# unset -> the script provisions the role only.
+- name: CLICKHOUSE_GRAFANA_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ default "insight-db-creds" .Values.clickhouse.passwordSecret.name | quote }}
+      key:  "clickhouse-grafana-password"
+      optional: true
 {{- end -}}
 
 {{/* ---------- MariaDB (external) ---------- */}}

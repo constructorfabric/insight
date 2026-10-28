@@ -1,0 +1,42 @@
+spec_version: 1
+description: >
+  Metric: collab.meetings_count and collab.meeting_hours — a Zoom participant who
+  joined without signing in is attributed through the account's user list.
+  How it's computed (bronze → silver → gold):
+    • bronze: the account's Zoom user list (display name + email) and the participant
+      sessions of each meeting; a joiner who did not sign in carries no email, only
+      the display name typed into the client.
+    • silver: a session without an email takes the email of the one Zoom user whose
+      display name equals it (case and surrounding spaces ignored); a name carried by
+      two Zoom users or by none attributes nobody; a signed-in session keeps its own email.
+    • gold:   meetings and hours per person per day, as for any signed-in attendee.
+
+  Cast (Engineering), one meeting z1 on Dec 10, 10:00–11:00, everyone there the whole hour:
+    alice — signed in → 1 meeting, 1 h (control).
+    bob   — unsigned, typed " bob beta " → the one Zoom user "Bob Beta" → 1 meeting, 1 h.
+    carol — unsigned as "Team Lead", a name two Zoom users carry (carol, dave) → nobody.
+    dave  — never joined; the shared name must not land on him either → nobody.
+    erin  — unsigned as "Erin E", a name no Zoom user carries → nobody.
+  Cases: signed-in control · unique display name resolves, normalized · shared name
+  attributes nobody · unknown name attributes nobody.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_zoom.users:
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_user, id: zu-alice, unique_key: zu-alice, display_name: Alice Alpha, email: alice@example.com }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_user, id: zu-bob,   unique_key: zu-bob,   display_name: Bob Beta,    email: bob@example.com }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_user, id: zu-carol, unique_key: zu-carol, display_name: Team Lead,   email: carol@example.com }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_user, id: zu-dave,  unique_key: zu-dave,  display_name: Team Lead,   email: dave@example.com }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_user, id: zu-erin,  unique_key: zu-erin,  display_name: Erin Echo,   email: erin@example.com }
+
+  bronze_zoom.participants:
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: zu-alice-z1, meeting_uuid: z1, participant_uuid: ua1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: " bob beta ", unique_key: zu-bob-z1,   meeting_uuid: z1, participant_uuid: ub1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Team Lead,    unique_key: zu-carol-z1, meeting_uuid: z1, participant_uuid: uc1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Erin E,       unique_key: zu-erin-z1,  meeting_uuid: z1, participant_uuid: ue1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T11:00:00Z" }

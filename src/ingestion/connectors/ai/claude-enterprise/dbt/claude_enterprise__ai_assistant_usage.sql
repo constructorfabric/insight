@@ -12,11 +12,6 @@
 --
 -- All rows carry tool='claude' (vendor discriminator for class_ai_assistant_usage).
 -- Future: tool='chatgpt' for OpenAI Compliance API, tool='gemini' for Google.
---
--- Previously this data fed class_ai_api_usage via the now-deprecated
--- claude_enterprise__ai_api_usage model. Enterprise engagement data represents
--- human ↔ Claude assistant interaction (not programmatic API consumption), so it
--- belongs in class_ai_assistant_usage instead.
 
 {{ config(
     materialized='incremental',

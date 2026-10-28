@@ -27,13 +27,13 @@
 
 
 {#- The modelled fields. `long_text` IS modelled: its body is content-addressed
-    into `jira__task_field_text` and the journal carries the hash plus a prefix.
+    into `jira__task_field_text` and the journal carries a text reference.
 
     The catalogue contains a real `created` field, but `created` is also the
     contract's creation-marker sentinel (§10). Emitting both produces two rows
     with the SAME unique_key, and ReplacingMergeTree then keeps one and drops the
     other. The marker wins: its timestamp is the same value, and
-    `task_issue_current_state.created_at` reads it by `event_kind`. -#}
+    `task_issue_state.created_at` reads it by `event_kind`. -#}
 {% macro jira_journal_kinds_sql() %}
     SELECT
         insight_source_id,
@@ -64,13 +64,16 @@
 
 
 {#- One stage, replaced. `ORDER BY tuple()`: a stage is read whole, by joins.
-    `marker` is a comment the statement carries for the log to name it by. -#}
+    `marker` is a comment the statement carries for the log to name it by.
+    Created EMPTY and then filled: a Replicated database rejects CREATE ... AS
+    SELECT. -#}
 {% macro jira_journal_write_stage(name, select_sql, marker='') %}
     {%- set stage = jira_journal_stage(name) -%}
     {%- set settings = adapter.get_model_query_settings(model) -%}
     {%- do run_query('DROP TABLE IF EXISTS ' ~ stage) -%}
-    {%- do run_query('CREATE TABLE ' ~ stage ~ ' ENGINE = MergeTree ORDER BY tuple() AS '
-                     ~ marker ~ select_sql ~ settings) -%}
+    {%- do run_query('CREATE TABLE ' ~ stage ~ ' ENGINE = ' ~ insight_engine('MergeTree')
+                     ~ ' ORDER BY tuple() EMPTY AS ' ~ select_sql) -%}
+    {%- do run_query('INSERT INTO ' ~ stage ~ ' ' ~ marker ~ select_sql ~ settings) -%}
 {% endmacro %}
 
 

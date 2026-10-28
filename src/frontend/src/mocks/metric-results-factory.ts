@@ -1,5 +1,6 @@
 import type {
   MetricErrorView,
+  MetricNotReadyView,
   MetricResult,
   MetricResultView,
   MetricResultsRequest,
@@ -116,6 +117,20 @@ export function buildMetricErrorView(
   };
 }
 
+/**
+ * A view whose data has not been built yet — what a fresh install answers
+ * before the first connector sync, in a requested view's slot.
+ */
+export function buildMetricNotReadyView(
+  overrides: Partial<Omit<MetricNotReadyView, "view">> = {},
+): MetricNotReadyView {
+  return {
+    view: "not_ready",
+    reason: "SOURCE_RELATION_MISSING",
+    ...overrides,
+  };
+}
+
 export function buildMetricResultsResponse(
   request: MetricResultsRequest,
 ): MetricResultsResponse {
@@ -134,6 +149,9 @@ export function buildMetricResultsResponse(
             values: ids.map((entityId) => ({
               entity_id: entityId,
               value: valueFor(entityId, key),
+              ...(request.compare_to
+                ? { compare_to: valueFor(entityId, key, "previous-period") }
+                : {}),
             })),
           };
         case "peer":

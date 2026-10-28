@@ -3,23 +3,29 @@ name: Warm upgrade
 # Validates the one contract the fresh-install lanes cannot see: deploying
 # this branch onto an installation that ALREADY holds data.
 #
-# On a fresh install the committed connectors-ddl snapshot carries the new
-# relation shapes, so a gold model that references a new silver/staging
-# column always builds. On a warm installation the relations already exist,
-# `CREATE TABLE IF NOT EXISTS` never widens them, and the deploy hook builds
-# only `tag:gold` — so the same gold model fails the deploy with
-# UNKNOWN_IDENTIFIER unless the change also ships a numbered migration
-# (silver.class_*) or a guarded heal (staging.*): the "Warehouse contract
-# changes" rule in AGENTS.md, enforced here instead of at deploy time.
+# On a fresh install every relation is created by the dbt run that first builds
+# it, so a model gets whatever shape this branch's SELECT states. On a warm
+# installation the relation already exists, and neither `CREATE TABLE IF NOT
+# EXISTS` nor dbt's default `on_schema_change` widens it — so a gold model
+# reading a newly added silver/staging column fails with UNKNOWN_IDENTIFIER
+# unless the change ships a guarded heal: the "Warehouse contract changes"
+# rule in AGENTS.md, enforced here instead of in the field.
+# Since #3561 nothing builds gold at deploy time, so the failure lands on the
+# first connector sync after the upgrade — later, and on the pipeline rather
+# than on helm, which is why this lane matters more, not less.
 #
-# The simulation runs the base commit's own deploy hook first (placeholders,
-# migrations, heals, base gold build — what an existing installation's last
-# deploy left behind), adds the bronze a connector would have synced into it,
-# then this branch's apply-ch-migrations.sh end to end, exactly like the Helm
-# clickhouse-migrate hook.
+# The simulation runs the base commit's own deploy first, lets its connectors
+# create their bronze through destination-clickhouse and plays its last sync
+# (the whole buildable dbt graph) — what an existing installation's last
+# deploy and last sync left behind — adds the rows a connector would have
+# synced into it, then runs this branch's apply-ch-migrations.sh end to end —
+# exactly like the Helm clickhouse-migrate hook — and finally its own whole
+# buildable graph, standing in for that first sync.
 #
 # Not a required check: on pull requests an `on: paths` filter scopes it to
-# the warehouse path, so an unrelated change gets no run at all.
+# the warehouse path, so an unrelated change gets no run at all. This lane
+# upgrades a single node; the same simulation on a two-replica warehouse is
+# a required leg of cluster-mode.yml, run in the merge queue.
 #
 # The push run is not redundant: a PR is validated against its own base, so
 # two PRs green apart can still leave main uncovered, and only a run on the
@@ -50,21 +56,19 @@ concurrency:
   # PRs supersede per ref — cancelling an outdated run is free. Every main
   # push gets its OWN group: a shared group would let a newer run replace an
   # older one, and the replaced A→B transition would never be validated — run
-  # B→C installs B's own fresh snapshot as the base, so B's missing migration
-  # is exactly what it cannot see.
+  # B→C installs B's own fresh warehouse as the base, so B's missing heal is
+  # exactly what it cannot see.
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
-# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
-# takes a GitHub-hosted runner, everything else a whole `persistent` machine,
-# and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# Routing: .github/runners/README.md.
 jobs:
   warm-upgrade:
     name: Deploy onto a warm installation
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 30
     env:
       CLICKHOUSE_CONTAINER: warm-upgrade-clickhouse
@@ -89,10 +93,19 @@ jobs:
       - name: Start an empty ClickHouse
         run: |
           set -euo pipefail
+          # seed-connectors.sh needs mikefarah yq v4 and jq; both ship in the
+          # runner image.
+          yq --version
+          jq --version
           # pins.env is plain KEY=VALUE, so it doubles as a $GITHUB_ENV fragment.
           cat src/ingestion/scripts/bootstrap-db/pins.env >> "$GITHUB_ENV"
           source src/ingestion/scripts/bootstrap-db/pins.env
-          echo "CLICKHOUSE_URL=http://127.0.0.1:8123" >> "$GITHUB_ENV"
+          # The bridge gateway is the runner host as seen from inside a
+          # container: one address that works for dbt on the host and for the
+          # destination-clickhouse container the sim starts, which reaches the
+          # published port. `host.docker.internal` does not resolve on Linux.
+          host="$(docker network inspect bridge -f '{{ (index .IPAM.Config 0).Gateway }}')"
+          echo "CLICKHOUSE_URL=http://${host}:8123" >> "$GITHUB_ENV"
           CLICKHOUSE_SERVER_IMAGE="$CLICKHOUSE_SERVER_IMAGE" \
             .github/workflows/scripts/start-clickhouse.sh "${CLICKHOUSE_CONTAINER}"
 

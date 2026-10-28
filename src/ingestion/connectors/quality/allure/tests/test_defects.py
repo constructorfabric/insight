@@ -107,7 +107,7 @@ def test_defect_list_pagination_follows_page_index_until_last_page(http_mocker: 
     output = read_stream(_CONNECTOR, _STREAM, config)
 
     assert not output.errors
-    assert [r.record.data["id"] for r in output.records] == [1201, 1202]
+    assert sorted(r.record.data["id"] for r in output.records) == [1201, 1202]
 
 
 def test_defect_deleted_between_list_and_detail_is_skipped(http_mocker: HttpMocker) -> None:

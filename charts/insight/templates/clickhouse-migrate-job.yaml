@@ -1,29 +1,23 @@
 {{/*
 ==============================================================================
- ClickHouse gold-view migrations
+ ClickHouse schema migrations
 ==============================================================================
 
-Helm Hook Job that applies the gold-view migrations
-(`src/ingestion/scripts/migrations/*.sql`) against the external ClickHouse.
-
-Why a Hook Job: the migrations used to be applied by `scripts/init.sh`,
-which `kubectl exec`s into a bundled CH StatefulSet. #1428 dropped the
-bundled L2 subcharts (CH is now always external), so that path can no
-longer reach ClickHouse and nothing else applied the migrations — the
-`clickhouse-init-svcdbs` Hook only runs `CREATE DATABASE`. This Job closes
-that gap: it runs the toolbox image (which bundles the migrations,
-`create-warehouse-placeholders.sh`, and `lib/ch-exec.sh`) and dials
-`clickhouse.host` directly over the HTTP interface (CLICKHOUSE_URL selects
-the HTTP backend in lib/ch-exec.sh).
+Helm Hook Job that applies the schema migrations
+(`src/ingestion/scripts/migrations/*.sql`) and the guarded heals of
+`apply-ch-migrations.sh` against the external ClickHouse: it runs the
+toolbox image (which bundles the scripts and `lib/ch-exec.sh`) and dials
+`clickhouse.host` over the HTTP interface (CLICKHOUSE_URL selects the HTTP
+backend in lib/ch-exec.sh). The `clickhouse-databases` Hook only creates
+databases and access.
 
 Hook timing: `post-install,post-upgrade`. The post-* phase runs after the
-main release (so the `clickhouse-init-svcdbs` pre-install Hook has created
+main release (so the `clickhouse-databases` pre-install Hook has created
 the app database and the app pods have rolled). post-* over pre-* is safe
-because gold-view consumers (analytics) resolve VIEW source tables
-lazily at query time, so views materialising shortly after pod startup is
-fine. (hook-weight 200 runs this AFTER the keycloak-config hook (100): helm
-executes same-phase hooks serially, and the quick realm import should
-not queue behind the dbt gold build.)
+because gold consumers (analytics) resolve VIEW source tables lazily at
+query time, so a relation materialising after pod startup is fine.
+(hook-weight 200 runs this AFTER the keycloak-config hook (100): helm
+executes same-phase hooks serially.)
 
 Failure behavior: a failed migration is NOT silently tolerated. Helm blocks
 on the hook Job, so a non-zero exit fails `helm upgrade` (and, under the
@@ -33,15 +27,14 @@ because migration SQL errors are deterministic, not transient: retrying a
 bad statement just delays the inevitable failure.
 
 Idempotent: migrations are re-run on every upgrade and are CREATE OR
-REPLACE / IF NOT EXISTS; placeholders are guarded by `ch_table_exists`.
-No migration ledger — same contract as the legacy init.sh path.
+REPLACE / IF NOT EXISTS; the heals are guarded by `ch_table_exists`. No
+migration ledger.
 
-The script's final step builds the dbt gold models (`dbt run --select
-tag:gold`) so dbt-owned views exist right after deploy instead of after
-the first connector sync — the analytics service reports metrics as
-unavailable while an observation view is missing. The toolbox image
-already bundles the dbt project; placeholders guarantee the view DDL
-type-checks on a fresh cluster.
+The script pre-creates no relation and builds no model (#3559, #3561): every
+staging, silver and gold relation is dbt's, built by the connector sync that
+feeds it, because every descriptor's dbt selector ends in `+`. A relation no
+sync has built yet does not exist, and the analytics service answers it as
+not-ready rather than as a failure.
 
 Gated on `clickhouse.runMigrations` (default true) AND the availability of
 `ingestion.toolboxImage` (the image that ships the migration SQL).
@@ -62,6 +55,11 @@ spec:
   # Low on purpose: migration SQL errors are deterministic (see header).
   # A couple of attempts still absorbs a transient CH blip mid-run.
   backoffLimit: 2
+  # 2700 s = 3 attempts (backoffLimit 2) x 900 s, lib/ch-exec.sh's cluster-mode
+  # transport ceiling per statement: an attempt either runs its ~200 statements
+  # and the row-moving heals well inside one ceiling, or stalls on one statement
+  # and is cut at it (a coordinated DDL answers within its own 60 s).
+  activeDeadlineSeconds: 2700
   ttlSecondsAfterFinished: 600
   template:
     metadata:
@@ -86,65 +84,5 @@ spec:
             - "-c"
             - "bash /ingestion/scripts/apply-ch-migrations.sh"
           env:
-            # CLICKHOUSE_URL selects the HTTP backend in lib/ch-exec.sh.
-            - name: CLICKHOUSE_URL
-              value: {{ include "insight.clickhouse.url" . | quote }}
-            - name: CLICKHOUSE_DATABASE
-              value: {{ include "insight.clickhouse.database" . | quote }}
-            # Topology of the target ClickHouse (epic #2010) — what the
-            # migrations and the gold build must emit DDL for. Defaults
-            # render "false" / "", which is the standalone DDL.
-            - name: CLICKHOUSE_CLUSTER_MODE
-              value: {{ include "insight.clickhouse.clusterMode" . | quote }}
-            - name: CLICKHOUSE_CLUSTER_NAME
-              value: {{ include "insight.clickhouse.clusterName" . | quote }}
-            - name: CLICKHOUSE_USER
-              value: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
-            - name: CLICKHOUSE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
-                  key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
-            # Grant-less `presentation` user's password (#1964). Optional:
-            # unset on a Secret predating this key → the script provisions the
-            # role only.
-            - name: CLICKHOUSE_PRESENTATION_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ default "insight-db-creds" .Values.clickhouse.passwordSecret.name | quote }}
-                  key:  "clickhouse-presentation-password"
-                  optional: true
-            - name: MCP_ENABLED
-              value: {{ .Values.global.mcp.enabled | quote }}
-            - name: SQL_API_ENABLED
-              value: {{ .Values.global.sqlApi.enabled | quote }}
-            {{- if or .Values.global.mcp.enabled .Values.global.sqlApi.enabled }}
-            - name: CLICKHOUSE_MCP_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "analytics.mcp.credentialsSecret is required when MCP is enabled" .Values.analytics.mcp.credentialsSecret | quote }}
-                  key: {{ required "analytics.mcp.clickhousePasswordKey is required when MCP is enabled" .Values.analytics.mcp.clickhousePasswordKey | quote }}
-            {{- end }}
-            {{- if (((.Values.global).insightV3Core).deploy) }}
-            # Grant-less `insight_v3_reader`'s password. Optional: unset on a
-            # Secret predating this key -> the script provisions the role only,
-            # and the service queries as its own user.
-            - name: CLICKHOUSE_V3_READER_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ default "insight-db-creds" .Values.clickhouse.passwordSecret.name | quote }}
-                  key:  "clickhouse-v3-reader-password"
-                  optional: true
-            - name: CLICKHOUSE_V3_READER_USER
-              value: {{ required "insightV3Core.clickhouseReaderUsername is required" .Values.insightV3Core.clickhouseReaderUsername | quote }}
-            {{- end }}
-            # Grant-less SELECT-only `grafana` user's password (#2888), shared
-            # with the Grafana datasource secret in insight-infra. Optional:
-            # unset -> the script provisions the role only.
-            - name: CLICKHOUSE_GRAFANA_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ default "insight-db-creds" .Values.clickhouse.passwordSecret.name | quote }}
-                  key:  "clickhouse-grafana-password"
-                  optional: true
+            {{- include "insight.clickhouse.ddlEnv" . | nindent 12 }}
 {{- end }}

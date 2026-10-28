@@ -6,8 +6,7 @@
 #
 # The base record lists EVERY schema field so a merged bronze row is complete;
 # unused fields default to null. The 4 `_airbyte_*` CDK columns are included too
-# (non-nullable) — transformations rely on them (e.g. the insight.people view
-# picks the latest row via `argMax(..., _airbyte_extracted_at)`).
+# (non-nullable) — transformations rely on them.
 #
 # `raw_data` is the one field NOT stated here: the fixture-loader derives it from
 # each record's own fields, so a record that overrides a column cannot end up

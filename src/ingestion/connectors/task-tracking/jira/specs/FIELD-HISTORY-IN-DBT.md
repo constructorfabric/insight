@@ -337,7 +337,7 @@ convention to invert:
 | kind | separator | why it is unambiguous |
 |---|---|---|
 | `string_array` | single space | Jira rejects a label containing whitespace, so a space is always a separator and a comma is always content |
-| `option_array` | `[`, comma followed by a space, `]` on the id side; bare comma on the display side | ids are numeric, so the bracket form parses without ambiguity; displays are matched positionally to ids |
+| `option_array` | `[`, comma followed by a space, `]` on the id side; bare comma on the display side | ids are numeric, so the bracket form parses without ambiguity; displays are matched positionally to ids. An id side naming no element — absent, or `[]` beside displays, as a migrated instance writes — yields to the displays, minus the literal `[]` an empty list renders as |
 | `legacy_list` | `", "` | the pre-2020 Sprint serialization |
 
 ### 3.4 Id spaces that do not reconcile
@@ -535,11 +535,12 @@ link added or removed. It is not an `obj_array`, because the two sides identify
 the element differently:
 
 - the **issue resource** holds the LINK OBJECT: `{"id": <the link's own id>,
-  "outwardIssue" | "inwardIssue": {"key": ...}, "type": {...}}`. A
+  "outwardIssue" | "inwardIssue": {"id": ..., "key": ...}, "type": {...}}`. A
   component-shaped normalizer takes the top-level `id`, which is the link's own;
-- the **changelog** names the LINKED ISSUE by key in the id side, with a
-  rendered sentence in the display side ("This issue duplicates PROJ-1"). The
-  link's own id appears nowhere in it.
+- the **changelog** names the LINKED ISSUE by the key it had at the time in the
+  id side, with a rendered sentence in the display side ("This issue duplicates
+  PROJ-1", or "This work item duplicates PROJ-1" in newer entries). Neither the
+  link's own id nor its type's id appears anywhere in it.
 
 So identifying by the link id leaves the two sides with no id in common, and
 every issue holding a link disagrees with its own history. Measured, this was
@@ -547,22 +548,64 @@ the single largest remaining round-trip class after the metadata-driven parsing
 landed — and it looked like a fold defect until the two shapes were put side by
 side.
 
-The key is the identifier on both sides, and the link id is discarded; it stays
-in the issue JSON. Direction is not part of the identity: an issue holds each
-link once, and which side of it the issue is on is carried by the rendered text.
+The element is the linked issue's immutable id, and the link id is discarded;
+it stays in the issue JSON. The snapshot reads the id from the link object. The
+changelog's key resolves to it through `jira__issue_key_ids`, which holds every
+key an issue is known to have had: its own bronze rows (one per key the
+connector saw), the `Key` items a move writes on the moved issue's own
+changelog, the link objects every snapshot holds, and parent changes, which
+name the parent by id and by key. Identifying by the key instead split one link
+in two when the linked issue moved — the addition named the old key, the
+removal the new one. A `subtasks` element is the child issue itself and is
+identified by its id the same way.
+
+A key no input names — an issue in a project the connector cannot read and
+that no synced issue now links to, or one deleted before it was read — stays
+the element's identifier. A key carries its project prefix, so it never
+collides with an id, and such a key never meets the snapshot: every link the
+snapshot holds names its id. Resolution reads other issues' data, so a key that
+first resolves after an issue's journal rows were written reaches those rows on
+the issue's next recompute, not before.
+
+Direction is not part of the identity: an issue holds each link once, and which
+side of it the issue is on is carried by the rendered text. `class_task_links`
+reads the link TYPE from the same two shapes, as its own producer
+(`jira__task_links`).
 
 Two consequences worth stating:
 
 - **two links to the same issue with different types collapse into one
   element.** The changelog gives them the same id, so the pipeline cannot hold
   them apart, and a display would be the only difference — which the contract
-  does not treat as identity.
+  does not treat as identity. The element therefore COUNTS its links: it is
+  present while the links held at creation plus those added outnumber those
+  removed, so removing one of two links to an issue leaves the issue linked.
+  The links held at creation are the fewest that keep that count from going
+  negative. `class_task_links` keeps the two apart by type.
 - **a remote link is logged in the same field.** A link to a Confluence page
   emits an item whose id side is the remote link's numeric id, and no such
   element exists in `issuelinks` at all — remote links are a separate REST
-  resource. Those rows carry an id the current value can never confirm. They are
-  a small fraction of the field's items and are left as they arrive rather than
-  detected by content.
+  resource. An issue key always carries its project prefix, so an all-digit id
+  side identifies these items unambiguously, and `jira_item_is_live` drops them.
+
+`jira__task_links` folds each occurrence's events into intervals, with three
+rules the events alone do not give:
+
+- **an Epic Link change is a parent change.** Before the epic became the
+  issue's `parent`, it was set through the `gh-epic-link` custom field, whose
+  items name the epic by id and key exactly as a parent item does. Read alone,
+  a parent cleared and an Epic Link set to the same epic seconds later ends a
+  parent the issue still has.
+- **within one changelog entry a removal precedes an addition.** An entry can
+  remove and add the same link, in either order of its items; the link holds
+  after it.
+- **the issue's newest read has the last word.** A link can go with no event on
+  either issue — deleting the linked issue logs nothing on this one, and a bulk
+  change can drop links unlogged — and come back the same way. Where the read
+  disagrees with the state the events leave, the occurrence closes at the
+  issue's `updated` when that is after the last event, else at the read, or
+  reopens at its last removal with `valid_from_known = 0`; either row is
+  `evidence = observation`. A read older than the last event is skipped.
 
 ## 4. Value normalization
 
@@ -1045,24 +1088,39 @@ journal never reaches it.
 
 ## 8. Long text in a side table
 
-Status: implemented (`jira__task_field_text`). §5's normalizers
-cover every other kind; this is the remaining one.
+Status: implemented (`jira__task_field_text`, reaching
+`silver.class_task_field_text`). §5's normalizers cover every other kind; this
+is the remaining one.
 
 `long_text` values are large, change often, and are stored per event, so a naive
 layout copies the whole body into every history row.
 
-A second model, `jira__task_field_text`, holds `(text_id, content)` with
-`text_id = sipHash128(content)`; ReplacingMergeTree on `text_id` deduplicates
-identical bodies for free. The history row stores `value_displays =
-[hex(text_id)]` and `value_id_type = 'text_ref'`.
+A second model, `jira__task_field_text`, holds one row per distinct body of a
+source: `(insight_source_id, data_source, text_id, content_form, content)` with
+`text_id = lower(hex(sipHash128(content)))` (the shared `task_text_id` macro),
+keyed by source and `text_id`. ReplacingMergeTree deduplicates identical bodies
+for free. It is tagged into `silver.class_task_field_text`, the source-neutral
+class every task tracker feeds.
 
-One dbt model writes one table, so this is simply a second model over the same
-upstream — no extra orchestration step.
+The history row is a text reference: `value_ids = [text_id]`,
+`value_displays = [the first task_long_text_prefix_chars characters]` (default
+200), and `value_id_type = 'text_ref'`. An empty value has no element and no
+body. A consumer joins `class_task_field_text` on (`insight_source_id`,
+`data_source`, `text_id = value_ids[1]`) for the full body.
+
+`content_form` says which representation a body is: `adf_json` for the current
+body read from the issue JSON, `rendered_text` for a body taken from either
+side of a changelog item. One dbt model writes one table, so this is simply a
+second model over the same upstream — no extra orchestration step.
 
 This makes long text cheap to store. It does not make it accurate: `toString`
-for a long-text field is Jira's rendering and may be truncated, so a
-reconstructed historical body is "as Jira rendered it", not the source text.
-Consumers needing exact bodies must read the issue snapshot, not the history.
+for a long-text field is Jira's rendering, so a reconstructed historical body
+is "as Jira rendered it", not the source text. The history references the
+`adf_json` row only where the field never changed — the initial value comes
+from the issue JSON then; after a change, the newest reference is Jira's
+rendering. The exact current body is `jira__task_field_current_text`
+(`silver.class_task_field_current_text`): one `text_id` per issue and field,
+keyed by the issue's immutable `jira_id`.
 
 ## 9. Failure policy
 
@@ -1100,7 +1158,7 @@ The output table is consumed by `silver.class_task_field_history` through
 
 - the per-issue creation marker: one row with `field_id = 'created'`,
   `event_kind = 'synthetic_initial'`, `_seq = 0`, carrying the reporter and the
-  creation timestamp, and no value. `task_issue_current_state.created_at` reads
+  creation timestamp, and no value. `task_issue_state.created_at` reads
   it as `minIf(event_at, event_kind = 'synthetic_initial')`
 - `event_id`: `initial:{issue_id}` for synthetic rows, the changelog id for
   changelog rows
@@ -1236,9 +1294,9 @@ destination recreate it:
 
 1. add a `RemoveFields` transformation for `fields` to the `jira_issue` stream
 2. bump the connector descriptor, deploy, let one sync complete
-3. add a migration under `src/ingestion/scripts/migrations/` performing
+3. add a `ch_table_exists`-guarded heal to
+   `src/ingestion/scripts/apply-ch-migrations.sh` performing
    `ALTER TABLE bronze_jira.jira_issue DROP COLUMN IF EXISTS fields`
-4. drop the column from `src/ingestion/scripts/connectors-ddl/jira.sql`
 
 This is storage hygiene, independent of the defects above, and can land
 separately.

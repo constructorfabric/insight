@@ -1,34 +1,41 @@
-import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 
-import type { AlertDestination, AlertOperator } from "@/api/alerts-types";
-import type { StoredMetric } from "@/api/custom-types";
+import type { AlertDestination } from "@/api/alerts-types";
+import { ConditionBuilder } from "@/components/alerts/condition-builder";
 import { FieldSelect } from "@/components/alerts/field-select";
-import { MetricPicker } from "@/components/alerts/metric-picker";
+import { DefinitionPicker } from "@/components/custom/definition-picker";
 import { Row } from "@/components/custom/editor/controls";
 import { refusal } from "@/components/custom/refusal";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Field,
+  FieldError,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { OPERATORS } from "@/lib/alerts/describe";
+import { conditionColumns } from "@/lib/alerts/condition";
 import {
-  thresholdSent,
-  type AlertForm,
+  CONTEXT_COLUMNS_MAX,
+  contextColumnsOf,
+  textOf,
+  type AlertDocument,
   type FieldErrors,
 } from "@/lib/alerts/draft";
 import { INTERVAL_PRESETS_SECS, intervalLabel } from "@/lib/alerts/interval";
-import {
-  alertColumns,
-  isRatio,
-  metricShape,
-  type MetricShape,
-} from "@/lib/alerts/shape";
-import { takesWindow, windowFor } from "@/lib/alerts/window";
+import { isRatio } from "@/lib/alerts/shape";
+import { takesWindow } from "@/lib/alerts/window";
 import { describing } from "@/lib/custom/editor/aria";
 import { RANGE_PRESETS, rangeLabel } from "@/lib/custom/time-range";
-import { metricQuery } from "@/queries/custom";
+import { TEXT_LABEL } from "@/lib/type-scale";
+import { cn } from "@/lib/utils";
 
 import { CurrentValue } from "./current-value";
+import type { AlertMetric } from "./use-alert-metric";
+import type { AlertPreviewState } from "./use-alert-preview";
 
 /** The window value meaning no window, since a kit select takes no empty value. */
 const ALL_TIME = "all-time";
@@ -39,78 +46,110 @@ const UTC_NOTE = "Days, months and quarters end at midnight UTC.";
 /** The windows bounded by calendar days rather than counted back from now. */
 const CALENDAR_WINDOWS = new Set(["PDC", "PMC", "PQC"]);
 
-/** The stored metric a rule reads, with how the read went. */
-function useStoredMetric(metric: string) {
-  return useQuery({ ...metricQuery(metric), enabled: metric !== "" });
-}
-
-/** Why the picked metric cannot be alerted on, or nothing when it can. */
-function shapeProblem(shape: MetricShape): string | undefined {
-  switch (shape.kind) {
-    case "one":
-      return undefined;
-    case "grouped":
-      return `Returns one row per ${shape.by.join(", ")}. Alerts need a single value.`;
-    case "rows":
-      return "Returns multiple rows. Alerts need a single value.";
-  }
-}
-
 /** The windows a rule may name: the presets, and the one it already has. */
-function windowOptions(current: string, windowed: boolean) {
+function windowOptions(current: string) {
   // INVARIANT: "inf" reads every dated row, which "All time" already offers.
   const presets = RANGE_PRESETS.filter(({ token }) => token !== "inf").map(
-    ({ token, label }) => ({ value: token, label, disabled: !windowed })
+    ({ token, label }) => ({ value: token, label })
   );
   const known = current === "" || presets.some((one) => one.value === current);
 
   return [
     { value: ALL_TIME, label: "All time" },
     ...presets,
-    ...(known
-      ? []
-      : [{ value: current, label: rangeLabel(current), disabled: !windowed }]),
+    ...(known ? [] : [{ value: current, label: rangeLabel(current) }]),
   ];
 }
 
+function ContextColumnChoice({
+  column,
+  checked,
+  disabled,
+  onToggle,
+}: {
+  column: string;
+  checked: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  const id = `alert-context-${column}`;
+
+  return (
+    <Field
+      orientation="horizontal"
+      data-disabled={disabled}
+      className="w-auto gap-2"
+    >
+      <Checkbox
+        id={id}
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onToggle}
+      />
+      <FieldLabel htmlFor={id} className="font-mono font-normal">
+        {column}
+      </FieldLabel>
+    </Field>
+  );
+}
+
 export function AlertFields({
-  form,
+  document,
   errors,
   destinations,
+  metric: picked,
+  preview,
   onChange,
 }: {
-  form: AlertForm;
+  document: AlertDocument;
   errors: FieldErrors;
   destinations: readonly AlertDestination[];
-  onChange: (next: AlertForm) => void;
+  metric: AlertMetric;
+  preview: AlertPreviewState;
+  onChange: (patch: AlertDocument) => void;
 }) {
-  const read = useStoredMetric(form.metric);
-  const stored: StoredMetric | undefined = read.data;
-  const definition = stored?.definition;
+  const { read, stored, definition, kinds, manyRows } = picked;
   const windowed = takesWindow(stored);
+  const metric = textOf(document, "metric");
+  const range = textOf(document, "range");
+  const interval =
+    typeof document.interval_secs === "number"
+      ? document.interval_secs
+      : undefined;
+  const destination = textOf(document, "destination");
+  const tested = conditionColumns(document.condition);
 
   // INVARIANT: a metric that lost its date refuses the window its alert still
-  // holds, and the disabled select cannot clear it.
+  // holds, and the hidden select cannot clear it.
   useEffect(() => {
-    if (!windowed && form.range !== "") onChange({ ...form, range: "" });
-  }, [windowed, form, onChange]);
+    if (!windowed && range !== "") onChange({ range: null });
+  }, [windowed, range, onChange]);
 
-  const windowHint = CALENDAR_WINDOWS.has(form.range) ? UTC_NOTE : undefined;
+  const windowHint = CALENDAR_WINDOWS.has(range) ? UTC_NOTE : undefined;
   const metricProblem =
     errors.metric ??
     (read.isError
       ? refusal(read.error, "Couldn't read the metric.")
-      : definition
-        ? shapeProblem(metricShape(definition))
-        : undefined);
-  const columns = definition
-    ? alertColumns(definition).map((field) => field.as_name)
-    : [];
-  const set = (patch: Partial<AlertForm>) => onChange({ ...form, ...patch });
+      : undefined);
+  const columns = definition?.fields.map((field) => field.as_name) ?? [];
+  const grouped = new Set(definition?.group_by ?? []);
+  const context = contextColumnsOf(document) ?? [];
+  // INVARIANT: a column the metric no longer answers stays listed while the
+  // rule names it, so an edit does not drop it unseen.
+  const offered = [
+    ...columns.filter((column) => !grouped.has(column)),
+    ...context.filter((column) => !columns.includes(column)),
+  ];
+  const chosen = metric !== "" && picked.settled;
+  // INVARIANT: a metric that cannot be read never hides the window a rule holds.
+  const showWindow = stored
+    ? Boolean(stored.clock)
+    : read.isError && range !== "";
 
-  const intervals = INTERVAL_PRESETS_SECS.includes(form.intervalSecs)
-    ? INTERVAL_PRESETS_SECS
-    : [...INTERVAL_PRESETS_SECS, form.intervalSecs].sort((a, b) => a - b);
+  const intervals =
+    interval === undefined || INTERVAL_PRESETS_SECS.includes(interval)
+      ? INTERVAL_PRESETS_SECS
+      : [...INTERVAL_PRESETS_SECS, interval].sort((a, b) => a - b);
 
   return (
     <div className="flex flex-col gap-6">
@@ -118,118 +157,123 @@ export function AlertFields({
         <Input
           id="alert-name"
           {...describing("alert-name", { said: errors.name, required: true })}
-          value={form.name}
+          value={textOf(document, "name")}
           className="h-9 w-full"
-          onChange={(event) => set({ name: event.target.value })}
+          onChange={(event) => onChange({ name: event.target.value })}
         />
       </Row>
 
-      <Row id="alert-metric" label="Metric" required said={metricProblem}>
-        <div className="flex flex-col items-start gap-1">
-          <MetricPicker
-            id="alert-metric"
-            value={form.metric}
-            describe={describing("alert-metric", {
-              said: metricProblem,
-              required: true,
-            })}
-            onChange={(metric) => set({ metric, column: "" })}
-          />
-          {read.isError ? (
-            <Button
-              type="button"
-              variant="link"
-              className="h-auto px-0 py-1"
-              onClick={() => void read.refetch()}
-            >
-              Retry
-            </Button>
-          ) : null}
-        </div>
-      </Row>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Row id="alert-column" label="Column" required said={errors.column}>
-          <FieldSelect
-            id="alert-column"
-            value={form.column}
-            placeholder={form.metric ? "Pick a column" : "Pick a metric first"}
-            disabled={form.metric === ""}
-            options={[
-              ...columns.map((name) => ({ value: name, label: name })),
-              ...(form.column && !columns.includes(form.column)
-                ? [{ value: form.column, label: form.column }]
-                : []),
-            ]}
-            describe={describing("alert-column", {
-              said: errors.column,
-              required: true,
-            })}
-            className="font-mono"
-            onChange={(column) =>
-              set({ column, range: windowFor(stored, form.range) })
-            }
-          />
+        <Row id="alert-metric" label="Metric" required said={metricProblem}>
+          <div className="flex flex-col items-start gap-1">
+            <DefinitionPicker
+              kind="metrics"
+              id="alert-metric"
+              value={metric}
+              describe={describing("alert-metric", {
+                said: metricProblem,
+                required: true,
+              })}
+              onChange={(next) => onChange({ metric: next })}
+            />
+            {read.isError ? (
+              <Button
+                type="button"
+                variant="link"
+                className="h-auto px-0 py-1"
+                onClick={() => void read.refetch()}
+              >
+                Retry
+              </Button>
+            ) : null}
+          </div>
         </Row>
-        <Row
-          id="alert-range"
-          label="Window"
-          hint={windowHint}
-          said={errors.range}
-        >
-          <FieldSelect
+        {showWindow ? (
+          <Row
             id="alert-range"
-            value={form.range === "" ? ALL_TIME : form.range}
-            options={windowOptions(form.range, windowed)}
-            disabled={!windowed}
-            describe={describing("alert-range", {
-              hint: windowHint,
-              said: errors.range,
-            })}
-            onChange={(range) =>
-              set({ range: range === ALL_TIME ? "" : range })
-            }
-          />
-        </Row>
+            label="Window"
+            hint={windowHint}
+            said={errors.range}
+          >
+            <FieldSelect
+              id="alert-range"
+              value={range === "" ? ALL_TIME : range}
+              options={windowOptions(range)}
+              describe={describing("alert-range", {
+                hint: windowHint,
+                said: errors.range,
+              })}
+              onChange={(next) =>
+                onChange({ range: next === ALL_TIME ? null : next })
+              }
+            />
+          </Row>
+        ) : null}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)]">
-        <Row id="alert-operator" label="Condition">
-          <FieldSelect
-            id="alert-operator"
-            value={form.operator}
-            options={OPERATORS}
-            onChange={(operator) =>
-              set({ operator: operator as AlertOperator })
+      {chosen ? (
+        <fieldset className="flex min-w-0 flex-col gap-3">
+          <legend className={cn(TEXT_LABEL, "mb-1 font-medium")}>
+            Condition
+          </legend>
+          <ConditionBuilder
+            condition={document.condition}
+            columns={columns}
+            kinds={kinds}
+            manyRows={manyRows}
+            errors={errors}
+            onChange={(condition) => onChange({ condition })}
+          />
+          <CurrentValue
+            preview={preview}
+            ratioOnly={
+              tested.length > 0 &&
+              tested.every((column) => isRatio(definition, column))
             }
           />
-        </Row>
-        <Row
-          id="alert-threshold"
-          label="Threshold"
-          required
-          said={errors.threshold}
+        </fieldset>
+      ) : null}
+
+      {chosen && (offered.length > 0 || errors.context_columns) ? (
+        <FieldSet
+          tabIndex={-1}
+          className="gap-2 outline-none"
+          aria-invalid={errors.context_columns ? true : undefined}
+          aria-describedby={
+            errors.context_columns ? "alert-context-columns-said" : undefined
+          }
         >
-          <Input
-            id="alert-threshold"
-            {...describing("alert-threshold", {
-              said: errors.threshold,
-              required: true,
-            })}
-            inputMode="decimal"
-            value={form.threshold}
-            className="h-9 w-full tabular-nums"
-            onChange={(event) => set({ threshold: event.target.value })}
-          />
-        </Row>
-      </div>
-      <CurrentValue
-        metric={form.metric}
-        column={form.column}
-        range={form.range}
-        operator={form.operator}
-        threshold={thresholdSent(form)}
-        ratio={isRatio(definition, form.column)}
-      />
+          <FieldLegend
+            variant="label"
+            className={cn(TEXT_LABEL, "mb-1 font-medium")}
+          >
+            Show in notification
+          </FieldLegend>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {offered.map((column) => (
+              <ContextColumnChoice
+                key={column}
+                column={column}
+                checked={context.includes(column)}
+                disabled={
+                  !context.includes(column) &&
+                  context.length >= CONTEXT_COLUMNS_MAX
+                }
+                onToggle={() =>
+                  onChange({
+                    context_columns: context.includes(column)
+                      ? context.filter((each) => each !== column)
+                      : [...context, column],
+                  })
+                }
+              />
+            ))}
+          </div>
+          <FieldError id="alert-context-columns-said">
+            {errors.context_columns}
+          </FieldError>
+        </FieldSet>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Row
@@ -239,7 +283,7 @@ export function AlertFields({
         >
           <FieldSelect
             id="alert-interval"
-            value={String(form.intervalSecs)}
+            value={interval === undefined ? "" : String(interval)}
             options={intervals.map((secs) => ({
               value: String(secs),
               label: intervalLabel(secs),
@@ -247,7 +291,7 @@ export function AlertFields({
             describe={describing("alert-interval", {
               said: errors.interval_secs,
             })}
-            onChange={(picked) => set({ intervalSecs: Number(picked) })}
+            onChange={(next) => onChange({ interval_secs: Number(next) })}
           />
         </Row>
         <Row
@@ -258,31 +302,31 @@ export function AlertFields({
         >
           <FieldSelect
             id="alert-destination"
-            value={form.destination}
+            value={destination}
             placeholder="Pick a destination"
             options={[
               ...destinations.map(({ name, provider }) => ({
                 value: name,
                 label: `${name} (${provider})`,
               })),
-              ...(form.destination &&
-              !destinations.some(({ name }) => name === form.destination)
-                ? [{ value: form.destination, label: form.destination }]
+              ...(destination &&
+              !destinations.some(({ name }) => name === destination)
+                ? [{ value: destination, label: destination }]
                 : []),
             ]}
             describe={describing("alert-destination", {
               said: errors.destination,
               required: true,
             })}
-            onChange={(destination) => set({ destination })}
+            onChange={(next) => onChange({ destination: next })}
           />
         </Row>
       </div>
 
       <label className="flex items-center gap-3 self-start">
         <Switch
-          checked={form.enabled}
-          onCheckedChange={(enabled: boolean) => set({ enabled })}
+          checked={document.enabled === true}
+          onCheckedChange={(enabled: boolean) => onChange({ enabled })}
         />
         <span className="text-sm">Enabled</span>
       </label>

@@ -67,7 +67,6 @@
   - [TEST-FDESIGN-001: Testability](#test-fdesign-001-testability)
   - [TEST-FDESIGN-002: Test Coverage Guidance](#test-fdesign-002-test-coverage-guidance)
   - [TEST-FDESIGN-003: Acceptance Criteria](#test-fdesign-003-acceptance-criteria)
-  - [TEST-FDESIGN-004: Testing Scenario Vector Attribution](#test-fdesign-004-testing-scenario-vector-attribution)
 - [📜 COMPLIANCE Expertise (COMPL)](#compliance-expertise-compl)
   - [COMPL-FDESIGN-001: Regulatory Compliance](#compl-fdesign-001-regulatory-compliance)
   - [COMPL-FDESIGN-002: Privacy Compliance](#compl-fdesign-002-privacy-compliance)
@@ -99,8 +98,8 @@
 <!-- /toc -->
 
 **Artifact**: Feature (FEATURE)
-**Version**: 2.1
-**Last Updated**: 2026-09-09
+**Version**: 2.0
+**Last Updated**: 2026-02-03
 **Purpose**: Comprehensive quality checklist for FEATURE artifacts
 ---
 
@@ -734,28 +733,6 @@ Before evaluating each checklist item, the expert MUST:
 - [ ] Criteria cover happy path
 - [ ] Criteria cover error paths
 - [ ] Criteria testable automatically
-
-### TEST-FDESIGN-004: Testing Scenario Vector Attribution
-**Severity**: HIGH
-**Ref**: [quality-vector guide](../../guides/quality-vectors.md) (kit-local framing, not an ISO/IEC 25010 characteristic set)
-
-> **New in v2.1**: Added to gate the vector and suite-tag attribution `FEATURE/rules.md` requires of every authored `## 7. Testing` scenario.
-
-- [ ] Every authored Testing scenario carries exactly one primary quality vector (Efficiency, Reliability, Performance, Security, Versatility) and exactly one suite tag
-- [ ] Each scenario traces to an executable test, citing the feature path, feature ID and stable scenario number (or is explicitly marked "Not implemented")
-- [ ] The vector attributed to a scenario is the one the scenario's own claim tests, not the vector the underlying requirement is filed under in section 1.2
-- [ ] A vector category with no scenario is not reported as a violation by itself — missing coverage across the five vectors is not a gate (`FEATURE/rules.md`)
-
----
-
-## Authoring aid — quality vectors
-
-**Authoring aid:** Use the [quality-vector guide](../../guides/quality-vectors.md)
-to suggest clearer requirement mappings, contribution boundaries and evidence
-links. Report these as improvement opportunities, without a severity or
-pass/fail verdict. Canonical criteria above and agreed requirements retain
-their meaning. Vector and suite-tag attribution on authored Testing scenarios
-is checked under TEST-FDESIGN-004.
 
 ---
 

@@ -28,7 +28,8 @@ pipeline's own `tag:jira,tag:staging` but read none of the three tables these
 tests seed, so building them per scenario costs about thirty seconds and proves
 nothing. `test_invariants.py` pays for the full pipeline selector once — that
 is what would catch a field-history model which works alone but breaks the
-chain.
+chain. `test_comment_state.py` is the one module that seeds comments: it builds
+`+jira__comment_state` over `jira_comments` and `jira_issue_keys` alone.
 
 Bronze is created by the Airbyte destination from the Jira connector's own
 catalogue, through the same scripts `bootstrap-db.sh` uses — so the tables carry
@@ -112,7 +113,9 @@ analysing this one takes about seven seconds on zero rows — its CTEs are
 inlined at each of their uses, and 1070 lines of SQL become 150 query-tree
 nodes. The suite's runtime is therefore the NUMBER of builds, not their content.
 
-So a module's `@case` scenarios are seeded together and built once. They do not
+So a module's `@case` scenarios are seeded together and built once, with the
+module's `SELECTOR` when it declares one — `test_task_links.py` adds
+`jira__task_links` to the journal's. They do not
 see each other: every model in the chain carries `insight_source_id` through its
 joins and windows, and each scenario is seeded under one of its own.
 

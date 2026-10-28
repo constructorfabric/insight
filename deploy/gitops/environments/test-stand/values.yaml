@@ -293,16 +293,14 @@ clickhouse:
   # A PER-POD Service, not the cluster-wide one, and that distinction is
   # load-bearing.
   #
-  # The chart is not cluster-aware: no template emits `ON CLUSTER`, there is
-  # no cluster-name value, and the objects it creates are
-  # ReplacingMergeTree / MergeTree / View rather than Replicated*, so nothing
-  # is synchronised between servers. Pointed at a Service that fans out
-  # across replicas, each new HTTP connection can land on a different server,
-  # so the post-install migration's DDL statements are distributed across
-  # independent servers that then disagree about which tables exist — the
-  # failure surfaces as ClickHouse's UNKNOWN_TABLE from whichever server
-  # answers a later statement. Airbyte writes and analytics reads would
-  # scatter the same way.
+  # This stand runs the release standalone (clusterMode off): its databases
+  # are Atomic and its tables plain MergeTree, so DDL and rows reach the one
+  # server a statement lands on. Pointed at a Service that fans out across
+  # replicas, each new HTTP connection can land on a different server, and
+  # the post-install migration's statements scatter across servers that then
+  # disagree about which tables exist — ClickHouse's UNKNOWN_TABLE from
+  # whichever server answers a later statement. Airbyte writes and analytics
+  # reads would scatter the same way.
   #
   # `chi-<chi>-<cluster>-<shard>-<replica>` is the Altinity operator's
   # per-pod Service, so this name always resolves to exactly one server. It
@@ -310,7 +308,9 @@ clickhouse:
   # guarantee then lives in this file rather than in a replica count, so
   # scaling out cannot silently reintroduce round-robin DDL.
   #
-  # Revisit if the chart learns `ON CLUSTER` DDL and Replicated engines.
+  # A clustered stand is a different install: clusterMode + clusterName set,
+  # host at the cluster-wide Service, and an existing standalone install
+  # converted first (docs/operations/CLICKHOUSE-CLUSTER-CONVERSION.md).
   host: chi-clickhouse-clickhouse-0-0.clickhouse.svc.cluster.local
   port: 8123
   database: insight

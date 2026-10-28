@@ -10,6 +10,7 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::engine::author_index::{self, AuthorChange, ChangesCursor, FeedQuery};
 use crate::engine::key::CacheKey;
 use crate::engine::page::PageToken;
 use crate::engine::read::{self, Page, authors, branches, commits, numstat, patches};
@@ -19,8 +20,8 @@ use crate::engine::store::{Freshness, RepoGuard, StoreError};
 use super::AppState;
 use super::error::ApiError;
 use super::request::{
-    BadRequest, Paging, RequestContext, ShaFilter, ValidatedQuery, clamp_patch_bytes,
-    parse_sha_filter, required_param,
+    BadRequest, Caller, Paging, RequestContext, ShaFilter, ValidatedQuery, clamp_page_size,
+    clamp_patch_bytes, parse_sha_filter, required_param,
 };
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -60,9 +61,65 @@ pub struct AuthorsQuery {
     page_token: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AuthorChangesQuery {
+    changed_since: Option<String>,
+    committed_since: Option<String>,
+    page_size: Option<u32>,
+    page_token: Option<String>,
+}
+
+/// One author whose record changed, workspace-wide.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AuthorChangeRow {
+    pub author_email: String,
+    pub author_name: String,
+    /// Proxy time of the author's most recent change; strictly increasing per
+    /// tenant and source. The caller's cursor.
+    pub changed_at: String,
+    /// Proxy time the author was first observed.
+    pub first_seen_at: String,
+    /// Newest committer date among the author's indexed commits; never a
+    /// cursor.
+    pub last_committed_date: String,
+    pub sample: AuthorSample,
+}
+
+/// The author's newest commit in a repository the caller may read — what a
+/// consumer asks the vendor about.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AuthorSample {
+    /// The clone URL as the caller sent it when the repository was fetched.
+    pub repo_url: String,
+    pub sha: String,
+}
+
+impl From<AuthorChange> for AuthorChangeRow {
+    fn from(change: AuthorChange) -> Self {
+        Self {
+            author_email: change.email,
+            author_name: change.name,
+            changed_at: author_index::format_stamp(change.changed_us),
+            first_seen_at: author_index::format_stamp(change.first_seen_us),
+            last_committed_date: change.last_committed,
+            sample: AuthorSample {
+                repo_url: change.sample_url,
+                sha: change.sample_sha,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AuthorChangesPage {
+    pub items: Vec<AuthorChangeRow>,
+    pub next_page_token: Option<String>,
+}
+impl toolkit::api::api_dto::ResponseApiDto for AuthorChangesPage {}
+
 /// Concrete page wrappers, one per endpoint: `Page<T>` cannot be a schema
-/// because the registry keys components on the type's own name, so all three
-/// instantiations would collide on one component.
+/// because the registry keys components on the type's own name, so every
+/// instantiation would collide on one component.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CommitsPage {
     pub items: Vec<commits::CommitRow>,
@@ -473,12 +530,77 @@ pub async fn list_authors(
     json_page(AuthorsPage::from(page)).await
 }
 
+/// `GET /v1/authors/changes` — authors changed since a point, across every
+/// repository of the caller's source that its credentials have read.
+///
+/// Served from the author index alone: it never contacts origin, so it has no
+/// snapshot to pin and never answers `409`.
+///
+/// # Errors
+///
+/// [`ApiError`] on malformed input.
+pub async fn list_author_changes(
+    Extension(state): Extension<Arc<AppState>>,
+    headers: HeaderMap,
+    ValidatedQuery(query): ValidatedQuery<AuthorChangesQuery>,
+) -> Result<Response, ApiError> {
+    let caller = Caller::from_headers(&headers)?;
+    let since_us = match query
+        .changed_since
+        .as_deref()
+        .filter(|raw| !raw.trim().is_empty())
+    {
+        Some(raw) => Some(
+            author_index::parse_instant_us(raw)
+                .ok_or(BadRequest::MalformedInstant("changed_since"))?,
+        ),
+        None => None,
+    };
+    let committed_since_us = match query
+        .committed_since
+        .as_deref()
+        .filter(|raw| !raw.trim().is_empty())
+    {
+        Some(raw) => Some(
+            author_index::parse_instant_us(raw)
+                .ok_or(BadRequest::MalformedInstant("committed_since"))?,
+        ),
+        None => None,
+    };
+    let cursor = match query.page_token.as_deref().filter(|raw| !raw.is_empty()) {
+        Some(raw) => Some(ChangesCursor::decode(raw).map_err(|_| BadRequest::MalformedToken)?),
+        None => None,
+    };
+
+    let page = state
+        .store
+        .authors()
+        .changes(
+            &caller.tenant_id,
+            &caller.source_id,
+            &caller.creds.fingerprint(),
+            FeedQuery {
+                since_us,
+                committed_since_us,
+                cursor: cursor.as_ref(),
+                limit: clamp_page_size(query.page_size),
+            },
+        )
+        .await;
+
+    json_page(AuthorChangesPage {
+        items: page.items.into_iter().map(AuthorChangeRow::from).collect(),
+        next_page_token: page.next.as_ref().map(ChangesCursor::encode),
+    })
+    .await
+}
+
 /// One page of commit keys, its cursor, and — when the index answered — the
 /// page's default-branch membership.
 ///
 /// The index is a per-generation cache of the two whole-history walks; the
-/// walks stay as the fallback so an entry cloned before indexes existed, or
-/// one whose build failed, serves correctly at the old cost. Both paths MUST
+/// walks stay as the fallback, so an entry with no index for its generation,
+/// or an unreadable one, still serves correctly. Both paths MUST
 /// apply the same filters in the same order — the parity test in
 /// `engine::read` is what holds them together.
 async fn page_of_keys(
@@ -629,8 +751,8 @@ async fn acquire_within(
 /// Hand the entry to the store's post-serve purge, detached.
 ///
 /// INVARIANT: the reader's guard is already dropped when this is called. The
-/// purge probes the write side without waiting, so calling it any earlier
-/// would simply find the entry busy and do nothing.
+/// purge probes the write side and usually gives up when it loses, so an
+/// earlier call would mostly find the entry busy and skip the purge.
 fn check_for_drift(state: &Arc<AppState>, context: &RequestContext) {
     let store = Arc::clone(&state.store);
     let key = context.key.clone();
@@ -682,7 +804,7 @@ async fn open(
     Ok(guard)
 }
 
-/// Serialize off the reactor: a page carries up to ten thousand commit
+/// Serialize off the reactor: a page carries up to a thousand commit
 /// messages, or the patch text of every file they touched.
 async fn json_page<T>(page: T) -> Result<Response, ApiError>
 where

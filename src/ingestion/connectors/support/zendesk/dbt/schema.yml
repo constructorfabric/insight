@@ -30,7 +30,7 @@ models:
       - name: unique_key
         tests: [unique, not_null]
       - name: person_key
-        description: lower(email) → FK insight.people. Never blank (blank-email agents are filtered).
+        description: lower(email). Never blank (blank-email agents are filtered).
         tests:
           - not_null
       - name: data_source
@@ -71,7 +71,7 @@ models:
       exploded from support_ticket_events.events[]. Source of the activity
       counts in zendesk__support_activity. Materialises in `staging` — it is an
       intermediate of this connector, not a class-contract contributor, so it
-      carries no `silver:` tag and no silver placeholder is created for it.
+      carries no `silver:` tag and contributes to no class.
     columns:
       - name: unique_key
         description: MD5(tenant_id, insight_source_id, audit_id, event_id) — instance-scoped, so audit ids cannot collide across sources.
@@ -87,7 +87,7 @@ models:
       - name: metric_date
         tests: [not_null]
       - name: actor_person_key
-        description: lower(email) of the audit author (the actor) → FK insight.people.
+        description: lower(email) of the audit author (the actor).
         tests: [not_null]
       - name: event_type
         tests:

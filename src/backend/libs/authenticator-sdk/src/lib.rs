@@ -1,6 +1,6 @@
 //! Authenticator SDK — the inter-gear contract for the authenticator service.
 //!
-//! Consumers (today: the future permissions service, which calls session-revoke
+//! Consumers (today: the planned permissions service, which calls session-revoke
 //! when a grant changes — see `NGINX_BFF.md` §9.4 / `DD-AUTH-07`) depend on
 //! **this crate only**, never on the `authenticator` impl crate. The impl
 //! registers a `LocalClient` under [`AuthenticatorClientV1`] in the toolkit

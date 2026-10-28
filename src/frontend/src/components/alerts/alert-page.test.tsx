@@ -3,6 +3,10 @@ vi.mock("@tanstack/react-router", async () => {
   return portalRouterMock();
 });
 vi.mock("@/api/alerts-client");
+vi.mock("@/api/custom-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/custom-client")>();
+  return { ...actual, fetchMetric: vi.fn() };
+});
 
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -10,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as alertsClient from "@/api/alerts-client";
 import type { Alert, AlertNotification } from "@/api/alerts-types";
+import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import { ALERT, NOTIFICATION, wrapper } from "@/test/alerts";
 import { portalRouter } from "@/test/portal-router";
@@ -30,9 +35,28 @@ function neverLands<T>(): Promise<T> {
 beforeEach(() => {
   vi.resetAllMocks();
   portalRouter.reset("/portal/custom/alerts/a1");
+  vi.mocked(customClient.fetchMetric).mockRejectedValue(
+    new CustomApiError(404, null)
+  );
 });
 
 describe("AlertPage", () => {
+  it("names the rule's metric and links it by its id", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue(ALERT);
+    vi.mocked(alertsClient.fetchAlertNotifications).mockResolvedValue(page([]));
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "Open pull requests",
+      definition: { dataset: "pull_requests", fields: [] },
+    });
+
+    render(<AlertPage id="a1" />, { wrapper });
+
+    expect(
+      await screen.findByRole("link", { name: "Open pull requests" })
+    ).toHaveAttribute("href", `/portal/custom/metrics/${ALERT.metric}`);
+    expect(customClient.fetchMetric).toHaveBeenCalledWith(ALERT.metric);
+  });
+
   it("shows the rule, the latest check and what it owed", async () => {
     vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
       ...ALERT,
@@ -40,7 +64,12 @@ describe("AlertPage", () => {
       state: {
         last_evaluated_at: "2026-10-01T09:00:00+00:00",
         last_outcome: "breach",
-        last_value: 12,
+        last_witness: {
+          matched: 1,
+          answered: 1,
+          columns: ["total"],
+          rows: [[12]],
+        },
         last_valid_breached: true,
         breached_since: "2026-10-01T09:00:00+00:00",
       },
@@ -69,6 +98,12 @@ describe("AlertPage", () => {
     expect(screen.getByText("Check every")).toBeInTheDocument();
     expect(screen.getByText("5 minutes")).toBeInTheDocument();
     expect(screen.getByText("Condition met")).toBeInTheDocument();
+    expect(screen.getByText("total above 10")).toBeInTheDocument();
+    const found = within(screen.getByText("1 of 1 row matches").parentElement!);
+    expect(
+      found.getByRole("columnheader", { name: "total" })
+    ).toBeInTheDocument();
+    expect(found.getByRole("cell", { name: "12" })).toBeInTheDocument();
     expect(
       await screen.findByText("1 attempt to ops · receipt msg-7")
     ).toBeInTheDocument();
@@ -93,9 +128,25 @@ describe("AlertPage", () => {
           ...NOTIFICATION,
           id: "n0",
           rule_revision: 2,
-          column: "count",
-          threshold: 5,
-          value: 7,
+          metric: "prs-stale",
+          metric_name: "Stale pull requests",
+          condition: {
+            rows: "one",
+            where: { column: "count", op: ">", value: 5 },
+          },
+          witness: { matched: 1, answered: 1, columns: ["count"], rows: [[7]] },
+        },
+        {
+          ...NOTIFICATION,
+          id: "n-1",
+          rule_revision: 1,
+          metric: "prs-closed",
+          metric_name: null,
+          condition: {
+            rows: "one",
+            where: { column: "count", op: ">", value: 3 },
+          },
+          witness: null,
         },
       ])
     );
@@ -103,10 +154,94 @@ describe("AlertPage", () => {
     render(<AlertPage id="a1" />, { wrapper });
     const table = within(await screen.findByRole("table"));
 
-    expect(table.getByText("above 10")).toBeInTheDocument();
-    expect(table.getByText("above 5")).toBeInTheDocument();
-    expect(table.getByText("prs-open · count")).toBeInTheDocument();
-    expect(table.queryByText("prs-open · total")).toBeNull();
+    expect(table.getByText("total above 10")).toBeInTheDocument();
+    expect(table.getByText("count above 5")).toBeInTheDocument();
+    expect(table.getByText("count 7")).toBeInTheDocument();
+    expect(table.getByText("Stale pull requests")).toBeInTheDocument();
+    expect(table.queryByText("prs-stale")).toBeNull();
+    expect(table.getByText("prs-closed")).toBeInTheDocument();
+    expect(table.queryByText("prs-open")).toBeNull();
+    expect(table.queryByText("Open pull requests")).toBeNull();
+  });
+
+  it("shows how many rows a notification matched, and which", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue(ALERT);
+    vi.mocked(alertsClient.fetchAlertNotifications).mockResolvedValue(
+      page([
+        {
+          ...NOTIFICATION,
+          condition: {
+            rows: "any",
+            where: {
+              all: [
+                { column: "open", op: ">", value: 10 },
+                { column: "stale", op: ">", value: 3 },
+              ],
+            },
+          },
+          witness: {
+            matched: 3,
+            answered: 12,
+            columns: ["team", "open", "stale"],
+            rows: [
+              ["core", 12, 4],
+              ["infra", 15, 5],
+              ["data", 11, null],
+            ],
+          },
+        },
+      ])
+    );
+
+    render(<AlertPage id="a1" />, { wrapper });
+    const table = within(await screen.findByRole("table"));
+
+    expect(table.getByText("3 of 12 rows match")).toBeInTheDocument();
+    expect(
+      table.getByText(
+        "core: open 12, stale 4 · infra: open 15, stale 5 · data: open 11, stale —"
+      )
+    ).toBeInTheDocument();
+    expect(
+      table.getByText("any row: open above 10 and stale above 3")
+    ).toBeInTheDocument();
+  });
+
+  it("writes a context column as a read column, after the condition's", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
+      ...ALERT,
+      context_columns: ["stale"],
+    });
+    vi.mocked(alertsClient.fetchAlertNotifications).mockResolvedValue(
+      page([
+        {
+          ...NOTIFICATION,
+          condition: {
+            rows: "any",
+            where: { column: "open", op: ">", value: 10 },
+          },
+          context_columns: ["stale"],
+          witness: {
+            matched: 2,
+            answered: 12,
+            columns: ["team", "open", "stale"],
+            rows: [
+              ["core", 12, 4],
+              ["infra", 15, null],
+            ],
+          },
+        },
+      ])
+    );
+
+    render(<AlertPage id="a1" />, { wrapper });
+    const table = within(await screen.findByRole("table"));
+
+    expect(
+      table.getByText("core: open 12, stale 4 · infra: open 15, stale —")
+    ).toBeInTheDocument();
+    expect(screen.getByText("Shown in notification")).toBeInTheDocument();
+    expect(screen.getByText("stale")).toBeInTheDocument();
   });
 
   it("names the zone the check times are shown in", async () => {

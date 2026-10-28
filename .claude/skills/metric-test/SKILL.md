@@ -9,7 +9,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 # Author a metric test (YAML fixture + pytest module)
 
 This skill writes and validates metric specs: a `<name>.test.yaml` fixture that
-drives the full `bronze → dbt silver → gold view → analytics` path on a compose
+drives the full `bronze → dbt silver → gold observations → analytics` path on a compose
 test-stand instance, and the `test_<name>.py` module beside it that asserts the
 result as a seeded persona.
 
@@ -97,7 +97,7 @@ language — **not** dbt model / silver-column names. Keep it short. Shape:
 
 ```yaml
 description: >
-  Metric: <metric_key> — <bullet name> (…0012), #<issue>.
+  Metric: <metric_key> — <label>, #<issue>.
   How it's computed (bronze → silver → gold):
     • bronze: <the raw source report(s) that arrive>
     • silver: <how they're deduped / normalized to per-person/day counts>
@@ -264,19 +264,16 @@ with a dedicated spec (see `collab/collab_emails_read.test.yaml`):
    `src/backend/services/analytics/src/domain/metric_definitions/registry.yaml`); copy
    the literal VERBATIM. An unknown key is a 400, and a requested key the registry lacks
    fails the coverage gate. Note which views the metric serves (period, peer, timeseries,
-   breakdown, histogram) and what its distribution is scoped to. For the collaboration
-   bullets the median/range is **DEPARTMENT/org_unit-scoped for BOTH** the Team bullet
-   (`…0005`) and the IC bullet (`…0012`) — `median`/`range_*` come from
-   `quantileExact`/min/max over the person's own `org_unit_id` (department) team (live query
-   `m20260604_000002_collab_bullet_distribution.rs`, `GROUP BY metric_key, org_unit_id`
-   joined `ON c.org_unit_id = p.org_unit_id`). The two bullets differ only in `value`
-   (Team = team average `avg(p.v_period)`/`avg(c.team_*)`; IC = the requested member
-   `any(c.team_*)`), NOT in median scope. Ignore the seed catalog's `range=company`
-   description — it is stale (the older `20260518` company-wide query was replaced; that
-   shape now lives only in `down()`/`old_*_query` for rollback).
+   breakdown, rollup, histogram), its `computation`, and its `peer_cohort_key`. A `peer`
+   view compares the person against a cohort from `insight.metric_entity_cohorts_current`:
+   their department under `org_chart` visibility, the whole tenant under `flat`. The
+   cohort's median, quartiles and min/max are NULL until at least 5 cohort members have
+   data (`MIN_PEER_N` in `domain/metric_results/compiler.rs`), so a peer case seeds at
+   least five people WITH DATA FOR THE METRIC in the effective cohort: one department
+   under `org_chart`, anywhere in the tenant under `flat`.
 2. **Ensure a schema file per table.** If `schemas/<db>.<table>.yaml` is missing, write it
-   from the table's `CREATE TABLE` in `src/ingestion/scripts/connectors-ddl/<connector>.sql`
-   — the snapshot the suite applies to the instance, so the two cannot disagree. Do not
+   from the table the destination creates — `SHOW CREATE bronze_<snake>.<stream>` on a
+   warehouse the suite has bootstrapped, or the connector's own stream schema. Do not
    invent columns. Map CH types → JSON-schema: `Nullable(String)`→`[string,"null"]`,
    `Decimal/Float/Int`→`[number,"null"]` (`UInt*` non-null →`integer`), `Bool`→`[boolean,"null"]`,
    `DateTime*`→`{string, format: date-time}`, `JSON`→`[object,"null"]`. Set
@@ -289,21 +286,21 @@ with a dedicated spec (see `collab/collab_emails_read.test.yaml`):
    `templates/people.yaml`: its base employee record reports to `{{ supervisor_email }}`,
    which is how a spec's cast lands beneath the caller.
 
-   **Seed the department, not a UUID.** In the GOLD/served layer `org_unit_id` is the
-   BambooHR **department STRING** — `insight.people.org_unit_id = argMax(department, …)`,
-   keyed `person_id = lower(workEmail)`; it is a UUID only in silver/`person.persons`. So
-   for a team/department (org_unit) metric set `department: "Engineering"` on the bamboohr
-   `employees` base record (people sharing a department form one team), and if you scope
-   a team-view request use the string (`org_unit_id eq 'Engineering'`), never a UUID.
+   **Seed the department, not a UUID.** The org cohort id is the HR **department
+   STRING**: `metric_entity_cohorts_current` takes `class_people.department_name` from
+   each person's latest HR record and resolves that record's email to a person through
+   `identity.person_map`. So for a department metric set `department: "Engineering"` on
+   the bamboohr `employees` base record; people sharing a department form one cohort. A
+   person whose HR records name two departments is left out of every cohort.
 
-   **Identity match is load-bearing (silent NULL trap).** Team/department attribution is a LEFT
-   JOIN: `collab_bullet_rows` joins `insight.people` ON `lower(silver.email) = person_id`,
-   where `person_id = lower(workEmail)`. There is no `email` column on bronze — bamboohr
-   carries `workEmail`, M365 carries `userPrincipalName`, and silver `email` derives from
-   `userPrincipalName`. So a seeded person's `userPrincipalName` must equal their bamboohr
-   `workEmail` **case-insensitively**; any mismatch → `org_unit_id` resolves NULL, the
-   person silently drops out of the team/department (no error), and the median/range is computed
-   over the wrong roster. Set the SAME email on both `workEmail` and `userPrincipalName`.
+   **Identity match is load-bearing (silent drop).** Gold evidence is keyed by the
+   source's normalized email and resolved to a person at query time — through
+   `identity.account_assignment` first where the source carries account ids, then
+   `identity.person_map` by email. There is no `email` column on bronze: bamboohr carries
+   `workEmail`, M365 carries `userPrincipalName`. So a seeded person's
+   `userPrincipalName` must equal their bamboohr `workEmail` **case-insensitively**; a
+   mismatch resolves the activity to no person, it silently leaves the person's values and
+   the cohort statistics, and no error says so. Set the SAME email on both.
 4. **Write the `description`** (metric + bronze→silver→gold formula + Team/Cases —
    see § `description`; a spec implementing a tracked feature scenario cites it
    here — see § Feature-scenario traceability), then **`bronze`** with `$ref`+overrides; include a duplicate
@@ -313,11 +310,11 @@ with a dedicated spec (see `collab/collab_emails_read.test.yaml`):
    `r.row(...).equals(...)`, and counts or inequalities over a whole view through `one`/`some`.
 6. **Pick numbers that distinguish behaviors** — e.g. for a median test use values
    where median ≠ mean (`[40,20,10]` → median 20, mean 23.33) so the test actually
-   pins the aggregation. Use an **odd-size** team (an odd number of members with data): ClickHouse `quantileExact(0.5)`
-   (which both collab bullets use) is NOT the average of the two middle values on an
-   EVEN team — it returns the UPPER middle element (index `floor(n/2)`): `{100,200}` →
-   200, not 150. An even team whose median you compute as the mean of the middles will
-   produce a wrong `equals(...)` (this bit the live specs twice), so prefer odd teams.
+   pins the aggregation. A `median` is the textbook one (`quantileExactInclusive(0.5)`):
+   an even sample averages its two middles, `{100,200,300,400}` → 250. Peer p25/p75 and
+   `percentile` metrics are order statistics instead (`quantilesExact`), which answer
+   with an observed value: the same sample gives p25 = 200 and p75 = 400. Compute the
+   expected value with the rule the metric uses, not the other one.
 
 ## Validating a test (no stand needed)
 
@@ -353,7 +350,7 @@ The suite seeds and clears a warehouse, so it needs an instance of its own, rais
 `minimal` (identity and the realm seeded, the warehouse empty):
 
 ```bash
-./dev-compose.sh test-stand minimal --instance=datapath                                 # once
+./dev-compose.sh test-stand minimal --pinned --instance=datapath                        # once; drop --pinned if you changed src/backend
 ./dev-compose.sh test-stand test --tree=tests/datapath/metrics/<class> --instance=datapath -q
 ./dev-compose.sh test-stand test --tree=tests/datapath/metrics/<class> --instance=datapath -q -k <name>
 ./dev-compose.sh test-stand down --instance=datapath                                    # removes volumes: full reset
@@ -405,28 +402,18 @@ and `<class>/test_<name>.py` as above.
 
 ## New bronze table for a not-yet-seeded connector
 
-At session start the suite gives the instance the schema a deployment has: it applies the
-`src/ingestion/scripts/connectors-ddl/*.sql` snapshot and `scripts/migrations/*.sql`. The
-seeder then requires every column a fixture declares to exist in the real table with a
-compatible type, and fails on drift. A table the snapshot lacks is created from the schema
-YAML as a bare `MergeTree` — enough to seed, but not the shape a connector leaves, so a
-spec green on that table proves nothing about a deployment. The snapshot is generated, not
-hand-edited; a table added by hand to `connectors-ddl/*.sql` does not survive the next
-regeneration. To seed a connector whose bronze tables aren't in the snapshot yet:
+At session start the suite gives the instance the schema a deployment has: it creates every
+database, runs the real connectors through the real `destination-clickhouse` to create
+bronze, and applies `scripts/migrations/*.sql`. Nothing pre-creates staging, silver or
+gold — a spec runs dbt for the models it asserts over. The seeder then requires every
+column a fixture declares to exist in the real table with a compatible type, and fails on
+drift. A table no connector created is made from the schema YAML as a bare `MergeTree` —
+enough to seed, but not the shape a connector leaves, so a spec green on that table proves
+nothing about a deployment. To seed a connector whose bronze tables aren't created yet:
 
-1. Make sure the connector is listed in `bootstrap-db/connectors-config.yaml`,
-   then regenerate and commit the snapshot (see
-   `src/ingestion/scripts/bootstrap-db/README.md`):
-
-   ```bash
-   cd src/ingestion/scripts/bootstrap-db
-   set -a; source pins.env; [ -f .env ] && source .env; set +a
-   ./bootstrap-db.sh connectors-config.yaml
-   ./dump-ddl.sh                              # writes ../connectors-ddl/*.sql
-   ```
-
-   Commit the resulting `connectors-ddl/*.sql` diff so the new
-   `bronze_<snake>.<stream>` tables ship in the snapshot the suite applies.
+1. Make sure the connector is listed in `bootstrap-db/connectors-config.yaml`. That file
+   is what the suite runs through the destination, so an entry there is the whole fix —
+   the connector's `discover` supplies the stream and the destination creates the table.
 2. Add a matching `schemas/bronze_<snake>.<stream>.yaml` (every column;
    `additionalProperties: false`) and a base template covering all of them.
 
@@ -466,10 +453,9 @@ regeneration. To seed a connector whose bronze tables aren't in the snapshot yet
   same change. A spec that asserts only the keys it requests is immune to this coupling;
   only a spec that pins a positive count needs the lockstep bump.
 
-## Feature-scenario traceability
+## Feature traceability
 
-When a spec implements a scenario from a feature's Testing section, cite it
-inside the spec's `description`: the FEATURE path, its `cpt-…-feature-…` ID and
-the stable scenario number. The full traceability contract is section 5 of the
-`quality-vector-tests` skill. This suite has no vector marker mechanism, so the
-scenario's vector lives in the FEATURE only.
+When a spec proves a FEATURE's Definition of Done, name it inside the spec's
+`description`: `Verifies cpt-…-dod-…` (or the flow ID). The binding is section 4
+of the `quality-vector-tests` skill. This suite has no vector marker mechanism,
+and a FEATURE carries no vectors, so a spec carries none.

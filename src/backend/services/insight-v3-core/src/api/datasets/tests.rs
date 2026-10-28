@@ -12,7 +12,6 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::domain::definition::Definitions as _;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -75,9 +74,11 @@ impl TestHarness {
         }
     }
 
-    /// The datasets database answers that nothing holds the name, and takes
-    /// whatever statement follows.
+    /// The datasets database stands as a plain one, answers that nothing
+    /// holds the name, and takes whatever statement follows.
     fn a_free_name(&self) {
+        self.mock
+            .add(handlers::provide(vec![String::from("Atomic")]));
         self.mock.add(handlers::provide(Vec::<NoTable>::new()));
         self.mock.add(handlers::record_ddl());
     }
@@ -286,6 +287,9 @@ async fn a_dataset_still_being_made_is_shown_by_nothing() {
     // The name is free, and then the table cannot be made: the row stays
     // claimed, holding the name, with nothing published under it. The attempt
     // takes back whatever it may have made before giving up.
+    harness
+        .mock
+        .add(handlers::provide(vec![String::from("Atomic")]));
     harness.mock.add(handlers::provide(Vec::<NoTable>::new()));
     harness.mock.add(handlers::failure(
         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -531,9 +535,9 @@ async fn a_dataset_names_the_metrics_that_read_it() {
     harness.put("commits", declaration()).await;
     harness
         .definitions
-        .put(
+        .seed(
             crate::domain::definition::DefinitionKind::Metric,
-            &crate::domain::definition::DefinitionName::parse("lines_per_day")
+            &crate::domain::definition::DefinitionId::parse("lines_per_day")
                 .unwrap_or_else(|error| panic!("the name parses: {error}")),
             &json!({
                 "dataset": "commits",
@@ -572,9 +576,9 @@ async fn a_dataset_something_still_reads_answers_a_conflict() {
     harness.put("commits", declaration()).await;
     harness
         .definitions
-        .put(
+        .seed(
             crate::domain::definition::DefinitionKind::Metric,
-            &crate::domain::definition::DefinitionName::parse("lines_per_day")
+            &crate::domain::definition::DefinitionId::parse("lines_per_day")
                 .unwrap_or_else(|error| panic!("the name parses: {error}")),
             &json!({
                 "dataset": "commits",

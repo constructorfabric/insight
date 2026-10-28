@@ -115,8 +115,48 @@ name: jira
 # MAJOR because the saved state belongs to the retired substream, and because
 # the false `remove` lifecycle events already written stay until the full
 # refresh a major dispatches (ADR-0015) rebuilds the journal.
-version: "12.0.0"
-schedule: "0 3 * * *"
+# 13.0.0 (major): the journal reads the link and parent changes Jira writes by
+# label with no field id ("Link", "IssueParentAssociation"), drops remote links
+# from `issuelinks`, counts the links an issue holds to one linked issue, and
+# keeps multi-select values whose changelog id side is an empty `[]`. MAJOR
+# because rows already written change, and only the full refresh a major
+# dispatches (ADR-0015) re-derives them.
+# 14.0.0 (major): the journal identifies an `issuelinks` and `subtasks` element
+# by the linked issue's immutable id instead of its key, resolving the key the
+# changelog names through `jira__issue_key_ids`, so a link no longer splits in
+# two when the linked issue moves; `value_id_type` of those fields becomes
+# `opaque_id`. `jira__task_links` adds Jira rows to `class_task_links`. MAJOR
+# because rows already written change, and only the full refresh a major
+# dispatches (ADR-0015) re-derives them.
+# 15.0.0 (major): a comment is deleted only when a later read of its own
+# issue's comment list left it out, or its issue is deleted or trashed. The
+# issue-key list is a stream of its own whose extraction time says nothing
+# about when an issue's comments were read, so comparing the two flagged
+# comments that still exist as deleted (#3708). MAJOR because the false
+# `remove` lifecycle events already written stay until the full refresh a
+# major dispatches (ADR-0015) rebuilds the journal.
+# 16.0.0 (major): long-text bodies reach `silver.class_task_field_text`, keyed
+# by source and content hash, and a long-text value in `class_task_field_history`
+# carries `value_id_type = 'text_ref'` instead of `string_literal` (#3895).
+# MAJOR because rows already written change, and only the full refresh a major
+# dispatches (ADR-0015) re-derives them.
+# 17.0.0 (major): Jira links close and reopen where the issue's newest read
+# disagrees with its changelog (`evidence = observation`), an Epic Link change
+# is a parent change, and a removal sorts before an addition within one
+# changelog entry (#3889). MAJOR because rows already written change, and only
+# the full refresh a major dispatches (ADR-0015) re-derives them.
+# 17.1.0: every stream declares `tenant_id` and `source_id` required, and the
+# issue-level streams (`jira_issue`, `jira_issue_keys`, `jira_issue_census`)
+# also `jira_id`: the connector stamps them on every record, so the schema no
+# longer says they can be absent. The bronze columns stay `Nullable(String)` —
+# destination-clickhouse makes every column outside the sort key nullable.
+# MINOR per ADR-0015: reconcile republishes the manifest and nothing stored
+# changes meaning.
+version: "17.1.0"
+# 22:10 and 10:10 UTC: clear of the 02:00-06:00 daily block and of github's
+# 4-hourly ticks, which rebuild the same task chain; :10 misses the */15
+# reconcile and identity-seed ticks.
+schedule: "10 10,22 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
 # package, not by this connector. The pipeline runs

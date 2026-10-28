@@ -73,7 +73,7 @@ CH_PORT="$(yq -r '.clickhouse.port // 8123' "$VALUES")"
 CH_USER="$(yq -r '.clickhouse.username // "insight"' "$VALUES")"
 
 MARIADB_IMAGE="docker.io/bitnamilegacy/mariadb:11.4.4-debian-12-r0"  # mirrors templates/mariadb-init-svcdbs-job.yaml
-CURL_IMAGE="curlimages/curl:8.10.1"  # mirrors templates/clickhouse-init-svcdbs-job.yaml
+CURL_IMAGE="curlimages/curl:8.10.1"  # a public image for the probes below
 
 # Not helm-managed; must survive the wipe. LIMIT: hand-maintained list — a
 # newly-required secret not added here is wiped through silently.
@@ -298,8 +298,8 @@ else
   note "    does not create the analytics database and the operator's Database CR"
   note "    is cleanupPolicy: Skip)"
   note "   drop ClickHouse every database except system/INFORMATION_SCHEMA/default,"
-  note "   whatever it is currently named (the seed's create-warehouse-placeholders.sh"
-  note "   and the chart's migrate hook rebuild them)"
+  note "   whatever it is currently named (the chart's migrate hook recreates them,"
+  note "   and the seed's dbt build fills what the connectors land)"
   note "   RISK: on a shared ClickHouse host this drops every non-system database"
   note "   ${CH_USER} can see, not just this stand's"
 fi

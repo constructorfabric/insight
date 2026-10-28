@@ -27,8 +27,8 @@ struct LandedRecord {
     received_at: DateTime<Utc>,
 }
 
-fn name(value: &str) -> DefinitionName {
-    DefinitionName::parse(value).unwrap_or_else(|error| panic!("the name parses: {error}"))
+fn name(value: &str) -> DefinitionId {
+    DefinitionId::parse(value).unwrap_or_else(|error| panic!("the name parses: {error}"))
 }
 
 fn declaration() -> Value {
@@ -67,6 +67,8 @@ impl Fixture {
 
     /// Declares a dataset that stands, ready to take records.
     async fn a_ready_dataset(&self) -> R {
+        self.mock
+            .add(handlers::provide(vec![String::from("Atomic")]));
         self.mock.add(handlers::provide(Vec::<NoTable>::new()));
         self.mock.add(handlers::record_ddl());
         DatasetLifecycle::new(&self.datasets, &self.tables, &self.definitions)

@@ -1,5 +1,6 @@
 use chrono::{TimeZone as _, Utc};
 use clickhouse::test::{Mock, handlers};
+use futures::FutureExt as _;
 use serde::Serialize;
 use serde_json::json;
 
@@ -10,14 +11,29 @@ use crate::store::definitions::memory::MemoryDefinitions;
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
+/// `TIMEOUT_EXCEEDED`: the warehouse stopped waiting on a statement that is
+/// still queued, so whether it lands is unknown to the caller.
+const TIMEOUT_EXCEEDED: u8 = 159;
+
 /// What `system.tables` answers about a name nothing holds.
 #[derive(Debug, Serialize, clickhouse::Row)]
 struct NoTable {
     sorting_key: String,
 }
 
-fn name(value: &str) -> DefinitionName {
-    DefinitionName::parse(value).unwrap_or_else(|error| panic!("the name parses: {error}"))
+/// The table a recorded create names, without its database or its quotes.
+fn created_table(ddl: &str) -> String {
+    ddl.split("IF NOT EXISTS ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|qualified| qualified.rsplit('.').next())
+        .unwrap_or_else(|| panic!("the create names a table: {ddl}"))
+        .trim_matches('`')
+        .to_owned()
+}
+
+fn name(value: &str) -> DefinitionId {
+    DefinitionId::parse(value).unwrap_or_else(|error| panic!("the name parses: {error}"))
 }
 
 fn declaration() -> Value {
@@ -57,8 +73,11 @@ impl Fixture {
         }
     }
 
-    /// The datasets database answers that nothing holds the name.
+    /// The datasets database stands as a plain one and answers that nothing
+    /// holds the name.
     fn nothing_holds_the_name(&self) {
+        self.mock
+            .add(handlers::provide(vec![String::from("Atomic")]));
         self.mock.add(handlers::provide(Vec::<NoTable>::new()));
     }
 
@@ -220,7 +239,7 @@ struct LosesTheDataset(MemoryDatasets);
 impl Datasets for LosesTheDataset {
     async fn get(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
     ) -> Result<Option<crate::domain::datasets::Dataset>, DatasetStoreError> {
         self.0.get(name).await
     }
@@ -239,19 +258,19 @@ impl Datasets for LosesTheDataset {
 
     async fn take_create(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<crate::domain::datasets::Taken, DatasetStoreError> {
         self.0.take_create(name, declaration).await
     }
 
-    async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
+    async fn take_remove(&self, name: &DefinitionId) -> Result<Attempt, DatasetStoreError> {
         self.0.take_remove(name).await
     }
 
     async fn replace(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<bool, DatasetStoreError> {
         self.0.replace(name, declaration).await
@@ -259,7 +278,7 @@ impl Datasets for LosesTheDataset {
 
     async fn finish(
         &self,
-        _name: &DefinitionName,
+        _name: &DefinitionId,
         _token: &OperationToken,
         _finish: Finish,
     ) -> Result<Owning, DatasetStoreError> {
@@ -276,7 +295,7 @@ struct StopsAnswering(MemoryDatasets);
 impl Datasets for StopsAnswering {
     async fn get(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
     ) -> Result<Option<crate::domain::datasets::Dataset>, DatasetStoreError> {
         self.0.get(name).await
     }
@@ -295,19 +314,19 @@ impl Datasets for StopsAnswering {
 
     async fn take_create(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<crate::domain::datasets::Taken, DatasetStoreError> {
         self.0.take_create(name, declaration).await
     }
 
-    async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
+    async fn take_remove(&self, name: &DefinitionId) -> Result<Attempt, DatasetStoreError> {
         self.0.take_remove(name).await
     }
 
     async fn replace(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         declaration: &Value,
     ) -> Result<bool, DatasetStoreError> {
         self.0.replace(name, declaration).await
@@ -315,7 +334,7 @@ impl Datasets for StopsAnswering {
 
     async fn finish(
         &self,
-        _name: &DefinitionName,
+        _name: &DefinitionId,
         _token: &OperationToken,
         _finish: Finish,
     ) -> Result<Owning, DatasetStoreError> {
@@ -352,6 +371,40 @@ async fn a_publication_the_store_never_answered_for_keeps_its_table() -> R {
     Ok(())
 }
 
+/// The warehouse may still be making a table whose create was not answered
+/// in time; a drop sent now could land first and leave it standing.
+///
+/// The warehouse itself reports the create unfinished, which the store takes
+/// for a timeout just as it takes its own bound running out. A bound racing
+/// a mock is not a timeout a test can count on: the mock answers within the
+/// millisecond the timer needs to fire. A drop would be the next request the
+/// mock sees.
+#[tokio::test]
+async fn a_create_the_warehouse_did_not_answer_in_time_is_left_where_it_is() -> R {
+    let fixture = Fixture::new();
+    fixture.nothing_holds_the_name();
+    fixture.mock.add(handlers::exception(TIMEOUT_EXCEEDED));
+    let dropping = fixture.mock.add(handlers::record_ddl());
+
+    let refused = DatasetLifecycle::new(&fixture.datasets, &fixture.tables, &fixture.definitions)
+        .declare(&name("commits"), &declaration())
+        .await;
+
+    assert!(
+        matches!(
+            refused,
+            Err(DatasetChangeError::Table(DatasetTableError::Timeout))
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        dropping.query().now_or_never().is_none(),
+        "a create that may still land must not be followed by a drop"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn an_attempt_that_lost_the_dataset_takes_away_the_table_it_made() -> R {
     let fixture = Fixture::new();
@@ -375,14 +428,9 @@ async fn an_attempt_that_lost_the_dataset_takes_away_the_table_it_made() -> R {
     let made = recording.query().await;
     let dropped = dropping.query().await;
     assert!(dropped.contains("DROP TABLE"), "{dropped}");
-    let table = made
-        .split("IF NOT EXISTS ")
-        .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-        .unwrap_or_else(|| panic!("the create names a table: {made}"))
-        .trim_matches('`');
+    let table = created_table(&made);
     assert!(
-        dropped.contains(table),
+        dropped.contains(&table),
         "the table taken away must be the one this attempt made: {dropped}"
     );
 
@@ -409,15 +457,7 @@ async fn removing_a_dataset_takes_its_records_and_its_row_with_it() -> R {
     assert!(fixture.datasets.get(&name("commits")).await?.is_none());
     let dropped = dropping.query().await;
     assert!(dropped.contains("DROP TABLE"), "{dropped}");
-    let table = made
-        .query()
-        .await
-        .split("IF NOT EXISTS ")
-        .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-        .unwrap_or_else(|| panic!("the create names a table"))
-        .trim_matches('`')
-        .to_owned();
+    let table = created_table(&made.query().await);
     assert!(
         dropped.contains(&table),
         "the table dropped must be the one the row named: {dropped}"
@@ -514,10 +554,10 @@ async fn a_table_that_is_no_longer_ours_is_left_where_it_is() -> R {
 
 /// A metric reading the fixture dataset, stored as a reader of it.
 async fn a_metric_reading_commits(fixture: &Fixture, named: &str, body: Value) -> R {
-    let stored = DefinitionName::parse(named)?;
+    let stored = DefinitionId::parse(named)?;
     fixture
         .definitions
-        .put(DefinitionKind::Metric, &stored, &body)
+        .seed(DefinitionKind::Metric, &stored, &body)
         .await?;
 
     Ok(())

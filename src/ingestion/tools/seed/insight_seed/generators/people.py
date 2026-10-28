@@ -112,33 +112,9 @@ def _measured_persons(roster: Sequence[Person]) -> list[Person]:
     return [p for p in roster if p.role != "admin"]
 
 
-def seed_class_people(
-    client: clickhouse_connect.driver.client.Client,
-    roster: Sequence[Person],
-    tenant_uuid: str,
-) -> int:
-    truncate(client, "silver", "class_people")
-    # workspace_id carries the tenant: metric_entity_cohorts_current filters
-    # `workspace_id IS NOT NULL AND workspace_id != ''` and selects it AS
-    # tenant_id, so an empty value drops every person from the cohort view.
-    # It MUST equal the tenant_uuid the git/ai generators use, or the
-    # observation↔cohort join yields nothing.
-    # `class_people` is a versionless ReplacingMergeTree (see module
-    # docstring), so no `_version` column here — emitting one fails against
-    # the dbt-materialised table, which has no such column.
-    cols = ["unique_key", "email", "department_name", "workspace_id"]
-    rows: list[tuple[object, ...]] = []
-    for p in _measured_persons(roster):
-        dept = _TEAM_DEPARTMENT.get(p.team or "", "Executive")
-        rows.append(
-            (
-                deterministic_uuid("class_people", p.email),
-                p.email.lower(),
-                dept,
-                tenant_uuid,
-            )
-        )
-    return bulk_insert(client, "silver", "class_people", cols, rows)
+def employee_unique_key(tenant_uuid: str, employee_id: str) -> str:
+    """The key the BambooHR connector writes: stable per employee, whatever their attributes."""
+    return f"{tenant_uuid}-{_BAMBOOHR_SOURCE_ID}-{employee_id}"
 
 
 def seed_bamboohr_employees(
@@ -148,6 +124,7 @@ def seed_bamboohr_employees(
 ) -> int:
     truncate(client, "bronze_bamboohr", "employees")
     cols = [
+        "unique_key",
         "id",
         "status",
         "firstName",
@@ -189,6 +166,7 @@ def seed_bamboohr_employees(
         }
         rows.append(
             (
+                employee_unique_key(tenant_uuid, record["id"]),
                 record["id"],
                 record["status"],
                 record["firstName"],
@@ -213,7 +191,17 @@ def generate(
     roster: Sequence[Person],
     tenant_uuid: str,
 ) -> dict[str, int]:
+    # Cleared, not written: `bamboohr__to_class_people` and
+    # `bamboohr__working_hours` build these from the employees below, and
+    # `class_focus_metrics` is derived from working hours and meeting activity.
+    # A re-seed at another anchor would otherwise leave the old window behind
+    # the incremental watermark.
+    truncate(client, "silver", "class_people")
+    truncate(client, "silver", "class_hr_working_hours")
+    truncate(client, "silver", "class_focus_metrics")
+    # Both bamboohr staging models are views: nothing to clear, and they are
+    # recomputed from the employees below on every read.
+
     return {
-        "silver.class_people": seed_class_people(client, roster, tenant_uuid),
         "bronze_bamboohr.employees": seed_bamboohr_employees(client, roster, tenant_uuid),
     }

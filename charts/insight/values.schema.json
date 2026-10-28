@@ -116,7 +116,9 @@
           "properties": {
             "protocol":    { "enum": ["http", "https"] },
             "clusterMode": { "type": "boolean" },
-            "clusterName": { "type": "string" }
+            "clusterName": { "type": "string" },
+            "createDatabases": { "type": "boolean" },
+            "provisionAccess": { "type": "boolean" }
           }
         }
       ]

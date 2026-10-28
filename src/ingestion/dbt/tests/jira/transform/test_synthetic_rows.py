@@ -109,7 +109,7 @@ def test_initial_rows_are_sequenced_by_field_id(scenario: Scenario) -> None:
 def test_creation_marker_carries_the_reporter_and_no_value(scenario: Scenario) -> None:
     """One row per issue that consumers read as "the issue exists from here".
 
-    `task_issue_current_state.created_at` finds it by `event_kind`, so its shape
+    `task_issue_state.created_at` finds it by `event_kind`, so its shape
     is a contract: the sentinel field id, seq 0, the reporter as author, no
     value, and an event id under the `initial:` convention.
     """
@@ -179,19 +179,19 @@ MULTIBYTE_BODY = {
 def test_long_text_is_stored_by_content_address(scenario: Scenario) -> None:
     """A description is kilobytes, and ClickHouse reads a whole column: a body
     inline in `value_displays` would be dragged through every read of every
-    field. The journal keeps the hash and a prefix; the body goes to a side
-    table, where identical bodies collapse into one row."""
+    field. The journal keeps a text reference — the hash and a prefix; the body
+    goes to a side table, where identical bodies of one source collapse into one
+    row."""
     rows = scenario.journal(issue="TST-1", field="description")
     assert len(rows) == 1
     text_id = rows[0]["value_ids"][0]
     assert len(text_id) == 32, f"expected a 128-bit hex address, got {text_id!r}"
     assert "Steps to reproduce" in rows[0]["value_displays"][0]
-    # The address is a value a consumer can key on, so the row says so rather
-    # than `none`; the shared enum gains no Jira-only word for it.
-    assert rows[0]["value_id_type"] == "string_literal"
+    assert rows[0]["value_id_type"] == "text_ref"
 
     side = scenario.text_rows(text_id)
     assert len(side) == 1
+    assert side[0]["data_source"] == "jira"
     assert side[0]["content_form"] == "adf_json"
     assert json.loads(side[0]["content"]) == ADF_BODY
 

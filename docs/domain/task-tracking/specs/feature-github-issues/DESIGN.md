@@ -307,9 +307,11 @@ until someone is assigned again. Folding the real assignee set is phase 2 work.
 
 `github__task_users` maps account to e-mail from
 `staging.github__account_emails`, emitting `user_id` as the numeric account
-identifier — which is what that model keys on. Gold joins this with an **inner**
-join and an `email LIKE '%@%'` filter, so an issue whose assignee has no known
-e-mail disappears from every measure.
+identifier — which is what that model keys on. Gold joins this to read the
+assignee's e-mail and carries the account beside it, so the analytics runtime
+resolves the issue account-first through identity. An account that
+`github__account_emails` never observed keeps its issues under the account
+alone, and they attribute only once identity binds that account.
 
 Measure that coverage before shipping. It is the single largest determinant of
 how much of the tracker reaches a dashboard.
@@ -479,8 +481,8 @@ when boards arrive and a board column's meaning genuinely changes on a date.
 ### 4.6 Ownership
 
 The `config` relations must not be dbt models — dbt would recreate and wipe
-them. They are created by migration alongside the connectors-ddl snapshot and
-declared to dbt as sources.
+them. They are created by an `on-run-start` hook (`create_task_config_tables()`)
+and declared to dbt as sources.
 
 ## 5. Making Gold Source-Neutral
 

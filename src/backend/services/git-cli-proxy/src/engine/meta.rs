@@ -58,8 +58,8 @@ const META_FILE: &str = "meta.json";
 /// caller cycling many tokens cannot grow the document without limit.
 const MAX_PROVEN_FINGERPRINTS: usize = 8;
 
-/// A document written before the set existed carries one fingerprint as a
-/// plain string; accepting it keeps every warm entry warm across the deploy.
+/// Accepts the single-string `cred_fingerprint` shape too, so an entry holding
+/// it stays warm.
 fn one_or_many<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -190,9 +190,8 @@ mod tests {
 
     #[test]
     fn a_pre_set_document_with_one_fingerprint_still_proves_access() {
-        // Written by the release before proofs became a set: the field is a
-        // plain string under the old name. Refusing it would cold-refetch
-        // every warm entry on deploy day.
+        // A single-string `cred_fingerprint` document must still prove access,
+        // or every such entry cold-refetches.
         let dir = temp_dir("legacy-fingerprint");
         let legacy = r#"{
             "clone_url": "https://example.com/a.git",

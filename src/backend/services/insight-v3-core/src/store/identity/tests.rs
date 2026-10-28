@@ -55,3 +55,54 @@ fn the_roles_a_caller_holds_decide() {
     assert!(admin.roles.iter().any(|role| role.role_id == ADMIN_ROLE_ID));
     assert!(!other.roles.iter().any(|role| role.role_id == ADMIN_ROLE_ID));
 }
+
+fn assignments(count: usize, person: u128) -> AssignmentList {
+    AssignmentList {
+        items: (0..count)
+            .map(|_| Assignment {
+                person_id: Uuid::from_u128(person),
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn a_listing_of_administrators_names_each_person_once() {
+    let listed: AssignmentList = serde_json::from_value(serde_json::json!({
+        "items": [
+            { "person_id": "00000000-0000-4000-8000-000000000002", "role_id": "a4d11000-0000-4000-8000-000000000001" },
+            { "person_id": "00000000-0000-4000-8000-000000000001", "role_id": "a4d11000-0000-4000-8000-000000000001" },
+            { "person_id": "00000000-0000-4000-8000-000000000002", "role_id": "a4d11000-0000-4000-8000-000000000001" }
+        ],
+        "next_cursor": null
+    }))
+    .unwrap_or_else(|error| panic!("the fixture parses: {error}"));
+
+    let people = administrators_in(&listed).unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(people.len(), 2, "{people:?}");
+}
+
+#[test]
+fn a_full_page_of_administrators_is_refused_as_possibly_cut_short() {
+    let cases = [
+        (ASSIGNMENTS_PAGE - 1, false),
+        (ASSIGNMENTS_PAGE, true),
+        (0, false),
+    ];
+
+    for (count, refused) in cases {
+        let answered = administrators_in(&assignments(count, 7));
+
+        assert_eq!(
+            matches!(answered, Err(IdentityError::Truncated)),
+            refused,
+            "for {count} assignments: {answered:?}"
+        );
+    }
+}
+
+#[test]
+fn a_cut_short_listing_is_ours_to_fix_not_the_callers() {
+    assert!(!IdentityError::Truncated.is_about_the_caller());
+}

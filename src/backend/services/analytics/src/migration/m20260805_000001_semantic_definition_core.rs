@@ -10,41 +10,12 @@
 //! serving change yet (later Phase 1 slices).
 //!
 //! CHECK-constraint style follows the existing catalog migrations: key shapes,
-//! the aggregation/expression biconditional, and monotonic-version guards. The
-//! CHECK names are registered in `migration::REQUIRED_CHECKS_BY_TABLE` so the
-//! startup probe verifies they were never dropped.
+//! the aggregation/expression biconditional, and monotonic-version guards.
 
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
-
-pub const REQUIRED_DATASET_CHECKS: &[&str] = &[
-    "chk_semantic_datasets_dataset_key_shape",
-    "chk_semantic_datasets_custom_sql_biconditional",
-    "chk_semantic_datasets_availability_reason_biconditional",
-];
-
-pub const REQUIRED_MEASURE_CHECKS: &[&str] = &[
-    "chk_semantic_measures_measure_key_shape",
-    "chk_semantic_measures_dataset_ref_shape",
-    "chk_semantic_measures_event_time_shape",
-    "chk_semantic_measures_entity_shape",
-    "chk_semantic_measures_definition_version_positive",
-    "chk_semantic_measures_aggregation_expr",
-];
-
-pub const REQUIRED_METRIC_CHECKS: &[&str] = &[
-    "chk_semantic_metrics_metric_key_shape",
-    "chk_semantic_metrics_entity_type_shape",
-    "chk_semantic_metrics_cohort_key_shape",
-    "chk_semantic_metrics_definition_version_positive",
-];
-
-pub const REQUIRED_REVISION_CHECKS: &[&str] = &[
-    "chk_semantic_definition_revisions_definition_key_shape",
-    "chk_semantic_definition_revisions_version_positive",
-];
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
@@ -169,19 +140,6 @@ const SCHEMA_STATEMENTS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn every_required_check_appears_in_schema() {
-        let all_sql = SCHEMA_STATEMENTS.join("\n");
-        for check in REQUIRED_DATASET_CHECKS
-            .iter()
-            .chain(REQUIRED_MEASURE_CHECKS)
-            .chain(REQUIRED_METRIC_CHECKS)
-            .chain(REQUIRED_REVISION_CHECKS)
-        {
-            assert!(all_sql.contains(check), "missing CHECK {check}");
-        }
-    }
 
     #[test]
     fn aggregation_enum_pins_the_six_kinds() {

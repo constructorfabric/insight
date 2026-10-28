@@ -16,10 +16,12 @@ const FIELDS = [
 ];
 
 const DATED: StoredMetric = {
+  name: "Runs",
   definition: { dataset: "runs", fields: FIELDS },
   clock: { field: "date", from: "dataset" },
 };
 const UNDATED: StoredMetric = {
+  name: "Runs",
   definition: { dataset: "runs", fields: FIELDS },
 };
 

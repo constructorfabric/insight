@@ -18,11 +18,11 @@ name: E2E bronze to API
 # Topology: a cheap `changes` job decides whether the diff can reach the data
 # path at all and everything expensive hangs off it. The suite is a shard
 # matrix, one leg per metric class plus one for identity: each leg raises a
-# MINIMAL compose stand of its own (`dev-compose.sh test-stand minimal` —
-# identity and the realm seeded, the warehouse empty), pulls the chart-pinned
-# backend images or, when the diff touched the backend, mounts the binaries
-# and loads the gateway/insight-v3-core images `build-backend` produced once
-# for every shard, runs its
+# MINIMAL compose stand of its own (`dev-compose.sh test-stand minimal
+# --pinned` — identity and the realm seeded, the warehouse empty), pulls the
+# chart-pinned backend images or, when the diff touched the backend, mounts
+# the binaries and loads the gateway/insight-v3-core images `build-backend`
+# produced once for every shard, runs its
 # directories of the suite host-side with uv, and the metric legs upload that
 # session's `.artifacts/` for `metric-coverage-gate`, a pure-Python check over
 # two JSON files: the builtin metric catalogue the run read from analytics, and
@@ -73,10 +73,7 @@ permissions:
   # The coverage gate downloads the shards' artifacts from this run.
   actions: read
 
-# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
-# takes a GitHub-hosted runner; otherwise build-backend and e2e-datapath take
-# a whole `persistent` machine and the rest the shared self-hosted pool.
-# INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# Routing: .github/runners/README.md.
 jobs:
   # `e2e-suite` is the aggregate that emits the stable "Run E2E suite" check.
   #
@@ -93,7 +90,7 @@ jobs:
   # untested data-path changes. It covers everything a stand raises or the
   # suite reads at run time:
   #
-  #   src/ingestion/    dbt models, the migration and connectors-ddl scripts,
+  #   src/ingestion/    dbt models, the migration and bootstrap scripts,
   #                     and every connector's enrich source
   #   src/backend/      analytics, identity-resolution, the gateway and the
   #                     authenticator — the stand runs them, and the analytics
@@ -109,7 +106,7 @@ jobs:
   changes:
     name: Detect changes
     if: github.event_name != 'pull_request'
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
@@ -196,7 +193,7 @@ jobs:
     name: Build backend
     needs: changes
     if: ${{ needs.changes.outputs.relevant == 'true' && needs.changes.outputs.backend == 'true' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 80
     permissions:
       contents: read
@@ -244,7 +241,7 @@ jobs:
       - name: Reclaim cache dir ownership from the build container
         run: sudo chown -R "$(id -u):$(id -g)" .ci-cargo
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name != 'push'
         with:
           name: backend-binaries
@@ -292,7 +289,7 @@ jobs:
           cache-from: |
             type=registry,ref=${{ env.BUILDCACHE }}:insight-v3-core-amd64
             type=registry,ref=${{ env.BUILDCACHE }}:backend-deps-amd64
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name != 'push'
         with:
           name: backend-images
@@ -307,7 +304,7 @@ jobs:
     # images) does not skip the shards along with it; the result check keeps a
     # FAILED build from letting them run against stale binaries.
     if: ${{ !cancelled() && github.event_name != 'push' && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 80
     permissions:
       contents: read
@@ -338,7 +335,7 @@ jobs:
         with:
           python-version: "3.13"
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           cache-suffix: datapath
 
@@ -348,7 +345,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: ${{ needs.changes.outputs.backend == 'true' }}
         with:
           name: backend-binaries
@@ -360,7 +357,7 @@ jobs:
         if: ${{ needs.changes.outputs.backend == 'true' }}
         run: find deploy/compose/build -type f -exec chmod 0755 {} +
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: ${{ needs.changes.outputs.backend == 'true' }}
         with:
           name: backend-images
@@ -399,7 +396,7 @@ jobs:
           BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
         run: |
           set -euo pipefail
-          flags=()
+          flags=(--pinned)
           if [ "$BUILD_BACKEND" = "true" ]; then
             flags+=(--build-backend --skip-build)
             # The two image-run services take the images build-backend built
@@ -464,7 +461,7 @@ jobs:
       # in every shard; the ledgers are per shard and the gate unions them.
       - name: Upload coverage inputs
         if: ${{ !cancelled() && matrix.shard != 'identity' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-inputs-metrics-${{ matrix.shard }}
           path: .artifacts/
@@ -510,7 +507,7 @@ jobs:
     name: Metric coverage gate
     needs: e2e-datapath
     if: ${{ !cancelled() && needs.e2e-datapath.result != 'skipped' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -522,7 +519,7 @@ jobs:
       # Merge every shard's artifact into one directory. metric_definitions.json
       # is the full builtin registry and is identical in every shard, so any one
       # will do; the assertion ledgers are per-shard and the gate takes them all.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: coverage-inputs-metrics-*
           merge-multiple: true
@@ -552,7 +549,7 @@ jobs:
       - e2e-datapath
       - metric-coverage-gate
     if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:
       # A skipped shard has two possible meanings, and they are opposites:

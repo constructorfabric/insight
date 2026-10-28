@@ -128,3 +128,10 @@ gears:
       clickhouse_database: "identity"
       clickhouse_user: ""
       clickhouse_password: ""
+      # Warehouse topology (epic #2010): whether the relations this service
+      # creates replicate. The name is the chart's shared contract and unused
+      # here: no statement this service emits carries ON CLUSTER. Injected
+      # per-deployment via APP__gears__identity_resolution__config__clickhouse_cluster_*;
+      # a standalone single node here.
+      clickhouse_cluster_mode: false
+      clickhouse_cluster_name: ""

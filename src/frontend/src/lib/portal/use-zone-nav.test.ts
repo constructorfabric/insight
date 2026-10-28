@@ -14,7 +14,9 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
 }));
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => mocks.navigate }));
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => mocks.navigate,
+}));
 vi.mock("@/auth", () => ({ useViewer: () => ({ personId: "me-1" }) }));
 vi.mock("@/lib/portal/use-active-zone", () => ({
   useActiveZone: () => ({ activeZone: "person", activePerson: "p-1" }),
@@ -41,21 +43,20 @@ function zoneIds(): string[] {
 }
 
 describe("useZoneNav", () => {
-  it("offers a viewer with no cohort their own page only", () => {
+  it("offers a viewer with no cohort their own page and the dashboards shared with them", () => {
     mocks.canSeeOthers = false;
     mocks.reachPending = false;
     mocks.isAdmin = false;
 
-    expect(zoneIds()).toEqual(["person"]);
+    expect(zoneIds()).toEqual(["person", "custom"]);
   });
 
-  it("keeps Custom out of the rail for a non-admin who manages a cohort", () => {
+  it("opens Custom to a member who manages a cohort", () => {
     mocks.canSeeOthers = true;
     mocks.reachPending = false;
     mocks.isAdmin = false;
 
-    // Having reports opens the org zones; it does not open Custom.
-    expect(zoneIds()).not.toContain("custom");
+    expect(zoneIds()).toContain("custom");
     expect(zoneIds()).toContain("overview");
   });
 
@@ -64,8 +65,6 @@ describe("useZoneNav", () => {
     mocks.reachPending = false;
     mocks.isAdmin = true;
 
-    // Custom rolls nothing up, so having no reports does not hide it from an
-    // admin - but the role is what opens it.
     expect(zoneIds()).toEqual(["person", "custom", "manage"]);
   });
 
@@ -104,7 +103,7 @@ describe("useZoneNav", () => {
       expect.objectContaining({
         to: "/ic/$person/personal",
         params: { person: "me-1" },
-      }),
+      })
     );
   });
 

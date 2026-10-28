@@ -8,6 +8,7 @@ use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl};
 pub(crate) mod admission;
 pub(crate) mod alerts;
 pub(crate) mod chat;
+pub(crate) mod dashboard_widgets;
 pub(crate) mod datasets;
 pub(crate) mod definitions;
 pub(crate) mod duplicate;
@@ -17,17 +18,18 @@ pub(crate) mod metric_drilldown;
 pub(crate) mod metric_run;
 pub(crate) mod pins;
 pub(crate) mod raw_data;
+pub(crate) mod sharing;
 pub(crate) mod tables;
 pub(crate) mod tags;
 
 use admission::IngestAdmission;
 
 use crate::chat::ChatClient;
+use crate::domain::access::Caller;
 use crate::domain::alerts::delivery::{Deliveries, Provider};
 use crate::domain::alerts::rule::AlertStore;
 use crate::domain::alerts::schedule::AlertSchedule;
 use crate::domain::alerts::{Destinations, Limits};
-use crate::domain::definition::Definitions;
 use crate::domain::folders::{DefinitionStore, Folders};
 use crate::domain::pins::Pins;
 use crate::domain::query::metric_query::MetricRunner;
@@ -39,29 +41,29 @@ use crate::store::identity::IdentityClient;
 /// What a refused surface says.
 pub(crate) const ADMIN_ONLY: &str = "admin role required for this operation";
 
+/// What a surface open to every signed-in person says to anyone else.
+pub(crate) const UNIDENTIFIED: &str = "the caller could not be identified";
+
 /// The caller's own authorization, as the gateway passed it on.
-fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {
+pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {
     headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
 }
 
-/// Refuses a caller without the admin role.
+/// Who is asking, and in what role, for a surface open to every signed-in
+/// person.
 ///
-/// The custom surfaces read and write one tenant's definitions and spend the
-/// configured model budget, so they are admin-only. Roles live in the identity
-/// service, so the caller's authorization is forwarded there.
-///
-/// An identity that is absent or unreachable is a server error, never a
-/// permit: a role check that cannot be made has not passed.
-/// Refuses a caller without the admin role, and names the one with it.
-pub(crate) async fn require_admin(
+/// Roles live in the identity service, so the caller's authorization is
+/// forwarded there. An identity that is absent or unreachable is a server
+/// error, never a permit: a check that cannot be made has not passed.
+pub(crate) async fn caller(
     state: &AppState,
     headers: &axum::http::HeaderMap,
     denied: fn() -> toolkit_canonical_errors::CanonicalError,
-) -> Result<uuid::Uuid, toolkit_canonical_errors::CanonicalError> {
+) -> Result<Caller, toolkit_canonical_errors::CanonicalError> {
     if !state.identity.is_configured() {
-        tracing::error!("identity service is not configured; admin access cannot be verified");
+        tracing::error!("identity service is not configured; the caller cannot be verified");
         return Err(toolkit_canonical_errors::CanonicalError::internal(
             "failed to verify caller permissions",
         )
@@ -70,21 +72,36 @@ pub(crate) async fn require_admin(
 
     let caller = state
         .identity
-        .admin_caller(forwarded_authorization(headers))
+        .caller(forwarded_authorization(headers))
         .await
         .map_err(|error| {
             if error.is_about_the_caller() {
                 tracing::warn!(error = %error, "the caller could not be identified");
                 return denied();
             }
-            tracing::error!(error = %error, "admin role check failed");
+            tracing::error!(error = %error, "the caller's role could not be read");
             toolkit_canonical_errors::CanonicalError::internal(
                 "failed to verify caller permissions",
             )
             .create()
         })?;
 
-    if let Some(caller) = caller {
+    caller.ok_or_else(denied)
+}
+
+/// Refuses a caller without the administrator role, before anything is
+/// looked up.
+///
+/// The library, authoring and sharing surfaces read and write one tenant's
+/// definitions and spend the configured model budget, so they are
+/// administrator-only.
+pub(crate) async fn require_admin(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    denied: fn() -> toolkit_canonical_errors::CanonicalError,
+) -> Result<Caller, toolkit_canonical_errors::CanonicalError> {
+    let caller = caller(state, headers, denied).await?;
+    if caller.is_administrator() {
         return Ok(caller);
     }
 
@@ -101,6 +118,9 @@ pub(crate) struct AppState {
     catalog: Catalog,
     /// How many drilldown pages may be read at once.
     drilldown_slots: Arc<tokio::sync::Semaphore>,
+    preview_slots: Arc<tokio::sync::Semaphore>,
+    /// How many widgets may be run through their dashboards at once.
+    widget_run_slots: Arc<tokio::sync::Semaphore>,
     /// Absent on an installation that has alerts turned off.
     alerts: Option<Alerts>,
 }
@@ -157,7 +177,7 @@ impl Datasets {
 
         futures::executor::block_on(async {
             for (named, declaration) in declared {
-                let name = crate::domain::definition::DefinitionName::parse(named)
+                let name = crate::domain::definition::DefinitionId::parse(named)
                     .unwrap_or_else(|error| panic!("`{named}` should be a dataset name: {error}"));
                 let attempt = rows
                     .take_create(&name, declaration)
@@ -218,6 +238,10 @@ impl AppState {
             drilldown_slots: Arc::new(tokio::sync::Semaphore::new(
                 metric_drilldown::MAX_CONCURRENT_PAGES,
             )),
+            preview_slots: Arc::new(tokio::sync::Semaphore::new(alerts::MAX_CONCURRENT_PREVIEWS)),
+            widget_run_slots: Arc::new(tokio::sync::Semaphore::new(
+                dashboard_widgets::MAX_CONCURRENT_WIDGET_RUNS,
+            )),
             alerts: None,
         }
     }
@@ -234,7 +258,7 @@ impl AppState {
         Some(crate::domain::alerts::rules::AlertRules::new(
             alerts.store.as_ref(),
             alerts.schedule.as_ref(),
-            self.definitions.as_ref(),
+            self.metric_runs(),
             alerts.limits,
             &alerts.destinations,
         ))
@@ -276,11 +300,20 @@ impl AppState {
         ))
     }
 
+    pub(crate) fn preview_slots(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.preview_slots
+    }
+
     pub(crate) fn drilldown_slots(&self) -> &Arc<tokio::sync::Semaphore> {
         &self.drilldown_slots
     }
 
-    pub(crate) fn definitions(&self) -> &dyn Definitions {
+    pub(crate) fn widget_run_slots(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.widget_run_slots
+    }
+
+    #[cfg(test)]
+    pub(crate) fn definitions(&self) -> &dyn crate::domain::definition::Definitions {
         self.definitions.as_ref()
     }
 
@@ -296,6 +329,14 @@ impl AppState {
         self.definitions.as_ref()
     }
 
+    pub(crate) fn store(&self) -> &dyn DefinitionStore {
+        self.definitions.as_ref()
+    }
+
+    pub(crate) fn identity(&self) -> &IdentityClient {
+        &self.identity
+    }
+
     pub(crate) fn metrics(&self) -> &MetricRunner {
         &self.metrics
     }
@@ -304,12 +345,14 @@ impl AppState {
         &self.chat
     }
 
-    pub(crate) fn surfaces(&self) -> crate::domain::surfaces::Surfaces<'_> {
+    /// The definitions as `caller` reaches them.
+    pub(crate) fn surfaces(&self, caller: Caller) -> crate::domain::surfaces::Surfaces<'_> {
         crate::domain::surfaces::Surfaces::new(
             self.definitions.as_ref(),
             self.datasets(),
             &self.datasets.database,
             self.metrics.people(),
+            caller,
         )
     }
 
@@ -444,6 +487,8 @@ pub(crate) fn register_routes(
     let api = raw_data::register_routes(Router::new(), openapi, state.clone(), admission);
     let api = definitions::register_routes(api, openapi, &state);
     let api = duplicate::register_routes(api, openapi, &state);
+    let api = sharing::register_routes(api, openapi, &state);
+    let api = dashboard_widgets::register_routes(api, openapi, &state);
     let api = folders::register_routes(api, openapi, &state);
     let api = tags::register_routes(api, openapi, &state);
     let api = pins::register_routes(api, openapi, &state);

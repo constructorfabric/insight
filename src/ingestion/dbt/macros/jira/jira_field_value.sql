@@ -172,51 +172,50 @@
 {#- The linked issue's key, from a link element of the issue resource.
 
     A link element is `{"id": <the link's own id>, "outwardIssue"|"inwardIssue":
-    {"key": ...}}`. The link's own id is what `jira_json_obj_id` would take, and
-    it appears nowhere in the changelog — which names the linked issue by key.
-    So the key is the identifier on both sides, and the link id is discarded; it
-    is recoverable from the issue JSON.
-
-    A SUBTASK element is the referenced issue itself, with the key at the top
-    level, so the same rule applies one level shallower.
-
-    Direction is not part of the identity: which side of a link the issue is on
-    is a property of the link, not of the element — the changelog's rendered
-    text carries it ("blocks", "is caused by"), which is why the display keeps
-    that text where it has it. -#}
+    {"id": ..., "key": ...}, "type": {...}}`; the link's own id appears nowhere
+    in the changelog, so it is discarded. A SUBTASK element is the referenced
+    issue itself, with its id and key at the top level. -#}
 {% macro jira_json_link_key(v) %}
     coalesce(
         nullIf(JSONExtractString({{ v }}, 'outwardIssue', 'key'), ''),
         nullIf(JSONExtractString({{ v }}, 'inwardIssue', 'key'), ''),
-        {#- `subtasks` carries the same `schema_items` as `issuelinks` and so the
-            same kind, but its element IS the referenced issue rather than a link
-            to it: the key sits at the top level and there is no link object. A
-            link element never has a top-level `key`, so probing it last is
-            unambiguous. Without this the whole field normalizes to empty
-            strings — parallel arrays of nothing, which no test but the round
-            trip would notice. -#}
+        {#- A link element never has a top-level `key`, so probing it last tells
+            a subtask apart without reading the field id. -#}
         nullIf(JSONExtractString({{ v }}, 'key'), ''),
         ''
     )
 {% endmacro %}
 
 
-{#- kind = link_array: the linked issue key as both value and identifier, which
-    is what makes the two sides reconcile at all.
+{#- The linked issue's immutable id, beside `jira_json_link_key`. A link
+    element's top-level `id` is the LINK's, so it is read only for a subtask,
+    which `key` at the top level identifies. -#}
+{% macro jira_json_link_issue_id(v) %}
+    coalesce(
+        nullIf(JSONExtractString({{ v }}, 'outwardIssue', 'id'), ''),
+        nullIf(JSONExtractString({{ v }}, 'inwardIssue', 'id'), ''),
+        if(JSONExtractString({{ v }}, 'key') != '', nullIf(JSONExtractString({{ v }}, 'id'), ''), NULL),
+        ''
+    )
+{% endmacro %}
 
-    The keys are deduplicated because two link objects can name the same issue —
-    one issue related to another by two link types is two elements of
-    `issuelinks` and one element here. The changelog cannot express the
-    difference either: it names the linked issue, so a second link to an issue
-    already linked reconciles against the element that is already present.
-    Leaving the repeat in makes the snapshot longer than any history that could
-    reproduce it, and the round trip reports the field forever. -#}
+
+{#- kind = link_array: the linked issue's immutable id as the identifier and its
+    key as the display (§3.7). The changelog names the linked issue by key, and
+    the journal resolves that key to the same id through `jira__issue_keys`; an
+    element with no id stays identified by its key, which a key's project prefix
+    keeps apart from every numeric id.
+
+    One element per linked issue: two link objects can name the same issue — one
+    issue related to another by two link types — and the changelog cannot tell
+    them apart either, so `element_wise_presence` counts them instead. -#}
 {% macro jira_norm_link_array(v) %}
+    {%- set elements = "arrayDistinct(arrayMap(x -> (coalesce(nullIf(" ~ jira_json_link_issue_id('x') ~ ", ''), "
+                       ~ jira_json_link_key('x') ~ "), " ~ jira_json_link_key('x') ~ "), "
+                       ~ "JSONExtractArrayRaw(if(" ~ v ~ " IN ('', 'null'), '[]', " ~ v ~ "))))" -%}
     (
-        CAST(arrayDistinct(arrayMap(x -> {{ jira_json_link_key('x') }},
-             JSONExtractArrayRaw(if({{ v }} IN ('', 'null'), '[]', {{ v }})))) AS Array(String)),
-        CAST(arrayDistinct(arrayMap(x -> {{ jira_json_link_key('x') }},
-             JSONExtractArrayRaw(if({{ v }} IN ('', 'null'), '[]', {{ v }})))) AS Array(String))
+        CAST(arrayMap(e -> e.1, {{ elements }}) AS Array(String)),
+        CAST(arrayMap(e -> e.2, {{ elements }}) AS Array(String))
     )
 {% endmacro %}
 
@@ -243,46 +242,15 @@
 {% endmacro %}
 
 
-{#- Content address for a long-text body (§8). A pure function of the text, so
-    the same body always resolves to the same `jira__task_field_text` row.
-    `sipHash128` is not cryptographic; it is a fast, well-distributed 128-bit
-    digest, which is what content addressing needs. -#}
-{% macro jira_text_id(content) %}
-    lower(hex(sipHash128({{ content }})))
-{% endmacro %}
-
-
-{#- The readable prefix of a long-text body.
-
-    `substringUTF8`, never `substring`: ClickHouse's `substring` counts BYTES,
-    so cutting a body at 200 bytes splits whatever multi-byte character spans
-    that boundary and the row carries invalid UTF-8. Nothing in the dbt chain
-    notices — ClickHouse stores the bytes happily and every array-shape test
-    passes — but a consumer that decodes strings strictly rejects the row. The
-    Rust reader does exactly that, and dying on "incomplete utf-8 byte sequence
-    from index 198" is how this was found.
-
-    The prefix is therefore measured in CHARACTERS, which is also what the
-    variable has always been named. -#}
-{% macro jira_text_prefix(v) %}
-    substringUTF8({{ v }}, 1, {{ var('jira_long_text_prefix_chars', 200) }})
-{% endmacro %}
-
-
-{#- kind = long_text: the journal carries the body's content address plus a short
-    prefix, never the body itself — see `jira__task_field_text`. The prefix keeps
-    a row readable in a drilldown without pulling kilobytes through the array
-    columns on every read of any field.
-
-    `value_id_type` stays `string_literal` rather than gaining a `text_ref` enum
-    value: the enum is a shared cross-source contract, and widening it for one
-    Jira kind is disproportionate while nothing outside the tests reads it. A
-    consumer that needs to tell them apart reads `field_kind`. -#}
+{#- kind = long_text: the journal carries a text reference (`task_field_text`),
+    never the body itself — the body goes to `jira__task_field_text`. The prefix
+    keeps a row readable in a drilldown without pulling kilobytes through the
+    array columns on every read of any field. -#}
 {% macro jira_norm_long_text(v) %}
     (
         if({{ v }} IN ('', 'null', '""', '{}'), [],
-           [CAST({{ jira_text_id(v) }} AS String)]),
+           [CAST({{ task_text_id(v) }} AS String)]),
         if({{ v }} IN ('', 'null', '""', '{}'), [],
-           [CAST({{ jira_text_prefix(v) }} AS String)])
+           [CAST({{ task_text_prefix(v) }} AS String)])
     )
 {% endmacro %}

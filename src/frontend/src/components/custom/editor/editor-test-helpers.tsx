@@ -14,30 +14,26 @@ export function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
-/** Every catalogue answers empty, and every dataset declares nothing, unless a test says otherwise. */
+/** Every catalogue answers empty, every dataset declares nothing, and no definition is found, unless a test says otherwise. */
 export function mockCatalogues(): void {
-  const none = { names: [], total: 0 };
-  vi.mocked(customClient.fetchMetricNames).mockResolvedValue(none);
-  vi.mocked(customClient.fetchWidgetNames).mockResolvedValue(none);
-  vi.mocked(customClient.fetchDashboardNames).mockResolvedValue(none);
-  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue(none);
+  const none = { items: [], total: 0 };
+  vi.mocked(customClient.fetchMetrics).mockResolvedValue(none);
+  vi.mocked(customClient.fetchWidgets).mockResolvedValue(none);
+  vi.mocked(customClient.fetchDashboards).mockResolvedValue(none);
+  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
+    names: [],
+    total: 0,
+  });
+  vi.mocked(customClient.fetchMetric).mockRejectedValue(
+    new CustomApiError(404, null)
+  );
+  vi.mocked(customClient.fetchWidget).mockRejectedValue(
+    new CustomApiError(404, null)
+  );
   vi.mocked(customClient.fetchDataset).mockImplementation(async (name) => ({
     name,
     declaration: { title: name, fields: [] },
   }));
-  vi.mocked(customClient.fetchTables).mockResolvedValue({
-    tables: [],
-    total: 0,
-  });
-  vi.mocked(customClient.fetchTable).mockImplementation(
-    async (database, table) => ({
-      database,
-      table,
-      layer: "other",
-      engine: "MergeTree",
-      columns: [],
-    })
-  );
 }
 
 /** A 400 as the service sends it: places in the document, each with a reason. */
@@ -55,24 +51,13 @@ export function invalid(
   });
 }
 
-/** What an input offers to pick from, in the order it offers it. */
-export function offeredBy(input: HTMLElement): string[] {
-  const listId = input.getAttribute("list");
-  const list = listId ? document.getElementById(listId) : null;
-  if (!list) throw new Error("input offers nothing");
-  return [...list.querySelectorAll("option")].map((option) => option.value);
-}
-
-/** The row a control sits in: its label, hint and whatever was said about it. */
-export function rowOf(control: HTMLElement): HTMLElement {
-  const row = control.closest("div.flex.flex-col");
-  if (!(row instanceof HTMLElement)) throw new Error("control has no row");
-  return row;
-}
-
-export async function showText(
-  user: ReturnType<typeof userEvent.setup>
+/** Replaces the document's text with what is given, as a person pasting it would. */
+export async function writeText(
+  user: ReturnType<typeof userEvent.setup>,
+  text: string
 ): Promise<HTMLTextAreaElement> {
-  await user.click(screen.getByRole("button", { name: "JSON" }));
-  return screen.getByLabelText(/as text/i) as HTMLTextAreaElement;
+  const area = screen.getByLabelText(/as text/i) as HTMLTextAreaElement;
+  await user.clear(area);
+  await user.paste(text);
+  return area;
 }

@@ -34,11 +34,16 @@ The stand and the suite are both driven through `./dev-compose.sh
 test-stand`, from the repository root:
 
 ```bash
-./dev-compose.sh test-stand up              # bring the stand up, seed it, wait for dbt
+./dev-compose.sh test-stand up              # build this tree, bring the stand up, seed it, wait for dbt
 ./dev-compose.sh test-stand test             # run the whole suite (uv, on the host)
 ./dev-compose.sh test-stand test tests/stand/api/    # a subset — args pass through to pytest
 ./dev-compose.sh test-stand down             # stop the stand and drop its volumes
 ```
+
+`up` compiles the Rust services and builds the SPA from the checkout, so the
+suite runs the code you changed. `up --pinned` pulls the published images at
+each chart's `appVersion` instead; that is CI's mode, and the fast path when
+nothing under `src/backend/` or `src/frontend/` differs from main.
 
 `test-stand test` requires [`uv`](https://docs.astral.sh/uv/) on the host
 and runs `uv run --project tests --frozen pytest tests/stand <args>`. Run
@@ -188,8 +193,7 @@ for — not an assertion that the UI "should" be covered too.
 As of this writing: no metric value is asserted (the golden set is empty by
 design, above); no accessibility or contrast checking; cross-tenant
 isolation and the service-principal route are left to the in-process
-`bronze-to-api` rig; `/v1/columns` is asserted only against an empty
-universe (the seed does not populate `table_columns`).
+`bronze-to-api` rig.
 
 Four gaps worth naming separately, because none of them is "nobody got to
 it":

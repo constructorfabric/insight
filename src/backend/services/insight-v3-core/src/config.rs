@@ -77,6 +77,11 @@ pub(crate) enum DestinationConfig {
         #[serde(deserialize_with = "text_or_number")]
         chat_id: String,
     },
+    /// A Slack channel, through a bot.
+    Slack {
+        bot_token: SecretString,
+        channel: String,
+    },
     /// A Zulip stream topic, through a bot.
     Zulip {
         site_url: String,
@@ -92,6 +97,7 @@ impl DestinationConfig {
         match self {
             Self::Discord { .. } => DestinationProvider::Discord,
             Self::Telegram { .. } => DestinationProvider::Telegram,
+            Self::Slack { .. } => DestinationProvider::Slack,
             Self::Zulip { .. } => DestinationProvider::Zulip,
         }
     }
@@ -114,6 +120,14 @@ impl DestinationConfig {
                 }
                 if chat_id.trim().is_empty() {
                     return Err(field("chat_id"));
+                }
+            }
+            Self::Slack { bot_token, channel } => {
+                if bot_token.expose_secret().trim().is_empty() {
+                    return Err(field("bot_token"));
+                }
+                if channel.trim().is_empty() {
+                    return Err(field("channel"));
                 }
             }
             Self::Zulip {
@@ -183,6 +197,7 @@ fn is_https_url(value: &str) -> bool {
 pub(crate) enum DestinationProvider {
     Discord,
     Telegram,
+    Slack,
     Zulip,
 }
 
@@ -191,6 +206,7 @@ impl DestinationProvider {
         match self {
             Self::Discord => "discord",
             Self::Telegram => "telegram",
+            Self::Slack => "slack",
             Self::Zulip => "zulip",
         }
     }
@@ -286,7 +302,8 @@ pub(crate) struct GearConfig {
     /// How long an abandoned create or removal holds its dataset.
     pub(crate) dataset_lease_secs: i64,
     /// Topology of the warehouse: whether the tables this service creates
-    /// must replicate, and the cluster its DDL is qualified with.
+    /// must replicate. The name is the chart's shared contract and unused
+    /// here: no statement this service emits carries `ON CLUSTER`.
     pub(crate) clickhouse_cluster_mode: bool,
     pub(crate) clickhouse_cluster_name: String,
     pub(crate) clickhouse_user: Option<String>,
@@ -502,7 +519,7 @@ impl ValidatedConfig {
     ) -> insight_clickhouse::Client {
         let mut config =
             insight_clickhouse::Config::new(&self.clickhouse_url, &self.clickhouse_database)
-                .with_topology(self.topology.clone());
+                .with_topology(self.topology);
         if let (Some(user), Some(password)) = (user, password) {
             config = config.with_auth(user, password.expose_secret());
         }
@@ -566,7 +583,7 @@ impl ValidatedConfig {
     pub(crate) fn datasets_client(&self) -> insight_clickhouse::Client {
         let mut config =
             insight_clickhouse::Config::new(&self.clickhouse_url, &self.datasets_database)
-                .with_topology(self.topology.clone());
+                .with_topology(self.topology);
         if let (Some(user), Some(password)) = (
             self.clickhouse_user.as_deref(),
             self.clickhouse_password.as_ref(),

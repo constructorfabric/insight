@@ -7,6 +7,7 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use insight_clickhouse::MissingRelation;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 
@@ -90,7 +91,7 @@ pub(crate) enum ErrorClass {
 
 impl ErrorClass {
     pub(crate) fn classify(message: &str) -> Self {
-        if message.contains("UNKNOWN_TABLE") || message.contains("Code: 60.") {
+        if MissingRelation::from_message(message).is_some() {
             return Self::RelationMissing;
         }
         if RESOURCE_LIMIT_MARKERS
@@ -197,6 +198,26 @@ mod tests {
                 "should be relation_missing: {message}"
             );
         }
+
+        for message in [
+            "Code: 81. DB::Exception: Database insight does not exist. (UNKNOWN_DATABASE)",
+            "Code: 81",
+        ] {
+            assert_eq!(
+                ErrorClass::classify(message),
+                ErrorClass::RelationMissing,
+                "an absent database is the same reading as an absent table: {message}"
+            );
+        }
+
+        // Code 47 is the relation disagreeing with the deployed code, not an
+        // absence — the one failure an empty answer would hide.
+        assert_eq!(
+            ErrorClass::classify(
+                "Code: 47. DB::Exception: Unknown expression identifier `commits` (UNKNOWN_IDENTIFIER)"
+            ),
+            ErrorClass::QueryFailed,
+        );
 
         for message in [
             "Code: 241. Memory limit exceeded",

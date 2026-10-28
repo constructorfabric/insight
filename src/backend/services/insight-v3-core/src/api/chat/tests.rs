@@ -4,29 +4,43 @@ use axum::Router;
 use axum::body::{Body, Bytes, to_bytes};
 use axum::http::{Request, StatusCode};
 use clickhouse::test::{Mock, handlers};
-use serde::Deserialize;
 use serde_json::json;
 use toolkit::api::OpenApiRegistryImpl;
 use tower::ServiceExt as _;
 
 use super::*;
 use crate::api::AppState;
-use crate::chat::{ChatClient, Proposal};
+use crate::chat::{ChatClient, Proposal, Proposed};
 use crate::domain::datasets::Datasets as _;
-use crate::domain::definition::Definitions;
+use crate::domain::definition::{Definitions as _, Lookup as _};
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
 
 struct TestHarness {
     mock: Mock,
     router: Router,
-    definitions: Arc<dyn Definitions>,
+    definitions: Arc<MemoryDefinitions>,
+}
+
+fn proposed(name: &str, body: serde_json::Value) -> Proposed {
+    Proposed {
+        id: None,
+        name: name.to_owned(),
+        body,
+    }
+}
+
+fn replacing(id: &str, name: &str, body: serde_json::Value) -> Proposed {
+    Proposed {
+        id: Some(id.to_owned()),
+        ..proposed(name, body)
+    }
 }
 
 /// The one dataset the assistant reads in these cases.
 fn a_ready_dataset(url: &str) -> crate::api::Datasets {
     let rows = crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now());
-    let name = crate::domain::definition::DefinitionName::parse("commits")
+    let name = crate::domain::definition::DefinitionId::parse("commits")
         .unwrap_or_else(|error| panic!("the name parses: {error}"));
     let declaration = json!({
         "title": "Commits",
@@ -105,26 +119,6 @@ impl TestHarness {
         }
     }
 
-    async fn put_json(&self, path: &str, body: serde_json::Value) -> TestResponse {
-        let request = Request::builder()
-            .method("PUT")
-            .uri(path)
-            .header("content-type", "application/json")
-            .body(Body::from(serde_json::to_vec(&body).unwrap_or_else(
-                |error| panic!("test JSON must serialize: {error}"),
-            )))
-            .unwrap_or_else(|error| panic!("test request must be valid: {error}"));
-
-        let response = self
-            .router
-            .clone()
-            .oneshot(request)
-            .await
-            .unwrap_or_else(|error| panic!("router must respond: {error}"));
-
-        TestResponse::from_response(response).await
-    }
-
     /// The only ClickHouse read a chat request makes before it answers: the
     /// list of ingest tables for the prompt. The definitions it reads come
     /// from the store, which needs no priming.
@@ -132,29 +126,37 @@ impl TestHarness {
         self.mock.add(handlers::provide(Vec::<String>::new()));
     }
 
-    /// Whether the store holds anything under `name`.
-    async fn holds(&self, kind: DefinitionKind, name: &str) -> bool {
-        let name = crate::domain::definition::DefinitionName::parse(name)
-            .unwrap_or_else(|error| panic!("test name must parse: {error}"));
-
-        self.definitions
-            .get(kind, &name)
+    /// Whether the store holds any definition of this kind.
+    async fn holds_any(&self, kind: DefinitionKind) -> bool {
+        !self
+            .definitions
+            .list(kind)
             .await
             .unwrap_or_else(|error| panic!("the store must answer: {error}"))
-            .is_some()
+            .is_empty()
     }
 
-    /// What the store holds under `name`, for the cases about what a request
+    /// What the store holds under `id`, for the cases about what a request
     /// wrote rather than what it answered.
-    async fn stored(&self, kind: DefinitionKind, name: &str) -> serde_json::Value {
-        let name = crate::domain::definition::DefinitionName::parse(name)
-            .unwrap_or_else(|error| panic!("test name must parse: {error}"));
+    async fn stored(&self, kind: DefinitionKind, id: &str) -> serde_json::Value {
+        let parsed = crate::domain::definition::DefinitionId::parse(id)
+            .unwrap_or_else(|error| panic!("the id must parse: {error}"));
 
         self.definitions
-            .get(kind, &name)
+            .get(kind, &parsed)
             .await
             .unwrap_or_else(|error| panic!("the store must answer: {error}"))
-            .unwrap_or_else(|| panic!("nothing stored under {}", name.as_str()))
+            .unwrap_or_else(|| panic!("nothing stored under {id}"))
+    }
+
+    async fn seed(&self, kind: DefinitionKind, id: &str, body: serde_json::Value) {
+        let parsed = crate::domain::definition::DefinitionId::parse(id)
+            .unwrap_or_else(|error| panic!("the id must parse: {error}"));
+
+        self.definitions
+            .seed(kind, &parsed, &body)
+            .await
+            .unwrap_or_else(|error| panic!("the store must accept it: {error}"));
     }
 
     /// Posts `message` to `/v1/chat`.
@@ -210,26 +212,12 @@ impl TestResponse {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[expect(
-    dead_code,
-    reason = "mirrors the full response shape; not every field is asserted on"
-)]
-struct TestCreated {
-    metric: Option<String>,
-    widgets: Vec<String>,
-    dashboard: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatCreatedBody {
-    #[serde(default)]
-    #[expect(dead_code, reason = "the wire shape carries it; no case asserts it")]
-    reply: String,
-    #[serde(default)]
-    created: TestCreated,
-    #[serde(default)]
-    updated: TestCreated,
+/// The id the response reports for a written item, as a string.
+fn reported_id(written: &serde_json::Value) -> String {
+    written["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("an id is reported: {written}"))
+        .to_owned()
 }
 
 /// An answer that promises rows over a table with none in it.
@@ -252,15 +240,16 @@ fn single_existing_widget_proposal() -> Proposal {
     Proposal::Create {
         reply: "ok".to_owned(),
         // The metric arrives with the widget, as a chat request builds them.
-        metric: Some((
-            "m".to_owned(),
+        metric: Some(proposed(
+            "m",
             json!({
                 "dataset": "commits",
                 "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )),
-        widgets: vec![(
-            "commits_table".to_owned(),
+        widgets: vec![replacing(
+            "commits_table",
+            "Commits table",
             json!({ "type": "table", "metric": "m", "columns": ["day"] }),
         )],
         dashboard: None,
@@ -268,43 +257,75 @@ fn single_existing_widget_proposal() -> Proposal {
 }
 
 #[tokio::test]
-async fn a_name_already_in_use_is_replaced_and_reported_as_updated() {
+async fn an_item_carrying_a_stored_id_replaces_it_and_is_reported_as_updated() {
     let harness = TestHarness::new(ChatClient::scripted(single_existing_widget_proposal)).await;
-
-    // The widget names this metric's columns, so it goes in first.
+    let first = json!({
+        "dataset": "commits",
+        "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
+    });
     harness
-        .put_json(
-            "/v1/metrics/was_here_first",
-            json!({
-                "dataset": "commits",
-                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
-            }),
-        )
+        .seed(DefinitionKind::Metric, "was_here_first", first)
         .await;
-    let seeded = harness
-        .put_json(
-            "/v1/widgets/commits_table",
+    harness
+        .seed(
+            DefinitionKind::Widget,
+            "commits_table",
             json!({ "type": "table", "metric": "was_here_first", "columns": ["day"] }),
         )
         .await;
-    assert_eq!(seeded.status(), StatusCode::NO_CONTENT);
-
     harness.queue_chat_context();
 
     let response = harness.post_chat("commits_table").await;
     assert_eq!(response.status(), StatusCode::OK);
-    let created: ChatCreatedBody = serde_json::from_slice(&response.body)
-        .unwrap_or_else(|error| panic!("response body must be JSON: {error}"));
+    let body = response.json().await;
 
-    // Reusing a name is how the reader changes something by asking, so the
-    // write goes through and the reply says which names it replaced.
-    assert_eq!(created.updated.widgets, vec!["commits_table".to_owned()]);
-    assert!(created.created.widgets.is_empty());
-
+    assert_eq!(
+        body["updated"]["widgets"],
+        json!([{ "id": "commits_table", "name": "Commits table" }])
+    );
+    assert_eq!(body["created"]["widgets"], json!([]));
+    let metric = reported_id(&body["created"]["metric"]);
+    assert_ne!(metric, "m", "a created item is given an id of its own");
     let stored = harness
         .stored(DefinitionKind::Widget, "commits_table")
         .await;
-    assert_eq!(stored["metric"], "m", "the new body must have replaced it");
+    assert_eq!(
+        stored["metric"],
+        json!(metric),
+        "the widget must draw the metric the same proposal created"
+    );
+}
+
+fn a_widget_replacing_an_id_nobody_holds() -> Proposal {
+    Proposal::Create {
+        reply: "ok".to_owned(),
+        metric: Some(proposed(
+            "m",
+            json!({
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
+            }),
+        )),
+        widgets: vec![replacing(
+            "nowhere",
+            "Chart",
+            json!({ "type": "table", "metric": "m", "columns": ["day"] }),
+        )],
+        dashboard: None,
+    }
+}
+
+#[tokio::test]
+async fn an_item_replacing_an_id_nobody_holds_stores_none_of_the_proposal() {
+    let harness =
+        TestHarness::new(ChatClient::scripted(a_widget_replacing_an_id_nobody_holds)).await;
+    harness.queue_chat_context();
+
+    let refused = harness.post_chat("change the chart").await;
+
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+    assert!(!harness.holds_any(DefinitionKind::Metric).await);
+    assert!(!harness.holds_any(DefinitionKind::Widget).await);
 }
 
 /// A metric, two widgets over it and a dashboard holding both: everything one
@@ -312,8 +333,8 @@ async fn a_name_already_in_use_is_replaced_and_reported_as_updated() {
 fn whole_board_proposal() -> Proposal {
     Proposal::Create {
         reply: "here it is".to_owned(),
-        metric: Some((
-            "delivery_metric".to_owned(),
+        metric: Some(proposed(
+            "Delivery metric",
             json!({
                 "dataset": "commits",
                 "fields": [
@@ -324,28 +345,28 @@ fn whole_board_proposal() -> Proposal {
             }),
         )),
         widgets: vec![
-            (
-                "delivery".to_owned(),
+            proposed(
+                "Delivery",
                 json!({
                     "type": "table",
-                    "metric": "delivery_metric",
+                    "metric": "Delivery metric",
                     "columns": ["day", "lines"]
                 }),
             ),
-            (
-                "delivery_line".to_owned(),
-                json!({ "type": "line", "metric": "delivery_metric", "x": "day", "y": "lines" }),
+            proposed(
+                "Delivery line",
+                json!({ "type": "line", "metric": "Delivery metric", "x": "day", "y": "lines" }),
             ),
         ],
-        dashboard: Some((
-            "delivery_dashboard".to_owned(),
-            json!({ "title": "delivery", "widgets": ["delivery", "delivery_line"] }),
+        dashboard: Some(proposed(
+            "Delivery board",
+            json!({ "title": "delivery", "items": [{ "widget": "Delivery" }, { "heading": "Trend" }, { "widget": "Delivery line" }] }),
         )),
     }
 }
 
 #[tokio::test]
-async fn a_proposal_stores_the_metric_its_widgets_and_the_dashboard_holding_them() {
+async fn a_proposal_lands_with_ids_and_its_items_point_at_each_other_by_them() {
     let harness = TestHarness::new(ChatClient::scripted(whole_board_proposal)).await;
 
     harness.queue_chat_context();
@@ -354,15 +375,31 @@ async fn a_proposal_stores_the_metric_its_widgets_and_the_dashboard_holding_them
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.json().await;
 
-    assert_eq!(body["created"]["metric"], "delivery_metric");
-    assert_eq!(
-        body["created"]["widgets"],
-        json!(["delivery", "delivery_line"])
-    );
-    assert_eq!(body["created"]["dashboard"], "delivery_dashboard");
+    let created = &body["created"];
+    assert_eq!(created["metric"]["name"], "Delivery metric");
+    assert_eq!(created["dashboard"]["name"], "Delivery board");
+    let metric = reported_id(&created["metric"]);
+    let widgets: Vec<String> = created["widgets"]
+        .as_array()
+        .unwrap_or_else(|| panic!("widgets are listed: {body}"))
+        .iter()
+        .map(reported_id)
+        .collect();
+    let dashboard = reported_id(&created["dashboard"]);
+    assert_eq!(widgets.len(), 2, "{body}");
     assert_eq!(
         body["updated"],
         json!({ "metric": null, "widgets": [], "dashboard": null })
+    );
+
+    for widget in &widgets {
+        let stored = harness.stored(DefinitionKind::Widget, widget).await;
+        assert_eq!(stored["metric"], json!(metric), "widget {widget}: {stored}");
+    }
+    let board = harness.stored(DefinitionKind::Dashboard, &dashboard).await;
+    assert_eq!(
+        board["items"],
+        json!([{ "widget": widgets[0] }, { "heading": "Trend" }, { "widget": widgets[1] }])
     );
 }
 
@@ -453,15 +490,15 @@ async fn an_answer_with_rows_keeps_the_reply_it_came_with() -> Result<(), Box<dy
 fn a_widget_naming_a_column_the_metric_lacks() -> Proposal {
     Proposal::Create {
         reply: "ok".to_owned(),
-        metric: Some((
-            "m".to_owned(),
+        metric: Some(proposed(
+            "m",
             json!({
                 "dataset": "commits",
                 "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )),
-        widgets: vec![(
-            "chart".to_owned(),
+        widgets: vec![proposed(
+            "chart",
             json!({ "type": "table", "metric": "m", "columns": ["nowhere"] }),
         )],
         dashboard: None,
@@ -471,7 +508,7 @@ fn a_widget_naming_a_column_the_metric_lacks() -> Proposal {
 fn a_metric_that_cannot_be_read_as_a_query() -> Proposal {
     Proposal::Create {
         reply: "ok".to_owned(),
-        metric: Some(("m".to_owned(), json!({ "dataset": "commits" }))),
+        metric: Some(proposed("m", json!({ "dataset": "commits" }))),
         widgets: Vec::new(),
         dashboard: None,
     }
@@ -489,10 +526,10 @@ async fn a_proposal_with_one_refused_body_stores_none_of_it() {
 
     assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
     assert!(
-        !harness.holds(DefinitionKind::Metric, "m").await,
+        !harness.holds_any(DefinitionKind::Metric).await,
         "the metric of a refused batch must not be stored"
     );
-    assert!(!harness.holds(DefinitionKind::Widget, "chart").await);
+    assert!(!harness.holds_any(DefinitionKind::Widget).await);
 }
 
 #[tokio::test]
@@ -506,5 +543,115 @@ async fn a_proposed_metric_that_cannot_be_read_as_a_query_is_refused_before_it_i
     let refused = harness.post_chat("build me a metric").await;
 
     assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
-    assert!(!harness.holds(DefinitionKind::Metric, "m").await);
+    assert!(!harness.holds_any(DefinitionKind::Metric).await);
+}
+
+/// Who the fixed identity says is chatting.
+fn chatting() -> crate::domain::access::PersonId {
+    crate::domain::access::PersonId::new(uuid::Uuid::nil())
+}
+
+fn someone_else() -> crate::domain::access::PersonId {
+    crate::domain::access::PersonId::new(uuid::Uuid::from_u128(2))
+}
+
+fn a_new_board() -> Proposal {
+    Proposal::Create {
+        reply: "ok".to_owned(),
+        metric: None,
+        widgets: Vec::new(),
+        dashboard: Some(proposed(
+            "Board",
+            json!({ "title": "Board", "widgets": [] }),
+        )),
+    }
+}
+
+fn replacing_their_board() -> Proposal {
+    Proposal::Create {
+        reply: "ok".to_owned(),
+        metric: None,
+        widgets: Vec::new(),
+        dashboard: Some(replacing(
+            "theirs",
+            "Mine now",
+            json!({ "title": "Mine now", "widgets": [] }),
+        )),
+    }
+}
+
+impl TestHarness {
+    async fn owned_by(&self, id: &str, owner: crate::domain::access::PersonId) {
+        let parsed = crate::domain::definition::DefinitionId::parse(id)
+            .unwrap_or_else(|error| panic!("the id must parse: {error}"));
+
+        self.definitions
+            .seed_owned(&parsed, &json!({ "title": id, "widgets": [] }), owner)
+            .await
+            .unwrap_or_else(|error| panic!("the store must accept it: {error}"));
+    }
+}
+
+#[tokio::test]
+async fn a_dashboard_the_assistant_creates_is_the_callers() {
+    use crate::domain::dashboards::DashboardCatalogue as _;
+
+    let harness = TestHarness::new(ChatClient::scripted(a_new_board)).await;
+    harness.queue_chat_context();
+
+    let response = harness.post_chat("make me a board").await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let id = reported_id(&response.json().await["created"]["dashboard"]);
+    let parsed = crate::domain::definition::DefinitionId::parse(&id)
+        .unwrap_or_else(|error| panic!("the id must parse: {error}"));
+    let standing = harness
+        .definitions
+        .standing(
+            &parsed,
+            crate::domain::access::Caller::administrator(chatting()),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("the store must answer: {error}"));
+    assert_eq!(
+        standing.map(|held| held.owner),
+        Some(crate::domain::access::Owner::Person(chatting()))
+    );
+}
+
+#[tokio::test]
+async fn replacing_a_dashboard_the_caller_cannot_see_is_refused_as_missing() {
+    let harness = TestHarness::new(ChatClient::scripted(replacing_their_board)).await;
+    harness.owned_by("theirs", someone_else()).await;
+    harness.queue_chat_context();
+
+    let refused = harness.post_chat("rename their board").await;
+
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        harness.stored(DefinitionKind::Dashboard, "theirs").await["title"],
+        json!("theirs")
+    );
+}
+
+#[tokio::test]
+async fn replacing_a_dashboard_shared_with_the_caller_is_refused_to_a_viewer() {
+    let harness = TestHarness::new(ChatClient::scripted(replacing_their_board)).await;
+    harness.owned_by("theirs", someone_else()).await;
+    let parsed = crate::domain::definition::DefinitionId::parse("theirs")
+        .unwrap_or_else(|error| panic!("the id must parse: {error}"));
+    harness
+        .definitions
+        .seed_viewer(&parsed, chatting(), someone_else())
+        .await
+        .unwrap_or_else(|error| panic!("the store must share it: {error}"));
+    harness.queue_chat_context();
+
+    let refused = harness.post_chat("rename their board").await;
+
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        harness.stored(DefinitionKind::Dashboard, "theirs").await["title"],
+        json!("theirs")
+    );
 }

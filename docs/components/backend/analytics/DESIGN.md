@@ -1,13 +1,8 @@
 ---
 status: proposed
-date: 2026-04-08
+date: 2026-10-14
+prd: pending
 ---
-
-> [!WARNING]
-> **Under review — audited against the implementation and found inaccurate in places.**
-> Read it against the code, not as authority. The specific claims the code contradicts
-> are listed in the repository [README](../../../../README.md#backend-specs--under-review). Where this
-> document and the committed `openapi.json` disagree, the contract is right.
 
 # Technical Design -- Analytics API
 
@@ -29,11 +24,12 @@ date: 2026-04-08
   - [3.4 Internal Dependencies](#34-internal-dependencies)
   - [3.5 External Dependencies](#35-external-dependencies)
   - [3.6 Interactions & Sequences](#36-interactions--sequences)
-  - [3.7 Database Schemas & Tables](#37-database-schemas--tables)
+  - [3.7 Database schemas & tables](#37-database-schemas--tables)
+  - [3.8 Deployment Topology](#38-deployment-topology)
 - [4. Additional Context](#4-additional-context)
   - [Metric families specified beside this document](#metric-families-specified-beside-this-document)
-  - [Inter-Service Authentication](#inter-service-authentication)
-  - [Multi-Tenant OIDC](#multi-tenant-oidc)
+  - [Known gaps](#known-gaps)
+  - [Metric passports](#metric-passports)
 - [5. Traceability](#5-traceability)
 
 <!-- /toc -->
@@ -42,559 +38,551 @@ date: 2026-04-08
 
 ### 1.1 Architectural Vision
 
-The Analytics API is a read-only query service over predefined ClickHouse queries (Silver/Gold materialized views). It does not expose raw ClickHouse tables. Instead, admins define **metrics** — named SQL queries stored in MariaDB — and the frontend queries them by UUID. Each metric has a `query_ref` field containing raw ClickHouse SQL. The query engine wraps it as a subquery, appends security filters and OData-style user filters as parameterized WHERE clauses, then executes against ClickHouse.
+The Analytics API serves metric readings computed from the gold serving relations in ClickHouse. A metric is a **definition**, not a stored query: it names a source relation, the measures it reads, how they combine (sum, ratio, median, percentile, distinct count, standard deviation) and the dimensions a reader may group or filter by. Built-in definitions are declared in `registry.yaml` beside the code and reconciled into MariaDB by the `migrate` job; a tenant adds its own definitions, each backed by a single read-only SQL observation, through the custom-metric API.
 
-Person filtering requires Identity Resolution integration: frontend sends Insight person IDs (golden records), the service resolves them to source-specific aliases via a generic Identity Resolution API, then queries ClickHouse with the resolved identifiers.
+A request names the metrics, the people or the tenant, a period and the views it wants (period value, peer comparison, time series, breakdown, rollup, histogram). The service compiles each view into parameterized ClickHouse SQL over `insight.<family>_metric_observations`, resolving source accounts to canonical people inside the query through `identity.account_assignment` and `identity.person_map`. People are never resolved before the query, so a reading and its peer cohort are always resolved against the same identity state.
 
-Each metric can have associated **thresholds** — rules that define good/warning/critical levels per column. The query engine evaluates thresholds server-side and attaches a `_thresholds` map to every response row, enabling frontend cell coloring without client-side threshold computation.
+Authorization and computation fail differently. Before any ClickHouse work the requested people are checked, in one call, against the set identity says the caller may see, and one invisible id refuses the whole request. Once authorized, a view whose ClickHouse query fails answers in its own slot with a stable error code, and the rest of the response stands; a request that cannot be planned, or a view that exceeds its row limit, fails as a whole.
 
-The API Gateway mounts this service at `/api/analytics`. All endpoints are versioned: `/v1/...`.
+Around that core the service carries the surfaces that read the same relations or the same definitions: evidence drilldown and its export, metric report preview and export, saved ad-hoc queries, an AI explanation of one reading, product-usage recording, connector sync history and bronze ingestion intensity. The API Gateway mounts it at `/api/analytics`; every route is versioned under `/v1/...`.
 
 ### 1.2 Architecture Drivers
 
+The service has no PRD of its own; the drivers below are the product behaviours it exists to serve. The metric families specified beside this document (see section 4) carry their own PRDs.
+
 #### Functional Drivers
 
-| Requirement | Design Response |
-|-------------|------------------|
-| `cpt-insightspec-fr-be-analytics-read` | Query ClickHouse metrics with OData-style filtering scoped to user's org visibility |
-| `cpt-insightspec-fr-be-metrics-catalog` | `metrics` and `table_columns` MariaDB tables — catalog of available metrics and Silver/Gold columns |
-| `cpt-insightspec-fr-be-dashboard-config` | Metrics stored in MariaDB — admin-defined SQL queries referenced by UUID |
-| `cpt-insightspec-fr-be-visibility-policy` | Security filters injected automatically: `insight_tenant_id`, org unit (validated via AuthZEN PolicyEnforcer), membership time range |
-| `cpt-insightspec-fr-be-identity-resolution-service` | Person ID resolution via Identity Resolution API before ClickHouse query |
-| `cpt-insightspec-fr-be-threshold-eval` | Server-side threshold evaluation per metric; `_thresholds` in every response row |
+| Driver | Design Response |
+|--------|-----------------|
+| Dashboards read one metric at person, peer and tenant level over any period | One request carries many metrics and views; the compiler batches period and peer views per source and runs at most four view queries at a time per request, beside one absence query |
+| Metric meaning is owned by the server, not the portal | Labels, descriptions, explanations, formats and direction live in the definition and reach the portal through `GET /v1/metric-definitions` |
+| A person's several source accounts count as one person | Evidence is keyed by source identity; resolution to the canonical person happens at read time through the identity map |
+| A reader may only see people the org chart lets them see | Requested person ids pass the identity visibility gate before any query runs |
+| A tenant can add metrics without a release | Custom definitions with their own SQL observation, gated and probed before they are stored |
+| A reading can be traced to the records behind it | Drilldown reads the paired `<family>_metric_evidence` relation with the same resolution |
+| Readings leave the product as files | Report and drilldown exports in CSV and XLSX, bounded in rows, bytes and time |
 
 #### NFR Allocation
 
-| NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
-|--------|-------------|--------------|-----------------|----------------------|
-| `cpt-insightspec-nfr-be-query-safety` | No SQL injection | Query builder | Parameterized bind values only; `$orderby` and `$select` validated against metric columns | Integration test with injection payloads |
-| `cpt-insightspec-nfr-be-tenant-isolation` | Tenant data isolation | Query builder | `insight_tenant_id = ?` injected on every query from SecurityContext | Cross-tenant query test |
-| `cpt-insightspec-nfr-be-api-conventions` | RFC 9457, cursor pagination | All endpoints | `{ items, page_info }` envelopes, Problem Details errors, OData query conventions | Response format tests |
-| `cpt-insightspec-nfr-be-rate-limiting` | Per-route rate limiting | API Gateway (upstream) | Governor-based rate limiter | Load test |
-| `cpt-insightspec-nfr-be-idor-prevention` | IDOR on person entity ids | `POST /v1/metric-results`, `POST /v1/metrics/{id}/query`, `POST /v1/metrics/queries` | Requested person ids — `entity.ids`, or `person_id` in `$filter` — filtered through identity's `POST /v1/visible-persons`; the whole request is refused when any one is not visible | Gate tests + filter-extraction tests + e2e 403 cases |
-| `cpt-insightspec-nfr-be-idor-prevention-org-unit` | IDOR on org_unit_id | Query engine | Planned: `org_unit_id` from `$filter` validated against the caller's AccessScope before execution. Not implemented — the OData `$filter` path carries no visibility check | Cross-org-unit query test |
+| NFR | Summary | Allocated To | Design Response | Verification Approach |
+|-----|---------|--------------|-----------------|----------------------|
+| Query safety | No SQL injection through request values | Metric results compiler, drilldown compiler | Every request value is a bound parameter; keys rendered into SQL are escaped literals; failures log a SQL hash, not the SQL | Compiler unit tests; HTTP live tests |
+| Person-level authorization | No reading about a person the caller may not see | Visibility gate | Whole-request refusal on any invisible id; an identity that cannot answer is a server error, never a permit | Gate unit tests; stand API tests |
+| Failure isolation | One broken metric cannot take down a dashboard | Metric results handler | A failed ClickHouse query becomes a per-view `error` variant with a stable code, detail only for admins; a relation not built yet becomes a `not_ready` view; planning errors and the per-view row limit still fail the whole request | Failure-mapping unit tests |
+| Bounded work | No request can hold unbounded warehouse or memory resources | Metric results, drilldown, reports, SQL explorer, AI | Per-request caps on metrics, people, period, filters and rows; per-query ClickHouse limits; per-process semaphores on exports and explanations. Saved-query runs are the exception: the service buffers the whole result with no row or byte cap of its own, and only the query's ClickHouse execution-time and memory limits apply (section 4) | Validation unit tests; configuration defaults |
+| Schema drift is visible | A definition whose relation changed reports itself unavailable instead of failing every read | Definition validator | Periodic probe of each source relation and definition; status stored on the definition | Validator unit and live tests |
 
 ### 1.3 Architecture Layers
 
 ```mermaid
 graph TB
-    subgraph Frontend
+    subgraph Portal
         FE[React SPA]
     end
 
     subgraph Gateway["API Gateway"]
-        GW[Auth + Routing]
+        GW[Session to JWT, routing]
     end
 
     subgraph AnalyticsAPI["Analytics API"]
-        MC[Metric Catalog]
-        QB[Query Builder]
-        TE[Threshold Evaluator]
-        CACHE[Redis Cache]
+        API[REST handlers]
+        REG[Definition registry]
+        VAL[Definition validator]
+        QE[Metric results compiler]
+        VIS[Visibility gate]
+        DD[Drilldown and reports]
+        SQLX[Saved queries and SQL explorer]
     end
 
-    subgraph IdentityResolution["Identity Resolution API"]
-        IR[Alias Resolver]
+    subgraph Identity["Identity Resolution"]
+        IR[visible-persons, profiles, me]
     end
 
     subgraph Storage
-        CH[(ClickHouse<br/>Silver/Gold)]
-        MDB[(MariaDB<br/>metrics + thresholds + table_columns)]
-        RD[Redis]
+        CH[(ClickHouse<br/>gold observations and evidence<br/>identity map)]
+        MDB[(MariaDB<br/>metric definitions)]
     end
 
-    FE -->|Bearer token| GW
-    GW -->|forwards Bearer| AnalyticsAPI
-    MC -->|read metric def| MDB
-    QB -->|parameterized query| CH
-    TE -->|read thresholds| MDB
-    AnalyticsAPI -->|resolve person_ids| IR
-    CACHE -->|cache aliases| RD
-    GW -->|forwards Bearer| IR
+    FE -->|session| GW
+    GW -->|JWT| API
+    API --> VIS
+    VIS -->|forwarded bearer| IR
+    API --> QE
+    API --> DD
+    API --> SQLX
+    QE --> REG
+    REG --> MDB
+    VAL --> MDB
+    VAL -->|probe| CH
+    QE -->|parameterized SQL| CH
+    DD --> CH
+    SQLX --> CH
 ```
 
 - [ ] `p1` - **ID**: `cpt-insightspec-tech-analytics-layers`
 
 | Layer | Responsibility | Technology |
 |-------|---------------|------------|
-| API | REST endpoints, OData query parsing, request validation | Axum (via Constructor Gears api-gateway) |
-| Metric Catalog | CRUD for metric definitions, column catalog, threshold CRUD | MariaDB (modkit-db / SeaORM) |
-| Query Builder | Build parameterized ClickHouse SQL from metric's `query_ref` + OData filters + security scope | insight-clickhouse crate |
-| Threshold Evaluator | Evaluate each result row against metric's thresholds, attach `_thresholds` map | In-process (loaded from MariaDB per query) |
-| Person Resolution | Resolve Insight person IDs to source aliases | HTTP call to Identity Resolution API, Redis cache |
-| Authentication | JWT validation per request | OIDC plugin (same as API Gateway — each service validates independently) |
+| API | Route registration, request parsing, authentication, error envelopes, OpenAPI | Constructor Gears api-gateway host, Axum |
+| Domain | Definition registry and validation, metric results compilation, drilldown, reports, SQL gate | Rust, pure functions over request and definition values |
+| Infrastructure | MariaDB access, ClickHouse client and query execution, identity client, Anthropic client | SeaORM, insight-clickhouse, reqwest |
+| Authentication | JWT verification and claim mapping per request | oidc-authn-plugin, single-tenant tenant resolver |
 
 ## 2. Principles & Constraints
 
 ### 2.1 Design Principles
 
-#### Metrics, Not Raw Tables
+#### Definitions, Not Raw Tables
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-analytics-views`
 
-The service never exposes ClickHouse table names to the frontend. All queries go through admin-defined metrics stored in MariaDB. The frontend references metrics by UUID, not by table name. Each metric's `query_ref` contains the raw ClickHouse SQL; the query engine wraps it as a subquery and appends filters.
+The portal never names a ClickHouse relation. It asks for metric keys; the definition decides which relation, which measures and which aggregation answer. A built-in definition is data in `registry.yaml`, reconciled on every `migrate`; a definition removed from the registry is disabled, not deleted.
 
-**Why**: Decouples the frontend from ClickHouse schema. Admins control what data is queryable. Table renames or schema changes don't break the frontend.
+**Why**: The meaning of a number is owned in one place. A relation can be rebuilt or renamed without a portal release, and the validator reports a definition the relation no longer serves.
 
-#### Security Filters Are Mandatory
+#### Authorization Is Whole-Request, Computation Is Per-View
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-analytics-security-filters`
 
-Every ClickHouse query includes `insight_tenant_id`. User-supplied OData `$filter` values are ANDed with security filters, so users can narrow their view but never widen it.
+Requested person ids are checked against identity's answer to "which of these may this caller see" before any warehouse work. One id outside the answer refuses the whole request with 403; a partial response would be indistinguishable from absent data. Reaching identity is required: an unconfigured or failing identity service is a server error, never a permit. On readings and drilldown, callers authenticated as `service` subjects bypass the gate; reports have no bypass.
 
-**IDOR prevention on person entities**: `POST /v1/metric-results` resolves the caller from the gateway JWT and asks identity, in one batch call, which of the requested person ids that caller may see (`POST /v1/visible-persons`). Any requested id outside the answer refuses the whole request with 403 — never a partial response, which would be indistinguishable from absent data. Reaching identity is required: an unconfigured or unreachable identity service is a server error, so an authorization backend that is down cannot read as "permitted".
+Once authorized, a ClickHouse failure while computing one view answers 200 with a `view: "error"` variant in that slot, carrying a stable code. A source relation the warehouse has not built yet is not a failure: the view answers `view: "not_ready"` with reason `SOURCE_RELATION_MISSING`, and drilldown, saved-query runs and report previews carry the same marker beside empty rows. A relation whose columns disagree with the code still fails. A request that cannot be planned, or a view over its row limit, is refused as a whole. The message carries the underlying description only when identity confirms the caller holds the admin role; an identity that cannot answer the role check degrades the message to generic text and never turns a partial answer into a server error.
 
-**Computation failure is per-view, authorization failure is whole-request**: the all-or-nothing rule above is about *permission*, not about *execution*. A ClickHouse failure while computing one metric's view (missing source relation, resource limit, timeout, unparseable result) answers 200 with a `view: "error"` variant in that view's slot — a stable `code` plus a `message` — so one broken metric cannot take down every other metric in the response. The message carries the underlying description only when identity confirms the caller holds the `admin` role; everyone else gets a generic per-code text, and the full error with its SQL is logged server-side. An identity that cannot answer the role check degrades the message to generic — it never turns a partial answer into a server error, because the check routes detail, not access.
+**Why**: Permission must never leak through a partial answer, and one broken metric must never blank a dashboard.
 
-**IDOR prevention on the legacy query paths**: `POST /v1/metrics/{id}/query` and `POST /v1/metrics/queries` accept `person_id eq …` / `person_id in (…)` in `$filter`. Those ids go through the same gate as `/v1/metric-results` before any ClickHouse work, with the same failure matrix, so one id outside the caller's visible set refuses the whole request with 403. A `person_id` value that is not a person UUID is a 400 — since the cutover the column is a UUID, so a pre-cutover email would otherwise surface as a cast failure the caller cannot act on.
-
-**Planned — IDOR prevention on org units**: validating `org_unit_id` from `$filter` against the caller's scope is *not* implemented — no visibility rule for org units exists yet, and failing them closed would take out every department distribution metric. Those filter values remain reachable for any org unit in the tenant.
-
-**Why**: Tenant isolation and org-scoped visibility are enforced at the query level, not at the application level.
-
-#### Frontend Speaks Person IDs Only
+#### The Portal Speaks Canonical Person Ids
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-analytics-person-ids`
 
-The frontend sends Insight person IDs (golden records from Identity Resolution). The service resolves them to source-specific aliases transparently. The frontend never knows about emails, usernames, or source account IDs.
+The portal sends canonical person UUIDs. Source accounts, e-mail addresses and logins stay inside the warehouse: managed evidence is keyed by source identity and resolved to the person in the same query that reads it, first through account assignments where a source carries account ids, then through the e-mail map. An account assigned to the reserved excluded person resolves to nobody. Custom SQL sources and tenant-level reads are taken as already canonical: custom SQL must emit canonical person ids itself. A person id that is not a UUID is a 400.
 
-Since the identity cutover this holds for every person-keyed route: `POST /v1/metric-results` takes canonical person UUIDs in `entity.ids`, and `GET /v1/persons/{person_id}` — the profile facade that delegates to identity's `POST /v1/profiles` — takes the same key, so an id read off a metric result resolves to a profile with no second mapping. A pre-cutover email in either position is a 400, never a 404 that would read as "no such person".
+**Why**: One key across every route, and a reading and its peer cohort resolved against the same identity state.
 
-**Why**: Source-specific identifiers are an implementation detail. The frontend works with a unified person model. One key across the routes means a caller never has to hold two identifiers for the same person.
+#### Peer Statistics Need a Pool
 
-#### Server-Side Threshold Evaluation
+- [ ] `p1` - **ID**: `cpt-insightspec-principle-analytics-peer-floor`
 
-- [ ] `p1` - **ID**: `cpt-insightspec-principle-analytics-thresholds`
+A peer view compares a person against the cohort `insight.metric_entity_cohorts_current` assigns them: their department under the `org_chart` visibility policy, the whole tenant under `flat`. A peer view on a definition without a cohort key is a 400. Its median, quartiles and range are withheld until at least five cohort members have data.
 
-Threshold evaluation is performed by the backend, not the frontend. Each metric can have associated thresholds (good/warning/critical per field). The query engine evaluates every result row against the metric's thresholds and attaches a `_thresholds` map to the response.
-
-**Why**: Centralizes threshold logic. Frontend reads `_thresholds` for cell coloring and "Attention Needed" blocks without duplicating evaluation rules.
+**Why**: Peer aggregates cover people the caller is not individually authorized to see; a minimum pool keeps one person's value from being read back out of a statistic.
 
 ### 2.2 Constraints
 
-#### Read-Only ClickHouse Access
+#### The Server Never Migrates Itself
 
-- [ ] `p1` - **ID**: `cpt-insightspec-constraint-analytics-readonly`
+- [ ] `p1` - **ID**: `cpt-insightspec-constraint-analytics-migrate-job`
 
-The service has read-only access to ClickHouse. It does not write to Silver/Gold tables. Metric definitions, thresholds, and column catalog are stored in MariaDB.
+Schema changes and built-in definition reconciliation run only in the `migrate` subcommand, which Helm runs as a pre-install and pre-upgrade hook under a MariaDB advisory lock. The server refuses to start when the migration ledger is behind the build, and refuses to start when a CHECK constraint the definition tables rely on is missing.
 
-#### Generic Identity Resolution API
+#### Warehouse Writes Are Limited to Usage Events
 
-- [ ] `p1` - **ID**: `cpt-insightspec-constraint-analytics-generic-ir`
+- [ ] `p1` - **ID**: `cpt-insightspec-constraint-analytics-warehouse-writes`
 
-The service calls Identity Resolution via a generic HTTP API contract (resolve person_id -> aliases). The contract is:
+The service reads the gold, silver, identity and ingestion-history relations and writes nothing there. Its only ClickHouse write is product-usage beacons into `product_usage.usage_events`, using ClickHouse asynchronous inserts; a failed write is logged and the beacon dropped, and with usage recording off the route answers 204 and records nothing.
 
-```
-GET /v1/persons/{person_id}/aliases
--> { "aliases": [{ "value_type": "email", "value": "...", "insight_source_id": "..." }] }
-```
+#### Tenant Comes From the Signed Token
 
-The specific Identity Resolution implementation is not a concern of this service.
+- [ ] `p1` - **ID**: `cpt-insightspec-constraint-analytics-tenant-claim`
 
-#### OData Query Conventions
-
-- [ ] `p1` - **ID**: `cpt-insightspec-constraint-analytics-odata`
-
-All query endpoints use OData-style parameters per DNA REST conventions: `$filter`, `$orderby`, `$select`, `$top` (default 25, max 200), `$skip` (cursor). Parameters are passed in the request body of `POST .../query` endpoints.
+The tenant is the signed `tenant_id` claim of the gateway JWT, resolved by the single-tenant resolver; there is no tenant header. The tenant predicate on readings, drilldown, reports and absences is enforced only when `metric_catalog.enforce_tenant_scope` is on; it defaults to off and no chart value sets it, so by default those reads match every tenant in the warehouse. Custom SQL observations carry whatever tenant their author emits. Saved queries, the SQL explorer, connector health and ingestion intensity are not filtered by tenant.
 
 ## 3. Technical Architecture
 
 ### 3.1 Domain Model
 
-```mermaid
-classDiagram
-    class Metric {
-        +UUID id
-        +UUID insight_tenant_id
-        +String name
-        +String description
-        +String query_ref
-        +Bool is_enabled
-        +DateTime created_at
-        +DateTime updated_at
-    }
+**Technology**: Rust structs, YAML registry, MariaDB rows
 
-    class Threshold {
-        +UUID id
-        +UUID metric_id
-        +UUID insight_tenant_id
-        +String field_name
-        +String operator
-        +Decimal value
-        +String level
-        +DateTime created_at
-        +DateTime updated_at
-    }
+**Location**: [registry.yaml](../../../../src/backend/services/analytics/src/domain/metric_definitions/registry.yaml), [builtin.rs](../../../../src/backend/services/analytics/src/domain/metric_definitions/builtin.rs), [metric results DTOs](../../../../src/backend/services/analytics/src/domain/metric_results/dto.rs)
 
-    class TableColumn {
-        +UUID id
-        +UUID insight_tenant_id [nullable]
-        +String clickhouse_table
-        +String field_name
-        +String field_description
-        +DateTime created_at
-        +DateTime updated_at
-    }
+**Core Entities**:
 
-    class QueryRequest {
-        +UUID metric_id
-        +String $filter
-        +String $orderby
-        +String $select
-        +u64 $top
-        +String $skip
-    }
+| Entity | Description | Schema |
+|--------|-------------|--------|
+| Source | A serving relation pair: observations for readings, evidence for drilldown. Managed sources name a gold relation; a custom source carries its own SQL | [builtin.rs](../../../../src/backend/services/analytics/src/domain/metric_definitions/builtin.rs) |
+| Measure | One `measure_key` a source emits, with its evidence granularity, alias collapse and evidence presentation | [builtin.rs](../../../../src/backend/services/analytics/src/domain/metric_definitions/builtin.rs) |
+| Definition | A metric: key, label and explanation, format, direction, entity type, computation, optional value transform, optional peer cohort key | [definition.rs](../../../../src/backend/services/analytics/src/domain/metric_definitions/definition.rs) |
+| Input | The role a measure plays in a definition: value, numerator or denominator | [builtin.rs](../../../../src/backend/services/analytics/src/domain/metric_definitions/builtin.rs) |
+| Metric results request | Entity (people or tenant), period, optional comparison period, metrics with filters and views | [dto.rs](../../../../src/backend/services/analytics/src/domain/metric_results/dto.rs) |
+| View result | One view's rows, or an error variant with a stable code | [dto.rs](../../../../src/backend/services/analytics/src/domain/metric_results/dto.rs) |
 
-    class QueryResponse {
-        +Vec~Row~ items
-        +PageInfo page_info
-    }
+**Relationships**:
 
-    class PageInfo {
-        +Bool has_next
-        +String cursor
-    }
+- Source → Measure: a source emits many measures; a measure belongs to one source.
+- Definition → Input → Measure: a definition reads one measure (value) or two (numerator and denominator).
+- Definition → Dimension: the dimensions a reader may filter or group by, a subset of the source's dimensions.
+- Definition → Tag: free tags returned with the listing.
+- A tenant definition with the same key as a built-in one takes its place for that tenant while it is usable; a disabled or failing tenant row falls back to the built-in one.
 
-    Metric "1" --> "*" Threshold : has thresholds
-    Metric "1" --> "*" TableColumn : references columns from
-```
-
-#### Metric
-
-A metric is a predefined, admin-configured ClickHouse SQL query stored in MariaDB. The `query_ref` field holds raw ClickHouse SQL (e.g. `SELECT person_id, avg_hours, metric_date FROM gold.pr_cycle_time`). The query engine wraps it as a subquery, appending security filters + OData filters as parameterized WHERE clauses.
-
-Metrics are created by admins after connectors are configured and dbt models produce Silver/Gold tables. The `metrics` table starts empty. Admins use the `table_columns` catalog to see what's available when building metrics.
-
-#### Threshold
-
-A threshold defines a condition on a metric column that classifies rows into `good`, `warning`, or `critical` levels. Each threshold specifies: `field_name` (column to evaluate), `operator` (`gt`/`ge`/`lt`/`le`/`eq`), `value` (decimal), `level` (good/warning/critical).
-
-The query engine loads thresholds for the queried metric and evaluates every result row. Each row in `items[]` includes a `_thresholds` field with the highest matched threshold level per field:
-
-```json
-{
-  "focus_time_pct": 0.58,
-  "pr_cycle_time_h": 26.4,
-  "_thresholds": {
-    "focus_time_pct": "warning",
-    "pr_cycle_time_h": "critical"
-  }
-}
-```
+Direction (`higher_is_better`, `lower_is_better`, `neutral`) is descriptive: it is returned with every reading and used in no computation.
 
 ### 3.2 Component Model
 
-#### Metric Catalog
+#### Definition Registry
 
 - [ ] `p1` - **ID**: `cpt-insightspec-component-analytics-view-registry`
 
 ##### Why this component exists
 
-Metrics are the abstraction layer between the frontend and ClickHouse. The catalog stores metric definitions, thresholds, and the column catalog.
+Every reading starts from a definition, and the definitions come from two places: the built-in registry shipped with the code and the custom metrics a tenant adds.
 
 ##### Responsibility scope
 
-CRUD for `metrics` table. CRUD for `thresholds` table (nested under metrics). CRUD for `table_columns` table. Validation that `query_ref` is well-formed. Tenant scoping on all operations.
+Embed `registry.yaml` at build time and reconcile it into the definition tables on `migrate`: upsert sources, measures and dimensions; replace each definition with its inputs, dimensions and tags in one transaction; disable built-in rows the registry no longer lists. Resolve the definitions a request names, preferring a usable tenant row to the built-in one and falling back to the built-in row when the tenant row is disabled or in error; refuse a key with no usable row. A row is usable when it is enabled, its schema status is `ok` or `unchecked`, and its source and measures are enabled and not in error. Serve the full listing to the portal. Accept, gate, probe, store, import and export custom metrics. Render the metric passports document from the registry.
 
 ##### Responsibility boundaries
 
-Does NOT execute ClickHouse queries. Does NOT handle authentication or authorization.
+Does not execute readings. Does not decide authorization. Does not probe managed relations (Definition Validator).
 
 ##### Related components (by ID)
 
-- `cpt-insightspec-component-analytics-query-engine` -- depends on: reads metric definitions and thresholds to build and evaluate queries
+- `cpt-insightspec-component-analytics-query-engine` -- called by: resolves the definitions a request names
+- `cpt-insightspec-component-analytics-definition-validator` -- shares model with: the validator writes the status the registry reads
 
-#### Query Engine
+#### Definition Validator
+
+- [ ] `p1` - **ID**: `cpt-insightspec-component-analytics-definition-validator`
+
+##### Why this component exists
+
+A gold relation can change shape after a definition was written. Without a probe every read of such a definition fails at query time.
+
+##### Responsibility scope
+
+At boot, and every five minutes unless periodic validation is turned off, probe each managed source's observation and evidence relations, the cohort relation and the identity map; probe each definition's measures over the whole relation and its dimension coverage over the 35 days up to the newest row; store the source, evidence and definition status with an error code, the oldest observed date and a monotonic newest observed date.
+
+##### Responsibility boundaries
+
+Does not probe custom SQL sources, so custom definitions stay `unchecked` and never qualify for drilldown, which requires `ok`. A probe that cannot run leaves the stored status unchanged.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-analytics-view-registry` -- owns data for: definition and source status
+
+#### Metric Results Compiler
 
 - [ ] `p1` - **ID**: `cpt-insightspec-component-analytics-query-engine`
 
 ##### Why this component exists
 
-Translates a metric definition + OData filters + security scope into a parameterized ClickHouse query, executes it, evaluates thresholds, and returns paginated results.
+Turns a validated request into the ClickHouse queries that answer it.
 
 ##### Responsibility scope
 
-Build parameterized SQL from metric's `query_ref` (wrapped as subquery). Parse OData `$filter`, `$orderby`, `$select`, `$top`, `$skip` parameters. Inject security filters (`insight_tenant_id`, org unit scope validated against AccessScope, membership time ranges). Validate `$orderby` columns against metric schema. Execute query via insight-clickhouse crate. Cursor-based pagination. Load metric thresholds and evaluate each result row, attaching `_thresholds` map.
+Validate request bounds. Plan queries, batching period and peer views per source and filter set. Compile each view into parameterized SQL over the source's observation relation or custom SQL, with person resolution, dimension filters, value transforms, peer cohorts and the five-member peer floor. Execute rankings first, then the remaining views four at a time; answer a missing source relation with a `not_ready` view and map every other ClickHouse failure to a per-view error code; attach person absences from `silver.class_person_absences` on a best-effort basis.
 
 ##### Responsibility boundaries
 
-Does NOT manage metric definitions (Metric Catalog). Does NOT validate JWT (API Gateway / OIDC plugin). Does NOT resolve person IDs (delegates to Person Resolver).
+Does not authorize people (Visibility Gate). Does not read definitions from storage directly (Definition Registry).
 
 ##### Related components (by ID)
 
-- `cpt-insightspec-component-analytics-view-registry` -- depends on: reads metric definitions and thresholds
-- `cpt-insightspec-component-analytics-person-resolver` -- depends on: resolves person IDs before query
+- `cpt-insightspec-component-analytics-view-registry` -- depends on: definitions
+- `cpt-insightspec-component-analytics-visibility-gate` -- depends on: authorization before execution
 
-#### Person Resolver
+#### Visibility Gate
 
-- [ ] `p2` - **ID**: `cpt-insightspec-component-analytics-person-resolver`
+- [ ] `p1` - **ID**: `cpt-insightspec-component-analytics-visibility-gate`
 
 ##### Why this component exists
 
-Frontend sends Insight person IDs. ClickHouse Silver tables may only have source-native identifiers (email, username). This component bridges the gap.
+Every person-keyed read must be limited to the people the caller may see, and that answer belongs to identity.
 
 ##### Responsibility scope
 
-Call Identity Resolution API to resolve person_id -> list of aliases. Cache responses in Redis (TTL: 5 min). Invalidate cache on merge/split events from Redpanda (`insight.identity.resolved` topic). Determine whether a metric's table has a resolved `person_id` column (skip resolution) or needs source-alias lookup.
+Ask identity which requested people the caller may see (`POST /v1/visible-persons` for readings and drilldown, `POST /v1/profiles/batch` for reports), refuse the request on any miss, refuse tenant-level reads while tenant metrics are disabled, and answer whether a caller is an admin through `GET /v1/me`.
 
 ##### Responsibility boundaries
 
-Does NOT implement identity resolution logic. Does NOT manage aliases or golden records. Only consumes the Identity Resolution API.
+Holds no visibility rules of its own; never caches an answer.
 
 ##### Related components (by ID)
 
-- `cpt-insightspec-component-analytics-query-engine` -- called by: provides resolved aliases for person filtering
+- `cpt-insightspec-component-analytics-query-engine` -- called by: authorization before any query
+- `cpt-insightspec-component-analytics-evidence-and-reports` -- called by: authorization before any query
+
+#### Evidence and Reports
+
+- [ ] `p2` - **ID**: `cpt-insightspec-component-analytics-evidence-and-reports`
+
+##### Why this component exists
+
+A reading must be traceable to its records, and readings must leave the product as files.
+
+##### Responsibility scope
+
+Drilldown authorizes the requested people first, then pages through `insight.<family>_metric_evidence` with the same person resolution, pinned to the relation snapshot it started on; it requires the definition and its evidence to be `ok`. Report preview and export run the time-series compiler over many people and metrics. Exports write CSV or XLSX off the async runtime, under row, byte, time and concurrency bounds.
+
+##### Responsibility boundaries
+
+Does not define metrics; reads the same definitions as the compiler.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-analytics-query-engine` -- shares model with: definitions and the time-series compiler
+
+#### Saved Queries and SQL Explorer
+
+- [ ] `p2` - **ID**: `cpt-insightspec-component-analytics-sql-surfaces`
+
+##### Why this component exists
+
+Analysts read the warehouse directly, through stored queries in the portal and through an MCP tool or a token-protected HTTP endpoint.
+
+##### Responsibility scope
+
+Store, list, update, delete and run saved queries per tenant; allow a single SELECT, and require the admin role to create, update or run SQL that names `product_usage` or a `bronze_*` database. Run the SQL explorer on its own listener with its own ClickHouse user, gating each statement and bounding SQL size, result size and fetch time.
+
+##### Responsibility boundaries
+
+Does not apply a tenant row filter to the SQL it runs. The saved-query gate does not refuse external table functions the custom-metric and MCP gates refuse.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-analytics-view-registry` -- shares model with: the SQL gate used for custom metric SQL
+
+#### AI Explanation
+
+- [ ] `p3` - **ID**: `cpt-insightspec-component-analytics-ai-explain`
+
+##### Why this component exists
+
+A reader can ask for a plain-language explanation of one reading.
+
+##### Responsibility scope
+
+Build a prompt from the reading the client sends, the tenant's system prompt and its context entries; call the Anthropic API with a stand-wide key or the caller's own key, sealed at rest with AES-256-GCM; bound in-flight calls and output length.
+
+##### Responsibility boundaries
+
+Does not read the warehouse. Every route but its configuration answers 404 when the feature is off.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-analytics-visibility-gate` -- depends on: the admin check for tenant-wide settings
+
+#### Operational Reads
+
+- [ ] `p3` - **ID**: `cpt-insightspec-component-analytics-operational-reads`
+
+##### Why this component exists
+
+Admins need to see how the product is used, whether connectors sync and what users report.
+
+##### Responsibility scope
+
+Record usage beacons and serve admin summaries over `product_usage.usage_events`; serve connector sync history from `ingestion_history.sync_events` and bronze ingestion intensity from `insight.bronze_insert_events`; store feedback and list it for admins.
+
+##### Responsibility boundaries
+
+Every read but the usage configuration is admin-only; nothing here feeds metric readings.
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-analytics-visibility-gate` -- depends on: the admin check
 
 ### 3.3 API Contracts
 
-All endpoints are service-local. API Gateway mounts at `/api/analytics`.
-
 - [ ] `p1` - **ID**: `cpt-insightspec-interface-analytics-views`
 
-- **Technology**: REST/JSON
-- **Auth**: All endpoints require valid JWT except where noted
-- **Query convention**: OData-style parameters (`$filter`, `$orderby`, `$select`, `$top`, `$skip`) per DNA REST conventions
+- **Technology**: REST/JSON, RFC 9457 problem details
+- **Location**: [openapi.json](openapi.json), generated from the route table and drift-checked in CI; where this table and the contract disagree, the contract is right
+- **Auth**: every route requires an authenticated caller; "admin" marks routes that also require the admin role
 
-| Method | Path | Description | Auth | RBAC |
-|--------|------|-------------|------|------|
-| `GET` | `/v1/metrics` | List enabled metrics for tenant | Required | Viewer+ |
-| `GET` | `/v1/metrics/{id}` | Get metric details | Required | Viewer+ |
-| `POST` | `/v1/metrics` | Create metric | Required | Tenant Admin |
-| `PUT` | `/v1/metrics/{id}` | Update metric | Required | Tenant Admin |
-| `DELETE` | `/v1/metrics/{id}` | Soft-delete metric | Required | Tenant Admin |
-| `POST` | `/v1/metrics/{id}/query` | Execute metric query | Required | Viewer+ |
-| `GET` | `/v1/metrics/{id}/thresholds` | List thresholds for metric | Required | Viewer+ |
-| `POST` | `/v1/metrics/{id}/thresholds` | Create threshold | Required | Tenant Admin |
-| `PUT` | `/v1/metrics/{id}/thresholds/{tid}` | Update threshold | Required | Tenant Admin |
-| `DELETE` | `/v1/metrics/{id}/thresholds/{tid}` | Delete threshold | Required | Tenant Admin |
-| `GET` | `/v1/columns` | List available columns for tenant | Required | Tenant Admin |
-| `GET` | `/v1/columns/{table}` | List columns for a specific table | Required | Tenant Admin |
+**Endpoints Overview**:
 
-**`POST /v1/metrics/{id}/query` request** (OData parameters in body):
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `POST` | `/v1/metric-results` | Compute readings for people or the tenant | authenticated |
+| `GET` | `/v1/metric-definitions` | List every definition the tenant can read | authenticated |
+| `GET`, `POST` | `/v1/metrics` | List or create the tenant's custom metrics | authenticated |
+| `GET`, `PUT`, `DELETE` | `/v1/metrics/{metric_key}` | Read, replace or delete one custom metric | authenticated |
+| `GET` | `/v1/metrics/export` | Export custom metrics | authenticated |
+| `POST` | `/v1/metrics/import` | Import custom metrics | authenticated |
+| `POST` | `/v1/metric-drilldown` | Page the evidence behind a reading | authenticated |
+| `POST` | `/v1/metric-drilldown/export` | Export that evidence | authenticated |
+| `POST` | `/v1/reports/preview`, `/v1/reports/export` | Preview or export a metric report | authenticated |
+| `GET`, `POST` | `/v1/queries` | List or create saved queries | authenticated; admin when the SQL names restricted data |
+| `GET`, `PUT`, `DELETE` | `/v1/queries/{id}` | Read, update or delete a saved query | authenticated; admin to update with restricted data |
+| `POST` | `/v1/queries/{id}/run` | Run a saved query | authenticated; admin when it names restricted data |
+| `GET` | `/v1/ai/config` | Whether AI explanation is on | authenticated |
+| `GET`, `PUT`, `DELETE` | `/v1/ai/credentials` | The caller's own Anthropic key | authenticated |
+| `GET`, `PUT`, `DELETE` | `/v1/ai/settings` | The tenant's system prompt | read authenticated; write admin |
+| `GET`, `POST` | `/v1/ai/context` | List or add context entries an explanation reads | authenticated; tenant-wide entries admin |
+| `PATCH`, `DELETE` | `/v1/ai/context/{id}` | Edit or remove a context entry | authenticated; tenant-wide entries admin |
+| `POST` | `/v1/ai/explain` | Explain one reading | admin unless opened to all |
+| `POST` | `/v1/usage/events` | Record usage beacons | authenticated |
+| `GET` | `/v1/usage/config` | Whether usage is recorded | authenticated |
+| `GET` | `/v1/usage/summary`, `/people`, `/pages`, `/actions` | Usage read model | admin |
+| `GET` | `/v1/connector-health` | Recorded sync state of every connector | admin |
+| `GET` | `/v1/connector-health/{connector}/syncs` | Recent syncs of one connector | admin |
+| `GET` | `/v1/ingestion/intensity` | Bronze extraction intensity | admin |
+| `POST`, `GET` | `/v1/feedback` | Send feedback; list it | send authenticated; list admin |
 
-```json
-{
-  "$filter": "metric_date ge '2026-03-01' and metric_date lt '2026-04-01' and org_unit_id eq 'uuid-of-team'",
-  "$orderby": "metric_date desc",
-  "$select": "person_id, avg_hours, metric_date",
-  "$top": 25,
-  "$skip": null
-}
-```
+The SQL explorer listens separately: an MCP tool authenticated by an OAuth access token with the `mcp:query` scope, and an HTTP query endpoint authenticated by a static bearer token.
 
-**`POST /v1/metrics/{id}/query` response**:
-
-```json
-{
-  "items": [
-    {
-      "person_id": "...",
-      "avg_hours": 4.2,
-      "metric_date": "2026-03-15",
-      "_thresholds": {
-        "avg_hours": "good"
-      }
-    }
-  ],
-  "page_info": {
-    "has_next": true,
-    "cursor": "eyJ..."
-  }
-}
-```
-
-**Threshold CRUD**:
-
-`POST /v1/metrics/{id}/thresholds` request:
-
-```json
-{
-  "field_name": "focus_time_pct",
-  "operator": "lt",
-  "value": 0.5,
-  "level": "critical"
-}
-```
-
-Operators: `gt`, `ge`, `lt`, `le`, `eq`. Levels: `good`, `warning`, `critical`.
-
-**Identity Resolution contract** (consumed, not owned):
-
-```
-GET /v1/persons/{person_id}/aliases
--> { "aliases": [{ "value_type": "email", "value": "anna@acme.com", "insight_source_id": "..." }] }
-```
-
-**Error responses** (RFC 9457 Problem Details):
-
-| HTTP | Error | Condition |
-|------|-------|-----------|
-| 400 | `invalid_filter` | Unknown filter field, invalid OData expression, or invalid value |
-| 400 | `invalid_order_by` | Column not in metric's schema |
-| 404 | `metric_not_found` | Metric ID doesn't exist or is disabled |
-| 401 | `unauthorized` | Missing or invalid JWT |
-| 403 | `forbidden` | RBAC role insufficient, or a requested person id is outside the caller's visible set |
+**Error responses** (the contract lists every status per route): 400 for a malformed request, an unknown or unavailable metric key, or a view over its row limit; 401 without a valid token; 403 for an invisible person, a missing admin role, or a tenant-level read while tenant metrics are off; 404 for a missing saved query or custom metric, and for AI routes while the feature is off; 409 for a custom metric key already taken; 415 for a body that is not JSON; 429 when export, drilldown or explanation capacity is exhausted; 500 when identity cannot answer an authorization question.
 
 ### 3.4 Internal Dependencies
 
-| Dependency | Interface | Purpose |
-|-----------|-----------|---------|
-| Identity Resolution API | HTTP `GET /v1/persons/{id}/aliases` | Resolve person IDs to source aliases |
-| API Gateway | JWT forwarding | Incoming requests carry `Authorization: Bearer` header |
-| AuthZ plugin | AccessScope in request | Org-unit visibility and time range constraints; validates `org_unit_id` from `$filter` |
+| Dependency Module | Interface Used | Purpose |
+|-------------------|----------------|---------|
+| Identity Resolution | `POST /v1/visible-persons`, `POST /v1/profiles/batch`, `GET /v1/me`, with the caller's bearer forwarded | Person authorization and the admin check |
+| API Gateway | Signed JWT on every request | Caller, tenant and subject type |
+| dbt gold and identity layers | `insight.<family>_metric_observations`, `insight.<family>_metric_evidence`, `insight.metric_entity_cohorts_current`, `identity.person_map`, `identity.account_assignment`, `identity.identity_persons` | Readings, drilldown and person display names |
+| dbt silver layer | `silver.class_person_absences`, `silver.contract_version` | Absence context on readings; a periodic, logged-only contract version check |
+| Ingestion | `product_usage.usage_events`, `ingestion_history.sync_events`, `insight.bronze_insert_events` | Usage, connector health and ingestion intensity |
 
 ### 3.5 External Dependencies
 
-| Dependency | Purpose |
-|-----------|---------|
-| ClickHouse | Read Silver/Gold tables (parameterized queries via insight-clickhouse crate) |
-| MariaDB | Metric definitions, thresholds, column catalog (modkit-db / SeaORM) |
-| Redis | Person alias cache (TTL: 5 min, invalidated via Redpanda) |
-| Redpanda | Consume `insight.identity.resolved` topic for cache invalidation |
+#### ClickHouse
+
+| Dependency Module | Interface Used | Purpose |
+|-------------------|----------------|---------|
+| insight-clickhouse | HTTP, bound parameters, per-query settings | Readings, drilldown, reports, saved queries, usage writes and reads, connector health, person names |
+
+#### MariaDB
+
+| Dependency Module | Interface Used | Purpose |
+|-------------------|----------------|---------|
+| SeaORM | Connection pool, migrations, advisory lock | Definitions, saved queries, feedback, AI settings and keys |
+
+#### Anthropic API
+
+| Dependency Module | Interface Used | Purpose |
+|-------------------|----------------|---------|
+| reqwest | Messages API | AI explanation of one reading |
 
 ### 3.6 Interactions & Sequences
 
-#### Query Metric with Person Filter
+#### Metric Readings for People
 
 **ID**: `cpt-insightspec-seq-analytics-query-person`
 
 ```mermaid
 sequenceDiagram
-    participant FE as Frontend
+    participant FE as Portal
     participant GW as API Gateway
     participant AA as Analytics API
-    participant IR as Identity Resolution
-    participant RD as Redis
     participant MDB as MariaDB
+    participant IR as Identity Resolution
     participant CH as ClickHouse
 
-    FE->>GW: POST /api/analytics/v1/metrics/{id}/query (Bearer token)
-    GW->>GW: Validate JWT
-    GW->>AA: Forward with Bearer header
-    AA->>AA: Validate JWT independently
-    AA->>MDB: Read metric definition + thresholds
-    AA->>AA: Parse OData $filter, $orderby, $top, $skip
-    AA->>AA: Validate org_unit_id against AccessScope (IDOR check)
-    AA->>AA: Validate $orderby against metric columns
-    AA->>RD: Check cache for person aliases
-    alt Cache miss
-        AA->>IR: GET /v1/persons/{id}/aliases (Bearer token)
-        IR->>IR: Validate JWT
-        IR-->>AA: aliases list
-        AA->>RD: Cache aliases (TTL: 5 min)
+    FE->>GW: POST /api/analytics/v1/metric-results
+    GW->>AA: Forward with JWT
+    AA->>AA: Verify JWT, read tenant and subject
+    AA->>MDB: Load definitions (tenant rows first)
+    AA->>AA: Validate bounds, keys, views
+    AA->>IR: POST /v1/visible-persons (forwarded bearer)
+    IR-->>AA: Visible subset
+    alt Any requested person not visible
+        AA-->>FE: 403
     end
-    AA->>AA: Build parameterized query (query_ref as subquery + security filters + OData filters)
-    AA->>CH: Execute query
-    CH-->>AA: Result rows
-    AA->>AA: Evaluate thresholds per row, attach _thresholds
-    AA-->>GW: { items (with _thresholds), page_info }
-    GW-->>FE: 200 OK
+    par Readings
+        AA->>CH: Parameterized SQL per view or batch, at most four at a time
+        CH-->>AA: Rows, or a failure kept in that view's slot
+    and Absences
+        AA->>CH: Person absences, best effort
+    end
+    AA-->>FE: 200 with metrics and absence context
 ```
 
-### 3.7 Database Schemas & Tables
+**Description**: Definitions are resolved before authorization so an unknown key is a 400 whatever the caller can see; no warehouse query runs until every requested person is visible.
+
+#### Built-in Definitions Reach the Database
+
+**ID**: `cpt-insightspec-seq-analytics-reconcile`
+
+```mermaid
+sequenceDiagram
+    participant H as Helm hook
+    participant M as analytics migrate
+    participant MDB as MariaDB
+    participant S as analytics server
+    participant CH as ClickHouse
+
+    H->>M: pre-install / pre-upgrade
+    M->>MDB: Advisory lock, apply migrations
+    M->>MDB: Reconcile registry.yaml into definition tables
+    M->>MDB: Verify required CHECK constraints
+    S->>MDB: Refuse to start if the ledger is behind or a CHECK is missing
+    loop At boot and every five minutes
+        S->>CH: Probe sources and definitions
+        S->>MDB: Store status and observed dates
+    end
+```
+
+**Description**: The server never changes schema or built-in definitions; it only reads them and records their validity.
+
+### 3.7 Database schemas & tables
 
 - [ ] `p1` - **ID**: `cpt-insightspec-db-analytics`
 
-#### Table: `metrics`
+The analytics database is `mariadb.database` in a chart install and `analytics` in the compose stack. Migrations under `src/backend/services/analytics/src/migration` are the column-level source of truth.
 
-**ID**: `cpt-insightspec-dbtable-analytics-metrics`
+#### Definition Tables
 
-Metric definitions — admin-configured SQL queries against ClickHouse.
+| Table | Holds | Written by | Read by |
+|-------|-------|------------|---------|
+| `metric_sources` | One row per source: kind (managed or custom SQL), observation and evidence relation or inline SQL, origin, schema status | Reconcile, custom-metric API, validator | Registry, drilldown capability, listing |
+| `metric_source_measures` | Measures per source with evidence granularity, alias collapse and presentation | Reconcile, custom-metric API | Registry |
+| `metric_source_dimensions` | Dimensions a source exposes | Reconcile, custom-metric API | Registry |
+| `metric_definitions` | Definitions: key, labels, format, direction, entity type, computation, transform, peer cohort key, origin, enabled flag, schema status, observed dates | Reconcile, custom-metric API, validator | Metric results, listing, drilldown, reports |
+| `metric_definition_inputs` | Measure bindings by role | Reconcile, custom-metric API | Registry, drilldown capability |
+| `metric_definition_dimensions` | Dimensions a definition allows | Reconcile, custom-metric API | Registry |
+| `metric_definition_tags` | Tags per definition | Reconcile, custom-metric API | Listing |
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | `UUID` | `NOT NULL DEFAULT uuid_v7() PRIMARY KEY` | Metric identifier |
-| `insight_tenant_id` | `UUID` | `NOT NULL` | Tenant scope |
-| `name` | `VARCHAR(255)` | `NOT NULL` | Human-readable name (e.g. "PR Cycle Time", "Exec Summary") |
-| `description` | `TEXT` | | Purpose of this metric |
-| `query_ref` | `TEXT` | `NOT NULL` | Raw ClickHouse SQL (SELECT statement; query engine wraps as subquery, appends WHERE/ORDER/LIMIT) |
-| `is_enabled` | `BOOL` | `NOT NULL DEFAULT TRUE` | Soft-disable without deleting |
-| `created_at` | `DATETIME(3)` | `NOT NULL DEFAULT CURRENT_TIMESTAMP(3)` | Creation time |
-| `updated_at` | `DATETIME(3)` | `NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)` | Last modification |
+Built-in rows carry a NULL tenant and `origin = 'builtin'`; a tenant's rows carry its id and `origin = 'custom'`. A stored generated sentinel stands in for the NULL tenant so a key is unique among built-in rows and within each tenant; a tenant row may reuse a built-in key. CHECK constraints on these tables pin key shapes and enumerated values, and the startup probe refuses to run without them. Triggers reset a source's evidence status to unchecked when its relations, measures, granularity or presentation change.
 
-**Indexes**: `(insight_tenant_id, is_enabled)` for list queries.
+#### Product Tables
 
-**Note**: `query_ref` contains ClickHouse SQL, not MariaDB SQL. MariaDB stores it as opaque text. Functions like `toStartOfWeek`, `quantile`, `ARRAY_AGG` are ClickHouse-specific and must not be validated or parsed by MariaDB.
+| Table | Holds | Written by | Read by |
+|-------|-------|------------|---------|
+| `saved_queries` | Per-tenant named SQL | `/v1/queries` | `/v1/queries` |
+| `feedback` | Feedback submissions | `POST /v1/feedback` | Admin list |
+| `ai_context_entries` | Context an explanation reads, per person or tenant-wide | `/v1/ai/context` | Explanation, listing |
+| `ai_credentials` | A person's Anthropic key, sealed with a per-write nonce | `/v1/ai/credentials` | Explanation |
+| `ai_settings` | The tenant's system prompt | `/v1/ai/settings` | Explanation |
 
-#### Table: `thresholds`
+### 3.8 Deployment Topology
 
-**ID**: `cpt-insightspec-dbtable-analytics-thresholds`
+- [ ] `p2` - **ID**: `cpt-insightspec-topology-analytics`
 
-Threshold rules per metric — evaluated server-side on every query response row.
-
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | `UUID` | `NOT NULL DEFAULT uuid_v7() PRIMARY KEY` | Threshold identifier |
-| `metric_id` | `UUID` | `NOT NULL REFERENCES metrics(id)` | Parent metric |
-| `insight_tenant_id` | `UUID` | `NOT NULL` | Tenant scope (denormalized for query performance) |
-| `field_name` | `VARCHAR(255)` | `NOT NULL` | Column to evaluate (e.g. "focus_time_pct") |
-| `operator` | `VARCHAR(10)` | `NOT NULL` | Comparison: `gt`, `ge`, `lt`, `le`, `eq` |
-| `value` | `DECIMAL(20,6)` | `NOT NULL` | Threshold boundary value |
-| `level` | `VARCHAR(20)` | `NOT NULL` | Result level: `good`, `warning`, `critical` |
-| `created_at` | `DATETIME(3)` | `NOT NULL DEFAULT CURRENT_TIMESTAMP(3)` | Creation time |
-| `updated_at` | `DATETIME(3)` | `NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)` | Last modification |
-
-**Indexes**: `(metric_id)` for loading thresholds during query evaluation.
-
-#### Table: `table_columns`
-
-**ID**: `cpt-insightspec-dbtable-analytics-columns`
-
-Catalog of available columns in Silver/Gold ClickHouse tables.
-
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | `UUID` | `NOT NULL DEFAULT uuid_v7() PRIMARY KEY` | Column record ID |
-| `insight_tenant_id` | `UUID` | `NULL` | NULL = shared (all tenants), UUID = tenant-specific custom field |
-| `clickhouse_table` | `VARCHAR(255)` | `NOT NULL` | ClickHouse table name |
-| `field_name` | `VARCHAR(255)` | `NOT NULL` | Column name |
-| `field_description` | `TEXT` | | Human-readable description |
-| `created_at` | `DATETIME(3)` | `NOT NULL DEFAULT CURRENT_TIMESTAMP(3)` | Creation time |
-| `updated_at` | `DATETIME(3)` | `NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)` | Last modification |
-
-**Unique**: `(insight_tenant_id, clickhouse_table, field_name)`
-
-**Query pattern**: `WHERE insight_tenant_id IS NULL OR insight_tenant_id = ?`
+One Deployment behind the gateway, plus the `migrate` hook Job that runs before each install and upgrade. The SQL explorer, when enabled, listens on its own port inside the same process. Durable state lives only in MariaDB and ClickHouse; report exports spool to a pod-local temporary volume. Every concurrency cap — exports, drilldown queries, report generations, AI calls — is per process, so the effective limit grows with the replica count. Identity is called with the caller's bearer forwarded.
 
 ## 4. Additional Context
 
 ### Metric families specified beside this document
 
-`specs/ai-cost/` carries the AI development cost family — PRD, design, decomposition and the
-audit behind them — with [ADR-0003](specs/ADR/0003-price-card-per-person-token-cost.md) on
-pricing. It specifies `insight.ai_cost_metric_evidence` and
-`insight.ai_cost_metric_observations`, a separate evidence family because seat measures are
-monthly snapshots rather than daily activity and one evidence relation binds per source. Those
-documents are written against the code they ship with; where they and this document disagree,
-they are the newer of the two.
+`specs/ai-cost/` carries the AI development cost family — PRD, design, decomposition and the audit behind them — with [ADR-0003](specs/ADR/0003-price-card-per-person-token-cost.md) on pricing. It specifies `insight.ai_cost_metric_evidence` and `insight.ai_cost_metric_observations`, a separate evidence family because seat measures are monthly snapshots rather than daily activity and one evidence relation binds per source. `specs/connector-health/` carries the connector sync history read model. Those documents are written against the code they ship with; where they and this document disagree, they are the newer of the two.
 
-### Inter-Service Authentication
+### Known gaps
 
-Each service (API Gateway, Analytics API, Identity Resolution) validates the JWT independently. The API Gateway forwards the original `Authorization: Bearer` header. No trust in internal headers.
+The code as it stands, recorded so a reader does not assume otherwise:
 
-See CLEAR-DESIGN.md section 5 for full auth flow details.
+- **Tenant isolation of metric reads is opt-in.** The tenant predicate on readings, drilldown, reports and absences is a no-op until `metric_catalog.enforce_tenant_scope` is turned on (section 2.2).
+- **Any authenticated caller can redefine a built-in metric for the tenant.** The custom-metric routes carry no admin check, and a custom metric may reuse a built-in key, which then takes its place for every reader in the tenant.
+- **Saved-query runs are loosely bounded.** The whole result is buffered with no row, byte or concurrency cap beyond the ClickHouse execution-time and memory limits; the gate does not refuse external table functions; and a failing run logs its full SQL.
+- **The SQL explorer and saved queries read across tenants.** Neither applies a tenant filter; they rely on their ClickHouse grants.
+- **No caching.** A Redis URL setting and dependency exist; nothing reads or writes Redis.
 
-### Multi-Tenant OIDC
+### Metric passports
 
-MVP: single OIDC issuer. Future: multiple issuers mapped to tenants, eventually stored in MariaDB for self-service onboarding.
-
-See CLEAR-DESIGN.md section 7 for details.
+`passports.md` beside the registry is a generated, human-readable rendering of every built-in definition — source, inputs, formula and shape. A drift test fails when it and the registry disagree.
 
 ## 5. Traceability
 
-- **Backend PRD**: `docs/components/backend/specs/PRD.md`
-- **Backend DESIGN**: `docs/components/backend/specs/DESIGN.md`
-- **CLEAR-DESIGN**: `src/backend/services/analytics/CLEAR-DESIGN.md`
-- **Frontend Data Requirements**: `docs/components/backend/specs/analytics-views-api.md`
+- **API contract**: [openapi.json](openapi.json)
+- **Definition registry**: [registry.yaml](../../../../src/backend/services/analytics/src/domain/metric_definitions/registry.yaml)
+- **Metric passports**: [passports.md](../../../../src/backend/services/analytics/src/domain/metric_definitions/passports.md)
+- **ADRs**: [ADR/](specs/ADR/)
+- **Metric families**: [ai-cost](specs/ai-cost/DESIGN.md), [connector-health](specs/connector-health/DESIGN.md)
 
-| Design Element | Requirement |
+| Design Element | Realized In |
 |---|---|
-| Metric Catalog (3.2) | `cpt-insightspec-fr-be-analytics-read`, `cpt-insightspec-fr-be-metrics-catalog`, `cpt-insightspec-fr-be-dashboard-config` |
-| Query Engine (3.2) | `cpt-insightspec-fr-be-analytics-read`, `cpt-insightspec-fr-be-visibility-policy`, `cpt-insightspec-nfr-be-query-safety` |
-| Threshold Evaluator (3.2) | `cpt-insightspec-fr-be-threshold-eval` |
-| Person Resolver (3.2) | `cpt-insightspec-fr-be-identity-resolution-service` |
-| Security filters (3.2, 4) | `cpt-insightspec-nfr-be-tenant-isolation`, `cpt-insightspec-principle-analytics-security-filters`, `cpt-insightspec-nfr-be-idor-prevention` |
-| API conventions (3.3) | `cpt-insightspec-nfr-be-api-conventions` |
-| Metrics not tables (2.1) | `cpt-insightspec-principle-analytics-views` |
-| Server-side thresholds (2.1) | `cpt-insightspec-principle-analytics-thresholds` |
-| OData conventions (2.2) | `cpt-insightspec-constraint-analytics-odata` |
+| Definition Registry (3.2) | `src/backend/services/analytics/src/domain/metric_definitions/`, `src/backend/services/analytics/src/domain/metric_crud.rs` |
+| Definition Validator (3.2) | `src/backend/services/analytics/src/domain/metric_definitions/validator.rs` |
+| Metric Results Compiler (3.2) | `src/backend/services/analytics/src/domain/metric_results/` |
+| Visibility Gate (3.2) | `src/backend/services/analytics/src/domain/person_visibility.rs`, `src/backend/services/analytics/src/domain/metric_access.rs` |
+| Evidence and Reports (3.2) | `src/backend/services/analytics/src/domain/metric_drilldown/`, `src/backend/services/analytics/src/domain/reports/` |
+| Saved Queries and SQL Explorer (3.2) | `src/backend/services/analytics/src/api/saved_queries.rs`, `src/backend/services/analytics/src/sql_explorer/`, `src/backend/services/analytics/src/domain/query_gate.rs` |
+| Startup gates (2.2) | `src/backend/services/analytics/src/gear.rs`, `src/backend/services/analytics/src/infra/db/` |

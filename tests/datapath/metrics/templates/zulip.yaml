@@ -1,0 +1,32 @@
+# Reusable Zulip-proxy records: one daily message total per sender
+# (bronze_zulip_proxy.messages) and the user directory (bronze_zulip_proxy.users).
+# The bases list EVERY schema field.
+templates:
+  zulip_message_day:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2030-01-01T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    uniq: null
+    sender_id: null
+    count: null
+    created_at: null
+    tenant_id: "{{ tenant }}"
+    source_id: "zulip-test"
+    unique_key: null
+
+  zulip_user:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2030-01-01T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    id: null
+    uuid: null
+    email: null
+    full_name: null
+    role: 400
+    is_active: true
+    recipient_id: null
+    tenant_id: "{{ tenant }}"
+    source_id: "zulip-test"
+    unique_key: null

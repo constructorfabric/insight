@@ -22,8 +22,15 @@ RUN curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linu
 RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/$(dpkg --print-architecture)/kubectl" \
     -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl
 
-# dbt-clickhouse
-RUN pip install --no-cache-dir dbt-clickhouse
+# dbt at the pin every dbt step reads (scripts/bootstrap-db/pins.env), so the
+# adapter the cluster rig proves is the one the migrate hook runs. certifi is
+# pinned beside it: this layer is served from the registry build cache until
+# the pins or the line change, so a certifi advisory (GHSA-6q48-6c7w-9gw2)
+# only reaches the image through an explicit pin.
+COPY scripts/bootstrap-db/pins.env /tmp/pins.env
+RUN . /tmp/pins.env && \
+    pip install --no-cache-dir "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}" "dbt-core==${DBT_CORE_VERSION}" "certifi==2026.10.19" && \
+    rm /tmp/pins.env
 
 # Copy the ingestion project, minus the sample-data seeder: this image runs
 # migrations against real stands, and a demo-data generator does not belong on

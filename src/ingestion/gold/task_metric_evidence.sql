@@ -1,17 +1,22 @@
 {{ metric_evidence_table() }}
 
--- Keyed by the source identity through `normalized_email()`, not by person:
--- the analytics runtime resolves through `identity.person_map` while it serves.
--- An unresolvable row stays and starts counting the moment it resolves.
+{% set account_keys = ['account_source_type', 'account_source_id', 'account_id'] %}
+
+-- Keyed by the source identity, not by person: the tracker account of the
+-- assignee or worklog author, plus its email when the tracker states one. The
+-- analytics runtime resolves account-first through `identity.account_assignment`
+-- and falls back to `identity.person_map` while it serves. An unresolvable row
+-- stays and starts counting the moment it resolves.
 SELECT
     src.tenant_id,
     src.source_key,
     src.entity_type,
     {{ normalized_email('src.entity_id') }} AS entity_id,
-    -- No account-keyed facts here; '' leaves the account join unmatched.
-    '' AS account_source_type,
-    '' AS account_source_id,
-    '' AS account_id,
+    -- INVARIANT: every account column is a plain String in every evidence
+    -- relation; the service's exact-column probe blanks a family that differs.
+    CAST(coalesce(src.account_source_type, '') AS String) AS account_source_type,
+    CAST(coalesce(src.account_source_id, '') AS String) AS account_source_id,
+    CAST(coalesce(src.account_id, '') AS String) AS account_id,
     src.metric_date,
     src.observed_at,
     src.measure_key,
@@ -39,6 +44,9 @@ issue_facts AS (
     SELECT
         s.tenant_id                                                          AS tenant_id,
         s.entity_id                                                          AS entity_id,
+        s.account_source_type                                                AS account_source_type,
+        s.account_source_id                                                  AS account_source_id,
+        s.account_id                                                         AS account_id,
         s.insight_source_id                                                   AS insight_source_id,
         toDate(s.final_close_at)                                             AS metric_date,
         any(s.final_close_at)                                                AS observed_at,
@@ -56,12 +64,14 @@ issue_facts AS (
            CAST(NULL AS Nullable(Float64)),
            toFloat64(greatest(toInt64(0),
                dateDiff('second', any(s.created_at), any(s.final_close_at))))) AS lead_seconds,
+        -- INVARIANT: an issue with no in-progress span joins one default row whose
+        -- start is 1970-01-01; matching the category keeps it out of the minimum.
         if(any(s.created_at) IS NULL
-               OR minIf(i.interval_start, i.interval_start < s.final_close_at) IS NULL,
+               OR minIfOrNull(i.interval_start, i.status_category = 'in_progress' AND i.interval_start < s.final_close_at) IS NULL,
            CAST(NULL AS Nullable(Float64)),
            toFloat64(greatest(toInt64(0),
                dateDiff('second', any(s.created_at),
-                        minIf(i.interval_start, i.interval_start < s.final_close_at))))) AS pickup_seconds,
+                        minIfOrNull(i.interval_start, i.status_category = 'in_progress' AND i.interval_start < s.final_close_at))))) AS pickup_seconds,
         -- The population measures taken off these rows carry no breakdown, but
         -- a row still has to name its tracker: `source` is what makes its ref
         -- addressable.
@@ -91,12 +101,16 @@ issue_facts AS (
         AND i.issue_id = s.issue_id
         AND i.status_category = 'in_progress'
     WHERE s.final_close_at IS NOT NULL
-    GROUP BY s.tenant_id, s.entity_id, s.insight_source_id, s.issue_id, toDate(s.final_close_at)
+    GROUP BY s.tenant_id, s.entity_id, s.account_source_type, s.account_source_id, s.account_id,
+             s.insight_source_id, s.issue_id, toDate(s.final_close_at)
 ),
 issue_item_evidence AS (
     SELECT
         tenant_id,
         entity_id,
+        account_source_type,
+        account_source_id,
+        account_id,
         insight_source_id,
         toDate(final_close_at) AS metric_date,
         final_close_at AS observed_at,
@@ -152,17 +166,34 @@ issue_item_evidence AS (
     WHERE final_close_at IS NOT NULL
       AND status_category = 'done'
 ),
+-- A day's estimate deviation is not additive across accounts, so it is taken
+-- per person-day (`task_person_day_group`), the grain the email gave it.
+estimation_rows AS (
+    SELECT
+        tenant_id                                                            AS day_tenant_id,
+        entity_id                                                            AS day_entity_id,
+        account_source_type                                                  AS day_account_source_type,
+        account_source_id                                                    AS day_account_source_id,
+        account_id                                                           AS day_account_id,
+        {{ task_person_day_group('') }}                                      AS person_day,
+        metric_date                                                          AS day_metric_date,
+        is_done,
+        time_estimate_seconds,
+        time_spent_seconds
+    FROM issue_facts
+),
 estimation_day AS (
     SELECT
-        tenant_id,
-        entity_id,
-        metric_date,
+        day_tenant_id AS tenant_id,
+        day_entity_id AS entity_id,
+        {{ task_person_day_account_columns('day_') }},
+        day_metric_date AS metric_date,
         100 * avgIf(time_estimate_seconds, is_done AND ifNull(time_estimate_seconds, 0) > 0 AND time_spent_seconds IS NOT NULL)
             / nullIf(avgIf(time_spent_seconds, is_done AND ifNull(time_estimate_seconds, 0) > 0 AND time_spent_seconds IS NOT NULL), 0)
             AS estimation_pct,
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
-    FROM issue_facts
-    GROUP BY tenant_id, entity_id, metric_date
+    FROM estimation_rows
+    GROUP BY day_tenant_id, day_entity_id, person_day, day_metric_date
 ),
 transitions AS (
     SELECT
@@ -189,6 +220,9 @@ close_reopen AS (
     SELECT
         s.tenant_id                                                          AS tenant_id,
         s.entity_id                                                          AS entity_id,
+        s.account_source_type                                                AS account_source_type,
+        s.account_source_id                                                  AS account_source_id,
+        s.account_id                                                         AS account_id,
         toDate(c.close_at)                                                   AS metric_date,
         toFloat64(1)                                                         AS close_event,
         -- OrNull, not minIf: over a non-Nullable column with nothing matching,
@@ -204,12 +238,16 @@ close_reopen AS (
         ON s.insight_source_id = c.insight_source_id AND s.issue_id = c.issue_id
     LEFT JOIN reopens AS r
         ON r.insight_source_id = c.insight_source_id AND r.issue_id = c.issue_id
-    GROUP BY s.tenant_id, s.entity_id, c.insight_source_id, c.issue_id, c.close_at
+    GROUP BY s.tenant_id, s.entity_id, s.account_source_type, s.account_source_id, s.account_id,
+             c.insight_source_id, c.issue_id, c.close_at
 ),
 worklog_flow AS (
     SELECT
         tenant_id,
         entity_id,
+        account_source_type,
+        account_source_id,
+        account_id,
         metric_date,
         in_progress_seconds,
         worklog_seconds,
@@ -220,6 +258,9 @@ stale AS (
     SELECT
         s.tenant_id                                                          AS tenant_id,
         s.entity_id                                                          AS entity_id,
+        s.account_source_type                                                AS account_source_type,
+        s.account_source_id                                                  AS account_source_id,
+        s.account_id                                                         AS account_id,
         toDate(s.last_status_event_at)                                       AS metric_date,
         toFloat64(count())                                                   AS stale_count,
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
@@ -227,48 +268,52 @@ stale AS (
     WHERE (s.status_category IS NULL OR s.status_category != 'done')
       AND s.last_status_event_at IS NOT NULL
       AND dateDiff('day', s.last_status_event_at, now()) > 14
-    GROUP BY s.tenant_id, s.entity_id, toDate(s.last_status_event_at)
+    GROUP BY s.tenant_id, s.entity_id, s.account_source_type, s.account_source_id, s.account_id,
+             toDate(s.last_status_event_at)
 ),
 value_measures AS (
-    {{ sum_measure('estimation_error_pct', 'estimation_day', 'if(estimation_pct > 0 AND estimation_pct <= 200, abs(100 - estimation_pct), NULL)', 'no_dimensions') }}
+    {{ sum_measure('estimation_error_pct', 'estimation_day', 'if(estimation_pct > 0 AND estimation_pct <= 200, abs(100 - estimation_pct), NULL)', 'no_dimensions', keys=account_keys) }}
 
     UNION ALL
 
-    {{ sum_measure('estimation_samples', 'estimation_day', 'if(estimation_pct > 0 AND estimation_pct <= 200, 1, NULL)', 'no_dimensions') }}
+    {{ sum_measure('estimation_samples', 'estimation_day', 'if(estimation_pct > 0 AND estimation_pct <= 200, 1, NULL)', 'no_dimensions', keys=account_keys) }}
 
     UNION ALL
 
-    {{ sum_measure('flow_dev_seconds', 'issue_facts', 'if(ifNull(dev_seconds, 0) > 0 AND ifNull(lead_seconds, 0) > 0, dev_seconds, NULL)', 'no_dimensions') }}
+    {{ sum_measure('flow_dev_seconds', 'issue_facts', 'if(ifNull(dev_seconds, 0) > 0 AND ifNull(lead_seconds, 0) > 0, dev_seconds, NULL)', 'no_dimensions', keys=account_keys) }}
 
     UNION ALL
 
-    {{ sum_measure('flow_lead_seconds', 'issue_facts', 'if(ifNull(dev_seconds, 0) > 0 AND ifNull(lead_seconds, 0) > 0, lead_seconds, NULL)', 'no_dimensions') }}
+    {{ sum_measure('flow_lead_seconds', 'issue_facts', 'if(ifNull(dev_seconds, 0) > 0 AND ifNull(lead_seconds, 0) > 0, lead_seconds, NULL)', 'no_dimensions', keys=account_keys) }}
 
     UNION ALL
 
-    {{ sum_measure('close_events', 'close_reopen', 'close_event', 'no_dimensions') }}
+    {{ sum_measure('close_events', 'close_reopen', 'close_event', 'no_dimensions', keys=account_keys) }}
 
     UNION ALL
 
-    {{ sum_measure('reopened_within_14d', 'close_reopen', 'reopened_14d', 'no_dimensions') }}
+    {{ sum_measure('reopened_within_14d', 'close_reopen', 'reopened_14d', 'no_dimensions', keys=account_keys) }}
 
     UNION ALL
 
-    {{ sum_measure('worklog_seconds', 'worklog_flow', 'worklog_seconds', 'no_dimensions', where='in_progress_seconds > 0') }}
+    {{ sum_measure('worklog_seconds', 'worklog_flow', 'worklog_seconds', 'no_dimensions', where='in_progress_seconds > 0', keys=account_keys) }}
 
     UNION ALL
 
-    {{ sum_measure('in_progress_seconds', 'worklog_flow', 'in_progress_seconds', 'no_dimensions', where='in_progress_seconds > 0') }}
+    {{ sum_measure('in_progress_seconds', 'worklog_flow', 'in_progress_seconds', 'no_dimensions', where='in_progress_seconds > 0', keys=account_keys) }}
 
     UNION ALL
 
-    {{ sum_measure('stale_in_progress', 'stale', 'stale_count', 'no_dimensions') }}
+    {{ sum_measure('stale_in_progress', 'stale', 'stale_count', 'no_dimensions', keys=account_keys) }}
 )
 SELECT
     assumeNotNull(tenant_id) AS tenant_id,
     'task' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
+    account_source_type,
+    account_source_id,
+    account_id,
     assumeNotNull(metric_date) AS metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     measure_key,
@@ -277,7 +322,14 @@ SELECT
         ':',
         measure_key,
         ':',
-        hex(sipHash128(toString(arrayMap(d -> tuple(d.1, d.2), dimensions))))
+        -- INVARIANT: the account is part of the key. Email-less accounts share
+        -- entity_id '', so without it their day rows collide on one record_id.
+        hex(sipHash128(
+            toString(arrayMap(d -> tuple(d.1, d.2), dimensions)),
+            coalesce(account_source_type, ''),
+            coalesce(account_source_id, ''),
+            coalesce(account_id, '')
+        ))
     ) AS record_id,
     measure_key AS record_kind,
     'derived_population' AS granularity,
@@ -289,6 +341,7 @@ SELECT
 FROM value_measures
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
+  AND (entity_id != '' OR account_id != '')
   AND metric_date IS NOT NULL
 
 UNION ALL
@@ -298,6 +351,9 @@ SELECT
     'task' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
+    account_source_type,
+    account_source_id,
+    account_id,
     assumeNotNull(metric_date) AS metric_date,
     toNullable(toDateTime64(observed_at, 3)) AS observed_at,
     measure_key,
@@ -316,7 +372,7 @@ SELECT
 FROM issue_item_evidence
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
-  AND entity_id != ''
+  AND (entity_id != '' OR account_id != '')
   AND metric_date IS NOT NULL
 
 UNION ALL
@@ -326,6 +382,9 @@ SELECT
     'task' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
+    account_source_type,
+    account_source_id,
+    account_id,
     assumeNotNull(metric_date) AS metric_date,
     toNullable(toDateTime64(observed_at, 3)) AS observed_at,
     duration_measure.1 AS measure_key,
@@ -349,6 +408,6 @@ ARRAY JOIN arrayConcat(
 ) AS duration_measure
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
-  AND entity_id != ''
+  AND (entity_id != '' OR account_id != '')
   AND metric_date IS NOT NULL
 ) AS src

@@ -1,10 +1,10 @@
 """Writing generated rows into the warehouse.
 
-The generators hardcode their column lists; the schema they write into is built
-by `create-warehouse-placeholders.sh` from the connectors-ddl snapshot and healed
-by the migrations. The two drift, so what a generator wrote is reconciled against
-what the target can hold before anything is sent — `plan_insert` decides that
-over values, `bulk_insert` is the shell that reads the shape and sends the rows.
+The generators hardcode their column lists; the schema they write into is the one
+destination-clickhouse built from the connector's own `discover`. The two drift, so
+what a generator wrote is reconciled against what the target can hold before
+anything is sent — `plan_insert` decides that over values, `bulk_insert` is the
+shell that reads the shape and sends the rows.
 """
 
 from __future__ import annotations
@@ -35,16 +35,59 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("config", "field_value_map"),
     ("config", "field_value_defaults"),
     ("bronze_bitbucket_cloud", "repositories"),
+    ("bronze_chatgpt_team", "chatgpt_team_chat_activity"),
+    ("bronze_chatgpt_team", "chatgpt_team_seats"),
+    ("bronze_claude_enterprise", "claude_enterprise_users"),
+    ("bronze_claude_team", "claude_team_code_metrics"),
+    ("bronze_claude_team", "claude_team_code_metrics_org"),
+    ("bronze_claude_team", "claude_team_overage_spend"),
     ("bronze_claude_team_invoices", "claude_team_invoice_lines"),
+    ("bronze_cursor", "cursor_daily_usage"),
+    ("bronze_github", "commit_authors"),
+    ("bronze_github", "commits"),
     ("bronze_github", "deployment_statuses"),
     ("bronze_github", "deployments"),
+    ("bronze_github", "file_changes"),
+    ("bronze_github", "pull_request_commits"),
+    ("bronze_github", "pull_request_diff_stats"),
+    ("bronze_github", "pull_requests"),
     ("bronze_github", "repositories"),
     ("bronze_github", "workflow_runs"),
     ("bronze_gitlab", "repositories"),
+    ("bronze_hubspot", "deals"),
+    ("bronze_hubspot", "engagements_calls"),
+    ("bronze_hubspot", "engagements_emails"),
+    ("bronze_hubspot", "engagements_meetings"),
+    ("bronze_hubspot", "owners"),
+    ("bronze_jira", "jira_fields"),
+    ("bronze_jira", "jira_issue"),
+    ("bronze_jira", "jira_issue_census"),
+    ("bronze_jira", "jira_issue_history"),
+    ("bronze_jira", "jira_issue_keys"),
+    ("bronze_jira", "jira_issuetypes"),
+    ("bronze_jira", "jira_project_visibility"),
+    ("bronze_jira", "jira_projects"),
+    ("bronze_jira", "jira_statuses"),
+    ("bronze_jira", "jira_user"),
+    ("bronze_jira", "jira_worklogs"),
+    ("bronze_m365", "email_activity"),
+    ("bronze_m365", "teams_activity"),
+    ("bronze_outline", "wiki_comments"),
+    ("bronze_outline", "wiki_page_versions"),
+    ("bronze_outline", "wiki_pages"),
+    ("bronze_outline", "wiki_spaces"),
+    ("bronze_outline", "wiki_users"),
+    ("bronze_slack", "users_details"),
+    ("bronze_zendesk", "support_agents"),
+    ("bronze_zendesk", "support_ticket_events"),
+    ("bronze_zendesk", "zendesk_satisfaction_ratings"),
+    ("bronze_zoom", "meetings"),
+    ("bronze_zoom", "participants"),
     ("silver", "class_ai_assistant_usage"),
     ("silver", "class_ai_dev_usage"),
     ("silver", "class_ai_invoice"),
     ("silver", "class_ai_overage"),
+    ("silver", "class_ai_overage_daily"),
     ("silver", "class_collab_chat_activity"),
     ("silver", "class_collab_email_activity"),
     ("silver", "class_collab_meeting_activity"),
@@ -52,6 +95,7 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("silver", "class_crm_deals"),
     ("silver", "class_crm_users"),
     ("silver", "class_focus_metrics"),
+    ("silver", "class_hr_working_hours"),
     ("silver", "class_git_ci_runs"),
     ("silver", "class_git_commits"),
     ("silver", "class_git_deployment_events"),
@@ -73,10 +117,34 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("staging", "bitbucket_cloud__repositories"),
     ("staging", "claude_team__ai_invoice"),
     ("staging", "github__ci_runs"),
+    ("staging", "github__commits"),
     ("staging", "github__deployment_events"),
     ("staging", "github__deployments"),
+    ("staging", "github__file_changes"),
+    ("staging", "github__pull_requests"),
+    ("staging", "github__pull_requests_commits"),
     ("staging", "github__repositories"),
     ("staging", "gitlab__repositories"),
+    ("staging", "chatgpt_team__ai_assistant_usage"),
+    ("staging", "claude_enterprise__ai_assistant_usage"),
+    ("staging", "claude_team__ai_dev_usage"),
+    ("staging", "claude_team__ai_overage"),
+    ("staging", "claude_team__ai_overage_daily"),
+    ("staging", "cursor__ai_dev_usage"),
+    ("staging", "hubspot__crm_activities"),
+    ("staging", "hubspot__crm_deals"),
+    ("staging", "hubspot__crm_users"),
+    ("staging", "jira__field_history_derived"),
+    ("staging", "jira__task_worklogs"),
+    ("staging", "m365__collab_chat_activity"),
+    ("staging", "m365__collab_email_activity"),
+    ("staging", "m365__collab_meeting_activity"),
+    ("staging", "slack__collab_chat_activity"),
+    ("staging", "zendesk__support_activity"),
+    ("staging", "zendesk__support_agent"),
+    ("staging", "zendesk__support_event"),
+    ("staging", "zoom__collab_meeting_activity"),
+    ("staging", "zoom__meeting_sessions"),
 )
 
 
@@ -85,14 +153,37 @@ def truncate(
     schema: str,
     table: str,
 ) -> None:
-    """Idempotent reset: TRUNCATE before INSERT."""
+    """Idempotent reset: TRUNCATE before INSERT.
+
+    A VIEW is skipped rather than refused. ClickHouse answers `TRUNCATE` on one
+    with NOT_IMPLEMENTED, and a view holds nothing to clear — it is recomputed
+    from its sources on every read. Checked at run time, not from a list: a dbt
+    model's materialization is free to change from one release to the next, and
+    the seed should keep working either way.
+    """
     if (schema, table) not in RESET_TARGETS:
         raise ValueError(
             f"{schema}.{table} is not in RESET_TARGETS. Clearing a relation preflight "
             "does not know about would let a seed run destroy data it never warned about "
             "— register it there (and in the same commit) instead."
         )
+    if _is_view(client, schema, table):
+        LOG.debug("%s.%s is a view; nothing to truncate", schema, table)
+        return
     client.command(f"TRUNCATE TABLE IF EXISTS `{schema}`.`{table}`")
+
+
+def _is_view(
+    client: clickhouse_connect.driver.client.Client,
+    schema: str,
+    table: str,
+) -> bool:
+    """Whether the relation is a view. False for one that does not exist yet."""
+    rows = client.query(
+        "SELECT engine FROM system.tables WHERE database = {db:String} AND name = {tbl:String}",
+        parameters={"db": schema, "tbl": table},
+    ).result_rows
+    return bool(rows) and str(rows[0][0]).endswith("View")
 
 
 @dataclass(frozen=True)

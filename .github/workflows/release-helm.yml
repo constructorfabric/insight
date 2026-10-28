@@ -1,0 +1,778 @@
+name: Validate Helm and publish changes
+
+on:
+  workflow_call:
+    inputs:
+      build_results:
+        description: "Results and outputs of the caller's image-build dependencies."
+        required: true
+        type: string
+      frontend_only:
+        type: boolean
+        default: false
+    secrets:
+      AUTOMATION_APP_PRIVATE_KEY:
+        required: false
+      TEST_STAND_KUBECONFIG:
+        required: false
+      TEST_STAND_PERSONA_PASSWORD:
+        required: false
+
+permissions:
+  contents: write
+  actions: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/constructorfabric
+
+jobs:
+  package-chart:
+    if: |
+      !cancelled()
+      && fromJSON(inputs.build_results).changes.result == 'success'
+      && fromJSON(inputs.build_results).discover-images.result == 'success'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && !(github.event_name == 'workflow_dispatch' && inputs.frontend_only)
+      && github.ref == 'refs/heads/main'
+      && (fromJSON(inputs.build_results).merge-analytics.result == 'success' || fromJSON(inputs.build_results).merge-analytics.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-authenticator.result == 'success' || fromJSON(inputs.build_results).merge-authenticator.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-gateway.result       == 'success' || fromJSON(inputs.build_results).merge-gateway.result       == 'skipped')
+      && (fromJSON(inputs.build_results).merge-identity-resolution.result == 'success' || fromJSON(inputs.build_results).merge-identity-resolution.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-git-cli-proxy.result == 'success' || fromJSON(inputs.build_results).merge-git-cli-proxy.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-insight-v3-core.result == 'success' || fromJSON(inputs.build_results).merge-insight-v3-core.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-previews.result      == 'success' || fromJSON(inputs.build_results).merge-previews.result      == 'skipped')
+      && (fromJSON(inputs.build_results).merge-frontend.result      == 'success' || fromJSON(inputs.build_results).merge-frontend.result      == 'skipped')
+      && (fromJSON(inputs.build_results).merge-toolbox.result       == 'success' || fromJSON(inputs.build_results).merge-toolbox.result       == 'skipped')
+      && (fromJSON(inputs.build_results).merge-seed.result          == 'success' || fromJSON(inputs.build_results).merge-seed.result          == 'skipped')
+      && (fromJSON(inputs.build_results).merge-image.result         == 'success' || fromJSON(inputs.build_results).merge-image.result         == 'skipped')
+      && (fromJSON(inputs.build_results).bump-descriptors.result    == 'success' || fromJSON(inputs.build_results).bump-descriptors.result    == 'skipped')
+      && (fromJSON(inputs.build_results).bump-descriptors.result == 'skipped'
+        || (fromJSON(inputs.build_results).bump-descriptors.outputs.committed == 'false'
+          && fromJSON(inputs.build_results).bump-descriptors.outputs.queue_clear == 'true'))
+      && fromJSON(inputs.build_results).queue-gate.result == 'success'
+      && fromJSON(inputs.build_results).queue-gate.outputs.clear == 'true'
+      && (
+        fromJSON(inputs.build_results).changes.outputs.analytics == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.authenticator == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.gateway      == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.identity_resolution == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.insight_v3_core == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.git_cli_proxy == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.previews     == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.frontend     == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.toolbox      == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.seed         == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.umbrella     == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.validation   == 'true'
+      )
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small-vm' }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    env:
+      RELEASE_REQUESTED: ${{ fromJSON(inputs.build_results).changes.outputs.release_requested }}
+    outputs:
+      version: ${{ steps.candidate-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: '3.14.0'
+
+      - name: Reuse the published chart for CI-only validation
+        if: env.RELEASE_REQUESTED == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chart="oci://ghcr.io/constructorfabric/charts/insight"
+          version="$(gh api "repos/$GITHUB_REPOSITORY/contents/deploy/gitops/.insight-version?ref=main" \
+            --jq '.content' | base64 --decode | tr -d '[:space:]')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '::error::Invalid published chart version recorded on main.'; exit 1; }
+          mkdir -p dist
+          helm pull "$chart" --version "$version" --destination dist
+          printf '%s\n' "$GITHUB_SHA" > dist/source-sha
+          printf '%s\n' "$version" > dist/version
+          : > dist/release.patch
+
+      # Per-service subchart appVersion bumps. Each is bumped INDEPENDENTLY,
+      # only if the matching image was rebuilt this run. Services whose
+      # source didn't change keep their previous appVersion → their image
+      # tag in the published chart still resolves to an image that exists.
+      # A manual full rebuild (workflow_dispatch) rebuilds every service image,
+      # so it bumps every service — mirroring the build jobs' own
+      # `workflow_dispatch` trigger. When
+      # bump-descriptors runs (connectors changed / full rebuild) it does the
+      # bump instead, in its re-triggering commit; this step is the canonical
+      # path when no connector changed and bump-descriptors was skipped.
+      - name: Bump per-service subchart appVersions
+        if: env.RELEASE_REQUESTED == 'true'
+        env:
+          BUILD_TAG: ${{ fromJSON(inputs.build_results).changes.outputs.build_tag }}
+          FULL_REBUILD: ${{ github.event_name == 'workflow_dispatch' }}
+          ANALYTICS: ${{ fromJSON(inputs.build_results).changes.outputs.analytics }}
+          AUTHENTICATOR: ${{ fromJSON(inputs.build_results).changes.outputs.authenticator }}
+          GATEWAY: ${{ fromJSON(inputs.build_results).changes.outputs.gateway }}
+          IDENTITY_RESOLUTION: ${{ fromJSON(inputs.build_results).changes.outputs.identity_resolution }}
+          INSIGHT_V3_CORE: ${{ fromJSON(inputs.build_results).changes.outputs.insight_v3_core }}
+          GIT_CLI_PROXY: ${{ fromJSON(inputs.build_results).changes.outputs.git_cli_proxy }}
+          PREVIEWS: ${{ fromJSON(inputs.build_results).changes.outputs.previews }}
+          FRONTEND: ${{ fromJSON(inputs.build_results).changes.outputs.frontend }}
+        run: .github/workflows/scripts/bump-service-appversions.sh
+
+      - name: Bump ingestion image refs
+        if: env.RELEASE_REQUESTED == 'true'
+        env:
+          BUILD_TAG: ${{ fromJSON(inputs.build_results).changes.outputs.build_tag }}
+          TOOLBOX: ${{ fromJSON(inputs.build_results).changes.outputs.toolbox }}
+          SEED: ${{ fromJSON(inputs.build_results).changes.outputs.seed }}
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+        run: |
+          set -euo pipefail
+          # toolbox and seed are the only ingestion images pinned in
+          # charts/insight/values.yaml — connector image refs travel inside
+          # the toolbox image's baked descriptors (ADR-0016). Connector
+          # descriptors are patched by `bump-descriptors` in a separate
+          # commit (without [skip ci]) BEFORE this run.
+          if [ "$TOOLBOX" = "true" ]; then
+            REF="$IMAGE_PREFIX/insight-toolbox:$BUILD_TAG"
+            echo "Setting ingestion.toolboxImage → $REF"
+            yq -i ".ingestion.toolboxImage = \"$REF\"" charts/insight/values.yaml
+          fi
+          # seedImage is not deployed by the chart — nothing renders it into a
+          # pod. It is published state: `seed-stand.sh` reads it back off an
+          # installed release to learn which seeder image matches that stand.
+          if [ "$SEED" = "true" ]; then
+            REF="$IMAGE_PREFIX/insight-seed:$BUILD_TAG"
+            echo "Setting ingestion.seedImage → $REF"
+            yq -i ".ingestion.seedImage = \"$REF\"" charts/insight/values.yaml
+          fi
+
+      # Umbrella `version` always patch-bumps (semver, per-publish contract).
+      # Umbrella `appVersion` is DISPLAY-ONLY in the deploy path — the actual
+      # image.tag for each pod is resolved inside that pod's subchart from
+      # the SUBCHART's appVersion. We set the umbrella appVersion to the MAX
+      # of the four subchart appVersions so it summarises "the newest image
+      # tag bundled in this chart artifact". `sort -V` handles the
+      # YYYY.MM.DD.HH.MM-shortsha format correctly because the date prefix
+      # is lexicographically sortable.
+      - name: Bump umbrella version
+        if: env.RELEASE_REQUESTED == 'true'
+        id: umbrella
+        run: |
+          set -euo pipefail
+          CURRENT="$(yq '.version' charts/insight/Chart.yaml)"
+          NEXT="$(echo "$CURRENT" | awk -F. '{ printf "%d.%d.%d", $1, $2, $3+1 }')"
+          # yq v4 emits a `---` document separator between results when given
+          # multiple files (behaviour appeared with a runner yq update,
+          # 2026-06-08): without the filter below, `sort -V | tail -1` picks
+          # the separator and `appVersion: "---"` ships in the published
+          # chart — an invalid `app.kubernetes.io/version` label value that
+          # breaks every install (charts 0.1.48–0.1.55 were affected).
+          NEW_APP=$(yq -r '.appVersion' \
+            src/backend/services/analytics/helm/Chart.yaml \
+            src/backend/services/authenticator/helm/Chart.yaml \
+            src/backend/services/gateway/helm/Chart.yaml \
+            src/backend/services/identity-resolution/helm/Chart.yaml \
+            src/backend/services/insight-v3-core/helm/Chart.yaml \
+            src/backend/services/git-cli-proxy/helm/Chart.yaml \
+            src/backend/services/previews/helm/Chart.yaml \
+            src/frontend/helm/Chart.yaml \
+            | grep -Ev '^(---|null)$' \
+            | sort -V | tail -1)
+          # Fail loud unless the result is a build tag (YYYY.MM.DD.HH.MM-sha):
+          # a malformed appVersion must never reach a published chart again.
+          # On main the regex stays strict — a branch-suffixed tag leaking
+          # into a main-published chart must abort. On release-** the
+          # suffixed form (…-sha7.<sanitized-branch>) is the canonical tag
+          # shape for images built from the branch, so accept it there.
+          TAG_RE='^[0-9]{4}(\.[0-9]{2}){4}-[0-9a-f]{7}$'
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            TAG_RE='^[0-9]{4}(\.[0-9]{2}){4}-[0-9a-f]{7}(\.[A-Za-z0-9._-]+)?$'
+          fi
+          if ! echo "$NEW_APP" | grep -Eq "$TAG_RE"; then
+            echo "ERROR: computed umbrella appVersion '$NEW_APP' is not a valid build tag for ref '${GITHUB_REF_NAME}'" >&2
+            exit 1
+          fi
+          echo "Umbrella version $CURRENT → $NEXT (appVersion → $NEW_APP)"
+          yq -i ".version = \"$NEXT\""        charts/insight/Chart.yaml
+          yq -i ".appVersion = \"$NEW_APP\""  charts/insight/Chart.yaml
+          # Pin new version in docs and sample gitops
+          if [ -f docs/deploy/.insight-version ]; then
+            echo "$NEXT" > docs/deploy/.insight-version
+          fi
+          if [ -f deploy/gitops/.insight-version ]; then
+            echo "$NEXT" > deploy/gitops/.insight-version
+          fi
+          echo "version=${NEXT}" >> "$GITHUB_OUTPUT"
+      - name: Read the candidate version
+        id: candidate-version
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE_REQUESTED" = true ]; then
+            version="$(yq -er '.version' charts/insight/Chart.yaml)"
+          else
+            version="$(cat dist/version)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve chart dependencies
+        if: env.RELEASE_REQUESTED == 'true'
+        run: helm dependency update charts/insight
+
+      - name: Save candidate source and release metadata
+        if: env.RELEASE_REQUESTED == 'true'
+        env:
+          VERSION: ${{ steps.candidate-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          git rev-parse HEAD > dist/source-sha
+          printf '%s\n' "$VERSION" > dist/version
+          git diff --binary > dist/release.patch
+
+      - name: Pin candidate images
+        if: env.RELEASE_REQUESTED == 'true'
+        run: .github/workflows/scripts/pin-chart-images.sh
+
+      - name: Bundle pinned dependencies
+        if: env.RELEASE_REQUESTED == 'true'
+        run: helm dependency build charts/insight
+
+      - name: Package the immutable candidate
+        if: env.RELEASE_REQUESTED == 'true'
+        env:
+          VERSION: ${{ steps.candidate-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          helm package charts/insight -d dist/
+
+      - name: Checksum the validation archive
+        env:
+          VERSION: ${{ steps.candidate-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum "insight-$VERSION.tgz" release.patch source-sha version > SHA256SUMS
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: helm-candidate
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  validate-chart:
+    needs: package-chart
+    if: |
+      !cancelled()
+      && needs.package-chart.result == 'success'
+      && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    uses: ./.github/workflows/deploy-test-stand.yml
+    with:
+      candidate_artifact: helm-candidate
+      chart_version: ${{ needs.package-chart.outputs.version }}
+    secrets:
+      TEST_STAND_KUBECONFIG: ${{ secrets.TEST_STAND_KUBECONFIG }}
+      TEST_STAND_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD }}
+
+  publish-chart:
+    needs: [package-chart, validate-chart]
+    if: |
+      !cancelled()
+      && fromJSON(inputs.build_results).changes.outputs.release_requested == 'true'
+      && needs.package-chart.result == 'success'
+      && github.ref == 'refs/heads/main'
+      && needs.validate-chart.result == 'success'
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || 'insight-small-vm' }}
+    timeout-minutes: 20
+    steps:
+      - name: Mint chart-release App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          app-id: ${{ vars.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
+        with:
+          version: '3.14.0'
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: helm-candidate
+          path: dist
+
+      - name: Verify the tested candidate
+        env:
+          VERSION: ${{ needs.package-chart.outputs.version }}
+        run: |
+          set -euo pipefail
+          .github/workflows/scripts/verify-chart-candidate.sh dist "$GITHUB_SHA" "$VERSION"
+          git apply --index dist/release.patch
+
+      # queue-gate drained the queue before this job started, and the steps
+      # since took minutes. A short budget suffices: an entry that joined
+      # within it cannot be far enough into its checks for a reset to cost.
+      # INVARIANT: checked before `helm push`, not just before the commit — a
+      # chart pushed but never committed is overwritten by the next run, which
+      # computes the same version.
+      - name: Re-check the merge queue before pushing
+        id: queue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/workflows/scripts/wait-for-empty-merge-queue.sh 10
+
+      - name: Require the candidate source to remain current
+        id: current
+        if: steps.queue.outputs.clear == 'true'
+        run: |
+          set -euo pipefail
+          tip="$(git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1)"
+          if [ "$tip" = "$GITHUB_SHA" ]; then
+            echo 'matches=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'matches=false' >> "$GITHUB_OUTPUT"
+            echo '::error::Branch advanced while validating; candidate was not published. Start a new workflow run on the current branch tip; rerunning this candidate will not update its source SHA.'
+            exit 1
+          fi
+
+      - name: Helm registry login (GHCR)
+        if: steps.queue.outputs.clear == 'true' && steps.current.outputs.matches == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Helm push
+        id: helm_push
+        if: steps.queue.outputs.clear == 'true' && steps.current.outputs.matches == 'true'
+        run: |
+          set -euo pipefail
+          OUT="$(helm push "dist/insight-${{ needs.package-chart.outputs.version }}.tgz" \
+            oci://ghcr.io/constructorfabric/charts 2>&1)"
+          echo "$OUT"
+          # helm push prints "Digest: sha256:..." — that digest is the chart's
+          # OCI manifest identity, which the attestation below binds to.
+          DIGEST="$(echo "$OUT" | sed -n 's/^Digest: //p')"
+          if [ -z "$DIGEST" ]; then
+            echo "ERROR: could not parse chart digest from helm push output" >&2
+            exit 1
+          fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      # attest-build-provenance with push-to-registry reads DOCKER credentials
+      # (~/.docker/config.json) — `helm registry login` above writes to helm's
+      # own config, which the attest action cannot see. Without this login the
+      # attest step dies with "No credentials found for registry ghcr.io".
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: steps.queue.outputs.clear == 'true' && steps.current.outputs.matches == 'true'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Keyless SLSA provenance for the umbrella chart OCI artifact — same
+      # contract as the image attestations (see backend-analytics). Verify:
+      #   gh attestation verify oci://ghcr.io/constructorfabric/charts/insight:<ver> \
+      #     --repo constructorfabric/insight
+      - name: Attest chart provenance
+        if: steps.queue.outputs.clear == 'true' && steps.current.outputs.matches == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/constructorfabric/charts/insight
+          subject-digest: ${{ steps.helm_push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Commit version bumps back to the branch
+        if: steps.queue.outputs.clear == 'true' && steps.current.outputs.matches == 'true'
+        env:
+          UMBRELLA_VERSION: ${{ needs.package-chart.outputs.version }}
+          BUILD_TAG: ${{ fromJSON(inputs.build_results).changes.outputs.build_tag }}
+        run: |
+          set -euo pipefail
+          git config user.email "ci@constructorfabric.local"
+          git config user.name  "insight-ci"
+
+          if git diff --staged --quiet; then
+            echo "no version changes to commit"
+            exit 0
+          fi
+
+          # [skip ci] in the message prevents the push from re-triggering
+          # this workflow. paths-filter on the next real merge will diff
+          # against THIS commit, so service-file changes are correctly
+          # detected on the subsequent run.
+          git commit -m "chore(release): umbrella ${UMBRELLA_VERSION} (build ${BUILD_TAG}) [skip ci]"
+
+          if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+            echo "push to ${GITHUB_REF_NAME} was rejected — the branch tip moved" >&2
+            echo "after validation. Run the release workflow for the new commit to" >&2
+            echo "prepare and test a new candidate." >&2
+            exit 1
+          fi
+
+      - name: Record the published chart
+        if: steps.queue.outputs.clear == 'true' && steps.current.outputs.matches == 'true'
+        env:
+          VERSION: ${{ needs.package-chart.outputs.version }}
+          DIGEST: ${{ steps.helm_push.outputs.digest }}
+          VALIDATED: ${{ needs.validate-chart.result == 'success' }}
+        run: |
+          mkdir -p published
+          jq -n --arg version "$VERSION" --arg digest "$DIGEST" --arg sha "$GITHUB_SHA" --argjson validated "$VALIDATED" \
+            '{version: $version, digest: $digest, source_sha: $sha, validated_on_stand: $validated}' > published/chart.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: steps.queue.outputs.clear == 'true' && steps.current.outputs.matches == 'true'
+        with:
+          name: published-helm
+          path: published/chart.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-release-chart:
+    if: |
+      always()
+      && fromJSON(inputs.build_results).changes.outputs.release_requested == 'true'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && !(github.event_name == 'workflow_dispatch' && inputs.frontend_only)
+      && startsWith(github.ref, 'refs/heads/release-')
+      && (fromJSON(inputs.build_results).merge-analytics.result == 'success' || fromJSON(inputs.build_results).merge-analytics.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-authenticator.result == 'success' || fromJSON(inputs.build_results).merge-authenticator.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-gateway.result       == 'success' || fromJSON(inputs.build_results).merge-gateway.result       == 'skipped')
+      && (fromJSON(inputs.build_results).merge-identity-resolution.result == 'success' || fromJSON(inputs.build_results).merge-identity-resolution.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-git-cli-proxy.result == 'success' || fromJSON(inputs.build_results).merge-git-cli-proxy.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-insight-v3-core.result == 'success' || fromJSON(inputs.build_results).merge-insight-v3-core.result == 'skipped')
+      && (fromJSON(inputs.build_results).merge-previews.result      == 'success' || fromJSON(inputs.build_results).merge-previews.result      == 'skipped')
+      && (fromJSON(inputs.build_results).merge-frontend.result      == 'success' || fromJSON(inputs.build_results).merge-frontend.result      == 'skipped')
+      && (fromJSON(inputs.build_results).merge-toolbox.result       == 'success' || fromJSON(inputs.build_results).merge-toolbox.result       == 'skipped')
+      && (fromJSON(inputs.build_results).merge-seed.result          == 'success' || fromJSON(inputs.build_results).merge-seed.result          == 'skipped')
+      && (fromJSON(inputs.build_results).merge-image.result         == 'success' || fromJSON(inputs.build_results).merge-image.result         == 'skipped')
+      && (fromJSON(inputs.build_results).bump-descriptors.result    == 'success' || fromJSON(inputs.build_results).bump-descriptors.result    == 'skipped')
+      && (fromJSON(inputs.build_results).bump-descriptors.result == 'skipped'
+        || (fromJSON(inputs.build_results).bump-descriptors.outputs.committed == 'false'
+          && fromJSON(inputs.build_results).bump-descriptors.outputs.queue_clear == 'true'))
+      && fromJSON(inputs.build_results).queue-gate.result == 'success'
+      && fromJSON(inputs.build_results).queue-gate.outputs.clear == 'true'
+      && (
+        fromJSON(inputs.build_results).changes.outputs.analytics == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.authenticator == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.gateway      == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.identity_resolution == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.insight_v3_core == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.git_cli_proxy == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.previews     == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.frontend     == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.toolbox      == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.seed         == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.umbrella     == 'true'
+      )
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small-vm' }}
+    timeout-minutes: 60
+    steps:
+      # Mint a short-lived (1h) installation token from the
+      # insight-chart-release-bot GitHub App so the auto-commit push at the
+      # end of this job can bypass branch protection on `main`. The App has
+      # Contents: read & write on this repo only and is on `main`'s bypass
+      # list; default GITHUB_TOKEN cannot bypass, and we explicitly chose
+      # App-over-PAT to avoid tying release pushes to a single human.
+      # GHCR push (helm registry login below) stays on GITHUB_TOKEN via
+      # packages: write — the App was deliberately not granted that scope.
+      - name: Mint chart-release App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history needed because we'll commit back to the same branch.
+          fetch-depth: 0
+          # App token; persists in the git remote so the final `git push`
+          # in this job runs as the App and clears `main` branch protection.
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: '3.14.0'
+
+      # Re-anchor the working tree to the live tip of the target branch
+      # BEFORE any value is computed. `checkout` above pins this run's
+      # trigger SHA, but the umbrella `version` is derived as
+      # (Chart.yaml version + 1) and `ingestion.toolboxImage` is rewritten
+      # to this run's build tag — both read from / written to the tree. If
+      # origin/main has advanced (an earlier release run already bumped &
+      # pushed; common when two src/ingestion/** PRs merge back-to-back),
+      # the trigger-SHA tree is stale: both runs compute the SAME next
+      # version and both rewrite the SAME toolboxImage line to a different
+      # tag. They both `helm push` that version (clobbering each other's
+      # OCI artifact), and the final commit can never fast-forward — the
+      # rebase-retry below then conflicts on the toolboxImage line in
+      # charts/insight/values.yaml (the version line auto-merges, identical
+      # on both sides) and cannot auto-resolve. Resetting to the live tip
+      # makes version-compute, the toolboxImage ref and the commit all
+      # consistent with what's on the branch, and makes a plain job re-run
+      # idempotent (a re-run recomputes against the refreshed tip instead
+      # of replaying the stale pinned SHA forever).
+      - name: Re-anchor to live branch tip
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$GITHUB_REF_NAME"
+          git reset --hard "origin/$GITHUB_REF_NAME"
+
+      # Per-service subchart appVersion bumps. Each is bumped INDEPENDENTLY,
+      # only if the matching image was rebuilt this run. Services whose
+      # source didn't change keep their previous appVersion → their image
+      # tag in the published chart still resolves to an image that exists.
+      # A manual full rebuild (workflow_dispatch) rebuilds every service image,
+      # so it bumps every service — mirroring the build jobs' own
+      # `workflow_dispatch` trigger. When
+      # bump-descriptors runs (connectors changed / full rebuild) it does the
+      # bump instead, in its re-triggering commit; this step is the canonical
+      # path when no connector changed and bump-descriptors was skipped.
+      - name: Bump per-service subchart appVersions
+        env:
+          BUILD_TAG: ${{ fromJSON(inputs.build_results).changes.outputs.build_tag }}
+          FULL_REBUILD: ${{ github.event_name == 'workflow_dispatch' }}
+          ANALYTICS: ${{ fromJSON(inputs.build_results).changes.outputs.analytics }}
+          AUTHENTICATOR: ${{ fromJSON(inputs.build_results).changes.outputs.authenticator }}
+          GATEWAY: ${{ fromJSON(inputs.build_results).changes.outputs.gateway }}
+          IDENTITY_RESOLUTION: ${{ fromJSON(inputs.build_results).changes.outputs.identity_resolution }}
+          INSIGHT_V3_CORE: ${{ fromJSON(inputs.build_results).changes.outputs.insight_v3_core }}
+          GIT_CLI_PROXY: ${{ fromJSON(inputs.build_results).changes.outputs.git_cli_proxy }}
+          PREVIEWS: ${{ fromJSON(inputs.build_results).changes.outputs.previews }}
+          FRONTEND: ${{ fromJSON(inputs.build_results).changes.outputs.frontend }}
+        run: .github/workflows/scripts/bump-service-appversions.sh
+
+      - name: Bump ingestion image refs
+        env:
+          BUILD_TAG: ${{ fromJSON(inputs.build_results).changes.outputs.build_tag }}
+          TOOLBOX: ${{ fromJSON(inputs.build_results).changes.outputs.toolbox }}
+          SEED: ${{ fromJSON(inputs.build_results).changes.outputs.seed }}
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+        run: |
+          set -euo pipefail
+          # toolbox and seed are the only ingestion images pinned in
+          # charts/insight/values.yaml — connector image refs travel inside
+          # the toolbox image's baked descriptors (ADR-0016). Connector
+          # descriptors are patched by `bump-descriptors` in a separate
+          # commit (without [skip ci]) BEFORE this run.
+          if [ "$TOOLBOX" = "true" ]; then
+            REF="$IMAGE_PREFIX/insight-toolbox:$BUILD_TAG"
+            echo "Setting ingestion.toolboxImage → $REF"
+            yq -i ".ingestion.toolboxImage = \"$REF\"" charts/insight/values.yaml
+          fi
+          # seedImage is not deployed by the chart — nothing renders it into a
+          # pod. It is published state: `seed-stand.sh` reads it back off an
+          # installed release to learn which seeder image matches that stand.
+          if [ "$SEED" = "true" ]; then
+            REF="$IMAGE_PREFIX/insight-seed:$BUILD_TAG"
+            echo "Setting ingestion.seedImage → $REF"
+            yq -i ".ingestion.seedImage = \"$REF\"" charts/insight/values.yaml
+          fi
+
+      # Umbrella `version` always patch-bumps (semver, per-publish contract).
+      # Umbrella `appVersion` is DISPLAY-ONLY in the deploy path — the actual
+      # image.tag for each pod is resolved inside that pod's subchart from
+      # the SUBCHART's appVersion. We set the umbrella appVersion to the MAX
+      # of the four subchart appVersions so it summarises "the newest image
+      # tag bundled in this chart artifact". `sort -V` handles the
+      # YYYY.MM.DD.HH.MM-shortsha format correctly because the date prefix
+      # is lexicographically sortable.
+      - name: Bump umbrella version
+        id: umbrella
+        run: |
+          set -euo pipefail
+          CURRENT="$(yq '.version' charts/insight/Chart.yaml)"
+          NEXT="$(echo "$CURRENT" | awk -F. '{ printf "%d.%d.%d", $1, $2, $3+1 }')"
+          # yq v4 emits a `---` document separator between results when given
+          # multiple files (behaviour appeared with a runner yq update,
+          # 2026-06-08): without the filter below, `sort -V | tail -1` picks
+          # the separator and `appVersion: "---"` ships in the published
+          # chart — an invalid `app.kubernetes.io/version` label value that
+          # breaks every install (charts 0.1.48–0.1.55 were affected).
+          NEW_APP=$(yq -r '.appVersion' \
+            src/backend/services/analytics/helm/Chart.yaml \
+            src/backend/services/authenticator/helm/Chart.yaml \
+            src/backend/services/gateway/helm/Chart.yaml \
+            src/backend/services/identity-resolution/helm/Chart.yaml \
+            src/backend/services/insight-v3-core/helm/Chart.yaml \
+            src/backend/services/git-cli-proxy/helm/Chart.yaml \
+            src/backend/services/previews/helm/Chart.yaml \
+            src/frontend/helm/Chart.yaml \
+            | grep -Ev '^(---|null)$' \
+            | sort -V | tail -1)
+          # Fail loud unless the result is a build tag (YYYY.MM.DD.HH.MM-sha):
+          # a malformed appVersion must never reach a published chart again.
+          # On main the regex stays strict — a branch-suffixed tag leaking
+          # into a main-published chart must abort. On release-** the
+          # suffixed form (…-sha7.<sanitized-branch>) is the canonical tag
+          # shape for images built from the branch, so accept it there.
+          TAG_RE='^[0-9]{4}(\.[0-9]{2}){4}-[0-9a-f]{7}$'
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            TAG_RE='^[0-9]{4}(\.[0-9]{2}){4}-[0-9a-f]{7}(\.[A-Za-z0-9._-]+)?$'
+          fi
+          if ! echo "$NEW_APP" | grep -Eq "$TAG_RE"; then
+            echo "ERROR: computed umbrella appVersion '$NEW_APP' is not a valid build tag for ref '${GITHUB_REF_NAME}'" >&2
+            exit 1
+          fi
+          echo "Umbrella version $CURRENT → $NEXT (appVersion → $NEW_APP)"
+          yq -i ".version = \"$NEXT\""        charts/insight/Chart.yaml
+          yq -i ".appVersion = \"$NEW_APP\""  charts/insight/Chart.yaml
+          # Pin new version in docs and sample gitops
+          if [ -f docs/deploy/.insight-version ]; then
+            echo "$NEXT" > docs/deploy/.insight-version
+          fi
+          if [ -f deploy/gitops/.insight-version ]; then
+            echo "$NEXT" > deploy/gitops/.insight-version
+          fi
+          echo "version=${NEXT}" >> "$GITHUB_OUTPUT"
+      - name: Helm dependency update
+        run: helm dependency update charts/insight
+
+      - name: Helm package
+        run: |
+          mkdir -p dist
+          helm package charts/insight -d dist/
+
+      # queue-gate drained the queue before this job started, and the steps
+      # since took minutes. A short budget suffices: an entry that joined
+      # within it cannot be far enough into its checks for a reset to cost.
+      # INVARIANT: checked before `helm push`, not just before the commit — a
+      # chart pushed but never committed is overwritten by the next run, which
+      # computes the same version.
+      - name: Re-check the merge queue before pushing
+        id: queue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/workflows/scripts/wait-for-empty-merge-queue.sh 10
+
+      - name: Helm registry login (GHCR)
+        if: steps.queue.outputs.clear == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Helm push
+        id: helm_push
+        if: steps.queue.outputs.clear == 'true'
+        run: |
+          set -euo pipefail
+          OUT="$(helm push "dist/insight-${{ steps.umbrella.outputs.version }}.tgz" \
+            oci://ghcr.io/constructorfabric/charts 2>&1)"
+          echo "$OUT"
+          # helm push prints "Digest: sha256:..." — that digest is the chart's
+          # OCI manifest identity, which the attestation below binds to.
+          DIGEST="$(echo "$OUT" | sed -n 's/^Digest: //p')"
+          if [ -z "$DIGEST" ]; then
+            echo "ERROR: could not parse chart digest from helm push output" >&2
+            exit 1
+          fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      # attest-build-provenance with push-to-registry reads DOCKER credentials
+      # (~/.docker/config.json) — `helm registry login` above writes to helm's
+      # own config, which the attest action cannot see. Without this login the
+      # attest step dies with "No credentials found for registry ghcr.io".
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: steps.queue.outputs.clear == 'true'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Keyless SLSA provenance for the umbrella chart OCI artifact — same
+      # contract as the image attestations (see backend-analytics). Verify:
+      #   gh attestation verify oci://ghcr.io/constructorfabric/charts/insight:<ver> \
+      #     --repo constructorfabric/insight
+      - name: Attest chart provenance
+        if: steps.queue.outputs.clear == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/constructorfabric/charts/insight
+          subject-digest: ${{ steps.helm_push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Commit version bumps back to the branch
+        if: steps.queue.outputs.clear == 'true'
+        env:
+          UMBRELLA_VERSION: ${{ steps.umbrella.outputs.version }}
+          BUILD_TAG: ${{ fromJSON(inputs.build_results).changes.outputs.build_tag }}
+        run: |
+          set -euo pipefail
+          git config user.email "ci@constructorfabric.local"
+          git config user.name  "insight-ci"
+
+          git add charts/insight/Chart.yaml \
+                  charts/insight/Chart.lock \
+                  charts/insight/values.yaml \
+                  src/backend/services/analytics/helm/Chart.yaml \
+                  src/backend/services/authenticator/helm/Chart.yaml \
+                  src/backend/services/gateway/helm/Chart.yaml \
+                  src/backend/services/identity-resolution/helm/Chart.yaml \
+                  src/backend/services/insight-v3-core/helm/Chart.yaml \
+                  src/backend/services/git-cli-proxy/helm/Chart.yaml \
+                  src/backend/services/previews/helm/Chart.yaml \
+                  src/frontend/helm/Chart.yaml \
+                  deploy/gitops/.insight-version
+          # Sample gitops starter under docs/deploy — pin moves with the
+          # umbrella. Stage only if present (the file is introduced by
+          # the gitops-sample PR and only lives on `main` after it merges).
+          if [ -f docs/deploy/.insight-version ]; then
+            git add docs/deploy/.insight-version
+          fi
+
+          if git diff --staged --quiet; then
+            echo "no version changes to commit"
+            exit 0
+          fi
+
+          # [skip ci] in the message prevents the push from re-triggering
+          # this workflow. paths-filter on the next real merge will diff
+          # against THIS commit, so service-file changes are correctly
+          # detected on the subsequent run.
+          git commit -m "chore(release): umbrella ${UMBRELLA_VERSION} (build ${BUILD_TAG}) [skip ci]"
+
+          # We re-anchored to the live branch tip at job start and runs are
+          # serialised per-ref (see the workflow `concurrency` block), so this
+          # push is expected to fast-forward. Do NOT rebase the bump commit on
+          # failure: the only way the tip moves under us now is a direct human
+          # push to ${GITHUB_REF_NAME}, and rebasing our bump onto it conflicts
+          # on the values.yaml lines we just edited (toolboxImage, seedImage) —
+          # unresolvable in CI. Fail loud instead; a plain job re-run is
+          # idempotent (it recomputes against the refreshed tip, see
+          # "Re-anchor" above).
+          if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+            echo "push to ${GITHUB_REF_NAME} was rejected — the branch tip moved" >&2
+            echo "after re-anchor (a direct human push?). Re-run this job to" >&2
+            echo "recompute the bump against the new tip." >&2
+            exit 1
+          fi

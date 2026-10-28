@@ -1,81 +1,55 @@
+use uuid::Uuid;
+
 use super::*;
-use crate::domain::definition::{DefinitionKind, Page};
-use crate::domain::folders::FolderId;
+use crate::domain::access::PersonId;
+use crate::store::definitions::visibility::assert_bound;
 
-fn bound(statement: &Statement) -> Vec<String> {
-    statement
-        .values
-        .as_ref()
-        .map(|values| values.0.iter().map(ToString::to_string).collect())
-        .unwrap_or_default()
-}
-
-fn an_id() -> FolderId {
-    FolderId::parse("0192a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b")
-        .unwrap_or_else(|error| panic!("the id must parse: {error}"))
-}
-
-fn a_page() -> Page {
-    Page::parse(Some(20), Some(40)).unwrap_or_else(|error| panic!("the page must parse: {error}"))
-}
-
-fn any_of(values: &[&str]) -> TagFilter {
-    let owned: Vec<String> = values.iter().map(|value| (*value).to_owned()).collect();
-
-    TagFilter::parse(DefinitionKind::Dashboard, &owned)
-        .unwrap_or_else(|error| panic!("the filter must parse: {error}"))
-        .unwrap_or_else(|| panic!("a filter naming tags is one"))
+fn person() -> PersonId {
+    PersonId::new(Uuid::from_u128(0x0192_a1b2_0000_7000_8000_0000_0000_0001))
 }
 
 #[test]
-fn a_page_by_tag_binds_the_search_then_each_tag_then_the_page() {
-    let statement = page_statement("deliv", a_page(), None, &any_of(&["Alpha", "Beta"]));
+fn a_tag_is_found_and_made_within_one_owners_scope() {
+    assert!(
+        FIND_TAG.contains("owner_scope = ? AND name = ?"),
+        "{FIND_TAG}"
+    );
+    assert!(INSERT_TAG.contains("owner_person_id"), "{INSERT_TAG}");
+    assert!(
+        COUNT_TAGS.ends_with("WHERE owner_scope = ?"),
+        "{COUNT_TAGS}"
+    );
+}
+
+#[test]
+fn the_ownerless_scope_is_the_empty_one_and_an_owners_is_their_id() {
+    assert_eq!(scope_value(Owner::Unowned).to_string(), "''");
+    assert_eq!(
+        scope_value(Owner::Person(person())).to_string(),
+        "'0192a1b2-0000-7000-8000-000000000001'"
+    );
+}
+
+#[test]
+fn listing_tags_counts_only_visible_dashboards_and_merges_scopes_by_name() {
+    let caller = Caller::member(person());
+    let statement = list_statement(caller);
 
     assert!(
-        statement.sql.contains("name LIKE ? OR body LIKE ?"),
+        statement.sql.contains(&dashboard_visible(caller).0),
+        "{}",
+        statement.sql
+    );
+    assert_bound(&statement);
+    assert!(
+        statement.sql.contains("GROUP BY tags.name"),
         "{}",
         statement.sql
     );
     assert!(
-        statement.sql.contains("tags.name IN (?, ?)"),
+        statement.sql.contains("COUNT(DISTINCT dashboards.id)"),
         "{}",
         statement.sql
     );
-    assert!(!statement.sql.contains("folder_id"), "{}", statement.sql);
-    assert_eq!(
-        bound(&statement),
-        ["'%deliv%'", "'%deliv%'", "'Alpha'", "'Beta'", "20", "40"]
-    );
-}
-
-#[test]
-fn a_page_by_tag_in_one_folder_binds_the_folder_before_the_tags() {
-    let statement = page_statement(
-        "",
-        a_page(),
-        Some(FolderFilter::In(an_id())),
-        &any_of(&["Alpha"]),
-    );
-
-    assert!(statement.sql.contains("folder_id = ?"), "{}", statement.sql);
-    assert_eq!(
-        bound(&statement),
-        [
-            "'%%'",
-            "'%%'",
-            "'0192a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b'",
-            "'Alpha'",
-            "20",
-            "40",
-        ]
-    );
-}
-
-#[test]
-fn a_count_by_tag_among_the_unfiled_asks_for_no_folder_and_no_page() {
-    let counted = count_statement("", Some(FolderFilter::Unfiled), &any_of(&["Alpha"]));
-
-    assert!(counted.sql.contains("folder_id IS NULL"), "{}", counted.sql);
-    assert!(counted.sql.contains("tags.name IN (?)"), "{}", counted.sql);
-    assert_eq!(bound(&counted), ["'%%'", "'%%'", "'Alpha'"]);
+    assert!(!statement.sql.contains("owner_scope"), "{}", statement.sql);
 }

@@ -43,12 +43,20 @@ const series = vi.hoisted(() => ({
     data: undefined as unknown,
     refetch: () => {},
   },
+  // Whether the warehouse could answer at all. The cases below set readings
+  // and leave this alone; the not-ready case is the one that flips it.
+  notReady: false,
   calls: [] as unknown[],
 }));
 vi.mock("@/queries/metric-day-series", () => ({
   useMetricDaySeries: (selection: unknown, enabled?: boolean) => {
     series.calls.push({ selection, enabled });
-    return series.state;
+    return {
+      ...series.state,
+      data: series.state.data
+        ? { readings: series.state.data, notReady: series.notReady }
+        : undefined,
+    };
   },
 }));
 
@@ -132,6 +140,7 @@ beforeEach(() => {
     refetch: () => {},
   };
   series.calls = [];
+  series.notReady = false;
   series.state = {
     isPending: false,
     isError: false,
@@ -456,5 +465,17 @@ describe("MetricActivity", () => {
     expect(
       screen.getByText(/Nothing recorded in this period/)
     ).toBeInTheDocument();
+  });
+
+  it("says no data yet rather than claiming the period was quiet", () => {
+    // Both render an empty strip; only one of them is a statement about the
+    // period, and a read that never reached the data cannot make it.
+    series.state.data = [];
+    series.notReady = true;
+    draw(metric("collab.messages_sent", ["source_summary"], 0));
+    expect(screen.getByText(/No data yet/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Nothing recorded in this period/)
+    ).not.toBeInTheDocument();
   });
 });

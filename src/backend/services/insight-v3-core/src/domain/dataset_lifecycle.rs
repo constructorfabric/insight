@@ -11,7 +11,7 @@ use thiserror::Error;
 use super::datasets::{
     Attempt, DatasetStoreError, Datasets, Finish, OperationToken, Owning, Refused, Taken,
 };
-use super::definition::{DefinitionKind, DefinitionName, DefinitionStoreError, Definitions};
+use super::definition::{DefinitionId, DefinitionKind, DefinitionStoreError, Definitions};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::dataset::shape;
 use super::kinds::dataset::state::Operation;
@@ -46,12 +46,12 @@ impl<'a> DatasetLifecycle<'a> {
     /// Every stored metric reading this dataset, with the body that reads it.
     async fn readers(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
     ) -> Result<Vec<(String, Value)>, DatasetChangeError> {
         let mut reading = Vec::new();
 
         for held in self.definitions.list(DefinitionKind::Metric).await? {
-            let Ok(parsed) = DefinitionName::parse(&held) else {
+            let Ok(parsed) = DefinitionId::parse(&held) else {
                 continue;
             };
             let Some(body) = self
@@ -75,7 +75,7 @@ impl<'a> DatasetLifecycle<'a> {
     /// text: a metric mentioning the name in a label does not depend on it.
     pub(crate) async fn dependents(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
     ) -> Result<Vec<String>, DatasetChangeError> {
         Ok(self
             .readers(name)
@@ -93,7 +93,7 @@ impl<'a> DatasetLifecycle<'a> {
     /// transaction.
     pub(crate) async fn declare(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         body: &Value,
     ) -> Result<Value, DatasetChangeError> {
         // The shape first, so a body the deserialiser cannot read is answered
@@ -127,7 +127,7 @@ impl<'a> DatasetLifecycle<'a> {
     /// something else.
     async fn replace(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         body: &Value,
         after: &Declaration,
     ) -> Result<Value, DatasetChangeError> {
@@ -157,7 +157,7 @@ impl<'a> DatasetLifecycle<'a> {
     /// happen.
     async fn broken_by(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         before: &Declaration,
         after: &Declaration,
     ) -> Result<Vec<Broken>, DatasetChangeError> {
@@ -206,19 +206,33 @@ impl<'a> DatasetLifecycle<'a> {
     /// one no reader could ever reach.
     async fn bring_into_being(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         body: &Value,
         attempt: Attempt,
     ) -> Result<Value, DatasetChangeError> {
         let table = attempt.token.table(name);
 
-        // A refusal means the name is held by a table this service never
-        // made, so there is nothing of ours to take away and dropping it
-        // would take somebody else's. Anything else leaves a table that may
-        // exist with nothing naming it.
         if let Err(error) = self.tables.provision(&table).await {
-            if !matches!(error, DatasetTableError::NotOurs(_)) {
-                self.discard(&table).await;
+            match error {
+                // The name is held by a table this service never made:
+                // nothing of ours to take away, and a drop would take
+                // somebody else's.
+                DatasetTableError::NotOurs(_) => {}
+                // INVARIANT: a warehouse that did not answer in time may
+                // still be making the table; a drop sent now could land
+                // before the create and leave it standing. Nothing names it,
+                // and a repeat of this create keeps it.
+                DatasetTableError::Timeout => {
+                    tracing::error!(
+                        dataset = name.as_str(),
+                        table,
+                        "a dataset's table was left where the warehouse may still be making it"
+                    );
+                }
+                DatasetTableError::Vanished
+                | DatasetTableError::ClickHouse(_)
+                | DatasetTableError::NotOurDatabase
+                | DatasetTableError::DatabaseTopology(_) => self.discard(&table).await,
             }
 
             return Err(error.into());
@@ -256,10 +270,7 @@ impl<'a> DatasetLifecycle<'a> {
     }
 
     /// Takes a dataset away, with the records it holds.
-    pub(crate) async fn remove(
-        &self,
-        name: &DefinitionName,
-    ) -> Result<Removal, DatasetChangeError> {
+    pub(crate) async fn remove(&self, name: &DefinitionId) -> Result<Removal, DatasetChangeError> {
         if self.datasets.get(name).await?.is_none() {
             return Err(DatasetChangeError::NotFound);
         }
@@ -346,7 +357,7 @@ impl<'a> DatasetLifecycle<'a> {
     /// attempt still owns it.
     async fn record(
         &self,
-        name: &DefinitionName,
+        name: &DefinitionId,
         attempt: &Attempt,
         table: String,
     ) -> Result<Owning, DatasetChangeError> {
@@ -460,7 +471,7 @@ impl From<DatasetStoreError> for DatasetChangeError {
 /// One of the three states an operator has to recognise: an attempt refused
 /// because another holds the dataset. The other two are an attempt that
 /// finished stale, and a drop that failed.
-fn held_by_another(name: &DefinitionName, error: &DatasetStoreError) {
+fn held_by_another(name: &DefinitionId, error: &DatasetStoreError) {
     if let DatasetStoreError::Refused(Refused::Busy(operation)) = error {
         tracing::warn!(
             dataset = name.as_str(),
@@ -472,7 +483,7 @@ fn held_by_another(name: &DefinitionName, error: &DatasetStoreError) {
 
 /// An attempt that did its work and lost the dataset before writing the
 /// outcome: whatever it made is discarded and the request is refused.
-fn finished_stale(name: &DefinitionName, operation: Operation) {
+fn finished_stale(name: &DefinitionId, operation: Operation) {
     tracing::warn!(
         dataset = name.as_str(),
         operation = operation.as_str(),

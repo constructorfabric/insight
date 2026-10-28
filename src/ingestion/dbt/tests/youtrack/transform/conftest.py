@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
@@ -47,22 +46,15 @@ class Warehouse:
             for row in client.query("SELECT name FROM system.tables WHERE database = 'bronze_youtrack'").result_rows
         }
 
-    def build(self, selector: str = "tag:youtrack", full_refresh: bool = False) -> None:
+    def dbt(self, command: str, *args: str) -> None:
         messages = []
         result = dbtRunner(callbacks=[lambda e: messages.append(e.info.msg)]).invoke(
-            [
-                "run",
-                "--project-dir",
-                str(DBT),
-                "--profiles-dir",
-                str(self.profile),
-                "--select",
-                selector,
-                "--quiet",
-                *(["--full-refresh"] if full_refresh else []),
-            ]
+            [command, "--project-dir", str(DBT), "--profiles-dir", str(self.profile), "--quiet", *args]
         )
         assert result.success, "\n".join(messages)[-10000:]
+
+    def build(self, selector: str = "tag:youtrack", full_refresh: bool = False) -> None:
+        self.dbt("run", "--select", selector, *(["--full-refresh"] if full_refresh else []))
 
     def insert(self, table: str, row: Mapping[str, object], observed: str = "2026-01-10T00:00:00") -> None:
         assert table in self.tables
@@ -165,22 +157,19 @@ def warehouse(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Warehouse]:
         password=connection.password,
         database="default",
     )
+    # Every database this rig touches. A throwaway warehouse makes its own:
+    # on a deployment create-databases.sh is the one creation site, and
+    # no on-run-start hook carries a CREATE DATABASE.
     client.command("CREATE DATABASE IF NOT EXISTS staging")
-    silver_ddl = (INGESTION / "scripts/connectors-ddl/silver.sql").read_text()
-    for stmt in silver_ddl.split(";"):
-        match = re.search(r"CREATE TABLE IF NOT EXISTS silver\.(class_task_\w+)", stmt)
-        if not match:
-            continue
-        name = match[1]
-        producer = (
-            "jira__field_history_derived"
-            if name == "class_task_field_history"
-            else "github__task_links"
-            if name == "class_task_links"
-            else "jira__" + name[6:]
-        )
-        client.command(stmt.replace("silver." + name, "staging." + producer))
-    yield Warehouse(client, profile)
+    client.command("CREATE DATABASE IF NOT EXISTS silver")
+    client.command("CREATE DATABASE IF NOT EXISTS identity")
+    client.command("CREATE DATABASE IF NOT EXISTS config")
+    # No staging target is pre-created: the shapes used to be derived by
+    # rewriting the silver snapshot's CREATE statements. A model this connector
+    # feeds is built by the run that asserts over it.
+    warehouse = Warehouse(client, profile)
+    warehouse.dbt("run-operation", "create_task_config_tables")
+    yield warehouse
     client.close()
 
 
@@ -197,5 +186,5 @@ def case(warehouse: Warehouse) -> Warehouse:
     ]:
         warehouse.client.command("TRUNCATE TABLE IF EXISTS staging." + name)
     for table in ["task_field_roles", "task_value_map", "field_value_map", "field_value_defaults"]:
-        warehouse.client.command("TRUNCATE TABLE IF EXISTS config." + table)
+        warehouse.client.command("TRUNCATE TABLE config." + table)
     return warehouse

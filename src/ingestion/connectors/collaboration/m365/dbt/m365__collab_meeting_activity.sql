@@ -37,14 +37,17 @@ SELECT
     reportPeriod AS report_period,
     now() AS collected_at,
     'insight_m365' AS data_source,
+    'email' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     toUnixTimestamp64Milli(now64()) AS _version
-FROM {{ source('bronze_m365', 'teams_activity') }}
+FROM {{ source('bronze_m365', 'teams_activity') }} FINAL
 WHERE userPrincipalName IS NOT NULL
   AND userPrincipalName != ''
   AND {{ m365_day_was_reported('teams_activity') }}
   -- Drop unlicensed users (guests, ex-employees, service accounts). Their Teams
-  -- activity inflates team-level collab counters and produces orphan gold rows
-  -- with no matching insight.people entry. `isLicensed` = "Selected if the user
+  -- activity inflates team-level collab counters and produces gold rows that
+  -- match no person. `isLicensed` = "Selected if the user
   -- is licensed to use Teams" (MS Graph getTeamsUserActivityUserDetail). Only the
   -- teams_activity report exposes this flag; the email/onedrive/sharepoint feeders
   -- fall back to `assignedProducts`. A NULL flag is treated as unlicensed and

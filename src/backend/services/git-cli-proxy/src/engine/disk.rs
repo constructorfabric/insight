@@ -2,8 +2,8 @@ use std::path::Path;
 
 const HIGH_WATERMARK_PCT: u64 = 85;
 const LOW_WATERMARK_PCT: u64 = 65;
-/// A repo must have grown by at least this fraction of its blobless baseline
-/// before a repack is worth its cost.
+/// A repo must have grown by more than 1/this of its blobless baseline before
+/// a repack is worth its cost.
 const PURGE_MIN_GROWTH_DIVISOR: u64 = 10;
 
 /// What the cache knows about one entry when deciding what to drop.
@@ -157,8 +157,8 @@ pub struct Budget {
 pub fn volume_available_bytes(path: &Path) -> Option<u64> {
     let stat = rustix::fs::statvfs(path).ok()?;
 
-    // `blocks_available` is what an unprivileged process may actually use;
-    // `blocks_free` includes the reserved blocks it cannot touch.
+    // `f_bavail` is what an unprivileged process may actually use; `f_bfree`
+    // includes the reserved blocks it cannot touch.
     Some(stat.f_frsize.saturating_mul(stat.f_bavail))
 }
 
@@ -173,7 +173,7 @@ impl Budget {
 
     /// Usage as the budget sees it, given both views of free space.
     ///
-    /// §3.6: effective free space is the MINIMUM of the per-entry accounting
+    /// Effective free space is the MINIMUM of the per-entry accounting
     /// and the volume itself, so effective usage is the maximum of the two.
     /// The volume view is what notices a clone staging under `tmp/`, or
     /// another writer on the same mount.

@@ -33,11 +33,10 @@
             max(extracted_at)                             AS fresh_at
         FROM (
             SELECT
-                COALESCE(source_id, '')                   AS insight_source_id,
-                COALESCE(toString(jira_id), '')           AS issue_id,
+                CAST(source_id AS String)                 AS insight_source_id,
+                assumeNotNull(jira_id)                    AS issue_id,
                 toDateTime64(_airbyte_extracted_at, 3)    AS extracted_at
             FROM {{ source('bronze_jira', 'jira_issue') }}
-            WHERE jira_id IS NOT NULL
 
             UNION ALL
 
@@ -67,9 +66,8 @@
 
 {#- Every issue bronze knows: the rebuild scope, counted for batching only. -#}
 {% macro jira_journal_all_issues() %}
-    SELECT COALESCE(source_id, '') AS insight_source_id, COALESCE(toString(jira_id), '') AS issue_id
+    SELECT CAST(source_id AS String) AS insight_source_id, CAST(jira_id AS String)       AS issue_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE jira_id IS NOT NULL
     UNION ALL
     SELECT insight_source_id, assumeNotNull(jira_id) AS issue_id
     FROM {{ ref('jira__changelog_items') }}
