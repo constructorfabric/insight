@@ -663,9 +663,9 @@ mod tests {
 
     #[tokio::test]
     async fn only_the_prefetch_aborts_a_stalled_transfer() {
+        let name = format!("git-cli-proxy-stall-config-{}", std::process::id());
         // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test fixture; the name carries pid and holds no secrets
-        let root =
-            std::env::temp_dir().join(format!("git-cli-proxy-stall-config-{}", std::process::id()));
+        let root = std::env::temp_dir().join(name);
         let _ = std::fs::remove_dir_all(&root);
         if let Err(e) = std::fs::create_dir_all(&root) {
             panic!("scratch dir: {e}");
