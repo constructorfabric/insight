@@ -34,9 +34,9 @@ pub(super) const PATCH_BATCH: usize = 2;
 /// Two bounds, because the per-file cap alone bounds nothing at page scale:
 /// the walk is split into [`PATCH_BATCH`] invocations so git's own buffered
 /// stdout stays small, and retention stops once `total_budget` bytes have been
-/// kept. `shas` is in page order, so the commits dropped by that second bound
-/// are exactly the ones the response cap would have withheld anyway — the
-/// caller stops emitting at or before the commit where retention stopped.
+/// kept. A commit after that point is absent from the result, which the
+/// caller must treat as unread rather than as a commit without text. `shas`
+/// must be in page order for that to hold.
 ///
 /// # Errors
 ///
