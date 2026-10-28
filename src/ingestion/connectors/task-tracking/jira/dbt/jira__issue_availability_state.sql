@@ -54,8 +54,8 @@ known AS (
     -- COALESCE keeps the key well-defined when a stamp column is NULL;
     -- otherwise every unstamped row would collapse into one NULL-key group.
     SELECT
-        concat(assumeNotNull(tenant_id), '-', assumeNotNull(source_id), '-',
-               assumeNotNull(jira_id))                       AS unique_key,
+        concat(CAST(tenant_id AS String), '-', CAST(source_id AS String), '-',
+               CAST(jira_id AS String))                      AS unique_key,
         tenant_id,
         source_id,
         jira_id,
@@ -68,8 +68,8 @@ known AS (
 
     -- Jira project keys cannot contain '-', so the key prefix is the project.
     SELECT
-        concat(assumeNotNull(tenant_id), '-', assumeNotNull(source_id), '-',
-               assumeNotNull(jira_id))                       AS unique_key,
+        concat(CAST(tenant_id AS String), '-', CAST(source_id AS String), '-',
+               CAST(jira_id AS String))                      AS unique_key,
         tenant_id,
         source_id,
         jira_id,

@@ -59,8 +59,8 @@ WITH winner AS (
 -- One row per (issue, field key present in the issue JSON).
 unpivoted AS (
     SELECT
-        assumeNotNull(i.source_id)                                    AS insight_source_id,
-        assumeNotNull(i.jira_id)                                      AS issue_id,
+        CAST(i.source_id AS String)                                   AS insight_source_id,
+        CAST(i.jira_id AS String)                                     AS issue_id,
         COALESCE(toString(i.id_readable), '')                         AS id_readable,
         COALESCE(parseDateTime64BestEffortOrNull(i.created, 3),
                  toDateTime64(0, 3))                                  AS created_at,

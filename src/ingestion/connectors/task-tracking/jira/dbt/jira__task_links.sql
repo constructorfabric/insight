@@ -41,8 +41,8 @@ WITH held_now AS (
 -- bronze row.
 issues AS (
     SELECT
-        assumeNotNull(source_id)                                      AS insight_source_id,
-        assumeNotNull(jira_id)                                        AS issue_id,
+        CAST(source_id AS String)                                     AS insight_source_id,
+        CAST(jira_id AS String)                                       AS issue_id,
         argMax(COALESCE(toString(id_readable), ''), _airbyte_extracted_at) AS current_key,
         argMax(parseDateTime64BestEffortOrNull(created, 3), _airbyte_extracted_at) AS created_at,
         argMax(parseDateTime64BestEffortOrNull(updated, 3), _airbyte_extracted_at) AS updated_at,

@@ -24,7 +24,7 @@
 
 SELECT
     f.unique_key                                  AS unique_key,
-    assumeNotNull(f.source_id)                    AS insight_source_id,
+    CAST(f.source_id AS String)                   AS insight_source_id,
     CAST('jira' AS String)                        AS data_source,
     CAST(NULL AS Nullable(String))                AS project_key,
     COALESCE(f.field_id, '')                      AS field_id,

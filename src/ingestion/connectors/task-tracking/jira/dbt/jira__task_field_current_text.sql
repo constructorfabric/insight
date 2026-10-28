@@ -27,7 +27,7 @@ issue_winner AS (
 
 current_bodies AS (
     SELECT
-        assumeNotNull(i.source_id)                        AS insight_source_id,
+        CAST(i.source_id AS String)                       AS insight_source_id,
         toString(assumeNotNull(i.jira_id))                AS issue_id,
         kv.1                                              AS field_id,
         kv.2                                              AS content
@@ -35,7 +35,7 @@ current_bodies AS (
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
     ARRAY JOIN JSONExtractKeysAndValuesRaw(COALESCE(i.custom_fields_json, '{}')) AS kv
     INNER JOIN long_text_fields AS f
-        ON f.insight_source_id = assumeNotNull(i.source_id)
+        ON f.insight_source_id = CAST(i.source_id AS String)
        AND f.field_id = kv.1
     WHERE kv.2 NOT IN ('', 'null', '""', '{}')
 )

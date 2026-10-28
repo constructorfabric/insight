@@ -23,8 +23,8 @@
 
 WITH first_syncs AS (
     SELECT
-        assumeNotNull(tenant_id)                          AS tenant_id,
-        assumeNotNull(source_id)                          AS insight_source_id,
+        CAST(tenant_id AS String)                         AS tenant_id,
+        CAST(source_id AS String)                         AS insight_source_id,
         min(_airbyte_extracted_at)                        AS catalogue_first_sync,
         now64(3)                                          AS recorded_at
     FROM {{ source('bronze_jira', 'jira_fields') }}

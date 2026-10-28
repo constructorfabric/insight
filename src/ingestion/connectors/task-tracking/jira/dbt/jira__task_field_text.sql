@@ -62,14 +62,14 @@ issue_winner AS (
 
 from_snapshot AS (
     SELECT
-        assumeNotNull(i.source_id)                        AS insight_source_id,
+        CAST(i.source_id AS String)                       AS insight_source_id,
         kv.2                                              AS content,
         CAST('adf_json' AS String)                        AS content_form
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
     ARRAY JOIN JSONExtractKeysAndValuesRaw(COALESCE(i.custom_fields_json, '{}')) AS kv
     INNER JOIN long_text_fields AS f
-        ON f.insight_source_id = assumeNotNull(i.source_id)
+        ON f.insight_source_id = CAST(i.source_id AS String)
        AND f.field_id = kv.1
     WHERE kv.2 NOT IN ('', 'null', '""', '{}')
 ),

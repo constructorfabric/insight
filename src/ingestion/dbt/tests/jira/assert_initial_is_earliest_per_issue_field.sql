@@ -26,8 +26,8 @@
 
 WITH issue_created AS (
     SELECT
-        assumeNotNull(source_id)                                      AS insight_source_id,
-        assumeNotNull(jira_id)                                        AS issue_id,
+        CAST(source_id AS String)                                     AS insight_source_id,
+        CAST(jira_id AS String)                                       AS issue_id,
         argMax(parseDateTime64BestEffortOrNull(created, 3),
                _airbyte_extracted_at)                                 AS created_at
     FROM {{ source('bronze_jira', 'jira_issue') }}
