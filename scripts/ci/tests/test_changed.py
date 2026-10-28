@@ -52,7 +52,7 @@ class ChangedCliTests(unittest.TestCase):
 
         for required in [
             "insight_v3_core: ${{ steps.filter.outputs.insight_v3_core }}",
-            "src/backend/services/insight-v3-core/**",
+            "src/backend/services/insight-v3-core/!(helm)/**",
             "backend-insight-v3-core:",
             "merge-insight-v3-core:",
             "${{ env.IMAGE_PREFIX }}/insight-v3-core",

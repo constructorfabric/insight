@@ -1,17 +1,40 @@
 {{ metric_evidence_table() }}
 
--- Keyed by the source identity through `normalized_email()`, not by person:
--- the analytics runtime resolves through `identity.person_map` while it serves.
--- An unresolvable row stays and starts counting the moment it resolves.
+-- Keyed by the source identity, not by person: the analytics runtime resolves
+-- through `identity.account_assignment` first and `identity.person_map` second
+-- while it serves. An unresolvable row stays and starts counting the moment it
+-- resolves. Every row is keyed by one `entity_id`: the normalized email where
+-- the source reported one, else an opaque key naming the source account (a Zoom
+-- guest known by display name only). The outer SELECT restores the account
+-- triple beside that key; no email map carries the key, so the account path
+-- decides.
+WITH account_keys AS (
+    SELECT DISTINCT
+        tenant_id,
+        entity_id,
+        account_source_type,
+        account_source_id,
+        account_id
+    FROM (
+        SELECT
+            tenant_id,
+            {{ account_entity_key('account_source_type', 'account_source_id', 'account_id') }} AS entity_id,
+            account_source_type,
+            account_source_id,
+            account_id
+        FROM {{ ref('class_collab_meeting_activity') }} FINAL
+        WHERE account_source_type != 'email'
+    )
+)
 SELECT
     src.tenant_id,
     src.source_key,
     src.entity_type,
-    {{ normalized_email('src.entity_id') }} AS entity_id,
-    -- No account-keyed facts here; '' leaves the account join unmatched.
-    '' AS account_source_type,
-    '' AS account_source_id,
-    '' AS account_id,
+    if(coalesce(acc.account_id, '') != '', src.entity_id, {{ normalized_email('src.entity_id') }}) AS entity_id,
+    -- '' on an email-keyed row leaves the account join unmatched.
+    coalesce(acc.account_source_type, '') AS account_source_type,
+    coalesce(acc.account_source_id, '') AS account_source_id,
+    coalesce(acc.account_id, '') AS account_id,
     src.metric_date,
     src.observed_at,
     src.measure_key,
@@ -49,7 +72,11 @@ chat_source AS (
 meeting_source AS (
     SELECT
         tenant_id,
-        {{ normalized_email('person_key') }} AS entity_id,
+        if(
+            account_source_type = 'email',
+            {{ normalized_email('person_key') }},
+            {{ account_entity_key('account_source_type', 'account_source_id', 'account_id') }}
+        ) AS entity_id,
         date AS metric_date,
         meetings_attended + ifNull(calls_count, 0) AS meetings_and_calls_attended,
         meetings_organized,
@@ -65,7 +92,7 @@ meeting_source AS (
             AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS tool_dimensions
     FROM {{ ref('class_collab_meeting_activity') }} FINAL
-    WHERE person_key LIKE '%@%'
+    WHERE (account_source_type != 'email' OR person_key LIKE '%@%')
       AND date IS NOT NULL
 ),
 email_source AS (
@@ -406,3 +433,6 @@ WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL
 ) AS src
+LEFT JOIN account_keys AS acc
+    ON acc.tenant_id = src.tenant_id
+   AND acc.entity_id = src.entity_id

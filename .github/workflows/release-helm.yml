@@ -1,4 +1,4 @@
-name: Release Helm
+name: Validate Helm and publish changes
 
 on:
   workflow_call:
@@ -67,12 +67,15 @@ jobs:
         || fromJSON(inputs.build_results).changes.outputs.toolbox      == 'true'
         || fromJSON(inputs.build_results).changes.outputs.seed         == 'true'
         || fromJSON(inputs.build_results).changes.outputs.umbrella     == 'true'
+        || fromJSON(inputs.build_results).changes.outputs.validation   == 'true'
       )
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small-vm' }}
     timeout-minutes: 60
     permissions:
       contents: read
       packages: read
+    env:
+      RELEASE_REQUESTED: ${{ fromJSON(inputs.build_results).changes.outputs.release_requested }}
     outputs:
       version: ${{ steps.candidate-version.outputs.version }}
     steps:
@@ -93,6 +96,22 @@ jobs:
         with:
           version: '3.14.0'
 
+      - name: Reuse the published chart for CI-only validation
+        if: env.RELEASE_REQUESTED == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chart="oci://ghcr.io/constructorfabric/charts/insight"
+          version="$(gh api "repos/$GITHUB_REPOSITORY/contents/deploy/gitops/.insight-version?ref=main" \
+            --jq '.content' | base64 --decode | tr -d '[:space:]')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '::error::Invalid published chart version recorded on main.'; exit 1; }
+          mkdir -p dist
+          helm pull "$chart" --version "$version" --destination dist
+          printf '%s\n' "$GITHUB_SHA" > dist/source-sha
+          printf '%s\n' "$version" > dist/version
+          : > dist/release.patch
+
       # Per-service subchart appVersion bumps. Each is bumped INDEPENDENTLY,
       # only if the matching image was rebuilt this run. Services whose
       # source didn't change keep their previous appVersion → their image
@@ -104,6 +123,7 @@ jobs:
       # bump instead, in its re-triggering commit; this step is the canonical
       # path when no connector changed and bump-descriptors was skipped.
       - name: Bump per-service subchart appVersions
+        if: env.RELEASE_REQUESTED == 'true'
         env:
           BUILD_TAG: ${{ fromJSON(inputs.build_results).changes.outputs.build_tag }}
           FULL_REBUILD: ${{ github.event_name == 'workflow_dispatch' }}
@@ -118,6 +138,7 @@ jobs:
         run: .github/workflows/scripts/bump-service-appversions.sh
 
       - name: Bump ingestion image refs
+        if: env.RELEASE_REQUESTED == 'true'
         env:
           BUILD_TAG: ${{ fromJSON(inputs.build_results).changes.outputs.build_tag }}
           TOOLBOX: ${{ fromJSON(inputs.build_results).changes.outputs.toolbox }}
@@ -153,6 +174,7 @@ jobs:
       # YYYY.MM.DD.HH.MM-shortsha format correctly because the date prefix
       # is lexicographically sortable.
       - name: Bump umbrella version
+        if: env.RELEASE_REQUESTED == 'true'
         id: umbrella
         run: |
           set -euo pipefail
@@ -204,13 +226,19 @@ jobs:
         id: candidate-version
         run: |
           set -euo pipefail
-          version="$(yq -er '.version' charts/insight/Chart.yaml)"
+          if [ "$RELEASE_REQUESTED" = true ]; then
+            version="$(yq -er '.version' charts/insight/Chart.yaml)"
+          else
+            version="$(cat dist/version)"
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Resolve chart dependencies
+        if: env.RELEASE_REQUESTED == 'true'
         run: helm dependency update charts/insight
 
       - name: Save candidate source and release metadata
+        if: env.RELEASE_REQUESTED == 'true'
         env:
           VERSION: ${{ steps.candidate-version.outputs.version }}
         run: |
@@ -221,17 +249,26 @@ jobs:
           git diff --binary > dist/release.patch
 
       - name: Pin candidate images
+        if: env.RELEASE_REQUESTED == 'true'
         run: .github/workflows/scripts/pin-chart-images.sh
 
       - name: Bundle pinned dependencies
+        if: env.RELEASE_REQUESTED == 'true'
         run: helm dependency build charts/insight
 
       - name: Package the immutable candidate
+        if: env.RELEASE_REQUESTED == 'true'
         env:
           VERSION: ${{ steps.candidate-version.outputs.version }}
         run: |
           set -euo pipefail
           helm package charts/insight -d dist/
+
+      - name: Checksum the validation archive
+        env:
+          VERSION: ${{ steps.candidate-version.outputs.version }}
+        run: |
+          set -euo pipefail
           cd dist
           sha256sum "insight-$VERSION.tgz" release.patch source-sha version > SHA256SUMS
 
@@ -264,6 +301,7 @@ jobs:
     needs: [package-chart, validate-chart]
     if: |
       !cancelled()
+      && fromJSON(inputs.build_results).changes.outputs.release_requested == 'true'
       && needs.package-chart.result == 'success'
       && github.ref == 'refs/heads/main'
       && needs.validate-chart.result == 'success'
@@ -421,6 +459,7 @@ jobs:
   publish-release-chart:
     if: |
       always()
+      && fromJSON(inputs.build_results).changes.outputs.release_requested == 'true'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && !(github.event_name == 'workflow_dispatch' && inputs.frontend_only)
       && startsWith(github.ref, 'refs/heads/release-')
