@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use super::{KindError, Reference};
 use crate::domain::datasets::Datasets;
-use crate::domain::definition::{DefinitionKind, DefinitionName, Lookup};
+use crate::domain::definition::{DefinitionId, DefinitionKind, Lookup};
 use crate::domain::kinds::dataset::declaration::BUCKET_COLUMN;
 use crate::domain::kinds::metric::answerable::effective_clock;
 use crate::domain::query::metric_query::MetricQuery;
@@ -204,7 +204,7 @@ pub(crate) async fn check(
     let widget: Widget =
         serde_json::from_value(body.clone()).map_err(|error| KindError::Widget(error.into()))?;
 
-    let metric_name = DefinitionName::parse(widget.metric())
+    let metric_name = DefinitionId::parse(widget.metric())
         .map_err(|_| KindError::Widget(WidgetError::NoMetric(widget.metric().to_owned())))?;
 
     let stored = definitions
@@ -234,7 +234,7 @@ pub(crate) async fn check(
 
 /// A stored metric, read as one, or the refusal that there is none.
 async fn stored_metric(named: &str, definitions: &dyn Lookup) -> Result<MetricQuery, KindError> {
-    let name = DefinitionName::parse(named)
+    let name = DefinitionId::parse(named)
         .map_err(|_| KindError::Widget(WidgetError::NoMetric(named.to_owned())))?;
 
     let stored = definitions
@@ -264,6 +264,19 @@ async fn clocked(metric: &MetricQuery, datasets: &dyn Datasets) -> bool {
 }
 
 const METRIC_KEYS: [&str; 2] = ["metric", "detail"];
+
+/// The metric a widget draws, when its body names one readably.
+pub(crate) fn drawn_metric(body: &Value) -> Option<&str> {
+    body.get("metric")?.as_str()
+}
+
+/// The metric a reader drills into: the widget's detail, else the metric it
+/// draws.
+pub(crate) fn drilled_metric(body: &Value) -> Option<&str> {
+    body.get("detail")
+        .and_then(Value::as_str)
+        .or_else(|| drawn_metric(body))
+}
 
 /// The metrics a widget draws and drills into, when its body names them
 /// readably. One metric named twice is one reference.

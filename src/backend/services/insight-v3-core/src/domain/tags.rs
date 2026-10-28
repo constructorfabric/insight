@@ -3,15 +3,16 @@ use std::fmt;
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::definition::{
-    DefinitionKind, DefinitionName, DefinitionStoreError, NamePage, Page,
-};
-use crate::domain::folders::FolderFilter;
+use crate::domain::access::{Caller, DASHBOARD_NOT_EDITOR, Owner, Refused};
+use crate::domain::dashboards::sight;
+use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionStoreError};
+use crate::domain::folders::DefinitionStore;
 
 const MAX_NAME_CHARS: usize = 32;
 
 pub(crate) const MAX_TAGS_PER_DASHBOARD: usize = 10;
 
+/// Per owner, the ownerless scope included.
 pub(crate) const MAX_TAGS: usize = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,9 +104,11 @@ pub(crate) enum TagError {
     FilterTooWide,
     #[error("{0} are not tagged")]
     NotTagged(&'static str),
-    #[error("no dashboard is named `{0}`")]
+    #[error("no dashboard has the id `{0}`")]
     DashboardNotFound(String),
-    #[error("at most {MAX_TAGS} tags can exist; reuse one that does")]
+    #[error("{DASHBOARD_NOT_EDITOR}")]
+    NotEditor,
+    #[error("at most {MAX_TAGS} tags can exist per owner; reuse one that does")]
     TooMany,
     #[error(transparent)]
     Store(#[from] DefinitionStoreError),
@@ -125,19 +128,40 @@ impl From<sea_orm::DbErr> for TagError {
 
 #[async_trait]
 pub(crate) trait Tags: Send + Sync + fmt::Debug {
-    async fn list_tags(&self) -> Result<Vec<TagSummary>, TagError>;
+    /// The names of the tags on dashboards the caller sees, each counting
+    /// those dashboards; one name held in several scopes is one entry.
+    async fn list_tags(&self, caller: Caller) -> Result<Vec<TagSummary>, TagError>;
 
-    async fn tags_of(&self, dashboard: &DefinitionName) -> Result<Vec<TagName>, TagError>;
+    async fn tags_of(&self, dashboard: &DefinitionId) -> Result<Vec<TagName>, TagError>;
 
-    async fn set_tags(&self, dashboard: &DefinitionName, tags: &TagSet) -> Result<(), TagError>;
-
-    async fn page_tagged(
+    /// Replaces the dashboard's tags with tags of `scope`, its owner's,
+    /// making any that scope does not hold yet.
+    async fn set_tags(
         &self,
-        needle: &str,
-        page: Page,
-        folder: Option<FolderFilter>,
-        tags: &TagFilter,
-    ) -> Result<NamePage, TagError>;
+        dashboard: &DefinitionId,
+        scope: Owner,
+        tags: &TagSet,
+    ) -> Result<(), TagError>;
+}
+
+/// Sets the tags of a dashboard the caller may change, in its owner's scope
+/// even when an editor sets them.
+pub(crate) async fn retag(
+    store: &dyn DefinitionStore,
+    caller: Caller,
+    dashboard: &DefinitionId,
+    tags: &TagSet,
+) -> Result<(), TagError> {
+    let seen = sight(store, dashboard, caller)
+        .await?
+        .ok_or_else(|| TagError::DashboardNotFound(dashboard.as_str().to_owned()))?;
+    seen.access.change().map_err(|refused| match refused {
+        Refused::NotEditor | Refused::NotOwner | Refused::Ownerless | Refused::EditorByFolder => {
+            TagError::NotEditor
+        }
+    })?;
+
+    store.set_tags(dashboard, seen.owner, tags).await
 }
 
 #[cfg(test)]

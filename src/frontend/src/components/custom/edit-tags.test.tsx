@@ -6,7 +6,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchDashboardRead: vi.fn(),
     setDashboardTags: vi.fn(),
     fetchFolders: vi.fn(),
-    fetchDashboardFolder: vi.fn(),
   };
 });
 
@@ -27,8 +26,13 @@ const TAGS = [
 
 function carrying(tags: string[]) {
   vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+    name: "delivery",
     body: { title: "Delivery", widgets: [] },
     tags,
+    ownerPersonId: null,
+    access: "ownerless",
+    folders: [],
+    carries: true,
   });
 }
 
@@ -39,7 +43,6 @@ beforeEach(() => {
     folders: [],
     unfiled: 1,
   });
-  vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
   vi.mocked(customClient.setDashboardTags).mockResolvedValue(undefined);
   carrying(["Ops"]);
 });
@@ -51,7 +54,7 @@ async function openTagsDialog(staleTime = 0) {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <DashboardMenu name="delivery" />
+      <DashboardMenu id="delivery" name="delivery" access="ownerless" />
     </QueryClientProvider>
   );
 
@@ -261,7 +264,15 @@ describe("the tags dialog", () => {
 
     const { user } = await openTagsDialog();
     await user.type(screen.getByRole("textbox", { name: "Add tag" }), "Qa{Enter}");
-    arrive({ body: { title: "Delivery", widgets: [] }, tags: ["Ops"] });
+    arrive({
+      name: "delivery",
+      body: { title: "Delivery", widgets: [] },
+      tags: ["Ops"],
+      ownerPersonId: null,
+      access: "ownerless",
+      folders: [],
+      carries: true,
+    });
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Done" })).toBeEnabled()
     );

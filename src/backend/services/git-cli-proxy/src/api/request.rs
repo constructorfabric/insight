@@ -115,7 +115,7 @@ pub enum BadRequest {
     BadRepoUrl(#[from] CloneUrlError),
     #[error("query parameters could not be parsed")]
     MalformedQuery,
-    #[error("{0} is not an RFC 3339 instant")]
+    #[error("{0} is not an RFC 3339 instant or a YYYY-MM-DD date")]
     MalformedInstant(&'static str),
 }
 

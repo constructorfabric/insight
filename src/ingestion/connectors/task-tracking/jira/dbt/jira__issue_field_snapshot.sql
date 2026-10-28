@@ -54,7 +54,6 @@ WITH winner AS (
         jira_id,
         argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE jira_id IS NOT NULL
     GROUP BY tenant_id, source_id, jira_id
 ),
 
@@ -62,8 +61,8 @@ WITH winner AS (
 unpivoted AS (
     SELECT
         i.tenant_id                                                   AS tenant_id,
-        COALESCE(i.source_id, '')                                     AS insight_source_id,
-        COALESCE(toString(i.jira_id), '')                             AS issue_id,
+        CAST(i.source_id AS String)                                   AS insight_source_id,
+        CAST(i.jira_id AS String)                                     AS issue_id,
         COALESCE(toString(i.id_readable), '')                         AS id_readable,
         COALESCE(parseDateTime64BestEffortOrNull(i.created, 3),
                  toDateTime64(0, 3))                                  AS created_at,

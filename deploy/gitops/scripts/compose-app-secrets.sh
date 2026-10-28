@@ -80,8 +80,8 @@ CH_USER=$( yq -r '.clickhouse.username'      "$VALUES")
 CH_DB=$(   yq -r '.clickhouse.database'      "$VALUES")
 # Topology of the warehouse (epic #2010). The chart renders these into the
 # service Secrets under credentials.autoGenerate; in gitops mode this script is
-# the only place they come from, and a service without them renders standalone
-# DDL into a Replicated database.
+# the only place they come from, and a service without them refuses to start
+# against a Replicated database (assert_database_topology).
 CH_CLUSTER_MODE=$(yq -r '.clickhouse.clusterMode // false' "$VALUES")
 CH_CLUSTER_NAME=$(yq -r '.clickhouse.clusterName // ""'    "$VALUES")
 CORE_CONFIG_SECRET=$(yq -r '.insightV3Core.existingSecret // ""' "$VALUES")

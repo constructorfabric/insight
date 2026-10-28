@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useRouterState } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import type { DeclaredField } from "@/api/custom-client";
@@ -19,6 +19,7 @@ import {
   datasetDependentsQuery,
   datasetQuery,
   datasetRecordsQuery,
+  metricQuery,
   PREVIEW_ROWS,
 } from "@/queries/custom";
 import { TEXT_BODY, TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";
@@ -319,6 +320,9 @@ function storedColumns(raw: string): string[] | undefined {
 /** Every metric that reads this dataset, which a removal would break. */
 function Dependents({ name }: { name: string }) {
   const dependents = useQuery(datasetDependentsQuery(name));
+  const metrics = useQueries({
+    queries: (dependents.data ?? []).map((id) => metricQuery(id)),
+  });
 
   return (
     <Held
@@ -326,9 +330,10 @@ function Dependents({ name }: { name: string }) {
       empty="Nothing reads it, so it can be taken away."
       pending={dependents.isPending}
       error={dependents.error}
-      holders={dependents.data?.map((metric) => ({
+      holders={dependents.data?.map((id, index) => ({
         kind: "metrics" as const,
-        name: metric,
+        id,
+        name: metrics[index]?.data?.name ?? id,
       }))}
     />
   );

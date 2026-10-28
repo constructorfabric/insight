@@ -94,8 +94,8 @@ WITH latest_state AS (
 issue_freshness AS (
     SELECT
         COALESCE(tenant_id, '')                     AS tenant_id,
-        COALESCE(source_id, '')                     AS insight_source_id,
-        COALESCE(toString(jira_id), '')             AS issue_id,
+        CAST(source_id AS String)                   AS insight_source_id,
+        CAST(jira_id AS String)                     AS issue_id,
         max(_airbyte_extracted_at)                  AS issue_seen_at
     FROM {{ source('bronze_jira', 'jira_issue') }}
     GROUP BY tenant_id, insight_source_id, issue_id

@@ -516,7 +516,7 @@ All write verbs append to the `persons` journal (never update/delete), record th
 
 | Aspect | Value |
 |---|---|
-| Tables | `identity_inputs` (MergeTree, connector-written), `identity.identity_persons` (mirror, swapped atomically) |
+| Tables | `identity_inputs` (`ReplacingMergeTree(_version)` through the `insight_engine` macro, connector-written), `identity.identity_persons` (mirror, swapped atomically) |
 | Version | 24.x+ (for `generateUUIDv7()` support) |
 | Access | Read by persons-seed; written by dbt (inputs) and persons-sync (mirror) |
 | Connection | HTTP interface / native protocol |
@@ -666,7 +666,7 @@ The models are incremental (`append` strategy): each run processes only `fields_
 
 **ORDER BY**: `(insight_tenant_id, insight_source_id, value_type, value, _synced_at)`
 
-**Engine**: `MergeTree`
+**Engine**: `ReplacingMergeTree(_version)` through the dbt `insight_engine` macro (`ReplicatedReplacingMergeTree` on a cluster)
 
 **Normalization rules**: applied by consumers at read time, never at write time (raw values are preserved in this table). The seed groups by lowercased e-mail; the analytics macro applies `lower(trim(...))` to both join sides; the future matcher defines its own per-rule normalization (§4.2).
 

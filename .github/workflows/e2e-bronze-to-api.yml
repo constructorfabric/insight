@@ -18,11 +18,11 @@ name: E2E bronze to API
 # Topology: a cheap `changes` job decides whether the diff can reach the data
 # path at all and everything expensive hangs off it. The suite is a shard
 # matrix, one leg per metric class plus one for identity: each leg raises a
-# MINIMAL compose stand of its own (`dev-compose.sh test-stand minimal` —
-# identity and the realm seeded, the warehouse empty), pulls the chart-pinned
-# backend images or, when the diff touched the backend, mounts the binaries
-# and loads the gateway/insight-v3-core images `build-backend` produced once
-# for every shard, runs its
+# MINIMAL compose stand of its own (`dev-compose.sh test-stand minimal
+# --pinned` — identity and the realm seeded, the warehouse empty), pulls the
+# chart-pinned backend images or, when the diff touched the backend, mounts
+# the binaries and loads the gateway/insight-v3-core images `build-backend`
+# produced once for every shard, runs its
 # directories of the suite host-side with uv, and the metric legs upload that
 # session's `.artifacts/` for `metric-coverage-gate`, a pure-Python check over
 # two JSON files: the builtin metric catalogue the run read from analytics, and
@@ -396,7 +396,7 @@ jobs:
           BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
         run: |
           set -euo pipefail
-          flags=()
+          flags=(--pinned)
           if [ "$BUILD_BACKEND" = "true" ]; then
             flags+=(--build-backend --skip-build)
             # The two image-run services take the images build-backend built

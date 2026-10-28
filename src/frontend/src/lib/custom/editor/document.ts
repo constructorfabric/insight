@@ -1,4 +1,5 @@
-import type { Path } from "./describe";
+/** A path into a document, as a violation names it: `fields[0].type`. */
+export type Path = readonly (string | number)[];
 
 // INVARIANT: there is one document, not two copies. The fields and the text are
 // two views of it, and whichever was edited last is believed; text that does not

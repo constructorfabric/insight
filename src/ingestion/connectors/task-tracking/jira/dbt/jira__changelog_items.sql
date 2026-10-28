@@ -45,7 +45,7 @@ WITH winner AS (
 
 exploded AS (
     SELECT
-        COALESCE(h.source_id, '')                                AS insight_source_id,
+        CAST(h.source_id AS String)                              AS insight_source_id,
         ifNull(h.tenant_id, '')                                  AS tenant_id,
         COALESCE(h.id_readable, '')                              AS id_readable,
         h.jira_id                                                AS jira_id,

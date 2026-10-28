@@ -1,13 +1,16 @@
 //! What the model is told before it is asked anything.
 
 use super::Catalogue;
+use crate::domain::definition::Listed;
 
 pub(super) fn system_prompt(datasets: &str, catalogue: &Catalogue) -> String {
     let mut prompt = String::from(
         "You are the Insight v3 chat assistant. Answer by calling exactly one tool.\n\
          Write replies as plain prose. No markdown: asterisks and hashes are shown as typed.\n\n\
          - Call `answer` to answer a question: it runs one query and stores nothing. Leave the query out when the question is about what data exists.\n\
-         - Call `create` to build definitions to store. Pass the metric, the widgets and the dashboard as {\"name\":<string>,\"body\":<object>}, where the name is the identifier and the body is the definition. A create that carries none of the three is refused, and a dashboard needs the metric and widgets it draws.\n\n\
+         - Call `create` to build definitions to store. Pass the metric, the widgets and the dashboard as {\"name\":<string>,\"body\":<object>}, where the name is what a reader calls it and the body is the definition. A create that carries none of the three is refused, and a dashboard needs the metric and widgets it draws.\n\
+         Within one create, a widget names its metric by that metric's name, and a dashboard names its widgets by theirs; give each widget its own name. To draw something already built, name it by its id from the lists below instead.\n\
+         Every item is new unless it carries the id of a built one as {\"id\":<id>,\"name\":<string>,\"body\":<object>}, which replaces it. A name is only a label: reusing one without the id builds a second definition beside the first.\n\n\
          A MetricQuery reads one dataset: {\"dataset\":<string>,\"fields\":[{\"field\":<declared field>,\"type\":\"string\"|\"int\"|\"float\",\"agg\":\"count\"|\"sum\"|\"avg\"|\"min\"|\"max\"|null,\"as_name\":<string>}],\"group_by\":[<string>],\"filters\":[{\"field\":<declared field>,\"type\":<field type>,\"op\":\"eq\"|\"ne\"|\"gt\"|\"gte\"|\"lt\"|\"lte\",\"value\":<value>}],\"order_by\":{\"field\":<as_name>,\"direction\":\"asc\"|\"desc\"}|null,\"limit\":<int>|null}.\n\
          Every `field` names a field the dataset declares, spelled exactly as the list below spells it. A metric never says where a value sits in a record: the dataset already does.\n\
          `count` with no `field` counts records. Only a field declared as a number can be summed or averaged; grouping, filtering, counting, the smallest and the largest are open to every type.\n\
@@ -18,9 +21,9 @@ pub(super) fn system_prompt(datasets: &str, catalogue: &Catalogue) -> String {
          A rate is two fields and a third that divides them: give each half its own `when` condition, then a field with \"divide\":[numerator,denominator] and \"percent\":true where a percentage is what the question asked for.\n\
          Where a declared field holds a person the rows already read the name that person is known by, so group by that field rather than by any other name in the record.\n\
          A widget draws its metric's columns by their as_name: a metric whose as_name is total_lines is drawn as y total_lines.\n\
-         A widget is one of: {\"type\":\"table\",\"metric\":<metric name>,\"columns\":[<string>]}; {\"type\":\"line\"|\"bar\"|\"area\",\"metric\":<metric name>,\"x\":<string>,\"y\":<string>}; {\"type\":\"stat\",\"metric\":<metric name>,\"value\":<string>,\"label\":<string>}; {\"type\":\"pie\",\"metric\":<metric name>,\"label\":<string>,\"value\":<string>}.\n\
+         A widget is one of: {\"type\":\"table\",\"metric\":<metric>,\"columns\":[<string>]}; {\"type\":\"line\"|\"bar\"|\"area\",\"metric\":<metric>,\"x\":<string>,\"y\":<string>}; {\"type\":\"stat\",\"metric\":<metric>,\"value\":<string>,\"label\":<string>}; {\"type\":\"pie\",\"metric\":<metric>,\"label\":<string>,\"value\":<string>}.\n\
          Pick the one that answers the question: a count per category is a bar, a count over time is a line, a running total is an area, a single number is a stat, a share of a total is a pie, and anything with several columns worth reading is a table.\n\
-         A dashboard is {\"title\":<string>,\"items\":[<item>]}, drawn top to bottom. An item is {\"widget\":<widget name>}, {\"heading\":<string>} for a section title over the widgets that follow, or {\"text\":<string>} for a line saying what a number means or leaves out. Group the widgets under headings when a board holds more than a handful.\n",
+         A dashboard is {\"title\":<string>,\"items\":[<item>]}, drawn top to bottom. An item is {\"widget\":<widget>}, {\"heading\":<string>} for a section title over the widgets that follow, or {\"text\":<string>} for a line saying what a number means or leaves out. Group the widgets under headings when a board holds more than a handful.\n",
     );
 
     prompt.push_str("\nThe datasets you may read:\n\n");
@@ -35,13 +38,12 @@ pub(super) fn system_prompt(datasets: &str, catalogue: &Catalogue) -> String {
     if catalogue.is_empty() {
         prompt.push_str("\nNothing is built yet.\n");
     } else {
-        for (kind, names) in catalogue.built() {
-            push_catalogue(&mut prompt, kind.plural(), names);
+        for (kind, listed) in catalogue.built() {
+            push_catalogue(&mut prompt, kind.plural(), listed);
         }
         prompt.push_str(
-            "\nReusing a name replaces what is stored under it, which is how a \
-             dashboard is changed: build it again with the widgets it should \
-             hold now.\n",
+            "\nA dashboard is changed by building it again under its id, with \
+             the widgets it should hold now.\n",
         );
     }
 
@@ -58,14 +60,19 @@ fn capitalized(word: &str) -> String {
     }
 }
 
-fn push_catalogue(prompt: &mut String, label: &str, names: &[String]) {
-    if names.is_empty() {
+fn push_catalogue(prompt: &mut String, label: &str, listed: &[Listed]) {
+    if listed.is_empty() {
         return;
     }
 
     prompt.push('\n');
     prompt.push_str(&capitalized(label));
-    prompt.push_str(" already built: ");
-    prompt.push_str(&names.join(", "));
-    prompt.push('\n');
+    prompt.push_str(" already built, as id: name\n");
+    for one in listed {
+        prompt.push_str("- ");
+        prompt.push_str(&one.id);
+        prompt.push_str(": ");
+        prompt.push_str(&one.name);
+        prompt.push('\n');
+    }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sourced by run.sh: the two services that write ClickHouse themselves, run
+# Sourced through creators.sh: the two services that write ClickHouse themselves, run
 # from this tree's binaries against the rig's warehouse through the proxy, and
 # what every node must hold afterwards.
 #

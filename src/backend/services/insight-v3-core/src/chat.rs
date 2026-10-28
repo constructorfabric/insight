@@ -17,9 +17,9 @@ use utoipa::ToSchema;
 use anthropic::Anthropic;
 use conversation::{converse, thread};
 use prompt::system_prompt;
-pub(crate) use proposal::Proposal;
+pub(crate) use proposal::{Proposal, Proposed};
 
-use crate::domain::definition::DefinitionKind;
+use crate::domain::definition::{DefinitionKind, Listed};
 use crate::domain::query::metric_query::{MetricQueryError, People};
 
 const CHAT_TIMEOUT_SECS: u64 = 30;
@@ -33,22 +33,23 @@ pub(crate) struct Turn {
     pub(crate) content: String,
 }
 
-/// What is already stored, so the model can name it, reuse it and replace it.
+/// What is already stored, by id and name, so the model can draw it and
+/// replace it.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Catalogue {
-    built: Vec<(DefinitionKind, Vec<String>)>,
+    built: Vec<(DefinitionKind, Vec<Listed>)>,
 }
 
 impl Catalogue {
-    pub(crate) fn new(built: Vec<(DefinitionKind, Vec<String>)>) -> Self {
+    pub(crate) fn new(built: Vec<(DefinitionKind, Vec<Listed>)>) -> Self {
         Self { built }
     }
 
     fn is_empty(&self) -> bool {
-        self.built.iter().all(|(_, names)| names.is_empty())
+        self.built.iter().all(|(_, listed)| listed.is_empty())
     }
 
-    fn built(&self) -> &[(DefinitionKind, Vec<String>)] {
+    fn built(&self) -> &[(DefinitionKind, Vec<Listed>)] {
         &self.built
     }
 }
@@ -93,6 +94,8 @@ pub(crate) enum ChatError {
     NoDataset { known: String },
     #[error("a create must carry at least one metric, widget or dashboard")]
     EmptyCreate,
+    #[error("two {kind} in one create are both named `{name}`; give each its own name")]
+    SharedName { kind: &'static str, name: String },
     #[error("the model kept asking what the datasets declare instead of answering")]
     TooManyLookups,
     #[error("the key was rejected upstream")]
@@ -117,6 +120,7 @@ impl ChatError {
             | Self::UnknownDataset { .. }
             | Self::NoDataset { .. }
             | Self::EmptyCreate
+            | Self::SharedName { .. }
             | Self::TooManyLookups
             | Self::TokenRejected
             | Self::Unavailable

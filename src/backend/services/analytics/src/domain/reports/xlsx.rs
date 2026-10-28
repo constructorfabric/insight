@@ -79,7 +79,9 @@ impl ReportXlsxSerializer {
         workbook
             .set_tempdir(temp_dir)
             .map_err(ReportXlsxError::Serialization)?;
-        let worksheet = workbook.add_worksheet_with_constant_memory();
+        let worksheet = workbook
+            .add_worksheet_with_constant_memory()
+            .map_err(ReportXlsxError::Serialization)?;
         let header_format = Format::new().set_bold().set_background_color("D9EAF7");
         for (column_index, column) in columns.iter().enumerate() {
             let column_index = u16::try_from(column_index)

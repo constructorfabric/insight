@@ -136,7 +136,13 @@ The umbrella validator (`templates/_helpers.tpl` → `insight.validate`) fails f
 A clustered ClickHouse needs `Replicated*` table engines and, depending on how
 its databases were created, an `ON CLUSTER` clause; a single node needs
 neither. Two chart values carry that one decision to every creator in the
-release, and they are the only place an operator sets it:
+release, and they are the one place an operator sets it. Under
+`credentials.autoGenerate: false` the chart renders no service Secrets:
+`deploy/gitops/scripts/compose-app-secrets.sh` builds them from the same two
+`values.yaml` keys, so a flip reaches identity-resolution and v3-core only once
+the composer has re-run and the Secrets are re-sealed; until then the two
+services hold the old pair and refuse to start against a database whose engine
+contradicts it.
 
 - `clickhouse.clusterMode` (bool, default `false`) — created engines replicate.
 - `clickhouse.clusterName` (string, default `""`) — the cluster the few
@@ -145,7 +151,12 @@ release, and they are the only place an operator sets it:
   whenever `clusterMode` is on, and `helm template` fails without it:
   replicated DDL that reaches only the node a creator connected to leaves
   every other replica without the relation. Every creator downstream reads
-  the pair from this release, so this is the one place it is checked.
+  the pair from this release; the chart check is the earliest, and
+  `scripts/lib/ch-topology.sh`, `compose_destination_config.py` and the
+  sweep's `ledger.py` refuse the flag without a name again at run time. The
+  name is a bare ClickHouse identifier (`^[A-Za-z_][A-Za-z0-9_]*$`,
+  `insight.clickhouse.requireNamedCluster`): every creator splices it into
+  DDL unquoted. That check is separate from `insight.validate`.
 
 Reading the pair is not the same as emitting a clause, and the table below says
 which layer does what. The Rust services emit no `ON CLUSTER` and create no
@@ -178,9 +189,10 @@ is the only site that creates a ClickHouse database, so the `Replicated`
 database engine has exactly one place to appear. Inside such a database every
 later DDL is logged in Keeper and replayed on every replica, which is what lets
 a creator state a table without naming a cluster. The
-`clickhouse-databases` pre-install Hook and the `clickhouse-migrate`
-post-install Hook both run that script; `clickhouse.createDatabases: false`
-turns the pre-install one off for a warehouse provisioned out of band. The
+`clickhouse-databases` Hook (`pre-install,pre-upgrade`, weight 5) and the
+`clickhouse-migrate` Hook (`post-install,post-upgrade`, weight 200) both run
+that script; `clickhouse.createDatabases: false` turns the first one off for
+a warehouse provisioned out of band. The
 roles and grant-less users ride along in the same script, from both Hooks;
 `clickhouse.provisionAccess: false` leaves those to the operator while the
 databases are still created and checked.
@@ -192,9 +204,33 @@ through `insight_engine` and the numbered migrations spell their engine behind
 `/*@@REPLICATED@@*/` — a SQL comment, so the file stays executable unrendered
 for the harnesses that apply it against a single node.
 
-What a clustered install needs belongs to the server, not to this release, so
-the deploy checks it before it creates or grants anything, and each refusal
-carries its own remedy:
+What a clustered install needs belongs to the server, not to this release:
+
+- one shard with N replicas. Nothing in this repo creates a `Distributed`
+  table; every creator emits `Replicated*` only, so a second shard holds
+  nothing Insight writes;
+- Keeper, the `{shard}` / `{replica}` macros, and the cluster `clusterName`
+  names in every node's `<remote_servers>`, with `internal_replication` true
+  and an interserver `<secret>` (the bronze sweep runs on the peers as the
+  deploy user);
+- SQL-created access stored in Keeper: a `<replicated>` entry in
+  `<user_directories>` ahead of any writable `local_directory`. The guard
+  counts `type = 'replicated'` rows only, so a local directory listed first
+  passes it and still catches every `CREATE ROLE`. Or
+  `clickhouse.provisionAccess: false`;
+- `clickhouse.host` at a load balancer over the replicas;
+- `clickhouse.runMigrations: true`: the post-install Hook is what checks and
+  converges the databases on every upgrade;
+- a deploy user holding `CREATE DATABASE`, `REMOTE ON *.*` and reads of
+  `system.zookeeper`, `system.distributed_ddl_queue`, `system.user_directories`,
+  `system.macros` and `system.clusters` (a denied `system.zookeeper` read is
+  reported as "no Keeper");
+- Airbyte's `destination-clickhouse` at 2.1.29 or later
+  (`reconcile-connectors/python/check_destination_version.py`; reconcile
+  refuses an older one).
+
+The deploy checks what it can before it creates or grants anything, and each
+refusal carries its own remedy:
 
 | Guard | What it reads | Why |
 | --- | --- | --- |
@@ -219,11 +255,15 @@ runs usually fails it, but not through the coordinated DDL: a `CREATE` or
 (`throw_only_active`, 60 s per statement from the hooks, 30 s from a service)
 and fails only while the departed one is still counted; once its session has
 expired, the statement completes on the others and the absent replica
-replays its queue on return, which the completeness guard reports as a note
-on the next deploy. What does fail outright is every mutation and ALTER,
-which run with `mutations_sync` / `alter_sync` 2 and wait for every replica
-until the transport ceiling fails the deploy, and every quorum insert, which
-fails rather than leave one replica with the old rows. So does a heal whose
+replays its queue on return. The completeness guard notes a `CREATE DATABASE`
+only while it is still queued for the inactive host; by the next deploy the
+replica must be back anyway, and has usually replayed it. What does fail
+outright is every mutation and ALTER, which run with `mutations_sync` /
+`alter_sync` 2: ClickHouse waits for an inactive replica for
+`replication_wait_for_inactive_replica_timeout` (120 s by default; nothing
+here changes it) and then fails the statement as unfinished. So does every
+quorum insert, which fails rather than leave one replica with the old rows,
+and a heal whose
 table probe the balancer could not answer: the hook stops there instead of
 skipping the heal as if the table were absent. Nothing is retried around the
 absent replica: restore it and re-run the deploy, which is idempotent. The
@@ -231,8 +271,9 @@ two hook Jobs carry an `activeDeadlineSeconds` sized from those ceilings.
 
 A two-replica cluster loses its quorum writes during a replica restart:
 `insert_quorum = auto` is a majority, and the majority of two is both, so
-each connector sync's dbt build, the deploy hook's heals and the persons
-sync fail until the replica is back. The destination's bronze writes,
+each connector sync's dbt build, the deploy hook's heals, the field-value-map
+seed, the reconcile sweep's ledger writes and the persons sync fail until the
+replica is back. The destination's bronze writes,
 `insight-v3-core`'s dataset records and analytics' usage events carry no
 quorum and keep landing. Three replicas tolerate one down.
 
@@ -243,12 +284,15 @@ tables to the replicated engines first, along the
 (`src/ingestion/scripts/convert-database-to-cluster.sh`, one database at a
 time, on the node that holds it), and the guards above refuse the deploy
 until it has — in both directions, so the way back is in the runbook too.
-The replicated leg of
-[`cluster-mode.yml`](../../.github/workflows/cluster-mode.yml) runs the full
-deploy hook, a connector's bronze and its dbt build twice on a two-replica
-warehouse, compares every node, and then asserts that a plain bronze table left
-on one replica is refused by name; its conversion leg executes the runbook on
-a standalone install made on one of the replicas. Its rig
+[`cluster-mode.yml`](../../.github/workflows/cluster-mode.yml) runs four legs
+in the merge queue (umbrella check "Cluster rig"): a standalone leg; a
+replicated leg that runs the full deploy hook, a connector's bronze and its
+dbt build twice on a two-replica warehouse and compares every node; a
+warm-upgrade leg that upgrades a warm installation on that warehouse; and a
+conversion leg that executes the runbook on a standalone install made on one
+of the replicas. The standalone and replicated legs also deploy what the
+warehouse must refuse: the flag the wrong way round, a plain bronze table from
+before the flip, a replica down. Its rig
 ([`src/ingestion/tests/cluster-rig`](../../src/ingestion/tests/cluster-rig/README.md))
 also spells out what a clustered ClickHouse must provide before Insight installs
 onto it.
@@ -268,7 +312,7 @@ Key groups:
 - `identityResolution.*` — identity-resolution service (must stay deployed; `rosterSourceType` for email-mode logins)
 - `keycloak.deploy` + `keycloakConfig.*` — the in-stack identity broker and its realms-as-code hook
 - `clickhouse.clusterMode` / `clickhouse.clusterName` — warehouse topology, see [ClickHouse topology](#clickhouse-topology)
-- `clickhouse.createDatabases` — whether the pre-install Hook creates the release's ClickHouse databases; the post-install Hook converges them either way (see [ClickHouse topology](#clickhouse-topology))
+- `clickhouse.createDatabases` — whether the pre-install Hook creates the release's ClickHouse databases. `false` is for a warehouse provisioned out of band: the post-install Hook converges them only with `clickhouse.runMigrations: true` and `ingestion.toolboxImage` set, and on a fresh install with v3-core deployed its pre-install migrate Job (weight 10) asserts `insight_datasets` before that Hook runs, so the install fails unless the database already stands (see [ClickHouse topology](#clickhouse-topology))
 - `clickhouse.provisionAccess` — whether the release provisions the ClickHouse roles and grant-less users beside them; `false` leaves access to the operator (a cluster without a replicated user directory)
 - `clickhouse.fieldValueMap.*` — insert-only seed of operator-authored `config.field_value_map` / `config.field_value_defaults` rows from a TSV ConfigMap (post-upgrade hook, weight 300)
 - `previews.*`, `gitCliProxy.*`, `frontend.*` — optional services, on by default

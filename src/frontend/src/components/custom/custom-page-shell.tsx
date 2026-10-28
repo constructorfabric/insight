@@ -20,9 +20,20 @@ export function CustomPageShell({
   chat,
 }: {
   children: ReactNode;
-  chat: ReactNode;
+  /** Absent for a caller the assistant is not open to. */
+  chat?: ReactNode;
 }) {
   const [hidden, setHidden] = useState(remembered);
+
+  if (chat === undefined) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="@container relative min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
+          {children}
+        </div>
+      </div>
+    );
+  }
 
   function toggle() {
     setHidden((wasHidden) => {
@@ -42,7 +53,7 @@ export function CustomPageShell({
         {children}
       </div>
       {hidden ? (
-        <div className="flex shrink-0 justify-center border-t bg-sidebar p-2 lg:w-12 lg:border-t-0 lg:border-s">
+        <div className="flex shrink-0 justify-center border-t bg-sidebar p-2 lg:w-12 lg:border-s lg:border-t-0">
           <Button
             variant="ghost"
             size="icon-sm"
