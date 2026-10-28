@@ -31,6 +31,7 @@ import { routeTree } from "@/routeTree.gen";
 import * as customClient from "@/api/custom-client";
 import * as identityClient from "@/api/identity-client";
 import { ADMIN_ROLE_ID } from "@/queries/identity-me";
+import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 
 vi.mock("@/api/custom-client");
 vi.mock("@/api/identity-client");
@@ -101,6 +102,7 @@ beforeEach(() => {
   // Opening the assistant is remembered per browser, and jsdom's storage
   // outlives a test.
   window.localStorage.clear();
+  setPortalShowPlanned(true);
   // The shell measures the viewport to decide whether the context pane is in
   // flow or off-canvas; jsdom implements no media queries.
   vi.stubGlobal(
@@ -124,6 +126,7 @@ beforeEach(() => {
 
 afterEach(() => {
   authStore.reset();
+  setPortalShowPlanned(false);
   vi.unstubAllGlobals();
 });
 
