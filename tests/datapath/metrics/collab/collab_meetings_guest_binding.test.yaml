@@ -1,0 +1,41 @@
+spec_version: 1
+description: >
+  Metric: collab.meetings_count and collab.meeting_hours — a Zoom joiner no Zoom
+  user is named after is kept as a guest account that an operator binds to a person.
+  How it's computed (bronze → silver → gold):
+    • bronze: the account's Zoom user list and the participant sessions of each
+      meeting; a joiner who did not sign in carries only a display name.
+    • silver: a session whose display name matches no Zoom user is kept under a
+      guest account keyed on the normalized name, with no email; the identity
+      inputs state that account once the name has been seen on two days.
+    • gold:   the row carries the account triple instead of an email, so the
+      analytics runtime attributes it through the account binding an operator
+      made, and to nobody while no binding exists.
+
+  Cast (Engineering), meetings z1 on Dec 10 and z2 on Dec 11, 10:00–11:00, everyone there the whole hour:
+    alice — signed in both days → 2 meetings, 2 h (control).
+    bob   — unsigned as "Bobby B" both days, no Zoom user by that name; the operator
+            binds the guest account to bob → 2 meetings, 2 h.
+    carol — unsigned as "Caro" both days, never bound → nobody.
+  Cases: signed-in control · a bound guest account attributes its sessions ·
+  an unbound guest account attributes nobody.
+
+identity_accounts:
+  - {source_type: zoom-guest, source_id: zoom-test, account_id: "bobby b", person: bob@example.com}
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_zoom.users:
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_user, id: zg-alice, unique_key: zg-alice, display_name: Alice Alpha, email: alice@example.com }
+
+  bronze_zoom.participants:
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: zg-alice-z1, meeting_uuid: z1, participant_uuid: ga1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Bobby B, unique_key: zg-bob-z1,   meeting_uuid: z1, participant_uuid: gb1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Caro,    unique_key: zg-carol-z1, meeting_uuid: z1, participant_uuid: gc1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: zg-alice-z2, meeting_uuid: z2, participant_uuid: ga2, join_time: "2026-12-11T10:00:00Z", leave_time: "2026-12-11T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Bobby B, unique_key: zg-bob-z2,   meeting_uuid: z2, participant_uuid: gb2, join_time: "2026-12-11T10:00:00Z", leave_time: "2026-12-11T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, user_name: Caro,    unique_key: zg-carol-z2, meeting_uuid: z2, participant_uuid: gc2, join_time: "2026-12-11T10:00:00Z", leave_time: "2026-12-11T11:00:00Z" }

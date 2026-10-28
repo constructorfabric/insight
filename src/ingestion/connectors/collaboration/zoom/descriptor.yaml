@@ -23,7 +23,12 @@ name: zoom
 #   the account's user list when exactly one Zoom user carries the display name.
 #   MAJOR so reconcile runs the one-shot `dbt --full-refresh` that recomputes the
 #   history those joiners were dropped from.
-version: "4.0.0"
+# 5.0.0 (major): a joiner no Zoom user is named after is kept as a `zoom-guest`
+#   account (person_key, account triple) for an operator to bind in the identity
+#   console; the meeting feeder and the class gain the three account columns.
+#   MAJOR so reconcile runs the one-shot `dbt --full-refresh` that writes the
+#   guest rows back into history.
+version: "5.0.0"
 schedule: 0 3 * * *
 dbt_select: tag:zoom+
 workflow: sync
