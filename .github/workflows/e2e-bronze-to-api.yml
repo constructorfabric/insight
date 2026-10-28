@@ -301,7 +301,7 @@ jobs:
       # Every leg reports: a red shard must not cancel its siblings, or their
       # failures (and coverage ledgers) vanish with it.
       fail-fast: false
-      max-parallel: ${{ inputs.candidate_artifact != '' && 2 || 6 }}
+      max-parallel: 6
       matrix:
         # One leg per metric class directory under tests/datapath/metrics, and
         # one for tests/datapath/identity. The suite builds every non-gold
