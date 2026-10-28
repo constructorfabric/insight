@@ -339,21 +339,3 @@ name = "ADR-0003: Operator identity corrections as append-only persons observati
 kind = "FEATURE"
 path = "docs/domain/identity-resolution/specs/feature-manual-resolution/FEATURE.md"
 name = "Feature: Manual Identity Resolution"
-
-[[systems.artifacts]]
-kind = "PRD"
-path = "docs/components/frontend/specs/PRD.md"
-name = "Insight Portal User Interface PRD"
-traceability = "DOCS-ONLY"
-
-[[systems.artifacts]]
-kind = "DESIGN"
-path = "docs/components/frontend/specs/DESIGN.md"
-name = "Insight Portal User Interface Design"
-traceability = "DOCS-ONLY"
-
-[[systems.artifacts]]
-kind = "ADR"
-path = "docs/components/frontend/specs/ADR/0001-one-period-control-dashboard-scoped-window.md"
-name = "ADR-0001: One Period Control, with a Window Scoped to Each Open Dashboard"
-traceability = "DOCS-ONLY"
