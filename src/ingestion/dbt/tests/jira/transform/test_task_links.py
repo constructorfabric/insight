@@ -651,9 +651,31 @@ def test_a_read_retains_only_links_whose_other_issue_is_hidden(
     scenario.build(LINKS_SELECTOR, full_refresh=False)
     assert scenario.links() == original
 
+    returned_held = scenario.warehouse.rows(
+        "SELECT toString(extracted_at) AS extracted_at FROM staging.jira__issue_link_snapshot FINAL"
+        " WHERE insight_source_id = {src:String}",
+        {"src": scenario.source},
+    )
+    assert returned_held == [{"extracted_at": READ}]
+
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    assert scenario.links() == original
+    unchanged_held = scenario.warehouse.rows(
+        "SELECT toString(extracted_at) AS extracted_at FROM staging.jira__issue_link_snapshot FINAL"
+        " WHERE insight_source_id = {src:String}",
+        {"src": scenario.source},
+    )
+    assert unchanged_held == returned_held
+
     scenario.seed(fields=[], issues=[issue("SEEN-1", jira_id="1001", fields=fields, extracted_at=RETURNED_READ)])
     scenario.build(LINKS_SELECTOR)
     assert scenario.links() == original
+    reread_held = scenario.warehouse.rows(
+        "SELECT toString(extracted_at) AS extracted_at FROM staging.jira__issue_link_snapshot FINAL"
+        " WHERE insight_source_id = {src:String}",
+        {"src": scenario.source},
+    )
+    assert reread_held == [{"extracted_at": "2026-04-01 15:00:00.000"}]
 
 
 @pytest.mark.parametrize("kind", ["issuelink", "parent"])
@@ -798,3 +820,165 @@ def test_a_fresh_parent_supersedes_an_earlier_parent_that_is_hidden(scenario: Sc
         ("1003", "sub_issue", "1001", "SEEN-1", changed_at, 1, None, "102"),
     ]
     assert {row["evidence"] for row in rows} == {"event"}
+
+
+@pytest.mark.parametrize("kind", ["issuelink", "parent"])
+@pytest.mark.parametrize(
+    ("updated", "closed_at"),
+    [
+        pytest.param("2026-04-01T14:30:00", "2026-04-01 14:30:00.000", id="updated_after_event"),
+        pytest.param("2026-04-01T16:00:00", "2026-04-01 15:00:00.000", id="updated_after_read"),
+        pytest.param(DAY_6, "2026-04-01 15:00:00.000", id="updated_at_event"),
+        pytest.param(None, None, id="read_only"),
+    ],
+)
+def test_a_missing_link_is_reconciled_after_visibility_returns(
+    scenario: Scenario, kind: str, updated: str | None, closed_at: str | None
+) -> None:
+    with_event = updated is not None
+    fields = {LINKS: [_outward("1", BLOCKS, "1002", "GONE-2")]}
+    addition = _added("GONE-2", "blocks")
+    catalogue = LINKS_FIELD
+    if kind == "parent":
+        fields = {PARENT: {"id": "1002", "key": "GONE-2"}}
+        addition = item(PARENT, to="1002", to_str="GONE-2")
+        catalogue = PARENT_FIELD
+    scenario.seed(
+        fields=[catalogue],
+        issues=[issue("SEEN-1", jira_id="1001", fields=fields), issue("GONE-2", jira_id="1002")],
+        events=[event("SEEN-1", 101, "2026-01-06T10:00:00", [addition], jira_id="1001")] if with_event else [],
+        census=[census("SEEN-1", "1001"), census("GONE-2", "1002")],
+        projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
+    )
+    scenario.build(LINKS_SELECTOR)
+    original = scenario.links()
+    assert len(original) == (2 if kind == "parent" else 1)
+
+    scenario.seed(
+        fields=[],
+        issues=[issue("SEEN-1", jira_id="1001", extracted_at=HIDDEN_READ)],
+        census=[census("SEEN-1", "1001", extracted_at=MISSING_CENSUS)],
+        projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
+    )
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    assert scenario.links() == original
+
+    scenario.seed(
+        fields=[],
+        issues=[],
+        census=[
+            census("SEEN-1", "1001", extracted_at=RETURNED_CENSUS),
+            census("GONE-2", "1002", extracted_at=RETURNED_CENSUS),
+        ],
+        projects=[
+            project_visibility("SEEN", "1", extracted_at=RETURNED_CENSUS),
+            project_visibility("GONE", "2", extracted_at=RETURNED_CENSUS),
+        ],
+    )
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    assert scenario.links() == original
+
+    scenario.seed(fields=[], issues=[issue("SEEN-1", jira_id="1001", extracted_at=RETURNED_READ, updated=updated)])
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+
+    link_type = "parent" if kind == "parent" else "blocking"
+    expected = [("1001", link_type, "1002", "GONE-2", DAY_6, 1, closed_at, "101")] if with_event else []
+    if with_event and kind == "parent":
+        expected.append(("1002", "sub_issue", "1001", "SEEN-1", DAY_6, 1, closed_at, "101"))
+    rows = scenario.links()
+    assert _intervals(rows) == expected
+    if with_event:
+        assert {(row["evidence"], row["removed_by"]) for row in rows} == {("observation", None)}
+    held = scenario.warehouse.rows(
+        "SELECT issue_id FROM staging.jira__issue_link_snapshot FINAL"
+        " WHERE insight_source_id = {src:String} AND issue_id = '1001'",
+        {"src": scenario.source},
+    )
+    assert held == []
+
+
+@pytest.mark.parametrize("kind", ["issuelink", "parent"])
+def test_visibility_returns_only_from_the_first_census_sighting_after_the_gap(scenario: Scenario, kind: str) -> None:
+    fields = {LINKS: [_outward("1", BLOCKS, "1002", "GONE-2")]}
+    addition = _added("GONE-2", "blocks")
+    catalogue = LINKS_FIELD
+    if kind == "parent":
+        fields = {PARENT: {"id": "1002", "key": "GONE-2"}}
+        addition = item(PARENT, to="1002", to_str="GONE-2")
+        catalogue = PARENT_FIELD
+    scenario.seed(
+        fields=[catalogue],
+        issues=[issue("SEEN-1", jira_id="1001", fields=fields), issue("GONE-2", jira_id="1002")],
+        events=[event("SEEN-1", 101, "2026-01-06T10:00:00", [addition], jira_id="1001")],
+        census=[census("SEEN-1", "1001"), census("GONE-2", "1002")],
+        projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
+    )
+    scenario.build(LINKS_SELECTOR)
+
+    link_type = "parent" if kind == "parent" else "blocking"
+    expected_open = [("1001", link_type, "1002", "GONE-2", DAY_6, 1, None, "101")]
+    if kind == "parent":
+        expected_open.append(("1002", "sub_issue", "1001", "SEEN-1", DAY_6, 1, None, "101"))
+    original = scenario.links()
+    assert _intervals(original) == expected_open
+    assert {row["evidence"] for row in original} == {"event"}
+
+    scenario.seed(
+        fields=[],
+        issues=[issue("SEEN-1", jira_id="1001", extracted_at=HIDDEN_READ)],
+        census=[census("SEEN-1", "1001", extracted_at=MISSING_CENSUS)],
+        projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
+    )
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    assert scenario.links() == original
+
+    before_census_read = "2026-04-01T13:30:00"
+    scenario.seed(
+        fields=[],
+        issues=[issue("SEEN-1", jira_id="1001", extracted_at=before_census_read, updated=before_census_read)],
+        census=[
+            census("SEEN-1", "1001", extracted_at=RETURNED_CENSUS),
+            census("GONE-2", "1002", extracted_at=RETURNED_CENSUS),
+        ],
+        projects=[
+            project_visibility("SEEN", "1", extracted_at=RETURNED_CENSUS),
+            project_visibility("GONE", "2", extracted_at=RETURNED_CENSUS),
+        ],
+    )
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    assert scenario.links() == original
+    held = scenario.warehouse.rows(
+        "SELECT toString(extracted_at) AS extracted_at FROM staging.jira__issue_link_snapshot FINAL"
+        " WHERE insight_source_id = {src:String} AND issue_id = '1001'",
+        {"src": scenario.source},
+    )
+    assert held == [{"extracted_at": READ}]
+
+    later_census = "2026-04-01T16:00:00"
+    scenario.seed(
+        fields=[],
+        issues=[issue("SEEN-1", jira_id="1001", extracted_at=RETURNED_READ, updated=RETURNED_READ)],
+        census=[
+            census("SEEN-1", "1001", extracted_at=later_census),
+            census("GONE-2", "1002", extracted_at=later_census),
+        ],
+        projects=[
+            project_visibility("SEEN", "1", extracted_at=later_census),
+            project_visibility("GONE", "2", extracted_at=later_census),
+        ],
+    )
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+
+    closed_at = "2026-04-01 15:00:00.000"
+    expected_closed = [("1001", link_type, "1002", "GONE-2", DAY_6, 1, closed_at, "101")]
+    if kind == "parent":
+        expected_closed.append(("1002", "sub_issue", "1001", "SEEN-1", DAY_6, 1, closed_at, "101"))
+    rows = scenario.links()
+    assert _intervals(rows) == expected_closed
+    assert {(row["evidence"], row["removed_by"]) for row in rows} == {("observation", None)}
+    held = scenario.warehouse.rows(
+        "SELECT issue_id FROM staging.jira__issue_link_snapshot FINAL"
+        " WHERE insight_source_id = {src:String} AND issue_id = '1001'",
+        {"src": scenario.source},
+    )
+    assert held == []
