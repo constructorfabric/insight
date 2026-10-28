@@ -2044,7 +2044,10 @@ fn skeleton_packs_after_fetch(
 }
 
 /// Every file of every pack that is not part of the skeleton: the served
-/// windows with their `.idx`, `.rev` and `.promisor` siblings.
+/// windows with their `.idx`, `.rev` and `.promisor` siblings, and the
+/// `tmp_*` files an interrupted fetch strands.
+/// INVARIANT: the caller holds the entry's write lock, so no fetch owns a
+/// `tmp_*` file while it is deleted.
 fn window_pack_files(git_dir: &Path, skeleton_packs: &[String]) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(git_dir.join("objects").join("pack")) else {
         return Vec::new();
@@ -2056,6 +2059,9 @@ fn window_pack_files(git_dir: &Path, skeleton_packs: &[String]) -> Vec<PathBuf> 
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 return false;
             };
+            if name.starts_with("tmp_") {
+                return true;
+            }
             let stem = name.split('.').next().unwrap_or(name);
             stem.starts_with("pack-") && !skeleton_packs.iter().any(|kept| kept == stem)
         })
@@ -3417,6 +3423,39 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn enumerating_a_window_with_an_edited_rename_fetches_no_blob_on_its_own() {
+        // A rename with an edit is only recognised by comparing blob content.
+        // In a blobless clone that comparison fetches each blob lazily, one
+        // origin round trip at a time, before the batched prefetch runs.
+        let f = fixture("prefetch-rename");
+        sh(
+            &f.root.join("origin"),
+            "git mv a.txt b.txt && echo two >> b.txt && git add b.txt && \
+             GIT_AUTHOR_DATE='2026-08-01T11:00:00+0000' \
+             GIT_COMMITTER_DATE='2026-08-01T11:00:00+0000' git commit -qm rename",
+        );
+        let k = key(&f);
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        let head = head_of(guard.git_dir());
+
+        let fetched = crate::engine::read::blobs::prefetch(
+            f.store.runner(),
+            guard.git_dir(),
+            &[head],
+            &creds(),
+            u64::MAX,
+        )
+        .await;
+        match fetched {
+            Ok(count) => assert_eq!(
+                count, 2,
+                "both sides of the rename must still be missing when the batch fetch runs"
+            ),
+            Err(e) => panic!("prefetch: {e}"),
+        }
+    }
+
+    #[tokio::test]
     async fn a_purge_that_keeps_failing_evicts_the_entry_instead_of_looping() {
         // An entry whose packs were never recorded can only be purged by a
         // repack. One that cannot finish inside the heavy budget will not
@@ -4261,6 +4300,25 @@ pub(crate) mod tests {
         assert!(
             guard.git_dir().is_dir(),
             "a repository with a live reader must never be deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_shed_removes_what_an_interrupted_fetch_left_behind() {
+        let (f, k, _) = entry_with_fetched_blobs("shed-tmp-pack").await;
+        let pack_dir = f.store.entry_dir(&k).join("repo.git/objects/pack");
+        let stranded = pack_dir.join("tmp_pack_abc123");
+        if let Err(e) = std::fs::write(&stranded, vec![0u8; 4096]) {
+            panic!("stage stranded pack: {e}");
+        }
+
+        assert_eq!(
+            f.store.purge_blobs_by_dir(&k.dir_name()).await,
+            BlobPurge::Purged
+        );
+        assert!(
+            !stranded.exists(),
+            "a partial pack no fetch owns must not count against the entry forever"
         );
     }
 
