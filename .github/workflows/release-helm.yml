@@ -285,8 +285,8 @@ jobs:
           yq -o=json "$chart/values.yaml" > candidate-inputs/values.json
           dependencies="$(yq -er '.dependencies[] | [.alias, .name] | @tsv' "$chart/Chart.yaml")"
           while IFS=$'\t' read -r alias name; do
-            repository="$(ALIAS="$alias" yq -er '.[strenv(ALIAS)].image.repository' "$chart/values.yaml" \
-              || yq -er '.image.repository' "$chart/charts/$name/values.yaml")"
+            repository="$(ALIAS="$alias" DEPENDENCY="$chart/charts/$name/values.yaml" \
+              yq -er '.[strenv(ALIAS)].image.repository // load(strenv(DEPENDENCY)).image.repository' "$chart/values.yaml")"
             ALIAS="$alias" IMAGE_REPOSITORY="$repository" yq -i -o=json \
               '.[strenv(ALIAS)].image.repository = strenv(IMAGE_REPOSITORY)' candidate-inputs/values.json
           done <<< "$dependencies"
