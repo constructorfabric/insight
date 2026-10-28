@@ -46,8 +46,9 @@ pub struct RepoMeta {
     pub full_clone: bool,
     /// Packs holding the blobless skeleton: the clone's, every fetch's, and
     /// the last consolidation's. Any other pack is a served window.
-    /// INVARIANT: empty means unknown, never "no skeleton" — a purge then
-    /// falls back to the repack instead of deleting packs it cannot classify.
+    /// INVARIANT: empty means unknown, never "no skeleton" — a post-serve
+    /// purge then repacks and a reclaim evicts, instead of deleting packs
+    /// neither can classify.
     #[serde(default)]
     pub skeleton_packs: Vec<String>,
 }
