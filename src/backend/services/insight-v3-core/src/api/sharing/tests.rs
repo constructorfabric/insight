@@ -332,6 +332,34 @@ async fn granting_again_sets_the_level_and_keeps_one_grant() {
 }
 
 #[tokio::test]
+async fn a_listing_shows_how_far_each_dashboards_own_grants_reach() {
+    let harness = Harness::new();
+    let private = harness.dashboard_of(OWNER, "Private").await;
+    let people = harness.dashboard_of(OWNER, "People").await;
+    let everyone = harness.dashboard_of(OWNER, "Everyone").await;
+    harness.share(OWNER, &people, VIEWER).await;
+    harness.share(OWNER, &everyone, VIEWER).await;
+    harness.share(OWNER, &everyone, "everyone").await;
+
+    let listed = harness.send(OWNER, "GET", "/v1/dashboards", None).await;
+
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+    let items = listed.body["items"].as_array().cloned().unwrap_or_default();
+    for (id, visibility) in [
+        (&private, "private"),
+        (&people, "people"),
+        (&everyone, "everyone"),
+    ] {
+        let item = items
+            .iter()
+            .find(|item| item["id"] == json!(id))
+            .unwrap_or_else(|| panic!("{id} is listed: {}", listed.body));
+        assert_eq!(item["visibility"], json!(visibility), "{id}: {item}");
+        assert!(item["updated_at"].is_string(), "{id}: {item}");
+    }
+}
+
+#[tokio::test]
 async fn a_grant_to_the_owner_an_unknown_person_or_no_person_is_refused_on_grantee() {
     let harness = Harness::new();
     let board = harness.dashboard_of(OWNER, "Board").await;

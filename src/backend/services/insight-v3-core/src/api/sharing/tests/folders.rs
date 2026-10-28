@@ -621,3 +621,81 @@ async fn a_malformed_folder_id_names_no_folder_on_any_folder_route() {
         );
     }
 }
+
+fn visibility_of(listed: &super::Answer, id: &str) -> serde_json::Value {
+    listed.body["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["id"] == json!(id)))
+        .unwrap_or_else(|| panic!("{id} is listed: {}", listed.body))["visibility"]
+        .clone()
+}
+
+#[tokio::test]
+async fn a_listing_counts_the_grants_a_carrying_folder_brings_its_dashboards() {
+    let harness = Harness::new();
+    let to_people = harness.dashboard_of(OWNER, "To people").await;
+    let to_everyone = harness.dashboard_of(OWNER, "To everyone").await;
+    let team = harness.folder_of(OWNER, "Team").await;
+    let org = harness.folder_of(OWNER, "Org").await;
+    harness
+        .grant(OWNER, "folders", &team, VIEWER, "viewer")
+        .await;
+    harness
+        .grant(OWNER, "folders", &org, "everyone", "viewer")
+        .await;
+    harness.add(OWNER, &team, &to_people).await;
+    harness.add(OWNER, &org, &to_everyone).await;
+
+    let listed = harness.send(OWNER, "GET", "/v1/dashboards", None).await;
+
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+    assert_eq!(visibility_of(&listed, &to_people), json!("people"));
+    assert_eq!(visibility_of(&listed, &to_everyone), json!("everyone"));
+}
+
+#[tokio::test]
+async fn a_filing_entry_lends_its_folder_s_grants_to_no_one() {
+    let harness = Harness::new();
+    let board = harness.dashboard_of(OWNER, "Board").await;
+    let team = harness.folder_of(OWNER, "Team").await;
+    harness
+        .grant(OWNER, "folders", &team, VIEWER, "editor")
+        .await;
+    harness.add(OWNER, &team, &board).await;
+    let theirs = harness.folder_of(VIEWER, "Theirs").await;
+    harness
+        .grant(VIEWER, "folders", &theirs, "everyone", "viewer")
+        .await;
+    let filed = harness.add(VIEWER, &theirs, &board).await;
+
+    let listed = harness.send(OWNER, "GET", "/v1/dashboards", None).await;
+
+    assert_eq!(filed.body, json!({ "carries": false }));
+    assert_eq!(visibility_of(&listed, &board), json!("people"));
+}
+
+#[tokio::test]
+async fn a_dashboard_carried_into_someone_else_s_folder_reaches_that_folder_s_owner() {
+    let harness = Harness::new();
+    let theirs = harness.folder_of(VIEWER, "Theirs").await;
+    harness
+        .grant(VIEWER, "folders", &theirs, OWNER, "editor")
+        .await;
+    let board = harness.dashboard_of(OWNER, "Board").await;
+    let carried = harness.add(OWNER, &theirs, &board).await;
+    let withdrawn = harness
+        .send(
+            VIEWER,
+            "DELETE",
+            &format!("/v1/folders/{theirs}/grants/{OWNER}"),
+            None,
+        )
+        .await;
+
+    let listed = harness.send(OWNER, "GET", "/v1/dashboards", None).await;
+
+    assert_eq!(carried.body, json!({ "carries": true }));
+    assert!(withdrawn.status.is_success(), "{}", withdrawn.body);
+    assert_eq!(harness.read(VIEWER, &board).await.status, StatusCode::OK);
+    assert_eq!(visibility_of(&listed, &board), json!("people"));
+}

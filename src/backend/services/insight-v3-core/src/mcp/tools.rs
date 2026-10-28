@@ -213,6 +213,7 @@ impl CustomSurfaces {
             asked.folder,
             asked.tags,
             asked.owned,
+            None,
         ) {
             Ok(query) => query,
             Err(error) => return refuse(&error.to_string()),

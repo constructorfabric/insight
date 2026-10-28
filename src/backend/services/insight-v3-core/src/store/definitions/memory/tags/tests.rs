@@ -49,7 +49,7 @@ fn tagged(needle: &str, folder: Option<FolderFilter>, filter: TagFilter) -> Dash
         needle: needle.to_owned(),
         folder,
         tags: Some(filter),
-        owned: None,
+        ..DashboardQuery::default()
     }
 }
 

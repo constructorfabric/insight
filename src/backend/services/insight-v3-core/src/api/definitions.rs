@@ -37,6 +37,7 @@ struct Search {
     offset: Option<u64>,
     folder: Option<String>,
     owned: Option<String>,
+    sort: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -147,6 +148,11 @@ fn register_list(
                 "owned",
                 "string",
                 "`me` for the caller's own dashboards, `shared` for those shared with them; absent lists every visible one",
+            ))
+            .param(query_param(
+                "sort",
+                "string",
+                "`name` (the default) orders by name, `recent` by last change, newest first",
             ))
     } else {
         builder
@@ -616,6 +622,7 @@ pub(crate) fn query_error(error: &QueryError) -> CanonicalError {
         QueryError::Folder(_) => "folder",
         QueryError::Tag(_) => "tag",
         QueryError::Owned(_) => "owned",
+        QueryError::Order(_) => "sort",
     };
 
     DefinitionApiError::invalid_field(field, error.to_string())
@@ -655,6 +662,7 @@ async fn list_definitions(
         search.folder.as_deref(),
         &tags,
         search.owned.as_deref(),
+        search.sort.as_deref(),
     )
     .map_err(|error| query_error(&error))?;
     let (items, total) = listed_page(&state.surfaces(caller), kind, &query, page)
@@ -679,8 +687,8 @@ pub(crate) fn listed_json(items: &[Listed]) -> serde_json::Value {
     )
 }
 
-/// Dashboards as a listing shows them: with their owner and how the caller
-/// sees each.
+/// Dashboards as a listing shows them: with their owner, how the caller sees
+/// each, when it last changed and who its grants reach.
 pub(crate) fn dashboards_json(items: &[ListedDashboard]) -> serde_json::Value {
     serde_json::Value::Array(
         items
@@ -691,6 +699,12 @@ pub(crate) fn dashboards_json(items: &[ListedDashboard]) -> serde_json::Value {
                     "name": listed.name,
                     "owner_person_id": owner_json(listed.owner),
                     "access": listed.access.as_str(),
+                    "updated_at": listed
+                        .updated_at
+                        .to_rfc3339_opts(SecondsFormat::Millis, true),
+                    "visibility": listed.visibility.as_str(),
+                    "title": listed.title,
+                    "tags": listed.tags,
                 })
             })
             .collect(),

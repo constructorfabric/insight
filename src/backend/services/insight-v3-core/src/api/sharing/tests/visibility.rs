@@ -257,6 +257,44 @@ async fn a_listing_keeps_my_own_or_those_shared_with_me_and_otherwise_everything
 }
 
 #[tokio::test]
+async fn a_listing_sorted_by_recent_puts_the_last_changed_first() {
+    let harness = Harness::new();
+    let older = harness.dashboard_of(VIEWER, "A older").await;
+    let changed = harness.dashboard_of(VIEWER, "B changed").await;
+    let untouched = harness.dashboard_of(VIEWER, "C untouched").await;
+    let edit = harness
+        .send(
+            VIEWER,
+            "PUT",
+            &format!("/v1/dashboards/{changed}"),
+            Some(json!({ "name": "B changed", "body": { "title": "B", "widgets": [] } })),
+        )
+        .await;
+    assert!(edit.status.is_success(), "{}", edit.body);
+
+    let by_name = harness.send(VIEWER, "GET", "/v1/dashboards", None).await;
+    let recent = harness
+        .send(VIEWER, "GET", "/v1/dashboards?sort=recent", None)
+        .await;
+    let unknown = harness
+        .send(VIEWER, "GET", "/v1/dashboards?sort=oldest", None)
+        .await;
+    let metrics = harness
+        .send(VIEWER, "GET", "/v1/metrics?sort=recent", None)
+        .await;
+
+    assert_eq!(
+        ids(&by_name),
+        vec![older.clone(), changed.clone(), untouched.clone()]
+    );
+    assert_eq!(ids(&recent), vec![changed, untouched, older]);
+    for refused in [&unknown, &metrics] {
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+        assert_eq!(super::field_of(refused), json!("sort"));
+    }
+}
+
+#[tokio::test]
 async fn dependents_name_only_what_the_caller_sees_and_count_the_rest() {
     let harness = Harness::new();
     let metric = harness
