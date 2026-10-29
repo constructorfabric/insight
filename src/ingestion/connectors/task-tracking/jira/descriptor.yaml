@@ -157,12 +157,16 @@ name: jira
 # when the issue was never updated inside the sync window. MINOR per ADR-0015:
 # reconcile republishes the manifest and refreshes the catalog, the destination
 # adds the column on the next sync, and nothing already stored changes meaning.
-# 18.0.0 (major): every Jira producer of a task class carries `tenant_id` after
+# 18.0.0 (major): omitted links and parents stay open when the other issue was
+# hidden at the read, and link snapshots retain earlier observations across
+# visibility gaps (#3950). MAJOR because rows already written change, and only
+# the full refresh a major dispatches (ADR-0015) re-derives them.
+# 19.0.0 (major): every Jira producer of a task class carries `tenant_id` after
 # `unique_key` and leads its key with the tenant, and the journal derives,
 # deletes and batches per tenant. MAJOR because rows already written change
 # key, and only the full refresh a major dispatches (ADR-0015) replaces them in
 # the journal, its lifecycle arms and the silver classes.
-version: "18.0.0"
+version: "19.0.0"
 # 22:10 and 10:10 UTC: clear of the 02:00-06:00 daily block and of github's
 # 4-hourly ticks, which rebuild the same task chain; :10 misses the */15
 # reconcile and identity-seed ticks.

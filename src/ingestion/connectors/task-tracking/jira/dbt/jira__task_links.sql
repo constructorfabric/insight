@@ -12,12 +12,9 @@
 -- One row per link OCCURRENCE, folded from the changelog's own add and remove
 -- events (`evidence = event`). See `class_task_links` for the contract.
 --
--- The issue's newest read has the last word. A link can go without an event —
--- Jira logs nothing on the other issue when one is deleted, nor on either when
--- a bulk change drops it — and come back without one. Where the read disagrees
--- with the state the events leave, the occurrence closes or reopens at an
--- observed edge (`evidence = observation`): the issue's `updated` when that is
--- after the last event, else the read itself.
+-- The newest read can close an event-open link only when the other issue was
+-- observable at that read; a link it shows can still reopen an event-closed
+-- link. These observed edges use `evidence = observation`.
 --
 -- An occurrence is one link of one type from one issue to one linked issue, as
 -- `jira__link_occurrences` identifies it. Jira logs a link on both issues, each
@@ -42,14 +39,13 @@ WITH held_now AS (
 issues AS (
     SELECT
         tenant_id,
-        CAST(source_id AS String)                                     AS insight_source_id,
-        CAST(jira_id AS String)                                       AS issue_id,
-        argMax(COALESCE(toString(id_readable), ''), _airbyte_extracted_at) AS current_key,
-        argMax(parseDateTime64BestEffortOrNull(created, 3), _airbyte_extracted_at) AS created_at,
-        argMax(parseDateTime64BestEffortOrNull(updated, 3), _airbyte_extracted_at) AS updated_at,
-        toDateTime64(max(_airbyte_extracted_at), 3)                   AS read_at
-    FROM {{ source('bronze_jira', 'jira_issue') }}
-    GROUP BY tenant_id, insight_source_id, issue_id
+        insight_source_id,
+        issue_id,
+        current_key,
+        created_at,
+        updated_at,
+        read_at
+    FROM {{ ref('jira__issue_read_current') }} FINAL
 ),
 
 -- The current key of an issue the connector does not sync, as the newest
@@ -91,23 +87,59 @@ occurrences AS (
        AND r.issue_id = o.issue_id
 ),
 
+current_link_keys AS (
+    SELECT
+        tenant_id AS current_tenant_id,
+        insight_source_id AS current_source_id,
+        issue_id AS current_issue_id,
+        kind AS current_kind,
+        if(kind = 'parent', 'parent', concat('type:', type_id, ':', direction)) AS current_occurrence_key,
+        if(target_id != '', target_id, target_key) AS current_target_ident
+    FROM {{ ref('jira__issue_link_current') }} FINAL
+),
+
+visibility_candidates AS (
+    SELECT
+        o.tenant_id AS tenant_id,
+        o.insight_source_id AS insight_source_id,
+        o.target_id AS target_id,
+        o.target_key AS target_key
+    FROM {{ ref('jira__link_occurrences') }} AS o FINAL
+    LEFT ANTI JOIN current_link_keys AS c
+        ON c.current_tenant_id = o.tenant_id
+       AND c.current_source_id = o.insight_source_id
+       AND c.current_issue_id = o.issue_id
+       AND c.current_kind = o.kind
+       AND c.current_occurrence_key = o.occurrence_key
+       AND c.current_target_ident = o.target_ident
+    WHERE notEmpty(o.ops)
+      AND o.ops[-1].3 = 'add'
+),
+
+visible_occurrences AS (
+    {{ jira_link_visibility('occurrences', 'visibility_candidates') }}
+),
+
 -- Where the newest read disagrees with the events. A read older than the last
 -- event predates it and says nothing.
 observed AS (
     SELECT
         *,
+        held_extracted_at = read_at AS read_holds,
+        -- WORKAROUND: Jira omits links and parents whose other issue the account cannot browse.
         notEmpty(ops)
             AND read_at IS NOT NULL
             AND ops[-1].1 <= read_at
-            AND (held_extracted_at IS NOT NULL) != (ops[-1].3 = 'add')    AS read_disagrees,
+            AND (COALESCE(read_holds, 0) OR other_issue_visible)
+            AND COALESCE(read_holds, 0) != (ops[-1].3 = 'add')          AS read_disagrees,
         multiIf(NOT read_disagrees,               '',
-                held_extracted_at IS NOT NULL,    'add',
+                COALESCE(read_holds, 0),           'add',
                                                   'remove')               AS observed_action,
         if(COALESCE(updated_at, toDateTime64(0, 3)) > ops[-1].1,
            least(assumeNotNull(updated_at), assumeNotNull(read_at)),
            read_at)                                                       AS observed_at,
         toUInt32(length(ops) + 1)                                         AS observed_position
-    FROM occurrences
+    FROM visible_occurrences
 ),
 
 -- Positions in `ops` where the occurrence appears and disappears; 0 is "held
@@ -200,42 +232,27 @@ lasting AS (
 
 -- The parent's side of each parent interval. A parent known only by key is
 -- no issue a row can belong to.
-mirrored AS (
-    SELECT
-        l.tenant_id                                                   AS tenant_id,
-        l.insight_source_id                                           AS insight_source_id,
-        assumeNotNull(l.target_id)                                    AS issue_id,
-        l.target_readable                                             AS id_readable,
-        'sub_issue'                                                   AS link_type,
-        'sub_issue'                                                   AS occurrence_key,
-        l.issue_id                                                    AS target_ident,
-        toNullable(l.issue_id)                                        AS target_id,
-        l.id_readable                                                 AS target_readable,
-        l.valid_from                                                  AS valid_from,
-        l.valid_from_known                                            AS valid_from_known,
-        l.valid_to                                                    AS valid_to,
-        l.added_by                                                    AS added_by,
-        l.removed_by                                                  AS removed_by,
-        l.origin_event_id                                             AS origin_event_id,
-        l.evidence                                                    AS evidence,
-        l.collected_at                                                AS collected_at
-    FROM lasting AS l
-    WHERE l.link_type = 'parent'
-      AND l.target_id IS NOT NULL
-),
-
 every_interval AS (
     SELECT
-        tenant_id, insight_source_id, issue_id, id_readable, link_type, occurrence_key, target_ident, target_id, target_readable,
-        valid_from, valid_from_known, valid_to, added_by, removed_by, origin_event_id, evidence, collected_at
-    FROM lasting
-
-    UNION ALL
-
-    SELECT
-        tenant_id, insight_source_id, issue_id, id_readable, link_type, occurrence_key, target_ident, target_id, target_readable,
-        valid_from, valid_from_known, valid_to, added_by, removed_by, origin_event_id, evidence, collected_at
-    FROM mirrored
+        l.tenant_id AS tenant_id,
+        l.insight_source_id AS insight_source_id,
+        if(is_mirrored, assumeNotNull(l.target_id), l.issue_id) AS issue_id,
+        if(is_mirrored, l.target_readable, l.id_readable) AS id_readable,
+        if(is_mirrored, 'sub_issue', l.link_type) AS link_type,
+        if(is_mirrored, 'sub_issue', l.occurrence_key) AS occurrence_key,
+        if(is_mirrored, l.issue_id, l.target_ident) AS target_ident,
+        if(is_mirrored, toNullable(l.issue_id), l.target_id) AS target_id,
+        if(is_mirrored, l.id_readable, l.target_readable) AS target_readable,
+        l.valid_from AS valid_from,
+        l.valid_from_known AS valid_from_known,
+        l.valid_to AS valid_to,
+        l.added_by AS added_by,
+        l.removed_by AS removed_by,
+        l.origin_event_id AS origin_event_id,
+        l.evidence AS evidence,
+        l.collected_at AS collected_at
+    FROM lasting AS l
+    ARRAY JOIN if(l.link_type = 'parent' AND l.target_id IS NOT NULL, [0, 1], [0]) AS is_mirrored
 )
 
 SELECT
