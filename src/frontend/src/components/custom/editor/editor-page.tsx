@@ -8,7 +8,7 @@ import { RemoveDataset } from "@/components/custom/remove-dataset";
 import { RemoveDefinition } from "@/components/custom/remove-definition";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
-import { DESCRIPTIONS } from "@/lib/custom/editor/kinds";
+import { NOUNS } from "@/lib/custom/editor/kinds";
 import { definitionBodyQuery } from "@/queries/custom";
 import { TEXT_BODY, TEXT_HEADING, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -36,7 +36,7 @@ export function EditorPage({
   id?: string;
 }) {
   const navigate = useNavigate();
-  const description = DESCRIPTIONS[kind];
+  const noun = NOUNS[kind];
   const stored = useQuery({
     ...definitionBodyQuery(kind, id ?? ""),
     enabled: id !== undefined,
@@ -56,9 +56,7 @@ export function EditorPage({
     <div className="flex flex-col gap-4 p-4 md:p-6">
       <div className="flex flex-col gap-1">
         <h1 className={TEXT_TITLE}>
-          {id === undefined
-            ? `New ${description.noun}`
-            : (stored.data?.name ?? id)}
+          {id === undefined ? `New ${noun}` : (stored.data?.name ?? id)}
         </h1>
         <Link
           to={CATALOGUE[kind]}
@@ -75,7 +73,7 @@ export function EditorPage({
         <DefinitionEditor kind={kind} onStored={created} />
       ) : stored.isError ? (
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-          {refusal(stored.error, `That ${description.noun} is not there.`)}
+          {refusal(stored.error, `That ${noun} is not there.`)}
         </p>
       ) : fresh?.access && !dashboardAllows(fresh.access).edit ? (
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>

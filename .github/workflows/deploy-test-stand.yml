@@ -3,6 +3,11 @@ name: Deploy test stand
 on:
   workflow_call:
     inputs:
+      candidate_artifact:
+        description: "Unpublished candidate artifact from the calling run. Empty for published-release deployment."
+        required: false
+        default: ''
+        type: string
       chart_version:
         description: >-
           Exact umbrella chart version to install, as published to oci://ghcr.io/constructorfabric/charts/insight — e.g. 0.5.101. Leave empty to install the registry's newest published version. Never from deploy/gitops/.insight-version: that file is committed at the END of publish-chart, so a checkout of the trigger SHA reads the PREVIOUS release.
@@ -21,6 +26,8 @@ on:
       TEST_STAND_KUBECONFIG:
         required: false
       TEST_STAND_PERSONA_PASSWORD:
+        required: false
+      TEST_STAND_SEED_EMAIL:
         required: false
   workflow_dispatch:
     inputs:
@@ -48,18 +55,18 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   test-stand:
     name: deploy → seed → smoke → suite
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED != 'true' && inputs.candidate_artifact != '' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 'insight-large' || 'ubuntu-latest' }}
     # `environment:` cannot sit on a job that `uses:` a reusable workflow, so
     # it is declared here rather than on the caller.
     environment: insight-test-stand
-    # Above the sum of the step ceilings: deploy (14) + edge (3) + seed, which
-    # runs seed + identity projection + gold rebuild (110) + smoke (5) +
-    # browser install (10) + the full suite (45).
-    timeout-minutes: 210
+    # INVARIANT: Candidate validation has a one-hour total budget, including setup.
+    # Runs with seeding allow 210 minutes, above the combined step ceilings.
+    timeout-minutes: ${{ inputs.candidate_artifact != '' && 60 || 210 }}
     env:
       ENV_NAME: test-stand
       VALUES_FILE: deploy/gitops/environments/test-stand/values.yaml
@@ -92,6 +99,21 @@ jobs:
 
       # `gh api`, not curl/urllib, for the fallback: a dynamic URL through a
       # URL opener trips a Semgrep finding no suppression can silence.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: inputs.candidate_artifact != ''
+        with:
+          name: ${{ inputs.candidate_artifact }}
+          path: candidate
+
+      - name: Verify the candidate archive
+        if: inputs.candidate_artifact != ''
+        run: |
+          set -euo pipefail
+          .github/workflows/scripts/verify-chart-candidate.sh candidate "$GITHUB_SHA" "$REQUESTED_CHART_VERSION"
+          archive="$GITHUB_WORKSPACE/candidate/insight-$REQUESTED_CHART_VERSION.tgz"
+          test "$(helm show chart "$archive" | yq -r '.version')" = "$REQUESTED_CHART_VERSION"
+          echo "CHART_REF=$archive" >> "$GITHUB_ENV"
+
       - name: Resolve the chart version
         id: chart
         env:
@@ -161,8 +183,13 @@ jobs:
         id: stages
         env:
           STAGES: ${{ inputs.stages }}
+          CANDIDATE: ${{ inputs.candidate_artifact }}
         run: |
           set -euo pipefail
+          if [ -n "$CANDIDATE" ] && [ "${STAGES:-all}" != all ]; then
+            echo '::error::Candidate publication requires the full smoke and API/UI suite.'
+            exit 1
+          fi
           case "${STAGES:-all}" in
             all)               deploy=true seed=true  smoke=true  suite=true  ;;
             deploy+seed+smoke) deploy=true seed=true  smoke=true  suite=false ;;
@@ -302,13 +329,24 @@ jobs:
             [ -n "$s" ] && echo "::add-mask::$s"
           fi
 
+      - name: Require the existing upgrade dataset
+        id: upgrade-dataset
+        if: inputs.candidate_artifact != ''
+        run: |
+          set -euo pipefail
+          kubectl -n "$STAND_NAMESPACE" get configmap seed-stand-manifest \
+            -o 'go-template={{index .data "manifest"}}' > "$RUNNER_TEMP/stand-manifest.json"
+          jq -e '.manifest_version and .personas and .fixtures' "$RUNNER_TEMP/stand-manifest.json" >/dev/null
+          status="$(helm status "$STAND_RELEASE" -n "$STAND_NAMESPACE" -o json | jq -er '.info.status')"
+          test "$status" = deployed || { echo '::error::Stand is not deployed; recover it before candidate validation.'; exit 1; }
+
       - name: 'Stage 1/5 — refuse a version downgrade'
         id: deploy_downgrade_guard
         run: |
           set -euo pipefail
           # Compares the CHART field ("<name>-<version>"), never app_version:
           # this chart's appVersion is a date+sha build stamp, not a semver.
-          chart_name="$(basename "$CHART_REF")"
+          chart_name=insight
           if ! listed="$(helm ls -n "$STAND_NAMESPACE" --filter "^${STAND_RELEASE}\$" -o json 2>&1)"; then
             echo "::error::could not list helm releases in namespace $STAND_NAMESPACE: $listed"
             echo "This is a reachability problem, not a downgrade — 'make deploy' below would refuse it too,"
@@ -342,6 +380,7 @@ jobs:
           set -euo pipefail
           make -C deploy/gitops --no-print-directory deploy \
             ENV="$ENV_NAME" \
+            CHART="$CHART_REF" \
             CONFIRM=yes-deploy-test-stand \
             INSIGHT_VERSION="$CHART_VERSION" \
             TIMEOUT=10m \
@@ -427,7 +466,7 @@ jobs:
       # ttlSecondsAfterFinished once it ends.
       - name: 'Stage 3/5 — seed the stand'
         id: seed
-        if: steps.stages.outputs.run_seed == 'true'
+        if: steps.stages.outputs.run_seed == 'true' && inputs.candidate_artifact == ''
         timeout-minutes: 110
         env:
           SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL }}
@@ -531,8 +570,6 @@ jobs:
       # group, which is what stops the next merge's deploy from landing on the
       # stand mid-suite.
       #
-      # No endpoint-coverage gate: that gate belongs to the compose lane, which
-      # reaches the internal listeners this stand keeps in-cluster.
       - name: 'Stage 5/5 — run the full stand suite'
         id: suite
         if: steps.stages.outputs.run_suite == 'true'
@@ -548,17 +585,27 @@ jobs:
           # retain-on-failure: a green run then carries no session credentials
           # off the runner at all, which is a smaller problem than redacting one.
           uv run --project tests --frozen \
-            pytest tests/stand -ra --stand-manifest "$INSIGHT_STAND_MANIFEST" \
+            pytest tests/stand -ra -m 'not requires_service_principal' --stand-manifest "$INSIGHT_STAND_MANIFEST" \
             --browser chromium \
             --tracing=retain-on-failure \
             --screenshot=only-on-failure \
+            2>&1 | python3 "$REDACT"
+
+      - name: Require public API endpoint coverage
+        if: inputs.candidate_artifact != '' && steps.suite.outcome == 'success'
+        run: |
+          set -euo pipefail
+          python3 tests/lib/insight_stand/coverage.py \
+            --observed "$RUNNER_TEMP/stand-artifacts/stand_observed_endpoints.json" \
+            --catalogue "$RUNNER_TEMP/stand-artifacts/stand_operations.json" \
+            --spec docs/components/backend/analytics/openapi.json \
             2>&1 | python3 "$REDACT"
 
       # Affirms the durable copy matches what this run emitted, so phase 2 can
       # let readers depend on it. After the suite and under always(), so a broken
       # publish turns the run red without blocking the stages of a seeded stand.
       - name: Verify the published seed manifest
-        if: ${{ always() && steps.seed.outcome == 'success' }}
+        if: ${{ always() && (steps.seed.outcome == 'success' || steps.upgrade-dataset.outcome == 'success') }}
         run: |
           set -euo pipefail
           kubectl -n "$STAND_NAMESPACE" get configmap seed-stand-manifest \
@@ -604,6 +651,7 @@ jobs:
           RUN_SMOKE: ${{ steps.stages.outputs.run_smoke }}
           RUN_SUITE: ${{ steps.stages.outputs.run_suite }}
           STAGES: ${{ inputs.stages }}
+          CANDIDATE: ${{ inputs.candidate_artifact }}
           # From what the steps DID, not what was requested.
           DEPLOY_RESULT: >-
             ${{ steps.deploy_secret.outcome || 'skipped' }} ${{ steps.deploy_downgrade_guard.outcome || 'skipped' }} ${{ steps.deploy_upgrade.outcome || 'skipped' }} ${{ steps.deploy_routes.outcome || 'skipped' }}
@@ -642,7 +690,11 @@ jobs:
             echo "| requested | \`${STAGES:-all}\` |"
             echo "| deploy | $(render "$DEPLOY_RESULT") |"
             echo "| edge | $(render "$EDGE_RESULT") |"
-            echo "| seed | $(render "$SEED_RESULT") |"
+            if [ -n "$CANDIDATE" ]; then
+              echo "| dataset | existing data retained; no reseed |"
+            else
+              echo "| seed | $(render "$SEED_RESULT") |"
+            fi
             echo "| smoke | $(render "$GATE_RESULT") |"
             echo "| suite | $(render "$SUITE_RESULT") |"
             echo "| outcome | **$OUTCOME** |"

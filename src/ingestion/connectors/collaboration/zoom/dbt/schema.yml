@@ -99,6 +99,26 @@ models:
           - not_null
           - unique
       - name: person_key
+        description: >
+          lower(email) for a signed-in attendee; `zoom-guest:<name>` for a
+          joiner no Zoom user is named after, kept as an account for an
+          operator to bind.
+        tests:
+          - not_null
+      - name: account_source_type
+        description: >
+          How the row is keyed: 'email' (person_key is the address, the other
+          two columns are empty) or 'zoom-guest' (the account triple)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['email', 'zoom-guest']
+      - name: account_source_id
+        description: "The raw connector source id on a guest row, '' on an email-keyed row"
+        tests:
+          - not_null
+      - name: account_id
+        description: "The normalized display name on a guest row, '' on an email-keyed row"
         tests:
           - not_null
       - name: date
@@ -135,3 +155,27 @@ models:
           a session that crosses UTC midnight counts entirely on its join day.
           video_duration_seconds and screen_share_duration_seconds count the same
           overlap for sessions with a camera or a share.
+
+
+  - name: zoom__guest_identity_inputs
+    description: >
+      The `zoom-guest` accounts for the identity console: one display_name claim
+      per guest name seen on at least two days in zoom__collab_meeting_activity.
+      Unioned into silver.identity_inputs; an operator's binding is what makes
+      the guest's meetings attribute.
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: insight_source_type
+        tests:
+          - accepted_values:
+              values: ['zoom-guest']
+      - name: source_account_id
+        tests:
+          - not_null
+      - name: value_type
+        tests:
+          - accepted_values:
+              values: ['display_name']

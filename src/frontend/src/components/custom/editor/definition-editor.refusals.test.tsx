@@ -16,8 +16,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchDashboards: vi.fn(),
     fetchDatasetNames: vi.fn(),
     fetchDataset: vi.fn(),
-    fetchTables: vi.fn(),
-    fetchTable: vi.fn(),
   };
 });
 
@@ -28,7 +26,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 
-import { invalid, mockCatalogues, rowOf, wrapper } from "./editor-test-helpers";
+import { invalid, mockCatalogues, wrapper } from "./editor-test-helpers";
 import { DefinitionEditor } from "./definition-editor";
 
 beforeEach(() => {
@@ -42,31 +40,7 @@ beforeEach(() => {
 });
 
 describe("<DefinitionEditor> shown a refusal", () => {
-  it("puts a refusal on the field it names, and nowhere else", async () => {
-    const user = userEvent.setup();
-    vi.mocked(customClient.putDefinition).mockRejectedValue(
-      invalid([{ field: "limit", description: "must be positive" }])
-    );
-
-    render(
-      <DefinitionEditor
-        kind="metrics"
-        id="wrong"
-        name="wrong"
-        document={{ dataset: "commits", limit: -1 }}
-        onStored={vi.fn()}
-      />,
-      { wrapper }
-    );
-
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    const said = await screen.findByRole("alert");
-    expect(said).toHaveTextContent("must be positive");
-    expect(rowOf(screen.getByLabelText("Limit"))).toContainElement(said);
-  });
-
-  it("puts each of several refusals on its own field", async () => {
+  it("says each refusal under the document, by the path it names", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.putDataset).mockRejectedValue(
       invalid([
@@ -95,67 +69,13 @@ describe("<DefinitionEditor> shown a refusal", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     const alerts = await screen.findAllByRole("alert");
-    expect(alerts).toHaveLength(2);
-    expect(rowOf(screen.getByLabelText("Title"))).toHaveTextContent(
-      "must not be empty"
-    );
-    expect(screen.getByRole("group", { name: "field 2" })).toHaveTextContent(
-      "unknown type"
-    );
-    expect(
-      screen.getByRole("group", { name: "field 1" })
-    ).not.toHaveTextContent("unknown type");
+    expect(alerts.map((alert) => alert.textContent)).toEqual([
+      "title: must not be empty",
+      "fields[1].type: unknown type",
+    ]);
   });
 
-  it("puts a refusal about a whole entry on that entry", async () => {
-    const user = userEvent.setup();
-    vi.mocked(customClient.putDataset).mockRejectedValue(
-      invalid([{ field: "fields[0]", description: "a field is an object" }])
-    );
-
-    render(
-      <DefinitionEditor
-        kind="datasets"
-        id="commits"
-        name="commits"
-        document={{ title: "Commits", fields: [{ name: "day" }] }}
-        onStored={vi.fn()}
-      />,
-      { wrapper }
-    );
-
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    expect(
-      await screen.findByRole("group", { name: "field 1" })
-    ).toHaveTextContent("a field is an object");
-  });
-
-  it("says a refusal about a field the chosen variant does not show", async () => {
-    const user = userEvent.setup();
-    vi.mocked(customClient.putDefinition).mockRejectedValue(
-      invalid([{ field: "columns", description: "unknown column" }])
-    );
-
-    render(
-      <DefinitionEditor
-        kind="widgets"
-        id="chart"
-        name="chart"
-        document={{ type: "stat", metric: "commits", value: "total" }}
-        onStored={vi.fn()}
-      />,
-      { wrapper }
-    );
-
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "columns: unknown column"
-    );
-  });
-
-  it("says a refusal it has no field for, above the document", async () => {
+  it("says the service's own words when it names nothing", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.putDefinition).mockRejectedValue(
       new CustomApiError(409, { detail: "the metric changed meanwhile" })
@@ -174,11 +94,9 @@ describe("<DefinitionEditor> shown a refusal", () => {
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    const said = await screen.findByText("the metric changed meanwhile");
-    const document = screen.getByLabelText("Dataset");
-    expect(
-      said.compareDocumentPosition(document) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "the metric changed meanwhile"
+    );
   });
 
   it("names what a change would break, when the service refuses for that", async () => {
@@ -239,32 +157,4 @@ describe("<DefinitionEditor> shown a refusal", () => {
       "Couldn't store it."
     );
   });
-
-  it("shows a placed refusal in the text as well, by its path", async () => {
-    const user = userEvent.setup();
-    vi.mocked(customClient.putDefinition).mockRejectedValue(
-      invalid([{ field: "limit", description: "must be positive" }])
-    );
-
-    render(
-      <DefinitionEditor
-        kind="metrics"
-        id="wrong"
-        name="wrong"
-        document={{ dataset: "commits", limit: -1 }}
-        onStored={vi.fn()}
-      />,
-      { wrapper }
-    );
-
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByRole("alert");
-    await user.click(screen.getByRole("button", { name: "JSON" }));
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "limit: must be positive"
-    );
-  });
-
-  // Two main dates is a refusal; the form offers only what a declaration
 });

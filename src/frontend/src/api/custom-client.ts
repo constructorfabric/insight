@@ -34,8 +34,6 @@ import type {
   MetricDefinition,
   OrphanedFolder,
   PinList,
-  TableList,
-  TableSchema,
   TagList,
 } from "@/api/custom-types";
 
@@ -444,23 +442,6 @@ export async function fetchDatasetNames(
 export async function fetchDataset(name: string): Promise<Dataset> {
   const res = await fetchWithAuth(`${BASE}/datasets/${named(name)}`);
   return readJson<Dataset>(res);
-}
-
-/** Every warehouse table a metric may read, or one database's. */
-export async function fetchTables(database?: string): Promise<TableList> {
-  const query = database ? `?database=${encodeURIComponent(database)}` : "";
-  const res = await fetchWithAuth(`${BASE}/tables${query}`);
-  return readJson<TableList>(res);
-}
-
-export async function fetchTable(
-  database: string,
-  table: string
-): Promise<TableSchema> {
-  const res = await fetchWithAuth(
-    `${BASE}/tables/${named(database)}/${named(table)}`
-  );
-  return readJson<TableSchema>(res);
 }
 
 /** One page of the records a dataset holds, sized by the service. */

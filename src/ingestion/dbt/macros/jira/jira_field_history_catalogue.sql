@@ -74,7 +74,7 @@
     {%- set rows = run_query(
         "SELECT toUnixTimestamp64Milli(toDateTime64(greatest("
         ~ "  (SELECT COALESCE(max(_airbyte_extracted_at), toDateTime64(0, 3))"
-        ~ "   FROM " ~ source('bronze_jira', 'jira_issue') ~ " WHERE jira_id IS NOT NULL),"
+        ~ "   FROM " ~ source('bronze_jira', 'jira_issue') ~ "),"
         ~ "  (SELECT COALESCE(max(extracted_at), toDateTime64(0, 3))"
         ~ "   FROM " ~ ref('jira__changelog_items') ~ " WHERE jira_id IS NOT NULL)"
         ~ "), 3))"
@@ -149,9 +149,8 @@
             sources is absent from their union. -#}
         DELETE FROM {{ this }}
         WHERE (insight_source_id, issue_id) NOT IN (
-                  SELECT COALESCE(source_id, ''), COALESCE(toString(jira_id), '')
+                  SELECT CAST(source_id AS String), CAST(jira_id AS String)
                   FROM {{ source('bronze_jira', 'jira_issue') }}
-                  WHERE jira_id IS NOT NULL
               )
           AND (insight_source_id, issue_id) NOT IN (
                   SELECT insight_source_id, assumeNotNull(jira_id)

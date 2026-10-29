@@ -19,14 +19,13 @@ WITH winner AS (
         jira_id,
         argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE jira_id IS NOT NULL
     GROUP BY source_id, jira_id
 ),
 
 issues AS (
     SELECT
-        COALESCE(i.source_id, '')                                     AS insight_source_id,
-        COALESCE(toString(i.jira_id), '')                             AS issue_id,
+        CAST(i.source_id AS String)                                   AS insight_source_id,
+        CAST(i.jira_id AS String)                                     AS issue_id,
         COALESCE(toString(i.id_readable), '')                         AS id_readable,
         toDateTime64(i._airbyte_extracted_at, 3)                      AS extracted_at,
         JSONExtractArrayRaw(COALESCE(i.custom_fields_json, '{}'), 'issuelinks') AS link_objects,

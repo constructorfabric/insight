@@ -31,7 +31,6 @@ import {
   fetchOrphanedDashboards,
   fetchOrphanedFolders,
   fetchPins,
-  fetchTable,
   fetchTags,
   fetchWidget,
   fetchWidgets,
@@ -368,8 +367,6 @@ describe("an id or name that reached the client empty", () => {
     ["duplicateDashboard", () => duplicateDashboard("", "copy")],
     ["fetchDependents", () => fetchDependents("metrics", "")],
     ["fetchDatasetDependents", () => fetchDatasetDependents("")],
-    ["fetchTable (database)", () => fetchTable("", "commits")],
-    ["fetchTable (table)", () => fetchTable("insight", "")],
   ])("is refused before %s asks for it", async (_name, call) => {
     await expect(call()).rejects.toBeInstanceOf(CustomApiError);
     expect(mockFetch).not.toHaveBeenCalled();

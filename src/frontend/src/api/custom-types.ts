@@ -269,34 +269,6 @@ export interface DatasetDeclaration {
   row_identity?: string[];
 }
 
-/** Which part of the warehouse a table belongs to, read off its database. */
-export type TableLayer = "bronze" | "silver" | "gold" | "identity" | "other";
-
-/** One warehouse table as the catalogue lists it: enough to name it. */
-export interface WarehouseTable {
-  database: string;
-  table: string;
-  layer: TableLayer;
-}
-
-export interface TableList {
-  tables: WarehouseTable[];
-  total: number;
-}
-
-export interface TableColumn {
-  name: string;
-  /** As the warehouse spells it, `Nullable(Int64)` and the like. */
-  type: string;
-}
-
-/** One warehouse table with what a metric over it needs. */
-export interface TableSchema extends WarehouseTable {
-  /** A replacing engine is read through FINAL without the metric saying so. */
-  engine: string;
-  columns: TableColumn[];
-}
-
 /** A dataset as the catalogue and its page read it. */
 export interface Dataset {
   name: string;

@@ -22,21 +22,20 @@ issue_winner AS (
     -- Read-time dedup by the issue's stable key within a source.
     SELECT source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE jira_id IS NOT NULL
     GROUP BY source_id, jira_id
 ),
 
 current_bodies AS (
     SELECT
-        COALESCE(i.source_id, '')                         AS insight_source_id,
-        toString(assumeNotNull(i.jira_id))                AS issue_id,
+        CAST(i.source_id AS String)                       AS insight_source_id,
+        CAST(i.jira_id AS String)                         AS issue_id,
         kv.1                                              AS field_id,
         kv.2                                              AS content
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
     ARRAY JOIN JSONExtractKeysAndValuesRaw(COALESCE(i.custom_fields_json, '{}')) AS kv
     INNER JOIN long_text_fields AS f
-        ON f.insight_source_id = COALESCE(i.source_id, '')
+        ON f.insight_source_id = CAST(i.source_id AS String)
        AND f.field_id = kv.1
     WHERE kv.2 NOT IN ('', 'null', '""', '{}')
 )

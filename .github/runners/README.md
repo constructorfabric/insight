@@ -44,9 +44,10 @@ repository, not a fork.
 
 - **arm64 legs** stay on `ubuntu-24.04-arm` under every event and with the kill
   switch on.
-- **`deploy-test-stand.yml` and `run-stand-suite.yml`** stay on GitHub-hosted
-  runners: they read `TEST_STAND_KUBECONFIG` and the persona password through
-  the `insight-test-stand` environment.
+- **`deploy-test-stand.yml`** uses `insight-large` for candidate validation
+  on `push` and `workflow_dispatch`, with the GitHub-hosted kill switch.
+  Published-release deployments and **`run-stand-suite.yml`** stay on
+  GitHub-hosted runners. All retain the `insight-test-stand` environment.
 
 ## Caches
 

@@ -12,8 +12,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchDefinition: vi.fn(),
     fetchMetric: vi.fn(),
     fetchDataset: vi.fn(),
-    fetchTables: vi.fn(),
-    fetchTable: vi.fn(),
     deleteDataset: vi.fn(),
     putDefinition: vi.fn(),
     fetchMetrics: vi.fn(),
@@ -64,6 +62,12 @@ function sharing(client: QueryClient) {
 
 const NO_ITEMS = { items: [], total: 0 };
 
+/** The document the editor holds, once it has opened. */
+async function shownDocument(): Promise<unknown> {
+  const text = await screen.findByLabelText(/as text/i);
+  return JSON.parse((text as HTMLTextAreaElement).value);
+}
+
 function storedMetric(body: Record<string, unknown>) {
   return { id: "lines_per_day", name: "Lines per day", body };
 }
@@ -90,19 +94,19 @@ beforeEach(() => {
 });
 
 describe("/portal/custom/edit/$kind/$name", () => {
-  it("opens the stored definition in the fields its kind admits", async () => {
+  it("opens the stored definition as its text", async () => {
+    const body = {
+      dataset: "commits",
+      fields: [{ field: "lines", type: "int", agg: "sum", as_name: "total" }],
+      limit: 25,
+    };
     vi.mocked(customClient.fetchDefinition).mockResolvedValue(
-      storedMetric({
-        dataset: "commits",
-        fields: [{ field: "lines", type: "int", agg: "sum", as_name: "total" }],
-        limit: 25,
-      })
+      storedMetric(body)
     );
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByLabelText("Dataset")).toHaveValue("commits");
-    expect(screen.getByLabelText("Limit")).toHaveValue(25);
+    expect(await shownDocument()).toEqual(body);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
       "Lines per day"
     );
@@ -119,7 +123,7 @@ describe("/portal/custom/edit/$kind/$name", () => {
     );
 
     render(<Component />, { wrapper });
-    await screen.findByLabelText("Dataset");
+    await screen.findByLabelText(/as text/i);
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -150,7 +154,7 @@ describe("/portal/custom/edit/$kind/$name", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "no such metric"
     );
-    expect(screen.queryByLabelText("Dataset")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/as text/i)).not.toBeInTheDocument();
   });
 
   it("says so for a path naming a kind there is no editor for", () => {
@@ -177,7 +181,7 @@ describe("/portal/custom/edit/$kind/$name", () => {
     );
 
     const first = render(<Component />, { wrapper: session });
-    expect(await screen.findByLabelText("Dataset")).toHaveValue("commits");
+    expect(await shownDocument()).toMatchObject({ dataset: "commits" });
     first.unmount();
 
     vi.mocked(customClient.fetchDefinition).mockResolvedValueOnce(
@@ -186,9 +190,9 @@ describe("/portal/custom/edit/$kind/$name", () => {
 
     render(<Component />, { wrapper: session });
 
-    expect(await screen.findByLabelText("Dataset")).toHaveValue(
-      "pull_requests"
-    );
+    expect(await shownDocument()).toMatchObject({
+      dataset: "pull_requests",
+    });
   });
 
   it("asks before taking a dataset away, and says what still reads it", async () => {
@@ -240,7 +244,7 @@ describe("/portal/custom/edit/$kind/$name", () => {
     );
 
     render(<Component />, { wrapper });
-    await screen.findByLabelText("Dataset");
+    await screen.findByLabelText(/as text/i);
     expect(
       screen.queryByRole("button", { name: /^Rename/ })
     ).not.toBeInTheDocument();
@@ -292,8 +296,7 @@ describe("/portal/custom/edit/$kind/$name", () => {
           name: "commits",
           declaration: { title: "Commits", fields: [] },
         }),
-      label: "Title",
-      value: "Commits",
+      shown: { title: "Commits" },
     },
     {
       kind: "widgets",
@@ -307,8 +310,7 @@ describe("/portal/custom/edit/$kind/$name", () => {
           new CustomApiError(404, null)
         );
       },
-      label: "Metric",
-      value: "commits",
+      shown: { type: "stat", metric: "commits", value: "total" },
     },
     {
       kind: "dashboards",
@@ -318,20 +320,17 @@ describe("/portal/custom/edit/$kind/$name", () => {
           name: "Thing",
           body: { title: "Board", items: [] },
         }),
-      label: "Title",
-      value: "Board",
+      shown: { title: "Board", items: [] },
     },
   ])(
     "opens a stored $kind body as the document",
-    async ({ kind, arrange, label, value }) => {
+    async ({ kind, arrange, shown }) => {
       portalRouter.reset(`/portal/custom/edit/${kind}/thing`);
       arrange();
 
       render(<Component />, { wrapper });
 
-      await waitFor(() =>
-        expect(screen.getByLabelText(label)).toHaveValue(value)
-      );
+      expect(await shownDocument()).toMatchObject(shown);
     }
   );
 });

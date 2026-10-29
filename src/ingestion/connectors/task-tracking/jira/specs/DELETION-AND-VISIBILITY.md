@@ -93,7 +93,9 @@ Id-only sweep of **all** issues in every visible live project.
   projects and therefore must never drive the census: a deletion does not
   reliably bump the project's `insight.lastIssueUpdateTime` aggregate.
 - Sync mode: full refresh, every sync.
-- Record: `jira_id` (numeric issue id), `project_key`, identity stamp.
+- Record: `jira_id` (numeric issue id), `id_readable` (the issue's current
+  key, which `jira__issue_key_ids` resolves to the id), `project_key`,
+  identity stamp.
   `unique_key = {tenant}-{source}-{jira_id}` — keyed by **numeric id, never by
   issue key**: moving an issue between projects changes its key but not its
   id; a key-based census would report every moved issue as deleted.

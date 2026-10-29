@@ -12,6 +12,7 @@ import { CustomPageShell } from "@/components/custom/custom-page-shell";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { dashboardIdFromPath } from "@/lib/custom/dashboard-path";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useIsAdmin } from "@/queries/identity-me";
 import {
   invalidateDashboardList,
@@ -34,6 +35,7 @@ const MEMBER_ROUTES = new Set(["/portal/custom/", "/portal/custom/$name"]);
 
 function CustomZone() {
   const { isAdmin, isPending, isError, retry } = useIsAdmin();
+  const showPlanned = usePortalShowPlanned();
   const routeId = useRouterState({ select: (s) => s.matches.at(-1)?.routeId });
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const openDashboard = dashboardIdFromPath(pathname);
@@ -90,7 +92,9 @@ function CustomZone() {
   }
 
   return (
-    <CustomPageShell chat={<CustomChat onCreated={handleCreated} />}>
+    <CustomPageShell
+      chat={showPlanned ? <CustomChat onCreated={handleCreated} /> : undefined}
+    >
       <Outlet />
     </CustomPageShell>
   );
