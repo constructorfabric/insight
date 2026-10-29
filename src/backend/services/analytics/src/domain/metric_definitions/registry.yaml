@@ -2179,7 +2179,7 @@ metrics:
     label: Files Shared
     short_label: Files shared
     description: Files shared with any recipient
-    explanation: Files a person shared with recipients inside or outside the organization, counted once per file per day. A file shared both inside and outside counts once in each, and a share with a group counts as inside even when the group has outside members.
+    explanation: Files a person shared with recipients inside or outside the organization, counted once per file per day in each scope. A file shared both inside and outside on the same day counts twice, once in each scope, and a share with a group counts as inside even when the group has outside members.
     unit: files
     format: integer
     direction: neutral
