@@ -79,7 +79,11 @@ async function createShared({
   return { id, shareFailure };
 }
 
-export function NewDashboardButton() {
+export function NewDashboardButton({
+  variant = "default",
+}: {
+  variant?: "default" | "outline";
+}) {
   const { isAdmin } = useIsAdmin();
   const [open, setOpen] = useState(false);
 
@@ -87,7 +91,12 @@ export function NewDashboardButton() {
 
   return (
     <>
-      <Button size="sm" icon={<Plus />} onClick={() => setOpen(true)}>
+      <Button
+        variant={variant}
+        size="sm"
+        icon={<Plus />}
+        onClick={() => setOpen(true)}
+      >
         New dashboard
       </Button>
       <CreateDashboardDialog open={open} onClose={() => setOpen(false)} />

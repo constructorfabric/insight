@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { NewDashboardButton } from "@/components/custom/create-dashboard-dialog";
 import { DashboardCard } from "@/components/custom/dashboard-card";
-import { NewLink } from "@/components/custom/editor/edit-link";
 import { Button } from "@/components/ui/button";
 import { useZoneNav } from "@/lib/portal/use-zone-nav";
 import { TEXT_EYEBROW } from "@/lib/type-scale";
@@ -28,7 +28,7 @@ function DashboardSection() {
         <h2 id="home-dashboards" className={TEXT_EYEBROW}>
           My dashboards · recent
         </h2>
-        <NewLink kind="dashboards" noun="dashboard" />
+        <NewDashboardButton variant="outline" />
       </div>
       {dashboards.isPending ? (
         <p role="status" className="text-sm text-muted-foreground">
