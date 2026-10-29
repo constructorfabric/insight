@@ -104,7 +104,7 @@ email_source AS (
         received_count,
         read_count,
         replaceOne(data_source, 'insight_', '') AS tool_value,
-        {{ collab_tool_label('tool_value') }} AS tool_label,
+        {{ collab_tool_label('tool_value', m365_label='Outlook') }} AS tool_label,
         CAST(
             [tuple('tool', tool_value, tool_label)]
             AS Array(Tuple(key String, value String, label Nullable(String)))
@@ -122,7 +122,7 @@ document_source AS (
         shared_internally_count,
         shared_externally_count,
         replaceOne(data_source, 'insight_', '') AS tool_value,
-        {{ collab_tool_label('tool_value') }} AS tool_label,
+        {{ collab_tool_label('tool_value', m365_label='OneDrive / SharePoint') }} AS tool_label,
         CAST(
             [tuple('tool', tool_value, tool_label)]
             AS Array(Tuple(key String, value String, label Nullable(String)))

@@ -536,31 +536,31 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit comments
 - Notes: Comments the person wrote on pull requests — conversation and inline review comments alike — dated by posting. The comment target dimension splits comments on the person's own requests from comments on other people's; a comment whose request author cannot be determined counts under others, so the two halves always add up to the total.
 
-## collab.messages_sent — Messages Sent
+## collab.messages_sent — Chat Messages Sent
 
 - Source: collab (collab_metric_observations)
 - Reads: total_chat_messages
 - Formula: sum(total_chat_messages)
 - Shape: integer, neutral, unit messages
-- Notes: Chat messages a person sent across messaging tools. Counts are not directly comparable between tools: Slack includes thread replies, and Microsoft 365 combines private-chat and channel messages.
+- Notes: Chat messages a person sent across messaging tools. Counts are not directly comparable between tools: Slack includes thread replies, and Microsoft Teams combines private-chat and channel messages.
 
-## collab.channel_posts — Channel Posts
+## collab.channel_posts — Channel Messages
 
 - Source: collab (collab_metric_observations)
 - Reads: channel_posts
 - Formula: sum(channel_posts)
 - Shape: integer, neutral, unit messages
-- Notes: Channel posts plus thread replies across messaging tools. Tools that report posts and replies separately are folded so counts stay comparable.
+- Notes: Messages a person posted to shared channels, posts and thread replies together, across messaging tools. Tools that report posts and replies separately are folded so counts stay comparable.
 
-## collab.dm_ratio — DM Ratio
+## collab.dm_ratio — Private Chat Share
 
 - Source: collab (collab_metric_observations)
 - Reads: direct_and_group_messages, split_chat_messages
 - Formula: 100 * (direct_and_group_messages / split_chat_messages)
 - Shape: percent, neutral
-- Notes: Direct and group-chat messages divided by all chat messages, counted only in tools that tell the two apart, such as Microsoft Teams and Slack. Messages from tools without that split, such as Zulip, are left out, and a person with only those tools has no value. A lower ratio means more communication happens in open channels.
+- Notes: Private-chat messages divided by all chat messages. Private chat is one-to-one and group chats in Microsoft Teams, and everything outside channels in Slack, so it is not limited to one-to-one conversations. Counted only in tools that tell private chat and channels apart; messages from tools without that split, such as Zulip, are left out, and a person with only those tools has no value. A lower share means more communication happens in open channels.
 
-## collab.msgs_per_active_day — Messages per Active Day
+## collab.msgs_per_active_day — Chat Messages per Active Day
 
 - Source: collab (collab_metric_observations)
 - Reads: total_chat_messages, chat_active_day
@@ -582,7 +582,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: emails_sent
 - Formula: sum(emails_sent)
 - Shape: integer, neutral, unit emails
-- Notes: Emails a person sent.
+- Notes: Emails a person sent. Replies and forwards count; a message to several recipients counts once.
 
 ## collab.emails_received — Emails Received
 
@@ -590,17 +590,17 @@ is an order statistic instead, and always answers with one that did.
 - Reads: emails_received
 - Formula: sum(emails_received)
 - Shape: integer, neutral, unit emails
-- Notes: Emails a person received.
+- Notes: Messages delivered to the mailbox, including mailing lists and automated notifications. Measures inbox volume, not work, and is not comparable with read events.
 
-## collab.emails_read — Email Read Actions
+## collab.emails_read — Email Read Events
 
 - Source: collab (collab_metric_observations)
 - Reads: emails_read
 - Formula: sum(emails_read)
-- Shape: integer, neutral, unit actions
-- Notes: Times a person opened an email, as the mail source reports them. Opening the same message again counts again, so this can exceed the number of emails received.
+- Shape: integer, neutral, unit events
+- Notes: Counts every time a message is marked read, as Exchange reports it: reopening a message or marking a whole folder read counts each message again. Not the number of distinct emails read, so it can exceed emails received.
 
-## collab.files_engaged — Files Engaged
+## collab.files_engaged — Files Viewed or Edited
 
 - Source: collab (collab_metric_observations)
 - Reads: files_engaged
@@ -614,7 +614,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: files_shared_internal
 - Formula: sum(files_shared_internal)
 - Shape: integer, neutral, unit files
-- Notes: Files a person shared with people inside the organization.
+- Notes: Files a person shared with people inside the organization, counted once per file per day.
 
 ## collab.files_shared_external — Files Shared (External)
 
@@ -622,7 +622,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: files_shared_external
 - Formula: sum(files_shared_external)
 - Shape: integer, neutral, unit files
-- Notes: Files a person shared with people outside the organization.
+- Notes: Files a person shared with people outside the organization, counted once per file per day.
 
 ## collab.files_shared — Files Shared
 
@@ -630,7 +630,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: files_shared
 - Formula: sum(files_shared)
 - Shape: integer, neutral, unit files
-- Notes: Files a person shared with recipients inside or outside the organization. A file shared both inside and outside counts once in each, and a share with a group counts as inside even when the group has outside members.
+- Notes: Files a person shared with recipients inside or outside the organization, counted once per file per day in each scope. A file shared both inside and outside on the same day counts twice, once in each scope, and a share with a group counts as inside even when the group has outside members.
 
 ## collab.meeting_hours — Meeting Hours
 
@@ -638,9 +638,9 @@ is an order statistic instead, and always answers with one that did.
 - Reads: meeting_hours
 - Formula: sum(meeting_hours)
 - Shape: decimal, lower_is_better, unit h
-- Notes: Hours spent in meetings. Microsoft Teams reports audio, video and screen-share time only as daily totals, so a Teams day counts the longest of the three, an estimate rather than exact meeting time. Zoom time counts only while someone else was in the meeting, so a room left open or a pause with nobody else adds nothing; Zoom counts all of a session's shared time as video or screen share once the camera or a share was used, so those may run higher than Microsoft Teams.
+- Notes: Hours spent in meetings and calls; Microsoft Teams includes one-to-one calls. Microsoft Teams reports audio, video and screen-share time only as daily totals, so a Teams day counts the longest of the three, an estimate rather than exact meeting time. Zoom time counts only while someone else was in the meeting, so a room left open or a pause with nobody else adds nothing.
 
-## collab.meetings_count — Meetings Attended
+## collab.meetings_count — Meetings and Calls Attended
 
 - Source: collab (collab_metric_observations)
 - Reads: meetings_attended
@@ -656,7 +656,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit days
 - Notes: Days on which a person was actively collaborating but spent no time in meetings or calls — a proxy for uninterrupted working days. Only addresses some meeting source reports on count, so a person no meeting tool knows has no value.
 
-## collab.focus_time_pct — Focus Time
+## collab.focus_time_pct — Time Outside Meetings
 
 - Source: collab (collab_metric_observations)
 - Reads: workday_meeting_hours, working_hours
@@ -686,7 +686,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: adhoc_meetings_attended
 - Formula: sum(adhoc_meetings_attended)
 - Shape: integer, neutral, unit meetings
-- Notes: Unscheduled Microsoft Teams meetings a person attended. Zoom does not report this split, so Zoom meetings are not included.
+- Notes: Unscheduled Microsoft Teams meetings a person attended. Meet Now started from a chat counts as ad hoc; started from the calendar it counts as scheduled. Zoom does not report this split, so Zoom meetings are not included.
 
 ## collab.scheduled_meetings — Scheduled Meetings
 
