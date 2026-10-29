@@ -154,6 +154,7 @@ def test_a_success_that_never_started_fails_the_step_and_logs_why(
 
     assert result == 1
     output = capsys.readouterr().err
+    assert '"event": "sync.not_run"' in output
     assert '"event": "sync.failure_reason"' in output
     assert '"failure_origin": "airbyte_platform"' in output
     assert '"status": "failed"' in output

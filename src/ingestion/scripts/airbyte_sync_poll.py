@@ -215,7 +215,7 @@ def main() -> int:
         if status == JobStatus.SUCCEEDED and succeeded_without_syncing(resp):
             log.error(
                 "Airbyte reported success, but the latest attempt recorded failures or synced no streams",
-                extra={"job_id": job_id, "streams": attempt_stream_count(resp)},
+                extra={"event": "sync.not_run", "job_id": job_id, "streams": attempt_stream_count(resp)},
             )
             emit_failure_reasons(resp)
             emit_completed("failed", 1)
