@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 from conftest import Scenario
-from helpers import issue
+from helpers import census_entry, issue
 
 # Reads the source and issue id of `jira_issue` through CAST; `+` builds
 # the staging models it joins.
@@ -35,3 +35,14 @@ def test_an_issue_row_with_its_identity_builds(scenario: Scenario) -> None:
     attempt = scenario.warehouse.dbt_status("run", "--select", SELECTOR)
 
     assert attempt.success, attempt.log
+
+
+@pytest.mark.parametrize("column", ["source_id", "jira_id"])
+def test_a_census_row_missing_its_identity_fails_the_key_map(scenario: Scenario, column: str) -> None:
+    """The census arm of the key map reads both through CAST as well."""
+    scenario.seed(fields=[], issues=[], census=[{**census_entry("ARC-7", jira_id="9007"), column: None}])
+
+    attempt = scenario.warehouse.dbt_status("run", "--select", "+jira__issue_key_ids")
+
+    assert not attempt.success, f"should fail on a NULL census {column}"
+    assert NULL_REJECTED in attempt.log, f"should name the NULL conversion for census {column}:\n{attempt.log}"

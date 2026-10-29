@@ -570,8 +570,6 @@ jobs:
       # group, which is what stops the next merge's deploy from landing on the
       # stand mid-suite.
       #
-      # No endpoint-coverage gate: that gate belongs to the compose lane, which
-      # reaches the internal listeners this stand keeps in-cluster.
       - name: 'Stage 5/5 — run the full stand suite'
         id: suite
         if: steps.stages.outputs.run_suite == 'true'
@@ -587,10 +585,20 @@ jobs:
           # retain-on-failure: a green run then carries no session credentials
           # off the runner at all, which is a smaller problem than redacting one.
           uv run --project tests --frozen \
-            pytest tests/stand -ra --stand-manifest "$INSIGHT_STAND_MANIFEST" \
+            pytest tests/stand -ra -m 'not requires_service_principal' --stand-manifest "$INSIGHT_STAND_MANIFEST" \
             --browser chromium \
             --tracing=retain-on-failure \
             --screenshot=only-on-failure \
+            2>&1 | python3 "$REDACT"
+
+      - name: Require public API endpoint coverage
+        if: inputs.candidate_artifact != '' && steps.suite.outcome == 'success'
+        run: |
+          set -euo pipefail
+          python3 tests/lib/insight_stand/coverage.py \
+            --observed "$RUNNER_TEMP/stand-artifacts/stand_observed_endpoints.json" \
+            --catalogue "$RUNNER_TEMP/stand-artifacts/stand_operations.json" \
+            --spec docs/components/backend/analytics/openapi.json \
             2>&1 | python3 "$REDACT"
 
       # Affirms the durable copy matches what this run emitted, so phase 2 can

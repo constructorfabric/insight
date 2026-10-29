@@ -152,6 +152,11 @@ name: jira
 # destination-clickhouse makes every column outside the sort key nullable.
 # MINOR per ADR-0015: reconcile republishes the manifest and nothing stored
 # changes meaning.
+# 17.2.0: `jira_issue_census` keeps each issue's current key beside its id, so
+# `jira__issue_key_ids` resolves a linked issue's key to its immutable id even
+# when the issue was never updated inside the sync window. MINOR per ADR-0015:
+# reconcile republishes the manifest and refreshes the catalog, the destination
+# adds the column on the next sync, and nothing already stored changes meaning.
 # 18.0.0 (major): every Jira producer of a task class carries `tenant_id` after
 # `unique_key` and leads its key with the tenant, and the journal derives,
 # deletes and batches per tenant. MAJOR because rows already written change

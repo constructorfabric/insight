@@ -282,6 +282,7 @@ class Case:
     issues: list[dict[str, Any]]
     events: list[dict[str, Any]]
     statuses: list[dict[str, Any]]
+    census: list[dict[str, Any]]
 
 
 def case(
@@ -290,6 +291,7 @@ def case(
     issues: list[dict[str, Any]],
     events: list[dict[str, Any]] | None = None,
     statuses: list[dict[str, Any]] | None = None,
+    census: list[dict[str, Any]] | None = None,
 ) -> Any:
     """Declare a test's bronze so its module can be seeded and built in one go.
 
@@ -305,7 +307,9 @@ def case(
     """
 
     def declare(test: Any) -> Any:
-        test.case = Case(fields=fields, issues=issues, events=events or [], statuses=statuses or [])
+        test.case = Case(
+            fields=fields, issues=issues, events=events or [], statuses=statuses or [], census=census or []
+        )
         return test
 
     return declare
@@ -332,6 +336,7 @@ class Scenario:
         statuses: list[dict[str, Any]] | None = None,
         comments: list[dict[str, Any]] | None = None,
         worklogs: list[dict[str, Any]] | None = None,
+        census: list[dict[str, Any]] | None = None,
     ) -> None:
         self.warehouse.insert("bronze_jira.jira_fields", self._stamp(fields))
         self.warehouse.insert("bronze_jira.jira_issue", self._stamp(issues))
@@ -339,6 +344,7 @@ class Scenario:
         self.warehouse.insert("bronze_jira.jira_statuses", self._stamp(statuses or []))
         self.warehouse.insert("bronze_jira.jira_comments", self._stamp(comments or []))
         self.warehouse.insert("bronze_jira.jira_worklogs", self._stamp(worklogs or []))
+        self.warehouse.insert("bronze_jira.jira_issue_census", self._stamp(census or []))
 
     def _stamp(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Re-address the builders' rows to this scenario's source.
@@ -461,6 +467,7 @@ def _truncate_bronze(warehouse: Warehouse) -> None:
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_comments")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_worklogs")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_keys")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_census")
     warehouse.generation += 1
 
 
@@ -500,7 +507,9 @@ class Batch:
         _truncate_bronze(self.warehouse)
         for name, scenario in self.scenarios.items():
             spec = self._cases[name]
-            scenario.seed(fields=spec.fields, issues=spec.issues, events=spec.events, statuses=spec.statuses)
+            scenario.seed(
+                fields=spec.fields, issues=spec.issues, events=spec.events, statuses=spec.statuses, census=spec.census
+            )
         self.warehouse.build(self._selector)
         self.generation = self.warehouse.generation
 

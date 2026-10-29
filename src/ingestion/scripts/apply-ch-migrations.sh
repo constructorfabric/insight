@@ -697,6 +697,28 @@ heal_collab_chat_table staging slack__collab_chat_activity
 heal_collab_chat_table staging zulip_proxy__collab_chat_activity
 heal_collab_chat_table silver class_collab_chat_activity
 
+echo "=== Healing collab-meeting contract schema ==="
+# Same positional invariant: collab meeting rows gained the account triple
+# after data_source (zoom-guest attribution). Every row written before the
+# columns existed is keyed by its email, which the default states.
+heal_collab_meeting_table() {
+  local db="$1" table="$2"
+  ch_table_exists "$db" "$table" || return 0
+  echo "  ${db}.${table}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS account_source_type String DEFAULT 'email' AFTER data_source;
+ALTER TABLE ${db}.${table} MODIFY COLUMN account_source_type String DEFAULT 'email' AFTER data_source;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS account_source_id String AFTER account_source_type;
+ALTER TABLE ${db}.${table} MODIFY COLUMN account_source_id String AFTER account_source_type;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS account_id String AFTER account_source_id;
+ALTER TABLE ${db}.${table} MODIFY COLUMN account_id String AFTER account_source_id;
+SQL
+}
+
+heal_collab_meeting_table staging m365__collab_meeting_activity
+heal_collab_meeting_table staging zoom__collab_meeting_activity
+heal_collab_meeting_table silver class_collab_meeting_activity
+
 # Same positional invariant: the task-users staging views gained tenant_id
 # mid-SELECT (after unique_key) for the task observation attribution, and
 # class_task_users inherits its column order from that union. Pre-existing

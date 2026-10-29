@@ -69,6 +69,7 @@ REBUILDABLE_APPEND_MODELS = frozenset(
         "outline__identity_inputs",
         "seed_identity_inputs_from_cursor",
         "zoom__collab_meeting_activity",
+        "zoom__guest_identity_inputs",
         "zoom__identity_inputs",
         "zoom__meeting_sessions",
         "zulip_proxy__identity_inputs",

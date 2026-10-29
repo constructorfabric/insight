@@ -1719,6 +1719,7 @@ instead, which is CI's mode.
                              passes it, plus a build flag for whatever tree
                              the ref changes.
           --build-backend    Compile the Rust services even under --pinned.
+          --prebuilt-frontend Use the loaded digest-pinned FRONTEND_IMAGE.
           --prebuilt-backend Use backend images already loaded under the
                              *_IMAGE environment variables. Never builds or
                              pulls a fallback image.
@@ -1933,7 +1934,7 @@ for name, svc in sorted(services.items()):
 # changes job names the trees the ref touches and the rest provably match
 # main. The verbs share these, so the default lives in one place.
 TEST_STAND_BACKEND_MODE=""   # source | prebuilt | pinned
-TEST_STAND_BUILD_FRONTEND="" # true | false
+TEST_STAND_BUILD_FRONTEND="" # true | false | prebuilt
 TEST_STAND_SKIP_BUILD=false
 TEST_STAND_PINNED=false
 
@@ -1945,6 +1946,7 @@ test_stand_build_flag() {
     --build)            TEST_STAND_BACKEND_MODE=source; TEST_STAND_BUILD_FRONTEND=true ;;
     --build-backend)    TEST_STAND_BACKEND_MODE=source ;;
     --prebuilt-backend) TEST_STAND_BACKEND_MODE=prebuilt ;;
+    --prebuilt-frontend) TEST_STAND_BUILD_FRONTEND=prebuilt ;;
     --build-frontend)   TEST_STAND_BUILD_FRONTEND=true ;;
     --skip-build)       TEST_STAND_SKIP_BUILD=true ;;
     *) return 1 ;;
@@ -1985,6 +1987,13 @@ test_stand_provide_backend() {
 # profile serves the pnpm build from src/frontend/dist).
 test_stand_prepare_env() {
   local build_frontend="$1" image
+  if [[ "$build_frontend" == prebuilt ]]; then
+    image="${FRONTEND_IMAGE:?FRONTEND_IMAGE is required for --prebuilt-frontend}"
+    [[ "$image" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "ERROR: frontend image requires a digest." >&2; return 1; }
+    docker image inspect "$image" >/dev/null || return 1
+    test_stand_write_env ghcr "$image"
+    return $?
+  fi
   if [[ "$build_frontend" == true ]]; then
     test_stand_write_env built || return 1
     echo "=== the frontend is built from this tree (pnpm), not pulled ==="

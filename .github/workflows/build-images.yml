@@ -14,6 +14,8 @@ on:
       - "charts/insight/**"
       - ".github/workflows/build-images.yml"
       - ".github/workflows/release-helm.yml"
+      - ".github/workflows/e2e-stand.yml"
+      - ".github/workflows/gateway.yml"
       - ".github/workflows/scripts/discover-image-matrix.py"
       - ".github/workflows/scripts/bump-service-appversions.sh"
       - ".github/workflows/scripts/wait-for-empty-merge-queue.sh"
@@ -21,6 +23,18 @@ on:
       - ".github/workflows/scripts/verify-chart-candidate.sh"
       - ".github/workflows/deploy-test-stand.yml"
       - "scripts/ci/prebuilt_images.py"
+      - "scripts/ci/candidate_inputs.py"
+      - "tests/datapath/**"
+      - "tests/stand/**"
+      - "tests/lib/**"
+      - "tests/pyproject.toml"
+      - "tests/uv.lock"
+      - "dev-compose.sh"
+      - "docker-compose.yml"
+      - "deploy/compose/**"
+      - ".env.compose.example"
+      - ".github/workflows/e2e-bronze-to-api.yml"
+      - ".github/workflows/scripts/start-candidate-stand.sh"
   pull_request:
     branches: ["release-**"]
     paths:
@@ -31,6 +45,7 @@ on:
       - ".github/workflows/build-images.yml"
       - ".github/workflows/release-helm.yml"
       - ".github/workflows/e2e-stand.yml"
+      - ".github/workflows/gateway.yml"
       - ".github/workflows/scripts/discover-image-matrix.py"
       - ".github/workflows/scripts/bump-service-appversions.sh"
       - ".github/workflows/scripts/wait-for-empty-merge-queue.sh"
@@ -38,6 +53,18 @@ on:
       - ".github/workflows/scripts/verify-chart-candidate.sh"
       - ".github/workflows/deploy-test-stand.yml"
       - "scripts/ci/prebuilt_images.py"
+      - "scripts/ci/candidate_inputs.py"
+      - "tests/datapath/**"
+      - "tests/stand/**"
+      - "tests/lib/**"
+      - "tests/pyproject.toml"
+      - "tests/uv.lock"
+      - "dev-compose.sh"
+      - "docker-compose.yml"
+      - "deploy/compose/**"
+      - ".env.compose.example"
+      - ".github/workflows/e2e-bronze-to-api.yml"
+      - ".github/workflows/scripts/start-candidate-stand.sh"
   workflow_call:
   # A manual dispatch is a full rebuild by default: every service and
   # connector image is rebuilt regardless of changed paths, and publish-chart
@@ -92,10 +119,11 @@ jobs:
     permissions:
       contents: read
     outputs:
-      analytics: ${{ steps.filter.outputs.analytics }}
-      authenticator: ${{ steps.filter.outputs.authenticator }}
-      gateway: ${{ steps.filter.outputs.gateway }}
-      identity_resolution: ${{ steps.filter.outputs.identity_resolution }}
+      candidate_checks: ${{ steps.filter.outputs.candidate_checks }}
+      analytics: ${{ steps.filter.outputs.analytics == 'true' || (github.event_name == 'merge_group' && steps.filter.outputs.mq_analytics == 'true') }}
+      authenticator: ${{ steps.filter.outputs.authenticator == 'true' || (github.event_name == 'merge_group' && steps.filter.outputs.mq_authenticator == 'true') }}
+      gateway: ${{ steps.filter.outputs.gateway == 'true' || (github.event_name == 'merge_group' && steps.filter.outputs.mq_gateway == 'true') }}
+      identity_resolution: ${{ steps.filter.outputs.identity_resolution == 'true' || (github.event_name == 'merge_group' && steps.filter.outputs.mq_identity_resolution == 'true') }}
       insight_v3_core: ${{ steps.filter.outputs.insight_v3_core }}
       git_cli_proxy: ${{ github.event_name != 'merge_group' && steps.filter.outputs.git_cli_proxy == 'true' }}
       previews: ${{ github.event_name != 'merge_group' && steps.filter.outputs.previews == 'true' }}
@@ -103,6 +131,8 @@ jobs:
       toolbox: ${{ github.event_name != 'merge_group' && steps.filter.outputs.toolbox == 'true' }}
       seed: ${{ github.event_name != 'merge_group' && steps.filter.outputs.seed == 'true' }}
       umbrella: ${{ github.event_name != 'merge_group' && steps.filter.outputs.umbrella == 'true' }}
+      validation: ${{ steps.filter.outputs.validation }}
+      release_requested: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.release == 'true' }}
       arches: ${{ steps.arches.outputs.arches }}
       build_tag: ${{ steps.tag.outputs.build_tag }}
       export_artifacts: ${{ steps.tag.outputs.export_artifacts }}
@@ -195,10 +225,9 @@ jobs:
           # branch, which on a release-** push marks every service changed.
           base: ${{ github.event.merge_group.base_sha || steps.pinbase.outputs.pin_base || github.ref_name }}
           filters: |
+            # INVARIANT: Workflow-only edits validate existing images; build-command edits require a manual full rebuild.
             analytics:
-              - '.github/workflows/build-images.yml'
-              - '.github/workflows/e2e-stand.yml'
-              - 'src/backend/services/analytics/**'
+              - 'src/backend/services/analytics/!(helm)/**'
               - 'src/backend/Dockerfile'
               - 'src/backend/.dockerignore'
               - 'src/backend/libs/insight-clickhouse/**'
@@ -207,31 +236,20 @@ jobs:
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             authenticator:
-              - '.github/workflows/build-images.yml'
-              - '.github/workflows/e2e-stand.yml'
-              - 'src/backend/services/authenticator/**'
+              - 'src/backend/services/authenticator/!(helm)/**'
               - 'src/backend/Dockerfile'
               - 'src/backend/.dockerignore'
               - 'src/backend/libs/authenticator-sdk/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
-              - '.github/workflows/gateway.yml'
-              - '.github/workflows/build-images.yml'
-              - 'scripts/ci/prebuilt_images.py'
             gateway:
-              - '.github/workflows/build-images.yml'
-              - '.github/workflows/e2e-stand.yml'
-              - 'src/backend/services/gateway/**'
+              - 'src/backend/services/gateway/!(helm)/**'
               - 'src/backend/.dockerignore'
               - 'src/backend/tools/routegen/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
-              - '.github/workflows/gateway.yml'
-              - '.github/workflows/build-images.yml'
-              - 'scripts/ci/prebuilt_images.py'
             git_cli_proxy:
-              - '.github/workflows/build-images.yml'
-              - 'src/backend/services/git-cli-proxy/**'
+              - 'src/backend/services/git-cli-proxy/!(helm)/**'
               - 'src/backend/Dockerfile'
               - 'src/backend/.dockerignore'
               # The shared entrypoint is baked into the image.
@@ -239,9 +257,7 @@ jobs:
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             identity_resolution:
-              - '.github/workflows/build-images.yml'
-              - '.github/workflows/e2e-stand.yml'
-              - 'src/backend/services/identity-resolution/**'
+              - 'src/backend/services/identity-resolution/!(helm)/**'
               - 'src/backend/Dockerfile'
               - 'src/backend/.dockerignore'
               # The image compiles the path-dependency lib in — a lib change
@@ -252,8 +268,7 @@ jobs:
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             insight_v3_core:
-              - '.github/workflows/build-images.yml'
-              - 'src/backend/services/insight-v3-core/**'
+              - 'src/backend/services/insight-v3-core/!(helm)/**'
               - 'src/backend/Dockerfile'
               - 'src/backend/.dockerignore'
               - 'src/backend/libs/insight-clickhouse/**'
@@ -262,21 +277,16 @@ jobs:
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             previews:
-              - '.github/workflows/build-images.yml'
-              - 'src/backend/services/previews/**'
+              - 'src/backend/services/previews/!(helm)/**'
               - 'src/backend/Dockerfile'
               - 'src/backend/.dockerignore'
               # The shared entrypoint is baked into the image.
               - 'src/backend/docker-entrypoint.sh'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
-            # Includes src/frontend/helm/, so a subchart edit rebuilds and
-            # republishes as it does for the services above.
             frontend:
-              - '.github/workflows/build-images.yml'
-              - 'src/frontend/**'
+              - 'src/frontend/!(helm)/**'
             toolbox:
-              - '.github/workflows/build-images.yml'
               - 'src/ingestion/**'
             # The sample-data seeder's own image. It COPYs a subset of the
             # ingestion tree (scripts, dbt, silver, gold, connectors, the tool
@@ -285,16 +295,62 @@ jobs:
             # Dockerfile's COPY lines, and the failure mode of forgetting is a
             # silently stale published image.
             seed:
-              - '.github/workflows/build-images.yml'
               - 'src/ingestion/**'
+            candidate_checks:
+              - 'tests/**'
+              - 'dev-compose.sh'
+              - 'docker-compose.yml'
+              - 'deploy/compose/**'
+              - '.env.compose.example'
+              - 'scripts/ci/candidate_inputs.py'
+              - '.github/workflows/e2e-bronze-to-api.yml'
+              - '.github/workflows/scripts/start-candidate-stand.sh'
             umbrella:
+              - 'charts/insight/**'
+              - 'src/backend/services/*/helm/**'
+              - 'src/frontend/helm/**'
+            release:
+              - 'src/backend/**'
+              - 'src/frontend/**'
+              - 'src/ingestion/**'
+              - 'charts/insight/**'
+            # INVARIANT: Existing merge-queue consumers require artifacts for workflow and image-pin changes.
+            mq_analytics:
+              - '.github/workflows/build-images.yml'
+              - '.github/workflows/e2e-stand.yml'
+              - 'src/backend/services/analytics/helm/Chart.yaml'
+            mq_authenticator:
+              - '.github/workflows/build-images.yml'
+              - '.github/workflows/e2e-stand.yml'
+              - '.github/workflows/gateway.yml'
+              - 'scripts/ci/prebuilt_images.py'
+              - 'src/backend/services/authenticator/helm/**'
+            mq_gateway:
+              - '.github/workflows/build-images.yml'
+              - '.github/workflows/e2e-stand.yml'
+              - '.github/workflows/gateway.yml'
+              - 'scripts/ci/prebuilt_images.py'
+              - 'src/backend/services/gateway/helm/**'
+            mq_identity_resolution:
+              - '.github/workflows/build-images.yml'
+              - '.github/workflows/e2e-stand.yml'
+              - 'src/backend/services/identity-resolution/helm/Chart.yaml'
+            validation:
               - '.github/workflows/release-helm.yml'
               - '.github/workflows/scripts/verify-chart-candidate.sh'
               - '.github/workflows/scripts/wait-for-empty-merge-queue.sh'
               - '.github/workflows/scripts/pin-chart-images.sh'
               - '.github/workflows/deploy-test-stand.yml'
               - '.github/workflows/build-images.yml'
-              - 'charts/insight/**'
+              - '.github/workflows/e2e-stand.yml'
+              - '.github/workflows/gateway.yml'
+              - '.github/workflows/scripts/discover-image-matrix.py'
+              - '.github/workflows/scripts/bump-service-appversions.sh'
+              - 'scripts/ci/prebuilt_images.py'
+              - 'tests/stand/**'
+              - 'tests/lib/**'
+              - 'tests/pyproject.toml'
+              - 'tests/uv.lock'
 
       # Compute the canonical build tag once per workflow run so every
       # downstream job (backend builds + matrix connector builds + toolbox +
@@ -429,8 +485,6 @@ jobs:
 
           ALL_FLAG=""
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            ALL_FLAG="--all"
-          elif grep -Fxq '.github/workflows/build-images.yml' "$RUNNER_TEMP/changed.txt"; then
             ALL_FLAG="--all"
           fi
           echo "--- changed paths vs $BASE ---"
@@ -1954,6 +2008,8 @@ jobs:
         || needs.changes.outputs.toolbox      == 'true'
         || needs.changes.outputs.seed         == 'true'
         || needs.changes.outputs.umbrella     == 'true'
+        || needs.changes.outputs.validation   == 'true'
+        || (github.ref == 'refs/heads/main' && needs.changes.outputs.candidate_checks == 'true')
       )
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     permissions:
