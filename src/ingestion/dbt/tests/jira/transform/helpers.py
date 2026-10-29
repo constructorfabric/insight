@@ -1,7 +1,7 @@
 """Builders for the bronze inputs the Jira staging chain reads.
 
 A test declares only what it is about: the field's catalogue row, the issue's
-current JSON, and the changelog items. Everything Airbyte adds — raw ids,
+current JSON, changelog items, and optional census sightings. Everything Airbyte adds — raw ids,
 extraction stamps, the columns no Jira model reads — is filled in here, so a
 scenario stays readable as a table.
 
@@ -124,7 +124,7 @@ def census_entry(key: str, *, jira_id: str, extracted_at: str = OBSERVED_AT) -> 
         "id": jira_id,
         "tenant_id": TENANT_ID,
         "source_id": SOURCE_ID,
-        "unique_key": f"{SOURCE_ID}-census-{jira_id}",
+        "unique_key": f"{TENANT_ID}-{SOURCE_ID}-{jira_id}",
         "jira_id": jira_id,
         "id_readable": key,
         "project_key": key.split("-")[0],
@@ -143,6 +143,24 @@ def status(status_id: str, *, name: str, category_key: str, extracted_at: str = 
         "unique_key": f"{SOURCE_ID}-status-{status_id}",
         "status_id": int(status_id),
         "category_key": category_key,
+        "collected_at": extracted_at,
+    }
+
+
+def project_visibility(
+    key: str, project_id: str, *, status: str = "live", extracted_at: str = OBSERVED_AT
+) -> dict[str, Any]:
+    return {
+        **_airbyte(extracted_at),
+        "id": project_id,
+        "key": key,
+        "tenant_id": TENANT_ID,
+        "source_id": SOURCE_ID,
+        "unique_key": f"{TENANT_ID}-{SOURCE_ID}-{project_id}",
+        "project_id": project_id,
+        "project_key": key,
+        "project_status": status,
+        "is_private": False,
         "collected_at": extracted_at,
     }
 
