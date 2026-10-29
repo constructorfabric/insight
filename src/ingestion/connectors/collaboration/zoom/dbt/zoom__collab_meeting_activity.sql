@@ -11,13 +11,16 @@
 
 -- Zoom meeting activity aggregated per user per day.
 --
--- Grain: (tenant, source, email, date). Zoom reports an email only for a
+-- Grain: (tenant, source, person_key, date). Zoom reports an email only for a
 -- participant who joined signed in; a joiner without one carries nothing but the
 -- display name. Such a row is attributed through the account's user list when
--- exactly one Zoom user carries that display name, and dropped otherwise:
---   1. A shared display name attributes nobody rather than the wrong person.
---   2. A name no Zoom user carries is an external guest: no identity can bind it
---      at the Silver layer, so it adds noise without enabling any use case.
+-- exactly one Zoom user carries that display name (a shared name attributes
+-- nobody rather than the wrong person). A name no Zoom user carries is kept as a
+-- `zoom-guest` ACCOUNT: person_key `zoom-guest:<name>`, no email, and the
+-- account triple (account_source_type / account_source_id / account_id; an
+-- email-keyed row says 'email' and carries no account) that
+-- the analytics runtime resolves through `identity.account_assignment` once an
+-- operator binds the name to a person. Until then the row resolves to nobody.
 -- If Zoom ever starts exposing a stable participant_id/user_id, switch to that.
 --
 -- Meeting-session stitching (issue #258): the (tenant, source, uuid) →
@@ -143,6 +146,10 @@ deduped_participants AS (
         p.meeting_uuid AS meeting_uuid,
         p.participant_uuid AS participant_uuid,
         if(p.email IS NOT NULL AND p.email != '', p.email, nullIf(u.user_email, '')) AS email,
+        p.name_key AS name_key,
+        -- INVARIANT: an attendee is one person however many devices joined: the
+        -- email when known, else the display name as a guest account.
+        if(email IS NOT NULL AND email != '', lower(email), concat('zoom-guest:', p.name_key)) AS person_key,
         p.user_name AS user_name,
         p.camera AS camera,
         p.share_desktop AS share_desktop,
@@ -191,8 +198,8 @@ attendee_sessions AS (
         source_id,
         meeting_uuid,
         if(
-            email IS NOT NULL AND email != '',
-            lower(email),
+            name_key != '' OR (email IS NOT NULL AND email != ''),
+            person_key,
             concat('guest:', ifNull(participant_uuid, ''))
         ) AS attendee,
         joined_at,
@@ -306,6 +313,8 @@ sessions_with_company AS (
         own.source_id AS source_id,
         own.meeting_uuid AS meeting_uuid,
         own.email AS email,
+        own.person_key AS person_key,
+        own.name_key AS name_key,
         own.user_name AS user_name,
         own.camera AS camera,
         own.share_desktop AS share_desktop,
@@ -328,14 +337,17 @@ sessions_with_company AS (
         ON solo.tenant_id = own.tenant_id
         AND solo.source_id = own.source_id
         AND solo.meeting_uuid = own.meeting_uuid
-        AND solo.attendee_hash = sipHash64(lower(own.email))
-    WHERE own.email IS NOT NULL AND own.email != ''
+        AND solo.attendee_hash = sipHash64(own.person_key)
+    -- A row with neither an email nor a display name is nobody's.
+    WHERE (own.email IS NOT NULL AND own.email != '') OR own.name_key != ''
     GROUP BY
         own.tenant_id,
         own.source_id,
         own.meeting_uuid,
         own.participant_uuid,
         own.email,
+        own.person_key,
+        own.name_key,
         own.user_name,
         own.camera,
         own.share_desktop,
@@ -349,10 +361,15 @@ attended_days AS (
     SELECT
         p.tenant_id AS tenant_id,
         p.source_id AS source_id,
-        lower(p.email) AS person_key,
+        p.person_key AS person_key,
         toDate(p.joined_at, 'UTC') AS date,
         min(p.email) AS attendee_email,
         coalesce(max(p.user_name), '') AS attendee_name,
+        -- INVARIANT: 'email' says the row is keyed by person_key and carries no
+        -- account; gold emits the account triple only for the other values.
+        if(min(p.email) IS NULL, 'zoom-guest', 'email') AS account_source_type,
+        if(min(p.email) IS NULL, p.source_id, '') AS account_source_id,
+        if(min(p.email) IS NULL, any(p.name_key), '') AS account_id,
         -- INVARIANT: logical_meeting_id folds host-drop rejoins into one meeting;
         -- meeting_uuid stands in until the meeting is stitched.
         toInt64(uniqExactIf(coalesce(ml.logical_meeting_id, p.meeting_uuid), p.company_seconds > 0)) AS meetings_attended,
@@ -437,6 +454,9 @@ person_days AS (
         date,
         attendee_email                AS contact_email,
         attendee_name                 AS display_name,
+        account_source_type,
+        account_source_id,
+        account_id,
         toUInt8(1)                    AS from_attendance,
         meetings_attended,
         audio_duration_seconds,
@@ -452,6 +472,9 @@ person_days AS (
         date,
         organizer_email               AS contact_email,
         ''                            AS display_name,
+        'email'                       AS account_source_type,
+        ''                            AS account_source_id,
+        ''                            AS account_id,
         toUInt8(0)                    AS from_attendance,
         toInt64(0)                    AS meetings_attended,
         toInt64(0)                    AS audio_duration_seconds,
@@ -483,6 +506,9 @@ SELECT
     CAST(NULL AS Nullable(String)) AS report_period,
     now() AS collected_at,
     'insight_zoom' AS data_source,
+    any(account_source_type) AS account_source_type,
+    any(account_source_id) AS account_source_id,
+    any(account_id) AS account_id,
     toUnixTimestamp64Milli(now64()) AS _version
 FROM person_days
 {%- if is_incremental() %}
