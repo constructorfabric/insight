@@ -283,3 +283,44 @@ availability data supports either choice.
   sync with `dbt --full-refresh` on the connector's selector, which rebuilds
   the affected staging/silver tables from bronze. No ALTER migrations are
   shipped for staging/silver.
+
+## Link observations across visibility gaps
+
+Jira issue reads omit issue links and parents whose other issue the account
+cannot browse. Changelog additions and removals remain usable during that gap.
+An omitted link therefore closes an event-open interval only when the other
+issue was observable at the read. A link shown by the newest read still
+reopens an event-closed interval.
+
+`jira_link_visibility` resolves availability at the issue's read time through
+`jira__issue_availability_snapshot`: `present` and `deleted` allow absence to
+close a link; `access_lost`, `unobserved`, `archived` and `trashed` do not.
+Without a matching issue version, the target key's project prefix resolves
+through `jira__project_visibility_snapshot`. A visible or never-listed project
+allows absence to close the link; a known invisible project does not. This
+fallback lets obsolete keys stop representing open links.
+
+Version boundaries use census sightings, not snapshot `_tracked_at`. A
+`present` or visible version begins at its stored `last_seen_at`, the first
+sighting of that version after a gap. An absent or invisible version begins
+one millisecond after `last_seen_at`. The census tolerance still controls
+absence classification, but is not added to these boundaries: a read in an
+earlier missed census can fall within that tolerance and must defer to events
+once a later census confirms absence. Versions with the same boundary use
+the latest `_tracked_at`. ASOF joins select the
+latest boundary at or before the read, so a census captured after a read can
+classify that read, and a later restoration does not rewrite an earlier read.
+
+`jira__issue_link_snapshot` remembers links from its previous table, preserving
+`extracted_at` when an omitted link's other issue was hidden at the newest
+read. It builds the replacement before swapping tables, and reads that prior
+table even under `--full-refresh`. This complete replacement also removes the
+last link when an authoritative read omits it; key-based incremental upserts
+would leave that row behind. No history columns or deletion hooks are needed.
+
+Retained rows continue to supply occurrence identities, link type wording and
+key-to-id mappings. Their earlier `extracted_at` distinguishes them from links
+shown by the newest read: they cannot reopen an occurrence after a removal
+event. Parent intervals use the same rule, including their mirrored
+`sub_issue` rows. References consume these intervals and use retained keys as
+fallback labels when no issue row supplies a current key.

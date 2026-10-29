@@ -22,13 +22,14 @@ clearing event is missing and that must stay visible. Hiding either would be
 worse than a red test. Invariants are asserted per scenario instead, through
 `scenario.invariants_hold()` and `scenario.round_trip_holds()`.
 
-The selector covers the journal, the side table and their ancestors. The
-comment, worklog, availability and project-visibility models are in the
-pipeline's own `tag:jira,tag:staging` but read none of the three tables these
-tests seed, so building them per scenario costs about thirty seconds and proves
-nothing. `test_invariants.py` pays for the full pipeline selector once — that
-is what would catch a field-history model which works alone but breaks the
-chain. `test_comment_state.py` is the one module that seeds comments: it builds
+The selector covers the journal, the side table and their ancestors, including
+availability and project-visibility snapshots used by link key resolution.
+Link scenarios can seed `jira_issue_census` and `jira_project_visibility` and
+build repeatedly to test visibility gaps. Exclusive scenarios clear these
+snapshots and the retained link snapshot alongside bronze; repeated builds of
+one scenario preserve them, including builds with `--full-refresh`.
+`test_invariants.py` builds the full pipeline selector once to catch models
+that work alone but break the chain. `test_comment_state.py` seeds comments and builds
 `+jira__comment_state` over `jira_comments` and `jira_issue_keys` alone.
 
 Bronze is created from [`scripts/connectors-ddl/jira.sql`](../../../../scripts/connectors-ddl/jira.sql),

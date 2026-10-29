@@ -145,7 +145,11 @@ name: jira
 # is a parent change, and a removal sorts before an addition within one
 # changelog entry (#3889). MAJOR because rows already written change, and only
 # the full refresh a major dispatches (ADR-0015) re-derives them.
-version: "17.0.0"
+# 18.0.0 (major): omitted links and parents stay open when the other issue was
+# hidden at the read, and link snapshots retain earlier observations across
+# visibility gaps (#3950). MAJOR because rows already written change, and only
+# the full refresh a major dispatches (ADR-0015) re-derives them.
+version: "18.0.0"
 # 22:10 and 10:10 UTC: clear of the 02:00-06:00 daily block and of github's
 # 4-hourly ticks, which rebuild the same task chain; :10 misses the */15
 # reconcile and identity-seed ticks.

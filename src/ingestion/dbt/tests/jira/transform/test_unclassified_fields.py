@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from conftest import Scenario, case
+from conftest import Scenario, case, clear_stateful_link_inputs
 from helpers import LATER_SYNC, SOURCE_ID, event, field, issue, item
 
 GHOST = "customfield_19001"
@@ -144,6 +144,7 @@ def test_the_first_sync_watermark_does_not_drift(scenario: Scenario) -> None:
         issues=[issue("TST-1", fields={POINTS: 5})],
     )
     scenario.build()
+    clear_stateful_link_inputs(scenario.warehouse)
     scenario.warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_fields")
     scenario.warehouse.insert(
         "bronze_jira.jira_fields", [field(POINTS, name="Story Points", schema_type="number", extracted_at=LATER_SYNC)]
