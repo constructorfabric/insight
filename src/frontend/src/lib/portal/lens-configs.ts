@@ -1098,10 +1098,10 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.messages_sent",
-        title: "How many messages people sent",
+        title: "How many chat messages people sent",
         caption:
           "How many people fall in each message-volume band — a long right tail means a few people account for most of the chatter.",
-        unitLabel: "messages per person",
+        unitLabel: "chat messages per person",
       },
       {
         kind: "concentration",
@@ -1137,7 +1137,8 @@ const COLLAB: Record<string, LensEntry> = {
       },
     ],
   },
-  // emails_received deliberately omitted: distribution-list/CI noise (see git history).
+  // emails_received deliberately omitted: it counts inbox volume (mailing lists,
+  // automated notifications), not work; its registry explanation says so.
   Email: {
     title: "Email",
     sections: [
@@ -1161,8 +1162,8 @@ const COLLAB: Record<string, LensEntry> = {
       },
     ],
   },
-  "Focus time": {
-    title: "Focus time",
+  "Time outside meetings": {
+    title: "Time outside meetings",
     sections: [
       {
         kind: "headline",
@@ -1171,10 +1172,10 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.focus_time_pct",
-        title: "How much focus time people had",
+        title: "How much of the workday people had outside meetings",
         caption:
-          "How many people fall in each focus-time band — a cluster on the left means many people have little uninterrupted focus time.",
-        unitLabel: "focus time (share of working time) per person",
+          "How many people fall in each band of time outside meetings — a cluster on the left means many people spend most of their scheduled hours in meetings.",
+        unitLabel: "share of scheduled hours outside meetings per person",
       },
     ],
   },

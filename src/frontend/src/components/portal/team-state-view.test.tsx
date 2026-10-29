@@ -109,7 +109,7 @@ beforeEach(() => {
     // a ratio metric: must roll up as MEDIAN, not a summed percentage
     ["collab.focus_time_pct", metric("collab.focus_time_pct", [[pid("boss"), 80], [pid("a"), 40], [pid("b"), 50], [pid("c"), 60], [pid("d"), 70]], {
       computation: "avg",
-      label: "Focus Time",
+      label: "Time Outside Meetings",
       format: "percent",
     } as never)],
     // ingested nowhere → its column must disappear, not paint zeros

@@ -144,7 +144,7 @@ export const DIRECTIONS: readonly Direction[] = [
     name: "Collaboration",
     icon: MessageSquare,
     source: "semantic",
-    lenses: ["Overview", "Messaging", "Meetings", "Email", "Focus time", "Files & sharing"],
+    lenses: ["Overview", "Messaging", "Meetings", "Email", "Time outside meetings", "Files & sharing"],
   },
   {
     id: "wiki",
