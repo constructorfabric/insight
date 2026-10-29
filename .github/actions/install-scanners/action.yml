@@ -2,7 +2,7 @@ name: Install scanners
 description: >-
   Put the pinned scanner binaries on PATH, each checked against the sha256 its
   own release publishes. This replaces `docker run` of the vendors' Docker Hub
-  images: every job on the self-hosted pool leaves through one outbound IP and
+  images: every job on the self-hosted runners leaves through one outbound IP and
   so shares one anonymous pull quota, and an ephemeral runner pulls again from
   scratch each time.
 

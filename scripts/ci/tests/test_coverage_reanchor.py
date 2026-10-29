@@ -1,9 +1,9 @@
 """A Cobertura report must mean the same thing on whichever runner reads it.
 
 pytest-cov and cargo-llvm-cov both write the producer's absolute workspace into
-`<source>`. The shared self-hosted pool answers to one label set from two kinds
-of runner, whose workspaces differ, so the consumer's checkout is routinely not
-the producer's. These cover the repair and, as importantly, its refusals: a
+`<source>`. Producer and consumer can land on different kinds of runner
+(container or VM, self-hosted or GitHub-hosted), whose workspaces differ, so the
+consumer's checkout is routinely not the producer's. These cover the repair and, as importantly, its refusals: a
 source that cannot be proved against a real file is left exactly as it was.
 
 Run: python3 -m unittest discover -s scripts/ci/tests -p 'test_*.py'
@@ -23,8 +23,8 @@ sys.path.insert(0, str(CI_DIR))
 
 import coverage  # noqa: E402
 
-ARC_WORKSPACE = "/home/runner/_work/insight/insight"
-POOL_WORKSPACE = "/srv/gha/work/insight/insight"
+POD_WORKSPACE = "/home/runner/_work/insight/insight"
+VM_WORKSPACE = "/opt/runner/_work/insight/insight"
 
 #: Where the real producers put a module, and what they call it there.
 PY_COMPONENT = "src/ingestion/scripts"
@@ -77,24 +77,24 @@ class ReanchorTests(unittest.TestCase):
 
         self.assertIsNone(coverage.reanchor_source(JS_COMPONENT, [JS_FILENAME], self.root))
 
-    def test_a_pod_workspace_is_re_anchored_onto_a_pool_checkout(self) -> None:
+    def test_a_pod_workspace_is_re_anchored_onto_a_vm_checkout(self) -> None:
         self.touch(f"{PY_COMPONENT}/{PY_FILENAME}")
 
-        anchored = coverage.reanchor_source(f"{ARC_WORKSPACE}/{PY_COMPONENT}", [PY_FILENAME], self.root)
+        anchored = coverage.reanchor_source(f"{POD_WORKSPACE}/{PY_COMPONENT}", [PY_FILENAME], self.root)
 
         self.assertEqual(anchored, PY_COMPONENT)
 
-    def test_a_pool_workspace_is_re_anchored_onto_a_pod_checkout(self) -> None:
+    def test_a_vm_workspace_is_re_anchored_onto_a_pod_checkout(self) -> None:
         self.touch(f"{PY_COMPONENT}/{PY_FILENAME}")
 
-        anchored = coverage.reanchor_source(f"{POOL_WORKSPACE}/{PY_COMPONENT}", [PY_FILENAME], self.root)
+        anchored = coverage.reanchor_source(f"{VM_WORKSPACE}/{PY_COMPONENT}", [PY_FILENAME], self.root)
 
         self.assertEqual(anchored, PY_COMPONENT)
 
     def test_a_nested_filename_resolves_the_rust_layout(self) -> None:
         self.touch(f"{RUST_COMPONENT}/{RUST_FILENAME}")
 
-        anchored = coverage.reanchor_source(f"{ARC_WORKSPACE}/{RUST_COMPONENT}", [RUST_FILENAME], self.root)
+        anchored = coverage.reanchor_source(f"{POD_WORKSPACE}/{RUST_COMPONENT}", [RUST_FILENAME], self.root)
 
         self.assertEqual(anchored, RUST_COMPONENT)
 
@@ -107,7 +107,7 @@ class ReanchorTests(unittest.TestCase):
         self.touch(f"scripts/{PY_FILENAME}")
         self.touch(f"{PY_COMPONENT}/{PY_FILENAME}")
 
-        anchored = coverage.reanchor_source(f"{ARC_WORKSPACE}/{PY_COMPONENT}", [PY_FILENAME], self.root)
+        anchored = coverage.reanchor_source(f"{POD_WORKSPACE}/{PY_COMPONENT}", [PY_FILENAME], self.root)
 
         self.assertEqual(anchored, PY_COMPONENT)
 
@@ -121,7 +121,7 @@ class ReanchorTests(unittest.TestCase):
     def test_a_directory_alone_is_not_proof(self) -> None:
         (self.root / PY_COMPONENT).mkdir(parents=True)
 
-        anchored = coverage.reanchor_source(f"{ARC_WORKSPACE}/{PY_COMPONENT}", [PY_FILENAME], self.root)
+        anchored = coverage.reanchor_source(f"{POD_WORKSPACE}/{PY_COMPONENT}", [PY_FILENAME], self.root)
 
         self.assertIsNone(anchored)
 
@@ -132,7 +132,7 @@ class ReanchorTests(unittest.TestCase):
         (self.root / PY_COMPONENT).mkdir(parents=True)
 
         anchored = coverage.reanchor_source(
-            f"{ARC_WORKSPACE}/{PY_COMPONENT}", [f"../../../../{outside.name}"], self.root
+            f"{POD_WORKSPACE}/{PY_COMPONENT}", [f"../../../../{outside.name}"], self.root
         )
 
         self.assertIsNone(anchored)
@@ -158,17 +158,17 @@ class SanitizeReportTests(unittest.TestCase):
 
     def test_the_python_producer_format_is_repaired(self) -> None:
         self.touch(f"{PY_COMPONENT}/{PY_FILENAME}")
-        path = self.write("python.xml", report([f"{ARC_WORKSPACE}/{PY_COMPONENT}"], [PY_FILENAME]))
+        path = self.write("python.xml", report([f"{POD_WORKSPACE}/{PY_COMPONENT}"], [PY_FILENAME]))
 
         text = coverage.sanitize_report(path, self.root)
 
         self.assertIsNotNone(text)
         self.assertIn(f"<source>{PY_COMPONENT}</source>", text)
-        self.assertNotIn(ARC_WORKSPACE, text)
+        self.assertNotIn(POD_WORKSPACE, text)
 
     def test_the_rust_producer_format_is_repaired(self) -> None:
         self.touch(f"{RUST_COMPONENT}/{RUST_FILENAME}")
-        path = self.write("rust.xml", report([f"{ARC_WORKSPACE}/{RUST_COMPONENT}"], [RUST_FILENAME]))
+        path = self.write("rust.xml", report([f"{POD_WORKSPACE}/{RUST_COMPONENT}"], [RUST_FILENAME]))
 
         text = coverage.sanitize_report(path, self.root)
 
@@ -183,7 +183,7 @@ class SanitizeReportTests(unittest.TestCase):
 
     def test_only_the_provable_source_of_several_is_rewritten(self) -> None:
         self.touch(f"{PY_COMPONENT}/{PY_FILENAME}")
-        path = self.write("multi.xml", report(["/nowhere/at/all", f"{ARC_WORKSPACE}/{PY_COMPONENT}"], [PY_FILENAME]))
+        path = self.write("multi.xml", report(["/nowhere/at/all", f"{POD_WORKSPACE}/{PY_COMPONENT}"], [PY_FILENAME]))
 
         text = coverage.sanitize_report(path, self.root)
 
@@ -191,7 +191,7 @@ class SanitizeReportTests(unittest.TestCase):
         self.assertIn("<source>/nowhere/at/all</source>", text)
 
     def test_a_report_that_cannot_be_proved_is_returned_unchanged(self) -> None:
-        path = self.write("orphan.xml", report([f"{ARC_WORKSPACE}/{PY_COMPONENT}"], [PY_FILENAME]))
+        path = self.write("orphan.xml", report([f"{POD_WORKSPACE}/{PY_COMPONENT}"], [PY_FILENAME]))
 
         self.assertIsNone(coverage.sanitize_report(path, self.root))
 
@@ -199,7 +199,7 @@ class SanitizeReportTests(unittest.TestCase):
         self.touch(f"{PY_COMPONENT}/{PY_FILENAME}")
         reports = self.root / "coverage"
         reports.mkdir()
-        original = report([f"{ARC_WORKSPACE}/{PY_COMPONENT}"], [PY_FILENAME])
+        original = report([f"{POD_WORKSPACE}/{PY_COMPONENT}"], [PY_FILENAME])
         (reports / "python.xml").write_text(original, encoding="utf-8")
         dest = self.root / "sanitized"
         dest.mkdir()
@@ -236,7 +236,7 @@ class ParseAfterSanitationTests(unittest.TestCase):
         reports = self.root / "coverage"
         reports.mkdir()
         (reports / "python.xml").write_text(
-            report([f"{ARC_WORKSPACE}/{PY_COMPONENT}"], [PY_FILENAME]), encoding="utf-8"
+            report([f"{POD_WORKSPACE}/{PY_COMPONENT}"], [PY_FILENAME]), encoding="utf-8"
         )
         dest = self.root / "sanitized"
         dest.mkdir()
@@ -308,7 +308,7 @@ class DiffCoverTests(unittest.TestCase):
         reports.mkdir()
         # The report must declare the line the diff adds, or diff-cover has
         # nothing to say whatever the source path resolves to.
-        body = report([f"{ARC_WORKSPACE}/{PY_COMPONENT}"], [PY_FILENAME], hits=1, lines=3)
+        body = report([f"{POD_WORKSPACE}/{PY_COMPONENT}"], [PY_FILENAME], hits=1, lines=3)
         (reports / "python.xml").write_text(body, encoding="utf-8")
         dest = self.root / "sanitized"
         dest.mkdir()
