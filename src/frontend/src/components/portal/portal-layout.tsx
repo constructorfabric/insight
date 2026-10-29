@@ -1,6 +1,7 @@
-import { useEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Outlet } from "@tanstack/react-router";
 
+import { AppBootSpinner } from "@/components/app-boot-spinner";
 import { MockBanner } from "@/components/mock-banner";
 import { ViewAsBanner } from "@/components/view-as-banner";
 import { ContextPane } from "@/components/portal/context-pane";
@@ -12,7 +13,10 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { usePortalNavActions, usePortalZone } from "@/lib/portal/portal-nav";
-import { landingDecision } from "@/lib/portal/landing-zone";
+import {
+  landingDecision,
+  type LandingDecision,
+} from "@/lib/portal/landing-zone";
 import { zoneHidden, zonePlanned } from "@/lib/portal/nav-policy";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import {
@@ -44,36 +48,35 @@ export function PortalLayout() {
   } = useIsAdmin();
   const showPlanned = usePortalShowPlanned();
   const zone = usePortalZone();
-  const landed = useRef(false);
-  useEffect(() => {
-    if (landed.current) return;
-    const decision = landingDecision({
-      zone,
-      mgrPending: isPending,
-      canSeeOthers,
-      // An errored check is "unknown", not "no": the landing decision is
-      // one-shot, so resetting on it would permanently rewrite a URL an
-      // admin deliberately opened. Waiting costs nothing — the me query
-      // retries itself until an answer lands.
-      adminPending: adminPending || adminError,
-      isAdmin,
-      overviewVisible:
-        !zoneHidden("overview") && (!zonePlanned("overview") || showPlanned),
-    });
-    if (decision.kind === "wait") return;
-    landed.current = true;
-    if (decision.kind === "pin-overview") replaceZone("overview");
-    if (decision.kind === "reset") replaceZone(null);
-  }, [
-    isPending,
-    canSeeOthers,
-    adminPending,
-    adminError,
-    isAdmin,
-    showPlanned,
+  // INVARIANT: the decision is applied once; it settles to "keep" when the URL
+  // matches it, so a later visit to a bare /portal is the reader's own.
+  const [landing, setLanding] = useState<LandingDecision["kind"] | null>(null);
+  const decision = landingDecision({
     zone,
-    replaceZone,
-  ]);
+    mgrPending: isPending,
+    canSeeOthers,
+    // An errored check is "unknown", not "no": the landing decision is
+    // one-shot, so resetting on it would permanently rewrite a URL an
+    // admin deliberately opened. Waiting costs nothing — the me query
+    // retries itself until an answer lands.
+    adminPending: adminPending || adminError,
+    isAdmin,
+    overviewVisible:
+      !zoneHidden("overview") && (!zonePlanned("overview") || showPlanned),
+  });
+  if (landing === null && decision.kind !== "wait") setLanding(decision.kind);
+  if (landing === "pin-overview" && zone != null) setLanding("keep");
+  if (landing === "reset" && zone == null) setLanding("keep");
+
+  useEffect(() => {
+    if (landing === "pin-overview") replaceZone("overview");
+    if (landing === "reset") replaceZone(null);
+  }, [landing, replaceZone]);
+
+  // A bare /portal renders the Person view, so it waits for the landing
+  // decision rather than showing a page it is about to leave.
+  const settling = (landing ?? decision.kind) !== "keep";
+  if (zone == null && settling) return <AppBootSpinner />;
 
   return (
     <SidebarProvider

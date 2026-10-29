@@ -272,6 +272,29 @@ describe("PortalLayout landing", () => {
     expect(zone.result.current).toBe("overview");
   });
 
+  it("holds a bare /portal while the viewer's reach resolves, then lands", () => {
+    mocks.isPending = true;
+    const zone = renderHook(() => usePortalZone());
+    const { rerender } = render(<PortalLayout />);
+    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
+    expect(zone.result.current).toBeNull();
+
+    mocks.isPending = false;
+    rerender(<PortalLayout />);
+    expect(zone.result.current).toBe("overview");
+    expect(screen.queryByRole("status", { name: "Loading" })).toBeNull();
+  });
+
+  it("shows a later bare /portal as it is once landed", () => {
+    const zone = renderHook(() => usePortalZone());
+    render(<PortalLayout />);
+    expect(zone.result.current).toBe("overview");
+
+    act(() => portalRouter.set({ zone: undefined }));
+    expect(zone.result.current).toBeNull();
+    expect(screen.queryByRole("status", { name: "Loading" })).toBeNull();
+  });
+
   it("leaves an IC route-driven (their own Person page)", () => {
     mocks.isManager = false;
     const zone = renderHook(() => usePortalZone());
