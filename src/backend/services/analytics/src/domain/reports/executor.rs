@@ -21,7 +21,6 @@ const REPORT_QUERY_CONCURRENCY: usize = 4;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReportExecutionContext {
     pub(crate) tenant_id: Uuid,
-    pub(crate) enforce_tenant_scope: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -191,7 +190,6 @@ async fn execute_metric_queries<R: ReportQueryRunner>(
                 from,
                 to,
                 plan.bucket,
-                context.enforce_tenant_scope,
             )
         })
         .collect::<Vec<ReportMetricQuery>>();

@@ -133,7 +133,6 @@ fn request() -> ValidatedMetricResultsRequest {
         to: NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default(),
         compare_to: None,
         metrics: Vec::new(),
-        enforce_tenant_scope: true,
     }
 }
 
