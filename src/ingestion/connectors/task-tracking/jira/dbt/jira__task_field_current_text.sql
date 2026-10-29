@@ -28,7 +28,7 @@ issue_winner AS (
 current_bodies AS (
     SELECT
         CAST(i.source_id AS String)                       AS insight_source_id,
-        toString(assumeNotNull(i.jira_id))                AS issue_id,
+        CAST(i.jira_id AS String)                         AS issue_id,
         kv.1                                              AS field_id,
         kv.2                                              AS content
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
