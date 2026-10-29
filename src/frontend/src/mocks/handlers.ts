@@ -139,7 +139,7 @@ const mockContext = new Map<
       id: "ctx-me-1",
       scope: "person",
       title: "How my week is shaped",
-      body: "Tuesdays and Thursdays are meeting-heavy by design, so focus time dips there and it is not a problem to flag.",
+      body: "Tuesdays and Thursdays are meeting-heavy by design, so time outside meetings dips there and it is not a problem to flag.",
       updated_at: "2026-08-14T09:00:00Z",
     },
   ],

@@ -81,9 +81,9 @@ function metric(key: string, label: string, value: number | null) {
 
 /** Collaboration's headline keys, from the group registry. */
 const HEADLINE = [
-  ["collab.messages_sent", "Messages Sent"],
+  ["collab.messages_sent", "Chat Messages Sent"],
   ["collab.meeting_hours", "Meeting Hours"],
-  ["collab.focus_time_pct", "Focus Time"],
+  ["collab.focus_time_pct", "Time Outside Meetings"],
 ] as const;
 
 function draw() {
@@ -165,13 +165,13 @@ describe("SingleGroupView", () => {
 
   it("gives a detail block only to the headline metrics that read", () => {
     mocks.byKey = normalizeMetricResults([
-      metric("collab.messages_sent", "Messages Sent", 400),
+      metric("collab.messages_sent", "Chat Messages Sent", 400),
       metric("collab.meeting_hours", "Meeting Hours", null),
-      metric("collab.focus_time_pct", "Focus Time", 81),
+      metric("collab.focus_time_pct", "Time Outside Meetings", 81),
     ]);
     draw();
     const shown = screen.getAllByTestId("activity").map((n) => n.textContent);
-    expect(shown).toEqual(["Messages Sent", "Focus Time"]);
+    expect(shown).toEqual(["Chat Messages Sent", "Time Outside Meetings"]);
   });
 
   it("says so once when the class reads but nothing can be broken down", () => {

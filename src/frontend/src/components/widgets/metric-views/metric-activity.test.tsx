@@ -97,7 +97,7 @@ function metric(
 ) {
   const result = {
     metric_key: key,
-    label: key === "git.commits" ? "Commits" : "Messages Sent",
+    label: key === "git.commits" ? "Commits" : "Chat Messages Sent",
     description: "what this counts",
     unit: key === "git.commits" ? "commits" : "messages",
     format: "integer",
@@ -429,7 +429,7 @@ describe("MetricActivity", () => {
     series.state.data = [reading("2026-03-01", 4), reading("2026-03-03", 9)];
     draw(metric("collab.messages_sent", ["source_summary"], 13));
     const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
-    expect(label).toMatch(/Messages Sent by day/);
+    expect(label).toMatch(/Chat Messages Sent by day/);
     expect(label).toMatch(/busiest/);
     expect(label).toMatch(/3 days have no reading/);
   });
