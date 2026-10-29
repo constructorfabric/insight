@@ -223,7 +223,7 @@ export const METRIC_RESULTS_RESPONSE_FIXTURE: MetricResultsResponse = {
 export const COLLAB_METRIC_FIXTURES: MetricResult[] = [
   {
     metric_key: "collab.messages_sent",
-    label: "Messages Sent",
+    label: "Chat Messages Sent",
     unit: "messages",
     format: "integer",
     direction: "higher_is_better",
@@ -245,7 +245,7 @@ export const COLLAB_METRIC_FIXTURES: MetricResult[] = [
   },
   {
     metric_key: "collab.dm_ratio",
-    label: "DM Ratio",
+    label: "Private Chat Share",
     unit: "%",
     format: "percent",
     direction: "lower_is_better",
@@ -257,7 +257,7 @@ export const COLLAB_METRIC_FIXTURES: MetricResult[] = [
   },
   {
     metric_key: "collab.msgs_per_active_day",
-    label: "Messages per Active Day",
+    label: "Chat Messages per Active Day",
     unit: "messages/day",
     format: "decimal",
     direction: "higher_is_better",
@@ -269,7 +269,7 @@ export const COLLAB_METRIC_FIXTURES: MetricResult[] = [
   },
   {
     metric_key: "collab.focus_time_pct",
-    label: "Focus Time",
+    label: "Time Outside Meetings",
     unit: "%",
     format: "percent",
     direction: "higher_is_better",

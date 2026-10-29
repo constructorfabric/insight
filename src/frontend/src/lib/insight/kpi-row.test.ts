@@ -142,7 +142,7 @@ describe("metricKpiTiles", () => {
     expect(tiles.map((t) => t.key)).toEqual(["ai.active_days"]);
   });
 
-  it("computes pp deltas for percent-ratio tiles (focus time)", () => {
+  it("computes pp deltas for percent-ratio tiles (time outside meetings)", () => {
     const current = metricResult("collab.focus_time_pct", 77, {
       metric_key: "collab.focus_time_pct",
       format: "percent",
