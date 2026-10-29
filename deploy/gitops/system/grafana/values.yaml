@@ -12057,6 +12057,52 @@ alerting:
         annotations:
           summary: "{{ \"{{ $labels.connector }}\" }} has no successful sync for over 26h \u2014 Insight\
             \ \xB7 Connectors"
+      - uid: insight-sync-not-run
+        title: Sync reported success but never ran
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 1800
+            to: 0
+          datasourceUid: loki
+          model:
+            refId: A
+            expr: sum by (pod) (count_over_time({namespace="${NS_APP}", pod=~".*poll-job.*"} |= "sync.not_run"
+              [30m]))
+            queryType: instant
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: B
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0.5
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ \"{{ $labels.pod }}\" }}: Airbyte reported success for a sync that never ran\
+            \ \u2014 Insight \xB7 Connectors"
       - uid: insight-sweep-seal-stale
         title: Connector sweep stopped sealing
         condition: C

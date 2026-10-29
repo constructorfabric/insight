@@ -9,7 +9,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from airbyte_sync_poll import FAILURE_MESSAGE_MAX_CHARS, SyncFailure, attempt_failures, attempt_progress, job_status
+from airbyte_sync_poll import (
+    FAILURE_MESSAGE_MAX_CHARS,
+    SyncFailure,
+    attempt_failures,
+    attempt_progress,
+    job_status,
+    succeeded_without_syncing,
+)
 
 
 def _resp_with_failures(failures: object) -> dict:
@@ -135,3 +142,49 @@ def test_an_oversized_reason_is_truncated_so_one_failure_cannot_flood_the_log() 
 
     assert failure.external_message == "x" * FAILURE_MESSAGE_MAX_CHARS
     assert failure.internal_message == "x" * FAILURE_MESSAGE_MAX_CHARS
+
+
+ONE_STREAM = [{"streamName": "issues", "stats": {"recordsEmitted": 0}}]
+NOT_STARTED = {
+    "failureType": "system_error",
+    "failureOrigin": "airbyte_platform",
+    "internalMessage": "Workload failed, source: workload-monitor-start",
+}
+
+
+def _latest(attempt: dict) -> dict:
+    return {"job": {"status": "succeeded"}, "attempts": [{"attempt": {"status": "succeeded", **attempt}}]}
+
+
+@pytest.mark.parametrize(
+    "resp",
+    [
+        _latest({"streamStats": ONE_STREAM, "totalStats": {"recordsEmitted": 0}}),
+        _latest({"streamStats": ONE_STREAM, "totalStats": {"recordsEmitted": 42}}),
+        _latest({"streamStats": ONE_STREAM, "failureSummary": {"failures": []}}),
+        {
+            "attempts": [
+                {"attempt": {"status": "failed", "failureSummary": {"failures": [NOT_STARTED]}}},
+                {"attempt": {"status": "succeeded", "streamStats": ONE_STREAM}},
+            ]
+        },
+    ],
+)
+def test_a_sync_that_ran_its_streams_counts_as_synced_even_with_zero_records(resp) -> None:
+    assert not succeeded_without_syncing(resp), f"should accept: {resp!r}"
+
+
+@pytest.mark.parametrize(
+    "resp",
+    [
+        _latest({"streamStats": [], "failureSummary": {"failures": [NOT_STARTED]}}),
+        _latest({"streamStats": ONE_STREAM, "failureSummary": {"failures": [NOT_STARTED]}}),
+        _latest({"streamStats": []}),
+        _latest({"streamStats": None}),
+        _latest({}),
+        {"job": {"status": "succeeded"}, "attempts": []},
+        {"job": {"status": "succeeded"}},
+    ],
+)
+def test_a_success_whose_latest_attempt_failed_or_ran_no_streams_did_not_sync(resp) -> None:
+    assert succeeded_without_syncing(resp), f"should reject: {resp!r}"
