@@ -150,6 +150,7 @@ describe("dashboardQuery", () => {
       body: dashboard,
       tags: ["Ops"],
       ownerPersonId: null,
+      ownerName: null,
       access: "ownerless",
       folders: [],
       carries: true,

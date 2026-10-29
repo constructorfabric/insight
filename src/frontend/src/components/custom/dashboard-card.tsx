@@ -5,7 +5,6 @@ import { ChevronRight, LayoutDashboard } from "lucide-react";
 import type { DashboardListed, DashboardVisibility } from "@/api/custom-client";
 import { DashboardMenu } from "@/components/custom/dashboard-menu";
 import { DashboardTags } from "@/components/custom/dashboard-tags";
-import { PersonName } from "@/components/custom/person-name";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { dashboardQuery, dashboardTagsQuery } from "@/queries/custom";
@@ -90,7 +89,7 @@ export function DashboardCard({ dashboard }: { dashboard: DashboardListed }) {
 }
 
 function CardMeta({ dashboard }: { dashboard: DashboardListed }) {
-  const { access, owner_person_id: owner, updated_at } = dashboard;
+  const { access, owner_name: owner, updated_at } = dashboard;
   const changed = updated_at ? changedAgo(updated_at) : null;
   const visibility = dashboard.visibility
     ? VISIBILITY[dashboard.visibility]
@@ -104,7 +103,7 @@ function CardMeta({ dashboard }: { dashboard: DashboardListed }) {
         "flex h-5 min-w-0 items-center gap-1.5 ps-7 font-normal"
       )}
     >
-      {owner ? <PersonName personId={owner} className="truncate" /> : null}
+      {owner ? <span className="truncate">{owner}</span> : null}
       {changed ? (
         <time
           dateTime={updated_at}

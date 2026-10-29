@@ -53,6 +53,7 @@ const LISTING = {
 const READ = {
   name: "engineering",
   ownerPersonId: null,
+  ownerName: null,
   access: "ownerless" as const,
   folders: [],
   carries: true,

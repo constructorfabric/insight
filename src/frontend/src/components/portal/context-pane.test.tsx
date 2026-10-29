@@ -921,6 +921,7 @@ describe("Dashboards pane pins", () => {
       body: { title: TITLES[id] ?? "", widgets: [] },
       tags: [],
       ownerPersonId: null,
+      ownerName: null,
       access: "ownerless",
     }));
     inZone("custom");
@@ -968,6 +969,7 @@ describe("Dashboards pane pins", () => {
             body: { title: "", widgets: [] },
             tags: [],
             ownerPersonId: null,
+            ownerName: null,
             access: "ownerless",
           }),
     );

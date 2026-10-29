@@ -209,6 +209,7 @@ export async function fetchDashboardRead(id: string): Promise<DashboardRead> {
     body: read.body,
     tags: read.tags ?? [],
     ownerPersonId: read.owner_person_id,
+    ownerName: read.owner_name ?? null,
     access: read.access,
     folders: read.folders ?? [],
     carries: read.carries ?? false,

@@ -6,9 +6,6 @@ vi.mock("@tanstack/react-router", async () => {
   };
 });
 vi.mock("@/api/custom-client");
-vi.mock("@/queries/person-name", () => ({
-  usePersonName: () => ({ isPending: false, data: "Jane Doe" }),
-}));
 const role = vi.hoisted(() => ({ isAdmin: true }));
 vi.mock("@/queries/identity-me", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-me")>()),
@@ -63,6 +60,7 @@ function listing(...names: string[]) {
 const READ = {
   name: "delivery",
   ownerPersonId: null,
+  ownerName: null,
   access: "ownerless" as const,
   folders: [],
   carries: true,
@@ -593,6 +591,7 @@ describe("/portal/custom narrowed by ownership", () => {
           id: "0190aaaa-0000-7000-8000-000000000001",
           name: "delivery",
           owner_person_id: "01900000-0000-7000-8000-00000000000a",
+          owner_name: "Jane Doe",
           updated_at: "2026-09-01T00:00:00Z",
           visibility: "private" as const,
           access: "viewer",

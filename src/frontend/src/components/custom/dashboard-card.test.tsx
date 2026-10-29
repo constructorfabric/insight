@@ -6,13 +6,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
   return { ...actual, fetchDashboardRead: vi.fn() };
 });
-const OWNER = vi.hoisted(() => "01900000-0000-7000-8000-00000000000a");
-vi.mock("@/queries/person-name", () => ({
-  usePersonName: (personId: string | null) => ({
-    isPending: false,
-    data: personId === OWNER ? "Jane Doe" : null,
-  }),
-}));
+const OWNER = "01900000-0000-7000-8000-00000000000a";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
@@ -56,6 +50,7 @@ function reading() {
     body: { title: "Delivery", widgets: [] },
     tags: [],
     ownerPersonId: null,
+    ownerName: null,
     access: "ownerless",
     folders: [],
     carries: true,
@@ -109,12 +104,13 @@ describe("<DashboardCard>", () => {
     );
   });
 
-  it("names the owner, and no one for an ownerless dashboard", async () => {
+  it("names the owner the listing names, and no one for an ownerless dashboard", async () => {
     reading();
 
     const { unmount } = card({
       ...LISTED,
       owner_person_id: OWNER,
+      owner_name: "Jane Doe",
       access: "owner",
     });
     expect(await screen.findByText("Jane Doe")).toBeInTheDocument();

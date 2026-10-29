@@ -535,7 +535,13 @@ describe("tags", () => {
     const folders = [{ id: "f1", name: "Platform" }];
     mockFetch
       .mockResolvedValueOnce(
-        response({ ...read, tags: ["Ops"], folders, carries: true })
+        response({
+          ...read,
+          owner_name: "Jane Doe",
+          tags: ["Ops"],
+          folders,
+          carries: true,
+        })
       )
       .mockResolvedValueOnce(response(read));
 
@@ -544,6 +550,7 @@ describe("tags", () => {
       body,
       tags: ["Ops"],
       ownerPersonId: null,
+      ownerName: "Jane Doe",
       access: "ownerless",
       folders,
       carries: true,
@@ -553,6 +560,7 @@ describe("tags", () => {
       body,
       tags: [],
       ownerPersonId: null,
+      ownerName: null,
       access: "ownerless",
       folders: [],
       carries: false,
