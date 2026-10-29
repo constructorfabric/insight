@@ -98,7 +98,7 @@ describe("ExplainWithAi", () => {
   it("reads the answer back with the model and the notes behind it", async () => {
     mocks.available = { featureOn: true, hasKey: true };
     mocks.explain.data = {
-      text: "Focus time is down seven points.",
+      text: "Time outside meetings is down seven points.",
       model: "claude-sonnet-5",
       tenant_context_entries: 2,
       person_context_entries: 1,
@@ -109,7 +109,7 @@ describe("ExplainWithAi", () => {
     await user.click(screen.getByLabelText("Explain Tasks closed with AI"));
 
     expect(
-      screen.getByText("Focus time is down seven points.")
+      screen.getByText("Time outside meetings is down seven points.")
     ).toBeInTheDocument();
     expect(
       screen.getByText(/claude-sonnet-5 · 2 org \+ 1 personal notes/)

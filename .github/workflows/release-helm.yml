@@ -70,7 +70,7 @@ jobs:
         || fromJSON(inputs.build_results).changes.outputs.validation   == 'true'
         || fromJSON(inputs.build_results).changes.outputs.candidate_checks == 'true'
       )
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small-vm' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small-vm' }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -344,7 +344,7 @@ jobs:
       && github.ref == 'refs/heads/main'
       && needs.validate-chart.result == 'success'
       && needs.validate-data.result == 'success'
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || 'insight-small-vm' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight') && 'ubuntu-latest' || 'insight-small-vm' }}
     timeout-minutes: 20
     steps:
       - name: Mint chart-release App token
@@ -532,7 +532,7 @@ jobs:
         || fromJSON(inputs.build_results).changes.outputs.seed         == 'true'
         || fromJSON(inputs.build_results).changes.outputs.umbrella     == 'true'
       )
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small-vm' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small-vm' }}
     timeout-minutes: 60
     steps:
       # Mint a short-lived (1h) installation token from the

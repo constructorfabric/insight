@@ -94,7 +94,7 @@ ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 # WORKAROUND: git-cli-proxy's blob purge needs `git repack --filter --filter-to`
 # (git >= 2.43); bookworm ships 2.39 with no backport, trixie ships 2.47. A
 # binary built against bookworm's glibc runs on trixie's newer one.
-FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS runtime-git
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS runtime-git
 
 RUN apt-get update && \
     apt-get upgrade -y --no-install-recommends && \

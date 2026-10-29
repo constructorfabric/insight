@@ -103,9 +103,9 @@ def load_all_reports(reports_dir: Path, root: Path) -> dict[str, dict[int, int]]
 # --------------------------------------------------------------------------- #
 # Cross-runner sanitation. pytest-cov and cargo-llvm-cov write the PRODUCER's
 # absolute workspace into <source>, with class filenames relative to it, so a
-# consumer whose checkout sits elsewhere can resolve neither. That is not
-# hypothetical: the shared self-hosted pool answers to one label set from two
-# kinds of runner, and their workspaces differ. diff-cover reads the same XML
+# consumer whose checkout sits elsewhere can resolve neither. Producer and
+# consumer can land on different kinds of runner (container or VM, self-hosted
+# or GitHub-hosted), whose workspaces differ. diff-cover reads the same XML
 # itself, so repairing it only inside _normalize would leave the new-code gate
 # measuring nothing and saying so in a line nobody reads. Both gates are handed
 # re-anchored COPIES instead; the downloaded artifact stays as the producer

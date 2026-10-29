@@ -87,7 +87,7 @@ jobs:
     # machines is the approval setting for outside contributors' workflows, and
     # every runner being ephemeral, so a job that does get through leaves
     # nothing behind.
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small' }}
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
@@ -136,7 +136,7 @@ jobs:
     name: Guards
     # Inline rather than `needs: changes`: this job runs beside change detection
     # today, and a dependency would serialise it for no gain.
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small-vm' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small-vm' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -208,7 +208,7 @@ jobs:
     name: Rust — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.rust != '[]' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
     # Only a push to main enters the environment, whose read-write cache key
     # GitHub releases to main alone; every other run reads the caches only.
     environment: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'ci-trusted' || '' }}
@@ -427,10 +427,6 @@ jobs:
           # missing file means something went wrong — fail rather than ignore.
           if-no-files-found: error
 
-      - name: Remove the service containers
-        if: always()
-        run: docker rm -f insight-maria insight-redis insight-clickhouse >/dev/null 2>&1 || true
-
   # One producer job per changed Python connector. Collects inline with
   # pytest-cov in an isolated uv venv; exit-5 (no tests collected) is tolerated.
   python:
@@ -439,7 +435,7 @@ jobs:
     if: ${{ needs.changes.outputs.python != '[]' }}
     # Each entry names its runner size (scripts/ci/changed.py, `runner`); a
     # live_ch entry starts a ClickHouse container, so it names a Docker one.
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || format('insight-{0}', matrix.entry.runner) }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || format('insight-{0}', matrix.entry.runner) }}
     strategy:
       fail-fast: false
       matrix:
@@ -528,7 +524,7 @@ jobs:
     name: Frontend — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.js != '[]' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))))) && 'ubuntu-latest' || 'insight-large' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
     # Chromium for the browser `storybook` project comes baked in; downloading it
     # at CI time stalls the runner. The tag MUST track `playwright` in the
     # component's package.json so the pre-installed build matches.
@@ -540,15 +536,6 @@ jobs:
       matrix:
         entry: ${{ fromJson(needs.changes.outputs.js) }}
     steps:
-      # Recovery, not hygiene: a predecessor killed before its post steps leaves
-      # root-owned files here, and checkout's clean would fail on them. Runs
-      # before checkout for that reason; the mirror step at the end is the
-      # normal path.
-      - name: Reclaim the workspace from a killed predecessor
-        run: |
-          owner="$(stat -c '%u:%g' "$RUNNER_TEMP")"
-          chown -R "$owner" "$GITHUB_WORKSPACE" || true
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
@@ -642,15 +629,6 @@ jobs:
           # something went wrong — fail rather than ignore.
           if-no-files-found: error
 
-      # The job runs as root inside the container while the workspace is mounted
-      # from the host, so whatever it writes would break the next job's checkout
-      # on this runner. RUNNER_TEMP is made by the agent, so it carries the uid.
-      - name: Hand the workspace back to the runner user
-        if: always()
-        run: |
-          owner="$(stat -c '%u:%g' "$RUNNER_TEMP")"
-          chown -R "$owner" "$GITHUB_WORKSPACE" || true
-
   # Single authority: per-component overall + the global new-code gate. Runs even
   # when some producers were skipped (unchanged languages) via `!cancelled()`,
   # and judges only the components that actually produced a report.
@@ -658,7 +636,7 @@ jobs:
     name: Coverage gate
     needs: [changes, rust, python, js]
     if: ${{ !cancelled() }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 15
     steps:
       # If detection failed, or any CHANGED component's producer job failed

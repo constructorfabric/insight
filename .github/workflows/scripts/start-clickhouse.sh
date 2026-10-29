@@ -11,11 +11,11 @@
 #     the read-only `presentation_ro` role (#1963/#1964). The official image
 #     disables it; both compose stacks and the bitnami prod admin have it.
 #
-# Plus what only a shared runner needs: a memory limit. ClickHouse sizes itself
-# from the RAM it can see, which for an unbounded container is the whole
-# machine, and several of these can be running on one. CLICKHOUSE_MEM_LIMIT
-# raises it for a lane that reports MEMORY_LIMIT_EXCEEDED; the config.d file
-# keeps the server's own cap under whatever that limit is.
+# Plus a memory limit: ClickHouse sizes itself from the RAM it can see, which
+# for an unbounded container is the whole machine it shares with the rest of
+# the job. CLICKHOUSE_MEM_LIMIT raises it for a lane that reports
+# MEMORY_LIMIT_EXCEEDED; the config.d file keeps the server's own cap under
+# whatever that limit is.
 #
 # Called once per phase: the lane deliberately builds each phase on a virgin
 # cluster (see the workflow header).
@@ -28,12 +28,6 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 : "${CLICKHOUSE_USER:?CLICKHOUSE_USER must be set}"
 : "${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}"
 : "${CLICKHOUSE_DATABASE:?CLICKHOUSE_DATABASE must be set}"
-
-# A self-hosted runner keeps whatever a killed job left behind. Port 8123 is
-# fixed and shared across lanes under different container names, so reclaim the
-# port first and the name second. Safe because a runner serves one job at a time.
-docker ps -q --filter "publish=8123" | xargs -r docker rm -f >/dev/null 2>&1 || true
-docker rm -f "${NAME}" >/dev/null 2>&1 || true
 
 docker run -d --name "${NAME}" -p 8123:8123 \
   --memory "${CLICKHOUSE_MEM_LIMIT:-3g}" \

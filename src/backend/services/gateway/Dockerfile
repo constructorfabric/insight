@@ -25,7 +25,12 @@ FROM openresty/openresty:1.31.1.1-2-alpine@sha256:5f621903212ed7194a6bd31de7a76c
 #     correlation ids. Alpine ships only libuuid.so.1, but the FFI loader wants
 #     libuuid.so, so symlink it.
 # opm needs perl + curl to fetch the modules; those are build-only, dropped after.
-RUN apk upgrade --no-cache \
+# The base digest is pinned, so the upgrade layer replays from cache until its
+# parent changes. Bump the epoch to re-run it when a fix lands in Alpine without
+# the base digest moving.
+ARG SECURITY_EPOCH=2026-10-29
+RUN echo "security epoch ${SECURITY_EPOCH}" \
+    && apk upgrade --no-cache \
     && apk add --no-cache libuuid \
     && apk add --no-cache --virtual .opm-deps perl curl \
     && opm get ledgetech/lua-resty-http \

@@ -156,7 +156,7 @@ export function metricKpiTiles(
     ];
   });
   // Two tiles saying one thing cost a slot the row does not have — with four
-  // of them, "Focus Time" and "Meeting Hours" would spend half the row on the
+  // of them, "Time Outside Meetings" and "Meeting Hours" would spend half the row on the
   // same measurement, read from opposite ends. Candidate order decides which
   // survives, so the row keeps the one it prefers.
   return dropRedundantMetrics(tiles).slice(0, KPI_ROW_MAX);

@@ -4,11 +4,11 @@
    discriminator with the `insight_` prefix stripped.
 
    `m365_label` names the M365 surface a measure actually reads: chat and
-   meeting measures come from the Teams activity report, so those call
-   sites pass 'Microsoft Teams'; the suite-level default fits email and
-   files (Outlook, OneDrive + SharePoint). The dimension VALUE stays
-   `m365` either way — one platform identity for colors, filters, and the
-   breadth count; only the display label is surface-specific. #}
+   meeting call sites pass 'Microsoft Teams', email 'Outlook', files
+   'OneDrive / SharePoint'. The suite-level default is for measures that
+   span surfaces (active days, breadth). The dimension VALUE stays `m365`
+   either way — one platform identity for colors, filters, and the breadth
+   count; only the display label is surface-specific. #}
 
 {% macro collab_tool_label(tool_expr, m365_label='Microsoft 365') %}
 multiIf(

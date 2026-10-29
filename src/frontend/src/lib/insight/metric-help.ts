@@ -4,7 +4,7 @@
  * `description` says what the number is; `explanation` says how it is counted
  * and what it is worth reading for. Both are server-owned copy that rides on
  * every metric result — the screens simply had nowhere to put it, so a reader
- * met "Focus Time 88%" with no way to learn what either word meant.
+ * met "Time Outside Meetings 88%" with no way to learn what it counted.
  */
 export interface MetricHelpText {
   description: string | null;

@@ -71,7 +71,7 @@ permissions:
 
 env:
   UI_TESTS_IMAGE: mcr.microsoft.com/playwright/python@sha256:aa81288e738725378becba5b3e06cb0f3a7f012a610e87e8d767a090ea3f740d
-  # The compose stand shares a runner with whatever else is on it, so its
+  # The compose stand shares the runner with its other services, so its
   # ClickHouse gets a share rather than the machine. Raise it here if a lane
   # starts failing with MEMORY_LIMIT_EXCEEDED.
   CLICKHOUSE_MEM_LIMIT: 3g
@@ -91,7 +91,7 @@ jobs:
   changes:
     name: Detect changes
     if: github.event_name != 'pull_request'
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
@@ -234,7 +234,7 @@ jobs:
     name: Resolve target
     needs: changes
     if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.changes.outputs.relevant == 'true' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     outputs:
       target: ${{ steps.resolve.outputs.target }}
@@ -269,7 +269,7 @@ jobs:
       && needs.resolve-target.result == 'success'
       && needs.resolve-target.outputs.target == 'compose'
       && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
     outputs:
       api: ${{ steps.results.outputs.api }}
       ui: ${{ steps.results.outputs.ui }}
@@ -334,15 +334,8 @@ jobs:
           restore-keys: |
             e2e-backend-${{ steps.toolchain.outputs.image }}-
 
-      # Two things dev-compose.sh needs from the host that no runner guarantees.
-      # It resolves the host IP with `ip route` — a minimal image need not carry
-      # iproute2, and an empty IP aborts bring-up — and it publishes ClickHouse
-      # on a fixed 8123, which a long-lived runner can still have allocated to a
-      # container the previous job left behind. The reclaim is the one from
-      # .github/workflows/scripts/start-clickhouse.sh: a self-hosted runner
-      # serves one job at a time, so whatever holds that port has finished.
-      # It belongs here and not in dev-compose.sh, which a developer runs
-      # against their own Docker.
+      # dev-compose.sh resolves the host IP with `ip route`; a minimal runner
+      # image need not carry iproute2, and an empty IP aborts bring-up.
       - name: Prepare the test-stand host
         run: |
           set -euo pipefail
@@ -350,7 +343,6 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends iproute2
           fi
-          docker ps -q --filter "publish=8123" | xargs -r docker rm -f >/dev/null 2>&1 || true
 
       # `up --pinned` writes .env.compose.test-stand, pulls every tree the
       # `changes` job did not flag for a build, forces Keycloak, seeds, and
@@ -552,9 +544,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # always(), not failure(): a cancelled run must still tear its stack
-      # down, and `down` passes --volumes so the next run starts from empty
-      # databases rather than inheriting this one's rows.
+      # always(), not failure(): a cancelled run must still tear its stack down.
       - name: Tear the stand down
         id: teardown
         if: always()
@@ -593,7 +583,7 @@ jobs:
     name: api-smoke
     needs: [changes, stand-runner]
     if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:
       - name: Report the API lane
@@ -621,7 +611,7 @@ jobs:
     name: ui-journeys
     needs: [changes, stand-runner]
     if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:
       - name: Report the UI lane
@@ -654,7 +644,7 @@ jobs:
     name: Stand E2E
     needs: [changes, api-smoke, ui-journeys]
     if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:
       - name: Require both lanes to have passed, or to have been skipped as irrelevant

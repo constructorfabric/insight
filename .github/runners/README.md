@@ -13,32 +13,32 @@ one job and is destroyed afterwards, so nothing carries over between jobs.
 ## The rule
 
 ```yaml
-runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
+runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
 ```
 
 | Event | Runner |
 |---|---|
-| pull request by a project member, from a branch or a fork | the job's `insight-*` label |
-| pull request by anyone else, Dependabot included | `ubuntu-latest` |
+| pull request from a branch of this repository, Dependabot included | the job's `insight-*` label |
+| pull request from a fork | `ubuntu-latest` |
 | `push`, `merge_group`, `schedule`, `workflow_dispatch`, `workflow_run` | the job's `insight-*` label |
+| any run inside a fork of this repository | `ubuntu-latest` |
 | any of the above with `INSIGHT_FORCE_GITHUB_HOSTED=true` (the kill switch) | `ubuntu-latest` |
 
-**Only project members reach these runners.** A project member is an author
-the event payload reports as `OWNER`, `MEMBER` or `COLLABORATOR`, or whose
-login is in the `INSIGHT_ARC_PR_AUTHORS` repository variable, a JSON array such
-as `["octocat"]`. The payload reports org membership only when it is public, so
-a member whose membership is private shows as `CONTRIBUTOR` and needs either
-the variable entry or public membership. Approval for an outside contributor's
-workflow is an admission gate, not a sandbox, so their pull requests stay on
-GitHub-hosted runners.
+**Whoever wants the self-hosted runners pushes a branch to this repository;
+forks never reach them.** Pushing a branch takes write access, so a pull
+request from a branch here is trusted by where it comes from, not by who opened
+it. Contributors with write access push branches here instead of opening pull
+requests from their forks. Approval for an outside contributor's workflow is an
+admission gate, not a sandbox, so fork pull requests stay on GitHub-hosted
+runners.
+
+A fork with Actions enabled runs its own pushes and pull requests; no runner
+there serves the `insight-*` labels, so those runs go to GitHub-hosted runners
+instead of queueing until they time out.
 
 **Routing is not a security boundary.** A pull request runs the workflow from
 its own merge commit, so its author can rewrite `runs-on`; the runner is picked
 before any step executes.
-
-Jobs that publish (`build-images.yml`, `gateway.yml`, `ghcr-cleanup.yml` and a
-few others) also require the pull request to come from a branch of this
-repository, not a fork.
 
 ## Exceptions
 
