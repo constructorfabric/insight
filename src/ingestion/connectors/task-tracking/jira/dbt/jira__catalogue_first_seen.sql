@@ -23,11 +23,11 @@
 -- bronze still shows at that moment.
 
 SELECT
-    COALESCE(source_id, '')                               AS insight_source_id,
+    CAST(source_id AS String)                             AS insight_source_id,
     min(_airbyte_extracted_at)                            AS catalogue_first_sync,
     now64(3)                                              AS recorded_at
 FROM {{ source('bronze_jira', 'jira_fields') }}
 {% if is_incremental() %}
-WHERE COALESCE(source_id, '') NOT IN (SELECT insight_source_id FROM {{ this }})
+WHERE CAST(source_id AS String) NOT IN (SELECT insight_source_id FROM {{ this }})
 {% endif %}
 GROUP BY insight_source_id

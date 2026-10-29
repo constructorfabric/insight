@@ -8,7 +8,7 @@
     them. Narrow columns only: this reads every issue in bronze and every row
     of the journal, and neither the JSON nor the value arrays.
 
-    Two ways of knowing an issue is stale, and the union of them is the scope.
+    Three ways of knowing an issue is stale, and the union of them is the scope.
 
     The issue's own rows are one: bronze holds an extraction the version those
     rows carry does not cover. This is what catches an issue whose rows a run
@@ -21,7 +21,10 @@
     the version the complete set would have carried, so the issue reads as
     current and the first test alone would skip it forever. `processed_ms` is
     written only after a replacement completed, so everything bronze delivered
-    since then is in scope again, the half-written issue with it. -#}
+    since then is in scope again, the half-written issue with it.
+
+    A link element still held as a key the key map has since resolved is the
+    third: the census can name an id for a key long after the issue last moved. -#}
 {% macro jira_journal_touched(processed_ms) %}
     SELECT
         f.insight_source_id                               AS insight_source_id,
@@ -33,11 +36,10 @@
             max(extracted_at)                             AS fresh_at
         FROM (
             SELECT
-                COALESCE(source_id, '')                   AS insight_source_id,
-                COALESCE(toString(jira_id), '')           AS issue_id,
+                CAST(source_id AS String)                 AS insight_source_id,
+                CAST(jira_id AS String)                   AS issue_id,
                 toDateTime64(_airbyte_extracted_at, 3)    AS extracted_at
             FROM {{ source('bronze_jira', 'jira_issue') }}
-            WHERE jira_id IS NOT NULL
 
             UNION ALL
 
@@ -47,6 +49,22 @@
                 extracted_at
             FROM {{ ref('jira__changelog_items') }}
             WHERE jira_id IS NOT NULL
+
+            UNION ALL
+
+            -- A link element the journal still names by a key the key map now
+            -- resolves: nothing in bronze moved, but the element is now an id.
+            SELECT
+                j.insight_source_id                       AS insight_source_id,
+                j.issue_id                                AS issue_id,
+                now64(3)                                  AS extracted_at
+            FROM {{ this }} AS j
+            ARRAY JOIN j.value_ids AS element
+            INNER JOIN {{ ref('jira__issue_key_ids') }} AS ik FINAL
+                ON ik.insight_source_id = j.insight_source_id
+               AND ik.issue_key = element
+            WHERE j.value_id_type = 'opaque_id'
+              AND NOT match(element, '^[0-9]+$')
         )
         GROUP BY insight_source_id, issue_id
     ) AS f
@@ -67,9 +85,8 @@
 
 {#- Every issue bronze knows: the rebuild scope, counted for batching only. -#}
 {% macro jira_journal_all_issues() %}
-    SELECT COALESCE(source_id, '') AS insight_source_id, COALESCE(toString(jira_id), '') AS issue_id
+    SELECT CAST(source_id AS String) AS insight_source_id, CAST(jira_id AS String)       AS issue_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE jira_id IS NOT NULL
     UNION ALL
     SELECT insight_source_id, assumeNotNull(jira_id) AS issue_id
     FROM {{ ref('jira__changelog_items') }}

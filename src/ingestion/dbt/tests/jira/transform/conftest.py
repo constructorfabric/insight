@@ -254,6 +254,7 @@ class Case:
     issues: list[dict[str, Any]]
     events: list[dict[str, Any]]
     statuses: list[dict[str, Any]]
+    census: list[dict[str, Any]]
 
 
 def case(
@@ -262,6 +263,7 @@ def case(
     issues: list[dict[str, Any]],
     events: list[dict[str, Any]] | None = None,
     statuses: list[dict[str, Any]] | None = None,
+    census: list[dict[str, Any]] | None = None,
 ) -> Any:
     """Declare a test's bronze so its module can be seeded and built in one go.
 
@@ -277,7 +279,9 @@ def case(
     """
 
     def declare(test: Any) -> Any:
-        test.case = Case(fields=fields, issues=issues, events=events or [], statuses=statuses or [])
+        test.case = Case(
+            fields=fields, issues=issues, events=events or [], statuses=statuses or [], census=census or []
+        )
         return test
 
     return declare
@@ -480,7 +484,9 @@ class Batch:
         _truncate_bronze(self.warehouse)
         for name, scenario in self.scenarios.items():
             spec = self._cases[name]
-            scenario.seed(fields=spec.fields, issues=spec.issues, events=spec.events, statuses=spec.statuses)
+            scenario.seed(
+                fields=spec.fields, issues=spec.issues, events=spec.events, statuses=spec.statuses, census=spec.census
+            )
         self.warehouse.build(self._selector)
         self.generation = self.warehouse.generation
 

@@ -26,12 +26,11 @@
 
 WITH issue_created AS (
     SELECT
-        COALESCE(source_id, '')                                       AS insight_source_id,
-        COALESCE(toString(jira_id), '')                               AS issue_id,
+        CAST(source_id AS String)                                     AS insight_source_id,
+        CAST(jira_id AS String)                                       AS issue_id,
         argMax(parseDateTime64BestEffortOrNull(created, 3),
                _airbyte_extracted_at)                                 AS created_at
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE jira_id IS NOT NULL
     GROUP BY insight_source_id, issue_id
 ),
 

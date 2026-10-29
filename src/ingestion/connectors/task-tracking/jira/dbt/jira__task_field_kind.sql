@@ -21,7 +21,7 @@
 -- run in that phase.
 
 SELECT
-    COALESCE(f.source_id, '')             AS insight_source_id,
+    CAST(f.source_id AS String)           AS insight_source_id,
     CAST('jira' AS String)                AS data_source,
     COALESCE(f.field_id, '')              AS field_id,
     COALESCE(f.name, '')                  AS field_name,

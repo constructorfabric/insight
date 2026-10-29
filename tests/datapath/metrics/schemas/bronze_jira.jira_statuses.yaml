@@ -10,6 +10,7 @@ schemas:
     properties:
       unique_key: {type: string}
       source_id: {type: string}
+      tenant_id: {type: string}
       # The jira connector types status/category ids as JSON numbers, which the
       # ClickHouse destination stores as Decimal(38,9). Accept number|string|null
       # so the fixture (which writes them as strings) matches the real column via

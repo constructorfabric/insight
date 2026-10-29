@@ -149,7 +149,19 @@ name: jira
 # hidden at the read, and link snapshots retain earlier observations across
 # visibility gaps (#3950). MAJOR because rows already written change, and only
 # the full refresh a major dispatches (ADR-0015) re-derives them.
-version: "18.0.0"
+# 18.1.0: every stream declares `tenant_id` and `source_id` required, and the
+# issue-level streams (`jira_issue`, `jira_issue_keys`, `jira_issue_census`)
+# also `jira_id`: the connector stamps them on every record, so the schema no
+# longer says they can be absent. The bronze columns stay `Nullable(String)` —
+# destination-clickhouse makes every column outside the sort key nullable.
+# MINOR per ADR-0015: reconcile republishes the manifest and nothing stored
+# changes meaning.
+# 18.2.0: `jira_issue_census` keeps each issue's current key beside its id, so
+# `jira__issue_key_ids` resolves a linked issue's key to its immutable id even
+# when the issue was never updated inside the sync window. MINOR per ADR-0015:
+# reconcile republishes the manifest and refreshes the catalog, the destination
+# adds the column on the next sync, and nothing already stored changes meaning.
+version: "18.2.0"
 # 22:10 and 10:10 UTC: clear of the 02:00-06:00 daily block and of github's
 # 4-hourly ticks, which rebuild the same task chain; :10 misses the */15
 # reconcile and identity-seed ticks.
