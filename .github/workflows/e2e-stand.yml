@@ -10,8 +10,7 @@ name: E2E compose stand
 # --pinned, so `test-stand up` pulls the frontend and the four backend services
 # at their charts' appVersions, which name main's build. The `changes` job adds
 # a build flag for each tree the ref touches, or the lane would report on code
-# it never tested. Merge-queue runs load backend images already built for the
-# same commit; events without that image workflow retain the source-build path.
+# it never tested. Nightly/manual runs retain the source-build path.
 # Frontend changes build the SPA in this job.
 #
 # INVARIANT: Both lane checks report independently from one stand lifecycle.
@@ -23,9 +22,9 @@ name: E2E compose stand
 #                what executes.
 #
 # The two lane names are stable required contexts. The workflow starts on every
-# pull request so those contexts exist there; every job is skipped on a pull
-# request, a skipped required check counts as passed, and the stand runs only
-# for merge groups, nightly runs, and manual dispatches. Wall-clock and flake
+# pull request and merge group so those contexts exist there; lane checks are
+# skipped on those events, and a skipped required check counts as passed.
+# The stand runs only for nightly and manual dispatches. Wall-clock and flake
 # history are in .cf-studio/.plans/stage1-compose-e2e-suite/out/ci-wiring.md.
 #
 # Every stand operation goes through ./dev-compose.sh test-stand — never the
@@ -234,7 +233,7 @@ jobs:
   resolve-target:
     name: Resolve target
     needs: changes
-    if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.relevant == 'true' }}
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.changes.outputs.relevant == 'true' }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     outputs:
@@ -593,7 +592,7 @@ jobs:
   api-smoke:
     name: api-smoke
     needs: [changes, stand-runner]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:
@@ -621,7 +620,7 @@ jobs:
   ui-journeys:
     name: ui-journeys
     needs: [changes, stand-runner]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:
@@ -654,7 +653,7 @@ jobs:
   stand-suite:
     name: Stand E2E
     needs: [changes, api-smoke, ui-journeys]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:
