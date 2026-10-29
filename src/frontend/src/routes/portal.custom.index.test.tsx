@@ -564,7 +564,7 @@ describe("/portal/custom narrowed by ownership", () => {
       expect(await screen.findByText(empty)).toBeInTheDocument();
       const browse = screen.getByRole("navigation", { name: "Browse dashboards" });
       expect(
-        within(browse).getByRole("link", { name: new RegExp(chip) })
+        within(browse).getByRole("link", { name: (name) => name.startsWith(chip) })
       ).toHaveAttribute("aria-current", "page");
       expect(askedFor()).toContain(owned);
     }
