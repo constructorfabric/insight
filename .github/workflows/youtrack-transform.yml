@@ -1,0 +1,110 @@
+# Not a required check: a path-filtered required check never reports on a PR
+# outside its filter and hangs on "Expected" (see jira-field-history.yml).
+name: YouTrack transformations
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - src/ingestion/connectors/task-tracking/youtrack/dbt/**
+      - src/ingestion/dbt/macros/youtrack/**
+      - src/ingestion/dbt/macros/silver_incremental_watermark.sql
+      - src/ingestion/dbt/macros/task_event_order.sql
+      - src/ingestion/dbt/macros/task_same_instant_order.sql
+      - src/ingestion/dbt/macros/create_task_config_tables.sql
+      - src/ingestion/silver/task-tracking/**
+      - src/ingestion/dbt/tests/youtrack/**
+      - src/ingestion/dbt/tests/bronze.py
+      - src/ingestion/dbt/dbt_project.yml
+      - src/ingestion/connectors/task-tracking/youtrack/connector.yaml
+      - src/ingestion/connectors/task-tracking/youtrack/descriptor.yaml
+      - src/ingestion/scripts/bootstrap-db/**
+      - src/ingestion/scripts/dbt_profiles.py
+      - .github/workflows/youtrack-transform.yml
+      - .github/workflows/scripts/start-clickhouse.sh
+  push:
+    branches: [main]
+    paths:
+      - src/ingestion/connectors/task-tracking/youtrack/dbt/**
+      - src/ingestion/dbt/macros/youtrack/**
+      - src/ingestion/dbt/macros/silver_incremental_watermark.sql
+      - src/ingestion/dbt/macros/task_event_order.sql
+      - src/ingestion/dbt/macros/task_same_instant_order.sql
+      - src/ingestion/dbt/macros/create_task_config_tables.sql
+      - src/ingestion/silver/task-tracking/**
+      - src/ingestion/dbt/tests/youtrack/**
+      - src/ingestion/dbt/tests/bronze.py
+      - src/ingestion/dbt/dbt_project.yml
+      - src/ingestion/connectors/task-tracking/youtrack/connector.yaml
+      - src/ingestion/connectors/task-tracking/youtrack/descriptor.yaml
+      - src/ingestion/scripts/bootstrap-db/**
+      - src/ingestion/scripts/dbt_profiles.py
+      - .github/workflows/youtrack-transform.yml
+      - .github/workflows/scripts/start-clickhouse.sh
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+# Routing: .github/runners/README.md.
+jobs:
+  transformations:
+    name: transformations
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
+    timeout-minutes: 45
+    env:
+      CLICKHOUSE_CONTAINER: youtrack-transform-clickhouse
+      CLICKHOUSE_USER: insight
+      CLICKHOUSE_PASSWORD: insight
+      CLICKHOUSE_DATABASE: insight
+      CLICKHOUSE_HOST: 127.0.0.1
+      CLICKHOUSE_HTTP_PORT: "8123"
+      YOUTRACK_TEST_DISPOSABLE: "yes"
+      VENV: ${{ github.workspace }}/.youtrack-dbt-venv
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Start ClickHouse on the pinned version
+        run: |
+          set -euo pipefail
+          cat src/ingestion/scripts/bootstrap-db/pins.env >> "$GITHUB_ENV"
+          . src/ingestion/scripts/bootstrap-db/pins.env
+          export CLICKHOUSE_SERVER_IMAGE
+          .github/workflows/scripts/start-clickhouse.sh "${CLICKHOUSE_CONTAINER}"
+          # WORKAROUND: the destination container cannot reach the runner's loopback.
+          echo "CLICKHOUSE_CONTAINER_HOST=$(docker network inspect bridge -f '{{ (index .IPAM.Config 0).Gateway }}')" >> "$GITHUB_ENV"
+          # INVARIANT: the dbt project's on-run-start hooks need these before the first run.
+          for db in staging silver config identity insight; do
+            curl -sSf "http://${CLICKHOUSE_HOST}:${CLICKHOUSE_HTTP_PORT}/" \
+              -u "${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}" \
+              --data-binary "CREATE DATABASE IF NOT EXISTS ${db}"
+          done
+
+      - name: Install pinned dbt and the suite's deps
+        run: |
+          set -euo pipefail
+          python -m venv "${VENV}"
+          "${VENV}/bin/pip" install --quiet \
+            "dbt-core==${DBT_CORE_VERSION}" \
+            "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}" \
+            -r src/ingestion/dbt/tests/youtrack/transform/requirements.txt
+
+      - name: Transformation tests
+        working-directory: src/ingestion/dbt/tests/youtrack/transform
+        run: |
+          set -euo pipefail
+          "${VENV}/bin/pytest" -q --durations=10
+
+      - name: ClickHouse logs
+        if: failure()
+        run: docker logs --tail 200 "${CLICKHOUSE_CONTAINER}" || true
