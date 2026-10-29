@@ -79,9 +79,9 @@ pub struct CommitTotals {
 /// Per-file stats for an explicit set of commits, keyed by sha. Requires the
 /// touched blobs to be present locally (see `blobs::prefetch`).
 ///
-/// Retention stops on the first whole batch that carries `max_files` — the
-/// commits dropped are exactly the ones the row cap would have withheld from
-/// the response anyway. `shas` must be in page order for that to hold.
+/// Retention stops on the first whole batch that carries `max_files`; a
+/// commit after it is absent from the result, which the caller must treat as
+/// unread rather than empty. `shas` must be in page order for that to hold.
 ///
 /// # Errors
 ///
