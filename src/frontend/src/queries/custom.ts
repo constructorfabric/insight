@@ -171,7 +171,7 @@ export function recentDashboardsQuery(count: number) {
   return queryOptions({
     queryKey: [...NAME_PAGES_PREFIX, "dashboards", "recent", count],
     queryFn: () =>
-      fetchDashboards({ owned: "me", sort: "recent", limit: count }),
+      fetchDashboards({ sort: "recent", limit: count }),
   });
 }
 

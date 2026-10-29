@@ -6,14 +6,12 @@ import { Button } from "@/components/ui/button";
 import { useZoneNav } from "@/lib/portal/use-zone-nav";
 import { TEXT_EYEBROW } from "@/lib/type-scale";
 import { recentDashboardsQuery } from "@/queries/custom";
-import { useIsAdmin } from "@/queries/identity-me";
 
 const RECENT_COUNT = 3;
 
 export function HomeDashboards() {
   const { zones } = useZoneNav();
-  const { isAdmin } = useIsAdmin();
-  if (!isAdmin || !zones.some((zone) => zone.id === "custom")) return null;
+  if (!zones.some((zone) => zone.id === "custom")) return null;
 
   return <DashboardSection />;
 }
@@ -22,19 +20,20 @@ function DashboardSection() {
   const dashboards = useQuery(recentDashboardsQuery(RECENT_COUNT));
   const shown = dashboards.data?.items ?? [];
 
+  // A viewer with no dashboard to open has no section; while that is unknown
+  // nothing is drawn, so the section never appears only to vanish.
+  if (dashboards.isPending) return null;
+  if (!dashboards.isError && shown.length === 0) return null;
+
   return (
     <section aria-labelledby="home-dashboards" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="home-dashboards" className={TEXT_EYEBROW}>
-          My dashboards · recent
+          Recent dashboards
         </h2>
         <NewDashboardButton variant="outline" />
       </div>
-      {dashboards.isPending ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          Loading dashboards…
-        </p>
-      ) : dashboards.isError ? (
+      {dashboards.isError ? (
         <div
           role="alert"
           className="flex flex-wrap items-center gap-3 rounded-xl border bg-card p-4"
@@ -50,7 +49,7 @@ function DashboardSection() {
             Try again
           </Button>
         </div>
-      ) : shown.length ? (
+      ) : (
         <ul className="grid gap-4 @2xl:grid-cols-2">
           {shown.map((dashboard) => (
             <li
@@ -61,10 +60,6 @@ function DashboardSection() {
             </li>
           ))}
         </ul>
-      ) : (
-        <p className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
-          You own no dashboards yet.
-        </p>
       )}
     </section>
   );
