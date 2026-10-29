@@ -59,6 +59,7 @@ export CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}"
 
 source "$SCRIPT_DIR/lib/ch-topology.sh"
 source "$SCRIPT_DIR/lib/retired-relations.sh"
+source "$SCRIPT_DIR/lib/heal-identity-map-tenant.sh"
 source "$SCRIPT_DIR/lib/heal-youtrack-field-observation-tenant.sh"
 source "$SCRIPT_DIR/lib/heal-task-producer-tenant.sh"
 source "$SCRIPT_DIR/lib/heal-identity-map-tenant.sh"
