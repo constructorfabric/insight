@@ -1875,7 +1875,7 @@
         "operationId": "identity_resolution.people.list",
         "parameters": [
           {
-            "description": "`caller` (default) returns people visible to the caller; `tenant` returns the entire tenant roster and requires admin",
+            "description": "`caller` (default) returns people visible to the caller; `tenant` returns the entire tenant roster to any member: names and contact for everyone, attributes and managers for administrators only",
             "in": "query",
             "name": "visibility",
             "required": false,
@@ -1887,6 +1887,15 @@
             "description": "Search display name, first name, last name, username, or email; every whitespace-separated term must match",
             "in": "query",
             "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated person ids, at most 200; a row is any one of them",
+            "in": "query",
+            "name": "ids",
             "required": false,
             "schema": {
               "type": "string"
