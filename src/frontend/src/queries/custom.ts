@@ -31,7 +31,6 @@ import type {
 import {
   addToFolder,
   createDefinition,
-  createFolder,
   deleteDataset,
   deleteDefinition,
   deleteFolder,
@@ -516,13 +515,18 @@ export function useRenameDashboard() {
   });
 }
 
-export function useCreateFolder() {
-  const queryClient = useQueryClient();
+export async function grantViewers(
+  target: GrantTarget,
+  grantees: readonly Grantee[]
+): Promise<{ refused: unknown } | null> {
+  const shares = await Promise.allSettled(
+    grantees.map((grantee) => putGrant(target, grantee, "viewer"))
+  );
+  const refused = shares.find(
+    (share): share is PromiseRejectedResult => share.status === "rejected"
+  );
 
-  return useMutation({
-    mutationFn: (name: string) => createFolder(name),
-    onSettled: () => invalidateDashboardList(queryClient),
-  });
+  return refused ? { refused: refused.reason } : null;
 }
 
 export function useRenameFolder() {

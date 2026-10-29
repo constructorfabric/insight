@@ -715,61 +715,63 @@ describe("Dashboards pane folders", () => {
     }
   });
 
-  it("makes a folder on Enter", async () => {
+  it("opens the folder dialog from New folder, creating nothing yet", async () => {
     onTheList();
     pane();
     const user = userEvent.setup();
 
     await user.click(await screen.findByRole("button", { name: /New folder/ }));
-    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Hiring{Enter}");
 
-    expect(mocks.createFolder).toHaveBeenCalledWith("Hiring");
-    expect(await screen.findByRole("button", { name: /New folder/ })).toBeInTheDocument();
-  });
-
-  it("drops a new folder on Esc without asking the service", async () => {
-    onTheList();
-    pane();
-    const user = userEvent.setup();
-
-    await user.click(await screen.findByRole("button", { name: /New folder/ }));
-    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Hir{Escape}");
-
+    expect(await screen.findByRole("dialog", { name: "New folder" })).toBeVisible();
     expect(screen.queryByRole("textbox", { name: "Folder name" })).toBeNull();
     expect(mocks.createFolder).not.toHaveBeenCalled();
   });
 
-  it("drops an unnamed new folder when focus leaves it, but keeps a typed name", async () => {
+  it("drops a rename when focus leaves an unchanged or blank name, but keeps a typed one", async () => {
     onTheList();
     pane();
     const user = userEvent.setup();
+    const startRename = async () => {
+      await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+      await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    };
 
-    await user.click(await screen.findByRole("button", { name: /New folder/ }));
+    await startRename();
     await user.tab();
     expect(screen.queryByRole("textbox", { name: "Folder name" })).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: /New folder/ }));
-    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Hir");
+    await startRename();
+    await user.clear(screen.getByRole("textbox", { name: "Folder name" }));
     await user.tab();
-    expect(screen.getByRole("textbox", { name: "Folder name" })).toHaveValue("Hir");
-    expect(mocks.createFolder).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox", { name: "Folder name" })).toBeNull();
+
+    await startRename();
+    const field = screen.getByRole("textbox", { name: "Folder name" });
+    await user.clear(field);
+    await user.type(field, "Cor");
+    await user.tab();
+    expect(screen.getByRole("textbox", { name: "Folder name" })).toHaveValue("Cor");
+    expect(mocks.renameFolder).not.toHaveBeenCalled();
   });
 
-  it("says under the field why a name was refused, and keeps the field", async () => {
-    mocks.createFolder.mockRejectedValue(
-      new CustomApiError(409, { detail: "a folder named `platform` already exists" }),
+  it("says under the field why a new name was refused, and keeps the field", async () => {
+    mocks.renameFolder.mockRejectedValue(
+      new CustomApiError(409, { detail: "a folder named `product` already exists" }),
     );
     onTheList();
     pane();
     const user = userEvent.setup();
 
-    await user.click(await screen.findByRole("button", { name: /New folder/ }));
-    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "platform{Enter}");
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const field = screen.getByRole("textbox", { name: "Folder name" });
+    await user.clear(field);
+    await user.type(field, "product{Enter}");
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "a folder named `platform` already exists",
+      "a folder named `product` already exists",
     );
-    expect(screen.getByRole("textbox", { name: "Folder name" })).toHaveValue("platform");
+    expect(screen.getByRole("textbox", { name: "Folder name" })).toHaveValue("product");
   });
 
   it("renames a folder from its menu, in the same field", async () => {

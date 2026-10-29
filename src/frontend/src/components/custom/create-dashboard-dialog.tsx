@@ -1,19 +1,17 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { MessageSquare, Plus, X, type LucideIcon } from "lucide-react";
+import { MessageSquare, Plus, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 
 import {
   createDefinition,
   DEFINITION_NAME_MAX,
-  EVERYONE,
-  putGrant,
   type DashboardVisibility,
   type Grantee,
 } from "@/api/custom-client";
 import type { PersonSummary } from "@/api/identity-client";
 import { refusal } from "@/components/custom/refusal";
-import { PersonPicker } from "@/components/portal/person-picker";
+import { VisibilityField } from "@/components/custom/visibility-field";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -27,34 +25,22 @@ import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/sonner";
 import { Spinner } from "@/components/ui/spinner";
 import { askAssistant } from "@/lib/custom/assistant-draft";
-import { personDisplayName } from "@/lib/identities/person-display";
+import { audienceChosen, granteesFor } from "@/lib/custom/initial-grants";
 import { useAssistantAvailable } from "@/lib/portal/use-assistant-available";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
-import { invalidateDashboardList } from "@/queries/custom";
+import { grantViewers, invalidateDashboardList } from "@/queries/custom";
 import { useIsAdmin } from "@/queries/identity-me";
 
 type Visibility = DashboardVisibility;
 
 type StartFrom = "empty" | "assistant";
 
-const VISIBILITIES = [
-  { value: "private", label: "Private", caption: "Only you" },
-  {
-    value: "everyone",
-    label: "Shared with org",
-    caption: "Everyone can view · only you can edit",
-  },
-  {
-    value: "people",
-    label: "Shared with people",
-    caption: "People you pick can view · only you can edit",
-  },
-] as const satisfies readonly {
-  value: Visibility;
-  label: string;
-  caption: string;
-}[];
+const CAPTIONS = {
+  private: "Only you",
+  everyone: "Everyone can view · only you can edit",
+  people: "People you pick can view · only you can edit",
+} as const satisfies Record<Visibility, string>;
 
 const STARTS = [
   { value: "empty", label: "Empty dashboard", icon: Plus },
@@ -66,6 +52,7 @@ const STARTS = [
 }[];
 
 const NAME_FIELD_ID = "new-dashboard-name";
+const ERROR_ID = "new-dashboard-error";
 
 interface NewDashboard {
   title: string;
@@ -74,21 +61,7 @@ interface NewDashboard {
 
 interface Created {
   id: string;
-  shareFailure: unknown;
-}
-
-function granteesFor(
-  visibility: Visibility,
-  people: PersonSummary[]
-): Grantee[] {
-  switch (visibility) {
-    case "private":
-      return [];
-    case "people":
-      return people.map((person) => person.person_id);
-    case "everyone":
-      return [EVERYONE];
-  }
+  shareFailure: { refused: unknown } | null;
 }
 
 function assistantPrompt(title: string): string {
@@ -101,15 +74,9 @@ async function createShared({
 }: NewDashboard): Promise<Created> {
   const id = await createDefinition("dashboards", title, { title, items: [] });
 
-  const target = { kind: "dashboards", id } as const;
-  const shares = await Promise.allSettled(
-    grantees.map((grantee) => putGrant(target, grantee, "viewer"))
-  );
-  const refused = shares.find(
-    (share): share is PromiseRejectedResult => share.status === "rejected"
-  );
+  const shareFailure = await grantViewers({ kind: "dashboards", id }, grantees);
 
-  return { id, shareFailure: refused?.reason ?? null };
+  return { id, shareFailure };
 }
 
 export function NewDashboardButton() {
@@ -155,8 +122,8 @@ export function CreateDashboardDialog({
   const title = name.trim();
   const pending = create.isPending;
   const toAssistant = assistantAvailable && start === "assistant";
-  const audienceChosen = visibility !== "people" || people.length > 0;
-  const ready = title !== "" && (toAssistant || audienceChosen);
+  const ready =
+    title !== "" && (toAssistant || audienceChosen(visibility, people));
 
   function close() {
     setName("");
@@ -195,7 +162,7 @@ export function CreateDashboardDialog({
       close();
       if (made.shareFailure !== null) {
         toast.error(
-          refusal(made.shareFailure, "Created, but couldn't share it.")
+          refusal(made.shareFailure.refused, "Created, but couldn't share it.")
         );
       }
       void navigate({ to: "/portal/custom/$name", params: { name: made.id } });
@@ -222,6 +189,8 @@ export function CreateDashboardDialog({
             <Input
               id={NAME_FIELD_ID}
               autoFocus
+              aria-invalid={error !== null}
+              aria-describedby={error ? ERROR_ID : undefined}
               required
               maxLength={DEFINITION_NAME_MAX}
               readOnly={pending}
@@ -238,26 +207,15 @@ export function CreateDashboardDialog({
             />
           </div>
 
-          <fieldset
+          <VisibilityField
+            name="new-dashboard-visibility"
+            captions={CAPTIONS}
+            value={visibility}
+            people={people}
             disabled={toAssistant || pending}
-            className="flex min-w-0 flex-col gap-2"
-          >
-            <legend className={cn(TEXT_LABEL, "mb-2 font-medium")}>
-              Visibility
-            </legend>
-            <VisibilityChoices value={visibility} onChange={setVisibility} />
-            {visibility === "people" ? (
-              <NamedPeople
-                people={people}
-                onAdd={(person) => setPeople((was) => [...was, person])}
-                onRemove={(personId) =>
-                  setPeople((was) =>
-                    was.filter((person) => person.person_id !== personId)
-                  )
-                }
-              />
-            ) : null}
-          </fieldset>
+            onChange={setVisibility}
+            onPeopleChange={setPeople}
+          />
 
           {assistantAvailable ? (
             <fieldset
@@ -272,7 +230,11 @@ export function CreateDashboardDialog({
           ) : null}
 
           {error ? (
-            <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
+            <p
+              id={ERROR_ID}
+              role="alert"
+              className={cn(TEXT_BODY, "text-destructive")}
+            >
               {error}
             </p>
           ) : null}
@@ -298,40 +260,6 @@ export function CreateDashboardDialog({
         </div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function VisibilityChoices({
-  value,
-  onChange,
-}: {
-  value: Visibility;
-  onChange: (next: Visibility) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-3">
-      {VISIBILITIES.map((option) => (
-        <label
-          key={option.value}
-          className="flex w-fit cursor-pointer items-start gap-2"
-        >
-          <input
-            type="radio"
-            name="new-dashboard-visibility"
-            value={option.value}
-            checked={value === option.value}
-            className="mt-0.5 size-4 accent-primary"
-            onChange={() => onChange(option.value)}
-          />
-          <span className="flex flex-col">
-            <span className={cn(TEXT_BODY, "font-medium")}>{option.label}</span>
-            <span className={cn(TEXT_LABEL, "font-normal text-muted-foreground")}>
-              {option.caption}
-            </span>
-          </span>
-        </label>
-      ))}
-    </div>
   );
 }
 
@@ -370,48 +298,6 @@ function StartChoices({
           </label>
         );
       })}
-    </div>
-  );
-}
-
-function NamedPeople({
-  people,
-  onAdd,
-  onRemove,
-}: {
-  people: PersonSummary[];
-  onAdd: (person: PersonSummary) => void;
-  onRemove: (personId: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-2 ps-6">
-      {people.length > 0 ? (
-        <ul aria-label="Named people" className="flex flex-col gap-1">
-          {people.map((person) => {
-            const shown = personDisplayName(person);
-
-            return (
-              <li key={person.person_id} className="flex items-center gap-2">
-                <span className={cn(TEXT_BODY, "min-w-0 flex-1 truncate")}>
-                  {shown}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`Remove ${shown}`}
-                  icon={<X />}
-                  onClick={() => onRemove(person.person_id)}
-                />
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-      <PersonPicker
-        excludeIds={people.map((person) => person.person_id)}
-        onPick={onAdd}
-      />
     </div>
   );
 }

@@ -28,7 +28,6 @@ import {
   pinsQuery,
   tagsQuery,
   useAddToFolder,
-  useCreateFolder,
   useDeleteFolder,
   useDeleteGrant,
   useDuplicateDashboard,
@@ -326,15 +325,6 @@ describe("the folder mutations", () => {
     });
   }
 
-  it("makes a folder, then refreshes the counts and the lists", async () => {
-    const { result, invalidated } = rendered(() => useCreateFolder());
-
-    await act(() => result.current.mutateAsync("Platform"));
-
-    expect(customClient.createFolder).toHaveBeenCalledWith("Platform");
-    expectCountsAndListsRefreshed(invalidated);
-  });
-
   it("renames a folder, then refreshes the counts and the lists", async () => {
     const { result, invalidated } = rendered(() => useRenameFolder());
 
@@ -372,15 +362,6 @@ describe("the folder mutations", () => {
       });
     },
   );
-
-  it("refreshes the counts and the lists after a taken name is refused", async () => {
-    vi.mocked(customClient.createFolder).mockRejectedValueOnce(new Error("taken"));
-    const { result, invalidated } = rendered(() => useCreateFolder());
-
-    await act(() => result.current.mutateAsync("Platform").catch(() => undefined));
-
-    expectCountsAndListsRefreshed(invalidated);
-  });
 
   it("refreshes the counts and the lists after an add into a gone folder is refused", async () => {
     vi.mocked(customClient.addToFolder).mockRejectedValueOnce(new Error("gone"));
