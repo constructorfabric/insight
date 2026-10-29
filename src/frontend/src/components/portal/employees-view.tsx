@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/table";
 import { personName } from "@/lib/identities/person-display";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
-import { useWholeRoster } from "@/lib/portal/whole-roster";
+import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
 import { cn } from "@/lib/utils";
 
@@ -59,7 +59,7 @@ function rosterEmployees(roster: readonly PeopleListItem[]): EmployeeRow[] {
  */
 export function EmployeesView() {
   const { setZone } = usePortalNavActions();
-  const { wholeRoster } = useWholeRoster();
+  const { isFlat } = useVisibilityPolicy();
   const visibleRoster = useVisibleRoster(true);
   const [query, setQuery] = useState("");
 
@@ -97,7 +97,7 @@ export function EmployeesView() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold tracking-tight">
-            {wholeRoster ? "Roster" : "Employees"}
+            {isFlat ? "Roster" : "Employees"}
           </h1>
           <p className="text-sm text-muted-foreground">
             {filtered.length}
@@ -124,7 +124,7 @@ export function EmployeesView() {
               <TableHead>Title</TableHead>
               {/* A flat organisation fills none of these: no reporting line,
                   and the roster carries no org attributes. */}
-              {wholeRoster ? null : (
+              {isFlat ? null : (
                 <>
                   <TableHead>Department</TableHead>
                   <TableHead>Division</TableHead>
@@ -152,7 +152,7 @@ export function EmployeesView() {
                 <TableCell className="text-muted-foreground">
                   {e.jobTitle || "—"}
                 </TableCell>
-                {wholeRoster ? null : (
+                {isFlat ? null : (
                   <>
                     <TableCell className="text-muted-foreground">
                       {e.department || "—"}

@@ -192,6 +192,13 @@ describe("useActiveZone", () => {
     );
   });
 
+  it("opens Home on a bare /portal", () => {
+    portalRouter.go("/portal");
+    expect(renderHook(() => useActiveZone()).result.current.activeZone).toBe(
+      "overview"
+    );
+  });
+
   it("falls back to the viewer for a non-person route", () => {
     portalRouter.go("/metrics");
     expect(renderHook(() => useActiveZone()).result.current.activePerson).toBe(

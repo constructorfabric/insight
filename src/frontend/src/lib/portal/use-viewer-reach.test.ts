@@ -1,7 +1,8 @@
 /**
- * Who the portal's org zones are for: a leaf IC shown only themselves has
- * nobody to roll up; a manager, a flat organisation, or a viewer shown other
- * people does.
+ * Who the portal's org zones are for. The distinction this hook exists to draw:
+ * a leaf IC on a hierarchical install has nobody to roll up, while a member of
+ * an organisation with no reporting lines can see everyone — and both are
+ * served the same empty `subordinates`.
  */
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -80,7 +81,7 @@ describe("useViewerReach", () => {
     expect(result.current.isManager).toBe(false);
   });
 
-  it("opens them for a viewer with no reports who is shown other people", () => {
+  it("keeps them closed for a viewer with no reports who is shown other people", () => {
     mocks.roster = [person("me"), person("ada"), person("grace", "ada")];
     mocks.isFlat = false;
     mocks.rosterPending = false;
@@ -88,8 +89,7 @@ describe("useViewerReach", () => {
 
     const { result } = renderHook(() => useViewerReach());
 
-    expect(result.current.canSeeOthers).toBe(true);
-    expect(result.current.isManager).toBe(false);
+    expect(result.current.canSeeOthers).toBe(false);
   });
 
   it("waits rather than deciding while either answer is in flight", () => {

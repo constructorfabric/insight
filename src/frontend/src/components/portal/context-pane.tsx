@@ -35,6 +35,7 @@ import { useDismissDrawer } from "@/lib/portal/use-dismiss-drawer";
 import { useRailNav } from "@/lib/portal/use-rail-nav";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
 import { useZoneNav, type ZoneNav } from "@/lib/portal/use-zone-nav";
+import { useViewerReach } from "@/lib/portal/use-viewer-reach";
 import { cn } from "@/lib/utils";
 import { useIsAdmin } from "@/queries/identity-me";
 import { usePreviewsGate } from "@/queries/previews";
@@ -207,12 +208,15 @@ function MobileRailNav() {
 function RailPane({ rail, nav }: { rail: RailId; nav: ZoneNav }) {
   const active = resolveZoneItem(nav.activeZone, usePortalItem());
   const visibleZones = new Set(nav.zones.map((zone) => zone.id));
+  const { canSeeOthers } = useViewerReach();
 
   switch (rail) {
     case "home":
       return (
         <>
-          <GroupsNav groups={zoneSections("overview")} active={active} />
+          {canSeeOthers ? (
+            <GroupsNav groups={zoneSections("overview")} active={active} />
+          ) : null}
           {visibleZones.has("custom") ? <HomeDashboardsGroup /> : null}
         </>
       );

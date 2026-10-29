@@ -82,6 +82,13 @@ export const ZONES: readonly Zone[] = [
   { id: "manage", label: "Manage", kind: "manage" },
 ];
 
+/** Zones every viewer may open: Home, their own page and Dashboards. */
+export const ZONES_FOR_EVERYONE: ReadonlySet<string> = new Set([
+  "overview",
+  "person",
+  "custom",
+]);
+
 export function zoneIsPlanned(zone: Zone, policy: InstanceNavPolicy = navPolicy()): boolean {
   const items = zoneItems(zone.id);
   return (
@@ -343,10 +350,10 @@ const FLAT_PEOPLE_ITEMS: readonly PaneItem[] = [
 ];
 
 export function peopleItemsFor(
-  wholeRoster: boolean,
+  isFlat: boolean,
   policy: InstanceNavPolicy = navPolicy()
 ): readonly PaneItem[] {
-  const items = wholeRoster ? FLAT_PEOPLE_ITEMS : PEOPLE_ITEMS;
+  const items = isFlat ? FLAT_PEOPLE_ITEMS : PEOPLE_ITEMS;
   return items
     .filter((item) => !itemHidden("people", item.id, policy))
     .map((item) => withConfigReadiness("people", item, policy));

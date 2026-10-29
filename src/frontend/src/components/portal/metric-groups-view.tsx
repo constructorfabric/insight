@@ -92,6 +92,8 @@ export interface MetricGroupsViewProps {
    * modal. Passing it also suppresses the modal sheets entirely.
    */
   onSelectGroup?: (id: GroupId) => void;
+  /** Rendered inside another page, which owns the padding and landmark. */
+  embedded?: boolean;
 }
 
 /**
@@ -105,6 +107,7 @@ export function MetricGroupsView({
   groupIds,
   showKpis = false,
   onSelectGroup,
+  embedded = false,
 }: MetricGroupsViewProps) {
   const cohortLabel = useCohortLabel();
   const { period, dateRange } = usePortalPeriod();
@@ -214,7 +217,9 @@ export function MetricGroupsView({
     (showKpis && kpiData.isPending) ||
     collectionSetPending(groupData) ||
     cohortPending;
-  if (isLoading) return <CenteredSpinner className="min-h-[60vh]" />;
+  if (isLoading) {
+    return <CenteredSpinner className={embedded ? "min-h-40" : "min-h-[60vh]"} />;
+  }
 
   // Surface a backend failure as a retryable error, not empty section cards.
   const isError =
@@ -290,9 +295,16 @@ export function MetricGroupsView({
       )
     : [];
 
+  const Shell = embedded ? "div" : "main";
+
   return (
     <>
-      <main className="flex flex-1 flex-col gap-8 p-4 md:p-6">
+      <Shell
+        className={cn(
+          "flex flex-1 flex-col gap-8",
+          !embedded && "p-4 md:p-6"
+        )}
+      >
         {showKpis ? (
           <>
             {/* Before the numbers, not after them. On a person's own page the
@@ -357,7 +369,7 @@ export function MetricGroupsView({
             />
           </>
         ) : null}
-      </main>
+      </Shell>
 
       {/* A click on a number is answered here, with the evidence behind it.
           This used to be gated on a `showSections` flag that also hid the

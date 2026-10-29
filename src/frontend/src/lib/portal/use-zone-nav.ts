@@ -2,17 +2,16 @@ import { useNavigate } from "@tanstack/react-router";
 
 import { useViewer } from "@/auth";
 import { zoneHidden } from "@/lib/portal/nav-policy";
-import { ZONES, zoneIsPlanned, type Zone } from "@/lib/portal/nav-model";
+import {
+  ZONES,
+  ZONES_FOR_EVERYONE,
+  zoneIsPlanned,
+  type Zone,
+} from "@/lib/portal/nav-model";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useViewerReach } from "@/lib/portal/use-viewer-reach";
 import { useIsAdmin } from "@/queries/identity-me";
-
-/**
- * Zones that still make sense when the viewer manages no one — everything else
- * rolls up a (non-existent) subtree. An IC's portal collapses to these.
- */
-const IC_ZONES = new Set(["person"]);
 
 export interface ZoneNav {
   zones: Zone[];
@@ -37,7 +36,7 @@ export function useZoneNav(): ZoneNav {
   // A rail of scaffolds makes the built zones look unreliable.
   const showPlanned = usePortalShowPlanned();
   // A viewer with nobody to look at has nothing to roll up, so org zones are
-  // hidden and the shell collapses to Person. While the answer is resolving,
+  // hidden and the shell keeps only the zones every viewer has. While the answer is resolving,
   // assume they have a cohort so the nav doesn't flash a collapsed state.
   const orgZonesVisible = canSeeOthers || reachPending;
   // Manage is opened by the admin role, not by having reports: the operator
@@ -47,11 +46,9 @@ export function useZoneNav(): ZoneNav {
 
   const zones = ZONES.filter((z) => {
     if (zoneHidden(z.id) || (zoneIsPlanned(z) && !showPlanned)) return false;
-    if (z.id === "custom") return true;
+    if (ZONES_FOR_EVERYONE.has(z.id)) return true;
 
-    return (
-      orgZonesVisible || IC_ZONES.has(z.id) || (z.id === "manage" && isAdmin)
-    );
+    return orgZonesVisible || (z.id === "manage" && isAdmin);
   });
 
   function selectZone(zone: Zone, item?: string) {

@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { availableSlices, collectPeopleAttrs } from "@/lib/insight/slices";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { usePortalSlice } from "@/lib/portal/portal-nav";
-import { useWholeRoster } from "@/lib/portal/whole-roster";
+import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
 
 /**
@@ -18,15 +18,15 @@ function midSentence(label: string): string {
 
 export function peerPopulationLabel(
   sliceLabel: string | null,
-  wholeRoster: boolean
+  isFlat: boolean
 ): string {
   if (sliceLabel) return midSentence(sliceLabel);
-  return wholeRoster ? "organisation" : "team";
+  return isFlat ? "organisation" : "team";
 }
 
 export function useCohortLabel(): string {
   const slice = usePortalSlice();
-  const { wholeRoster } = useWholeRoster();
+  const { isFlat } = useVisibilityPolicy();
   const roster = useVisibleRoster(true).roster;
   const dims = useMemo(
     () => availableSlices(collectPeopleAttrs(roster, normalizePersonId).values()),
@@ -36,5 +36,5 @@ export function useCohortLabel(): string {
     ? (dims.find((dimension) => dimension.key === slice)?.label ?? "cohort")
     : null;
 
-  return peerPopulationLabel(sliceLabel, wholeRoster);
+  return peerPopulationLabel(sliceLabel, isFlat);
 }

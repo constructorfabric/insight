@@ -1,21 +1,29 @@
+import {
+  ZONES_FOR_EVERYONE,
+  zoneById,
+  zoneIsPlanned,
+} from "@/lib/portal/nav-model";
+import {
+  navPolicy,
+  zoneHidden,
+  type InstanceNavPolicy,
+} from "@/lib/portal/nav-policy";
+
 /**
  * The landing-zone decision: what the portal shell does with the zone in the
  * URL once the viewer's shape (manager? admin?) resolves.
  *
- * Pulled out of the layout effect because the rules braid three async facts
- * together and the mistakes are silent: the original effect reset EVERY
- * non-person zone for a non-manager, which kicked an admin operator (an IC by
- * design — the seeded operator sits outside the org chart) off
- * `?zone=manage` before the admin check could even answer.
+ * Home (where the install shows it), the viewer's own page and Dashboards are
+ * everyone's, so a bare /portal and those stand without waiting. An org zone
+ * waits for the viewer's reach, and Manage for the admin role: an admin
+ * operator may manage no one.
  */
 export type LandingDecision =
   /** An input is still resolving — decide on a later render. */
   | { kind: "wait" }
   /** The zone in the URL stands. */
   | { kind: "keep" }
-  /** A viewer with a cohort landing on bare /portal starts at the org rollup. */
-  | { kind: "pin-overview" }
-  /** The zone is not this viewer's to see — back to route-driven (Person). */
+  /** The zone is not this viewer's to see — back to Home. */
   | { kind: "reset" };
 
 export function landingDecision(args: {
@@ -24,31 +32,35 @@ export function landingDecision(args: {
   canSeeOthers: boolean;
   adminPending: boolean;
   isAdmin: boolean;
-  overviewVisible?: boolean;
+  homeShown: boolean;
 }): LandingDecision {
-  const {
-    zone,
-    mgrPending,
-    canSeeOthers,
-    adminPending,
-    isAdmin,
-    overviewVisible = true,
-  } = args;
+  const { zone, mgrPending, canSeeOthers, adminPending, isAdmin, homeShown } =
+    args;
 
+  if (zone === "overview" && !homeShown) return { kind: "reset" };
+  if (zone == null || ZONES_FOR_EVERYONE.has(zone)) return { kind: "keep" };
   if (mgrPending) return { kind: "wait" };
-  if (canSeeOthers) {
-    if (zone != null) return { kind: "keep" };
-    return overviewVisible ? { kind: "pin-overview" } : { kind: "keep" };
-  }
+  if (canSeeOthers) return { kind: "keep" };
 
-  // A viewer with nobody to look at collapses to Person — except Manage, which is
-  // gated by the admin role, not by having reports. Hold the decision until
-  // the role answer is in: resetting first would discard the URL the admin
-  // deliberately opened.
-  if (zone == null || zone === "person") return { kind: "keep" };
+  // Manage is gated by the admin role, not by having reports. Hold the
+  // decision until the role answer is in: resetting first would discard the
+  // URL the admin deliberately opened.
   if (zone === "manage") {
     if (adminPending) return { kind: "wait" };
     return isAdmin ? { kind: "keep" } : { kind: "reset" };
   }
   return { kind: "reset" };
+}
+
+/** The zone a bare /portal opens: Home, unless the install leaves it out. */
+export function bareLandingZone(
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): "overview" | "person" {
+  const home = zoneById("overview");
+  const homeShown =
+    home !== undefined &&
+    !zoneHidden(home.id, policy) &&
+    (!zoneIsPlanned(home, policy) || showPlanned);
+  return homeShown ? "overview" : "person";
 }

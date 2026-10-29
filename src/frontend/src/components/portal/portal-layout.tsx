@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { Outlet } from "@tanstack/react-router";
 
-import { AppBootSpinner } from "@/components/app-boot-spinner";
 import { MockBanner } from "@/components/mock-banner";
 import { ViewAsBanner } from "@/components/view-as-banner";
 import { ContextPane } from "@/components/portal/context-pane";
@@ -13,11 +12,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { usePortalNavActions, usePortalZone } from "@/lib/portal/portal-nav";
-import {
-  landingDecision,
-  type LandingDecision,
-} from "@/lib/portal/landing-zone";
-import { zoneHidden, zonePlanned } from "@/lib/portal/nav-policy";
+import { bareLandingZone, landingDecision } from "@/lib/portal/landing-zone";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import {
   useShellLayout,
@@ -35,48 +30,45 @@ import { useIsAdmin } from "@/queries/identity-me";
  */
 export function PortalLayout() {
   const { replaceZone } = usePortalNavActions();
-  // Pin the landing zone exactly once, when the viewer's shape resolves: a
-  // manager lands on the Overview org rollup; an IC has no subtree, so their
-  // zone stays route-driven (their own Person page) — EXCEPT Manage, which
-  // the admin role opens regardless of reports. The rules live in
-  // `landingDecision` (pure, table-tested); this effect only applies them.
+  // Leave an org zone the viewer cannot see, once their shape resolves. The
+  // rules live in `landingDecision` (pure, table-tested); this effect only
+  // applies them, once, so a zone the reader picks later is never rewritten.
   const { canSeeOthers, isPending } = useViewerReach();
   const {
     isAdmin,
     isPending: adminPending,
     isError: adminError,
   } = useIsAdmin();
-  const showPlanned = usePortalShowPlanned();
   const zone = usePortalZone();
-  // INVARIANT: the decision is applied once; it settles to "keep" when the URL
-  // matches it, so a later visit to a bare /portal is the reader's own.
-  const [landing, setLanding] = useState<LandingDecision["kind"] | null>(null);
-  const decision = landingDecision({
-    zone,
-    mgrPending: isPending,
-    canSeeOthers,
-    // An errored check is "unknown", not "no": the landing decision is
-    // one-shot, so resetting on it would permanently rewrite a URL an
-    // admin deliberately opened. Waiting costs nothing — the me query
-    // retries itself until an answer lands.
-    adminPending: adminPending || adminError,
-    isAdmin,
-    overviewVisible:
-      !zoneHidden("overview") && (!zonePlanned("overview") || showPlanned),
-  });
-  if (landing === null && decision.kind !== "wait") setLanding(decision.kind);
-  if (landing === "pin-overview" && zone != null) setLanding("keep");
-  if (landing === "reset" && zone == null) setLanding("keep");
-
+  const homeShown = bareLandingZone(usePortalShowPlanned()) === "overview";
+  const landed = useRef(false);
   useEffect(() => {
-    if (landing === "pin-overview") replaceZone("overview");
-    if (landing === "reset") replaceZone(null);
-  }, [landing, replaceZone]);
-
-  // A bare /portal renders the Person view, so it waits for the landing
-  // decision rather than showing a page it is about to leave.
-  const settling = (landing ?? decision.kind) !== "keep";
-  if (zone == null && settling) return <AppBootSpinner />;
+    if (landed.current) return;
+    const decision = landingDecision({
+      zone,
+      mgrPending: isPending,
+      canSeeOthers,
+      // An errored check is "unknown", not "no": the landing decision is
+      // one-shot, so resetting on it would permanently rewrite a URL an
+      // admin deliberately opened. Waiting costs nothing — the me query
+      // retries itself until an answer lands.
+      adminPending: adminPending || adminError,
+      isAdmin,
+      homeShown,
+    });
+    if (decision.kind === "wait") return;
+    landed.current = true;
+    if (decision.kind === "reset") replaceZone(null);
+  }, [
+    isPending,
+    canSeeOthers,
+    adminPending,
+    adminError,
+    isAdmin,
+    homeShown,
+    zone,
+    replaceZone,
+  ]);
 
   return (
     <SidebarProvider

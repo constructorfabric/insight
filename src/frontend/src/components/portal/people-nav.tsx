@@ -31,7 +31,7 @@ import {
 } from "@/lib/portal/use-person-sections";
 import { STATUS_BG_CLASS } from "@/lib/status";
 import { cn } from "@/lib/utils";
-import { useWholeRoster } from "@/lib/portal/whole-roster";
+import { useVisibilityPolicy } from "@/queries/identity-me";
 
 export function PeopleNav({ nav }: { nav: ZoneNav }) {
   return (
@@ -48,13 +48,13 @@ function PeopleViews({ nav }: { nav: ZoneNav }) {
   const { setItem } = usePortalNavActions();
   const dismiss = useDismissDrawer();
   const { activePerson } = useActiveZone();
-  const { wholeRoster } = useWholeRoster();
+  const { isFlat } = useVisibilityPolicy();
   const showPlanned = usePortalShowPlanned();
   const item = resolveZoneItem("people", usePortalItem());
   const personZone = zones.find((zone) => zone.id === "person");
   const peopleZone = zones.find((zone) => zone.id === "people");
   const teamViews = peopleZone
-    ? orderByReadiness(peopleItemsFor(wholeRoster), showPlanned)
+    ? orderByReadiness(peopleItemsFor(isFlat), showPlanned)
     : [];
 
   return (
@@ -100,7 +100,7 @@ function WorkChart() {
   const [query, setQuery] = useState("");
   // A chart is what a reporting line draws. With no lines there is a roster,
   // and calling it a chart would name a structure the reader cannot see.
-  const { wholeRoster } = useWholeRoster();
+  const { isFlat } = useVisibilityPolicy();
 
   const find = (
     <div className="relative px-2">
@@ -120,7 +120,7 @@ function WorkChart() {
   // draw its scrollbar and rows over the search.
   return (
     <SidebarGroup className="min-h-0 flex-1">
-      {wholeRoster ? null : <SidebarGroupLabel>WorkChart</SidebarGroupLabel>}
+      {isFlat ? null : <SidebarGroupLabel>WorkChart</SidebarGroupLabel>}
       <SidebarGroupContent className="flex min-h-0 flex-1 flex-col gap-2">
         {find}
         <ScrollArea className="min-h-0 flex-1">

@@ -47,7 +47,7 @@ import {
 import { GROUPS, visibleGroups } from "@/lib/insight/groups";
 import type { PersonCoverage } from "@/lib/insight/coverage";
 import { useScopeCoverage } from "@/lib/portal/use-scope-coverage";
-import { useWholeRoster } from "@/lib/portal/whole-roster";
+import { useVisibilityPolicy } from "@/queries/identity-me";
 import {
   availableSlices,
   cohortKey,
@@ -204,7 +204,7 @@ export function DomainLensView({
 
 
   const orgScope = useOrgScope();
-  const { wholeRoster } = useWholeRoster();
+  const { isFlat } = useVisibilityPolicy();
   const { pivot, roster } = orgScope;
   // The scope IS the member list — pivot included: identity owns who is on the team and
   // every metric for them comes from `/v1/metric-results`. There is no second
@@ -476,7 +476,7 @@ export function DomainLensView({
   );
   const cohortLabel = peerPopulationLabel(
     slice ? (sliceLabel ?? "cohort") : null,
-    wholeRoster
+    isFlat
   );
 
   const gate = orgScopeGate({
@@ -537,8 +537,9 @@ export function DomainLensView({
     trendSpec && trendBucket ? trendCharts(trendSpec, grid, trend, memberIds) : [];
   const drawable = charts.filter((c) => c.data.length > 1);
   // The roster the chart sums IS the drilldown's scope, so the two can never
-  // disagree: everyone the viewer may see when they manage no one, otherwise
-  // their own subtree — the permission boundary identity already enforces.
+  // disagree: under a flat policy that roster is the whole organisation, and
+  // under an org chart it is the viewer's own subtree — the permission
+  // boundary identity already enforces.
   // One hour block over the whole period — the narrowest slice of a heatmap the
   // evidence request can express. A single cell is that block on ONE weekday,
   // and there is no weekday predicate to ask for.

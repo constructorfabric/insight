@@ -17,7 +17,7 @@ import {
   type OrgTreeFilter,
 } from "@/lib/portal/org-tree-filter";
 import { rosterTree } from "@/lib/insight/identity-tree";
-import { useWholeRoster } from "@/lib/portal/whole-roster";
+import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
 import type { IdentityPerson } from "@/types/insight";
 
@@ -216,7 +216,7 @@ export function OrgTree({
   leadsToTeam = false,
   query = "",
 }: { leadsToTeam?: boolean; query?: string } = {}) {
-  const { wholeRoster } = useWholeRoster();
+  const { isFlat } = useVisibilityPolicy();
   const { personId: viewerPersonId } = useViewer();
   const { roster } = useVisibleRoster(true);
   const viewer = useMemo(
@@ -243,7 +243,7 @@ export function OrgTree({
     });
   };
 
-  if (wholeRoster) return <RosterList query={query} roster={roster} />;
+  if (isFlat) return <RosterList query={query} roster={roster} />;
   if (!viewer) return null;
   if (filter && filter.visible.size === 0) {
     return (

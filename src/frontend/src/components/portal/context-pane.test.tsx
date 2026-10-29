@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   }>,
   isAdmin: false,
   canSeeOthers: true,
+  reachPending: false,
   showPlanned: false,
   createFolder: vi.fn(),
   renameFolder: vi.fn(),
@@ -58,7 +59,7 @@ vi.mock("@/lib/portal/use-viewer-reach", () => ({
   useViewerReach: () => ({
     canSeeOthers: mocks.canSeeOthers,
     isManager: mocks.canSeeOthers,
-    isPending: false,
+    isPending: mocks.reachPending,
   }),
 }));
 vi.mock("@/auth", () => ({ useViewer: () => ({ personId: "me@x", email: "me@x" }) }));
@@ -140,6 +141,7 @@ beforeEach(() => {
   mocks.isFlat = false;
   mocks.isAdmin = false;
   mocks.canSeeOthers = true;
+  mocks.reachPending = false;
   mocks.showPlanned = false;
   mocks.standings = [];
   mocks.createFolder.mockReset().mockResolvedValue({ id: "f3", name: "Hiring" });
@@ -621,6 +623,29 @@ describe("Dashboards pane", () => {
     pane();
     expect(buttonFor("Starred")).toHaveAttribute("aria-disabled", "true");
     expect(buttonFor("Starter")).toHaveAttribute("aria-disabled", "true");
+  });
+});
+
+describe("Home pane", () => {
+  it("lists the org themes for a viewer with a cohort", () => {
+    pane();
+    expect(screen.getByText("At a glance")).toBeInTheDocument();
+    expect(screen.getByText("Trend")).toBeInTheDocument();
+  });
+
+  it("holds the org themes back until the viewer's cohort is known", () => {
+    mocks.canSeeOthers = false;
+    mocks.reachPending = true;
+    pane();
+    expect(screen.queryByText("At a glance")).toBeNull();
+  });
+
+  it("leaves the org themes out for a viewer without a cohort", () => {
+    mocks.canSeeOthers = false;
+    pane();
+    expect(screen.getByText("Constructor Insight")).toBeInTheDocument();
+    expect(screen.queryByText("At a glance")).toBeNull();
+    expect(screen.queryByText("Trend")).toBeNull();
   });
 });
 

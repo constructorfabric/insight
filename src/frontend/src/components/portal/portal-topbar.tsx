@@ -13,7 +13,7 @@ import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useCohortOptions } from "@/lib/portal/use-cohort-options";
-import { useWholeRoster } from "@/lib/portal/whole-roster";
+import { useVisibilityPolicy } from "@/queries/identity-me";
 import { cn } from "@/lib/utils";
 
 /**
@@ -65,9 +65,9 @@ function ViewFilters() {
   // on the roster there is nothing to compare people within, so the control
   // would offer a single choice and the tooltip would describe a cut that
   // cannot be made.
-  const { wholeRoster } = useWholeRoster();
+  const { isFlat } = useVisibilityPolicy();
   const showPlanned = usePortalShowPlanned();
-  const cohortShown = showPlanned && !wholeRoster;
+  const cohortShown = showPlanned && !isFlat;
 
   return (
     // Narrow screens keep the three controls on ONE scrollable row: wrapped,

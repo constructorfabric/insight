@@ -43,12 +43,12 @@ function zoneIds(): string[] {
 }
 
 describe("useZoneNav", () => {
-  it("offers a viewer with no cohort their own page and the dashboards shared with them", () => {
+  it("offers a viewer with no cohort Home, their own page and the dashboards shared with them", () => {
     mocks.canSeeOthers = false;
     mocks.reachPending = false;
     mocks.isAdmin = false;
 
-    expect(zoneIds()).toEqual(["person", "custom"]);
+    expect(zoneIds()).toEqual(["overview", "person", "custom"]);
   });
 
   it("opens Custom to a member who manages a cohort", () => {
@@ -65,7 +65,7 @@ describe("useZoneNav", () => {
     mocks.reachPending = false;
     mocks.isAdmin = true;
 
-    expect(zoneIds()).toEqual(["person", "custom", "manage"]);
+    expect(zoneIds()).toEqual(["overview", "person", "custom", "manage"]);
   });
 
   it("offers the org zones once the viewer has a cohort", () => {
@@ -115,6 +115,6 @@ describe("useZoneNav", () => {
     const ids = zoneIds();
 
     expect(ids).toContain("manage");
-    expect(ids).not.toContain("overview");
+    expect(ids).not.toContain("directions");
   });
 });
