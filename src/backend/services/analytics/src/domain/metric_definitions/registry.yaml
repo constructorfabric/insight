@@ -1969,10 +1969,10 @@ metrics:
   - metric_key: collab.messages_sent
     source_key: collab
     subject: messaging
-    label: Messages Sent
-    short_label: Msgs
+    label: Chat Messages Sent
+    short_label: Chat msgs
     description: Chat messages sent
-    explanation: 'Chat messages a person sent across messaging tools. Counts are not directly comparable between tools: Slack includes thread replies, and Microsoft 365 combines private-chat and channel messages.'
+    explanation: 'Chat messages a person sent across messaging tools. Counts are not directly comparable between tools: Slack includes thread replies, and Microsoft Teams combines private-chat and channel messages.'
     unit: messages
     format: integer
     direction: neutral
@@ -1987,10 +1987,10 @@ metrics:
   - metric_key: collab.channel_posts
     source_key: collab
     subject: messaging
-    label: Channel Posts
-    short_label: Channel posts
+    label: Channel Messages
+    short_label: Channel msgs
     description: Messages posted to shared channels, including replies
-    explanation: Channel posts plus thread replies across messaging tools. Tools that report posts and replies separately are folded so counts stay comparable.
+    explanation: Messages a person posted to shared channels, posts and thread replies together, across messaging tools. Tools that report posts and replies separately are folded so counts stay comparable.
     unit: messages
     format: integer
     direction: neutral
@@ -2007,10 +2007,10 @@ metrics:
     subject: messaging
     tags:
       - rate
-    label: DM Ratio
-    short_label: DM %
-    description: Share of messages sent in direct or group chats
-    explanation: Direct and group-chat messages divided by all chat messages, counted only in tools that tell the two apart, such as Microsoft Teams and Slack. Messages from tools without that split, such as Zulip, are left out, and a person with only those tools has no value. A lower ratio means more communication happens in open channels.
+    label: Private Chat Share
+    short_label: Private %
+    description: Share of chat messages sent outside shared channels
+    explanation: Private-chat messages divided by all chat messages. Private chat is one-to-one and group chats in Microsoft Teams, and everything outside channels in Slack, so it is not limited to one-to-one conversations. Counted only in tools that tell private chat and channels apart; messages from tools without that split, such as Zulip, are left out, and a person with only those tools has no value. A lower share means more communication happens in open channels.
     format: percent
     direction: neutral
     entity_type: person
@@ -2029,7 +2029,7 @@ metrics:
     subject: messaging
     tags:
       - rate
-    label: Messages per Active Day
+    label: Chat Messages per Active Day
     short_label: Msgs/day
     description: Chat messages divided by chat-active days
     explanation: Chat messages sent divided by the distinct days with chat messages in any tool, so a day spent in two tools counts once.
@@ -2071,7 +2071,7 @@ metrics:
     label: Emails Sent
     short_label: Emails sent
     description: Emails sent
-    explanation: Emails a person sent.
+    explanation: Emails a person sent. Replies and forwards count; a message to several recipients counts once.
     unit: emails
     format: integer
     direction: neutral
@@ -2089,7 +2089,7 @@ metrics:
     label: Emails Received
     short_label: Emails rcvd
     description: Emails received
-    explanation: Emails a person received.
+    explanation: Messages delivered to the mailbox, including mailing lists and automated notifications. Measures inbox volume, not work, and is not comparable with read events.
     unit: emails
     format: integer
     direction: neutral
@@ -2104,11 +2104,11 @@ metrics:
   - metric_key: collab.emails_read
     source_key: collab
     subject: email
-    label: Email Read Actions
-    short_label: Mail read actions
-    description: Email read actions
-    explanation: Times a person opened an email, as the mail source reports them. Opening the same message again counts again, so this can exceed the number of emails received.
-    unit: actions
+    label: Email Read Events
+    short_label: Mail read events
+    description: Email read events
+    explanation: 'Counts every time a message is marked read, as Exchange reports it: reopening a message or marking a whole folder read counts each message again. Not the number of distinct emails read, so it can exceed emails received.'
+    unit: events
     format: integer
     direction: neutral
     entity_type: person
@@ -2122,7 +2122,8 @@ metrics:
   - metric_key: collab.files_engaged
     source_key: collab
     subject: documents
-    label: Files Engaged
+    label: Files Viewed or Edited
+    short_label: Files used
     description: Files viewed or edited
     explanation: Files a person viewed, edited, uploaded or downloaded in OneDrive and SharePoint, counted once per file per day and summed over the period. A bulk upload or download counts every file, so one such day can outweigh weeks of ordinary work. Files the OneDrive sync client syncs are reported separately and do not count.
     unit: files
@@ -2142,7 +2143,7 @@ metrics:
     label: Files Shared (Internal)
     short_label: Files (int)
     description: Files shared inside the organization
-    explanation: Files a person shared with people inside the organization.
+    explanation: Files a person shared with people inside the organization, counted once per file per day.
     unit: files
     format: integer
     direction: neutral
@@ -2160,7 +2161,7 @@ metrics:
     label: Files Shared (External)
     short_label: Files (ext)
     description: Files shared outside the organization
-    explanation: Files a person shared with people outside the organization.
+    explanation: Files a person shared with people outside the organization, counted once per file per day.
     unit: files
     format: integer
     direction: neutral
@@ -2178,7 +2179,7 @@ metrics:
     label: Files Shared
     short_label: Files shared
     description: Files shared with any recipient
-    explanation: Files a person shared with recipients inside or outside the organization. A file shared both inside and outside counts once in each, and a share with a group counts as inside even when the group has outside members.
+    explanation: Files a person shared with recipients inside or outside the organization, counted once per file per day. A file shared both inside and outside counts once in each, and a share with a group counts as inside even when the group has outside members.
     unit: files
     format: integer
     direction: neutral
@@ -2197,8 +2198,8 @@ metrics:
       - duration
     label: Meeting Hours
     short_label: Mtg hrs
-    description: Hours spent in meetings
-    explanation: Hours spent in meetings. Microsoft Teams reports audio, video and screen-share time only as daily totals, so a Teams day counts the longest of the three, an estimate rather than exact meeting time. Zoom time counts only while someone else was in the meeting, so a room left open or a pause with nobody else adds nothing; Zoom counts all of a session's shared time as video or screen share once the camera or a share was used, so those may run higher than Microsoft Teams.
+    description: Hours in meetings and calls, estimated from daily totals
+    explanation: Hours spent in meetings and calls; Microsoft Teams includes one-to-one calls. Microsoft Teams reports audio, video and screen-share time only as daily totals, so a Teams day counts the longest of the three, an estimate rather than exact meeting time. Zoom time counts only while someone else was in the meeting, so a room left open or a pause with nobody else adds nothing.
     unit: h
     format: decimal
     direction: lower_is_better
@@ -2213,7 +2214,7 @@ metrics:
   - metric_key: collab.meetings_count
     source_key: collab
     subject: meetings
-    label: Meetings Attended
+    label: Meetings and Calls Attended
     short_label: Mtgs
     description: Distinct meetings and one-to-one calls attended
     explanation: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do.
@@ -2233,7 +2234,7 @@ metrics:
     subject: meetings
     label: Meeting-Free Days
     short_label: Mtg-free days
-    description: Active days with no meeting time
+    description: Active days with no meeting or call time
     explanation: Days on which a person was actively collaborating but spent no time in meetings or calls — a proxy for uninterrupted working days. Only addresses some meeting source reports on count, so a person no meeting tool knows has no value.
     unit: days
     format: integer
@@ -2250,9 +2251,9 @@ metrics:
     subject: focus
     tags:
       - rate
-    label: Focus Time
-    short_label: Focus %
-    description: Share of the workday outside meetings
+    label: Time Outside Meetings
+    short_label: Non-mtg %
+    description: Share of the workday outside meetings and calls
     explanation: 'Share of the workday not spent in meetings or calls, over the days a person was active: 100 minus meeting hours as a share of scheduled working hours. Meeting time counts up to the working hours of the day and address it was recorded under. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them. Only addresses some meeting source reports on count, so a person no meeting tool knows has no value.'
     format: percent
     direction: higher_is_better
@@ -2275,7 +2276,7 @@ metrics:
     source_key: collab
     subject: activity
     label: Collaboration Breadth
-    short_label: Breadth
+    short_label: Modalities
     description: Distinct collaboration modalities used
     explanation: Distinct collaboration modalities — chat, meetings, email, documents — a person was deliberately active in during the period.
     unit: modalities
@@ -2292,7 +2293,7 @@ metrics:
     source_key: collab
     subject: meetings
     label: Meetings Organized
-    short_label: Mtgs hosted
+    short_label: Mtgs organized
     description: Meetings organized
     explanation: Meetings a person organized in Microsoft Teams or Zoom. A Zoom meeting counts for its host on the day it started, and only if someone besides the host attended.
     unit: meetings
@@ -2312,7 +2313,7 @@ metrics:
     label: Ad-hoc Meetings
     short_label: Ad-hoc mtgs
     description: Unscheduled meetings attended
-    explanation: Unscheduled Microsoft Teams meetings a person attended. Zoom does not report this split, so Zoom meetings are not included.
+    explanation: Unscheduled Microsoft Teams meetings a person attended. Meet Now started from a chat counts as ad hoc; started from the calendar it counts as scheduled. Zoom does not report this split, so Zoom meetings are not included.
     unit: meetings
     format: integer
     direction: neutral
