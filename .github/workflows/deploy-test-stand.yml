@@ -87,6 +87,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false # don't leave the token in .git/config
 
       # Before the guards below: the chart-version resolver needs helm.
