@@ -228,7 +228,7 @@ impl CustomSurfaces {
             None => surfaces
                 .page_dashboards(&query, page)
                 .await
-                .map(|found| (dashboards_json(&found.items), found.total)),
+                .map(|found| (dashboards_json(&found.items, None), found.total)),
         };
 
         match found {
