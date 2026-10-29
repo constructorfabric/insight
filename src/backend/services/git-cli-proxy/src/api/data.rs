@@ -351,8 +351,13 @@ pub async fn list_file_changes(
                 },
             )?;
 
-            let (items, early_cursor) =
-                emit_file_changes(window, &file_stats, &mut texts, RowCaps::DEFAULT);
+            let (items, early_cursor) = emit_file_changes(
+                window,
+                &file_stats,
+                &mut texts,
+                include_patch,
+                RowCaps::DEFAULT,
+            );
 
             Ok(Page {
                 items,
@@ -392,6 +397,7 @@ fn emit_file_changes(
     window: Vec<commits::CommitKey>,
     file_stats: &HashMap<String, Vec<numstat::FileStat>>,
     texts: &mut HashMap<String, patches::CommitPatches>,
+    include_patch: bool,
     caps: RowCaps,
 ) -> (Vec<FileChangeRow>, Option<(String, String)>) {
     let mut items: Vec<FileChangeRow> = Vec::new();
@@ -400,6 +406,12 @@ fn emit_file_changes(
     let mut stopped_early = false;
 
     for header in window {
+        // INVARIANT: numstat and patch retention stop reading once their cap
+        // is reached, so a commit either reader never reached is unstated,
+        // not empty; passing it would advance the cursor over rows nobody
+        // served.
+        let unread = !file_stats.contains_key(&header.sha)
+            || (include_patch && !texts.contains_key(&header.sha));
         let files = file_stats.get(&header.sha).map_or(&[][..], Vec::as_slice);
         let rows = files.len();
         let bytes: usize = files
@@ -413,7 +425,9 @@ fn emit_file_changes(
             .sum();
 
         if !items.is_empty()
-            && (items.len() + rows > caps.max_rows || patch_bytes + bytes > caps.max_patch_bytes)
+            && (unread
+                || items.len() + rows > caps.max_rows
+                || patch_bytes + bytes > caps.max_patch_bytes)
         {
             stopped_early = true;
             break;
@@ -1120,8 +1134,13 @@ mod tests {
             max_rows: usize::MAX,
             max_patch_bytes: 150,
         };
-        let (rows, cursor) =
-            emit_file_changes(vec![early, next.clone()], &stats, &mut texts.clone(), caps);
+        let (rows, cursor) = emit_file_changes(
+            vec![early, next.clone()],
+            &stats,
+            &mut texts.clone(),
+            true,
+            caps,
+        );
         assert_eq!(rows.len(), 1, "only the first commit fits");
         let Some((primary, secondary)) = cursor else {
             panic!("a page stopped early must carry a cursor")
@@ -1144,7 +1163,7 @@ mod tests {
     fn an_unbounded_page_keeps_every_row_and_no_early_cursor() {
         let (window, stats, texts) = scenario(3, 2, 4);
         let (rows, cursor) =
-            emit_file_changes(window, &stats, &mut texts.clone(), RowCaps::DEFAULT);
+            emit_file_changes(window, &stats, &mut texts.clone(), true, RowCaps::DEFAULT);
 
         assert_eq!(rows.len(), 6);
         assert_eq!(cursor, None, "nothing was withheld, so nothing to resume");
@@ -1157,7 +1176,7 @@ mod tests {
             max_rows: 7,
             max_patch_bytes: usize::MAX,
         };
-        let (rows, cursor) = emit_file_changes(window, &stats, &mut texts.clone(), caps);
+        let (rows, cursor) = emit_file_changes(window, &stats, &mut texts.clone(), true, caps);
 
         assert_eq!(rows.len(), 6, "two whole commits fit, the third would not");
         assert_eq!(
@@ -1174,7 +1193,7 @@ mod tests {
             max_rows: usize::MAX,
             max_patch_bytes: 250,
         };
-        let (rows, cursor) = emit_file_changes(window, &stats, &mut texts.clone(), caps);
+        let (rows, cursor) = emit_file_changes(window, &stats, &mut texts.clone(), true, caps);
 
         assert_eq!(
             rows.len(),
@@ -1191,7 +1210,7 @@ mod tests {
             max_rows: 8,
             max_patch_bytes: 95,
         };
-        let (rows, _) = emit_file_changes(window, &stats, &mut texts.clone(), caps);
+        let (rows, _) = emit_file_changes(window, &stats, &mut texts.clone(), true, caps);
 
         let mut per_sha: HashMap<&str, usize> = HashMap::new();
         for row in &rows {
@@ -1209,7 +1228,7 @@ mod tests {
             max_rows: 1,
             max_patch_bytes: 1,
         };
-        let (rows, cursor) = emit_file_changes(window, &stats, &mut texts.clone(), caps);
+        let (rows, cursor) = emit_file_changes(window, &stats, &mut texts.clone(), true, caps);
 
         assert_eq!(
             rows.len(),
@@ -1224,11 +1243,64 @@ mod tests {
     }
 
     #[test]
+    fn a_commit_the_numstat_read_never_reached_ends_the_page_before_it() {
+        let (window, mut stats, texts) = scenario(4, 2, 1);
+        stats.remove("sha0002");
+        stats.remove("sha0003");
+        let caps = RowCaps {
+            max_rows: 4,
+            max_patch_bytes: usize::MAX,
+        };
+        let (rows, cursor) = emit_file_changes(window, &stats, &mut texts.clone(), true, caps);
+
+        assert_eq!(rows.len(), 4, "exactly the cap was read and emitted");
+        assert_eq!(
+            cursor.map(|(_, sha)| sha),
+            Some("sha0001".to_owned()),
+            "the next page must resume at the first unread commit, not past it"
+        );
+    }
+
+    #[test]
+    fn a_commit_whose_patch_text_was_never_read_ends_the_page_before_it() {
+        let (window, stats, mut texts) = scenario(3, 1, 1);
+        texts.remove("sha0002");
+        let (rows, cursor) =
+            emit_file_changes(window, &stats, &mut texts.clone(), true, RowCaps::DEFAULT);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(cursor.map(|(_, sha)| sha), Some("sha0001".to_owned()));
+    }
+
+    #[test]
+    fn an_empty_commit_inside_a_page_does_not_end_it() {
+        let (window, mut stats, mut texts) = scenario(3, 2, 1);
+        stats.insert("sha0001".to_owned(), Vec::new());
+        texts.insert("sha0001".to_owned(), patches::CommitPatches::default());
+        let (rows, cursor) =
+            emit_file_changes(window, &stats, &mut texts.clone(), true, RowCaps::DEFAULT);
+
+        assert_eq!(rows.len(), 4, "both non-empty commits are served");
+        assert_eq!(cursor, None, "nothing was withheld");
+    }
+
+    #[test]
+    fn without_patch_text_every_read_commit_is_served() {
+        let (window, stats, _) = scenario(3, 2, 1);
+        let (rows, cursor) =
+            emit_file_changes(window, &stats, &mut HashMap::new(), false, RowCaps::DEFAULT);
+
+        assert_eq!(rows.len(), 6);
+        assert_eq!(cursor, None);
+    }
+
+    #[test]
     fn an_empty_window_emits_nothing() {
         let (rows, cursor) = emit_file_changes(
             Vec::new(),
             &HashMap::new(),
             &mut HashMap::new(),
+            true,
             RowCaps::DEFAULT,
         );
         assert!(rows.is_empty());

@@ -26,6 +26,7 @@ on:
       - "scripts/ci/candidate_inputs.py"
       - "tests/datapath/**"
       - "tests/stand/**"
+      - "docs/components/backend/*/openapi.json"
       - "tests/lib/**"
       - "tests/pyproject.toml"
       - "tests/uv.lock"
@@ -56,6 +57,7 @@ on:
       - "scripts/ci/candidate_inputs.py"
       - "tests/datapath/**"
       - "tests/stand/**"
+      - "docs/components/backend/*/openapi.json"
       - "tests/lib/**"
       - "tests/pyproject.toml"
       - "tests/uv.lock"
@@ -297,6 +299,7 @@ jobs:
             seed:
               - 'src/ingestion/**'
             candidate_checks:
+              - 'docs/components/backend/*/openapi.json'
               - 'tests/**'
               - 'dev-compose.sh'
               - 'docker-compose.yml'

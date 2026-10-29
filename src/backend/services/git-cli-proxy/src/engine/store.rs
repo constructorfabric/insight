@@ -149,6 +149,8 @@ impl From<GitError> for StoreError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BlobPurge {
     Purged,
+    /// The entry's packs could not be told apart, so it was deleted whole.
+    Evicted,
     /// Nothing to purge, or the entry has readers right now.
     Skipped,
 }
@@ -1206,6 +1208,7 @@ impl RepoStore {
                 return;
             }
             WindowShed::RepackDue { freed } => freed,
+            WindowShed::Untracked => 0,
         };
 
         let permit = self.heavy_permit().await;
@@ -1513,7 +1516,7 @@ impl RepoStore {
             freed.as_mut().enable();
 
             let permit = self.heavy_permit().await;
-            if let Some(reserved) = self.admit(entry_dir, size_hint, &permit).await {
+            if let Some(reserved) = self.admit(entry_dir, size_hint).await {
                 return Ok((permit, reserved));
             }
             drop(permit);
@@ -1526,19 +1529,15 @@ impl RepoStore {
         }
     }
 
-    /// The caller's heavy permit is what a reclaim repack runs under: the
-    /// purge must not take a second one while the caller's slot is occupied.
-    async fn admit(
-        &self,
-        entry_dir: &Path,
-        size_hint: Option<u64>,
-        permit: &SemaphorePermit<'_>,
-    ) -> Option<Reservation<'_>> {
+    async fn admit(&self, entry_dir: &Path, size_hint: Option<u64>) -> Option<Reservation<'_>> {
+        // INVARIANT: every caller holds `entry_dir`'s write lock, so its size
+        // cannot change between this measurement and the reservation.
+        let want = self.headroom_for(entry_dir, size_hint).await;
+
         // INVARIANT: deciding and reserving must be one step. Two callers that
         // both read usage before either reserved would both be admitted
         // against the same headroom.
         let _decision = self.admission.lock().await;
-        let want = self.headroom_for(entry_dir, size_hint).await;
 
         let candidates = self.candidates().await;
         let accounted: u64 = candidates.iter().map(|c| c.size_bytes).sum();
@@ -1560,19 +1559,13 @@ impl RepoStore {
 
         for step in plan {
             match step {
-                // A purge that cannot run or cannot finish must not leave the
-                // space unreclaimed: eviction frees it with no git involved.
                 Reclaim::PurgeBlobs { dir_name, frees } => {
-                    match self.purge_blobs_by_dir(&dir_name, permit).await {
-                        Ok(BlobPurge::Purged) => {
+                    match self.purge_blobs_by_dir(&dir_name).await {
+                        BlobPurge::Purged => {
                             metrics::record_eviction(EvictionTier::Blob);
                             tracing::info!(dir = %dir_name, freed_bytes = frees, "purged blobs");
                         }
-                        Ok(BlobPurge::Skipped) => {}
-                        Err(e) => {
-                            tracing::warn!(error = %e, dir = %dir_name, "blob purge failed; evicting instead");
-                            self.evict_dir(&dir_name, frees).await;
-                        }
+                        BlobPurge::Evicted | BlobPurge::Skipped => {}
                     }
                 }
                 Reclaim::Evict { dir_name, frees } => {
@@ -1856,41 +1849,42 @@ impl RepoStore {
         entries.entry(dir_name.to_owned()).or_default().clone()
     }
 
-    /// Shed an entry's served windows and, if the skeleton still needs it,
-    /// repack under the caller's heavy `permit`.
-    pub(crate) async fn purge_blobs_by_dir(
-        &self,
-        dir_name: &str,
-        permit: &SemaphorePermit<'_>,
-    ) -> Result<BlobPurge, StoreError> {
+    /// Shed an entry's served windows without running git.
+    pub(crate) async fn purge_blobs_by_dir(&self, dir_name: &str) -> BlobPurge {
+        // INVARIANT: this runs under the admission lock every clone and fetch
+        // waits on, so it never repacks: an untracked entry is evicted, and a
+        // skeleton due for consolidation is left to its post-serve purge.
         let entry_dir = self.data_dir.join("repos").join(dir_name);
         if !entry_dir.join("repo.git").is_dir() {
-            return Ok(BlobPurge::Skipped);
+            return BlobPurge::Skipped;
         }
 
-        // A promoted entry has no promisor remote behind it: re-marking its
-        // packs would make git tolerate blobs nothing can serve again.
-        if RepoMeta::load(&entry_dir).is_none_or(|meta| meta.full_clone) {
-            return Ok(BlobPurge::Skipped);
-        }
+        // A promoted entry has no promisor remote behind it: its blobs are
+        // the only copy, so none of its packs is a window.
+        let Some(meta) = RepoMeta::load(&entry_dir).filter(|meta| !meta.full_clone) else {
+            return BlobPurge::Skipped;
+        };
 
         let lock = self.lock_for_dir(dir_name).await;
-        // INVARIANT: repack DELETES packs — it must run with zero readers.
+        // INVARIANT: shedding DELETES packs — it must run with zero readers.
         let Ok(_write) = lock.try_write() else {
-            return Ok(BlobPurge::Skipped);
+            return BlobPurge::Skipped;
         };
 
         match self.shed_window_packs(&entry_dir).await {
-            WindowShed::Settled { freed: 0 } => return Ok(BlobPurge::Skipped),
-            WindowShed::Settled { .. } => {
-                self.space_freed.notify_waiters();
-                return Ok(BlobPurge::Purged);
+            WindowShed::Untracked => {
+                self.evict_locked(dir_name, entry_dir, meta.size_bytes, EvictionTier::Full)
+                    .await;
+                BlobPurge::Evicted
             }
-            WindowShed::RepackDue { .. } => {}
+            WindowShed::Settled { freed: 0 } | WindowShed::RepackDue { freed: 0 } => {
+                BlobPurge::Skipped
+            }
+            WindowShed::Settled { .. } | WindowShed::RepackDue { .. } => {
+                self.space_freed.notify_waiters();
+                BlobPurge::Purged
+            }
         }
-        self.repack_blobless(&entry_dir, permit)
-            .await
-            .map(|_| BlobPurge::Purged)
     }
 
     /// Current cache usage, as accounted per entry.
@@ -1979,9 +1973,11 @@ fn discard_parked_meta(entry_dir: &Path) {
 enum WindowShed {
     /// The skeleton alone remains, in few enough packs.
     Settled { freed: u64 },
-    /// The windows are gone (or could not be told apart), and the skeleton
-    /// itself still needs a repack.
+    /// The windows are gone, and the skeleton itself still needs a repack.
     RepackDue { freed: u64 },
+    /// No skeleton is recorded, so no pack can be told from a window and
+    /// nothing was deleted; only a repack can purge this entry.
+    Untracked,
 }
 
 impl RepoStore {
@@ -1992,10 +1988,10 @@ impl RepoStore {
     /// INVARIANT: the caller holds the entry's write lock.
     async fn shed_window_packs(&self, entry_dir: &Path) -> WindowShed {
         let Some(mut meta) = RepoMeta::load(entry_dir) else {
-            return WindowShed::RepackDue { freed: 0 };
+            return WindowShed::Untracked;
         };
         if meta.skeleton_packs.is_empty() {
-            return WindowShed::RepackDue { freed: 0 };
+            return WindowShed::Untracked;
         }
 
         let git_dir = entry_dir.join("repo.git");
@@ -2048,7 +2044,10 @@ fn skeleton_packs_after_fetch(
 }
 
 /// Every file of every pack that is not part of the skeleton: the served
-/// windows with their `.idx`, `.rev` and `.promisor` siblings.
+/// windows with their `.idx`, `.rev` and `.promisor` siblings, and the
+/// `tmp_*` files an interrupted fetch strands.
+/// INVARIANT: the caller holds the entry's write lock, so no fetch owns a
+/// `tmp_*` file while it is deleted.
 fn window_pack_files(git_dir: &Path, skeleton_packs: &[String]) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(git_dir.join("objects").join("pack")) else {
         return Vec::new();
@@ -2060,6 +2059,9 @@ fn window_pack_files(git_dir: &Path, skeleton_packs: &[String]) -> Vec<PathBuf> 
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 return false;
             };
+            if name.starts_with("tmp_") {
+                return true;
+            }
             let stem = name.split('.').next().unwrap_or(name);
             stem.starts_with("pack-") && !skeleton_packs.iter().any(|kept| kept == stem)
         })
@@ -2666,20 +2668,19 @@ pub(crate) mod tests {
         // Without reservations both callers see an empty cache, are both
         // admitted, and together overrun the budget.
         let f = fixture_with_budget("reserve", 1_000_000, 500_000);
-        let permit = f.store.heavy_permit().await;
         let entry_dir = f.store.entry_dir(&key(&f));
 
-        let Some(first) = f.store.admit(&entry_dir, None, &permit).await else {
+        let Some(first) = f.store.admit(&entry_dir, None).await else {
             panic!("an empty cache must admit the first caller")
         };
         assert!(
-            f.store.admit(&entry_dir, None, &permit).await.is_none(),
+            f.store.admit(&entry_dir, None).await.is_none(),
             "the second caller must be refused against the first's reservation"
         );
 
         drop(first);
         assert!(
-            f.store.admit(&entry_dir, None, &permit).await.is_some(),
+            f.store.admit(&entry_dir, None).await.is_some(),
             "and admitted again once that reservation is released"
         );
     }
@@ -2690,20 +2691,19 @@ pub(crate) mod tests {
         // a second cap-sized one does not fit, a hinted one (floored at 64 MiB)
         // does.
         let f = fixture_with_budget("hint", 1_000_000_000, 500_000_000);
-        let permit = f.store.heavy_permit().await;
         let cold = f
             .root
             .join("cache-bounded")
             .join("repos")
             .join("cold-entry");
-        let Some(_held) = f.store.admit(&cold, None, &permit).await else {
+        let Some(_held) = f.store.admit(&cold, None).await else {
             panic!("an empty cache must admit the first caller")
         };
         assert!(
-            f.store.admit(&cold, None, &permit).await.is_none(),
+            f.store.admit(&cold, None).await.is_none(),
             "a second cap-sized reservation must not fit"
         );
-        let hinted = f.store.admit(&cold, Some(1_000), &permit).await;
+        let hinted = f.store.admit(&cold, Some(1_000)).await;
         assert!(
             hinted.is_some(),
             "a hinted reservation is the floor, not the cap, and fits beside the first"
@@ -2734,13 +2734,12 @@ pub(crate) mod tests {
         // Real time: a paused clock would fire git's own timeout under the
         // clone before the subprocess finishes.
         let f = fixture_with_budget("wait-headroom", 1_000_000, 500_000);
-        let permit = f.store.heavy_permit().await;
         let elsewhere = f
             .root
             .join("cache-bounded")
             .join("repos")
             .join("other-entry");
-        let Some(held) = f.store.admit(&elsewhere, None, &permit).await else {
+        let Some(held) = f.store.admit(&elsewhere, None).await else {
             panic!("an empty cache must admit the first caller")
         };
 
@@ -2768,13 +2767,12 @@ pub(crate) mod tests {
     #[tokio::test(start_paused = true)]
     async fn headroom_that_never_appears_ends_in_busy_after_the_wait() {
         let f = fixture_with_budget("wait-exhausted", 1_000_000, 500_000);
-        let permit = f.store.heavy_permit().await;
         let elsewhere = f
             .root
             .join("cache-bounded")
             .join("repos")
             .join("other-entry");
-        let Some(_held) = f.store.admit(&elsewhere, None, &permit).await else {
+        let Some(_held) = f.store.admit(&elsewhere, None).await else {
             panic!("an empty cache must admit the first caller")
         };
 
@@ -3421,6 +3419,39 @@ pub(crate) mod tests {
         match refetched {
             Ok(count) => assert_eq!(count, 0, "every blob of this window is already local"),
             Err(e) => panic!("presence filtering must not fail the prefetch: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn enumerating_a_window_with_an_edited_rename_fetches_no_blob_on_its_own() {
+        // A rename with an edit is only recognised by comparing blob content.
+        // In a blobless clone that comparison fetches each blob lazily, one
+        // origin round trip at a time, before the batched prefetch runs.
+        let f = fixture("prefetch-rename");
+        sh(
+            &f.root.join("origin"),
+            "git mv a.txt b.txt && echo two >> b.txt && git add b.txt && \
+             GIT_AUTHOR_DATE='2026-08-01T11:00:00+0000' \
+             GIT_COMMITTER_DATE='2026-08-01T11:00:00+0000' git commit -qm rename",
+        );
+        let k = key(&f);
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        let head = head_of(guard.git_dir());
+
+        let fetched = crate::engine::read::blobs::prefetch(
+            f.store.runner(),
+            guard.git_dir(),
+            &[head],
+            &creds(),
+            u64::MAX,
+        )
+        .await;
+        match fetched {
+            Ok(count) => assert_eq!(
+                count, 2,
+                "both sides of the rename must still be missing when the batch fetch runs"
+            ),
+            Err(e) => panic!("prefetch: {e}"),
         }
     }
 
@@ -4254,7 +4285,6 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_pinned_repository_survives_reclaim() {
         let f = fixture_with_budget("pinned-reclaim", 1, u64::MAX);
-        let permit = f.store.heavy_permit().await;
         let k = key(&f);
 
         let guard = open_until_ready(
@@ -4266,10 +4296,7 @@ pub(crate) mod tests {
         )
         .await;
 
-        let _ = f
-            .store
-            .admit(&f.store.entry_dir(&key(&f)), None, &permit)
-            .await;
+        let _ = f.store.admit(&f.store.entry_dir(&key(&f)), None).await;
         assert!(
             guard.git_dir().is_dir(),
             "a repository with a live reader must never be deleted"
@@ -4277,40 +4304,100 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn a_reclaim_purge_repacks_under_the_callers_permit() {
-        let f = fixture("permit-busy-purge");
-        let k = key(&f);
-        let guard = open_until_ready(&f, &k, refresh()).await;
-        drop(guard);
-        forget_skeleton_packs(&f.store.entry_dir(&k));
-
-        // The caller holds one slot; clones or fetches elsewhere hold the rest.
-        let permit = f.store.heavy_permit().await;
-        let Ok(_others) = f.store.heavy.try_acquire_many(1) else {
-            panic!("the fixture's remaining heavy permit must be free")
-        };
-        assert_eq!(f.store.heavy.available_permits(), 0);
-
-        match f.store.purge_blobs_by_dir(&k.dir_name(), &permit).await {
-            Ok(BlobPurge::Purged) => {}
-            other => panic!("the purge must repack under the permit it was given: {other:?}"),
+    async fn a_shed_removes_what_an_interrupted_fetch_left_behind() {
+        let (f, k, _) = entry_with_fetched_blobs("shed-tmp-pack").await;
+        let pack_dir = f.store.entry_dir(&k).join("repo.git/objects/pack");
+        let stranded = pack_dir.join("tmp_pack_abc123");
+        if let Err(e) = std::fs::write(&stranded, vec![0u8; 4096]) {
+            panic!("stage stranded pack: {e}");
         }
+
+        assert_eq!(
+            f.store.purge_blobs_by_dir(&k.dir_name()).await,
+            BlobPurge::Purged
+        );
+        assert!(
+            !stranded.exists(),
+            "a partial pack no fetch owns must not count against the entry forever"
+        );
     }
 
     #[tokio::test]
-    async fn purge_blobs_succeeds_with_bitmaps_configured() {
-        let f = fixture("purge");
-        let k = key(&f);
-        let guard = open_until_ready(&f, &k, refresh()).await;
-        let git_dir = guard.git_dir().to_path_buf();
-        drop(guard);
+    async fn a_reclaim_evicts_an_entry_whose_packs_it_cannot_tell_apart() {
+        // Reclaim runs under the admission lock every clone and fetch waits
+        // on; a repack there would hold the whole cache for its heavy budget.
+        let (f, k, _) = entry_with_fetched_blobs("reclaim-untracked").await;
+        let entry_dir = f.store.entry_dir(&k);
+        forget_skeleton_packs(&entry_dir);
 
-        // Bitmap writing on + `--filter` is exactly the combination that fails
-        // without `--no-write-bitmap-index`.
-        sh(&git_dir, "git config repack.writeBitmaps true");
-        let permit = f.store.heavy_permit().await;
-        if let Err(e) = f.store.purge_blobs_by_dir(&k.dir_name(), &permit).await {
-            panic!("purge must survive repack.writeBitmaps=true: {e}");
+        assert_eq!(
+            f.store.purge_blobs_by_dir(&k.dir_name()).await,
+            BlobPurge::Evicted
+        );
+        assert!(
+            !entry_dir.exists(),
+            "the entry must be gone so the next open re-clones the skeleton"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reclaim_leaves_a_skeleton_due_for_consolidation_to_its_post_serve_purge() {
+        let f = fixture("reclaim-consolidation");
+        let k = key(&f);
+        drop(open_until_ready(&f, &k, refresh()).await);
+        let entry_dir = f.store.entry_dir(&k);
+        let git_dir = entry_dir.join("repo.git");
+        sh(
+            &git_dir,
+            &format!(
+                "for i in $(seq {}); do \
+                   echo $i | git hash-object -w --stdin | \
+                   git pack-objects -q objects/pack/pack >/dev/null; \
+                 done",
+                crate::engine::disk::PACK_CONSOLIDATION_LIMIT
+            ),
+        );
+        let Some(mut meta) = RepoMeta::load(&entry_dir) else {
+            panic!("meta must exist")
+        };
+        meta.skeleton_packs = pack_names(&git_dir).into_iter().collect();
+        if let Err(e) = meta.store(&entry_dir) {
+            panic!("meta store: {e}");
         }
+        let packs = pack_names(&git_dir);
+
+        assert_eq!(
+            f.store.purge_blobs_by_dir(&k.dir_name()).await,
+            BlobPurge::Skipped
+        );
+        assert_eq!(
+            pack_names(&git_dir),
+            packs,
+            "no repack may run under admission"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_post_serve_purge_succeeds_with_bitmaps_configured() {
+        // Bitmap writing on + `--filter` is exactly the combination that fails
+        // without `--no-write-bitmap-index`. An entry with no recorded
+        // skeleton is the one the post-serve purge must repack.
+        let (f, k, _) = entry_with_fetched_blobs("purge-bitmaps").await;
+        let entry_dir = f.store.entry_dir(&k);
+        sh(
+            &entry_dir.join("repo.git"),
+            "git config repack.writeBitmaps true",
+        );
+        forget_skeleton_packs(&entry_dir);
+
+        f.store.purge_if_drifted(&k).await;
+
+        let Some(meta) = RepoMeta::load(&entry_dir) else {
+            panic!("the entry must survive its purge")
+        };
+        assert!(
+            !meta.skeleton_packs.is_empty(),
+            "a successful repack records the skeleton it left"
+        );
     }
 }

@@ -10,14 +10,8 @@ on:
         description: "Verified candidate inputs from the calling build run."
         required: true
         type: string
-  # Merge-queue builds: the queue's gh-readonly-queue/* branches emit merge_group,
-  # and the required "Run E2E suite" check must report there or every queued PR
-  # times out and is evicted.
+  # WORKAROUND: skipped required checks must still report on PR/queue events.
   merge_group:
-  # The suite runs in the queue, not on the pull request. The trigger stays, with
-  # no `paths:` filter, so the required check exists on every PR: every job is
-  # skipped there, and a skipped required check counts as passed. A workflow
-  # that never ran would leave the check pending forever.
   pull_request:
     branches: [main]
   # Cache-warm runs only: merge-queue refs cannot restore caches saved by
@@ -84,7 +78,7 @@ jobs:
   # src/frontend/ and docs/ are absent on purpose: nothing here loads them.
   changes:
     name: Detect changes
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     outputs:
@@ -553,7 +547,7 @@ jobs:
       - build-backend
       - e2e-datapath
       - metric-coverage-gate
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'push' || inputs.candidate_artifact != '') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' && (github.event_name != 'push' || inputs.candidate_artifact != '') }}
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 5
     steps:

@@ -51,7 +51,15 @@ def run_poll(monkeypatch: pytest.MonkeyPatch) -> PollRunner:
 def job(status: str, records: int = 0) -> dict[str, object]:
     return {
         "job": {"status": status},
-        "attempts": [{"attempt": {"status": "running", "totalStats": {"recordsEmitted": records}}}],
+        "attempts": [
+            {
+                "attempt": {
+                    "status": "running",
+                    "totalStats": {"recordsEmitted": records},
+                    "streamStats": [{"streamName": "issues"}],
+                }
+            }
+        ],
     }
 
 
@@ -92,7 +100,12 @@ def test_terminal_status_wins_over_stale_counters(run_poll: PollRunner, status: 
 
 def test_terminal_status_does_not_require_attempt_statistics(run_poll: PollRunner) -> None:
     result, _ = run_poll(
-        [{"job": {"status": "succeeded"}, "attempts": [{"attempt": {"totalStats": {"recordsEmitted": "bad"}}}]}]
+        [
+            {
+                "job": {"status": "succeeded"},
+                "attempts": [{"attempt": {"totalStats": {"recordsEmitted": "bad"}, "streamStats": [{}]}}],
+            }
+        ]
     )
     assert result == 0
 
@@ -118,3 +131,30 @@ def test_permanent_auth_failure_does_not_claim_sync_completion(
     output = capsys.readouterr().err
     assert '"event": "sync.poll_failed"' in output
     assert '"event": "sync.completed"' not in output
+
+
+def test_a_success_that_never_started_fails_the_step_and_logs_why(
+    run_poll: PollRunner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    not_started = {
+        "job": {"status": "succeeded"},
+        "attempts": [
+            {
+                "attempt": {
+                    "status": "succeeded",
+                    "failureSummary": {
+                        "failures": [{"failureOrigin": "airbyte_platform", "internalMessage": "never started"}]
+                    },
+                }
+            }
+        ],
+    }
+
+    result, _ = run_poll([job("running"), not_started])
+
+    assert result == 1
+    output = capsys.readouterr().err
+    assert '"event": "sync.not_run"' in output
+    assert '"event": "sync.failure_reason"' in output
+    assert '"failure_origin": "airbyte_platform"' in output
+    assert '"status": "failed"' in output

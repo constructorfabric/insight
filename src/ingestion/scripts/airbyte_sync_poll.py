@@ -35,20 +35,36 @@ class SyncFailure(NamedTuple):
     internal_message: str
 
 
-def attempt_failures(resp: object) -> list[SyncFailure]:
+def _latest_attempt(resp: object) -> dict | None:
     if not isinstance(resp, dict):
-        return []
+        return None
     attempts = resp.get("attempts")
     if not isinstance(attempts, list) or not attempts:
-        return []
+        return None
 
     attempt = attempts[-1].get("attempt") if isinstance(attempts[-1], dict) else None
-    summary = attempt.get("failureSummary") if isinstance(attempt, dict) else None
+    return attempt if isinstance(attempt, dict) else None
+
+
+def attempt_failures(resp: object) -> list[SyncFailure]:
+    attempt = _latest_attempt(resp)
+    summary = attempt.get("failureSummary") if attempt is not None else None
     entries = summary.get("failures") if isinstance(summary, dict) else None
     if not isinstance(entries, list):
         return []
 
     return [_read_failure(entry) for entry in entries if isinstance(entry, dict)]
+
+
+def attempt_stream_count(resp: object) -> int:
+    attempt = _latest_attempt(resp)
+    streams = attempt.get("streamStats") if attempt is not None else None
+    return len(streams) if isinstance(streams, list) else 0
+
+
+def succeeded_without_syncing(resp: object) -> bool:
+    # INVARIANT: a sync that ran reports one streamStats entry per stream, even at zero records.
+    return bool(attempt_failures(resp)) or attempt_stream_count(resp) == 0
 
 
 def _read_failure(entry: dict) -> SyncFailure:
@@ -126,6 +142,20 @@ def main() -> int:
             },
         )
 
+    def emit_failure_reasons(resp: object) -> None:
+        for failure in attempt_failures(resp):
+            log.error(
+                "sync failure reason",
+                extra={
+                    "event": "sync.failure_reason",
+                    "job_id": job_id,
+                    "failure_type": failure.failure_type,
+                    "failure_origin": failure.origin,
+                    "external_message": failure.external_message,
+                    "internal_message": failure.internal_message,
+                },
+            )
+
     def retry_or_give_up(reason: str) -> bool:
         unreadable_for = time.monotonic() - last_readable_at
         if unreadable_for >= unreadable_threshold:
@@ -182,24 +212,21 @@ def main() -> int:
         else:
             log.info("waiting for sync completion", extra={"job_id": job_id, "status": status})
 
+        if status == JobStatus.SUCCEEDED and succeeded_without_syncing(resp):
+            log.error(
+                "Airbyte reported success, but the latest attempt recorded failures or synced no streams",
+                extra={"event": "sync.not_run", "job_id": job_id, "streams": attempt_stream_count(resp)},
+            )
+            emit_failure_reasons(resp)
+            emit_completed("failed", 1)
+            return 1
         if status == JobStatus.SUCCEEDED:
             log.info("Sync complete")
             emit_completed("succeeded", 0)
             return 0
         if status in (JobStatus.FAILED, JobStatus.CANCELLED):
             log.error(f"Sync failed: {status}")
-            for failure in attempt_failures(resp):
-                log.error(
-                    "sync failure reason",
-                    extra={
-                        "event": "sync.failure_reason",
-                        "job_id": job_id,
-                        "failure_type": failure.failure_type,
-                        "failure_origin": failure.origin,
-                        "external_message": failure.external_message,
-                        "internal_message": failure.internal_message,
-                    },
-                )
+            emit_failure_reasons(resp)
             emit_completed(status, 1)
             return 1
 
