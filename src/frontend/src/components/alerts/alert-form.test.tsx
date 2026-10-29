@@ -295,10 +295,11 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
     );
     await pickColumn(1, "total");
     await userEvent.type(condition(1).getByLabelText("Value"), "10");
-    await userEvent.click(screen.getByRole("button", { name: "Create alert" }));
 
     expect(customClient.fetchMetric).toHaveBeenCalledWith("m-1");
     expect(screen.getByLabelText("Metric")).toHaveValue("Lines per day");
+
+    await userEvent.click(screen.getByRole("button", { name: "Create alert" }));
     await waitFor(() =>
       expect(alertsClient.createAlert).toHaveBeenCalledWith(
         expect.objectContaining({ metric: "m-1" })
