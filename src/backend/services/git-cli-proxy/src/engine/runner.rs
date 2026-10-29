@@ -137,6 +137,10 @@ const PACK_DELTA_CACHE_MB: usize = 256;
 const READ_TIMEOUT: Duration = Duration::from_mins(30);
 const PREFETCH_TIMEOUT: Duration = Duration::from_mins(10);
 const HEAVY_OP_TIMEOUT: Duration = Duration::from_mins(30);
+/// Half the prefetch budget: an origin may stay silent while it validates the
+/// requested objects, before any keepalive or progress is sent.
+const STALLED_TRANSFER_BYTES_PER_SEC: u32 = 1;
+const STALLED_TRANSFER_SECS: u32 = 300;
 /// How often a capped run re-measures the tree it is filling. The cap can be
 /// overshot by one interval's worth of download; the post-hoc check is what
 /// catches that remainder.
@@ -176,7 +180,7 @@ impl GitRunner {
     }
 
     #[cfg(test)]
-    fn with_git_binary(mut self, binary: std::path::PathBuf) -> Self {
+    pub(crate) fn with_git_binary(mut self, binary: std::path::PathBuf) -> Self {
         self.git_binary = binary;
         self
     }
@@ -202,21 +206,6 @@ impl GitRunner {
             .await
     }
 
-    /// Run the per-page blob prefetch under its own budget.
-    ///
-    /// # Errors
-    ///
-    /// [`GitError`] on spawn failure, timeout, or non-zero exit.
-    pub async fn run_prefetch(
-        &self,
-        git_dir: &Path,
-        args: &[&str],
-        creds: &GitCredentials,
-    ) -> Result<Output, GitError> {
-        self.run_within(self.timeouts.prefetch, Some(git_dir), args, Some(creds))
-            .await
-    }
-
     /// Run whole-repository work — repack, promotion — under the heavy budget.
     ///
     /// # Errors
@@ -239,7 +228,7 @@ impl GitRunner {
         args: &[&str],
         creds: Option<&GitCredentials>,
     ) -> Result<Output, GitError> {
-        let mut command = self.base_command(creds);
+        let mut command = self.base_command(creds, &[]);
         if let Some(dir) = git_dir {
             command.arg("--git-dir").arg(dir);
         }
@@ -284,7 +273,7 @@ impl GitRunner {
         watch: &Path,
         cap_bytes: u64,
     ) -> Result<Output, GitError> {
-        self.run_capped_within(self.timeouts.heavy, git_dir, args, creds, watch, cap_bytes)
+        self.run_capped_within(CappedRun::Heavy, git_dir, args, creds, watch, cap_bytes)
             .await
     }
 
@@ -302,7 +291,7 @@ impl GitRunner {
         cap_bytes: u64,
     ) -> Result<Output, GitError> {
         self.run_capped_within(
-            self.timeouts.prefetch,
+            CappedRun::Prefetch,
             Some(git_dir),
             args,
             Some(creds),
@@ -314,14 +303,18 @@ impl GitRunner {
 
     async fn run_capped_within(
         &self,
-        budget: Duration,
+        run: CappedRun,
         git_dir: Option<&Path>,
         args: &[&str],
         creds: Option<&GitCredentials>,
         watch: &Path,
         cap_bytes: u64,
     ) -> Result<Output, GitError> {
-        let mut command = self.base_command(creds);
+        let (budget, extra_config) = match run {
+            CappedRun::Heavy => (self.timeouts.heavy, Vec::new()),
+            CappedRun::Prefetch => (self.timeouts.prefetch, stalled_transfer_abort().to_vec()),
+        };
+        let mut command = self.base_command(creds, &extra_config);
         if let Some(dir) = git_dir {
             command.arg("--git-dir").arg(dir);
         }
@@ -388,7 +381,7 @@ impl GitRunner {
         consumer: &[&str],
         creds: &GitCredentials,
     ) -> Result<Vec<u8>, GitError> {
-        let mut left = self.base_command(Some(creds));
+        let mut left = self.base_command(Some(creds), &[]);
         left.arg("--git-dir")
             .arg(git_dir)
             .args(producer)
@@ -403,7 +396,7 @@ impl GitRunner {
             .take()
             .ok_or_else(|| GitError::Failed("pipe producer exposed no stdout".to_owned()))?;
 
-        let mut right = self.base_command(Some(creds));
+        let mut right = self.base_command(Some(creds), &[]);
         right
             .arg("--git-dir")
             .arg(git_dir)
@@ -441,7 +434,11 @@ impl GitRunner {
         Ok(right_output.stdout)
     }
 
-    fn base_command(&self, creds: Option<&GitCredentials>) -> tokio::process::Command {
+    fn base_command(
+        &self,
+        creds: Option<&GitCredentials>,
+        extra_config: &[(&'static str, String)],
+    ) -> tokio::process::Command {
         let mut command = tokio::process::Command::new(&self.git_binary);
         // Its own group, so a budget overrun can take git's own children (a
         // repack's pack-objects) down with it instead of killing the parent
@@ -460,13 +457,14 @@ impl GitRunner {
 
         // Config travels as env pairs, never argv: the credential header must
         // stay invisible in `ps`, and the CA path rides along the same way.
-        for (index, (key, value)) in self.config_pairs(creds).into_iter().enumerate() {
+        let mut pairs = self.config_pairs(creds);
+        pairs.extend_from_slice(extra_config);
+        for (index, (key, value)) in pairs.iter().enumerate() {
             command.env(format!("GIT_CONFIG_KEY_{index}"), key);
             command.env(format!("GIT_CONFIG_VALUE_{index}"), value);
         }
-        let count = self.config_pairs(creds).len();
-        if count > 0 {
-            command.env("GIT_CONFIG_COUNT", count.to_string());
+        if !pairs.is_empty() {
+            command.env("GIT_CONFIG_COUNT", pairs.len().to_string());
         }
         command
     }
@@ -497,6 +495,22 @@ impl GitRunner {
         pairs.push(("pack.deltaCacheSize", format!("{PACK_DELTA_CACHE_MB}m")));
         pairs
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CappedRun {
+    Heavy,
+    Prefetch,
+}
+
+fn stalled_transfer_abort() -> [(&'static str, String); 2] {
+    [
+        (
+            "http.lowSpeedLimit",
+            STALLED_TRANSFER_BYTES_PER_SEC.to_string(),
+        ),
+        ("http.lowSpeedTime", STALLED_TRANSFER_SECS.to_string()),
+    ]
 }
 
 /// Map a failed git invocation to a typed error by stderr fingerprints. The
@@ -646,6 +660,57 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
+
+    #[tokio::test]
+    async fn only_the_prefetch_aborts_a_stalled_transfer() {
+        let name = format!("git-cli-proxy-stall-config-{}", std::process::id());
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test fixture; the name carries pid and holds no secrets
+        let root = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_dir_all(&root);
+        if let Err(e) = std::fs::create_dir_all(&root) {
+            panic!("scratch dir: {e}");
+        }
+        let script = root.join("git");
+        let seen = root.join("env");
+        let source = format!("#!/bin/sh\nenv > {}\n", seen.display());
+        if let Err(e) = std::fs::write(&script, source) {
+            panic!("write fake git: {e}");
+        }
+        let executable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
+        if let Err(e) = std::fs::set_permissions(&script, executable) {
+            panic!("chmod fake git: {e}");
+        }
+        let runner = GitRunner::new().with_git_binary(script);
+        let creds = GitCredentials {
+            username: "u".to_owned(),
+            token: "t".to_owned(),
+        };
+        let configured = || std::fs::read_to_string(&seen).unwrap_or_default();
+
+        let prefetched = runner
+            .run_prefetch_capped(&root, &["fetch"], &creds, u64::MAX)
+            .await;
+        assert!(prefetched.is_ok(), "fake prefetch: {prefetched:?}");
+        assert!(
+            configured().contains("=http.lowSpeedLimit"),
+            "the prefetch must carry the stall abort"
+        );
+
+        let heavy = runner
+            .run_capped(Some(&root), &["fetch"], Some(&creds), &root, u64::MAX)
+            .await;
+        assert!(heavy.is_ok(), "fake heavy run: {heavy:?}");
+        assert!(
+            !configured().contains("lowSpeed"),
+            "a clone or fetch must not inherit the prefetch's stall abort"
+        );
+
+        let read = runner.run(Some(&root), &["log"], Some(&creds)).await;
+        assert!(read.is_ok(), "fake read: {read:?}");
+        assert!(!configured().contains("lowSpeed"), "nor may a local read");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     fn failed_output(stderr: &str) -> Output {
         Output {

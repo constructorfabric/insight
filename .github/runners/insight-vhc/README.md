@@ -109,6 +109,7 @@ The jobs under this rule:
 - `functional-k3s.yml`: `cluster-smoke`
 - `jira-field-history.yml`: `transformations`
 - `github-transform.yml`: `transformations`
+- `youtrack-transform.yml`: `transformations`
 - `field-parity.yml`: `field-parity`
 - `warm-upgrade.yml`: `warm-upgrade`
 - `cluster-mode.yml`: `rig` (every leg) and `warm-cache`
