@@ -60,7 +60,7 @@ permissions:
 jobs:
   test-stand:
     name: deploy → seed → smoke → suite
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED != 'true' && inputs.candidate_artifact != '' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 'insight-large' || 'ubuntu-latest' }}
+    runs-on: ${{ !(vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight') && inputs.candidate_artifact != '' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 'insight-large' || 'ubuntu-latest' }}
     # `environment:` cannot sit on a job that `uses:` a reusable workflow, so
     # it is declared here rather than on the caller.
     environment: insight-test-stand

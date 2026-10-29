@@ -59,7 +59,7 @@ jobs:
   field-parity:
     name: staging contributors match their silver target
     # Starts ClickHouse in Docker: a large runner.
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-large' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 60
     env:
       BOOTSTRAP_DIR: src/ingestion/scripts/bootstrap-db
@@ -129,8 +129,4 @@ jobs:
       - name: ClickHouse logs
         if: failure()
         run: docker logs --tail 200 "${CLICKHOUSE_CONTAINER}" 2>&1 || true
-
-      - name: Remove the ClickHouse container
-        if: always()
-        run: docker rm -f "${CLICKHOUSE_CONTAINER}" >/dev/null 2>&1 || true
 

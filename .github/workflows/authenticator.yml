@@ -50,12 +50,11 @@ concurrency:
 permissions:
   contents: read
 
-# Routing: .github/runners/README.md. e2e starts containers, so on a pull
-# request it also requires a branch of this repository.
+# Routing: .github/runners/README.md.
 jobs:
   e2e:
     name: e2e (8 suites)
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login))))) && 'ubuntu-latest' || 'insight-large' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -116,7 +115,7 @@ jobs:
     name: Authenticator endpoint coverage gate
     needs: e2e
     if: ${{ !cancelled() && needs.e2e.result != 'skipped' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && !(contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) || contains(fromJSON(vars.INSIGHT_ARC_PR_AUTHORS || '[]'), github.event.pull_request.user.login)))) && 'ubuntu-latest' || 'insight-small' }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 10
     steps:
       # Checkout only for the gate script + the committed OpenAPI spec (the
