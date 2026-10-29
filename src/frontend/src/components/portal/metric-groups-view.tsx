@@ -84,8 +84,11 @@ export interface MetricGroupsViewProps {
   personId: string;
   /** Which metric-family groups to render; empty ⇒ nothing available yet. */
   groupIds: readonly GroupId[];
-  /** Overview renders the KPI row + needs-attention; direction lenses don't. */
-  showKpis?: boolean;
+  /**
+   * The glance is the KPI row with needs-attention thinned against it;
+   * attention is the list alone; direction lenses show neither.
+   */
+  content?: MetricGroupsContent;
   /**
    * When set, a group card selects the group via this callback (e.g. to expand
    * it inline in a second sidebar level) instead of opening the drilldown
@@ -96,6 +99,8 @@ export interface MetricGroupsViewProps {
   embedded?: boolean;
 }
 
+export type MetricGroupsContent = "glance" | "attention" | "none";
+
 /**
  * Catalog-driven metric-group screen — the reusable body behind the portal's
  * Overview and Direction lenses. Reuses the v2 dashboard widgets
@@ -105,10 +110,12 @@ export interface MetricGroupsViewProps {
 export function MetricGroupsView({
   personId,
   groupIds,
-  showKpis = false,
+  content = "none",
   onSelectGroup,
   embedded = false,
 }: MetricGroupsViewProps) {
+  const showKpis = content === "glance";
+  const showAttention = content !== "none";
   const cohortLabel = useCohortLabel();
   const { period, dateRange } = usePortalPeriod();
   const { focusMode } = useSettings();
@@ -279,7 +286,7 @@ export function MetricGroupsView({
   // Thinned across groups AND against the row above: a metric and the one it
   // restates need not live in the same section, and the row is the more
   // prominent of the two places a fact can appear.
-  const attentionItems = showKpis
+  const attentionItems = showAttention
     ? orderAttentionItems(
         defs.flatMap((def) =>
           metricAttentionItems(
@@ -305,6 +312,19 @@ export function MetricGroupsView({
           !embedded && "p-4 md:p-6"
         )}
       >
+        {content === "attention" ? (
+          attentionItems.length > 0 ? (
+            <IcNeedsAttention
+              items={attentionItems}
+              onOpenGroup={openOrSelect}
+              titled={false}
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Nothing needs attention this period.
+            </p>
+          )
+        ) : null}
         {showKpis ? (
           <>
             {/* Before the numbers, not after them. On a person's own page the

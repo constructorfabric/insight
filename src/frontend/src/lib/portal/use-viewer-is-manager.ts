@@ -8,7 +8,11 @@ import { useVisibleRoster } from "@/queries/visible-roster";
  * `isPending` remains true until the canonical roster resolves; callers should
  * treat pending as "assume manager" to avoid hiding zones on a flash.
  */
-export function useViewerIsManager(): { isManager: boolean; isPending: boolean } {
+export function useViewerIsManager(): {
+  isManager: boolean;
+  isPending: boolean;
+  isError: boolean;
+} {
   const { personId } = useViewer();
   const roster = useVisibleRoster(true);
   const viewerId = personId?.toLowerCase();
@@ -18,5 +22,9 @@ export function useViewerIsManager(): { isManager: boolean; isPending: boolean }
       )
     : false;
 
-  return { isManager, isPending: roster.isPending || roster.isError };
+  return {
+    isManager,
+    isPending: roster.isPending || roster.isError,
+    isError: roster.isError,
+  };
 }

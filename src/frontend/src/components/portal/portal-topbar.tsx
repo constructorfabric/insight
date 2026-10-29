@@ -8,8 +8,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { PeriodSelectorBar } from "@/components/widgets/period-selector-bar";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
+import { useHomeSubject } from "@/lib/portal/home-subject";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useCohortOptions } from "@/lib/portal/use-cohort-options";
@@ -46,6 +48,7 @@ export function PortalTopBar() {
           way to reach sections on a tablet. Outside the scroller below, so it
           stays put while the controls slide. */}
       <SidebarTrigger className="shrink-0 lg:hidden" />
+      {activeZone === "overview" ? <HomeSubjectSwitch /> : null}
       {filtered ? <ViewFilters /> : null}
     </div>
   );
@@ -123,5 +126,35 @@ function ViewFilters() {
         onRangeChange={setCustomRange}
       />
     </div>
+  );
+}
+
+const SUBJECT_SEGMENT = "bg-card text-muted-foreground";
+
+function HomeSubjectSwitch() {
+  const { subject, canSwitch, setSubject } = useHomeSubject();
+  const { isFlat } = useVisibilityPolicy();
+
+  if (!canSwitch) return null;
+
+  return (
+    <ToggleGroup
+      aria-label="Whose numbers"
+      value={[subject]}
+      onValueChange={(values) => {
+        const next = Array.isArray(values) ? values[0] : values;
+        if (next === "me" || next === "team") setSubject(next);
+      }}
+      variant="outline"
+      size="default"
+      className="shrink-0"
+    >
+      <ToggleGroupItem value="me" className={SUBJECT_SEGMENT}>
+        Me
+      </ToggleGroupItem>
+      <ToggleGroupItem value="team" className={SUBJECT_SEGMENT}>
+        {isFlat ? "Organisation" : "My team"}
+      </ToggleGroupItem>
+    </ToggleGroup>
   );
 }

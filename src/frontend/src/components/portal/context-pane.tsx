@@ -35,7 +35,11 @@ import { useDismissDrawer } from "@/lib/portal/use-dismiss-drawer";
 import { useRailNav } from "@/lib/portal/use-rail-nav";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
 import { useZoneNav, type ZoneNav } from "@/lib/portal/use-zone-nav";
-import { useViewerReach } from "@/lib/portal/use-viewer-reach";
+import {
+  homeItemShown,
+  useHomeSubject,
+  type HomeSubject,
+} from "@/lib/portal/home-subject";
 import { cn } from "@/lib/utils";
 import { useIsAdmin } from "@/queries/identity-me";
 import { usePreviewsGate } from "@/queries/previews";
@@ -208,15 +212,15 @@ function MobileRailNav() {
 function RailPane({ rail, nav }: { rail: RailId; nav: ZoneNav }) {
   const active = resolveZoneItem(nav.activeZone, usePortalItem());
   const visibleZones = new Set(nav.zones.map((zone) => zone.id));
-  const { canSeeOthers } = useViewerReach();
+  const { subject, isPending: reachPending } = useHomeSubject();
 
   switch (rail) {
     case "home":
       return (
         <>
-          {canSeeOthers ? (
-            <GroupsNav groups={zoneSections("overview")} active={active} />
-          ) : null}
+          {reachPending ? null : (
+            <GroupsNav groups={homeGroupsFor(subject)} active={active} />
+          )}
           {visibleZones.has("custom") ? <HomeDashboardsGroup /> : null}
         </>
       );
@@ -231,6 +235,13 @@ function RailPane({ rail, nav }: { rail: RailId; nav: ZoneNav }) {
     case "manage":
       return <ManageNav active={active} />;
   }
+}
+
+function homeGroupsFor(subject: HomeSubject) {
+  return zoneSections("overview").map((group) => ({
+    ...group,
+    items: group.items.filter((item) => homeItemShown(subject, item.id)),
+  }));
 }
 
 function ManageNav({ active }: { active: string | null }) {

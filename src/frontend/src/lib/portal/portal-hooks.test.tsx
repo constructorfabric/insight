@@ -212,6 +212,7 @@ describe("useViewerIsManager", () => {
     expect(renderHook(() => useViewerIsManager()).result.current).toEqual({
       isManager: true,
       isPending: false,
+      isError: false,
     });
   });
 
@@ -226,7 +227,11 @@ describe("useViewerIsManager", () => {
     mocks.roster.roster = [];
     mocks.roster.isPending = true;
     const { result } = renderHook(() => useViewerIsManager());
-    expect(result.current).toEqual({ isManager: false, isPending: true });
+    expect(result.current).toEqual({
+      isManager: false,
+      isPending: true,
+      isError: false,
+    });
   });
 });
 

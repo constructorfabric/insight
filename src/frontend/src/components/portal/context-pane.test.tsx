@@ -640,13 +640,23 @@ describe("Home pane", () => {
     expect(screen.queryByText("At a glance")).toBeNull();
   });
 
-  it("leaves the org themes out for a viewer without a cohort", () => {
-    mocks.canSeeOthers = false;
-    pane();
-    expect(screen.getByText("Constructor Insight")).toBeInTheDocument();
-    expect(screen.queryByText("At a glance")).toBeNull();
-    expect(screen.queryByText("Trend")).toBeNull();
-  });
+  it.each([
+    ["a viewer without a cohort", false, undefined, false],
+    ["a viewer looking at their team", true, undefined, true],
+    ["a viewer with a cohort who picked Me", true, "me", false],
+  ] as const)(
+    "lists the split of work between people only for %s",
+    (_case, canSeeOthers, who, shown) => {
+      mocks.canSeeOthers = canSeeOthers;
+      act(() => portalRouter.set({ who }));
+      pane();
+      expect(screen.getByText("Trend")).toBeInTheDocument();
+      expect(
+        screen.queryByText("Contribution breakdown") !== null,
+        `case: ${_case}`,
+      ).toBe(shown);
+    },
+  );
 });
 
 describe("ContextPane highlight", () => {

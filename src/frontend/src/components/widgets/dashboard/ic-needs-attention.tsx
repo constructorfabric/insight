@@ -16,6 +16,8 @@ const COLLAPSE_THRESHOLD = 7;
 export interface IcNeedsAttentionProps {
   items: AttentionItem[];
   onOpenGroup: (id: GroupId) => void;
+  /** False where the page title already names the list. */
+  titled?: boolean;
 }
 
 /**
@@ -26,6 +28,7 @@ export interface IcNeedsAttentionProps {
 export function IcNeedsAttention({
   items,
   onOpenGroup,
+  titled = true,
 }: IcNeedsAttentionProps) {
   const { focusMode } = useSettings();
   const [showAll, setShowAll] = useState(false);
@@ -49,9 +52,9 @@ export function IcNeedsAttention({
 
   return (
     <section>
-      <h2 className={cn("mb-3", TEXT_EYEBROW)}>
-        Needs attention
-      </h2>
+      {titled ? (
+        <h2 className={cn("mb-3", TEXT_EYEBROW)}>Needs attention</h2>
+      ) : null}
       <Card data-size="sm">
         <CardContent className="text-sm">
           {/* One column, not two. Six columns of content inside half the
