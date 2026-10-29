@@ -27,6 +27,11 @@
 -- universe with an epoch last-seen: absent from the very first census means
 -- deleted before the mechanism landed — the intended historical backfill.
 
+-- INVARIANT: the census carries `id_readable` only from the first sync after
+-- reconcile publishes the manifest that declares it; until then it has no key.
+{%- set census_columns = adapter.get_columns_in_relation(source('bronze_jira', 'jira_issue_census')) if execute else [] %}
+{%- set census_has_keys = 'id_readable' in (census_columns | map(attribute='name') | list) %}
+
 WITH census AS (
     SELECT
         unique_key,
@@ -34,7 +39,11 @@ WITH census AS (
         source_id,
         jira_id,
         project_key,
+{%- if census_has_keys %}
+        CAST(id_readable AS Nullable(String))                AS id_readable,
+{%- else %}
         CAST(NULL AS Nullable(String))                       AS id_readable,
+{%- endif %}
         _airbyte_extracted_at                                AS seen_at
     FROM {{ source('bronze_jira', 'jira_issue_census') }} FINAL
 ),

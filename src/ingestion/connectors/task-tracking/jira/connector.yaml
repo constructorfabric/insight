@@ -3095,7 +3095,9 @@ streams:
   # so the census costs ceil(issues/5000) requests per
   # project. Keyed by numeric issue id, never by key: moving an issue between
   # projects changes its key but not its id — a key-based census would report
-  # every moved issue as deleted.
+  # every moved issue as deleted. Each issue's current key comes back in the
+  # same response and is kept as `id_readable`, so a key resolves to its id
+  # whatever the sync window.
   - type: DeclarativeStream
     name: jira_issue_census
     primary_key:
@@ -3167,6 +3169,10 @@ streams:
             value: "{{ record['id'] }}"
           - type: AddedFieldDefinition
             path:
+              - id_readable
+            value: "{{ record['key'] }}"
+          - type: AddedFieldDefinition
+            path:
               - project_key
             value: "{{ stream_partition.project_key }}"
           - type: AddedFieldDefinition
@@ -3194,6 +3200,10 @@ streams:
           # jira_issue.jira_id is String and dbt joins the two directly.
           jira_id:
             type: string
+          id_readable:
+            type:
+              - string
+              - "null"
           project_key:
             type:
               - string

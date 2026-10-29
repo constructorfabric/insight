@@ -156,7 +156,12 @@ name: jira
 # destination-clickhouse makes every column outside the sort key nullable.
 # MINOR per ADR-0015: reconcile republishes the manifest and nothing stored
 # changes meaning.
-version: "18.1.0"
+# 18.2.0: `jira_issue_census` keeps each issue's current key beside its id, so
+# `jira__issue_key_ids` resolves a linked issue's key to its immutable id even
+# when the issue was never updated inside the sync window. MINOR per ADR-0015:
+# reconcile republishes the manifest and refreshes the catalog, the destination
+# adds the column on the next sync, and nothing already stored changes meaning.
+version: "18.2.0"
 # 22:10 and 10:10 UTC: clear of the 02:00-06:00 daily block and of github's
 # 4-hourly ticks, which rebuild the same task chain; :10 misses the */15
 # reconcile and identity-seed ticks.

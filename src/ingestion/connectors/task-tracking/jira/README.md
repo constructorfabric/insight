@@ -81,7 +81,7 @@ kubectl apply -f src/ingestion/secrets/connectors/jira.yaml
 | `jira_worklogs` | `GET /rest/api/3/worklog/updated` → `POST /rest/api/3/worklog/list` | Incremental on the change feed's `since` | — | `nextPage` URL; 1000 ids per list request |
 | `jira_sprints` | `GET /rest/agile/1.0/board/{board_id}/sprint` | Substream of boards | — | Offset |
 | `jira_project_visibility` | `GET /rest/api/3/project/search?status=<live\|archived\|deleted>` | Full refresh | — | Offset |
-| `jira_issue_census` | `GET /rest/api/3/search/jql` (`fields=id`) | Full refresh | — | Cursor (`nextPageToken`) |
+| `jira_issue_census` | `GET /rest/api/3/search/jql` (`fields=id`; the response's `key` is kept as `id_readable`) | Full refresh | — | Cursor (`nextPageToken`) |
 | `jira_worklog_deleted` | `GET /rest/api/3/worklog/deleted` | Full refresh | — | `nextPage` URL |
 | `jira_board_configuration` | `GET /rest/agile/1.0/board/{board_id}/configuration` | Substream of boards | — | None |
 

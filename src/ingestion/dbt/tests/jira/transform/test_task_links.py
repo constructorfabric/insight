@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 from conftest import LINKS_SELECTOR, Scenario, case
-from helpers import census, event, field, issue, item, project_visibility
+from helpers import census_entry, event, field, issue, item, project_visibility
 
 SELECTOR = LINKS_SELECTOR
 
@@ -503,8 +503,8 @@ def test_a_missing_link_only_closes_when_other_issue_availability_allows_it(
     project_time = FIRST_CENSUS if availability == "access_lost" else MISSING_CENSUS
     project_status = {"archived": "archived", "trashed": "deleted"}.get(availability, "live")
     peers = [
-        census("GONE-3", "1003", extracted_at=MISSING_CENSUS),
-        census("GONE-4", "1004", extracted_at=MISSING_CENSUS),
+        census_entry("GONE-3", jira_id="1003", extracted_at=MISSING_CENSUS),
+        census_entry("GONE-4", jira_id="1004", extracted_at=MISSING_CENSUS),
     ]
     scenario.seed(
         fields=[LINKS_FIELD],
@@ -514,8 +514,8 @@ def test_a_missing_link_only_closes_when_other_issue_availability_allows_it(
         ],
         events=[event("SEEN-1", 101, "2026-01-06T10:00:00", [_added("GONE-2", "blocks")], jira_id="1001")],
         census=[
-            census("SEEN-1", "1001", extracted_at=census_at),
-            census("GONE-2", "1002", extracted_at=FIRST_CENSUS),
+            census_entry("SEEN-1", jira_id="1001", extracted_at=census_at),
+            census_entry("GONE-2", jira_id="1002", extracted_at=FIRST_CENSUS),
             *(peers if availability == "deleted" else []),
         ],
         projects=[
@@ -530,7 +530,7 @@ def test_a_missing_link_only_closes_when_other_issue_availability_allows_it(
         scenario.seed(
             fields=[],
             issues=[],
-            census=[census("SEEN-1", "1001", extracted_at=MISSING_CENSUS)],
+            census=[census_entry("SEEN-1", jira_id="1001", extracted_at=MISSING_CENSUS)],
             projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
         )
         scenario.build(LINKS_SELECTOR, full_refresh=False)
@@ -597,7 +597,7 @@ def test_a_read_retains_only_links_whose_other_issue_is_hidden(
         fields=[catalogue],
         issues=[issue("SEEN-1", jira_id="1001", fields=fields), issue("GONE-2", jira_id="1002")],
         events=[event("SEEN-1", 101, "2026-01-06T10:00:00", [addition], jira_id="1001")] if with_event else [],
-        census=[census("SEEN-1", "1001"), census("GONE-2", "1002")],
+        census=[census_entry("SEEN-1", jira_id="1001"), census_entry("GONE-2", jira_id="1002")],
         projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
     )
     scenario.build(LINKS_SELECTOR)
@@ -608,8 +608,8 @@ def test_a_read_retains_only_links_whose_other_issue_is_hidden(
         fields=[],
         issues=[issue("SEEN-1", jira_id="1001", extracted_at=HIDDEN_READ)],
         census=[
-            census("SEEN-1", "1001", extracted_at=MISSING_CENSUS),
-            *([] if hidden else [census("GONE-2", "1002", extracted_at=MISSING_CENSUS)]),
+            census_entry("SEEN-1", jira_id="1001", extracted_at=MISSING_CENSUS),
+            *([] if hidden else [census_entry("GONE-2", jira_id="1002", extracted_at=MISSING_CENSUS)]),
         ],
         projects=[
             project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS),
@@ -640,8 +640,8 @@ def test_a_read_retains_only_links_whose_other_issue_is_hidden(
         fields=[],
         issues=[],
         census=[
-            census("SEEN-1", "1001", extracted_at=RETURNED_CENSUS),
-            census("GONE-2", "1002", extracted_at=RETURNED_CENSUS),
+            census_entry("SEEN-1", jira_id="1001", extracted_at=RETURNED_CENSUS),
+            census_entry("GONE-2", jira_id="1002", extracted_at=RETURNED_CENSUS),
         ],
         projects=[
             project_visibility("SEEN", "1", extracted_at=RETURNED_CENSUS),
@@ -692,7 +692,7 @@ def test_hidden_issue_events_still_open_and_close_links(scenario: Scenario, kind
     scenario.seed(
         fields=[catalogue],
         issues=[issue("SEEN-1", jira_id="1001", fields=fields), issue("GONE-2", jira_id="1002")],
-        census=[census("SEEN-1", "1001"), census("GONE-2", "1002")],
+        census=[census_entry("SEEN-1", jira_id="1001"), census_entry("GONE-2", jira_id="1002")],
         projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
     )
     scenario.build(LINKS_SELECTOR)
@@ -701,7 +701,7 @@ def test_hidden_issue_events_still_open_and_close_links(scenario: Scenario, kind
         fields=[],
         issues=[issue("SEEN-1", jira_id="1001", extracted_at=HIDDEN_READ)],
         events=[event("SEEN-1", 101, "2026-03-30T10:00:00", [addition], jira_id="1001", extracted_at=HIDDEN_READ)],
-        census=[census("SEEN-1", "1001", extracted_at=MISSING_CENSUS)],
+        census=[census_entry("SEEN-1", jira_id="1001", extracted_at=MISSING_CENSUS)],
         projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
     )
     scenario.build(LINKS_SELECTOR, full_refresh=False)
@@ -736,8 +736,8 @@ def test_an_issue_without_a_current_read_keeps_no_retained_links(scenario: Scena
         fields=[catalogue],
         issues=[issue("SEEN-1", jira_id="1001", fields=fields), issue("GONE-2", jira_id="1002")],
         census=[
-            census("SEEN-1", "1001", extracted_at=MISSING_CENSUS),
-            census("GONE-2", "1002", extracted_at=FIRST_CENSUS),
+            census_entry("SEEN-1", jira_id="1001", extracted_at=MISSING_CENSUS),
+            census_entry("GONE-2", jira_id="1002", extracted_at=FIRST_CENSUS),
         ],
         projects=[
             project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS),
@@ -773,7 +773,7 @@ def test_a_fresh_parent_supersedes_an_earlier_parent_that_is_hidden(scenario: Sc
         events=[
             event("SEEN-1", 101, "2026-01-06T10:00:00", [item(PARENT, to="1002", to_str="GONE-2")], jira_id="1001")
         ],
-        census=[census("SEEN-1", "1001"), census("GONE-2", "1002"), census("SEEN-3", "1003")],
+        census=[census_entry("SEEN-1", jira_id="1001"), census_entry("GONE-2", jira_id="1002"), census_entry("SEEN-3", jira_id="1003")],
         projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
     )
     scenario.build(LINKS_SELECTOR)
@@ -796,8 +796,8 @@ def test_a_fresh_parent_supersedes_an_earlier_parent_that_is_hidden(scenario: Sc
             )
         ],
         census=[
-            census("SEEN-1", "1001", extracted_at=MISSING_CENSUS),
-            census("SEEN-3", "1003", extracted_at=MISSING_CENSUS),
+            census_entry("SEEN-1", jira_id="1001", extracted_at=MISSING_CENSUS),
+            census_entry("SEEN-3", jira_id="1003", extracted_at=MISSING_CENSUS),
         ],
         projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
     )
@@ -847,7 +847,7 @@ def test_a_missing_link_is_reconciled_after_visibility_returns(
         fields=[catalogue],
         issues=[issue("SEEN-1", jira_id="1001", fields=fields), issue("GONE-2", jira_id="1002")],
         events=[event("SEEN-1", 101, "2026-01-06T10:00:00", [addition], jira_id="1001")] if with_event else [],
-        census=[census("SEEN-1", "1001"), census("GONE-2", "1002")],
+        census=[census_entry("SEEN-1", jira_id="1001"), census_entry("GONE-2", jira_id="1002")],
         projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
     )
     scenario.build(LINKS_SELECTOR)
@@ -857,7 +857,7 @@ def test_a_missing_link_is_reconciled_after_visibility_returns(
     scenario.seed(
         fields=[],
         issues=[issue("SEEN-1", jira_id="1001", extracted_at=HIDDEN_READ)],
-        census=[census("SEEN-1", "1001", extracted_at=MISSING_CENSUS)],
+        census=[census_entry("SEEN-1", jira_id="1001", extracted_at=MISSING_CENSUS)],
         projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
     )
     scenario.build(LINKS_SELECTOR, full_refresh=False)
@@ -867,8 +867,8 @@ def test_a_missing_link_is_reconciled_after_visibility_returns(
         fields=[],
         issues=[],
         census=[
-            census("SEEN-1", "1001", extracted_at=RETURNED_CENSUS),
-            census("GONE-2", "1002", extracted_at=RETURNED_CENSUS),
+            census_entry("SEEN-1", jira_id="1001", extracted_at=RETURNED_CENSUS),
+            census_entry("GONE-2", jira_id="1002", extracted_at=RETURNED_CENSUS),
         ],
         projects=[
             project_visibility("SEEN", "1", extracted_at=RETURNED_CENSUS),
@@ -910,7 +910,7 @@ def test_visibility_returns_only_from_the_first_census_sighting_after_the_gap(sc
         fields=[catalogue],
         issues=[issue("SEEN-1", jira_id="1001", fields=fields), issue("GONE-2", jira_id="1002")],
         events=[event("SEEN-1", 101, "2026-01-06T10:00:00", [addition], jira_id="1001")],
-        census=[census("SEEN-1", "1001"), census("GONE-2", "1002")],
+        census=[census_entry("SEEN-1", jira_id="1001"), census_entry("GONE-2", jira_id="1002")],
         projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
     )
     scenario.build(LINKS_SELECTOR)
@@ -926,7 +926,7 @@ def test_visibility_returns_only_from_the_first_census_sighting_after_the_gap(sc
     scenario.seed(
         fields=[],
         issues=[issue("SEEN-1", jira_id="1001", extracted_at=HIDDEN_READ)],
-        census=[census("SEEN-1", "1001", extracted_at=MISSING_CENSUS)],
+        census=[census_entry("SEEN-1", jira_id="1001", extracted_at=MISSING_CENSUS)],
         projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
     )
     scenario.build(LINKS_SELECTOR, full_refresh=False)
@@ -937,8 +937,8 @@ def test_visibility_returns_only_from_the_first_census_sighting_after_the_gap(sc
         fields=[],
         issues=[issue("SEEN-1", jira_id="1001", extracted_at=before_census_read, updated=before_census_read)],
         census=[
-            census("SEEN-1", "1001", extracted_at=RETURNED_CENSUS),
-            census("GONE-2", "1002", extracted_at=RETURNED_CENSUS),
+            census_entry("SEEN-1", jira_id="1001", extracted_at=RETURNED_CENSUS),
+            census_entry("GONE-2", jira_id="1002", extracted_at=RETURNED_CENSUS),
         ],
         projects=[
             project_visibility("SEEN", "1", extracted_at=RETURNED_CENSUS),
@@ -959,8 +959,8 @@ def test_visibility_returns_only_from_the_first_census_sighting_after_the_gap(sc
         fields=[],
         issues=[issue("SEEN-1", jira_id="1001", extracted_at=RETURNED_READ, updated=RETURNED_READ)],
         census=[
-            census("SEEN-1", "1001", extracted_at=later_census),
-            census("GONE-2", "1002", extracted_at=later_census),
+            census_entry("SEEN-1", jira_id="1001", extracted_at=later_census),
+            census_entry("GONE-2", jira_id="1002", extracted_at=later_census),
         ],
         projects=[
             project_visibility("SEEN", "1", extracted_at=later_census),
@@ -982,3 +982,41 @@ def test_visibility_returns_only_from_the_first_census_sighting_after_the_gap(sc
         {"src": scenario.source},
     )
     assert held == []
+
+
+@case(
+    fields=[LINKS_FIELD],
+    issues=[issue("TST-1", jira_id="1001")],
+    events=[
+        event("TST-1", 101, "2026-01-06T10:00:00", [_added("ARC-7", "relates to", WORK_ITEM_WORDING)], jira_id="1001"),
+        event("TST-1", 102, "2026-01-07T10:00:00", [_removed("ARC-7", "relates to", WORK_ITEM_WORDING)], jira_id="1001"),
+    ],
+    census=[census_entry("ARC-7", jira_id="9007")],
+)
+def test_a_linked_issue_outside_the_sync_window_resolves_through_the_census(scenario: Scenario) -> None:
+    """ARC-7 is neither synced nor held in any snapshot. The census lists every
+    issue a visible project holds, so its key still resolves to its id."""
+    assert _intervals(scenario.links()) == [("1001", "connected", "9007", "ARC-7", DAY_6, 1, DAY_7, "101")]
+    assert scenario.changelog_states(LINKS, issue="TST-1") == [["9007"], []]
+    assert scenario.round_trip_holds()
+
+
+def test_a_key_the_census_names_later_reaches_the_journal_without_a_full_refresh(scenario: Scenario) -> None:
+    """The journal derives only the issues bronze moved. When the census later
+    names the id of a key a link still holds, the owning issue has not moved,
+    yet its element must become the id on the next ordinary run."""
+    scenario.seed(
+        fields=[LINKS_FIELD],
+        issues=[issue("TST-1", jira_id="1001")],
+        events=[
+            event("TST-1", 101, "2026-01-06T10:00:00", [_added("ARC-7", "relates to")], jira_id="1001"),
+            event("TST-1", 102, "2026-01-07T10:00:00", [_removed("ARC-7", "relates to")], jira_id="1001"),
+        ],
+    )
+    scenario.build(LINKS_SELECTOR)
+    assert scenario.changelog_states(LINKS, issue="TST-1") == [["ARC-7"], []]
+
+    scenario.warehouse.insert("bronze_jira.jira_issue_census", [census_entry("ARC-7", jira_id="9007")])
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
+
+    assert scenario.changelog_states(LINKS, issue="TST-1") == [["9007"], []]

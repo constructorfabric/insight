@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_census
     `source_id` Nullable(String),
     `unique_key` Nullable(String),
     `jira_id` Nullable(String),
+    `id_readable` Nullable(String),
     `project_key` Nullable(String),
     `collected_at` Nullable(String)
 )

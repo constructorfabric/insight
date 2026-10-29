@@ -41,8 +41,8 @@ def _mock_parent(http_mocker: HttpMocker, keys: list[str]) -> None:
     )
 
 
-def _census_page(ids: list[int], next_token: str | None = None) -> HttpResponse:
-    body: dict = {"issues": [{"id": str(i)} for i in ids]}
+def _census_page(ids: list[int], next_token: str | None = None, project_key: str = "PROJ1") -> HttpResponse:
+    body: dict = {"issues": [{"id": str(i), "key": f"{project_key}-{i}"} for i in ids]}
     if next_token:
         body["nextPageToken"] = next_token
     return HttpResponse(body=json.dumps(body), status_code=200)
@@ -101,6 +101,21 @@ def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
     # not its id, and must not be reported as deleted.
     assert rec["unique_key"] == (f"{config['insight_tenant_id']}-{config['insight_source_id']}-101")
     assert rec["project_key"] == "PROJ1"
+
+
+def test_each_issue_keeps_its_current_key_beside_its_id(http_mocker: HttpMocker) -> None:
+    """Jira returns the key with every id even when only `id` is requested;
+    it is what resolves a linked issue's key outside the sync window."""
+    config = JiraConfigBuilder().build()
+    _mock_parent(http_mocker, ["PROJ1"])
+    http_mocker.get(HttpRequest(_SEARCH_URL, query_params=ANY_QUERY_PARAMS), _census_page([101, 102]))
+
+    output = read_stream(_CONNECTOR, _STREAM, config)
+
+    assert [(r.record.data["jira_id"], r.record.data["id_readable"]) for r in output.records] == [
+        (101, "PROJ1-101"),
+        (102, "PROJ1-102"),
+    ]
 
 
 @pytest.mark.skip(

@@ -14,11 +14,17 @@
 --
 -- INVARIANT: one id per key. Jira never reassigns a key: a moved issue keeps
 -- its old key as an alias. Where two inputs disagree anyway, the issue's own
--- rows win over what another issue's data says about it.
+-- synced rows win, then the census, then what another issue's data says.
 --
 -- A key no input names has no row: an issue in a project the connector cannot
--- read and that no synced issue's snapshot links to, or one deleted before it
--- was ever read.
+-- read and that no synced issue's snapshot links to, one deleted before it was
+-- ever read, or an earlier key of an issue whose own changelog is not synced.
+
+-- INVARIANT: the destination adds `id_readable` to the census on the first sync
+-- after reconcile publishes the manifest that declares it; a sync that runs
+-- before that must still build, so the census arm waits for the column.
+{%- set census_columns = adapter.get_columns_in_relation(source('bronze_jira', 'jira_issue_census')) if execute else [] %}
+{%- set census_has_keys = 'id_readable' in (census_columns | map(attribute='name') | list) %}
 
 WITH issue_rows AS (
     -- Every row, not the newest: bronze keeps one per key the connector saw.
@@ -37,6 +43,19 @@ WITH issue_rows AS (
         CAST(jira_id AS String)                                       AS issue_id,
         toUInt8(1)                                                    AS precedence
     FROM {{ source('bronze_jira', 'jira_issue_keys') }}
+{%- if census_has_keys %}
+
+    UNION ALL
+
+    -- The census lists every issue a visible project holds, whatever its last
+    -- update, so a key outside the sync window still resolves.
+    SELECT
+        CAST(source_id AS String)                                     AS insight_source_id,
+        COALESCE(toString(id_readable), '')                           AS issue_key,
+        CAST(jira_id AS String)                                       AS issue_id,
+        toUInt8(2)                                                    AS precedence
+    FROM {{ source('bronze_jira', 'jira_issue_census') }}
+{%- endif %}
 ),
 
 -- A move is a `Key` item on the moved issue's own changelog, with no field id,
@@ -52,7 +71,7 @@ moves AS (
             JSONExtractString(item, 'to')
         ])                                                            AS issue_key,
         issue_id,
-        toUInt8(2)                                                    AS precedence
+        toUInt8(3)                                                    AS precedence
     FROM (
         SELECT
             CAST(source_id AS String)                                 AS insight_source_id,
@@ -72,7 +91,7 @@ linked_now AS (
         insight_source_id,
         target_key                                                    AS issue_key,
         target_id                                                     AS issue_id,
-        toUInt8(3)                                                    AS precedence
+        toUInt8(4)                                                    AS precedence
     FROM {{ ref('jira__issue_link_snapshot') }} FINAL
 ),
 
@@ -86,7 +105,7 @@ parent_changes AS (
         ])                                                            AS pair,
         pair.1                                                        AS issue_key,
         pair.2                                                        AS issue_id,
-        toUInt8(3)                                                    AS precedence
+        toUInt8(4)                                                    AS precedence
     FROM {{ ref('jira__changelog_items') }}
     WHERE field_id = 'parent'
 ),
