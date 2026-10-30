@@ -61,6 +61,7 @@ const READ = {
   tags: [],
   ownerPersonId: null,
   ownerName: null,
+  visibility: null,
   access: "ownerless" as const,
   folders: [],
   carries: true,
@@ -159,10 +160,13 @@ describe("/portal/custom/$name", () => {
 
     render(<Component />, { wrapper });
 
-    const [open] = await screen.findAllByRole("button", {
-      name: "Show the data behind Widget",
+    const [more] = await screen.findAllByRole("button", {
+      name: "More for Widget",
     });
-    await userEvent.click(open as HTMLElement);
+    await userEvent.click(more as HTMLElement);
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Show data" })
+    );
 
     await waitFor(() =>
       expect(customClient.fetchDashboardDrilldownPage).toHaveBeenCalledWith(
@@ -185,9 +189,11 @@ describe("/portal/custom/$name", () => {
 
     expect(await screen.findByRole("cell", { name: "59" })).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Show the data behind Widget" })
+      screen.queryByRole("button", { name: "More for Widget" })
     ).toBeNull();
-    expect(screen.queryByRole("button", { name: "Edit engineering" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Edit engineering" })
+    ).toBeNull();
     expect(customClient.fetchMetric).not.toHaveBeenCalled();
     expect(customClient.fetchDashboardDrilldownPage).not.toHaveBeenCalled();
   });
@@ -282,6 +288,7 @@ describe("/portal/custom/$name", () => {
       body: { title: "Engineering", widgets: [] },
       ownerPersonId: "01900000-0000-7000-8000-00000000000a",
       ownerName: "Jane Doe",
+      visibility: null,
       access: "viewer",
     });
     portalRouter.go("/portal/custom/engineering");
@@ -291,9 +298,8 @@ describe("/portal/custom/$name", () => {
     const header = (
       await screen.findByRole("heading", { level: 1, name: "Engineering" })
     ).closest("header") as HTMLElement;
-    expect(within(header).getByText(/Owner:/)).toHaveTextContent(
-      "Owner: Jane Doe"
-    );
+    expect(within(header).getByText("Jane Doe")).toBeInTheDocument();
+    expect(within(header).queryByText(/Owner:/)).toBeNull();
     expect(
       within(header).queryByRole("button", { name: "Edit engineering" })
     ).toBeNull();
@@ -369,7 +375,9 @@ describe("/portal/custom/$name", () => {
 
     render(<Component />, { wrapper });
 
-    expect(screen.getByRole("status", { name: /loading/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: /loading/i })
+    ).toBeInTheDocument();
   });
 
   it("says a dashboard it cannot read is not there, with no retry offered", async () => {
@@ -465,7 +473,7 @@ describe("/portal/custom/$name — the window it is read over", () => {
     render(<Component />, { wrapper });
 
     const picker = await screen.findByRole("button", { name: "Last 30 days" });
-    expect(picker.closest("header")).toHaveClass("sticky");
+    expect(picker.closest('[role="toolbar"]')).toHaveClass("sticky");
   });
 
   it("puts the reader's choice in the URL", async () => {

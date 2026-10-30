@@ -230,6 +230,13 @@ pub(crate) trait DashboardCatalogue: Send + Sync + fmt::Debug {
         query: &DashboardQuery,
         page: Page,
     ) -> Result<DashboardPage, DefinitionStoreError>;
+
+    /// Who beyond its owner sees the dashboard, or none when no dashboard has
+    /// the id.
+    async fn visibility(
+        &self,
+        dashboard: &DefinitionId,
+    ) -> Result<Option<Visibility>, DefinitionStoreError>;
 }
 
 /// How `caller` sees the dashboard, or none when they cannot or it is not

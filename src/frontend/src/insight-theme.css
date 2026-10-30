@@ -38,6 +38,7 @@
   --accent-foreground: var(--primary-foreground);
   --accent-soft: light-dark(#e4eef8, #1b2e4a);
   --accent-text: light-dark(#0057c2, #7ab4ff);
+  --info-soft: light-dark(#eff6ff, #172554);
   --destructive: light-dark(#e11d48, #fb7185);
   --destructive-soft: light-dark(#fff1f2, #3a1220);
   --success: light-dark(#059669, #34d399);
@@ -54,7 +55,7 @@
   --rail: light-dark(#e8edf3, #0b1220);
   --sidebar: light-dark(#f1f5f9, #0f172a);
   --sidebar-foreground: var(--foreground);
-  --sidebar-accent: light-dark(#ffffff, #1e2a40);
+  --sidebar-accent: light-dark(#ffffff, #1e293b);
   --sidebar-accent-foreground: var(--foreground);
   --sidebar-border: var(--border);
   --chart-1: light-dark(#e86a33, #f08a5d);

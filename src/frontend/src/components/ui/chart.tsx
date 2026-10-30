@@ -143,12 +143,22 @@ const ZAxis = RechartsPrimitive.ZAxis;
 const ResponsiveContainer = RechartsPrimitive.ResponsiveContainer;
 const ChartTooltip = RechartsPrimitive.Tooltip;
 
+/** The widest a bar draws; a few categories otherwise stretch into slabs. */
+export const BAR_MAX_PX = 24;
+
 function ChartBar({
   isAnimationActive = false,
+  maxBarSize = BAR_MAX_PX,
+  radius = [4, 4, 0, 0],
   ...props
 }: React.ComponentProps<typeof RechartsPrimitive.Bar>) {
   return (
-    <RechartsPrimitive.Bar isAnimationActive={isAnimationActive} {...props} />
+    <RechartsPrimitive.Bar
+      isAnimationActive={isAnimationActive}
+      maxBarSize={maxBarSize}
+      radius={radius}
+      {...props}
+    />
   );
 }
 

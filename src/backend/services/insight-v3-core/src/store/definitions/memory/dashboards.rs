@@ -212,6 +212,18 @@ impl DashboardCatalogue for MemoryDefinitions {
 
         Ok(DashboardPage { items, total })
     }
+
+    async fn visibility(
+        &self,
+        dashboard: &DefinitionId,
+    ) -> Result<Option<Visibility>, DefinitionStoreError> {
+        let stored = self.lock();
+        let known = stored
+            .definitions
+            .contains_key(&(DASHBOARDS, dashboard.as_str().to_owned()));
+
+        Ok(known.then(|| stored.visibility(dashboard.as_str())))
+    }
 }
 
 #[async_trait]

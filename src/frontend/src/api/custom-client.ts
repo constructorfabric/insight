@@ -211,6 +211,7 @@ export async function fetchDashboardRead(id: string): Promise<DashboardRead> {
     ownerPersonId: read.owner_person_id,
     ownerName: read.owner_name ?? null,
     access: read.access,
+    visibility: read.visibility ?? null,
     folders: read.folders ?? [],
     carries: read.carries ?? false,
   };

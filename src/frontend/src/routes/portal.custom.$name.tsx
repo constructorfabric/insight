@@ -1,9 +1,15 @@
 import { createFileRoute, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Table2 } from "lucide-react";
+import { Ellipsis, Table2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 import {
   CustomApiError,
@@ -12,6 +18,7 @@ import {
   type DashboardWidget,
   type RunOptions,
 } from "@/api/custom-client";
+import { DashboardByline } from "@/components/custom/dashboard-byline";
 import { DashboardFolders } from "@/components/custom/dashboard-folders";
 import { DashboardPageActions } from "@/components/custom/dashboard-page-actions";
 import { RangePicker } from "@/components/custom/range-picker";
@@ -36,12 +43,7 @@ import {
   dashboardWidgetsQuery,
 } from "@/queries/custom";
 import { useIsAdmin } from "@/queries/identity-me";
-import {
-  TEXT_BODY,
-  TEXT_HEADING,
-  TEXT_LABEL,
-  TEXT_TITLE,
-} from "@/lib/type-scale";
+import { TEXT_BODY, TEXT_HEADING, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/portal/custom/$name")({
@@ -124,28 +126,28 @@ function CustomDashboardBody({
   const dashboard = read.body;
   const items = dashboardItems(dashboard);
 
+  const picksRange = offered !== undefined && offered.length > 0 && range;
+
   return (
     <>
-      <header className="sticky -top-4 z-10 -mx-4 -mt-4 mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b bg-background px-4 pt-4 pb-3 md:-top-6 md:-mx-6 md:-mt-6 md:px-6 md:pt-6">
-        <div className="flex min-w-0 flex-col">
-          <h1 className={cn(TEXT_TITLE, "shrink-0")}>
+      {picksRange ? (
+        <div
+          role="toolbar"
+          aria-label="Period"
+          className="sticky -top-4 z-10 -mx-4 -mt-4 mb-4 flex min-h-[53px] items-center justify-end border-b bg-background px-4 py-2 md:-top-6 md:-mx-6 md:-mt-6 md:px-6"
+        >
+          <RangePicker
+            offered={offered}
+            selected={range}
+            onSelect={onSelectRange}
+          />
+        </div>
+      ) : null}
+      <header className="mb-6 flex flex-col gap-1.5">
+        <div className="flex items-start justify-between gap-3">
+          <h1 className={cn(TEXT_TITLE, "min-w-0 break-words")}>
             {dashboard.title || read.name}
           </h1>
-          {read.ownerName ? (
-            <span className={cn(TEXT_LABEL, "text-muted-foreground")}>
-              Owner: {read.ownerName}
-            </span>
-          ) : null}
-          <DashboardFolders id={id} folders={read.folders} />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {offered && offered.length > 0 && range ? (
-            <RangePicker
-              offered={offered}
-              selected={range}
-              onSelect={onSelectRange}
-            />
-          ) : null}
           <DashboardPageActions
             id={id}
             name={read.name}
@@ -155,6 +157,13 @@ function CustomDashboardBody({
             carries={read.carries}
           />
         </div>
+        <DashboardByline
+          owner={read.ownerName}
+          updatedAt={read.updatedAt}
+          visibility={read.visibility}
+          access={read.access}
+        />
+        <DashboardFolders id={id} folders={read.folders} />
       </header>
       {items.length === 0 ? (
         <ComingSoon
@@ -284,7 +293,6 @@ function DashboardWidgetSlot({
   }
 
   const heading = widget.body.title ?? name;
-  const label = `Show the data behind ${heading}`;
   const drawn = (
     <CustomWidget
       widget={widget.body}
@@ -308,36 +316,31 @@ function DashboardWidgetSlot({
           </Badge>
         ) : null}
         {isAdmin ? (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={label}
-            className="text-muted-foreground"
-            onClick={() => setDrilldown(true)}
-          >
-            <Table2 />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`More for ${heading}`}
+                  className="-my-1 text-muted-foreground"
+                  icon={<Ellipsis />}
+                />
+              }
+            />
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                disabled={isBusy(resultState.error)}
+                onClick={() => setDrilldown(true)}
+              >
+                <Table2 />
+                Show data
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         ) : null}
       </CardHeader>
-      {isAdmin && !isBusy(resultState.error) ? (
-        <CardContent
-          role="button"
-          tabIndex={0}
-          aria-label={label}
-          className="max-h-72 cursor-pointer overflow-auto"
-          onClick={() => setDrilldown(true)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              setDrilldown(true);
-            }
-          }}
-        >
-          {drawn}
-        </CardContent>
-      ) : (
-        <CardContent className="max-h-72 overflow-auto">{drawn}</CardContent>
-      )}
+      <CardContent className="max-h-72 overflow-auto">{drawn}</CardContent>
       {isAdmin ? (
         <WidgetDrilldown
           dashboard={dashboard}

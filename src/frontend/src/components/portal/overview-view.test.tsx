@@ -91,17 +91,17 @@ describe("<OverviewView>", () => {
     [
       "an IC: their glance and dashboards, no org rollup",
       { canSeeOthers: false, who: undefined, item: null },
-      ["Glance for me-1", "Recent dashboards"],
+      ["Recent dashboards", "Glance for me-1"],
     ],
     [
-      "a viewer with a cohort: their glance, dashboards, then the org rollup",
+      "a viewer with a cohort: the team's rollup alone",
       { canSeeOthers: true, who: undefined, item: null },
-      ["Glance for me-1", "Recent dashboards", "Lens Overview"],
+      ["Lens Overview"],
     ],
     [
       "a viewer with a cohort who picked Me: Home without the rollup",
       { canSeeOthers: true, who: "me", item: null },
-      ["Glance for me-1", "Recent dashboards"],
+      ["Recent dashboards", "Glance for me-1"],
     ],
     [
       "a viewer with a cohort who opens a theme: the team's",
@@ -131,7 +131,7 @@ describe("<OverviewView>", () => {
     [
       "an IC who opens the split of work between people: Home instead",
       { canSeeOthers: false, who: undefined, item: "contribution" },
-      ["Glance for me-1", "Recent dashboards"],
+      ["Recent dashboards", "Glance for me-1"],
     ],
   ] as const)("shows %s", (_case, { canSeeOthers, who, item }, expected) => {
     viewer.canSeeOthers = canSeeOthers;
@@ -161,12 +161,13 @@ describe("<OverviewView>", () => {
     );
   });
 
-  it("shows the viewer's own Home while their reach resolves", () => {
+  it("holds the viewer's own Home until their reach decides Me or My team", () => {
     viewer.reachPending = true;
 
     render(<OverviewView item={null} />);
 
-    expect(shownSections()).toEqual(["Glance for me-1", "Recent dashboards"]);
+    expect(shownSections()).toEqual([]);
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("holds a theme while the viewer's reach resolves", () => {

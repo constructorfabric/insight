@@ -1,9 +1,10 @@
-import { Bar, BarChart } from "recharts";
+import { BarChart } from "recharts";
 
 import type { MetricResult } from "@/api/custom-client";
 import { points, seriesConfig } from "@/components/custom/chart-data";
 import { unitFor } from "@/components/custom/chart-format";
 import { ChartFrame, SeriesAxes } from "@/components/custom/chart-frame";
+import { ChartBar } from "@/components/ui/chart";
 
 export interface CustomBarChartProps {
   result: MetricResult;
@@ -23,14 +24,7 @@ export function CustomBarChart({ result, x, y }: CustomBarChartProps) {
           categories={data.map((point) => point[x])}
           unit={unitFor(result.percents, y)}
         />
-        {/* Without a cap, one category stretches into a slab the width of the
-            card. */}
-        <Bar
-          dataKey={y}
-          fill={`var(--color-${y})`}
-          radius={[4, 4, 0, 0]}
-          maxBarSize={48}
-        />
+        <ChartBar dataKey={y} fill={`var(--color-${y})`} />
       </BarChart>
     </ChartFrame>
   );

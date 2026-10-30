@@ -143,17 +143,19 @@ describe("<DashboardPageActions>", () => {
     }
   );
 
-  it("offers pin, share, rename, duplicate, filing, tags and delete to the owner", async () => {
+  it("offers the owner duplicate, share, the planned exports, rename, pin, filing, tags and delete", async () => {
     await openMenu();
 
     await screen.findByRole("menuitem", { name: "Pin" });
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent)
     ).toEqual([
-      "Pin",
-      "Share…",
-      "Rename…",
       "Duplicate…",
+      "Share…",
+      "Export snapshot (PDF)Planned",
+      "Schedule report…Planned",
+      "Rename…",
+      "Pin",
       "Add to folder…",
       "Edit tags…",
       "Delete…",
@@ -167,10 +169,12 @@ describe("<DashboardPageActions>", () => {
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent)
     ).toEqual([
-      "Pin",
-      "Share…",
-      "Rename…",
       "Duplicate…",
+      "Share…",
+      "Export snapshot (PDF)Planned",
+      "Schedule report…Planned",
+      "Rename…",
+      "Pin",
       "Add to folder…",
       "Edit tags…",
     ]);

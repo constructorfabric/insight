@@ -57,6 +57,7 @@ function reading(read: Partial<DashboardRead> = {}) {
     tags: [],
     ownerPersonId: null,
     ownerName: null,
+    visibility: null,
     access: "owner",
     folders: [],
     carries: true,
@@ -160,15 +161,15 @@ describe("what the ··· menu offers by access", () => {
   it.each([
     [
       "owner",
-      ["Pin", "Rename…", "Duplicate…", "Add to folder…", "Edit tags…", "Delete…"],
+      ["Duplicate…", "Rename…", "Pin", "Add to folder…", "Edit tags…", "Delete…"],
     ],
     [
       "editor",
-      ["Pin", "Rename…", "Duplicate…", "Add to folder…", "Edit tags…"],
+      ["Duplicate…", "Rename…", "Pin", "Add to folder…", "Edit tags…"],
     ],
     [
       "ownerless",
-      ["Pin", "Rename…", "Duplicate…", "Add to folder…", "Edit tags…", "Delete…"],
+      ["Duplicate…", "Rename…", "Pin", "Add to folder…", "Edit tags…", "Delete…"],
     ],
     ["viewer", ["Pin", "Add to folder…"]],
   ] as const)("offers a caller with %s access %j", async (access, offered) => {

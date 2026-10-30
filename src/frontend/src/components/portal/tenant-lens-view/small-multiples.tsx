@@ -69,7 +69,6 @@ export function SmallMultiplesSection({
                     dataKey="value"
                     stroke="var(--chart-1)"
                     strokeWidth={1.5}
-                    dot={false}
                   />
                 </ComposedChart>
               </ChartContainer>

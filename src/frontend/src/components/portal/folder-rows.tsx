@@ -4,7 +4,6 @@ import {
   Ellipsis,
   Folder,
   FolderX,
-  Inbox,
   Pencil,
   Plus,
   Share2,
@@ -51,6 +50,9 @@ import {
 
 const LIST_PATH = /^\/portal\/custom\/?$/;
 
+/** Folder counts keep clear of the row's `···`, so the count reads before it. */
+const FOLDER_COUNT = "end-8";
+
 export function FoldersGroup() {
   const { data } = useQuery(foldersQuery());
   const { isAdmin } = useIsAdmin();
@@ -88,7 +90,7 @@ export function FoldersGroup() {
               <SidebarMenuItem key={folder.id}>
                 <SidebarMenuButton
                   isActive={isShown(folder.id)}
-                  className="group-has-data-[sidebar=menu-action]/menu-item:pe-14"
+                  className="pe-16"
                   render={
                     <Link
                       to="/portal/custom"
@@ -99,7 +101,9 @@ export function FoldersGroup() {
                   <Folder />
                   <span>{folder.name}</span>
                 </SidebarMenuButton>
-                <CountBadge>{folder.dashboards}</CountBadge>
+                <CountBadge className={FOLDER_COUNT}>
+                  {folder.dashboards}
+                </CountBadge>
                 <FolderMenu
                   name={folder.name}
                   allows={folderAllows(folder.access, isAdmin)}
@@ -125,17 +129,14 @@ export function FoldersGroup() {
                   />
                 }
               >
-                <Inbox />
+                <Folder />
                 <span>Unfiled</span>
               </SidebarMenuButton>
-              <CountBadge>{data.unfiled}</CountBadge>
+              <CountBadge className={FOLDER_COUNT}>{data.unfiled}</CountBadge>
             </SidebarMenuItem>
           ) : null}
           <SidebarMenuItem>
-            <SidebarMenuButton
-              className="text-muted-foreground"
-              onClick={() => setCreating(true)}
-            >
+            <SidebarMenuButton onClick={() => setCreating(true)}>
               <Plus />
               <span>New folder</span>
             </SidebarMenuButton>
@@ -225,11 +226,7 @@ function FolderMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <SidebarMenuAction
-            showOnHover
-            className="end-7"
-            aria-label={`More for ${name}`}
-          />
+          <SidebarMenuAction showOnHover aria-label={`More for ${name}`} />
         }
       >
         <Ellipsis />

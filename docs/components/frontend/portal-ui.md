@@ -54,14 +54,23 @@ Presets are the server's tokens; portal and services resolve them identically.
 
 ## Home
 
-In order:
+A manager, and anyone in a flat organisation, switches between **Me** and **My team** (**Organisation** when flat); My team is the default. Everyone else reads Me. Home holds its content until it is known which applies.
+
+Me, in order:
 
 1. **Starter dashboards for your sources** (planned): one card for each connected source. Question it answers; chip per source read, with connection state (connected / partial / missing). Actions: Open; Save as dashboard (administrators).
-2. **My dashboards · recent**: three most recently changed dashboards the viewer owns; New dashboard button (administrators). Cards as in the Dashboards list.
-3. **Per person**: six tiles: commits, pull requests merged, tasks closed, messages sent, AI cost, AI extra usage cost. Each: change vs previous period of the same length (none for All time); "team total · N per active person".
-4. **Needs attention**: collapsible rows, one per metric, with people count.
+2. **Recent dashboards**: three most recently changed dashboards the viewer can open; left out when there are none. New dashboard button (those who may create). Cards as in the Dashboards list.
+3. **At a glance**: the viewer's own tiles, each with change vs previous period and the team median.
+4. **Needs attention**: the viewer's own flagged metrics.
 
-Pane: At a glance, By direction, Trend, Attention needed, Data coverage, Contribution breakdown; Dashboards group: My dashboards, Starter dashboards, with counts.
+My team, in order:
+
+1. **Per person**: six tiles: commits, pull requests merged, tasks closed, messages sent, AI cost, AI extra usage cost. Each: change vs previous period of the same length (none for All time); "team total · N per active person".
+2. **AI adoption**: people using AI, as a share of the team.
+3. **Needs attention**: collapsible rows, one per metric, with people count.
+4. **By direction**: one card per direction.
+
+Each theme in the pane reads the same subject as the switch. Pane: At a glance, By direction, Trend, Attention needed, Data coverage, Contribution breakdown (My team only); Dashboards group: My dashboards with count, Starter dashboards (planned).
 
 ## Dashboards
 
@@ -84,12 +93,12 @@ Open to every signed-in person; each sees only what the services return for them
 
 ### Open dashboard
 
-- Toolbar: the period control, bound to the dashboard period.
+- Toolbar above the dashboard: the dashboard's period picker, bound to the dashboard period.
 - Title row: title; filled Edit button (may edit); `···` menu.
-- Under it: owner and visibility as on the card; chip per source with connection state; "Updated N ago".
+- Under it: owner, last change and visibility, as on the card. Chip per source with connection state: planned.
 - Widgets in stored order.
-- Menu: Pin, Star (planned), Rename, Duplicate, Share, Move to folder, Tags, Delete (red, trash icon). Export snapshot, Schedule report: planned, shown to everyone. Other items only when permitted.
-- Widget: title; subtitle (aggregation · grain · unit, where present); figure or chart. Headline figure shows change vs previous period. Administrators: a way to see the rows behind it. Failed widget: members see a generic failure, no cause.
+- Menu: Duplicate, Share, Export snapshot and Schedule report (planned, shown to everyone), Rename, Pin, Add to folder, Edit tags, Delete (red, trash icon). Star: planned. Other items only when permitted.
+- Widget: title; figure or chart; `···` menu with Show data, the rows behind it (administrators). Subtitle (aggregation · grain · unit) and a headline figure's change vs previous period: planned. Failed widget: members see a generic failure, no cause.
 
 ### Create
 
@@ -182,6 +191,7 @@ Every page and every independently loaded section distinguishes:
 - Delete: confirmation stating the consequence (folder: what happens to its dashboards). Same for anything widening who sees a dashboard (a grant; moving into a shared folder). Delete drawn destructive.
 - View-as: every screen says whose view it is, with a way back. Demonstration data: marked.
 - Light and dark themes; colour carries the same meaning in both.
+- Charts: lines and areas join readings with straight segments. A line marks every reading up to 31 points and none beyond, where hover gives the value. A reading with no neighbours always gets a dot, since it draws no line.
 - Keyboard: every action reachable, visible focus; every control has an accessible name; loading, refusals, errors announced.
 
 ## Not yet

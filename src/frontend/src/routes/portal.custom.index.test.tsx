@@ -21,7 +21,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import * as customClient from "@/api/custom-client";
 import type { DashboardAccess, DashboardListed } from "@/api/custom-client";
@@ -61,6 +61,7 @@ const READ = {
   name: "delivery",
   ownerPersonId: null,
   ownerName: null,
+  visibility: null,
   access: "ownerless" as const,
   folders: [],
   carries: true,
@@ -440,24 +441,40 @@ describe("/portal/custom cards with tags", () => {
     ).not.toHaveTextContent("Ops");
   });
 
-  it("shows three tags and counts the rest", async () => {
+  it("shows every tag the row has room for", async () => {
     carrying(["Hiring", "Ops", "Platform", "Quality", "Release"]);
 
     render(<Component />, { wrapper });
 
-    expect((await chips()).slice(0, 3)).toEqual(["Hiring", "Ops", "Platform"]);
-    expect(screen.getByText("+2").parentElement).toHaveAttribute(
-      "title",
-      "Quality, Release"
-    );
+    expect(await chips()).toEqual(["Hiring", "Ops", "Platform", "Quality", "Release"]);
   });
 
-  it("reads out the tags hidden behind the count", async () => {
+  it("counts the tags a narrow row has no room for and reads them out", async () => {
+    const CHIP_WIDTH = 60;
+    const ROW_WIDTH = 150;
+    const offset = vi
+      .spyOn(HTMLElement.prototype, "offsetWidth", "get")
+      .mockReturnValue(CHIP_WIDTH);
+    const client = vi
+      .spyOn(HTMLElement.prototype, "clientWidth", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.tagName === "UL" ? ROW_WIDTH : 0;
+      });
+    onTestFinished(() => {
+      offset.mockRestore();
+      client.mockRestore();
+    });
     carrying(["Hiring", "Ops", "Platform", "Quality", "Release"]);
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText("2 more: Quality, Release")).toBeInTheDocument();
+    expect(
+      await screen.findByText("4 more: Ops, Platform, Quality, Release")
+    ).toBeInTheDocument();
+    expect(screen.getByText("+4").parentElement).toHaveAttribute(
+      "title",
+      "Ops, Platform, Quality, Release"
+    );
   });
 
   it("shows no tag row on a card without tags", async () => {
