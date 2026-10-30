@@ -46,7 +46,7 @@ export function DashboardCard({ dashboard }: { dashboard: DashboardListed }) {
   return (
     <Card size="sm" className="h-full">
       <CardContent className="flex flex-1 gap-3">
-        <div className="flex min-w-0 flex-1 flex-col justify-between gap-2">
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
           <Link
             to="/portal/custom/$name"
             params={{ name: id }}
@@ -62,9 +62,11 @@ export function DashboardCard({ dashboard }: { dashboard: DashboardListed }) {
           </Link>
           <div className="flex flex-col gap-2">
             <CardMeta dashboard={dashboard} />
-            <div className="h-5 ps-7">
-              <DashboardTags tags={tags} />
-            </div>
+            {tags.length > 0 ? (
+              <div className="h-5 ps-7">
+                <DashboardTags tags={tags} />
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="-my-1 flex shrink-0 flex-col items-center justify-between gap-1">
@@ -100,10 +102,10 @@ function CardMeta({ dashboard }: { dashboard: DashboardListed }) {
     <div
       className={cn(
         TEXT_LABEL,
-        "flex h-5 min-w-0 items-center gap-1.5 ps-7 font-normal"
+        "flex min-h-5 min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 ps-7 font-normal"
       )}
     >
-      {owner ? <span className="truncate">{owner}</span> : null}
+      {owner ? <span className="max-w-full truncate">{owner}</span> : null}
       {changed ? (
         <time
           dateTime={updated_at}
