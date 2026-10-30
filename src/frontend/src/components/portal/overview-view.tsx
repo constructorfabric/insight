@@ -41,7 +41,7 @@ export function OverviewView({ item }: { item: string | null }) {
     return (
       <div className="@container flex flex-col gap-6 p-4 md:p-6">
         <h1 className={TEXT_TITLE}>Home</h1>
-        <OwnGlance />
+        {subject === "me" && !isPending ? <OwnGlance /> : null}
         <HomeDashboards />
         {subject === "team" && rollup ? (
           <DomainLensView config={rollup} gridKeys={gridKeys} embedded />
