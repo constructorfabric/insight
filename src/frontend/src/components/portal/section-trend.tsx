@@ -228,7 +228,7 @@ export function SectionTrend({
                   yAxisId={yAxisId}
                   dataKey={s.key}
                   name={s.label}
-                  type={s.type === "step" ? "stepAfter" : "linear"}
+                  type={s.type === "step" ? "stepAfter" : "monotone"}
                   stroke={color}
                   strokeWidth={2}
                 />
