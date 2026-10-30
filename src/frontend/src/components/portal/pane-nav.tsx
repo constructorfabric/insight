@@ -26,9 +26,20 @@ const BADGE_TONE: Record<string, string> = {
   error: "bg-destructive/15 text-destructive",
 };
 
-export function CountBadge({ children }: { children: ReactNode }) {
+export function CountBadge({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <SidebarMenuBadge className="rounded-full bg-muted px-1.5 font-normal text-muted-foreground">
+    <SidebarMenuBadge
+      className={cn(
+        "rounded-full bg-muted px-1.5 font-normal text-muted-foreground",
+        className
+      )}
+    >
       {children}
     </SidebarMenuBadge>
   );
