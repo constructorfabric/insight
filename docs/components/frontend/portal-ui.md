@@ -93,12 +93,12 @@ Open to every signed-in person; each sees only what the services return for them
 
 ### Open dashboard
 
-- Toolbar: the period control, bound to the dashboard period.
+- Toolbar above the dashboard: the dashboard's period picker, bound to the dashboard period.
 - Title row: title; filled Edit button (may edit); `···` menu.
-- Under it: owner and visibility as on the card; chip per source with connection state; "Updated N ago".
+- Under it: owner, last change and visibility, as on the card. Chip per source with connection state: planned.
 - Widgets in stored order.
-- Menu: Pin, Star (planned), Rename, Duplicate, Share, Move to folder, Tags, Delete (red, trash icon). Export snapshot, Schedule report: planned, shown to everyone. Other items only when permitted.
-- Widget: title; subtitle (aggregation · grain · unit, where present); figure or chart. Headline figure shows change vs previous period. Administrators: a way to see the rows behind it. Failed widget: members see a generic failure, no cause.
+- Menu: Duplicate, Share, Export snapshot and Schedule report (planned, shown to everyone), Rename, Pin, Add to folder, Edit tags, Delete (red, trash icon). Star: planned. Other items only when permitted.
+- Widget: title; figure or chart; `···` menu with Show data, the rows behind it (administrators). Subtitle (aggregation · grain · unit) and a headline figure's change vs previous period: planned. Failed widget: members see a generic failure, no cause.
 
 ### Create
 
