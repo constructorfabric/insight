@@ -14,8 +14,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from conftest import LINKS_SELECTOR, Build, Scenario, case, phased
+from conftest import LINKS_SELECTOR, Scenario, case
 from helpers import census_entry, event, field, issue, item, project_visibility
+from phased import Build, phased
 
 SELECTOR = LINKS_SELECTOR
 

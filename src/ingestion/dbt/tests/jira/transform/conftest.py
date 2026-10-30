@@ -24,13 +24,10 @@ warehouse. See README.md for the two commands that set it up.
 from __future__ import annotations
 
 import functools
-import inspect
 import json
 import os
 import sys
 import tempfile
-from collections.abc import Callable, Generator
-from copy import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,6 +37,7 @@ import pytest
 import yaml
 from dbt.cli.main import dbtRunner
 from helpers import SOURCE_ID
+from phased import run_phased
 
 # tests/jira/transform -> tests/jira -> tests -> dbt
 DBT_DIR = Path(__file__).resolve().parents[3]
@@ -507,75 +505,6 @@ class Batch:
         self.generation = self.warehouse.generation
 
 
-@dataclass(frozen=True)
-class Build:
-    selector: str = FIELD_HISTORY_SELECTOR
-    full_refresh: bool = True
-    dbt_vars: dict[str, Any] | None = None
-
-
-def phased(test: Callable[..., Generator[Build, None, None]]) -> Callable[..., None]:
-    """Each yield Build(...) replaces a scenario.build(...) and is shared with the module's other phased tests."""
-
-    @functools.wraps(test)
-    def run(request: pytest.FixtureRequest, _phased: dict[str, BaseException | None], **params: object) -> None:
-        error = _phased[request.node.nodeid]
-        if error is not None:
-            raise error
-
-    signature = inspect.signature(test)
-    parameters = [parameter for name, parameter in signature.parameters.items() if name != "scenario"]
-    parameters.extend(inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY) for name in ("request", "_phased"))
-    run.__signature__ = signature.replace(parameters=parameters, return_annotation=None)
-    run.phased = test
-    return run
-
-
-@dataclass(frozen=True)
-class PhasedItem:
-    nodeid: str
-    source: str
-    generator: Generator[Build, None, None]
-
-
-def _advance(
-    item: PhasedItem, outcomes: dict[str, BaseException | None], error: BaseException | None = None
-) -> Build | None:
-    try:
-        if error is None:
-            build = next(item.generator)
-        else:
-            failure = copy(error)
-            if isinstance(failure, pytest.fail.Exception):
-                failure.pytrace = True
-            build = item.generator.throw(failure)
-
-        if not isinstance(build, Build):
-            raise TypeError(f"{item.nodeid} yielded {build!r}; expected Build")
-        return build
-    except StopIteration:
-        outcomes[item.nodeid] = None
-    except BaseException as failure:
-        if isinstance(failure, (KeyboardInterrupt, SystemExit, pytest.exit.Exception)):
-            raise
-        outcomes[item.nodeid] = failure
-    return None
-
-
-def _shared_build(warehouse: Warehouse, pending: dict[str, Build]) -> BaseException | None:
-    build = next(iter(pending.values()))
-    if any(other != build for other in pending.values()):
-        descriptions = "\n".join(f"{nodeid}: {spec!r}" for nodeid, spec in pending.items())
-        return RuntimeError(f"Phased tests requested disagreeing Builds:\n{descriptions}")
-    try:
-        warehouse.build(build.selector, full_refresh=build.full_refresh, dbt_vars=build.dbt_vars)
-    except BaseException as error:
-        if isinstance(error, (KeyboardInterrupt, SystemExit, pytest.exit.Exception)):
-            raise
-        return error
-    return None
-
-
 @pytest.fixture(scope="module")
 def _phased(warehouse: Warehouse, request: pytest.FixtureRequest) -> dict[str, BaseException | None]:
     items = [
@@ -583,30 +512,13 @@ def _phased(warehouse: Warehouse, request: pytest.FixtureRequest) -> dict[str, B
         for item in request.session.items
         if isinstance(item, pytest.Function) and item.module is request.module and hasattr(item.obj, "phased")
     ]
-    outcomes: dict[str, BaseException | None] = {}
-    generators: list[PhasedItem] = []
     _truncate_bronze(warehouse)
     try:
-        for index, item in enumerate(items):
-            source = f"{SOURCE_ID}-phased-{index}"
-            params = item.callspec.params if hasattr(item, "callspec") else {}
-            generator = item.obj.phased(scenario=Scenario(warehouse, source=source), **params)
-            generators.append(PhasedItem(item.nodeid, source, generator))
-
-        pending = {item.nodeid: build for item in generators if (build := _advance(item, outcomes)) is not None}
-        while pending:
-            error = _shared_build(warehouse, pending)
-            waiting = [item for item in generators if item.nodeid in pending]
-            pending = {}
-            for item in waiting:
-                build = _advance(item, outcomes, error)
-                if build is not None:
-                    pending[item.nodeid] = build
+        return run_phased(
+            items, lambda index: Scenario(warehouse, source=f"{SOURCE_ID}-phased-{index}"), warehouse.build
+        )
     finally:
         warehouse.generation += 1
-        for item in generators:
-            item.generator.close()
-    return outcomes
 
 
 @pytest.fixture(scope="module")
