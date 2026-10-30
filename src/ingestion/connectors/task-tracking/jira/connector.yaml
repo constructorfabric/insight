@@ -3090,14 +3090,14 @@ streams:
           - source_id
         additionalProperties: true
 
-  # Id-only sweep of ALL issues in every visible live project. Jira Cloud
-  # serves large pages when only `id` is requested (maxResults up to 5000),
-  # so the census costs ceil(issues/5000) requests per
+  # Key-only sweep of ALL issues in every visible live project. Jira Cloud
+  # serves its largest pages when only `id` or `key` is requested (maxResults
+  # up to 5000), so the census costs ceil(issues/5000) requests per
   # project. Keyed by numeric issue id, never by key: moving an issue between
   # projects changes its key but not its id — a key-based census would report
-  # every moved issue as deleted. Each issue's current key comes back in the
-  # same response and is kept as `id_readable`, so a key resolves to its id
-  # whatever the sync window.
+  # every moved issue as deleted. The id comes with every issue; the key only
+  # when requested (`fields=id` returns ids alone), and is kept as
+  # `id_readable`, so a key resolves to its id whatever the sync window.
   - type: DeclarativeStream
     name: jira_issue_census
     primary_key:
@@ -3135,7 +3135,7 @@ streams:
         request_parameters:
           jql: >-
             project = "{{ stream_partition.project_key }}" ORDER BY created ASC
-          fields: id
+          fields: key
         url: "{{ config['jira_instance_url'] }}/rest/api/3/search/jql"
       partition_router:
         type: SubstreamPartitionRouter

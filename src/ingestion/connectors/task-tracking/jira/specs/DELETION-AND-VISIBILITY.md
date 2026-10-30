@@ -81,12 +81,13 @@ status.
 
 ### `jira_issue_census`
 
-Id-only sweep of **all** issues in every visible live project.
+Key-only sweep of **all** issues in every visible live project.
 
-- Endpoint: `GET /rest/api/3/search/jql` with `fields=id` and
-  `maxResults=5000`. Jira Cloud serves multi-thousand-id pages for id-only
-  queries, so a census of even hundreds of thousands of issues is a few
-  hundred requests.
+- Endpoint: `GET /rest/api/3/search/jql` with `fields=key` and
+  `maxResults=5000`. Jira Cloud serves its largest pages when only `id` or
+  `key` is requested; `fields=id` returns ids alone, so the census asks for
+  `key` and gets both. A census of even hundreds of thousands of issues is a
+  few hundred requests.
 - Partitioned per project (Jira Cloud rejects unbounded JQL) via a dedicated
   inline parent (`jira_census_projects`) that lists live projects with **no
   incremental gate** — unlike `jira_project_discovery`, which skips idle
@@ -256,7 +257,7 @@ availability data supports either choice.
 
 ## Operational constraints
 
-- The census adds one id-only scan of every live project per sync. Requests
+- The census adds one key-only scan of every live project per sync. Requests
   scale with `ceil(issues / 5000)` per project plus one project-roster page
   per ~50 projects per status.
 - A failed sync does not corrupt classification: dbt runs only after a
