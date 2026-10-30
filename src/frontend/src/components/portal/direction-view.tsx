@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { DomainLensView, Pending } from "@/components/portal/domain-lens-view";
 import { TenantLensView } from "@/components/portal/tenant-lens-view";
 import { directionMetricKeys, lensEntry } from "@/lib/portal/lens-configs";
-import { DIRECTIONS } from "@/lib/portal/nav-model";
+import { DIRECTIONS, lensSlug } from "@/lib/portal/nav-model";
 
 /**
  * Directions content — every direction/lens resolves through the lens-config
@@ -27,8 +27,11 @@ export function DirectionView({ dir, lens }: { dir: string; lens: string }) {
     );
   }
   if ("comingSoon" in entry) return <Pending label={entry.comingSoon} />;
+
+  const pageTestId = `page-directions-${dir}-${lensSlug(lens)}`;
+
   // Org-grain lens: its metrics ride a tenant-entity request of its own, so it
   // renders outside the person grid entirely.
-  if ("entity" in entry) return <TenantLensView config={entry} />;
-  return <DomainLensView config={entry} gridKeys={gridKeys} />;
+  if ("entity" in entry) return <TenantLensView config={entry} pageTestId={pageTestId} />;
+  return <DomainLensView config={entry} gridKeys={gridKeys} pageTestId={pageTestId} />;
 }

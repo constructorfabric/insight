@@ -53,7 +53,10 @@ export function EditorPage({
     void navigate({ to: PAGE[kind], params: { name: made } });
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">
+    <div
+      data-testid={`page-custom-${id === undefined ? "new" : "edit"}-${noun}`}
+      className="flex flex-col gap-4 p-4 md:p-6"
+    >
       <div className="flex flex-col gap-1">
         <h1 className={TEXT_TITLE}>
           {id === undefined ? `New ${noun}` : (stored.data?.name ?? id)}

@@ -52,7 +52,7 @@ import { tenantData } from "./data";
  * collection 0 (with the previous-period twin the tiles need), the overflow
  * collections, and a first-/second-half pair for the slope/momentum sections.
  */
-export function TenantLensView({ config }: { config: TenantLensConfig }) {
+export function TenantLensView({ config, pageTestId }: { config: TenantLensConfig; pageTestId?: string }) {
   const { period, dateRange } = usePortalPeriod();
   // One entity → the projected-row budget is all headroom; the picker still
   // guards a pathological custom range, and month always fits.
@@ -113,7 +113,7 @@ export function TenantLensView({ config }: { config: TenantLensConfig }) {
 
   if (main.isPending || collectionSetPending(extras) || halves.isPending) {
     return (
-      <div className="flex flex-col gap-6 p-6">
+      <div data-testid={pageTestId} className="flex flex-col gap-6 p-6">
         <Skeleton className="h-8 w-64" />
         <div className="grid grid-cols-[repeat(auto-fit,minmax(14rem,1fr))] gap-3">
           <Skeleton className="h-28" />
@@ -129,7 +129,7 @@ export function TenantLensView({ config }: { config: TenantLensConfig }) {
   );
   if (failed.length > 0) {
     return (
-      <div className="mx-auto w-full max-w-md p-8">
+      <div data-testid={pageTestId} className="mx-auto w-full max-w-md p-8">
         <ComingSoon
           variant="card"
           state="error"
@@ -164,7 +164,7 @@ export function TenantLensView({ config }: { config: TenantLensConfig }) {
   if (!observed) return <Pending label={config.notIngested} />;
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div data-testid={pageTestId} className="flex flex-col gap-6 p-6">
       <header>
         <h2 className="text-lg font-semibold">{config.title}</h2>
         {config.tagline ? (

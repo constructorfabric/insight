@@ -80,6 +80,7 @@ const CLOSED_DRILLDOWN_DATA = {
 
 /** The person and catalogue slice a metric-groups screen renders. */
 export interface MetricGroupsViewProps {
+  pageTestId?: string;
   /** Person id the lens is scoped to (org-level rollup is a backend follow-up). */
   personId: string;
   /** Which metric-family groups to render; empty ⇒ nothing available yet. */
@@ -108,6 +109,7 @@ export type MetricGroupsContent = "glance" | "attention" | "none";
  * collection queries, parameterised by the set of groups to show.
  */
 export function MetricGroupsView({
+  pageTestId,
   personId,
   groupIds,
   content = "none",
@@ -225,7 +227,7 @@ export function MetricGroupsView({
     collectionSetPending(groupData) ||
     cohortPending;
   if (isLoading) {
-    return <CenteredSpinner className={embedded ? "min-h-40" : "min-h-[60vh]"} />;
+    return <CenteredSpinner data-testid={pageTestId} className={embedded ? "min-h-40" : "min-h-[60vh]"} />;
   }
 
   // Surface a backend failure as a retryable error, not empty section cards.
@@ -237,7 +239,7 @@ export function MetricGroupsView({
         [...cohortGroup.values()].some((r) => r.isError)));
   if (isError)
     return (
-      <div className="mx-auto w-full max-w-md p-8">
+      <div data-testid={pageTestId} className="mx-auto w-full max-w-md p-8">
         <ComingSoon
           variant="card"
           state="error"
@@ -307,6 +309,7 @@ export function MetricGroupsView({
   return (
     <>
       <Shell
+        data-testid={pageTestId}
         className={cn(
           "flex flex-1 flex-col gap-8",
           !embedded && "p-4 md:p-6"

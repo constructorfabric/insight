@@ -8,6 +8,7 @@ import { ComingSoon } from "@/components/widgets/coming-soon";
 
 /** What the gate needs to decide between loading, empty, failed, and ready. */
 export interface OrgScopeGateArgs {
+  pageTestId?: string;
   /** Viewer identity query — `isLoading` (not `isPending`), so a disabled query
    * (viewer email still unresolved) doesn't spin forever. */
   viewerLoading: boolean;
@@ -36,25 +37,27 @@ export interface OrgScopeGateArgs {
  */
 export function orgScopeGate(a: OrgScopeGateArgs): ReactNode | null {
   if (a.viewerLoading || a.membersLoading)
-    return <CenteredSpinner className="min-h-[60vh]" />;
-  if (a.viewerError || a.membersError) return <GateCard error onRetry={a.onRetry} />;
-  if (a.memberCount === 0) return <GateCard label={a.emptyLabel} />;
-  if (a.gridPending) return <CenteredSpinner className="min-h-[60vh]" />;
-  if (a.gridError) return <GateCard error onRetry={a.onRetry} />;
+    return <CenteredSpinner data-testid={a.pageTestId} className="min-h-[60vh]" />;
+  if (a.viewerError || a.membersError) return <GateCard pageTestId={a.pageTestId} error onRetry={a.onRetry} />;
+  if (a.memberCount === 0) return <GateCard pageTestId={a.pageTestId} label={a.emptyLabel} />;
+  if (a.gridPending) return <CenteredSpinner data-testid={a.pageTestId} className="min-h-[60vh]" />;
+  if (a.gridError) return <GateCard pageTestId={a.pageTestId} error onRetry={a.onRetry} />;
   return null;
 }
 
 function GateCard({
+  pageTestId,
   error,
   label,
   onRetry,
 }: {
+  pageTestId?: string;
   error?: boolean;
   label?: string;
   onRetry?: () => void;
 }) {
   return (
-    <div className="mx-auto w-full max-w-md p-8">
+    <div data-testid={pageTestId} className="mx-auto w-full max-w-md p-8">
       <ComingSoon
         variant="card"
         state={error ? "error" : "empty"}

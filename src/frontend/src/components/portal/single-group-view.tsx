@@ -43,7 +43,9 @@ const CLOSED_ENTITY = { type: "person" as const, ids: [] };
 export function SingleGroupView({
   personId,
   groupId,
+  pageTestId,
 }: {
+  pageTestId?: string;
   personId: string;
   groupId: GroupId;
 }) {
@@ -123,12 +125,12 @@ export function SingleGroupView({
   // empty section cannot say which of the two emptinesses it is, and guessing
   // while they load would show one sentence and then swap it for the other.
   if (data.isPending || definitions.isPending)
-    return <CenteredSpinner className="min-h-[60vh]" />;
+    return <CenteredSpinner data-testid={pageTestId} className="min-h-[60vh]" />;
   // A failed fetch must surface as a retryable error, not a drilldown
   // rendered over an empty dataset (same policy as MetricGroupsView).
   if (data.isError) {
     return (
-      <div className="mx-auto w-full max-w-md p-8">
+      <div data-testid={pageTestId} className="mx-auto w-full max-w-md p-8">
         <ComingSoon variant="card" state="error" onRetry={() => data.refetch()} />
       </div>
     );
@@ -160,7 +162,7 @@ export function SingleGroupView({
   );
   if (state !== "reads") {
     return (
-      <div className="flex flex-col gap-3 p-4 md:p-6">
+      <div data-testid={pageTestId} className="flex flex-col gap-3 p-4 md:p-6">
         <h1 className={TEXT_TITLE}>{def.title}</h1>
         <p className="text-sm text-muted-foreground">
           {definitions.isError
@@ -182,7 +184,7 @@ export function SingleGroupView({
   );
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">
+    <div data-testid={pageTestId} className="flex flex-col gap-4 p-4 md:p-6">
       <h1 className={TEXT_TITLE}>{def.title}</h1>
       {sources.length > 0 ? (
         // What was being watched, next to what it concluded. A low number

@@ -45,7 +45,10 @@ export function PreviewsBody() {
     );
   }
   return (
-    <main className="flex flex-1 flex-col gap-6 p-4 md:p-6">
+    <main
+      data-testid="page-manage-previews"
+      className="flex flex-1 flex-col gap-6 p-4 md:p-6"
+    >
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 pb-12">
         <section>
           <h2 className="text-lg font-semibold tracking-tight">

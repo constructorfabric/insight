@@ -31,6 +31,7 @@ function MetricsCatalogue() {
 
   return (
     <DefinitionList
+      pageTestId="page-custom-metrics"
       title="Metrics"
       blurb={
         assistant

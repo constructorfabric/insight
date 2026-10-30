@@ -120,7 +120,7 @@ function StandKeyCard() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
+    <div data-testid="page-manage-ai-assistant" className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <header className="flex items-center gap-2">
         <Sparkles className="size-4" aria-hidden />
         <h2 className={TEXT_TITLE}>AI assistant</h2>

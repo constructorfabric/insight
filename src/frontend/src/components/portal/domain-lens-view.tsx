@@ -151,7 +151,9 @@ export function DomainLensView({
   gridKeys: gridKeysProp,
   embedded = false,
   personId = null,
+  pageTestId,
 }: {
+  pageTestId?: string;
   config: LensConfig;
   embedded?: boolean;
   /**
@@ -502,6 +504,7 @@ export function DomainLensView({
   );
 
   const gate = orgScopeGate({
+    pageTestId,
     viewerLoading: !personId && orgScope.isLoading,
     viewerError: !personId && orgScope.isError,
     membersLoading: false,
@@ -612,7 +615,7 @@ export function DomainLensView({
   };
 
   return (
-    <div className={cn("flex flex-col gap-6", embedded ? "home-metrics" : "p-4 md:p-6")}>
+    <div data-testid={pageTestId} className={cn("flex flex-col gap-6", embedded ? "home-metrics" : "p-4 md:p-6")}>
       {scoped ? (
         <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm">
           <button

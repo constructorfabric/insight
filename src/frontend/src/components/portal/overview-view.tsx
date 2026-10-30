@@ -31,7 +31,14 @@ export function OverviewView({ item }: { item: string | null }) {
   // A manager's item would otherwise open on their own view, then switch to
   // the team's once their reach is known.
   if (isPending && asked !== DEFAULT_OVERVIEW_ITEM) {
-    return <CenteredSpinner className="min-h-[60vh]" />;
+    return (
+      <CenteredSpinner
+        data-testid={
+          OVERVIEW_ITEMS[asked] ? `page-overview-${asked}` : undefined
+        }
+        className="min-h-[60vh]"
+      />
+    );
   }
   const shown = homeItemShown(subject, asked) ? asked : DEFAULT_OVERVIEW_ITEM;
 
@@ -39,7 +46,10 @@ export function OverviewView({ item }: { item: string | null }) {
     const rollup = OVERVIEW_ITEMS[DEFAULT_OVERVIEW_ITEM];
 
     return (
-      <div className="@container flex flex-col gap-6 p-4 md:p-6">
+      <div
+        data-testid="page-overview-at-a-glance"
+        className="@container flex flex-col gap-6 p-4 md:p-6"
+      >
         <h1 className={TEXT_TITLE}>Home</h1>
         <OwnGlance />
         <HomeDashboards />
@@ -55,7 +65,13 @@ export function OverviewView({ item }: { item: string | null }) {
   if (!entry) {
     return <Pending label={`“${item}” isn't an Overview view yet.`} />;
   }
-  return <DomainLensView config={entry} gridKeys={gridKeys} />;
+  return (
+    <DomainLensView
+      config={entry}
+      gridKeys={gridKeys}
+      pageTestId={`page-overview-${shown}`}
+    />
+  );
 }
 
 function OwnItem({ item }: { item: string }) {
@@ -73,10 +89,16 @@ function OwnItem({ item }: { item: string }) {
 
   switch (own.kind) {
     case "lens":
-      return <DomainLensView config={own.config} personId={personId} />;
+      return (
+        <DomainLensView
+          config={own.config}
+          personId={personId}
+          pageTestId={`page-overview-${item}`}
+        />
+      );
     case "attention":
       return (
-        <OwnThemePage title={own.title} tagline={own.tagline}>
+        <OwnThemePage item={item} title={own.title} tagline={own.tagline}>
           <MetricGroupsView
             personId={personId}
             groupIds={groupIds}
@@ -88,7 +110,7 @@ function OwnItem({ item }: { item: string }) {
       );
     case "coverage":
       return (
-        <OwnThemePage title={own.title} tagline={own.tagline}>
+        <OwnThemePage item={item} title={own.title} tagline={own.tagline}>
           <OwnCoverage personId={personId} onOpenSection={openSection} />
         </OwnThemePage>
       );
@@ -96,16 +118,21 @@ function OwnItem({ item }: { item: string }) {
 }
 
 function OwnThemePage({
+  item,
   title,
   tagline,
   children,
 }: {
+  item: string;
   title: string;
   tagline: string;
   children: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-6 p-4 md:p-6">
+    <div
+      data-testid={`page-overview-${item}`}
+      className="flex flex-col gap-6 p-4 md:p-6"
+    >
       <div>
         <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
         <p className="text-sm text-muted-foreground">{tagline}</p>

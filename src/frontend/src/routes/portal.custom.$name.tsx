@@ -99,7 +99,13 @@ function CustomDashboardBody({
   offered: string[] | undefined;
   onSelectRange: (token: string) => void;
 }) {
-  if (isLoading) return <CenteredSpinner className="min-h-40" />;
+  if (isLoading)
+    return (
+      <CenteredSpinner
+        data-testid="page-custom-dashboard"
+        className="min-h-40"
+      />
+    );
   if (isError) {
     if (error instanceof CustomApiError && error.status === 404) {
       return (
@@ -126,7 +132,10 @@ function CustomDashboardBody({
 
   return (
     <>
-      <header className="sticky -top-4 z-10 -mx-4 -mt-4 mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b bg-background px-4 pt-4 pb-3 md:-top-6 md:-mx-6 md:-mt-6 md:px-6 md:pt-6">
+      <header
+        data-testid="page-custom-dashboard"
+        className="sticky -top-4 z-10 -mx-4 -mt-4 mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b bg-background px-4 pt-4 pb-3 md:-top-6 md:-mx-6 md:-mt-6 md:px-6 md:pt-6"
+      >
         <div className="flex min-w-0 flex-col">
           <h1 className={cn(TEXT_TITLE, "shrink-0")}>
             {dashboard.title || read.name}

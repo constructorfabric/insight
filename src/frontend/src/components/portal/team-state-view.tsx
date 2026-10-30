@@ -258,6 +258,7 @@ export function TeamStateView() {
   }, [shownKeys, grid.byKey, memberIds, cohortOf]);
 
   const gate = orgScopeGate({
+    pageTestId: "page-people-roster",
     viewerLoading: orgScope.isLoading,
     viewerError: orgScope.isError,
     membersLoading: false,
@@ -276,7 +277,7 @@ export function TeamStateView() {
   const flaggedPeople = new Set(flags.map((f) => f.personId)).size;
 
   return (
-    <div className="flex flex-col gap-6 p-4 md:p-6">
+    <div data-testid="page-people-roster" className="flex flex-col gap-6 p-4 md:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold tracking-tight">
