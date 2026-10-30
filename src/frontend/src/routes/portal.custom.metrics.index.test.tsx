@@ -39,6 +39,17 @@ beforeEach(() => {
 });
 
 describe("/portal/custom/metrics", () => {
+  it("keeps its route-based page id while loading", () => {
+    vi.mocked(customClient.fetchMetrics).mockReturnValue(new Promise(() => {}));
+
+    const { container } = render(<Component />, { wrapper });
+
+    expect(container.firstElementChild).toBe(
+      screen.getByTestId("page-custom-metrics")
+    );
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
   it("names every metric and reads its query back", async () => {
     vi.mocked(customClient.fetchMetrics).mockResolvedValue({
       items: [{ id: "lines_per_day", name: "lines_per_day" }],
@@ -73,6 +84,7 @@ describe("/portal/custom/metrics", () => {
     // Ordering decides which row answers "the most", so the catalogue says it.
     expect(await screen.findByText("total_lines desc")).toBeInTheDocument();
     expect(await screen.findByText("100")).toBeInTheDocument();
+    expect(screen.getByTestId("page-custom-metrics")).toBeInTheDocument();
   });
 
   it("reads back a query over a dataset, by its declared fields", async () => {

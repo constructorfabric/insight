@@ -33,11 +33,11 @@ function MetricPage() {
   const id = metricIdFromPath(pathname);
   const metric = useQuery(metricQuery(id));
 
-  if (metric.isPending) return <CenteredSpinner className="min-h-40" />;
+  if (metric.isPending) return <CenteredSpinner data-testid="page-custom-metric" className="min-h-40" />;
 
   if (metric.isError) {
     return (
-      <div className="flex flex-col gap-2 p-4 md:p-6">
+      <div data-testid="page-custom-metric" className="flex flex-col gap-2 p-4 md:p-6">
         <h1 className={cn(TEXT_HEADING, "font-mono")}>{id}</h1>
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(metric.error, "That metric is not there.")}
@@ -56,7 +56,7 @@ function MetricPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">
+    <div data-testid="page-custom-metric" className="flex flex-col gap-4 p-4 md:p-6">
       <header className="flex flex-wrap items-baseline gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <h1 className={TEXT_HEADING}>{metric.data.name}</h1>

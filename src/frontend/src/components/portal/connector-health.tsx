@@ -61,10 +61,10 @@ export function ConnectorHealthPane() {
   const { data, isPending, isError, refetch } = useConnectorHealth();
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  if (isPending) return <CenteredSpinner className="min-h-[60vh]" />;
+  if (isPending) return <CenteredSpinner data-testid="page-manage-connector-health" className="min-h-[60vh]" />;
   if (isError || data === undefined) {
     return (
-      <div className="mx-auto w-full max-w-md p-8">
+      <div data-testid="page-manage-connector-health" className="mx-auto w-full max-w-md p-8">
         <ComingSoon variant="card" state="error" onRetry={() => refetch()} />
       </div>
     );
@@ -73,7 +73,7 @@ export function ConnectorHealthPane() {
   const recording = describeRecording(data);
 
   return (
-    <div className="flex flex-col gap-3 p-4 md:p-6">
+    <div data-testid="page-manage-connector-health" className="flex flex-col gap-3 p-4 md:p-6">
       <div>
         <h1 className="text-lg font-semibold tracking-tight">
           Connector health

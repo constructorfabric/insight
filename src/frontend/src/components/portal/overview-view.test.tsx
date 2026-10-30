@@ -52,11 +52,14 @@ vi.mock("@/components/portal/domain-lens-view", () => ({
   DomainLensView: ({
     config,
     personId,
+    "data-testid": testId,
   }: {
     config: { title: string };
     personId?: string | null;
+    "data-testid"?: string;
   }) => (
     <section
+      data-testid={testId}
       aria-label={`Lens ${config.title}${personId ? ` for ${personId}` : ""}`}
     />
   ),
@@ -176,7 +179,32 @@ describe("<OverviewView>", () => {
 
     expect(shownSections()).toEqual([]);
     expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.getByTestId("page-overview-trend")).toBeInTheDocument();
   });
+
+  it.each([false, true])(
+    "identifies Contribution only after the subject resolves (team: %s)",
+    (canSeeOthers) => {
+      viewer.reachPending = true;
+
+      const { rerender } = render(<OverviewView item="contribution" />);
+
+      expect(screen.getByRole("status")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("page-overview-contribution")
+      ).not.toBeInTheDocument();
+
+      viewer.reachPending = false;
+      viewer.canSeeOthers = canSeeOthers;
+      rerender(<OverviewView item="contribution" />);
+
+      const expected = canSeeOthers
+        ? "page-overview-contribution"
+        : "page-overview-at-a-glance";
+
+      expect(screen.getByTestId(expected)).toBeInTheDocument();
+    }
+  );
 
   it("says so for an item the registry does not have", () => {
     viewer.canSeeOthers = true;

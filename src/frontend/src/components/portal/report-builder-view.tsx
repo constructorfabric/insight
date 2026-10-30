@@ -180,7 +180,7 @@ export function ReportBuilderView() {
 
   if (definitions.isError) {
     return (
-      <div className="mx-auto w-full max-w-md p-8">
+      <div data-testid="page-reports-report-builder" className="mx-auto w-full max-w-md p-8">
         <ComingSoon
           variant="card"
           state="error"
@@ -191,7 +191,7 @@ export function ReportBuilderView() {
   }
 
   return (
-    <div className="flex flex-col gap-4 p-4 pb-24 md:p-6 md:pb-24">
+    <div data-testid="page-reports-report-builder" className="flex flex-col gap-4 p-4 pb-24 md:p-6 md:pb-24">
       <Card className="gap-0 py-0">
         <CardContent className="flex flex-col p-0">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b p-4">

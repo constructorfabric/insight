@@ -28,7 +28,11 @@ export function PersonView({ person }: { person: string }) {
     <>
       <PersonHeader person={person} />
       {selectedSection ? (
-        <SingleGroupView personId={person} groupId={selectedSection} />
+        <SingleGroupView
+          personId={person}
+          groupId={selectedSection}
+          data-testid={`page-person-${selectedSection.replaceAll("_", "-")}`}
+        />
       ) : (
         // "At a glance" — the headline row and what needs attention.
         //
@@ -37,6 +41,7 @@ export function PersonView({ person }: { person: string }) {
         // it is explained. No modal — a problem points you straight at the
         // screen that covers it.
         <MetricGroupsView
+          data-testid="page-person-at-a-glance"
           personId={person}
           groupIds={groupIds}
           content="glance"

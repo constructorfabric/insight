@@ -27,6 +27,7 @@ function WidgetsCatalogue() {
 
   return (
     <DefinitionList
+      data-testid="page-custom-widgets"
       title="Widgets"
       blurb="Every stored visual. Each draws one metric; a dashboard holds them."
       items={catalogue.items}

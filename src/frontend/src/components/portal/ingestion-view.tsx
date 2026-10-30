@@ -85,7 +85,7 @@ export function IngestionView() {
   );
 
   return (
-    <div className="flex w-full flex-col gap-6 p-6">
+    <div data-testid="page-manage-ingestion" className="flex w-full flex-col gap-6 p-6">
       <header className="flex flex-col gap-2">
         {conn ? (
           <div className="flex items-center gap-3">

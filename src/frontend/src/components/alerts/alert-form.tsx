@@ -51,10 +51,16 @@ import {
 export function NewAlertPage() {
   const destinations = useQuery(alertDestinationsQuery());
 
-  if (destinations.isPending) return <CenteredSpinner className="min-h-40" />;
+  if (destinations.isPending)
+    return (
+      <CenteredSpinner
+        data-testid="page-custom-alert-new"
+        className="min-h-40"
+      />
+    );
   if (destinations.isError) {
     return (
-      <Shell title="New alert">
+      <Shell data-testid="page-custom-alert-new" title="New alert">
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(destinations.error, "Couldn't load destinations.")}
         </p>
@@ -65,7 +71,7 @@ export function NewAlertPage() {
   const only = destinations.data.length === 1 ? destinations.data[0].name : "";
 
   return (
-    <Shell title="New alert">
+    <Shell data-testid="page-custom-alert-new" title="New alert">
       <AlertEditor initial={blankForm(only)} />
     </Shell>
   );
@@ -82,7 +88,7 @@ export function EditAlertPage({ id }: { id: string }) {
 
   if (alert.isError) {
     return (
-      <Shell title="Edit alert">
+      <Shell data-testid="page-custom-alert-edit" title="Edit alert">
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(alert.error, "Alert not found.")}
         </p>
@@ -92,11 +98,20 @@ export function EditAlertPage({ id }: { id: string }) {
   // INVARIANT: the form seeds once, from what this page read now, never from
   // the copy the alert page cached, or a save would overwrite what changed since.
   if (!alert.isFetchedAfterMount || !alert.isSuccess) {
-    return <CenteredSpinner className="min-h-40" />;
+    return (
+      <CenteredSpinner
+        data-testid="page-custom-alert-edit"
+        className="min-h-40"
+      />
+    );
   }
 
   return (
-    <Shell title={`Edit ${alert.data.name}`} backTo={id}>
+    <Shell
+      data-testid="page-custom-alert-edit"
+      title={`Edit ${alert.data.name}`}
+      backTo={id}
+    >
       <AlertEditor key={id} existing={alert.data} />
     </Shell>
   );
@@ -121,17 +136,22 @@ function Cancel({ id }: { id?: string }) {
 }
 
 function Shell({
+  "data-testid": testId,
   title,
   backTo,
   children,
 }: {
+  "data-testid": string;
   title: string;
   /** The alert the form edits, which Cancel returns to. */
   backTo?: string;
   children: ReactNode;
 }) {
   return (
-    <div className="flex max-w-3xl flex-col gap-4 p-4 md:p-6">
+    <div
+      data-testid={testId}
+      className="flex max-w-3xl flex-col gap-4 p-4 md:p-6"
+    >
       <header className="flex flex-col gap-1">
         <h1 className={cn(TEXT_TITLE, "break-words")}>{title}</h1>
         <Cancel id={backTo} />

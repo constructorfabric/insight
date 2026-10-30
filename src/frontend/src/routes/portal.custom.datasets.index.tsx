@@ -28,6 +28,7 @@ function DatasetsCatalogue() {
 
   return (
     <DefinitionList
+      data-testid="page-custom-datasets"
       title="Datasets"
       blurb="Every declared dataset. A metric reads one of these, and records are sent into them."
       items={catalogue.items}

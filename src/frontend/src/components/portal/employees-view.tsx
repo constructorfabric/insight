@@ -80,10 +80,10 @@ export function EmployeesView() {
 
   const loading = visibleRoster.isPending;
   const failed = visibleRoster.isError;
-  if (loading) return <CenteredSpinner className="min-h-[60vh]" />;
+  if (loading) return <CenteredSpinner data-testid="page-people-employees" className="min-h-[60vh]" />;
   if (failed)
     return (
-      <div className="mx-auto w-full max-w-md p-8">
+      <div data-testid="page-people-employees" className="mx-auto w-full max-w-md p-8">
         <ComingSoon
           variant="card"
           state="error"
@@ -93,7 +93,7 @@ export function EmployeesView() {
     );
 
   return (
-    <div className="flex flex-col gap-3 p-4 md:p-6">
+    <div data-testid="page-people-employees" className="flex flex-col gap-3 p-4 md:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold tracking-tight">

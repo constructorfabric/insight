@@ -38,7 +38,10 @@ export function AlertsList() {
   const total = pages.data?.pages.at(-1)?.total;
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">
+    <div
+      data-testid="page-custom-alerts"
+      className="flex flex-col gap-4 p-4 md:p-6"
+    >
       <header className="flex flex-wrap items-start gap-3">
         <h1 className={cn(TEXT_TITLE, "min-w-0 grow")}>Alerts</h1>
         <Button
