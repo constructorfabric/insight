@@ -94,9 +94,9 @@ describe("<OverviewView>", () => {
       ["Glance for me-1", "Recent dashboards"],
     ],
     [
-      "a viewer with a cohort: dashboards, then the team's rollup without their own glance",
+      "a viewer with a cohort: the team's rollup alone",
       { canSeeOthers: true, who: undefined, item: null },
-      ["Recent dashboards", "Lens Overview"],
+      ["Lens Overview"],
     ],
     [
       "a viewer with a cohort who picked Me: Home without the rollup",
@@ -161,12 +161,13 @@ describe("<OverviewView>", () => {
     );
   });
 
-  it("holds the viewer's own glance until their reach decides Me or My team", () => {
+  it("holds the viewer's own Home until their reach decides Me or My team", () => {
     viewer.reachPending = true;
 
     render(<OverviewView item={null} />);
 
-    expect(shownSections()).toEqual(["Recent dashboards"]);
+    expect(shownSections()).toEqual([]);
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("holds a theme while the viewer's reach resolves", () => {
