@@ -1,6 +1,8 @@
 import {
+  CalendarClock,
   Copy,
   Ellipsis,
+  FileDown,
   FolderPlus,
   Pin,
   PinOff,
@@ -9,7 +11,7 @@ import {
   TextCursorInput,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import type { DashboardAccess } from "@/api/custom-client";
 import {
@@ -39,6 +41,7 @@ export function DashboardMenu({
   title,
   access,
   share,
+  planned = false,
   onDuplicated,
   onDeleted,
 }: {
@@ -47,6 +50,8 @@ export function DashboardMenu({
   title?: string;
   access: DashboardAccess;
   share?: { ownerPersonId: string | null };
+  /** Whether to list the actions not built yet, as an open dashboard does. */
+  planned?: boolean;
   onDuplicated?: (id: string) => void;
   onDeleted?: () => void;
 }) {
@@ -72,29 +77,35 @@ export function DashboardMenu({
             />
           }
         />
-        <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuItem disabled={!pin.ready} onClick={pin.toggle}>
-            {pin.pinned ? <PinOff /> : <Pin />}
-            {pin.pinned ? "Unpin" : "Pin"}
-          </DropdownMenuItem>
+        <DropdownMenuContent align="end" className={planned ? "w-64" : "w-56"}>
+          {allows.edit ? (
+            <DropdownMenuItem onClick={() => setAsked("duplicate")}>
+              <Copy />
+              Duplicate…
+            </DropdownMenuItem>
+          ) : null}
           {share ? (
             <DropdownMenuItem onClick={() => setAsked("share")}>
               <Share2 />
               Share…
             </DropdownMenuItem>
           ) : null}
-          {allows.edit ? (
+          {planned ? (
             <>
-              <DropdownMenuItem onClick={() => setAsked("rename")}>
-                <TextCursorInput />
-                Rename…
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setAsked("duplicate")}>
-                <Copy />
-                Duplicate…
-              </DropdownMenuItem>
+              <PlannedItem icon={<FileDown />} label="Export snapshot (PDF)" />
+              <PlannedItem icon={<CalendarClock />} label="Schedule report…" />
             </>
           ) : null}
+          {allows.edit ? (
+            <DropdownMenuItem onClick={() => setAsked("rename")}>
+              <TextCursorInput />
+              Rename…
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem disabled={!pin.ready} onClick={pin.toggle}>
+            {pin.pinned ? <PinOff /> : <Pin />}
+            {pin.pinned ? "Unpin" : "Pin"}
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setAsked("folder")}>
             <FolderPlus />
             Add to folder…
@@ -168,5 +179,15 @@ export function DashboardMenu({
         </>
       ) : null}
     </>
+  );
+}
+
+function PlannedItem({ icon, label }: { icon: ReactNode; label: string }) {
+  return (
+    <DropdownMenuItem disabled>
+      {icon}
+      {label}
+      <span className="ms-auto text-xs text-muted-foreground">Planned</span>
+    </DropdownMenuItem>
   );
 }

@@ -158,6 +158,7 @@ export interface DashboardResponse extends DefinitionResponse<Dashboard> {
   owner_person_id: string | null;
   owner_name?: string | null;
   access: DashboardAccess;
+  visibility?: DashboardVisibility;
   /** The folders holding it that the caller can see. */
   folders?: Folder[];
   /** Whether placing it in a folder would carry that folder's people to it. */
@@ -172,6 +173,7 @@ export interface DashboardRead {
   ownerPersonId: string | null;
   ownerName: string | null;
   access: DashboardAccess;
+  visibility: DashboardVisibility | null;
   folders: Folder[];
   carries: boolean;
 }

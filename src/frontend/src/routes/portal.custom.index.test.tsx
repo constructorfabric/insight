@@ -61,6 +61,7 @@ const READ = {
   name: "delivery",
   ownerPersonId: null,
   ownerName: null,
+  visibility: null,
   access: "ownerless" as const,
   folders: [],
   carries: true,

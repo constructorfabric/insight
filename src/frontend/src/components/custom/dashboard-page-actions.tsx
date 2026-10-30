@@ -48,6 +48,7 @@ export function DashboardPageActions({
         title={title}
         access={access}
         share={allows.share && carries ? { ownerPersonId } : undefined}
+        planned
         onDuplicated={(copy) =>
           void navigate({ to: "/portal/custom/$name", params: { name: copy } })
         }

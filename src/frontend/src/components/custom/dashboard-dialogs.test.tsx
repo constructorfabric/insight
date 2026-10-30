@@ -115,16 +115,16 @@ async function choose(user: ReturnType<typeof userEvent.setup>, item: string) {
 }
 
 describe("the card's ··· menu", () => {
-  it("offers pin, rename and duplicate, then filing and tags, then delete", async () => {
+  it("offers duplicate and rename, then pin, filing and tags, then delete", async () => {
     await openCardMenu();
 
     await screen.findByRole("menuitem", { name: "Unpin" });
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent)
     ).toEqual([
-      "Unpin",
-      "Rename…",
       "Duplicate…",
+      "Rename…",
+      "Unpin",
       "Add to folder…",
       "Edit tags…",
       "Delete…",
