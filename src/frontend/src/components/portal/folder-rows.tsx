@@ -4,7 +4,6 @@ import {
   Ellipsis,
   Folder,
   FolderX,
-  Inbox,
   Pencil,
   Plus,
   Share2,
@@ -125,17 +124,14 @@ export function FoldersGroup() {
                   />
                 }
               >
-                <Inbox />
+                <Folder />
                 <span>Unfiled</span>
               </SidebarMenuButton>
               <CountBadge>{data.unfiled}</CountBadge>
             </SidebarMenuItem>
           ) : null}
           <SidebarMenuItem>
-            <SidebarMenuButton
-              className="text-muted-foreground"
-              onClick={() => setCreating(true)}
-            >
+            <SidebarMenuButton onClick={() => setCreating(true)}>
               <Plus />
               <span>New folder</span>
             </SidebarMenuButton>
