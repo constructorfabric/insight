@@ -24,10 +24,14 @@ warehouse. See README.md for the two commands that set it up.
 from __future__ import annotations
 
 import functools
+import inspect
 import json
 import os
 import sys
 import tempfile
+import time
+from collections.abc import Callable, Generator
+from copy import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -65,6 +69,39 @@ FIELD_HISTORY_SELECTOR = "+jira__field_history_derived +jira__task_field_text +j
 # The journal and the links producer: a module about links asserts both, because
 # they resolve a linked issue's key through the same map.
 LINKS_SELECTOR = f"{FIELD_HISTORY_SELECTOR} +jira__task_links"
+
+
+@dataclass
+class SuiteStats:
+    started: float
+    tests: int = 0
+    builds: int = 0
+
+
+_SUITE_STATS = pytest.StashKey[SuiteStats]()
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    session.stash[_SUITE_STATS] = SuiteStats(started=time.monotonic())
+
+
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[object]) -> None:
+    if call.when == "setup":
+        item.session.stash[_SUITE_STATS].tests += 1
+
+
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    stats = session.stash[_SUITE_STATS]
+    minutes = (time.monotonic() - stats.started) / 60
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with Path(summary).open("a", encoding="utf-8") as output:
+            output.write(f"Jira suite: {stats.tests} tests run, {stats.builds} dbt builds, {minutes:.1f} minutes.\n")
+
+    budget = os.environ.get("JIRA_SUITE_WARN_MINUTES")
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if budget and minutes > float(budget) and reporter is not None:
+        reporter.write_line(f"::warning::Jira suite took {minutes:.1f} minutes; budget is {budget} minutes.")
 
 
 def _env(name: str) -> str:
@@ -125,12 +162,13 @@ class Dbt:
 class Warehouse:
     """The ClickHouse under test, plus the dbt invocation that targets it."""
 
-    def __init__(self, profiles_dir: Path) -> None:
+    def __init__(self, profiles_dir: Path, stats: SuiteStats) -> None:
         self.host = _env("CLICKHOUSE_HOST")
         self.port = int(_env("CLICKHOUSE_HTTP_PORT"))
         self.user = _env("CLICKHOUSE_USER")
         self.password = _env("CLICKHOUSE_PASSWORD")
         self.profiles_dir = profiles_dir
+        self._stats = stats
         # Bumped whenever bronze is truncated, so a shared build knows its rows
         # were taken out from under it.
         self.generation = 0
@@ -195,6 +233,7 @@ class Warehouse:
         # The catalogue refuses a full refresh, so it is emptied by hand.
         if full_refresh:
             self.execute("TRUNCATE TABLE IF EXISTS staging.jira__catalogue_first_seen")
+        self._stats.builds += 1
         self.dbt(
             "run",
             "--select",
@@ -223,7 +262,7 @@ SEEDED_CLASS_ARMS = (
 
 
 @pytest.fixture(scope="session")
-def warehouse() -> Warehouse:
+def warehouse(request: pytest.FixtureRequest) -> Warehouse:
     """Session setup: databases, bronze, the classes a module seeds, and a dbt
     profile pointing at them.
 
@@ -233,7 +272,7 @@ def warehouse() -> Warehouse:
     """
     with tempfile.TemporaryDirectory() as tmp:
         profiles_dir = Path(tmp)
-        wh = Warehouse(profiles_dir)
+        wh = Warehouse(profiles_dir, request.session.stash[_SUITE_STATS])
         # `password` is inlined rather than read through env_var: this profile is
         # written to a private temp dir for one session and never committed.
         profile = build_profile(
@@ -502,6 +541,108 @@ class Batch:
             )
         self.warehouse.build(self._selector)
         self.generation = self.warehouse.generation
+
+
+@dataclass(frozen=True)
+class Build:
+    selector: str = FIELD_HISTORY_SELECTOR
+    full_refresh: bool = True
+    dbt_vars: dict[str, Any] | None = None
+
+
+def phased(test: Callable[..., Generator[Build, None, None]]) -> Callable[..., None]:
+    """Each yield Build(...) replaces a scenario.build(...) and is shared with the module's other phased tests."""
+
+    @functools.wraps(test)
+    def run(request: pytest.FixtureRequest, _phased: dict[str, BaseException | None], **params: object) -> None:
+        error = _phased[request.node.nodeid]
+        if error is not None:
+            raise error
+
+    signature = inspect.signature(test)
+    parameters = [parameter for name, parameter in signature.parameters.items() if name != "scenario"]
+    parameters.extend(inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY) for name in ("request", "_phased"))
+    run.__signature__ = signature.replace(parameters=parameters, return_annotation=None)
+    run.phased = test
+    return run
+
+
+@dataclass(frozen=True)
+class PhasedItem:
+    nodeid: str
+    source: str
+    generator: Generator[Build, None, None]
+
+
+def _advance(
+    item: PhasedItem, outcomes: dict[str, BaseException | None], error: BaseException | None = None
+) -> Build | None:
+    try:
+        if error is None:
+            build = next(item.generator)
+        else:
+            failure = copy(error)
+            if isinstance(failure, pytest.fail.Exception):
+                failure.pytrace = True
+            build = item.generator.throw(failure)
+
+        if not isinstance(build, Build):
+            raise TypeError(f"{item.nodeid} yielded {build!r}; expected Build")
+        return build
+    except StopIteration:
+        outcomes[item.nodeid] = None
+    except BaseException as failure:
+        if isinstance(failure, (KeyboardInterrupt, SystemExit, pytest.exit.Exception)):
+            raise
+        outcomes[item.nodeid] = failure
+    return None
+
+
+def _shared_build(warehouse: Warehouse, pending: dict[str, Build]) -> BaseException | None:
+    build = next(iter(pending.values()))
+    if any(other != build for other in pending.values()):
+        descriptions = "\n".join(f"{nodeid}: {spec!r}" for nodeid, spec in pending.items())
+        return RuntimeError(f"Phased tests requested disagreeing Builds:\n{descriptions}")
+    try:
+        warehouse.build(build.selector, full_refresh=build.full_refresh, dbt_vars=build.dbt_vars)
+    except BaseException as error:
+        if isinstance(error, (KeyboardInterrupt, SystemExit, pytest.exit.Exception)):
+            raise
+        return error
+    return None
+
+
+@pytest.fixture(scope="module")
+def _phased(warehouse: Warehouse, request: pytest.FixtureRequest) -> dict[str, BaseException | None]:
+    items = [
+        item
+        for item in request.session.items
+        if isinstance(item, pytest.Function) and item.module is request.module and hasattr(item.obj, "phased")
+    ]
+    outcomes: dict[str, BaseException | None] = {}
+    generators: list[PhasedItem] = []
+    _truncate_bronze(warehouse)
+    try:
+        for index, item in enumerate(items):
+            source = f"{SOURCE_ID}-phased-{index}"
+            params = item.callspec.params if hasattr(item, "callspec") else {}
+            generator = item.obj.phased(scenario=Scenario(warehouse, source=source), **params)
+            generators.append(PhasedItem(item.nodeid, source, generator))
+
+        pending = {item.nodeid: build for item in generators if (build := _advance(item, outcomes)) is not None}
+        while pending:
+            error = _shared_build(warehouse, pending)
+            waiting = [item for item in generators if item.nodeid in pending]
+            pending = {}
+            for item in waiting:
+                build = _advance(item, outcomes, error)
+                if build is not None:
+                    pending[item.nodeid] = build
+    finally:
+        warehouse.generation += 1
+        for item in generators:
+            item.generator.close()
+    return outcomes
 
 
 @pytest.fixture(scope="module")

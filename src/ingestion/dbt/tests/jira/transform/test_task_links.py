@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from conftest import LINKS_SELECTOR, Scenario, case
+from conftest import LINKS_SELECTOR, Build, Scenario, case, phased
 from helpers import census_entry, event, field, issue, item, project_visibility
 
 SELECTOR = LINKS_SELECTOR
@@ -378,6 +378,7 @@ def test_one_entry_that_removes_and_adds_the_same_parent_leaves_it_held(scenario
     ]
 
 
+@phased
 def test_an_epic_link_change_is_a_parent_change(scenario: Scenario) -> None:
     """Before the epic became the issue's `parent`, it was set through the
     Epic Link field. Jira logged the parent cleared and the Epic Link set to the
@@ -400,7 +401,7 @@ def test_an_epic_link_change_is_a_parent_change(scenario: Scenario) -> None:
             ),
         ],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
 
     rows = scenario.links(issue_id="1003")
     assert _intervals(rows) == [
@@ -410,6 +411,7 @@ def test_an_epic_link_change_is_a_parent_change(scenario: Scenario) -> None:
     assert {r["evidence"] for r in rows} == {"event"}
 
 
+@phased
 def test_a_link_the_newest_read_no_longer_holds_closes_at_the_issues_last_update(scenario: Scenario) -> None:
     """Nothing in the changelog removed the link; the issue's newest read lacks
     it. The interval closes at the issue's `updated`, the newest change Jira
@@ -419,13 +421,14 @@ def test_a_link_the_newest_read_no_longer_holds_closes_at_the_issues_last_update
         issues=[issue("TST-1", jira_id="1001", updated=UPDATED), issue("TST-2", jira_id="1002")],
         events=[event("TST-1", 101, "2026-01-06T10:00:00", [_added("TST-2", "blocks")], jira_id="1001")],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
 
     rows = scenario.links(issue_id="1001")
     assert _intervals(rows) == [("1001", "blocking", "1002", "TST-2", DAY_6, 1, UPDATED, "101")]
     assert (rows[0]["removed_by"], rows[0]["evidence"]) == (None, "observation")
 
 
+@phased
 def test_a_link_gone_before_the_issues_last_update_closes_at_the_read(scenario: Scenario) -> None:
     """The issue was not touched after the link was added — its linked issue
     was deleted, say, which Jira logs on neither side. Only the read bounds the
@@ -435,11 +438,12 @@ def test_a_link_gone_before_the_issues_last_update_closes_at_the_read(scenario: 
         issues=[issue("TST-1", jira_id="1001")],
         events=[event("TST-1", 101, "2026-01-06T10:00:00", [_added("TST-2", "blocks")], jira_id="1001")],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
 
     assert _intervals(scenario.links(issue_id="1001")) == [("1001", "blocking", None, "TST-2", DAY_6, 1, READ, "101")]
 
 
+@phased
 def test_a_link_the_newest_read_holds_again_reopens_at_its_last_removal(scenario: Scenario) -> None:
     """The changelog removed the link and never added it back, yet the issue
     holds it. It reopens at the removal, a bound rather than a fact."""
@@ -454,7 +458,7 @@ def test_a_link_the_newest_read_holds_again_reopens_at_its_last_removal(scenario
             event("TST-1", 102, "2026-01-07T10:00:00", [_removed("TST-2", "blocks")], jira_id="1001"),
         ],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
 
     rows = scenario.links(issue_id="1001")
     assert _intervals(rows) == [
@@ -464,6 +468,7 @@ def test_a_link_the_newest_read_holds_again_reopens_at_its_last_removal(scenario
     assert [r["evidence"] for r in rows] == ["event", "observation"]
 
 
+@phased
 def test_a_read_older_than_the_last_event_says_nothing(scenario: Scenario) -> None:
     """The changelog was read after the issue row: the read predates the
     addition, so its missing link is no evidence."""
@@ -472,7 +477,7 @@ def test_a_read_older_than_the_last_event_says_nothing(scenario: Scenario) -> No
         issues=[issue("TST-1", jira_id="1001", extracted_at="2026-01-06T09:00:00"), issue("TST-2", jira_id="1002")],
         events=[event("TST-1", 101, "2026-01-06T10:00:00", [_added("TST-2", "blocks")], jira_id="1001")],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
 
     assert _intervals(scenario.links(issue_id="1001")) == [("1001", "blocking", "1002", "TST-2", DAY_6, 1, None, "101")]
 
@@ -495,6 +500,7 @@ def _availability(scenario: Scenario) -> str:
 
 
 @pytest.mark.parametrize("availability", ["access_lost", "unobserved", "archived", "trashed", "deleted"])
+@phased
 def test_a_missing_link_only_closes_when_other_issue_availability_allows_it(
     scenario: Scenario, availability: str
 ) -> None:
@@ -523,7 +529,7 @@ def test_a_missing_link_only_closes_when_other_issue_availability_allows_it(
             project_visibility("GONE", "2", status=project_status, extracted_at=project_time),
         ],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
 
     if availability == "access_lost":
         assert _availability(scenario) == "present"
@@ -533,7 +539,7 @@ def test_a_missing_link_only_closes_when_other_issue_availability_allows_it(
             census=[census_entry("SEEN-1", jira_id="1001", extracted_at=MISSING_CENSUS)],
             projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
         )
-        scenario.build(LINKS_SELECTOR, full_refresh=False)
+        yield Build(LINKS_SELECTOR, full_refresh=False)
 
     assert _availability(scenario) == availability
     closes = availability == "deleted"
@@ -552,6 +558,7 @@ def test_a_missing_link_only_closes_when_other_issue_availability_allows_it(
 
 @pytest.mark.parametrize("target_id", [None, "1002"])
 @pytest.mark.parametrize("project", ["GONE", "SEEN", "NEVER"])
+@phased
 def test_a_target_without_availability_uses_project_visibility(
     scenario: Scenario, project: str, target_id: str | None
 ) -> None:
@@ -569,9 +576,9 @@ def test_a_target_without_availability_uses_project_visibility(
             project_visibility("GONE", "2", extracted_at=FIRST_CENSUS),
         ],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
     scenario.seed(fields=[], issues=[issue("SEEN-1", jira_id="1001", extracted_at=HIDDEN_READ)])
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
 
     rows = scenario.links(issue_id="1001")
     assert _intervals(rows) == [
@@ -583,6 +590,7 @@ def test_a_target_without_availability_uses_project_visibility(
 @pytest.mark.parametrize("kind", ["issuelink", "parent"])
 @pytest.mark.parametrize("with_event", [False, True])
 @pytest.mark.parametrize("hidden", [False, True])
+@phased
 def test_a_read_retains_only_links_whose_other_issue_is_hidden(
     scenario: Scenario, kind: str, with_event: bool, hidden: bool
 ) -> None:
@@ -600,7 +608,7 @@ def test_a_read_retains_only_links_whose_other_issue_is_hidden(
         census=[census_entry("SEEN-1", jira_id="1001"), census_entry("GONE-2", jira_id="1002")],
         projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
     original = scenario.links()
     assert len(original) == (2 if kind == "parent" else 1)
 
@@ -616,7 +624,7 @@ def test_a_read_retains_only_links_whose_other_issue_is_hidden(
             *([] if hidden else [project_visibility("GONE", "2", extracted_at=MISSING_CENSUS)]),
         ],
     )
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
 
     rows = scenario.links()
     if hidden:
@@ -648,7 +656,7 @@ def test_a_read_retains_only_links_whose_other_issue_is_hidden(
             project_visibility("GONE", "2", extracted_at=RETURNED_CENSUS),
         ],
     )
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
     assert scenario.links() == original
 
     returned_held = scenario.warehouse.rows(
@@ -658,7 +666,7 @@ def test_a_read_retains_only_links_whose_other_issue_is_hidden(
     )
     assert returned_held == [{"extracted_at": READ}]
 
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
     assert scenario.links() == original
     unchanged_held = scenario.warehouse.rows(
         "SELECT toString(extracted_at) AS extracted_at FROM staging.jira__issue_link_snapshot FINAL"
@@ -668,7 +676,7 @@ def test_a_read_retains_only_links_whose_other_issue_is_hidden(
     assert unchanged_held == returned_held
 
     scenario.seed(fields=[], issues=[issue("SEEN-1", jira_id="1001", fields=fields, extracted_at=RETURNED_READ)])
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
     assert scenario.links() == original
     reread_held = scenario.warehouse.rows(
         "SELECT toString(extracted_at) AS extracted_at FROM staging.jira__issue_link_snapshot FINAL"
@@ -679,6 +687,7 @@ def test_a_read_retains_only_links_whose_other_issue_is_hidden(
 
 
 @pytest.mark.parametrize("kind", ["issuelink", "parent"])
+@phased
 def test_hidden_issue_events_still_open_and_close_links(scenario: Scenario, kind: str) -> None:
     addition = _added("GONE-2", "blocks")
     removal = _removed("GONE-2", "blocks")
@@ -695,7 +704,7 @@ def test_hidden_issue_events_still_open_and_close_links(scenario: Scenario, kind
         census=[census_entry("SEEN-1", jira_id="1001"), census_entry("GONE-2", jira_id="1002")],
         projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
 
     scenario.seed(
         fields=[],
@@ -704,7 +713,7 @@ def test_hidden_issue_events_still_open_and_close_links(scenario: Scenario, kind
         census=[census_entry("SEEN-1", jira_id="1001", extracted_at=MISSING_CENSUS)],
         projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
     )
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
     rows = scenario.links()
     assert len(rows) == (2 if kind == "parent" else 1)
     assert {(r["valid_from"], r["valid_to"], r["evidence"]) for r in rows} == {
@@ -716,7 +725,7 @@ def test_hidden_issue_events_still_open_and_close_links(scenario: Scenario, kind
         issues=[],
         events=[event("SEEN-1", 102, "2026-03-31T10:00:00", [removal], jira_id="1001", extracted_at=HIDDEN_READ)],
     )
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
     rows = scenario.links()
     assert len(rows) == (2 if kind == "parent" else 1)
     assert {(r["valid_from"], r["valid_to"], r["evidence"], r["origin_event_id"]) for r in rows} == {
@@ -762,6 +771,7 @@ def test_an_issue_without_a_current_read_keeps_no_retained_links(scenario: Scena
     assert scenario.links() == []
 
 
+@phased
 def test_a_fresh_parent_supersedes_an_earlier_parent_that_is_hidden(scenario: Scenario) -> None:
     scenario.seed(
         fields=[PARENT_FIELD],
@@ -780,7 +790,7 @@ def test_a_fresh_parent_supersedes_an_earlier_parent_that_is_hidden(scenario: Sc
         ],
         projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
 
     assert _intervals(scenario.links(issue_id="1001")) == [("1001", "parent", "1002", "GONE-2", DAY_6, 1, None, "101")]
 
@@ -805,7 +815,7 @@ def test_a_fresh_parent_supersedes_an_earlier_parent_that_is_hidden(scenario: Sc
         ],
         projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
     )
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
 
     assert _availability(scenario) == "access_lost"
     held = scenario.warehouse.rows(
@@ -836,6 +846,7 @@ def test_a_fresh_parent_supersedes_an_earlier_parent_that_is_hidden(scenario: Sc
         pytest.param(None, None, id="read_only"),
     ],
 )
+@phased
 def test_a_missing_link_is_reconciled_after_visibility_returns(
     scenario: Scenario, kind: str, updated: str | None, closed_at: str | None
 ) -> None:
@@ -854,7 +865,7 @@ def test_a_missing_link_is_reconciled_after_visibility_returns(
         census=[census_entry("SEEN-1", jira_id="1001"), census_entry("GONE-2", jira_id="1002")],
         projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
     original = scenario.links()
     assert len(original) == (2 if kind == "parent" else 1)
 
@@ -864,7 +875,7 @@ def test_a_missing_link_is_reconciled_after_visibility_returns(
         census=[census_entry("SEEN-1", jira_id="1001", extracted_at=MISSING_CENSUS)],
         projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
     )
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
     assert scenario.links() == original
 
     scenario.seed(
@@ -879,11 +890,11 @@ def test_a_missing_link_is_reconciled_after_visibility_returns(
             project_visibility("GONE", "2", extracted_at=RETURNED_CENSUS),
         ],
     )
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
     assert scenario.links() == original
 
     scenario.seed(fields=[], issues=[issue("SEEN-1", jira_id="1001", extracted_at=RETURNED_READ, updated=updated)])
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
 
     link_type = "parent" if kind == "parent" else "blocking"
     expected = [("1001", link_type, "1002", "GONE-2", DAY_6, 1, closed_at, "101")] if with_event else []
@@ -902,6 +913,7 @@ def test_a_missing_link_is_reconciled_after_visibility_returns(
 
 
 @pytest.mark.parametrize("kind", ["issuelink", "parent"])
+@phased
 def test_visibility_returns_only_from_the_first_census_sighting_after_the_gap(scenario: Scenario, kind: str) -> None:
     fields = {LINKS: [_outward("1", BLOCKS, "1002", "GONE-2")]}
     addition = _added("GONE-2", "blocks")
@@ -917,7 +929,7 @@ def test_visibility_returns_only_from_the_first_census_sighting_after_the_gap(sc
         census=[census_entry("SEEN-1", jira_id="1001"), census_entry("GONE-2", jira_id="1002")],
         projects=[project_visibility("SEEN", "1"), project_visibility("GONE", "2")],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
 
     link_type = "parent" if kind == "parent" else "blocking"
     expected_open = [("1001", link_type, "1002", "GONE-2", DAY_6, 1, None, "101")]
@@ -933,7 +945,7 @@ def test_visibility_returns_only_from_the_first_census_sighting_after_the_gap(sc
         census=[census_entry("SEEN-1", jira_id="1001", extracted_at=MISSING_CENSUS)],
         projects=[project_visibility("SEEN", "1", extracted_at=MISSING_CENSUS)],
     )
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
     assert scenario.links() == original
 
     before_census_read = "2026-04-01T13:30:00"
@@ -949,7 +961,7 @@ def test_visibility_returns_only_from_the_first_census_sighting_after_the_gap(sc
             project_visibility("GONE", "2", extracted_at=RETURNED_CENSUS),
         ],
     )
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
     assert scenario.links() == original
     held = scenario.warehouse.rows(
         "SELECT toString(extracted_at) AS extracted_at FROM staging.jira__issue_link_snapshot FINAL"
@@ -971,7 +983,7 @@ def test_visibility_returns_only_from_the_first_census_sighting_after_the_gap(sc
             project_visibility("GONE", "2", extracted_at=later_census),
         ],
     )
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
 
     closed_at = "2026-04-01 15:00:00.000"
     expected_closed = [("1001", link_type, "1002", "GONE-2", DAY_6, 1, closed_at, "101")]
@@ -1007,6 +1019,7 @@ def test_a_linked_issue_outside_the_sync_window_resolves_through_the_census(scen
     assert scenario.round_trip_holds()
 
 
+@phased
 def test_a_key_the_census_names_later_reaches_the_journal_without_a_full_refresh(scenario: Scenario) -> None:
     """The journal derives only the issues bronze moved. When the census later
     names the id of a key a link still holds, the owning issue has not moved,
@@ -1019,10 +1032,10 @@ def test_a_key_the_census_names_later_reaches_the_journal_without_a_full_refresh
             event("TST-1", 102, "2026-01-07T10:00:00", [_removed("ARC-7", "relates to")], jira_id="1001"),
         ],
     )
-    scenario.build(LINKS_SELECTOR)
+    yield Build(LINKS_SELECTOR)
     assert scenario.changelog_states(LINKS, issue="TST-1") == [["ARC-7"], []]
 
     scenario.warehouse.insert("bronze_jira.jira_issue_census", [census_entry("ARC-7", jira_id="9007")])
-    scenario.build(LINKS_SELECTOR, full_refresh=False)
+    yield Build(LINKS_SELECTOR, full_refresh=False)
 
     assert scenario.changelog_states(LINKS, issue="TST-1") == [["9007"], []]

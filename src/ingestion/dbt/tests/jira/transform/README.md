@@ -120,10 +120,18 @@ module's `SELECTOR` when it declares one — `test_task_links.py` adds
 see each other: every model in the chain carries `insight_source_id` through its
 joins and windows, and each scenario is seeded under one of its own.
 
-**Omit `@case` when the scenario cannot share.** It then gets bronze to itself
-and seeds and builds as it likes. Three kinds need it:
+Tests that build more than once can use `@phased`, replacing each
+`scenario.build(...)` with `yield Build(...)`. The module's collected phased
+items run together, each under its own source id, sharing one build per phase.
+Every pending `Build` must agree, including selector, refresh mode and vars.
+Failures are reported on each affected item; `-k` limits the group to selected
+items.
 
-- the scenario builds more than once, or rewrites bronze half way through;
+**Omit both decorators when the scenario cannot share.** It then gets bronze
+to itself and seeds and builds as it likes. These scenarios need it:
+
+- the scenario rewrites a whole bronze table half way through or needs
+  incompatible build phases or a dbt call other than `build`;
 - it expects a build to FAIL;
 - its round trip is meant NOT to reconcile. `invariants_hold()` and
   `round_trip_holds()` ask about the whole warehouse, so such a scenario would
