@@ -28,9 +28,7 @@ WHERE tags.name IN ({names}))";
 const OWNER_OF: &str = "SELECT id, owner_person_id FROM dashboards WHERE id = ?";
 
 // INVARIANT: the carrying terms match `folder_carrying` - a carrying folder shows the dashboard to its owner and its grantees.
-const PAGE_DASHBOARDS: &str = "SELECT dashboards.id, dashboards.owner_person_id, dashboards.name,
-dashboards.updated_at, JSON_VALUE(dashboards.body, '$.title') AS title,
-CASE
+const VISIBILITY: &str = "CASE
 WHEN EXISTS (SELECT 1 FROM dashboard_grants WHERE dashboard_grants.dashboard = dashboards.id
 AND dashboard_grants.grantee = 'everyone')
 OR EXISTS (SELECT 1 FROM folder_entries carrying
@@ -46,7 +44,14 @@ AND carrier.owner_person_id IS NOT NULL
 AND (NOT carrier.owner_person_id <=> dashboards.owner_person_id
 OR EXISTS (SELECT 1 FROM folder_grants WHERE folder_grants.folder_id = carrier.id))) THEN 'people'
 ELSE 'private'
-END AS visibility
+END";
+
+const VISIBILITY_OF: &str =
+    "SELECT {visibility} AS visibility FROM dashboards WHERE dashboards.id = ?";
+
+const PAGE_DASHBOARDS: &str = "SELECT dashboards.id, dashboards.owner_person_id, dashboards.name,
+dashboards.updated_at, JSON_VALUE(dashboards.body, '$.title') AS title,
+{visibility} AS visibility
 FROM dashboards
 WHERE {where}
 ORDER BY {order}
@@ -91,6 +96,11 @@ pub(super) fn owner_value(owner: Owner) -> Value {
 /// A level column as the store wrote it.
 pub(super) fn level_of(column: &str) -> Result<Level, DefinitionStoreError> {
     Level::parse(column).ok_or(DefinitionStoreError::UnreadableRow("level"))
+}
+
+#[derive(Debug, FromQueryResult)]
+struct VisibilityRow {
+    visibility: String,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -204,6 +214,7 @@ pub(super) fn page_statement(caller: Caller, query: &DashboardQuery, page: Page)
         Order::Recent => "dashboards.updated_at DESC, dashboards.id",
     };
     let sql = PAGE_DASHBOARDS
+        .replace("{visibility}", VISIBILITY)
         .replace("{where}", &clause)
         .replace("{order}", order);
 
@@ -375,6 +386,23 @@ impl DashboardCatalogue for MariaDefinitions {
             items,
             total: u64::try_from(total).unwrap_or(0),
         })
+    }
+    async fn visibility(
+        &self,
+        dashboard: &DefinitionId,
+    ) -> Result<Option<Visibility>, DefinitionStoreError> {
+        let sql = VISIBILITY_OF.replace("{visibility}", VISIBILITY);
+        let row =
+            VisibilityRow::find_by_statement(statement(&sql, vec![dashboard.as_str().into()]))
+                .one(&self.db)
+                .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Visibility::parse(&row.visibility)
+            .map(Some)
+            .ok_or(DefinitionStoreError::UnreadableRow("visibility"))
     }
 }
 

@@ -292,6 +292,8 @@ struct DashboardMeta {
     owner_person_id: Option<String>,
     owner_name: Option<String>,
     access: &'static str,
+    /// Who beyond its owner sees it: `private`, `people` or `everyone`.
+    visibility: &'static str,
     /// Whether an entry the caller adds now carries a folder's audience.
     carries: bool,
     /// The folders the caller sees that hold it.
@@ -351,6 +353,7 @@ async fn dashboard_meta(
     stored: &StoredDefinition,
 ) -> Result<DashboardMeta, CanonicalError> {
     let seen = surfaces.seen(id).await.map_err(custom_error)?;
+    let visibility = surfaces.visibility(id).await.map_err(custom_error)?;
     let names = owner_names(state, authorization, std::iter::once(seen.owner)).await;
     let folders = state
         .folders()
@@ -363,6 +366,7 @@ async fn dashboard_meta(
         owner_person_id: owner_json(seen.owner),
         owner_name: owner_name_json(seen.owner, &names),
         access: seen.access.as_str(),
+        visibility: visibility.as_str(),
         carries: seen.entry.carries(),
         folders: folders.iter().map(holding_json).collect(),
         tags: names_json(&tags),

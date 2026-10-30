@@ -4,7 +4,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::domain::access::{Caller, DASHBOARD_NOT_EDITOR, DASHBOARD_NOT_OWNER, PersonId, Refused};
-use crate::domain::dashboards::{DashboardPage, DashboardQuery, Seen, sight};
+use crate::domain::dashboards::{DashboardPage, DashboardQuery, Seen, Visibility, sight};
 use crate::domain::datasets::{self, Datasets};
 use crate::domain::definition::arriving::Arriving;
 use crate::domain::definition::{
@@ -160,6 +160,15 @@ impl<'a> Surfaces<'a> {
             .list(kind)
             .await
             .map_err(CustomError::Store)
+    }
+
+    /// Who beyond its owner sees a dashboard the caller has already been shown.
+    pub(crate) async fn visibility(&self, id: &DefinitionId) -> Result<Visibility, CustomError> {
+        self.definitions
+            .visibility(id)
+            .await
+            .map_err(CustomError::Store)?
+            .ok_or_else(|| not_found(DefinitionKind::Dashboard, id))
     }
 
     /// How the caller sees a dashboard; one they cannot see is not found.

@@ -654,6 +654,49 @@ async fn a_listing_counts_the_grants_a_carrying_folder_brings_its_dashboards() {
 }
 
 #[tokio::test]
+async fn a_read_names_the_same_visibility_as_the_listing() {
+    let harness = Harness::new();
+    let private = harness.dashboard_of(OWNER, "Private").await;
+    let to_person = harness.dashboard_of(OWNER, "To a person").await;
+    let to_everyone = harness.dashboard_of(OWNER, "To everyone").await;
+    let carried = harness.dashboard_of(OWNER, "Carried").await;
+    harness
+        .grant(OWNER, "dashboards", &to_person, VIEWER, "viewer")
+        .await;
+    harness
+        .grant(OWNER, "dashboards", &to_everyone, "everyone", "viewer")
+        .await;
+    let org = harness.folder_of(OWNER, "Org").await;
+    harness
+        .grant(OWNER, "folders", &org, "everyone", "viewer")
+        .await;
+    harness.add(OWNER, &org, &carried).await;
+
+    let listed = harness.send(OWNER, "GET", "/v1/dashboards", None).await;
+
+    for (board, expected) in [
+        (&private, "private"),
+        (&to_person, "people"),
+        (&to_everyone, "everyone"),
+        (&carried, "everyone"),
+    ] {
+        let read = harness.read(OWNER, board).await;
+
+        assert_eq!(
+            read.body["visibility"],
+            json!(expected),
+            "read of {board}: {}",
+            read.body
+        );
+        assert_eq!(
+            visibility_of(&listed, board),
+            json!(expected),
+            "listing of {board}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_filing_entry_lends_its_folder_s_grants_to_no_one() {
     let harness = Harness::new();
     let board = harness.dashboard_of(OWNER, "Board").await;
