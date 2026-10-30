@@ -44,7 +44,7 @@ function MetricsCatalogue() {
 
 function MetricCard({ item }: { item: MetricListed }) {
   const source = metricSource(item.body);
-  const fields = item.body.fields.length;
+  const fields = item.body.fields?.length ?? 0;
 
   return (
     <CatalogueCard

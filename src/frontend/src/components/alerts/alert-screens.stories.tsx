@@ -156,15 +156,20 @@ const handlers = [
   ),
   http.get("*/api/v3/v1/metrics", () =>
     HttpResponse.json({
-      items: [{ id: "prs-open", name: "prs-open" }],
+      items: [
+        {
+          id: "prs-open",
+          name: "prs-open",
+          updated_at: "2026-01-05T09:00:00.000Z",
+          body: { table: "silver.example", fields: [] },
+        },
+      ],
       total: 1,
       limit: 50,
       offset: 0,
     })
   ),
-  http.get("*/api/v3/v1/metrics/:id", () =>
-    HttpResponse.json(BY_TEAM_METRIC)
-  ),
+  http.get("*/api/v3/v1/metrics/:id", () => HttpResponse.json(BY_TEAM_METRIC)),
   http.get("*/api/v3/v1/datasets/:name", () =>
     HttpResponse.json(PULL_REQUESTS)
   ),

@@ -47,7 +47,14 @@ describe("/portal/custom/datasets", () => {
   it("names a dataset by its title, with its name and how many fields it declares", async () => {
     vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
       names: ["commits"],
-      items: [{ name: "commits", title: "Commits", fields: 2 }],
+      items: [
+        {
+          name: "commits",
+          title: "Commits",
+          fields: 2,
+          updated_at: "2026-01-05T09:00:00.000Z",
+        },
+      ],
       total: 1,
     });
 
@@ -62,7 +69,14 @@ describe("/portal/custom/datasets", () => {
   it("names an untitled dataset once, by its name", async () => {
     vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
       names: ["events"],
-      items: [{ name: "events", title: null, fields: 1 }],
+      items: [
+        {
+          name: "events",
+          title: null,
+          fields: 1,
+          updated_at: "2026-01-05T09:00:00.000Z",
+        },
+      ],
       total: 1,
     });
 
@@ -75,7 +89,14 @@ describe("/portal/custom/datasets", () => {
   it("opens a dataset by its name, and deletes it with its records once confirmed", async () => {
     vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
       names: ["commits"],
-      items: [{ name: "commits", title: "Commits", fields: 2 }],
+      items: [
+        {
+          name: "commits",
+          title: "Commits",
+          fields: 2,
+          updated_at: "2026-01-05T09:00:00.000Z",
+        },
+      ],
       total: 1,
     });
     vi.mocked(customClient.deleteDataset).mockResolvedValue(undefined);

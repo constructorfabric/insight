@@ -31,7 +31,12 @@ export function widgetListed(
 export function datasetNames(names: string[], total = names.length): NamePage {
   return {
     names,
-    items: names.map((name) => ({ name, title: null, fields: 0 })),
+    items: names.map((name) => ({
+      name,
+      title: null,
+      fields: 0,
+      updated_at: CHANGED,
+    })),
     total,
   };
 }

@@ -4,7 +4,6 @@ import { Plus } from "lucide-react";
 import type { EditableKind } from "@/api/custom-client";
 import { NewDashboardButton } from "@/components/custom/create-dashboard-dialog";
 import { Button } from "@/components/ui/button";
-import { PREVIEWED, type PreviewedKind } from "@/lib/custom/catalogue-paths";
 
 export function EditLink({
   kind,
@@ -45,29 +44,6 @@ export function NewLink({ kind, noun }: { kind: EditableKind; noun: string }) {
       render={<Link to="/portal/custom/new/$kind" params={{ kind }} />}
     >
       New {noun}
-    </Button>
-  );
-}
-
-export function PreviewLink({
-  kind,
-  id,
-  name,
-}: {
-  kind: PreviewedKind;
-  id: string;
-  name: string;
-}) {
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="text-muted-foreground"
-      aria-label={`Preview ${name}`}
-      nativeButton={false}
-      render={<Link to={PREVIEWED[kind]} params={{ name: id }} />}
-    >
-      Preview
     </Button>
   );
 }

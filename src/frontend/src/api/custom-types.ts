@@ -131,7 +131,7 @@ export interface WidgetListed extends Listed {
 export interface DatasetListed extends Listed {
   title: string | null;
   fields: number;
-  updated_at?: string;
+  updated_at: string;
 }
 
 /** What the caller may do with a dashboard, as the service decides it. */

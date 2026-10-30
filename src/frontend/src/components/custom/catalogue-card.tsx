@@ -210,6 +210,7 @@ function RemoveFromCatalogue({
   }
 
   async function confirm() {
+    setError(null);
     try {
       if (kind === "datasets") {
         await dataset.mutateAsync(name);

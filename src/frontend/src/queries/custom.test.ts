@@ -86,14 +86,29 @@ describe("datasets in a catalogue", () => {
   it("are listed under their name, which is their id, with what a card shows", async () => {
     vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
       names: ["commits"],
-      items: [{ name: "commits", title: "Commits", fields: 3 }],
+      items: [
+        {
+          name: "commits",
+          title: "Commits",
+          fields: 3,
+          updated_at: "2026-01-05T09:00:00.000Z",
+        },
+      ],
       total: 1,
     });
 
     await expect(
       definitionPagesQuery("datasets").queryFn?.({ pageParam: 0 } as never),
     ).resolves.toEqual({
-      items: [{ id: "commits", name: "commits", title: "Commits", fields: 3 }],
+      items: [
+        {
+          id: "commits",
+          name: "commits",
+          title: "Commits",
+          fields: 3,
+          updated_at: "2026-01-05T09:00:00.000Z",
+        },
+      ],
       total: 1,
     });
   });

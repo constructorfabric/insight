@@ -5,6 +5,7 @@ import {
   ChartLine,
   ChartPie,
   Hash,
+  LayoutGrid,
   Table2,
 } from "lucide-react";
 
@@ -53,7 +54,11 @@ function WidgetsCatalogue() {
 }
 
 function WidgetCard({ item }: { item: WidgetListed }) {
-  const kind = KIND[item.body.type];
+  // INVARIANT: a stored body may name a kind this build does not know; one such widget must not blank the page.
+  const kind = KIND[item.body.type] ?? {
+    label: String(item.body.type),
+    icon: LayoutGrid,
+  };
 
   return (
     <CatalogueCard
