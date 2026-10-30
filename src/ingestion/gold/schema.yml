@@ -698,7 +698,10 @@ models:
       per (tenant, entity, day, measure, dimension tuple). Distinct-count
       measures (active_day, active_modality) stamp the counted subject on
       subject_key and emit one row per (entity, day, subject); the runtime
-      aggregates them with uniqExact(subject_key). The column set is the same
+      aggregates them with uniqExact(subject_key). meetings_attended emits one
+      row per attended meeting where the source names them (Zoom), with the
+      meeting as the subject, so the runtime counts a meeting once for a person
+      who joined it from several addresses. The column set is the same
       published contract the analytics service schema validator probes
       (`OBSERVATION_COLUMNS`); changing it requires a coordinated backend
       change.
@@ -784,7 +787,10 @@ models:
       - name: subject_key
         description: >
           Distinct-count subject: the date for active_day and chat_active_day,
-          the modality for active_modality. NULL for sum and presence measures.
+          the modality for active_modality. On meetings_attended, the attended
+          meeting (`<source id>:<logical meeting id>`), or the address itself on
+          a daily report that names no meetings. NULL for the other sum and
+          presence measures.
       - name: dimensions
         description: >
           Array(Tuple(key, value, label)). `tool` carries the collaboration

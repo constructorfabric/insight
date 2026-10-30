@@ -1,5 +1,5 @@
 -- Build-integrity check (untagged → error severity under `dbt build`).
--- Every collaboration measure is day-grain: exactly one row per
+-- Every collaboration measure has one row per
 -- (tenant, entity, date, measure, dimensions, subject). A duplicate means
 -- FINAL dedup regressed on a class read or a measure branch fanned out —
 -- sums and distinct counts would silently inflate.

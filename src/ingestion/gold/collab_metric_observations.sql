@@ -13,11 +13,10 @@ SELECT
     metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     measure_key,
-    -- Grouped to CANONICAL grain: a person's several source accounts land in
-    -- ONE row per (person, day, measure, subject, dims). Additive measures sum
-    -- across accounts; day flags collapse by their own semantics (max — active
-    -- under any account; min for meeting_free_day — free only if every account
-    -- was); distinct subjects stay their own rows via subject_key in the key.
+    -- One row per (source identity, day, measure, subject, dims). The runtime
+    -- resolves identities to persons as it serves and applies each measure's
+    -- alias collapse there; distinct subjects stay their own rows via
+    -- subject_key in the key, so a per-subject collapse can see them.
     toNullable(sum(contribution)) AS value,
     subject_key,
     dimensions

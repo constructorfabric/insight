@@ -121,6 +121,10 @@ models:
         description: "The normalized display name on a guest row, '' on an email-keyed row"
         tests:
           - not_null
+      - name: attended_meeting_keys
+        description: >
+          The logical meetings meetings_attended counts, sorted; the same
+          company-time rule applies to both.
       - name: date
         tests:
           - not_null

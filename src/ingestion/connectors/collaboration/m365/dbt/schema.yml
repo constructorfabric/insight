@@ -62,6 +62,8 @@ models:
       - name: date
         tests:
           - not_null
+      - name: attended_meeting_keys
+        description: "Always empty: the daily report names no meetings."
 
   - name: m365__collab_email_activity
     description: "M365 Outlook email activity → staging, feeds class_collab_email_activity"

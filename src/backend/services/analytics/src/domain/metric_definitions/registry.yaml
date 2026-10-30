@@ -200,6 +200,7 @@ sources:
         evidence_granularity: source_summary
       - key: meetings_attended
         evidence_granularity: source_summary
+        alias_collapse: max
       - key: meetings_organized
         evidence_granularity: source_summary
       - key: adhoc_meetings_attended
