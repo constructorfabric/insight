@@ -34,7 +34,9 @@ export function OverviewView({ item }: { item: string | null }) {
     return (
       <CenteredSpinner
         data-testid={
-          OVERVIEW_ITEMS[asked] ? `page-overview-${asked}` : undefined
+          OVERVIEW_ITEMS[asked] && homeItemShown("me", asked)
+            ? `page-overview-${asked}`
+            : undefined
         }
         className="min-h-[60vh]"
       />
@@ -69,7 +71,7 @@ export function OverviewView({ item }: { item: string | null }) {
     <DomainLensView
       config={entry}
       gridKeys={gridKeys}
-      pageTestId={`page-overview-${shown}`}
+      data-testid={`page-overview-${shown}`}
     />
   );
 }
@@ -93,7 +95,7 @@ function OwnItem({ item }: { item: string }) {
         <DomainLensView
           config={own.config}
           personId={personId}
-          pageTestId={`page-overview-${item}`}
+          data-testid={`page-overview-${item}`}
         />
       );
     case "attention":

@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
  * blanking the page.
  */
 export function DefinitionList({
-  pageTestId,
+  "data-testid": testId,
   title,
   blurb,
   items,
@@ -35,7 +35,7 @@ export function DefinitionList({
   paging,
   create,
 }: {
-  pageTestId?: string;
+  "data-testid"?: string;
   title: string;
   blurb: string;
   items: Listed[] | undefined;
@@ -52,7 +52,7 @@ export function DefinitionList({
   return (
     <>
       <header
-        data-testid={pageTestId}
+        data-testid={testId}
         className="mb-3 flex flex-wrap items-start gap-3"
       >
         <div className="min-w-0 grow">

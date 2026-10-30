@@ -258,7 +258,7 @@ export function TeamStateView() {
   }, [shownKeys, grid.byKey, memberIds, cohortOf]);
 
   const gate = orgScopeGate({
-    pageTestId: "page-people-roster",
+    "data-testid": "page-people-roster",
     viewerLoading: orgScope.isLoading,
     viewerError: orgScope.isError,
     membersLoading: false,

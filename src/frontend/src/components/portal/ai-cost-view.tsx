@@ -339,7 +339,7 @@ export function AiCostView({ item }: { item: string | null }) {
     );
 
   const gate = orgScopeGate({
-    pageTestId: `page-aicost-${item ?? "overview"}`,
+    "data-testid": `page-aicost-${item ?? "overview"}`,
     viewerLoading: orgScope.isLoading,
     viewerError: orgScope.isError,
     membersLoading: false,

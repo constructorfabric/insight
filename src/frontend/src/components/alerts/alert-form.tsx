@@ -60,7 +60,7 @@ export function NewAlertPage() {
     );
   if (destinations.isError) {
     return (
-      <Shell pageTestId="page-custom-alert-new" title="New alert">
+      <Shell data-testid="page-custom-alert-new" title="New alert">
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(destinations.error, "Couldn't load destinations.")}
         </p>
@@ -71,7 +71,7 @@ export function NewAlertPage() {
   const only = destinations.data.length === 1 ? destinations.data[0].name : "";
 
   return (
-    <Shell pageTestId="page-custom-alert-new" title="New alert">
+    <Shell data-testid="page-custom-alert-new" title="New alert">
       <AlertEditor initial={blankForm(only)} />
     </Shell>
   );
@@ -88,7 +88,7 @@ export function EditAlertPage({ id }: { id: string }) {
 
   if (alert.isError) {
     return (
-      <Shell pageTestId="page-custom-alert-edit" title="Edit alert">
+      <Shell data-testid="page-custom-alert-edit" title="Edit alert">
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(alert.error, "Alert not found.")}
         </p>
@@ -108,7 +108,7 @@ export function EditAlertPage({ id }: { id: string }) {
 
   return (
     <Shell
-      pageTestId="page-custom-alert-edit"
+      data-testid="page-custom-alert-edit"
       title={`Edit ${alert.data.name}`}
       backTo={id}
     >
@@ -136,12 +136,12 @@ function Cancel({ id }: { id?: string }) {
 }
 
 function Shell({
-  pageTestId,
+  "data-testid": testId,
   title,
   backTo,
   children,
 }: {
-  pageTestId: string;
+  "data-testid": string;
   title: string;
   /** The alert the form edits, which Cancel returns to. */
   backTo?: string;
@@ -149,7 +149,7 @@ function Shell({
 }) {
   return (
     <div
-      data-testid={pageTestId}
+      data-testid={testId}
       className="flex max-w-3xl flex-col gap-4 p-4 md:p-6"
     >
       <header className="flex flex-col gap-1">

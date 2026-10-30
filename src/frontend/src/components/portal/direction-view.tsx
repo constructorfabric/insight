@@ -28,10 +28,10 @@ export function DirectionView({ dir, lens }: { dir: string; lens: string }) {
   }
   if ("comingSoon" in entry) return <Pending label={entry.comingSoon} />;
 
-  const pageTestId = `page-directions-${dir}-${lensSlug(lens)}`;
+  const testId = `page-directions-${dir}-${lensSlug(lens)}`;
 
   // Org-grain lens: its metrics ride a tenant-entity request of its own, so it
   // renders outside the person grid entirely.
-  if ("entity" in entry) return <TenantLensView config={entry} pageTestId={pageTestId} />;
-  return <DomainLensView config={entry} gridKeys={gridKeys} pageTestId={pageTestId} />;
+  if ("entity" in entry) return <TenantLensView config={entry} data-testid={testId} />;
+  return <DomainLensView config={entry} gridKeys={gridKeys} data-testid={testId} />;
 }
