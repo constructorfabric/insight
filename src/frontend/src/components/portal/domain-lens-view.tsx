@@ -2854,7 +2854,7 @@ function DirectionCardsSection({
                     >
                       <MetricName
                         metric={r}
-                        text={r.short_label ?? r.label}
+                        text={r.label}
                         className="truncate text-muted-foreground"
                       />
                       <span className="flex items-center gap-2">
