@@ -1,29 +1,18 @@
 import type { ReactNode } from "react";
 
-import type { DefinitionKind, Listed } from "@/api/custom-client";
 import {
   DefinitionCount,
   MoreDefinitions,
   type Paging,
 } from "@/components/custom/definition-paging";
 import { DefinitionSearch } from "@/components/custom/definition-search";
-import { EditLink, PreviewLink } from "@/components/custom/editor/edit-link";
-
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { TEXT_BODY, TEXT_HEADING, TEXT_TITLE } from "@/lib/type-scale";
-import { cn } from "@/lib/utils";
+import { TEXT_TITLE } from "@/lib/type-scale";
 
-/**
- * A catalogue page: every definition of one kind, each in a card that renders
- * its own body. The list endpoint returns ids and names only, so each row
- * fetches its own definition — which is also what keeps a broken one from
- * blanking the page.
- */
-export function DefinitionList({
+/** A catalogue page: every definition of one kind, a card each. */
+export function DefinitionList<T extends { id: string }>({
   title,
-  blurb,
   items,
   isLoading,
   isError,
@@ -35,13 +24,12 @@ export function DefinitionList({
   create,
 }: {
   title: string;
-  blurb: string;
-  items: Listed[] | undefined;
+  items: T[] | undefined;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
   emptyLabel: string;
-  renderRow: (item: Listed) => ReactNode;
+  renderRow: (item: T) => ReactNode;
   search?: { label: string; value: string; onChange: (needle: string) => void };
   paging?: Paging;
   /** What starts a new one of this kind, where one may be written by hand. */
@@ -49,11 +37,8 @@ export function DefinitionList({
 }) {
   return (
     <>
-      <header className="mb-3 flex flex-wrap items-start gap-3">
-        <div className="min-w-0 grow">
-          <h1 className={TEXT_TITLE}>{title}</h1>
-          <p className={cn(TEXT_BODY, "text-muted-foreground")}>{blurb}</p>
-        </div>
+      <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <h1 className={TEXT_TITLE}>{title}</h1>
         {create}
       </header>
       {search || paging ? (
@@ -87,57 +72,13 @@ export function DefinitionList({
         <ComingSoon variant="card" state="empty" label={emptyLabel} />
       ) : (
         <>
-          <ul className="grid gap-4 @3xl:grid-cols-2">
+          <ul className="grid gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">
             {items.map((item) => (
               <li key={item.id}>{renderRow(item)}</li>
             ))}
           </ul>
           {paging ? <MoreDefinitions {...paging} /> : null}
         </>
-      )}
-    </>
-  );
-}
-
-export function DefinitionCard({
-  name,
-  actions,
-  children,
-}: {
-  name: string;
-  actions: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <Card className="h-full">
-      <CardHeader className="flex flex-row items-center gap-2">
-        <CardTitle className={cn(TEXT_HEADING, "min-w-0 truncate")}>
-          {name}
-        </CardTitle>
-        <span className="ms-auto flex shrink-0 items-center gap-1">
-          {actions}
-        </span>
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
-  );
-}
-
-/** What a card offers: opening the editor, where renaming and removal live too. */
-export function DefinitionActions({
-  kind,
-  id,
-  name,
-}: {
-  kind: DefinitionKind;
-  id: string;
-  name: string;
-}) {
-  return (
-    <>
-      <EditLink kind={kind} id={id} name={name} />
-      {kind === "dashboards" ? null : (
-        <PreviewLink kind={kind} id={id} name={name} />
       )}
     </>
   );

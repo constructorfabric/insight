@@ -10,6 +10,7 @@ import type {
 import { MetricName } from "@/components/custom/metric-name";
 import { Badge } from "@/components/ui/badge";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
+import { metricSource } from "@/lib/custom/metric-source";
 import { cn } from "@/lib/utils";
 
 /**
@@ -47,18 +48,6 @@ function reads(field: MetricDefinition["fields"][number]): string {
 }
 
 /** What the metric reads, named as the body names it. */
-function over(definition: MetricDefinition): { label: string; named: string } {
-  if (definition.dataset !== undefined) {
-    return { label: "Dataset", named: definition.dataset };
-  }
-  const table = definition.table ?? "";
-  const named =
-    definition.database && !table.includes(".")
-      ? `${definition.database}.${table}`
-      : table;
-
-  return { label: "Table", named };
-}
 
 /** What a dataset says about its records, as a catalogue row reads it. */
 export function DatasetSummary({
@@ -101,7 +90,7 @@ export function MetricSummary({
   const grouped = definition.group_by ?? [];
   const filters = definition.filters ?? [];
 
-  const read = over(definition);
+  const read = metricSource(definition);
 
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">

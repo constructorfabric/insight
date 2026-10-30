@@ -14,6 +14,9 @@ import type {
   DrilldownRequest,
   Listed,
   ListedPage,
+  MetricListed,
+  WidgetListed,
+  DatasetListed,
   RecordPage,
   MetricResult,
   OrphanedDashboard,
@@ -410,9 +413,9 @@ export async function removeFromFolder(
 
 export async function fetchMetrics(
   page: PageRequest = {}
-): Promise<ListedPage> {
+): Promise<ListedPage<MetricListed>> {
   const res = await fetchWithAuth(`${BASE}/metrics${pageQuery(page)}`);
-  return readJson<ListedPage>(res);
+  return readJson<ListedPage<MetricListed>>(res);
 }
 
 export async function fetchMetric(id: string): Promise<StoredMetric> {
@@ -423,9 +426,9 @@ export async function fetchMetric(id: string): Promise<StoredMetric> {
 
 export async function fetchWidgets(
   page: PageRequest = {}
-): Promise<ListedPage> {
+): Promise<ListedPage<WidgetListed>> {
   const res = await fetchWithAuth(`${BASE}/widgets${pageQuery(page)}`);
-  return readJson<ListedPage>(res);
+  return readJson<ListedPage<WidgetListed>>(res);
 }
 
 export async function fetchWidget(id: string): Promise<StoredWidget> {
@@ -436,6 +439,8 @@ export async function fetchWidget(id: string): Promise<StoredWidget> {
 
 export interface NamePage {
   names: string[];
+  /** The same datasets as `names`, in order, with what a card shows. */
+  items: Omit<DatasetListed, "id">[];
   total: number;
 }
 

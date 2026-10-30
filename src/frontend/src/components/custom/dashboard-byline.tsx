@@ -1,11 +1,9 @@
 import type { DashboardAccess, DashboardVisibility } from "@/api/custom-client";
 import { Badge } from "@/components/ui/badge";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
-import { describeAge } from "@/lib/portal/connector-health";
+import { changedAgo } from "@/lib/custom/changed-ago";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 const VISIBILITY: Record<
   DashboardVisibility,
@@ -15,16 +13,6 @@ const VISIBILITY: Record<
   people: { label: "Shared with people", variant: "info" },
   everyone: { label: "Shared with org", variant: "info" },
 };
-
-function changedAgo(updatedAt: string): string | null {
-  const changed = Date.parse(updatedAt);
-  if (Number.isNaN(changed)) return null;
-
-  const age = Math.max(0, Date.now() - changed);
-  if (age >= DAY_MS && age < 2 * DAY_MS) return "yesterday";
-
-  return describeAge(age);
-}
 
 /** Owner · last change · who else sees it, as a card and the open dashboard show them. */
 export function DashboardByline({

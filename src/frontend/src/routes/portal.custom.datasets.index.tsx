@@ -1,21 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { Database } from "lucide-react";
 
-import {
-  DefinitionCard,
-  DefinitionList,
-} from "@/components/custom/definition-list";
-import { DatasetSummary } from "@/components/custom/definition-summary";
-import {
-  EditLink,
-  NewLink,
-  PreviewLink,
-} from "@/components/custom/editor/edit-link";
-import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import type { DatasetListed } from "@/api/custom-client";
+import { CatalogueCard } from "@/components/custom/catalogue-card";
+import { DefinitionList } from "@/components/custom/definition-list";
+import { NewLink } from "@/components/custom/editor/edit-link";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
-import { datasetQuery } from "@/queries/custom";
-import { TEXT_BODY } from "@/lib/type-scale";
-import { cn } from "@/lib/utils";
 
 // An index route beside `$name`, not its parent: a parent would have to draw
 // the page through an Outlet, and the catalogue is a page of its own.
@@ -29,7 +19,6 @@ function DatasetsCatalogue() {
   return (
     <DefinitionList
       title="Datasets"
-      blurb="Every declared dataset. A metric reads one of these, and records are sent into them."
       items={catalogue.items}
       isLoading={catalogue.isLoading}
       isError={catalogue.isError}
@@ -38,33 +27,24 @@ function DatasetsCatalogue() {
       paging={catalogue.paging}
       create={<NewLink kind="datasets" noun="dataset" />}
       emptyLabel="No datasets yet. Declare one to send records into it."
-      renderRow={(item) => <DatasetRow name={item.id} />}
+      renderRow={(item) => <DatasetCard item={item} />}
     />
   );
 }
 
-function DatasetRow({ name }: { name: string }) {
-  const { data, isPending, isError, error } = useQuery(datasetQuery(name));
+function DatasetCard({ item }: { item: DatasetListed }) {
+  const titled = item.title && item.title !== item.name;
+  const fields = `${item.fields} ${item.fields === 1 ? "field" : "fields"}`;
 
   return (
-    <DefinitionCard
-      name={name}
-      actions={
-        <>
-          <EditLink kind="datasets" id={name} name={name} />
-          <PreviewLink kind="datasets" id={name} name={name} />
-        </>
-      }
-    >
-      {isPending ? (
-        <CenteredSpinner className="min-h-24" />
-      ) : isError ? (
-        <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-          {(error as Error).message}
-        </p>
-      ) : (
-        <DatasetSummary declaration={data.declaration} />
-      )}
-    </DefinitionCard>
+    <CatalogueCard
+      kind="datasets"
+      id={item.name}
+      name={item.name}
+      title={item.title || item.name}
+      icon={Database}
+      facts={titled ? [item.name, fields] : [fields]}
+      updatedAt={item.updated_at}
+    />
   );
 }

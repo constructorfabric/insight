@@ -1,25 +1,32 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-
-import type { Listed } from "@/api/custom-client";
 import {
-  DefinitionActions,
-  DefinitionCard,
-  DefinitionList,
-} from "@/components/custom/definition-list";
-import { WidgetSummary } from "@/components/custom/definition-summary";
+  ChartArea,
+  ChartColumn,
+  ChartLine,
+  ChartPie,
+  Hash,
+  Table2,
+} from "lucide-react";
+
+import type { Widget, WidgetListed } from "@/api/custom-client";
+import { CatalogueCard } from "@/components/custom/catalogue-card";
+import { DefinitionList } from "@/components/custom/definition-list";
 import { NewLink } from "@/components/custom/editor/edit-link";
-import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
 import { useAssistantAvailable } from "@/lib/portal/use-assistant-available";
-import { widgetQuery } from "@/queries/custom";
-import { TEXT_BODY } from "@/lib/type-scale";
-import { cn } from "@/lib/utils";
 
-/** Static, so it wins over `$name` — see the note on the metrics route. */
 export const Route = createFileRoute("/portal/custom/widgets/")({
   component: WidgetsCatalogue,
 });
+
+const KIND: Record<Widget["type"], { label: string; icon: typeof Hash }> = {
+  table: { label: "Table", icon: Table2 },
+  line: { label: "Line chart", icon: ChartLine },
+  bar: { label: "Bar chart", icon: ChartColumn },
+  area: { label: "Area chart", icon: ChartArea },
+  stat: { label: "Figure", icon: Hash },
+  pie: { label: "Pie chart", icon: ChartPie },
+};
 
 function WidgetsCatalogue() {
   const catalogue = useDefinitionCatalogue("widgets");
@@ -28,7 +35,6 @@ function WidgetsCatalogue() {
   return (
     <DefinitionList
       title="Widgets"
-      blurb="Every stored visual. Each draws one metric; a dashboard holds them."
       items={catalogue.items}
       isLoading={catalogue.isLoading}
       isError={catalogue.isError}
@@ -37,32 +43,28 @@ function WidgetsCatalogue() {
       paging={catalogue.paging}
       create={<NewLink kind="widgets" noun="widget" />}
       emptyLabel={
-        assistant ? "No widgets yet. Ask the assistant for one." : "No widgets yet."
+        assistant
+          ? "No widgets yet. Ask the assistant for one."
+          : "No widgets yet."
       }
-      renderRow={(item) => <WidgetRow item={item} />}
+      renderRow={(item) => <WidgetCard item={item} />}
     />
   );
 }
 
-function WidgetRow({ item }: { item: Listed }) {
-  const { data, isPending, isError, error } = useQuery(widgetQuery(item.id));
+function WidgetCard({ item }: { item: WidgetListed }) {
+  const kind = KIND[item.body.type];
 
   return (
-    <DefinitionCard
+    <CatalogueCard
+      kind="widgets"
+      id={item.id}
       name={item.name}
-      actions={
-        <DefinitionActions kind="widgets" id={item.id} name={item.name} />
-      }
-    >
-      {isPending ? (
-        <CenteredSpinner className="min-h-24" />
-      ) : isError ? (
-        <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-          {(error as Error).message}
-        </p>
-      ) : (
-        <WidgetSummary widget={data.widget} />
-      )}
-    </DefinitionCard>
+      title={item.body.title || item.name}
+      icon={kind.icon}
+      facts={[kind.label, item.metric_name ?? "Missing metric"]}
+      squeezed={1}
+      updatedAt={item.updated_at}
+    />
   );
 }

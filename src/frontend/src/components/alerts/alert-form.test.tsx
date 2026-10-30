@@ -31,6 +31,7 @@ import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import { alertQuery } from "@/queries/alerts";
 import { ALERT, wrapper } from "@/test/alerts";
+import { metricListed } from "@/test/catalogue";
 import {
   scrollEndIntoView,
   scrollEndOutOfView,
@@ -40,7 +41,7 @@ import { portalRouter } from "@/test/portal-router";
 import { EditAlertPage, NewAlertPage } from "./alert-form";
 
 function listed(names: string[]) {
-  return names.map((name) => ({ id: `id-${name}`, name }));
+  return names.map((name) => metricListed(`id-${name}`, name));
 }
 
 const PRS_OPEN = {
@@ -282,7 +283,7 @@ describe("NewAlertPage", { timeout: 20_000 }, () => {
 
   it("offers each metric by its name and stores the one picked by its id", async () => {
     vi.mocked(customClient.fetchMetrics).mockResolvedValue({
-      items: [{ id: "m-1", name: "Lines per day" }],
+      items: [metricListed("m-1", "Lines per day")],
       total: 1,
     });
     vi.mocked(alertsClient.createAlert).mockResolvedValue(ALERT);

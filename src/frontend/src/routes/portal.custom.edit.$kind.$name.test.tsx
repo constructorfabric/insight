@@ -29,6 +29,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
+import { datasetNames } from "@/test/catalogue";
 import { portalRouter } from "@/test/portal-router";
 
 import { Route } from "./portal.custom.edit.$kind.$name";
@@ -82,10 +83,7 @@ beforeEach(() => {
   ]) {
     vi.mocked(page).mockResolvedValue(NO_ITEMS);
   }
-  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
-    names: [],
-    total: 0,
-  });
+  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue(datasetNames([]));
   vi.mocked(customClient.putDefinition).mockResolvedValue(undefined);
   vi.mocked(customClient.fetchDataset).mockImplementation(async (name) => ({
     name,

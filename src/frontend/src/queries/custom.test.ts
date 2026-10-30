@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/api/custom-client");
 
 import * as customClient from "@/api/custom-client";
+import { metricListed, widgetListed } from "@/test/catalogue";
 
 import {
   catalogueQuery,
@@ -47,12 +48,12 @@ describe("definitionPagesQuery", () => {
   it("asks for one page at a time, and stops once it has them all", async () => {
     const first = {
       items: [
-        { id: "a", name: "A" },
-        { id: "b", name: "B" },
+        metricListed("a", "A"),
+        metricListed("b", "B"),
       ],
       total: 3,
     };
-    const second = { items: [{ id: "c", name: "C" }], total: 3 };
+    const second = { items: [metricListed("c", "C")], total: 3 };
     vi.mocked(customClient.fetchMetrics).mockResolvedValue(first);
 
     const options = definitionPagesQuery("metrics", "git");
@@ -82,21 +83,25 @@ describe("definitionPagesQuery", () => {
 });
 
 describe("datasets in a catalogue", () => {
-  it("are listed under their name, which is their id", async () => {
+  it("are listed under their name, which is their id, with what a card shows", async () => {
     vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
       names: ["commits"],
+      items: [{ name: "commits", title: "Commits", fields: 3 }],
       total: 1,
     });
 
     await expect(
       definitionPagesQuery("datasets").queryFn?.({ pageParam: 0 } as never),
-    ).resolves.toEqual({ items: [{ id: "commits", name: "commits" }], total: 1 });
+    ).resolves.toEqual({
+      items: [{ id: "commits", name: "commits", title: "Commits", fields: 3 }],
+      total: 1,
+    });
   });
 });
 
 describe("catalogueQuery", () => {
   it("offers every definition of a kind by id and name", async () => {
-    const page = { items: [{ id: "w1", name: "Commits table" }], total: 1 };
+    const page = { items: [widgetListed("w1", "Commits table")], total: 1 };
     vi.mocked(customClient.fetchWidgets).mockResolvedValue(page);
     const options = catalogueQuery("widgets");
 

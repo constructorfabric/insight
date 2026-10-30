@@ -6,6 +6,7 @@ import { vi } from "vitest";
 
 import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
+import { datasetNames } from "@/test/catalogue";
 
 export function wrapper({ children }: { children: ReactNode }) {
   const queryClient = new QueryClient({
@@ -20,10 +21,7 @@ export function mockCatalogues(): void {
   vi.mocked(customClient.fetchMetrics).mockResolvedValue(none);
   vi.mocked(customClient.fetchWidgets).mockResolvedValue(none);
   vi.mocked(customClient.fetchDashboards).mockResolvedValue(none);
-  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
-    names: [],
-    total: 0,
-  });
+  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue(datasetNames([]));
   vi.mocked(customClient.fetchMetric).mockRejectedValue(
     new CustomApiError(404, null)
   );

@@ -1,8 +1,10 @@
 import { Link } from "@tanstack/react-router";
+import { Plus } from "lucide-react";
 
 import type { EditableKind } from "@/api/custom-client";
 import { NewDashboardButton } from "@/components/custom/create-dashboard-dialog";
 import { Button } from "@/components/ui/button";
+import { PREVIEWED, type PreviewedKind } from "@/lib/custom/catalogue-paths";
 
 export function EditLink({
   kind,
@@ -37,8 +39,8 @@ export function NewLink({ kind, noun }: { kind: EditableKind; noun: string }) {
 
   return (
     <Button
-      variant="outline"
       size="sm"
+      icon={<Plus />}
       nativeButton={false}
       render={<Link to="/portal/custom/new/$kind" params={{ kind }} />}
     >
@@ -46,15 +48,6 @@ export function NewLink({ kind, noun }: { kind: EditableKind; noun: string }) {
     </Button>
   );
 }
-
-/** The kinds that have a page of their own to look at, and where it is. */
-const PREVIEWED = {
-  datasets: "/portal/custom/datasets/$name",
-  metrics: "/portal/custom/metrics/$name",
-  widgets: "/portal/custom/widgets/$name",
-} as const;
-
-export type PreviewedKind = keyof typeof PREVIEWED;
 
 export function PreviewLink({
   kind,

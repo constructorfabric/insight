@@ -10,6 +10,7 @@ import type {
   ChatTurn,
   DashboardAccess,
   DashboardListed,
+  DatasetListed,
   DashboardRead,
   DrilldownPage,
   DrilldownRequest,
@@ -18,6 +19,8 @@ import type {
   EditableKind,
   FolderFilter,
   Listed,
+  MetricListed,
+  WidgetListed,
   GrantLevel,
   GrantTarget,
   Grantee,
@@ -91,17 +94,19 @@ const ORPHANED_PREFIX = ["custom", "orphaned"] as const;
 const DASHBOARD_PREFIX = ["custom", "dashboard"] as const;
 
 interface Catalogued {
-  metrics: Listed;
-  widgets: Listed;
+  metrics: MetricListed;
+  widgets: WidgetListed;
   dashboards: DashboardListed;
-  datasets: Listed;
+  datasets: DatasetListed;
 }
 
-async function fetchDatasetPage(page: PageRequest): Promise<ListedPage> {
+async function fetchDatasetPage(
+  page: PageRequest
+): Promise<ListedPage<DatasetListed>> {
   const read = await fetchDatasetNames(page);
 
   return {
-    items: read.names.map((name) => ({ id: name, name })),
+    items: read.items.map((item) => ({ ...item, id: item.name })),
     total: read.total,
   };
 }
@@ -170,8 +175,7 @@ export function definitionPagesQuery<K extends EditableKind>(
 export function recentDashboardsQuery(count: number) {
   return queryOptions({
     queryKey: [...NAME_PAGES_PREFIX, "dashboards", "recent", count],
-    queryFn: () =>
-      fetchDashboards({ sort: "recent", limit: count }),
+    queryFn: () => fetchDashboards({ sort: "recent", limit: count }),
   });
 }
 

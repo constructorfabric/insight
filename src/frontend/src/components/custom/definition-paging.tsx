@@ -30,7 +30,9 @@ export function DefinitionCount({
 
   return (
     <p className={cn(TEXT_LABEL, "shrink-0 text-muted-foreground")}>
-      {searching ? `${total} matching` : `${total} ${noun}`}
+      {searching
+        ? `${total} matching`
+        : `${total} ${total === 1 ? noun.replace(/s$/, "") : noun}`}
     </p>
   );
 }

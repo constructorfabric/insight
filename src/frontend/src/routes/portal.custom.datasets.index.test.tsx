@@ -8,11 +8,13 @@ vi.mock("@tanstack/react-router", async () => {
 vi.mock("@/api/custom-client");
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as customClient from "@/api/custom-client";
+import { datasetNames } from "@/test/catalogue";
 import { scrollEndOutOfView } from "@/test/intersection-observer";
 import { portalRouter } from "@/test/portal-router";
 
@@ -28,85 +30,81 @@ function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
-const COMMITS = {
-  name: "commits",
-  declaration: {
-    title: "Commits",
-    fields: [
-      { name: "author", path: "author", type: "string" as const },
-      {
-        name: "day",
-        path: "day",
-        type: "datetime" as const,
-        default_clock: true,
-      },
-    ],
-    row_identity: ["author"],
-  },
-};
-
 beforeEach(() => {
   vi.resetAllMocks();
   portalRouter.reset();
   scrollEndOutOfView();
 });
 
+async function openMenu(title: string) {
+  await userEvent.click(
+    await screen.findByRole("button", { name: `More for ${title}` })
+  );
+  await screen.findAllByRole("menuitem");
+}
+
 describe("/portal/custom/datasets", () => {
-  it("names every dataset and reads its declaration back", async () => {
+  it("names a dataset by its title, with its name and how many fields it declares", async () => {
     vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
       names: ["commits"],
+      items: [{ name: "commits", title: "Commits", fields: 2 }],
       total: 1,
     });
-    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText("commits")).toBeInTheDocument();
     expect(await screen.findByText("Commits")).toBeInTheDocument();
+    expect(screen.getByText("commits")).toBeInTheDocument();
+    expect(screen.getByText("2 fields")).toBeInTheDocument();
+    expect(customClient.fetchDataset).not.toHaveBeenCalled();
+  });
+
+  it("names an untitled dataset once, by its name", async () => {
+    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
+      names: ["events"],
+      items: [{ name: "events", title: null, fields: 1 }],
+      total: 1,
+    });
+
+    render(<Component />, { wrapper });
+
+    expect(await screen.findAllByText("events")).toHaveLength(1);
+    expect(screen.getByText("1 field")).toBeInTheDocument();
+  });
+
+  it("opens a dataset by its name, and deletes it with its records once confirmed", async () => {
+    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
+      names: ["commits"],
+      items: [{ name: "commits", title: "Commits", fields: 2 }],
+      total: 1,
+    });
+    vi.mocked(customClient.deleteDataset).mockResolvedValue(undefined);
+
+    render(<Component />, { wrapper });
+
     expect(
-      await screen.findByText("author (string), day (datetime)")
+      await screen.findByRole("link", { name: "Open Commits" })
+    ).toHaveAttribute("href", "/portal/custom/datasets/commits");
+    await openMenu("Commits");
+    await userEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/records it holds are deleted/)
     ).toBeInTheDocument();
-  });
-
-  // Which field a window selects by, and which records count as one, are the
-  // two things a reader cannot infer from the field list.
-  it("says which date a window uses and what makes two records one", async () => {
-    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
-      names: ["commits"],
-      total: 1,
-    });
-    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
-
-    render(<Component />, { wrapper });
-
-    expect(await screen.findByText("Main date")).toBeInTheDocument();
-    expect(await screen.findByText("One record per")).toBeInTheDocument();
-  });
-
-  it("says so when a declaration cannot be read", async () => {
-    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
-      names: ["commits"],
-      total: 1,
-    });
-    vi.mocked(customClient.fetchDataset).mockRejectedValue(
-      new Error("that dataset is gone")
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Delete dataset" })
     );
 
-    render(<Component />, { wrapper });
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "that dataset is gone"
-    );
+    expect(customClient.deleteDataset).toHaveBeenCalledWith("commits");
   });
 
   it("says there are none rather than showing an empty list", async () => {
-    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
-      names: [],
-      total: 0,
-    });
+    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue(
+      datasetNames([])
+    );
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText(/No datasets yet/)).toBeInTheDocument();
+    expect(await screen.findByText(/no datasets yet/i)).toBeInTheDocument();
   });
 });

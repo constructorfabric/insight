@@ -14,7 +14,6 @@ function Catalogue() {
     <CustomPageShell chat={<p>assistant</p>}>
       <DefinitionList
         title="Datasets"
-        blurb="Every declared dataset. A metric reads one of these, and records are sent into them."
         items={[]}
         isLoading={false}
         isError={false}

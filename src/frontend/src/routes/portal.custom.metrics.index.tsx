@@ -1,20 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { Sigma } from "lucide-react";
 
-import type { Listed } from "@/api/custom-client";
-import {
-  DefinitionActions,
-  DefinitionCard,
-  DefinitionList,
-} from "@/components/custom/definition-list";
-import { MetricSummary } from "@/components/custom/definition-summary";
+import type { MetricListed } from "@/api/custom-client";
+import { CatalogueCard } from "@/components/custom/catalogue-card";
+import { DefinitionList } from "@/components/custom/definition-list";
 import { NewLink } from "@/components/custom/editor/edit-link";
-import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
+import { metricSource } from "@/lib/custom/metric-source";
 import { useAssistantAvailable } from "@/lib/portal/use-assistant-available";
-import { metricQuery } from "@/queries/custom";
-import { TEXT_BODY } from "@/lib/type-scale";
-import { cn } from "@/lib/utils";
 
 /**
  * A static segment, so it wins over `$name` in the route tree — a dashboard
@@ -32,11 +25,6 @@ function MetricsCatalogue() {
   return (
     <DefinitionList
       title="Metrics"
-      blurb={
-        assistant
-          ? "Every stored query. A widget draws one of these; the assistant can build more."
-          : "Every stored query. A widget draws one of these."
-      }
       items={catalogue.items}
       isLoading={catalogue.isLoading}
       isError={catalogue.isError}
@@ -45,32 +33,28 @@ function MetricsCatalogue() {
       paging={catalogue.paging}
       create={<NewLink kind="metrics" noun="metric" />}
       emptyLabel={
-        assistant ? "No metrics yet. Ask the assistant for one." : "No metrics yet."
+        assistant
+          ? "No metrics yet. Ask the assistant for one."
+          : "No metrics yet."
       }
-      renderRow={(item) => <MetricRow item={item} />}
+      renderRow={(item) => <MetricCard item={item} />}
     />
   );
 }
 
-function MetricRow({ item }: { item: Listed }) {
-  const { data, isPending, isError, error } = useQuery(metricQuery(item.id));
+function MetricCard({ item }: { item: MetricListed }) {
+  const source = metricSource(item.body);
+  const fields = item.body.fields.length;
 
   return (
-    <DefinitionCard
+    <CatalogueCard
+      kind="metrics"
+      id={item.id}
       name={item.name}
-      actions={
-        <DefinitionActions kind="metrics" id={item.id} name={item.name} />
-      }
-    >
-      {isPending ? (
-        <CenteredSpinner className="min-h-24" />
-      ) : isError ? (
-        <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-          {(error as Error).message}
-        </p>
-      ) : (
-        <MetricSummary definition={data.definition} />
-      )}
-    </DefinitionCard>
+      title={item.name}
+      icon={Sigma}
+      facts={[source.named, `${fields} ${fields === 1 ? "column" : "columns"}`]}
+      updatedAt={item.updated_at}
+    />
   );
 }
