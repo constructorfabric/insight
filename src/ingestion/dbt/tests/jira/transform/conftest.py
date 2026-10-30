@@ -37,6 +37,7 @@ import pytest
 import yaml
 from dbt.cli.main import dbtRunner
 from helpers import SOURCE_ID
+from phased import run_phased
 
 # tests/jira/transform -> tests/jira -> tests -> dbt
 DBT_DIR = Path(__file__).resolve().parents[3]
@@ -502,6 +503,22 @@ class Batch:
             )
         self.warehouse.build(self._selector)
         self.generation = self.warehouse.generation
+
+
+@pytest.fixture(scope="module")
+def _phased(warehouse: Warehouse, request: pytest.FixtureRequest) -> dict[str, BaseException | None]:
+    items = [
+        item
+        for item in request.session.items
+        if isinstance(item, pytest.Function) and item.module is request.module and hasattr(item.obj, "phased")
+    ]
+    _truncate_bronze(warehouse)
+    try:
+        return run_phased(
+            items, lambda index: Scenario(warehouse, source=f"{SOURCE_ID}-phased-{index}"), warehouse.build
+        )
+    finally:
+        warehouse.generation += 1
 
 
 @pytest.fixture(scope="module")
