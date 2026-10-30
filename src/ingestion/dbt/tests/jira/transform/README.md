@@ -32,6 +32,17 @@ one scenario preserve them, including builds with `--full-refresh`.
 that work alone but break the chain. `test_comment_state.py` seeds comments and builds
 `+jira__comment_state` over `jira_comments` and `jira_issue_keys` alone.
 
+`test_two_tenants_lifecycle.py` is the one module that seeds the comment and
+worklog streams — `scenario.seed(comments=..., worklogs=...)`, with rows from
+the `comment` and `worklog` builders — and it builds `LIFECYCLE_SELECTOR`, the
+two lifecycle producers and their ancestors, instead of the journal's.
+
+`test_missing_tenant.py` proves the other half of tenant isolation: a bronze
+row with no tenant still builds, and the `not_null` and `not_empty` tests on the
+tenant of the model that reads it report the row. A key reads the tenant as
+`ifNull(tenant_id, '')`, so the row never makes a key Nullable; a class producer
+carries it as `''`, which `not_empty` reports.
+
 Bronze is created by the Airbyte destination from the Jira connector's own
 catalogue, through the same scripts `bootstrap-db.sh` uses — so the tables carry
 production's engines and types, including the ReplacingMergeTree shape, because
@@ -80,7 +91,7 @@ against dbt-clickhouse, never enters into it.
 
 ## Writing a test
 
-`helpers.py` supplies the four builders, named after what Jira calls things, and
+`helpers.py` supplies the builders, named after what Jira calls things, and
 `@case` declares the bronze the test reads:
 
 ```python

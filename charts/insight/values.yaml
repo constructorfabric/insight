@@ -120,12 +120,6 @@ global:
     # list. We use bitnamilegacy (see mariadb.image / redis.image) so we
     # have to allow "insecure" images — otherwise the chart refuses to deploy.
     allowInsecureImages: true
-  # Optional single-tenant seed UUID. NGINX_BFF: the request tenant comes ONLY
-  # from the signed gateway JWT (the api-gateway plugin default fallback was
-  # removed), so this no longer affects request-time tenant — it only feeds the
-  # analytics metric-catalog fallback + identity-resolution's bootstrap-admin
-  # seed. Empty (default) = no default anywhere; a missing tenant fails closed.
-  tenantDefaultId: ""
   # ═════════════════════════════════════════════════════════════════════════
   #  OBSERVABILITY — logs & traces EMISSION (the product contract)
   # ═════════════════════════════════════════════════════════════════════════
@@ -252,7 +246,6 @@ ingestion:
     destinationId: "" # Optional override: explicit Airbyte destination UUID. Leave empty for fresh installs — reconcile auto-creates the Bronze ClickHouse destination by name (ADR-0012).
     destinationName: "" # Optional: name of the Bronze destination managed by reconcile. Default `clickhouse-bronze`.
     argoInstanceId: "" # Optional. Set only if the cluster's Argo workflow controller runs with `instanceID:` configured (e.g. "argo-workflows-insight" on dev-vhc). Empty leaves the controller-instanceid label off — controllers without instanceID accept that.
-    tenantId: "" # Set to the Insight tenant slug (used in source/connection names per ADR-0005). No silent default.
     # NB: the old `logs:` block (PVC/emptyDir file logger at
     # /var/log/insight) is gone — reconcile emits structured JSON to
     # stdout and the cluster's log collector is the durable destination.
@@ -458,6 +451,11 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: ""
     redirectUri: "" # browser-facing callback, through the gateway edge
+    # REQUIRED. The install's one tenant, a lowercase UUID. The Keycloak realm
+    # stamps it as the `tenant_id` claim on every token, and data, connectors,
+    # identity and authorization all read this same value; set it once and
+    # never change it.
+    defaultTenantId: ""
     # How a login finds its person. Two modes, declared — never a fallback
     # chain, so a token that cannot answer the configured question is refused
     # rather than quietly answered a different way:
@@ -581,7 +579,7 @@ keycloakConfig:
   #   - name: INSIGHT_AUTHENTICATOR_CLIENT_SECRET
   #     valueFrom:
   #       secretKeyRef: {name: insight-oidc, key: oidc-client-secret}
-  # The Job also injects INSIGHT_TENANT_ID from global.tenantDefaultId (set):
+  # The Job also injects INSIGHT_TENANT_ID from authenticator.oidc.defaultTenantId:
   # realm IdP mappers pin the tenant per environment, never from IdP claims.
   extraEnv: []
   # Glob(s) config-cli imports, comma-separated. config-cli FAILS on any
@@ -648,11 +646,6 @@ analytics:
   # `credentials.autoGenerate: true`; on the gitops path the config Secret
   # pre-exists and this ref stays an inert optional.
   migrateEnvSecret: "insight-analytics-migrate-env"
-  # Metric Catalog single-tenant fallback comes from
-  # `global.tenantDefaultId` (DESIGN §2.2 cpt-metric-cat-constraint-tenant-
-  # default). The session-bound tenant from the gateway ALWAYS wins; this
-  # global default fires only on header-less callers. Empty global value =
-  # strict mode (400 tenant_unresolved on header-less requests).
   # Gateway-JWT verification (NGINX_BFF R1). The oidc-authn-plugin resolves the
   # authenticator's JWKS via OIDC discovery over https on `issuer` (the authn-tls
   # FQDN, rendered with `tpl`). It trusts the issuer's CA (ca.crt) from the
@@ -837,7 +830,7 @@ identityResolution:
   databaseName: "identity"
   # First-admin seed: on migrate,
   # this person UUID gets an active `admin` assignment in
-  # `global.tenantDefaultId`, idempotently. The person row must already
+  # `authenticator.oidc.defaultTenantId`, idempotently. The person row must already
   # exist in `persons` for that tenant. Empty string disables the runner.
   bootstrapAdminPersonId: ""
   # The ONE source trusted to say who exists: the persons-seed mints a person for

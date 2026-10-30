@@ -7,12 +7,12 @@
         'domain': 'task-tracking',
         'category': 'consistency',
         'tier': 'warn',
-        'remediation': 'Every Jira stream declares tenant_id and source_id required, and jira_issue, jira_issue_keys and jira_issue_census also jira_id; the connector stamps them on every record. The Jira models read these columns through CAST(... AS String), so one NULL stops the Jira transform with Code 349 (Cannot convert NULL value to non-Nullable type), which names neither table nor column; this test does. Run it on its own (dbt test --select assert_jira_identity_columns_are_set) to find the row, find how it was written (a manual insert or a restore from an older dump), then delete or re-sync it.'
+        'remediation': 'Every Jira stream declares tenant_id and source_id required, and jira_issue, jira_issue_keys and jira_issue_census also jira_id; the connector stamps them on every record. The Jira models read source_id and jira_id through CAST(... AS String), so one NULL there stops the Jira transform with Code 349 (Cannot convert NULL value to non-Nullable type), which names neither table nor column; this test does. A NULL tenant_id builds and fails the not_null and not_empty tenant tests of the model that reads it. Run it on its own (dbt test --select assert_jira_identity_columns_are_set) to find the row, find how it was written (a manual insert or a restore from an older dump), then delete or re-sync it.'
     }
 ) }}
 
--- Where the NULL is that stops the Jira transform: the models read the identity
--- columns through `CAST(... AS String)`, whose error names no table or column.
+-- Where the NULL is: the models read the source and issue id through
+-- `CAST(... AS String)`, whose error names no table or column.
 
 {%- set stamped = [
     'jira_board_configuration', 'jira_boards', 'jira_comments', 'jira_fields', 'jira_issue',

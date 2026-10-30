@@ -303,7 +303,7 @@ See comments in [`values.yaml`](./values.yaml) — every block is documented inl
 Key groups:
 
 - `credentials.deploymentMode` / `credentials.autoGenerate` — who owns the generated Secrets (`helm` with lookup-based reuse, or `gitops` with out-of-band Secrets)
-- `global.*` — cluster-wide defaults (pull secrets, storage class, `tenantDefaultId`, `observability.logs.{level,format}`, `observability.otlp.endpoint`)
+- `global.*` — cluster-wide defaults (pull secrets, storage class, `observability.logs.{level,format}`, `observability.otlp.endpoint`)
 - `<dep>.host` / `<dep>.port` / `<dep>.passwordSecret` (Redpanda: `<dep>.brokers`) — external-infra wiring for ClickHouse, MariaDB, Redis, Redpanda
 - `gateway` / `authenticator` / `analytics` — **mandatory** app services (no deploy flag; the gateway is the single entrance and the product is one unit)
 - `global.insightV3Core.deploy` + `insightV3Core.*` — insight-v3-core, off by default (it needs `insightV3Core.ingest.tokenSecret` to exist first); the same flag drops the gateway's v3 routes and the `insight_v3_ro` ClickHouse role, which reads every table so that an install without the assistant does not carry it. Turning the flag off on a running install strips that role's grants; the role and its user are left standing, since the deploy did not create the identity

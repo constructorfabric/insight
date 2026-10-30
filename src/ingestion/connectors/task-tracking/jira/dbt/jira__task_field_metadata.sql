@@ -24,6 +24,7 @@
 
 SELECT
     f.unique_key                                  AS unique_key,
+    ifNull(f.tenant_id, '')                       AS tenant_id,
     CAST(f.source_id AS String)                   AS insight_source_id,
     CAST('jira' AS String)                        AS data_source,
     CAST(NULL AS Nullable(String))                AS project_key,

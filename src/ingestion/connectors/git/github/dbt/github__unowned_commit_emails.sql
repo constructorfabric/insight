@@ -65,11 +65,12 @@ SELECT
     -- The name from their most recent commit: one person spells it several
     -- ways, and the freshest spelling is the one an operator will recognise.
     assumeNotNull(argMax(c.author_name, c.seen_at)) AS author_name,
-    any(c.tenant_id) AS tenant_id,
+    c.tenant_id AS tenant_id,
     any(c.source_id) AS source_id,
     assumeNotNull(max(c.seen_at)) AS last_committed_at,
     sum(1) AS commit_idents
 FROM candidates AS c
 LEFT ANTI JOIN {{ ref('github__account_emails') }} AS owned
     ON owned.email = c.email
-GROUP BY c.email
+    AND owned.tenant_id = c.tenant_id
+GROUP BY c.email, c.tenant_id

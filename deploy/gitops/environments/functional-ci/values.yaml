@@ -11,7 +11,6 @@ gitCliProxy:
 
 global:
   storageClass: local-path
-  tenantDefaultId: "00000000-df51-5b42-9538-d2b56b7ee953"
   # functional-k3s.yml drives v3's raw-data flow end to end, so this
   # environment opts in.
   insightV3Core:
@@ -66,6 +65,8 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: "insight-authenticator-dev-secret"
     redirectUri: "http://localhost/auth/callback"
+    # The install's one tenant; every consumer reads it from here.
+    defaultTenantId: "00000000-df51-5b42-9538-d2b56b7ee953"
     # Realm users' `sub` is their roster uuid; persons-seed fixtures key
     # their id rows on this source_type.
     sourceType: "keycloak"

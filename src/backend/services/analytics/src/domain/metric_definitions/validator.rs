@@ -683,13 +683,18 @@ const EVIDENCE_COLUMN_TYPES: &[(&str, &str)] = &[
 /// serving contract: a missing map makes the relation unqueryable, not empty.
 const PERSON_MAP_TABLE: (&str, &str) = ("identity", "person_map");
 
-const PERSON_MAP_COLUMNS: &[&str] = &["email", "person_id"];
+const PERSON_MAP_COLUMNS: &[&str] = &["tenant_id", "email", "person_id"];
 
 /// The live account → person binding consulted before the email map.
 const ACCOUNT_ASSIGNMENT_TABLE: (&str, &str) = ("identity", "account_assignment");
 
-const ACCOUNT_ASSIGNMENT_COLUMNS: &[&str] =
-    &["source_type", "source_id", "account_id", "person_id"];
+const ACCOUNT_ASSIGNMENT_COLUMNS: &[&str] = &[
+    "tenant_id",
+    "source_type",
+    "source_id",
+    "account_id",
+    "person_id",
+];
 
 const COHORT_COLUMNS: &[&str] = &[
     "tenant_id",

@@ -18,40 +18,43 @@
 
 WITH issues AS (
     SELECT
+        tenant_id,
         CAST(source_id AS String)                                     AS insight_source_id,
         CAST(jira_id AS String)                                       AS issue_id,
         argMax(COALESCE(toString(id_readable), ''), _airbyte_extracted_at) AS current_key,
         argMax(parseDateTime64BestEffortOrNull(created, 3), _airbyte_extracted_at) AS created_at
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    GROUP BY insight_source_id, issue_id
+    GROUP BY tenant_id, insight_source_id, issue_id
 ),
 
 -- An issue the connector does not sync is known by the key the newest snapshot
 -- linking to it names.
 current_keys AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         argMin(current_key, precedence)                               AS current_key
     FROM (
-        SELECT insight_source_id, issue_id, current_key, toUInt8(1) AS precedence
+        SELECT tenant_id, insight_source_id, issue_id, current_key, toUInt8(1) AS precedence
         FROM issues
         WHERE current_key != ''
 
         UNION ALL
 
-        SELECT insight_source_id, target_id AS issue_id, argMax(target_key, extracted_at) AS current_key, toUInt8(2) AS precedence
+        SELECT tenant_id, insight_source_id, target_id AS issue_id, argMax(target_key, extracted_at) AS current_key, toUInt8(2) AS precedence
         FROM {{ ref('jira__issue_link_snapshot') }} FINAL
         WHERE target_id != '' AND target_key != ''
-        GROUP BY insight_source_id, target_id
+        GROUP BY tenant_id, insight_source_id, target_id
     )
-    GROUP BY insight_source_id, issue_id
+    GROUP BY tenant_id, insight_source_id, issue_id
 ),
 
 -- Every field with a value a person sets, scanned as Jira displays it.
 -- Linked issues and the parent are links, read from `jira__task_links`.
 scanned_fields AS (
     SELECT
+        tenant_id,
         insight_source_id,
         field_id,
         field_kind,
@@ -62,12 +65,13 @@ scanned_fields AS (
 ),
 
 texts AS (
-    SELECT insight_source_id, text_id, content_form, content
+    SELECT tenant_id, insight_source_id, text_id, content_form, content
     FROM {{ ref('jira__task_field_text') }} FINAL
 ),
 
 current_long_text AS (
     SELECT
+        c.tenant_id                                                   AS tenant_id,
         c.insight_source_id                                           AS insight_source_id,
         c.issue_id                                                    AS issue_id,
         c.field_id                                                    AS field_id,
@@ -76,12 +80,14 @@ current_long_text AS (
         t.content                                                     AS content
     FROM {{ ref('jira__task_field_current_text') }} AS c FINAL
     INNER JOIN texts AS t
-        ON t.insight_source_id = c.insight_source_id
+        ON t.tenant_id = c.tenant_id
+       AND t.insight_source_id = c.insight_source_id
        AND t.text_id = c.text_id
 ),
 
 current_short_values AS (
     SELECT
+        s.tenant_id                                                   AS tenant_id,
         s.insight_source_id                                           AS insight_source_id,
         s.issue_id                                                    AS issue_id,
         s.field_id                                                    AS field_id,
@@ -90,7 +96,8 @@ current_short_values AS (
         arrayStringConcat(s.value_displays, '\n')                    AS content
     FROM {{ ref('jira__issue_field_snapshot') }} AS s FINAL
     INNER JOIN scanned_fields AS f
-        ON f.insight_source_id = s.insight_source_id
+        ON f.tenant_id = s.tenant_id
+       AND f.insight_source_id = s.insight_source_id
        AND f.field_id = s.field_id
     WHERE f.field_kind != 'long_text'
 ),
@@ -99,6 +106,7 @@ current_short_values AS (
 -- as no longer current.
 past_values AS (
     SELECT
+        h.tenant_id                                                   AS tenant_id,
         h.insight_source_id                                           AS insight_source_id,
         h.issue_id                                                    AS issue_id,
         h.field_id                                                    AS field_id,
@@ -108,34 +116,37 @@ past_values AS (
         if(f.field_kind = 'long_text', t.content, arrayStringConcat(h.value_displays, '\n')) AS content
     FROM {{ ref('jira__field_history_derived') }} AS h FINAL
     INNER JOIN scanned_fields AS f
-        ON f.insight_source_id = h.insight_source_id
+        ON f.tenant_id = h.tenant_id
+       AND f.insight_source_id = h.insight_source_id
        AND f.field_id = h.field_id
     LEFT JOIN texts AS t
-        ON t.insight_source_id = h.insight_source_id
+        ON t.tenant_id = h.tenant_id
+       AND t.insight_source_id = h.insight_source_id
        AND t.text_id = h.value_ids[1]
     WHERE notEmpty(h.value_ids)
 ),
 
 field_values AS (
-    SELECT insight_source_id, issue_id, field_id, found_kind, CAST(NULL AS Nullable(DateTime64(3))) AS seen_at,
+    SELECT tenant_id, insight_source_id, issue_id, field_id, found_kind, CAST(NULL AS Nullable(DateTime64(3))) AS seen_at,
            toUInt8(1) AS is_current, content_form, content
     FROM current_long_text
 
     UNION ALL
 
-    SELECT insight_source_id, issue_id, field_id, found_kind, CAST(NULL AS Nullable(DateTime64(3))) AS seen_at,
+    SELECT tenant_id, insight_source_id, issue_id, field_id, found_kind, CAST(NULL AS Nullable(DateTime64(3))) AS seen_at,
            toUInt8(1) AS is_current, content_form, content
     FROM current_short_values
 
     UNION ALL
 
-    SELECT insight_source_id, issue_id, field_id, found_kind, CAST(seen_at AS Nullable(DateTime64(3))) AS seen_at,
+    SELECT tenant_id, insight_source_id, issue_id, field_id, found_kind, CAST(seen_at AS Nullable(DateTime64(3))) AS seen_at,
            toUInt8(0) AS is_current, content_form, ifNull(content, '') AS content
     FROM past_values
 ),
 
 field_keys AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         CAST('field' AS String)                                       AS found_in,
@@ -152,6 +163,7 @@ field_keys AS (
 
 comment_keys AS (
     SELECT
+        tenant_id,
         insight_source_id,
         assumeNotNull(issue_id)                                       AS issue_id,
         CAST('comment' AS String)                                     AS found_in,
@@ -167,17 +179,17 @@ comment_keys AS (
 ),
 
 written_keys AS (
-    SELECT insight_source_id, issue_id, found_in, found_ref, found_kind, written_key, seen_at, is_current
+    SELECT tenant_id, insight_source_id, issue_id, found_in, found_ref, found_kind, written_key, seen_at, is_current
     FROM field_keys
 
     UNION ALL
 
-    SELECT insight_source_id, issue_id, found_in, found_ref, found_kind, written_key, seen_at, is_current
+    SELECT tenant_id, insight_source_id, issue_id, found_in, found_ref, found_kind, written_key, seen_at, is_current
     FROM comment_keys
 ),
 
 project_keys AS (
-    SELECT DISTINCT insight_source_id, project_key
+    SELECT DISTINCT tenant_id, insight_source_id, project_key
     FROM {{ ref('jira__task_projects') }}
     WHERE project_key != ''
 ),
@@ -186,6 +198,7 @@ project_keys AS (
 -- project the connector syncs; `UTF-8` is neither.
 resolved_keys AS (
     SELECT
+        w.tenant_id                                                   AS tenant_id,
         w.insight_source_id                                           AS insight_source_id,
         w.issue_id                                                    AS issue_id,
         w.found_in                                                    AS found_in,
@@ -197,16 +210,19 @@ resolved_keys AS (
         w.is_current                                                  AS is_current
     FROM written_keys AS w
     LEFT JOIN {{ ref('jira__issue_key_ids') }} AS k FINAL
-        ON k.insight_source_id = w.insight_source_id
+        ON k.tenant_id = w.tenant_id
+       AND k.insight_source_id = w.insight_source_id
        AND k.issue_key = w.written_key
     LEFT JOIN project_keys AS p
-        ON p.insight_source_id = w.insight_source_id
+        ON p.tenant_id = w.tenant_id
+       AND p.insight_source_id = w.insight_source_id
        AND p.project_key = splitByChar('-', w.written_key)[1]
     WHERE k.issue_id IS NOT NULL OR p.project_key IS NOT NULL
 ),
 
 links AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         CAST('link' AS String)                                        AS found_in,
@@ -221,18 +237,19 @@ links AS (
 ),
 
 references AS (
-    SELECT insight_source_id, issue_id, found_in, found_ref, found_kind, written_key, target_id, seen_at, is_current
+    SELECT tenant_id, insight_source_id, issue_id, found_in, found_ref, found_kind, written_key, target_id, seen_at, is_current
     FROM resolved_keys
 
     UNION ALL
 
-    SELECT insight_source_id, issue_id, found_in, found_ref, found_kind, written_key, target_id, seen_at, is_current
+    SELECT tenant_id, insight_source_id, issue_id, found_in, found_ref, found_kind, written_key, target_id, seen_at, is_current
     FROM links
 ),
 
 -- Renamed here so the aggregates below can take the plain names back.
 other_issues AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         found_in,
@@ -251,6 +268,7 @@ other_issues AS (
 -- and new key are the same reference.
 per_target AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         found_in,
@@ -262,11 +280,13 @@ per_target AS (
         min(candidate_seen_at)                                        AS seen_at,
         max(candidate_current)                                        AS is_current
     FROM other_issues
-    GROUP BY insight_source_id, issue_id, found_in, found_ref, found_kind, target_ident
+    GROUP BY tenant_id, insight_source_id, issue_id, found_in, found_ref, found_kind, target_ident
 )
 
 SELECT
-    concat(r.insight_source_id, '-jira-', r.issue_id, '-', r.found_in, '-', r.found_ref, '-', r.target_ident) AS unique_key,
+    concat(ifNull(r.tenant_id, ''), '-', r.insight_source_id, '-jira-', r.issue_id, '-', r.found_in, '-', r.found_ref, '-',
+           r.target_ident)                                            AS unique_key,
+    ifNull(r.tenant_id, '')                                           AS tenant_id,
     r.insight_source_id                                               AS insight_source_id,
     CAST('jira' AS String)                                            AS data_source,
     r.issue_id                                                        AS issue_id,
@@ -281,11 +301,14 @@ SELECT
     toUnixTimestamp64Milli(now64(3))                                  AS _version
 FROM per_target AS r
 LEFT JOIN current_keys AS own
-    ON own.insight_source_id = r.insight_source_id
+    ON own.tenant_id = r.tenant_id
+   AND own.insight_source_id = r.insight_source_id
    AND own.issue_id = r.issue_id
 LEFT JOIN current_keys AS target
-    ON target.insight_source_id = r.insight_source_id
+    ON target.tenant_id = r.tenant_id
+   AND target.insight_source_id = r.insight_source_id
    AND target.issue_id = r.target_id
 LEFT JOIN issues AS i
-    ON i.insight_source_id = r.insight_source_id
+    ON i.tenant_id = r.tenant_id
+   AND i.insight_source_id = r.insight_source_id
    AND i.issue_id = r.issue_id

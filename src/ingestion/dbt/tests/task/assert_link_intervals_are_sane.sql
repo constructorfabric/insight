@@ -13,6 +13,7 @@
 --      the vendor stated a moment that is the sentinel for "unknown".
 
 SELECT
+    tenant_id,
     insight_source_id,
     data_source,
     id_readable,

@@ -11,8 +11,9 @@ field the connector did not have before (run.sh widens the catalog to match).
 
 The records carry the stamps the connector's `standard_fields` put on every
 row, keyed the way the connector keys them, so what the destination writes is
-what a real sync writes; `tenant_id`/`source_id` are the fake ones in
-bootstrap-db/connectors-config.yaml.
+what a real sync writes. `tenant_id` is the rig's canonical tenant (RIG_TENANT in
+services.sh, the tenant identity-resolution is configured for); `source_id` is
+the fake one in bootstrap-db/connectors-config.yaml.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import sys
 from pathlib import Path
 
 NAMESPACE = "bronze_github"
-TENANT = "fake"
+TENANT = "a4d11000-0000-4000-8000-00000000c1a0"
 SOURCE = "fake"
 REPO_FULL_NAME = "fake/api"
 CLONE_URL = f"https://github.com/{REPO_FULL_NAME}.git"

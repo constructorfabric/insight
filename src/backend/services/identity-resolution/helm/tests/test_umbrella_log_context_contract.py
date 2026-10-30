@@ -21,7 +21,7 @@ def rendered_per_service(stdout: str, template: str, pattern: re.Pattern) -> dic
 
 
 def test_every_gears_configmap_pins_the_image_tag_as_service_version(umbrella_deps) -> None:
-    code, out, err = render(UMBRELLA, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}")
+    code, out, err = render(UMBRELLA, *UMBRELLA_BASE, "--set", f"authenticator.oidc.defaultTenantId={TENANT}")
     assert code == 0, err
 
     versions = rendered_per_service(out, r"configmap\.yaml", VERSION_ATTR)

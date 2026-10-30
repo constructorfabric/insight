@@ -1,9 +1,10 @@
-"""A Jira row without the identity its stream requires stops the transform.
+"""A Jira row without the source or issue id its stream requires stops the transform.
 
 Every Jira stream declares `tenant_id` and `source_id` required, and the
 issue-level streams `jira_id`; bronze still holds them as `Nullable(String)`.
-The models read them through `CAST(... AS String)`, so a NULL fails the run
-instead of becoming an empty tenant, source or issue.
+The models read the source and issue id through `CAST(... AS String)`, so a NULL
+fails the run instead of becoming an empty source or issue. A missing tenant
+builds and is reported by the tenant tests instead (`test_missing_tenant.py`).
 """
 
 from __future__ import annotations
@@ -12,13 +13,13 @@ import pytest
 from conftest import Scenario
 from helpers import census_entry, issue
 
-# Reads all three identity columns of `jira_issue` through CAST; `+` builds
+# Reads the source and issue id of `jira_issue` through CAST; `+` builds
 # the staging models it joins.
 SELECTOR = "+jira__issue_availability_state"
 NULL_REJECTED = "Cannot convert NULL value to non-Nullable type"
 
 
-@pytest.mark.parametrize("column", ["tenant_id", "source_id", "jira_id"])
+@pytest.mark.parametrize("column", ["source_id", "jira_id"])
 def test_an_issue_row_missing_its_identity_fails_the_run(scenario: Scenario, column: str) -> None:
     scenario.seed(fields=[], issues=[{**issue("TST-1", jira_id="1001"), column: None}])
 

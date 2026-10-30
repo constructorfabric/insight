@@ -45,18 +45,54 @@ sources:
 models:
   - name: jira__task_comments
     description: "Per-source staging projection of Jira comments. Unioned into silver.class_task_comments."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__task_worklogs
     description: "Per-source staging projection of Jira worklogs. Unioned into silver.class_task_worklogs."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__task_users
     description: "Per-source staging projection of Jira users. Unioned into silver.class_task_users."
   - name: jira__task_projects
     description: "Per-source staging projection of Jira projects. Unioned into silver.class_task_projects."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__task_sprints
     description: "Per-source staging projection of Jira sprints. Unioned into silver.class_task_sprints."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__task_field_metadata
     description: "Per-source staging projection of Jira field catalog. Unioned into silver.class_task_field_metadata."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__task_field_unclassified
     description: "Registry of fields the changelog names but the field catalogue does not contain, with their event range. Their history cannot be reconstructed; see specs/FIELD-HISTORY-IN-DBT.md §3.2."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__catalogue_first_seen
     description: "Per-tenant and per-source instant of the first field-catalogue sync, written once and kept — tagged `history` and never rebuilt by a full refresh: bronze keeps only each field's latest extraction once its parts merge, so the value cannot be recomputed later. Input to the recency guard of specs/FIELD-HISTORY-IN-DBT.md §3.2."
     columns:
@@ -66,6 +102,8 @@ models:
           - not_null
       - name: tenant_id
         description: "The tenant the catalogue rows were synced under; empty for a source recorded before the column existed and absent from bronze since."
+        tests:
+          - not_null
       - name: insight_source_id
         description: "The connector instance."
       - name: catalogue_first_sync
@@ -75,63 +113,133 @@ models:
       - name: _version
         description: "Falls as `catalogue_first_sync` grows, so ReplacingMergeTree keeps the earliest boundary."
   - name: jira__task_field_kind
-    description: "Per-source field classification into the closed field_kind enum that drives value normalization and delta application. Matched on Jira type constants, never on instance-specific field ids. See specs/FIELD-HISTORY-IN-DBT.md."
+    description: "Per-tenant, per-source field classification into the closed field_kind enum that drives value normalization and delta application. Matched on Jira type constants, never on instance-specific field ids. See specs/FIELD-HISTORY-IN-DBT.md."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__changelog_entry_ranks
     description: "Rank of each changelog entry among the entries its issue recorded at the same instant, from the from→to chains of every field they touch, then the numeric changelog id. One row per entry of such an instant; an entry alone at its instant has none and ranks 0. Read by jira__field_history_derived into event_order. See specs/FIELD-HISTORY-IN-DBT.md §5."
     columns:
       - name: unique_key
-        description: "Source, issue and changelog id."
+        description: "Tenant, source, issue and changelog id."
         tests:
           - unique
           - not_null
+      - name: tenant_id
+        description: "Tenant the issue belongs to; Jira ids are unique only within one tenant's source."
+        tests:
+          - not_null
+          - not_empty
       - name: changelog_id
         description: "The entry, as the changelog id string the journal carries as event_id."
       - name: entry_rank
         description: "0-based position of the entry within its issue's instant, shared by every field the entry changed."
   - name: jira__task_statuses
     description: "Per-source status dimension: Jira status_id → status_category (via statusCategory). Unioned into silver.class_task_statuses. See issue #1541."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__task_issuetypes
     description: "Per-source issue-type dimension: the raw Jira type catalogue (id, display name, untranslatedName). Unioned into silver.class_task_issuetypes; gold resolves the kind from config.field_value_map."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__identity_inputs
     description: "Identity-resolution inputs from the Jira user profile history (email, display_name, id binding). Unioned into silver.identity_inputs via the silver:identity_inputs tag."
   - name: jira__project_visibility_state
     description: "Current visibility per ever-seen project: is_visible + project_status derived from the jira_project_visibility census (absent from the latest generation = not visible). Input to the SCD2 snapshot."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__project_visibility_snapshot
     description: "Append-only SCD2 over project visibility — a version per is_visible/project_status flip. Permanent record of when the account gained or lost sight of a project."
   - name: jira__project_visibility_history
     description: "Per-field change events (is_visible, project_status: old → new @ ts) derived from the visibility snapshot."
   - name: jira__issue_availability_state
     description: "Current availability per ever-seen issue (present / deleted / archived / trashed / access_lost / unobserved), classified from the jira_issue_census absence against the project visibility roster. See specs/DELETION-AND-VISIBILITY.md."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__issue_availability_snapshot
     description: "Append-only SCD2 over issue availability — a version per state flip. Deletion is recorded here as an event in the issue's history, never as a physical delete."
   - name: jira__issue_availability_history
     description: "Per-issue availability transition events (availability: old → new @ detection time) derived from the availability snapshot."
   - name: jira__availability_events
     description: "Availability transitions as synthetic field-history events (field_id='availability', event_kind='availability'). Unioned into silver.class_task_field_history so an issue's whole lifecycle — including deletion and lost access — lives in one source-agnostic table."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__comment_state
     description: "Current state per comment including is_deleted (missing from a later read of its issue's comment list, or parent-issue availability). Feeds the class projection and the lifecycle snapshot chain."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__comment_snapshot
     description: "Append-only SCD2 over comment state — a version per edit (updated_at) or deletion flip."
   - name: jira__comment_lifecycle_history
     description: "Per-field transitions derived from the comment snapshot; raw input for the lifecycle events."
   - name: jira__comment_lifecycle_events
     description: "Comment add/set/remove as field-history events (field_id='comment', event_kind='lifecycle'); value carries the comment id — the lookup key into class_task_comments. Unioned into silver.class_task_field_history."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__worklog_state
     description: "Current state per worklog including is_deleted (tombstone + parent-issue availability) and the tombstone's real deletion timestamp. Feeds the class projection and the lifecycle snapshot chain."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__worklog_snapshot
     description: "Append-only SCD2 over worklog state — a version per edit (updated_at / seconds / started) or deletion flip."
   - name: jira__worklog_lifecycle_history
     description: "Per-field transitions derived from the worklog snapshot; raw input for the lifecycle events."
   - name: jira__worklog_lifecycle_events
     description: "Worklog add/set/remove as field-history events (field_id='worklog', event_kind='lifecycle'); value carries the worklog id — the lookup key into class_task_worklogs; remove is dated by the /worklog/deleted tombstone when available. Unioned into silver.class_task_field_history."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
   - name: jira__link_occurrences
     description: "Every link occurrence an issue has had — one link of one type to one linked issue, keyed by the type's immutable id and direction, or by its phrase when it resolves to no type — with the changelog operations that opened and closed it and whether it was held before them. Read by jira__task_links."
     columns:
       - name: unique_key
-        description: "Source, issue, kind, occurrence key and the linked issue."
+        description: "Tenant, source, issue, kind, occurrence key and the linked issue."
         tests:
           - unique
           - not_null
+      - name: tenant_id
+        description: "Tenant the issue belongs to; every resolution and grouping stays within it, since Jira ids, keys and link type ids are unique only within one tenant's source."
+        tests:
+          - not_null
+          - not_empty
       - name: occurrence_key
         description: "'type:<type id>:<direction>', 'phrase:<phrase>' for a phrase resolved to no type, or 'parent'."
   - name: jira__issue_read_current
@@ -139,8 +247,13 @@ models:
       Latest key, creation/update times and read timestamp per issue, materialized once for link
       retention and interval labels. Rebuilt from bronze on each sync; contains no issue JSON.
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
       - name: unique_key
-        description: "Source and immutable issue id."
+        description: "Tenant, source and immutable issue id."
         tests:
           - unique
           - not_null
@@ -164,8 +277,13 @@ models:
       unpivot after raw-id deduplication. Rebuilt on every sync; jira__issue_link_snapshot adds
       retained observations from earlier reads while the other issue is hidden.
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
       - name: unique_key
-        description: "Source, issue, kind, the link's own id and the linked issue."
+        description: "Tenant, source, issue, kind, the link's own id and the linked issue."
         tests:
           - unique
           - not_null
@@ -208,8 +326,13 @@ models:
       without adding the census tolerance to these boundaries;
       see specs/DELETION-AND-VISIBILITY.md.
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
       - name: unique_key
-        description: "Source, issue, kind, the link's own id and the linked issue."
+        description: "Tenant, source, issue, kind, the link's own id and the linked issue."
         tests:
           - unique
           - not_null
@@ -241,8 +364,13 @@ models:
   - name: jira__issue_key_ids
     description: "Every key an issue is known to have had, with its immutable id: the issue's own bronze rows, Key events of moved issues, the links snapshots hold, and parent changes. Resolves the keys the changelog names linked issues by."
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
       - name: unique_key
-        description: "Source and key."
+        description: "Tenant, source and key."
         tests:
           - unique
           - not_null
@@ -255,7 +383,13 @@ models:
   - name: jira__task_references
     description: "Per-source staging projection of the issues each Jira issue points at — through a link, a key in a field value, or a key in a live comment — resolving written keys through jira__issue_key_ids. Unioned into silver.class_task_references."
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
       - name: unique_key
+        description: "Tenant, source, issue, `found_in`, `found_ref` and the target — its id when the key resolved, else the key as written."
         tests:
           - not_null
           - unique
@@ -266,8 +400,13 @@ models:
       a link shown by the newest read can reopen an event-closed interval. Parent intervals mirror as sub_issue.
       Unioned into silver.class_task_links.
     columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
       - name: unique_key
-        description: "Source, issue, link type, relation, linked issue (its id, or its key when the key resolves to none) and valid_from."
+        description: "Tenant, source, issue, link type, occurrence, linked issue (its id, or its key when the key resolves to none) and valid_from."
         tests:
           - unique
           - not_null
@@ -282,3 +421,27 @@ models:
         description: >
           event when folded without an observation edge; observation when a newest read reopens a link
           or closes it while the other issue is observable. Omission during a visibility gap is not an edge.
+  - name: jira__field_history_derived
+    description: "Per-source staging projection unioned into silver.class_task_field_history."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: jira__changelog_items
+    description: "Every changelog item of every issue, one row per field change."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty
+  - name: jira__issue_field_snapshot
+    description: "Every field value each issue holds now, one row per issue and field."
+    columns:
+      - name: tenant_id
+        description: "Canonical tenant the row belongs to; never NULL or empty."
+        tests:
+          - not_null
+          - not_empty

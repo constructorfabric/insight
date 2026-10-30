@@ -5,10 +5,11 @@
 -- multiply. Asserted because the runtime joins this view per person read, where
 -- a duplicate inflates metrics silently rather than failing.
 SELECT
+    tenant_id,
     source_type,
     source_id,
     account_id,
     count() AS binding_count
 FROM {{ ref('account_assignment') }}
-GROUP BY source_type, source_id, account_id
+GROUP BY tenant_id, source_type, source_id, account_id
 HAVING count() > 1

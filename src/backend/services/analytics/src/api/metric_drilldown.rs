@@ -62,7 +62,6 @@ pub async fn query_metric_drilldown(
             )));
         }
     };
-    req.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
 
     // Ahead of the read: the reader searches `Who` by name, and the names are
     // what turn that needle into identities the query can compare.
@@ -128,7 +127,6 @@ pub async fn export_metric_drilldown(
             .await;
         }
     };
-    validated.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
     let names = roster_names(&state, &validated).await?;
     validated.search_person_ids = people_named_like(&names, validated.selection.search.as_deref());
 

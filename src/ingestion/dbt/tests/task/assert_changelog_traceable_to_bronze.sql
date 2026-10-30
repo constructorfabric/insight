@@ -5,6 +5,7 @@
 -- Jira-only for now; other sources get their own staging table checks.
 
 SELECT
+    fh.tenant_id,
     fh.insight_source_id,
     fh.id_readable,
     fh.event_id,
@@ -12,7 +13,8 @@ SELECT
 FROM silver.class_task_field_history fh FINAL
 -- staging.jira_changelog_items is plain MergeTree (append-only dbt incremental), no FINAL needed
 LEFT JOIN staging.jira_changelog_items ci
-    ON fh.insight_source_id = ci.insight_source_id
+    ON fh.tenant_id         = ci.tenant_id
+   AND fh.insight_source_id = ci.insight_source_id
    AND fh.issue_id          = ci.jira_id
    AND fh.event_id          = ci.changelog_id
    AND fh.field_id          = ci.field_id

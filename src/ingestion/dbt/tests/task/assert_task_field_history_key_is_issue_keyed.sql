@@ -7,9 +7,9 @@
 -- producer that is no longer a model — or by a formula that drifted — is seen
 -- where gold reads it. An empty `issue_id` fails it too.
 
-SELECT unique_key, issue_id, id_readable, field_id, event_id
+SELECT unique_key, tenant_id, insight_source_id, issue_id, id_readable, field_id, event_id
 FROM {{ ref('class_task_field_history') }} FINAL
 WHERE data_source = 'jira'
   AND (issue_id = ''
-       OR unique_key != {{ jira_history_key('insight_source_id', 'issue_id', 'field_id', 'event_id') }})
+       OR unique_key != {{ jira_history_key('tenant_id', 'insight_source_id', 'issue_id', 'field_id', 'event_id') }})
 LIMIT 100

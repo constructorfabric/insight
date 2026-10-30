@@ -46,19 +46,21 @@
 
 WITH winner AS (
     -- Read-time dedup of the ReplacingMergeTree by the issue's stable key
-    -- within a source, (source_id, jira_id): unmerged parts hold several rows
-    -- per issue, and `unique_key` exists for the merge alone.
+    -- within a tenant's source, (tenant_id, source_id, jira_id): unmerged parts
+    -- hold several rows per issue, and `unique_key` exists for the merge alone.
     SELECT
+        tenant_id,
         source_id,
         jira_id,
         argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    GROUP BY source_id, jira_id
+    GROUP BY tenant_id, source_id, jira_id
 ),
 
 -- One row per (issue, field key present in the issue JSON).
 unpivoted AS (
     SELECT
+        i.tenant_id                                                   AS tenant_id,
         CAST(i.source_id AS String)                                   AS insight_source_id,
         CAST(i.jira_id AS String)                                     AS issue_id,
         COALESCE(toString(i.id_readable), '')                         AS id_readable,
@@ -77,7 +79,8 @@ classified AS (
         k.field_kind AS field_kind
     FROM unpivoted AS u
     INNER JOIN {{ ref('jira__task_field_kind') }} AS k
-        ON k.insight_source_id = u.insight_source_id
+        ON k.tenant_id = u.tenant_id
+       AND k.insight_source_id = u.insight_source_id
        AND k.field_id = u.field_id
     -- A key absent from the field catalogue cannot be classified even in
     -- principle (§3.2). None occur today, and the classifier resolves the whole
@@ -104,10 +107,12 @@ classified AS (
 
 SELECT
     CAST(concat(
+        ifNull(tenant_id, ''), '-',
         insight_source_id, '-',
         issue_id, '-',
         field_id
     ) AS String)                                          AS unique_key,
+    tenant_id,
     insight_source_id,
     issue_id,
     id_readable,

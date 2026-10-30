@@ -97,7 +97,8 @@ issue_facts AS (
         ) AS type_dimensions
     FROM issue_state AS s
     LEFT JOIN status_intervals AS i
-        ON i.insight_source_id = s.insight_source_id
+        ON i.tenant_id = s.tenant_id
+        AND i.insight_source_id = s.insight_source_id
         AND i.issue_id = s.issue_id
         AND i.status_category = 'in_progress'
     WHERE s.final_close_at IS NOT NULL
@@ -197,22 +198,23 @@ estimation_day AS (
 ),
 transitions AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         interval_start AS event_at,
         status_category,
         lagInFrame(status_category) OVER (
-            PARTITION BY insight_source_id, issue_id ORDER BY interval_start
+            PARTITION BY tenant_id, insight_source_id, issue_id ORDER BY interval_start
         ) AS prev_category
     FROM status_intervals
 ),
 closes AS (
-    SELECT insight_source_id, issue_id, event_at AS close_at
+    SELECT tenant_id, insight_source_id, issue_id, event_at AS close_at
     FROM transitions
     WHERE status_category = 'done' AND (prev_category IS NULL OR prev_category != 'done')
 ),
 reopens AS (
-    SELECT insight_source_id, issue_id, event_at AS reopen_at
+    SELECT tenant_id, insight_source_id, issue_id, event_at AS reopen_at
     FROM transitions
     WHERE prev_category = 'done' AND (status_category != 'done' OR status_category IS NULL)
 ),
@@ -235,9 +237,13 @@ close_reopen AS (
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
     FROM closes AS c
     INNER JOIN issue_state AS s
-        ON s.insight_source_id = c.insight_source_id AND s.issue_id = c.issue_id
+        ON s.tenant_id = c.tenant_id
+        AND s.insight_source_id = c.insight_source_id
+        AND s.issue_id = c.issue_id
     LEFT JOIN reopens AS r
-        ON r.insight_source_id = c.insight_source_id AND r.issue_id = c.issue_id
+        ON r.tenant_id = c.tenant_id
+        AND r.insight_source_id = c.insight_source_id
+        AND r.issue_id = c.issue_id
     GROUP BY s.tenant_id, s.entity_id, s.account_source_type, s.account_source_id, s.account_id,
              c.insight_source_id, c.issue_id, c.close_at
 ),
@@ -307,7 +313,7 @@ value_measures AS (
     {{ sum_measure('stale_in_progress', 'stale', 'stale_count', 'no_dimensions', keys=account_keys) }}
 )
 SELECT
-    assumeNotNull(tenant_id) AS tenant_id,
+    ifNull(tenant_id, '') AS tenant_id,
     'task' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
@@ -347,7 +353,7 @@ WHERE tenant_id IS NOT NULL
 UNION ALL
 
 SELECT
-    assumeNotNull(tenant_id) AS tenant_id,
+    ifNull(tenant_id, '') AS tenant_id,
     'task' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
@@ -378,7 +384,7 @@ WHERE tenant_id IS NOT NULL
 UNION ALL
 
 SELECT
-    assumeNotNull(tenant_id) AS tenant_id,
+    ifNull(tenant_id, '') AS tenant_id,
     'task' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,

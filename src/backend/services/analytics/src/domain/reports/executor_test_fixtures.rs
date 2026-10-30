@@ -17,7 +17,6 @@ use crate::infra::identity::IdentityProfile;
 pub(super) fn context() -> ReportExecutionContext {
     ReportExecutionContext {
         tenant_id: Uuid::from_u128(9),
-        enforce_tenant_scope: true,
     }
 }
 

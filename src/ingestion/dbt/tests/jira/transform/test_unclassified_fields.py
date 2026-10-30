@@ -205,10 +205,11 @@ def test_two_runs_recording_one_source_keep_the_earlier_boundary(scenario: Scena
 
 def test_a_source_recorded_under_two_tenants_counts_each_changelog_item_once(scenario: Scenario) -> None:
     """The catalogue record keeps one row per tenant and source, so a source can
-    appear under an empty tenant beside its own. The registry reads one boundary
-    per source: the earlier one, without multiplying the changelog items."""
+    appear under an empty tenant beside its own. The registry reads its own
+    tenant's boundary, without multiplying the changelog items."""
     scenario.seed(fields=[POINTS_FIELD], issues=[issue("TST-1", fields={POINTS: 5})], events=_ghost_history())
     scenario.build()
+    own_boundary = min(_first_syncs(scenario))
     scenario.warehouse.execute(
         "INSERT INTO staging.jira__catalogue_first_seen"
         " (unique_key, tenant_id, insight_source_id, catalogue_first_sync, recorded_at, _version)"
@@ -229,4 +230,4 @@ def test_a_source_recorded_under_two_tenants_counts_each_changelog_item_once(sce
     assert len(rows) == 1, rows
     assert rows[0]["changelog_items"] == 2, f"each changelog item should count once: {rows}"
     assert rows[0]["issues_affected"] == 1, rows
-    assert rows[0]["first_sync"] == min(_first_syncs(scenario)), f"should keep the earlier boundary: {rows}"
+    assert rows[0]["first_sync"] == own_boundary, f"should keep its own tenant's boundary: {rows}"

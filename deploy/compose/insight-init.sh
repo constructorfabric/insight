@@ -756,12 +756,12 @@ EOF
 
   # ── Write values.yaml from template ──────────────────────────────
   # cp values.yaml.template → values.yaml, then inject the collected
-  # tenant id under .global.tenantDefaultId and the dev impersonation
+  # tenant id under .authenticator.oidc.defaultTenantId and the dev impersonation
   # email under .frontend.devUserEmail. The live values.yaml is
   # gitignored — the wizard regenerates it per-developer; the template
   # holds the committed sandbox config.
   cp "$values_tmpl" "$values_out"
-  yq -i ".global.tenantDefaultId = \"$TENANT_DEFAULT_ID\"" "$values_out"
+  yq -i ".authenticator.oidc.defaultTenantId = \"$TENANT_DEFAULT_ID\"" "$values_out"
   # Full auth: the dev login identity is a realm user (must exist in
   # identity's `persons`), not a frontend impersonation escape hatch.
   yq -i ".keycloak.devUserEmail  = \"$DEV_USER_EMAIL\""    "$values_out"
