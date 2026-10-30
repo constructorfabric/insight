@@ -161,6 +161,10 @@ name: jira
 # hidden at the read, and link snapshots retain earlier observations across
 # visibility gaps (#3950). MAJOR because rows already written change, and only
 # the full refresh a major dispatches (ADR-0015) re-derives them.
+# 18.1.0: `jira_issue_census` requests `fields=key`; with `fields=id` the search
+# returns ids alone, so `id_readable` stayed empty. MINOR per ADR-0015: the
+# manifest changes, the next sync rewrites the census in full, and nothing
+# stored changes meaning.
 # 19.0.0 (major): every Jira producer of a task class carries `tenant_id` after
 # `unique_key` and leads its key with the tenant, and the journal derives,
 # deletes and batches per tenant. MAJOR because rows already written change
