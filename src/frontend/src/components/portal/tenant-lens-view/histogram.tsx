@@ -82,7 +82,6 @@ export function HistogramSection({
               <ChartBar
                 dataKey="count"
                 name="Runs"
-                radius={[2, 2, 0, 0]}
                 fill="var(--chart-1)"
               />
             </BarChart>

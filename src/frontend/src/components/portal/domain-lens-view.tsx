@@ -1735,7 +1735,6 @@ function DistributionSection({
               <ChartBar
                 dataKey="count"
                 name="People"
-                radius={[2, 2, 0, 0]}
                 fill="var(--chart-1)"
               />
             </BarChart>
@@ -1866,7 +1865,6 @@ function EventHistogramSection({
               <ChartBar
                 dataKey="count"
                 name="Events"
-                radius={[2, 2, 0, 0]}
                 fill="var(--chart-1)"
               />
             </BarChart>
