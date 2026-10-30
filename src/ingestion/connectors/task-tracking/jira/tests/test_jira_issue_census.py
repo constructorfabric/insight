@@ -1,7 +1,7 @@
 """Mock-server tests for the `jira_issue_census` stream.
 
-Full-refresh id-only sweep of every issue in every visible live project:
-GET /rest/api/3/search/jql with `fields=id` / `maxResults=5000`, nextPageToken
+Full-refresh key-only sweep of every issue in every visible live project:
+GET /rest/api/3/search/jql with `fields=key` / `maxResults=5000`, nextPageToken
 cursor pagination, partitioned per project via the inline (non-gated)
 jira_census_projects parent. See specs/DELETION-AND-VISIBILITY.md.
 
@@ -12,15 +12,18 @@ tenant_source_stamping, schema_conformance, empty_project.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from config import JIRA_URL, JiraConfigBuilder
-from connector_tests import ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse, load_fixture, read_stream
+from connector_tests import HttpMocker, HttpRequest, HttpResponse, load_fixture, read_stream
+from connector_tests.source import load_manifest
 
 _STREAM = "jira_issue_census"
 _CONNECTOR = "task-tracking/jira"
 _PROJECT_URL = f"{JIRA_URL}/rest/api/3/project/search"
 _SEARCH_URL = f"{JIRA_URL}/rest/api/3/search/jql"
+_RECORD_FIELD = re.compile(r"record\[['\"](\w+)['\"]\]")
 
 
 def _mock_parent(http_mocker: HttpMocker, keys: list[str]) -> None:
@@ -41,21 +44,48 @@ def _mock_parent(http_mocker: HttpMocker, keys: list[str]) -> None:
     )
 
 
-def _census_page(ids: list[int], next_token: str | None = None, project_key: str = "PROJ1") -> HttpResponse:
-    body: dict = {"issues": [{"id": str(i), "key": f"{project_key}-{i}"} for i in ids]}
-    if next_token:
-        body["nextPageToken"] = next_token
-    return HttpResponse(body=json.dumps(body), status_code=200)
+def _census_stream() -> dict:
+    return next(s for s in load_manifest(_CONNECTOR)["streams"] if s["name"] == _STREAM)
 
 
-def _jql(project_key: str) -> str:
-    return f'project = "{project_key}" ORDER BY created ASC'
+def _requested_fields() -> str:
+    return _census_stream()["retriever"]["requester"]["request_parameters"]["fields"]
+
+
+def _searched_issue(issue_id: int, project_key: str, fields: set[str]) -> dict:
+    """The issue as enhanced search documents it: the id always, `fields=id`
+    alone yields nothing else, and the key only when `fields` names it."""
+    if fields == {"id"}:
+        return {"id": str(issue_id)}
+
+    issue: dict = {"id": str(issue_id), "fields": {}}
+    if "key" in fields:
+        issue["key"] = f"{project_key}-{issue_id}"
+    return issue
+
+
+def _mock_census(http_mocker: HttpMocker, pages: list[list[int]], project_key: str = "PROJ1") -> None:
+    """Answers whatever `fields` the manifest requests the way Jira would, so
+    a field the census reads but does not request comes back missing."""
+    fields = _requested_fields()
+    requested = set(fields.split(","))
+    query_params = {"jql": f'project = "{project_key}" ORDER BY created ASC', "fields": fields, "maxResults": "5000"}
+
+    for page, ids in enumerate(pages):
+        body: dict = {"issues": [_searched_issue(i, project_key, requested) for i in ids]}
+        if page + 1 < len(pages):
+            body["nextPageToken"] = f"tok-{page + 1}"
+
+        page_params = {**query_params, "nextPageToken": f"tok-{page}"} if page else query_params
+        http_mocker.get(
+            HttpRequest(_SEARCH_URL, query_params=page_params), HttpResponse(body=json.dumps(body), status_code=200)
+        )
 
 
 def test_full_sweep_single_page(http_mocker: HttpMocker) -> None:
     config = JiraConfigBuilder().build()
     _mock_parent(http_mocker, ["PROJ1"])
-    http_mocker.get(HttpRequest(_SEARCH_URL, query_params=ANY_QUERY_PARAMS), _census_page([101, 102, 103]))
+    _mock_census(http_mocker, [[101, 102, 103]])
 
     output = read_stream(_CONNECTOR, _STREAM, config)
 
@@ -69,17 +99,7 @@ def test_pagination_next_page_token(http_mocker: HttpMocker) -> None:
     request; its absence stops the sweep."""
     config = JiraConfigBuilder().build()
     _mock_parent(http_mocker, ["PROJ1"])
-    http_mocker.get(
-        HttpRequest(_SEARCH_URL, query_params={"jql": _jql("PROJ1"), "fields": "id", "maxResults": "5000"}),
-        _census_page([101], next_token="tok-1"),
-    )
-    http_mocker.get(
-        HttpRequest(
-            _SEARCH_URL,
-            query_params={"jql": _jql("PROJ1"), "fields": "id", "maxResults": "5000", "nextPageToken": "tok-1"},
-        ),
-        _census_page([102]),
-    )
+    _mock_census(http_mocker, [[101], [102]])
 
     output = read_stream(_CONNECTOR, _STREAM, config)
 
@@ -90,7 +110,7 @@ def test_pagination_next_page_token(http_mocker: HttpMocker) -> None:
 def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
     config = JiraConfigBuilder().build()
     _mock_parent(http_mocker, ["PROJ1"])
-    http_mocker.get(HttpRequest(_SEARCH_URL, query_params=ANY_QUERY_PARAMS), _census_page([101]))
+    _mock_census(http_mocker, [[101]])
 
     output = read_stream(_CONNECTOR, _STREAM, config)
 
@@ -104,11 +124,11 @@ def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
 
 
 def test_each_issue_keeps_its_current_key_beside_its_id(http_mocker: HttpMocker) -> None:
-    """Jira returns the key with every id even when only `id` is requested;
-    it is what resolves a linked issue's key outside the sync window."""
+    """The key is what resolves a linked issue's key outside the sync window;
+    the census request asks for it, since `fields=id` returns ids alone."""
     config = JiraConfigBuilder().build()
     _mock_parent(http_mocker, ["PROJ1"])
-    http_mocker.get(HttpRequest(_SEARCH_URL, query_params=ANY_QUERY_PARAMS), _census_page([101, 102]))
+    _mock_census(http_mocker, [[101, 102]])
 
     output = read_stream(_CONNECTOR, _STREAM, config)
 
@@ -116,6 +136,17 @@ def test_each_issue_keeps_its_current_key_beside_its_id(http_mocker: HttpMocker)
         (101, "PROJ1-101"),
         (102, "PROJ1-102"),
     ]
+
+
+def test_census_requests_every_issue_field_it_reads() -> None:
+    """Enhanced search returns an issue's `id` unasked and any other field only
+    when `fields` names it, so a field the transformations read but the request
+    omits lands empty in every row without an error."""
+    requested = set(_requested_fields().split(","))
+    read = set(_RECORD_FIELD.findall(json.dumps(_census_stream()["transformations"])))
+
+    assert "key" in read, "should keep each issue's key as id_readable"
+    assert read - {"id"} <= requested, f"should request every field read from the record: {sorted(read - requested)}"
 
 
 @pytest.mark.skip(
@@ -132,7 +163,7 @@ def test_schema_conformance() -> None:
 def test_empty_project(http_mocker: HttpMocker) -> None:
     config = JiraConfigBuilder().build()
     _mock_parent(http_mocker, ["EMPTY"])
-    http_mocker.get(HttpRequest(_SEARCH_URL, query_params=ANY_QUERY_PARAMS), _census_page([]))
+    _mock_census(http_mocker, [[]], project_key="EMPTY")
 
     output = read_stream(_CONNECTOR, _STREAM, config)
 
