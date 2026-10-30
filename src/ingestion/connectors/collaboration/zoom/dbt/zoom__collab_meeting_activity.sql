@@ -373,6 +373,9 @@ attended_days AS (
         -- INVARIANT: logical_meeting_id folds host-drop rejoins into one meeting;
         -- meeting_uuid stands in until the meeting is stitched.
         toInt64(uniqExactIf(coalesce(ml.logical_meeting_id, p.meeting_uuid), p.company_seconds > 0)) AS meetings_attended,
+        -- INVARIANT: the same meetings meetings_attended counts; gold counts each
+        -- once for a person however many addresses joined it.
+        arraySort(groupUniqArrayIf(coalesce(ml.logical_meeting_id, p.meeting_uuid), p.company_seconds > 0)) AS attended_meeting_keys,
         toInt64(sum(p.company_seconds)) AS audio_duration_seconds,
         -- INVARIANT: video is gated by the participant's own camera, not the meeting-level
         -- has_video flag, which would credit everyone in a meeting where anyone had video.
@@ -459,6 +462,7 @@ person_days AS (
         account_id,
         toUInt8(1)                    AS from_attendance,
         meetings_attended,
+        attended_meeting_keys,
         audio_duration_seconds,
         video_duration_seconds,
         screen_share_duration_seconds,
@@ -477,6 +481,7 @@ person_days AS (
         ''                            AS account_id,
         toUInt8(0)                    AS from_attendance,
         toInt64(0)                    AS meetings_attended,
+        CAST([] AS Array(String))     AS attended_meeting_keys,
         toInt64(0)                    AS audio_duration_seconds,
         toInt64(0)                    AS video_duration_seconds,
         toInt64(0)                    AS screen_share_duration_seconds,
@@ -509,6 +514,7 @@ SELECT
     any(account_source_type) AS account_source_type,
     any(account_source_id) AS account_source_id,
     any(account_id) AS account_id,
+    arraySort(groupUniqArrayArray(attended_meeting_keys)) AS attended_meeting_keys,
     toUnixTimestamp64Milli(now64()) AS _version
 FROM person_days
 {%- if is_incremental() %}

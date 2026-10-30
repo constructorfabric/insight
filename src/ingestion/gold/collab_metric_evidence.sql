@@ -77,8 +77,10 @@ meeting_source AS (
             {{ normalized_email('person_key') }},
             {{ account_entity_key('account_source_type', 'account_source_id', 'account_id') }}
         ) AS entity_id,
+        insight_source_id,
         date AS metric_date,
         meetings_attended + ifNull(calls_count, 0) AS meetings_and_calls_attended,
+        attended_meeting_keys,
         meetings_organized,
         adhoc_meetings_attended,
         scheduled_meetings_attended,
@@ -310,10 +312,6 @@ value_measures AS (
 
     UNION ALL
 
-    {{ sum_measure('meetings_attended', 'meeting_source', 'meetings_and_calls_attended', 'tool_dimensions') }}
-
-    UNION ALL
-
     {{ sum_measure('meetings_organized', 'meeting_source', 'meetings_organized', 'tool_dimensions') }}
 
     UNION ALL
@@ -361,6 +359,46 @@ active_modality_grain AS (
         modality,
         no_dimensions
     FROM deliberate_activity
+),
+meeting_summary_measures AS (
+    {{ sum_measure('meetings_attended', 'meeting_source', 'meetings_and_calls_attended', 'tool_dimensions', where='empty(attended_meeting_keys)') }}
+),
+attendance_measures AS (
+    -- INVARIANT: a meeting counts once for a person however many addresses they
+    -- joined it from. A row that names its meetings (Zoom) emits one row per
+    -- meeting with the meeting as the subject; a row that names none (the Teams
+    -- daily report, a Zoom day written before the keys existed) keeps its count
+    -- under the address as the subject. The runtime collapses a person's
+    -- addresses per subject (`alias_collapse: max` on meetings_attended), so a
+    -- shared meeting folds to one and distinct subjects still add up.
+    SELECT
+        tenant_id,
+        entity_id,
+        metric_date,
+        'meetings_attended' AS measure_key,
+        toNullable(toFloat64(1)) AS value,
+        toNullable(concat(insight_source_id, ':', meeting_key)) AS subject_key,
+        tool_dimensions AS dimensions,
+        'event' AS granularity,
+        'meeting' AS record_label,
+        map('meeting', meeting_key) AS details
+    FROM meeting_source
+    ARRAY JOIN attended_meeting_keys AS meeting_key
+
+    UNION ALL
+
+    SELECT
+        tenant_id,
+        entity_id,
+        metric_date,
+        measure_key,
+        value,
+        toNullable(entity_id) AS subject_key,
+        dimensions,
+        'source_summary' AS granularity,
+        'meetings attended' AS record_label,
+        CAST(map() AS Map(String, String)) AS details
+    FROM meeting_summary_measures
 ),
 subject_measures AS (
     {{ distinct_measure('active_day', 'active_day_grain', 'metric_date', 'tool_dimensions') }}
@@ -429,6 +467,35 @@ SELECT
     dimensions,
     CAST(map() AS Map(String, String)) AS details
 FROM subject_measures
+WHERE tenant_id IS NOT NULL
+  AND entity_id IS NOT NULL
+  AND metric_date IS NOT NULL
+
+UNION ALL
+
+SELECT
+    assumeNotNull(tenant_id) AS tenant_id,
+    'collab' AS source_key,
+    'person' AS entity_type,
+    assumeNotNull(entity_id) AS entity_id,
+    assumeNotNull(metric_date) AS metric_date,
+    CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
+    measure_key,
+    concat(
+        toString(metric_date),
+        ':',
+        measure_key,
+        ':',
+        hex(sipHash128(toString(tuple(arrayMap(d -> tuple(d.1, d.2), dimensions), subject_key))))
+    ) AS record_id,
+    measure_key AS record_kind,
+    granularity,
+    record_label,
+    value AS contribution,
+    subject_key,
+    dimensions,
+    details
+FROM attendance_measures
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL

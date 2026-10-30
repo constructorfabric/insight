@@ -28,7 +28,11 @@ name: zoom
 #   console; the meeting feeder and the class gain the three account columns.
 #   MAJOR so reconcile runs the one-shot `dbt --full-refresh` that writes the
 #   guest rows back into history.
-version: "5.0.0"
+# 6.0.0 (major): the meeting feeder and the class name the meetings a day's
+#   count stands for, so a meeting joined from two of a person's addresses
+#   counts once. MAJOR so reconcile runs the one-shot `dbt --full-refresh` that
+#   fills the keys for history; a day without them keeps counting per address.
+version: "6.0.0"
 schedule: 0 3 * * *
 dbt_select: tag:zoom+
 workflow: sync

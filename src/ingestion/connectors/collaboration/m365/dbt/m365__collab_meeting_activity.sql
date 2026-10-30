@@ -40,6 +40,8 @@ SELECT
     'email' AS account_source_type,
     '' AS account_source_id,
     '' AS account_id,
+    -- The daily report names no meetings.
+    CAST([] AS Array(String)) AS attended_meeting_keys,
     toUnixTimestamp64Milli(now64()) AS _version
 FROM {{ source('bronze_m365', 'teams_activity') }} FINAL
 WHERE userPrincipalName IS NOT NULL

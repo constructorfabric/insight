@@ -1,0 +1,65 @@
+spec_version: 1
+description: >
+  Metric: collab.meetings_count — a meeting counts once for a person however many
+  of their addresses joined it, while meetings under different addresses still add up.
+  How it's computed (bronze → silver → gold):
+    • bronze: Zoom meetings with participant sessions, and the daily Teams activity
+      report, each under one of the person's two addresses.
+    • staging: Zoom names the logical meetings a day's count stands for; the Teams
+      report carries only a count.
+    • gold:   one Zoom row per attended meeting with the meeting as the subject; the
+      runtime folds a person's addresses per subject, so a meeting joined from two
+      addresses is one meeting, and a Teams day under each address adds up as before.
+
+  Cast (Engineering):
+    alice — two addresses, the second bound by the operator. Zoom Dec 10: meeting 111
+            and 222 from her first address; meeting 333 from her second address, then
+            after leaving it from her first → 3 Zoom meetings, not 4. Teams Dec 11: 2
+            meetings under her first address and 1 under her second → 3.
+    bob   — Zoom Dec 10: meeting 333 only → 1; he is the company in alice's meetings.
+  Cases: a meeting joined from two addresses counts once · meetings under either
+  address still add up · a daily report under each address adds up.
+
+identity_aliases:
+  alice@example.com: [alice.zoom@example.org]
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+
+  bronze_ms_entra.users:
+    # alice's second address is its own directory account, so only the operator's
+    # binding joins it to her.
+    - _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+      _airbyte_extracted_at: "2026-01-05T00:00:00"
+      _airbyte_meta: "{}"
+      _airbyte_generation_id: 0
+      tenant_id: "{{ tenant }}"
+      source_id: entra-test
+      unique_key: entra-alice-zoom
+      id: entra-alice-zoom
+      mail: alice.zoom@example.org
+      displayName: Alice Zoom
+      accountEnabled: true
+      userType: Member
+
+  bronze_m365.teams_activity:
+    - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-11", lastActivityDate: "2026-12-11", unique_key: mca-teams-alice-20261211, meetingsAttendedCount: 2 }
+    - { $ref: ../templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice.zoom@example.org, reportRefreshDate: "2026-12-11", lastActivityDate: "2026-12-11", unique_key: mca-teams-alice-zoom-20261211, meetingsAttendedCount: 1 }
+
+  bronze_zoom.meetings:
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: mca-zm-111, id: 111, uuid: mca-m111, start_time: "2026-12-10T08:00:00Z", end_time: "2026-12-10T08:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: mca-zm-222, id: 222, uuid: mca-m222, start_time: "2026-12-10T09:00:00Z", end_time: "2026-12-10T09:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: mca-zm-333, id: 333, uuid: mca-m333, start_time: "2026-12-10T10:00:00Z", end_time: "2026-12-10T12:00:00Z" }
+
+  bronze_zoom.participants:
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: mca-zp-alice-111, meeting_uuid: mca-m111, participant_uuid: mca-pa1, join_time: "2026-12-10T08:00:00Z", leave_time: "2026-12-10T08:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: mca-zp-alice-222, meeting_uuid: mca-m222, participant_uuid: mca-pa2, join_time: "2026-12-10T09:00:00Z", leave_time: "2026-12-10T09:30:00Z" }
+    # meeting 333: alice joins from her second address, leaves, and rejoins from her first.
+    - { $ref: ../templates/zoom.yaml#/templates/zoom_participant, email: alice.zoom@example.org, user_name: Alice, unique_key: mca-zp-alice-zoom-333, meeting_uuid: mca-m333, participant_uuid: mca-pa3, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T11:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/alice_participant, unique_key: mca-zp-alice-333, meeting_uuid: mca-m333, participant_uuid: mca-pa4, join_time: "2026-12-10T11:01:00Z", leave_time: "2026-12-10T12:00:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/bob_participant, unique_key: mca-zp-bob-333, meeting_uuid: mca-m333, participant_uuid: mca-pb1, join_time: "2026-12-10T10:00:00Z", leave_time: "2026-12-10T12:00:00Z" }
+    # bob is the company in alice's other meetings, so they count.
+    - { $ref: ../templates/zoom.yaml#/templates/bob_participant, unique_key: mca-zp-bob-111, meeting_uuid: mca-m111, participant_uuid: mca-pb2, join_time: "2026-12-10T08:00:00Z", leave_time: "2026-12-10T08:30:00Z" }
+    - { $ref: ../templates/zoom.yaml#/templates/bob_participant, unique_key: mca-zp-bob-222, meeting_uuid: mca-m222, participant_uuid: mca-pb3, join_time: "2026-12-10T09:00:00Z", leave_time: "2026-12-10T09:30:00Z" }
