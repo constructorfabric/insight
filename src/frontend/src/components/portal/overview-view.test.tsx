@@ -91,7 +91,7 @@ describe("<OverviewView>", () => {
     [
       "an IC: their glance and dashboards, no org rollup",
       { canSeeOthers: false, who: undefined, item: null },
-      ["Glance for me-1", "Recent dashboards"],
+      ["Recent dashboards", "Glance for me-1"],
     ],
     [
       "a viewer with a cohort: the team's rollup alone",
@@ -101,7 +101,7 @@ describe("<OverviewView>", () => {
     [
       "a viewer with a cohort who picked Me: Home without the rollup",
       { canSeeOthers: true, who: "me", item: null },
-      ["Glance for me-1", "Recent dashboards"],
+      ["Recent dashboards", "Glance for me-1"],
     ],
     [
       "a viewer with a cohort who opens a theme: the team's",
@@ -131,7 +131,7 @@ describe("<OverviewView>", () => {
     [
       "an IC who opens the split of work between people: Home instead",
       { canSeeOthers: false, who: undefined, item: "contribution" },
-      ["Glance for me-1", "Recent dashboards"],
+      ["Recent dashboards", "Glance for me-1"],
     ],
   ] as const)("shows %s", (_case, { canSeeOthers, who, item }, expected) => {
     viewer.canSeeOthers = canSeeOthers;

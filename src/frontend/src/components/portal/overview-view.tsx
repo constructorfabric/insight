@@ -43,8 +43,8 @@ export function OverviewView({ item }: { item: string | null }) {
         <h1 className={TEXT_TITLE}>Home</h1>
         {subject === "me" ? (
           <>
-            <OwnGlance />
             <HomeDashboards />
+            <OwnGlance />
           </>
         ) : null}
         {subject === "team" && rollup ? (
