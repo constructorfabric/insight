@@ -9,6 +9,7 @@ schemas:
     additionalProperties: false
     properties:
       unique_key: {type: string}
+      tenant_id: {type: string}
       source_id: {type: string}
       tenant_id: {type: string}
       # The jira connector types status/category ids as JSON numbers, which the

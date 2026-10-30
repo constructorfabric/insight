@@ -13,20 +13,21 @@
 -- the only way to the exact current document. An empty field has no row.
 
 WITH long_text_fields AS (
-    SELECT insight_source_id, field_id
+    SELECT tenant_id, insight_source_id, field_id
     FROM {{ ref('jira__task_field_kind') }}
     WHERE field_kind = 'long_text'
 ),
 
 issue_winner AS (
-    -- Read-time dedup by the issue's stable key within a source.
-    SELECT source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
+    -- Read-time dedup by the issue's stable key within a tenant's source.
+    SELECT tenant_id, source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    GROUP BY source_id, jira_id
+    GROUP BY tenant_id, source_id, jira_id
 ),
 
 current_bodies AS (
     SELECT
+        i.tenant_id                                       AS tenant_id,
         CAST(i.source_id AS String)                       AS insight_source_id,
         CAST(i.jira_id AS String)                         AS issue_id,
         kv.1                                              AS field_id,
@@ -35,13 +36,15 @@ current_bodies AS (
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
     ARRAY JOIN JSONExtractKeysAndValuesRaw(COALESCE(i.custom_fields_json, '{}')) AS kv
     INNER JOIN long_text_fields AS f
-        ON f.insight_source_id = CAST(i.source_id AS String)
+        ON f.tenant_id = i.tenant_id
+       AND f.insight_source_id = CAST(i.source_id AS String)
        AND f.field_id = kv.1
     WHERE kv.2 NOT IN ('', 'null', '""', '{}')
 )
 
 SELECT
-    concat(insight_source_id, '-jira-', issue_id, '-', field_id) AS unique_key,
+    concat(ifNull(tenant_id, ''), '-', insight_source_id, '-jira-', issue_id, '-', field_id) AS unique_key,
+    ifNull(tenant_id, '')                                 AS tenant_id,
     insight_source_id,
     CAST('jira' AS String)                                AS data_source,
     issue_id,

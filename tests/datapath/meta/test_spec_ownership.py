@@ -14,6 +14,7 @@ from insight_datapath.fixture_loader import discover_tests
 METRICS_ROOT = Path(__file__).resolve().parents[1] / "metrics"
 
 _DECLARATION = re.compile(r"^SPEC = [\"'](?P<name>[^\"']+)[\"']", re.MULTILINE)
+_NEIGHBOUR = re.compile(r"^NEIGHBOUR = [\"'](?P<name>[^\"']+)[\"']", re.MULTILINE)
 
 
 def _claims() -> dict[Path, list[Path]]:
@@ -55,3 +56,14 @@ def test_every_claim_names_a_spec_beside_its_module() -> None:
         if not spec.exists()
     }
     assert not dangling, f"SPEC names a file that is not there: {dangling}"
+
+
+def test_every_neighbour_names_a_spec() -> None:
+    """A neighbour borrows another module's spec; it never claims one of its own."""
+    dangling = {
+        str(module.relative_to(METRICS_ROOT)): declaration["name"]
+        for module in sorted(METRICS_ROOT.rglob("test_*.py"))
+        if (declaration := _NEIGHBOUR.search(module.read_text(encoding="utf-8")))
+        and not (module.parent / f"{declaration['name']}.test.yaml").resolve().exists()
+    }
+    assert not dangling, f"NEIGHBOUR names a file that is not there: {dangling}"

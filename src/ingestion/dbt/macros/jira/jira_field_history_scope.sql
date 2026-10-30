@@ -27,15 +27,18 @@
     third: the census can name an id for a key long after the issue last moved. -#}
 {% macro jira_journal_touched(processed_ms) %}
     SELECT
+        f.tenant_id                                       AS tenant_id,
         f.insight_source_id                               AS insight_source_id,
         f.issue_id                                        AS issue_id
     FROM (
         SELECT
+            tenant_id,
             insight_source_id,
             issue_id,
             max(extracted_at)                             AS fresh_at
         FROM (
             SELECT
+                ifNull(tenant_id, '')                     AS tenant_id,
                 CAST(source_id AS String)                 AS insight_source_id,
                 CAST(jira_id AS String)                   AS issue_id,
                 toDateTime64(_airbyte_extracted_at, 3)    AS extracted_at
@@ -44,6 +47,7 @@
             UNION ALL
 
             SELECT
+                tenant_id,
                 insight_source_id,
                 assumeNotNull(jira_id)                    AS issue_id,
                 extracted_at
@@ -55,28 +59,32 @@
             -- A link element the journal still names by a key the key map now
             -- resolves: nothing in bronze moved, but the element is now an id.
             SELECT
+                j.tenant_id                               AS tenant_id,
                 j.insight_source_id                       AS insight_source_id,
                 j.issue_id                                AS issue_id,
                 now64(3)                                  AS extracted_at
             FROM {{ this }} AS j
             ARRAY JOIN j.value_ids AS element
             INNER JOIN {{ ref('jira__issue_key_ids') }} AS ik FINAL
-                ON ik.insight_source_id = j.insight_source_id
+                ON ik.tenant_id = j.tenant_id
+               AND ik.insight_source_id = j.insight_source_id
                AND ik.issue_key = element
             WHERE j.value_id_type = 'opaque_id'
               AND NOT match(element, '^[0-9]+$')
         )
-        GROUP BY insight_source_id, issue_id
+        GROUP BY tenant_id, insight_source_id, issue_id
     ) AS f
     LEFT JOIN (
         SELECT
+            tenant_id,
             insight_source_id,
             issue_id,
             max(_version)                                 AS journal_version
         FROM {{ this }}
-        GROUP BY insight_source_id, issue_id
+        GROUP BY tenant_id, insight_source_id, issue_id
     ) AS v
-        ON v.insight_source_id = f.insight_source_id
+        ON v.tenant_id = f.tenant_id
+       AND v.insight_source_id = f.insight_source_id
        AND v.issue_id = f.issue_id
     WHERE toUnixTimestamp64Milli(f.fresh_at) > toInt64(COALESCE(v.journal_version, 0))
        OR toUnixTimestamp64Milli(f.fresh_at) > toInt64({{ processed_ms }})
@@ -85,10 +93,10 @@
 
 {#- Every issue bronze knows: the rebuild scope, counted for batching only. -#}
 {% macro jira_journal_all_issues() %}
-    SELECT CAST(source_id AS String) AS insight_source_id, CAST(jira_id AS String)       AS issue_id
+    SELECT ifNull(tenant_id, '') AS tenant_id, CAST(source_id AS String) AS insight_source_id, CAST(jira_id AS String) AS issue_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
     UNION ALL
-    SELECT insight_source_id, assumeNotNull(jira_id) AS issue_id
+    SELECT tenant_id, insight_source_id, assumeNotNull(jira_id) AS issue_id
     FROM {{ ref('jira__changelog_items') }}
     WHERE jira_id IS NOT NULL
 {% endmacro %}
@@ -109,7 +117,7 @@
         {%- set scope_sql = jira_journal_touched(catalogue.processed_ms) if touched else jira_journal_all_issues() -%}
         {%- do jira_journal_write_stage('kinds', jira_journal_kinds_sql()) -%}
         {%- do jira_journal_write_stage('scope',
-                'SELECT insight_source_id, issue_id FROM (' ~ scope_sql ~ ') GROUP BY insight_source_id, issue_id') -%}
+                'SELECT tenant_id, insight_source_id, issue_id FROM (' ~ scope_sql ~ ') GROUP BY tenant_id, insight_source_id, issue_id') -%}
         {%- do jira_journal_derive_stages(0, jira_journal_batches()) -%}
     {%- endif -%}
     SELECT 1
@@ -146,8 +154,8 @@
                 {%- do run_query('DROP TABLE IF EXISTS ' ~ staged) -%}
                 {%- do run_query('CREATE TABLE ' ~ staged ~ ' AS ' ~ this) -%}
                 {%- do run_query('INSERT INTO ' ~ staged ~ ' (' ~ columns ~ ') ' ~ derive) -%}
-                {%- do run_query('DELETE FROM ' ~ this ~ ' WHERE (insight_source_id, issue_id) IN ('
-                                 ~ 'SELECT insight_source_id, issue_id FROM ' ~ staged ~ ')' ~ settings) -%}
+                {%- do run_query('DELETE FROM ' ~ this ~ ' WHERE (tenant_id, insight_source_id, issue_id) IN ('
+                                 ~ 'SELECT tenant_id, insight_source_id, issue_id FROM ' ~ staged ~ ')' ~ settings) -%}
                 {%- do run_query('INSERT INTO ' ~ this ~ ' (' ~ columns ~ ') SELECT ' ~ columns
                                  ~ ' FROM ' ~ staged ~ settings) -%}
                 {%- do run_query('DROP TABLE ' ~ staged) -%}

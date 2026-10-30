@@ -12,6 +12,9 @@ people in place and mint against those.
 
 A spec addresses people by email. The wire carries person ids, so requests translate
 on the way out and responses on the way back, and a test asserts in the spec's terms.
+
+A spec may also seed a neighbour: another tenant's world in the same warehouse, built
+and minted beside its own, which no read of this tenant may ever see.
 """
 
 from __future__ import annotations
@@ -67,6 +70,9 @@ def all_persona_emails(
 
 _HR_RECORDS = "bronze_bamboohr.employees"
 
+#: The tenant a module's neighbour is seeded under; never an instance's own.
+NEIGHBOUR_TENANT = "5d2c8e1a-3b7f-4c9d-a6e0-2f4b8c1d7e93"
+
 
 def declared_people(bronze: dict[str, list[dict[str, Any]]], *, excluding: str = "") -> set[str]:
     """The addresses the spec seeds an employment record for.
@@ -106,6 +112,33 @@ def canonical_emails(person_ids: dict[str, str], of_record: dict[str, str]) -> d
     by_person = {person_id: email for email, person_id in person_ids.items()}
     by_person.update({person_id: email for email, person_id in of_record.items()})
     return by_person
+
+
+@dataclass(frozen=True)
+class Neighbour:
+    """Another tenant's spec, seeded and minted beside the one under test."""
+
+    spec: TestYaml
+    subjects: Subjects
+
+
+def keyed_under(
+    bronze: dict[str, list[dict[str, Any]]], tenant: str
+) -> dict[str, list[dict[str, Any]]]:
+    """`bronze` with every row key led by `tenant`, as each tenant's connector writes it.
+
+    Two tenants reporting one source id must never write one row: a neighbour seeded
+    under the spec's own keys would replace the spec's rows instead of standing beside
+    them. A key the spec already builds from its tenant leads with it and is kept.
+    """
+    return {table: [_keyed_row(row, tenant) for row in rows] for table, rows in bronze.items()}
+
+
+def _keyed_row(row: dict[str, Any], tenant: str) -> dict[str, Any]:
+    key = row.get("unique_key")
+    if not key or str(key).startswith(tenant):
+        return row
+    return {**row, "unique_key": f"{tenant}-{key}"}
 
 
 @dataclass
@@ -164,13 +197,19 @@ def run_spec(
     tenant: str,
     bindings: Bindings,
     ledger: Ledger,
+    neighbour: Neighbour | None = None,
 ) -> SpecRun:
     """Seed, build and publish one spec; returns the caller its tests read through."""
     tracked = TrackedModels(dbt_runner, ch_seeder)
     clear(ch_seeder.cfg, ch_seeder.ledger.drain())
     ch_seeder.seed_bronze(spec.bronze, spec.schemas)
+    touched = set(spec.touched_tables)
+    if neighbour is not None:
+        neighbour_bronze = keyed_under(neighbour.spec.bronze, neighbour.subjects.tenant_id)
+        ch_seeder.seed_bronze(neighbour_bronze, neighbour.spec.schemas)
+        touched |= set(neighbour.spec.touched_tables)
 
-    staging, silver = dbt_runner.derive_selectors(spec.touched_tables)
+    staging, silver = dbt_runner.derive_selectors(touched)
     tracked.build(staging, with_ancestors=True)
 
     silver_set = set(silver)
@@ -183,6 +222,8 @@ def run_spec(
     cast = declared_people(spec.bronze, excluding=caller_email)
     if cast:
         subjects.publish()
+    if neighbour is not None and declared_people(neighbour.spec.bronze, excluding=caller_email):
+        neighbour.subjects.publish()
     emails = all_persona_emails(spec.bronze, excluding=caller_email)
     of_record = subjects.person_ids_of_records(spec.bronze.get(_HR_RECORDS) or [])
     person_ids = {**subjects.person_ids(emails), **of_record}

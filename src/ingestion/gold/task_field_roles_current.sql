@@ -4,7 +4,7 @@
 ) }}
 
 -- Which vendor field plays which metric role, resolved to one row per
--- (source, field). Gold matches a role, never a vendor's field identifier —
+-- (tenant, source, field). Gold matches a role, never a vendor's field identifier —
 -- `field_id` is documented as vendor-specific, so a literal like `'status'` is
 -- Jira's name for the thing and no other source can honour it.
 --
@@ -23,14 +23,11 @@
 -- a wrong binding expects the fix to reach the numbers already published. The
 -- validity axis is recorded and becomes effective when the class dimensions
 -- gain a period grain; see the design's configuration section.
---
--- `tenant_id` is deliberately absent from the output. `class_task_field_history`
--- carries no tenant column — a source instance belongs to exactly one tenant,
--- so the source identifier already answers for it.
 
 WITH
 observed_sources AS (
     SELECT DISTINCT
+        tenant_id,
         insight_source_id,
         data_source
     FROM {{ ref('class_task_field_history') }}
@@ -41,6 +38,7 @@ observed_sources AS (
 -- rather than asked of every deployment. Time is already seconds.
 vendor_defaults AS (
     SELECT
+        s.tenant_id                             AS tenant_id,
         s.insight_source_id                     AS insight_source_id,
         s.data_source                           AS data_source,
         d.1                                     AS field_id,
@@ -62,6 +60,7 @@ vendor_defaults AS (
     UNION ALL
 
     SELECT
+        s.tenant_id                             AS tenant_id,
         s.insight_source_id                     AS insight_source_id,
         s.data_source                           AS data_source,
         if(s.data_source = 'youtrack', 'summary', 'title') AS field_id,
@@ -75,6 +74,7 @@ vendor_defaults AS (
 -- row — filter `is_deleted` after the LIMIT 1 BY pick, never before.
 authored AS (
     SELECT
+        tenant_id,
         insight_source_id,
         data_source,
         field_id,
@@ -84,6 +84,7 @@ authored AS (
         unit_multiplier
     FROM (
         SELECT
+            tenant_id,
             insight_source_id,
             data_source,
             field_id,
@@ -95,13 +96,14 @@ authored AS (
         FROM {{ source('config', 'task_field_roles') }} FINAL
         WHERE valid_from <= now64(3)
         ORDER BY valid_from DESC, recorded_at DESC
-        LIMIT 1 BY insight_source_id, data_source, field_id
+        LIMIT 1 BY tenant_id, insight_source_id, data_source, field_id
     )
     WHERE is_deleted = 0
 ),
 
 every_binding AS (
     SELECT
+        tenant_id,
         insight_source_id,
         data_source,
         field_id,
@@ -114,6 +116,7 @@ every_binding AS (
     UNION ALL
 
     SELECT
+        d.tenant_id,
         d.insight_source_id,
         d.data_source,
         d.field_id,
@@ -123,7 +126,8 @@ every_binding AS (
         toFloat64(1)                 AS unit_multiplier
     FROM vendor_defaults AS d
     LEFT ANTI JOIN authored AS a
-        ON a.insight_source_id = d.insight_source_id
+        ON a.tenant_id = d.tenant_id
+        AND a.insight_source_id = d.insight_source_id
         AND a.data_source = d.data_source
         AND a.field_id = d.field_id
 )

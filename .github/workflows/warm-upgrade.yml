@@ -45,6 +45,7 @@ on:
       - "src/ingestion/scripts/**"
       - ".github/workflows/warm-upgrade.yml"
       - ".github/workflows/scripts/warm-upgrade-sim.sh"
+      - ".github/workflows/scripts/tenant-cutover-sim.sh"
       - ".github/workflows/scripts/start-clickhouse.sh"
   # Unfiltered on main: the paths filter sees at most 300 changed files, and
   # the merged tree is the one an installation upgrades to.
@@ -134,6 +135,68 @@ jobs:
 
       - name: Install the base release, then deploy this tree onto it
         run: .github/workflows/scripts/warm-upgrade-sim.sh
+
+      - name: ClickHouse logs on failure
+        if: failure()
+        run: docker logs --tail 200 "${CLICKHOUSE_CONTAINER}" || true
+
+  # The canonical-tenant cutover of deploy/TENANT_IDENTITY_UPGRADE.md, run on
+  # this tree: a warm state under a legacy tenant, the key migration with its
+  # rollback and restore, and the rebuild. Its own ClickHouse, so it shares no
+  # relation with the job above.
+  tenant-cutover:
+    name: Cut a warm installation over to the canonical tenant
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
+    timeout-minutes: 30
+    env:
+      CLICKHOUSE_CONTAINER: tenant-cutover-clickhouse
+      CLICKHOUSE_USER: insight
+      CLICKHOUSE_PASSWORD: insight
+      CLICKHOUSE_DATABASE: insight
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+          # The sim installs the base commit's tree first, so that commit's
+          # objects must be present.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Start an empty ClickHouse
+        run: |
+          set -euo pipefail
+          cat src/ingestion/scripts/bootstrap-db/pins.env >> "$GITHUB_ENV"
+          source src/ingestion/scripts/bootstrap-db/pins.env
+          # The bridge gateway: one address for dbt on the host and for the
+          # destination-clickhouse container that creates the zoom bronze.
+          host="$(docker network inspect bridge -f '{{ (index .IPAM.Config 0).Gateway }}')"
+          echo "CLICKHOUSE_URL=http://${host}:8123" >> "$GITHUB_ENV"
+          CLICKHOUSE_SERVER_IMAGE="$CLICKHOUSE_SERVER_IMAGE" \
+            .github/workflows/scripts/start-clickhouse.sh "${CLICKHOUSE_CONTAINER}"
+
+      - name: Resolve the installed-release commit
+        run: |
+          set -euo pipefail
+          if [ -n "${PR_BASE_SHA}" ]; then
+            echo "BASE_SHA=${PR_BASE_SHA}" >> "$GITHUB_ENV"
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ] \
+              && [ "${PUSH_BEFORE_SHA}" != "0000000000000000000000000000000000000000" ] \
+              && git cat-file -e "${PUSH_BEFORE_SHA}^{commit}" 2>/dev/null; then
+            echo "BASE_SHA=${PUSH_BEFORE_SHA}" >> "$GITHUB_ENV"
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            echo "BASE_SHA=$(git rev-parse HEAD^)" >> "$GITHUB_ENV"
+          else
+            echo "BASE_SHA=$(git rev-parse origin/main)" >> "$GITHUB_ENV"
+          fi
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+
+      - name: Migrate a warm warehouse to the canonical tenant
+        run: .github/workflows/scripts/tenant-cutover-sim.sh
 
       - name: ClickHouse logs on failure
         if: failure()

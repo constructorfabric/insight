@@ -17,7 +17,7 @@
 
 
 {#- The catalogue as one fingerprint plus its extraction stamp, or `none` when
-    the classifier relation does not exist yet. One line per (source, field):
+    the classifier relation does not exist yet. One line per (tenant, source, field):
     the classification and the name, hashed in a fixed order. The WHOLE
     catalogue, not the modelled subset — an `ignored` field decides what the
     unclassified arm leaves out. -#}
@@ -32,7 +32,7 @@
     {%- endif -%}
     {%- set current = run_query(
         "SELECT hex(cityHash64(arrayStringConcat(arraySort(groupArray("
-        ~ "    concat(insight_source_id, '\\x1f', field_id, '\\x1f', field_kind, '\\x1f', field_name)"
+        ~ "    concat(ifNull(tenant_id, ''), '\\x1f', insight_source_id, '\\x1f', field_id, '\\x1f', field_kind, '\\x1f', field_name)"
         ~ ")), '\\x1e'))) AS fingerprint,"
         ~ " (SELECT toUnixTimestamp64Milli(toDateTime64("
         ~ "      COALESCE(max(_airbyte_extracted_at), toDateTime64(0, 3)), 3))"
@@ -148,12 +148,12 @@
             (`UNION mode UNION_DEFAULT must be normalized`). Absent from both
             sources is absent from their union. -#}
         DELETE FROM {{ this }}
-        WHERE (insight_source_id, issue_id) NOT IN (
-                  SELECT CAST(source_id AS String), CAST(jira_id AS String)
+        WHERE (tenant_id, insight_source_id, issue_id) NOT IN (
+                  SELECT ifNull(tenant_id, ''), CAST(source_id AS String), CAST(jira_id AS String)
                   FROM {{ source('bronze_jira', 'jira_issue') }}
               )
-          AND (insight_source_id, issue_id) NOT IN (
-                  SELECT insight_source_id, assumeNotNull(jira_id)
+          AND (tenant_id, insight_source_id, issue_id) NOT IN (
+                  SELECT tenant_id, insight_source_id, assumeNotNull(jira_id)
                   FROM {{ ref('jira__changelog_items') }}
                   WHERE jira_id IS NOT NULL
               )

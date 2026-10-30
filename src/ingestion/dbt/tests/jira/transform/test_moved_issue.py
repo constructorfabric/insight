@@ -10,7 +10,7 @@ creation marker, one initial state, every event, all keyed by the id.
 from __future__ import annotations
 
 from conftest import Scenario
-from helpers import CREATED_AT, OBSERVED_AT, SOURCE_ID, event, field, issue, item
+from helpers import CREATED_AT, OBSERVED_AT, SOURCE_ID, TENANT_ID, event, field, issue, item
 
 STATUS = field("status", name="Status", schema_type="status")
 EARLIER = "2026-02-01T12:00:00"
@@ -61,7 +61,7 @@ def test_a_moved_issue_has_one_history_under_its_current_key(scenario: Scenario)
         "SELECT unique_key FROM staging.jira__field_history_derived FINAL WHERE insight_source_id = {src:String}",
         {"src": SOURCE_ID},
     )
-    assert all(k["unique_key"].startswith(f"{SOURCE_ID}-jira-7001-") for k in keys), keys
+    assert all(k["unique_key"].startswith(f"{TENANT_ID}-{SOURCE_ID}-jira-7001-") for k in keys), keys
     assert scenario.invariants_hold()
 
 

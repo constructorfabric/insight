@@ -1404,8 +1404,8 @@ models:
   - name: identity_resolution_coverage
     description: >
       Identity-resolution match rate measured over ACTIVITY (evidence source
-      rows), one row per source (git/ai_usage/ai_cost/collab/task/wiki) plus
-      hr_cohorts for the peer-membership relation. A VIEW joining the same
+      rows), one row per tenant and source (git/ai_usage/ai_cost/collab/task/wiki)
+      plus hr_cohorts for the peer-membership relation. A VIEW joining the same
       live `identity.person_map` the runtime joins, so the rate describes what
       a dashboard would show right now rather than what a past build stamped.
       Row-weighted on purpose —
@@ -1414,6 +1414,10 @@ models:
       (roughly the operator decisions that would close it). The "match rate
       is reported" surface of the identity epic for the metrics pipeline.
     columns:
+      - name: tenant_id
+        description: "Tenant the rows belong to; rates are never pooled across tenants"
+        tests:
+          - not_null
       - name: source_key
         description: "Observation source_key, or 'hr_cohorts' for the cohort membership"
         tests:

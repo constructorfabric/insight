@@ -1,4 +1,4 @@
-"""Builders for the bronze inputs the Jira field-history chain reads.
+"""Builders for the bronze inputs the Jira staging chain reads.
 
 A test declares only what it is about: the field's catalogue row, the issue's
 current JSON, changelog items, and optional census sightings. Everything Airbyte adds — raw ids,
@@ -17,6 +17,7 @@ from typing import Any
 
 SOURCE_ID = "jira-transform-test"
 TENANT_ID = "11111111-1111-1111-1111-111111111111"
+OTHER_TENANT = "22222222-2222-2222-2222-222222222222"
 
 # Every fixture issue is created at this instant, so a synthetic_initial row's
 # expected `event_at` is one constant rather than a per-test literal.
@@ -39,6 +40,11 @@ def _airbyte(extracted_at: str) -> dict[str, Any]:
         "_airbyte_meta": "{}",
         "_airbyte_generation_id": 0,
     }
+
+
+def as_other_tenant(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The same ids under the other tenant, keyed the way its connector would key them."""
+    return [{**r, "tenant_id": OTHER_TENANT, "unique_key": f"{OTHER_TENANT}-{r['unique_key']}"} for r in records]
 
 
 def field(
@@ -204,5 +210,62 @@ def event(
         "changelog_id": changelog_id,
         "created_at": at,
         "items": json.dumps(items),
+        "collected_at": extracted_at,
+    }
+
+
+def comment(
+    key: str,
+    comment_id: int,
+    *,
+    jira_id: str,
+    updated: str,
+    author: str = "author-acct",
+    extracted_at: str = OBSERVED_AT,
+) -> dict[str, Any]:
+    """One comment of an issue, as the comment stream lands it; `updated` dates its lifecycle event."""
+    return {
+        **_airbyte(extracted_at),
+        "id": str(comment_id),
+        "tenant_id": TENANT_ID,
+        "source_id": SOURCE_ID,
+        "unique_key": f"{SOURCE_ID}-comment-{comment_id}",
+        "comment_id": comment_id,
+        "jira_id": jira_id,
+        "id_readable": key,
+        "author_account_id": author,
+        "body": f"comment {comment_id}",
+        "created": updated,
+        "updated": updated,
+        "collected_at": extracted_at,
+    }
+
+
+def worklog(
+    key: str,
+    worklog_id: int,
+    *,
+    jira_id: str,
+    updated: str,
+    author: str = "author-acct",
+    extracted_at: str = OBSERVED_AT,
+) -> dict[str, Any]:
+    """One worklog of an issue, as the worklog stream lands it; `updated` dates its lifecycle event."""
+    return {
+        **_airbyte(extracted_at),
+        "id": str(worklog_id),
+        "tenant_id": TENANT_ID,
+        "source_id": SOURCE_ID,
+        "unique_key": f"{SOURCE_ID}-worklog-{worklog_id}",
+        "worklog_id": worklog_id,
+        "jira_id": jira_id,
+        "issueId": jira_id,
+        "id_readable": key,
+        "author_account_id": author,
+        "started": updated,
+        "time_spent_seconds": 3600,
+        "comment": f"worklog {worklog_id}",
+        "created": updated,
+        "updated": updated,
         "collected_at": extracted_at,
     }

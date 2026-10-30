@@ -88,7 +88,7 @@ def test_the_one_knob_reaches_every_service_config(umbrella_deps) -> None:
         UMBRELLA,
         *UMBRELLA_BASE,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"authenticator.oidc.defaultTenantId={TENANT}",
         "--set",
         "global.observability.logs.level=debug",
     )
@@ -107,7 +107,7 @@ def test_every_ingestion_workflow_step_reads_the_platform_knob(umbrella_deps) ->
         *UMBRELLA_BASE,
         *INGESTION_ENABLED,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"authenticator.oidc.defaultTenantId={TENANT}",
         "--set",
         "global.observability.logs.level=debug",
     )
@@ -126,7 +126,7 @@ def test_every_ingestion_workflow_step_reads_the_platform_knob(umbrella_deps) ->
 
 
 def test_the_default_is_info_on_both_surfaces(umbrella_deps) -> None:
-    code, out, err = render(UMBRELLA, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}")
+    code, out, err = render(UMBRELLA, *UMBRELLA_BASE, "--set", f"authenticator.oidc.defaultTenantId={TENANT}")
     assert code == 0, err
 
     assert_every_service_renders_exactly(out, "console_level", "info")
@@ -138,7 +138,7 @@ def test_the_one_format_reaches_every_service_config(umbrella_deps) -> None:
         UMBRELLA,
         *UMBRELLA_BASE,
         "--set",
-        f"global.tenantDefaultId={TENANT}",
+        f"authenticator.oidc.defaultTenantId={TENANT}",
         "--set",
         "global.observability.logs.format=text",
     )
@@ -149,7 +149,7 @@ def test_the_one_format_reaches_every_service_config(umbrella_deps) -> None:
 
 
 def test_the_default_format_is_json_on_both_surfaces(umbrella_deps) -> None:
-    code, out, err = render(UMBRELLA, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}")
+    code, out, err = render(UMBRELLA, *UMBRELLA_BASE, "--set", f"authenticator.oidc.defaultTenantId={TENANT}")
     assert code == 0, err
 
     assert_every_service_renders_exactly(out, "console_format", "json")
@@ -160,7 +160,7 @@ def test_a_legacy_top_level_format_override_cannot_split_the_surfaces(umbrella_d
     """The gears subcharts never see the top-level observability block, so the
     platform ConfigMap must not honour it for the format either."""
     code, out, err = render(
-        UMBRELLA, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}", "--set", "observability.logs.format=text"
+        UMBRELLA, *UMBRELLA_BASE, "--set", f"authenticator.oidc.defaultTenantId={TENANT}", "--set", "observability.logs.format=text"
     )
     assert code == 0, err
 

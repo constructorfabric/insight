@@ -6,6 +6,7 @@
 -- the closed-issue measures gated on `final_close_at IS NOT NULL` would
 -- silently drop an issue the state table itself calls done.
 SELECT
+    tenant_id,
     insight_source_id,
     issue_id,
     id_readable,

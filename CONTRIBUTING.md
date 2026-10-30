@@ -178,7 +178,7 @@ cp environments/local/inventory.yaml.template environments/local/inventory.yaml
 # 2. Umbrella overlay: image tags / OIDC / tenant id / L2 hosts.
 cp environments/local/values.yaml.template environments/local/values.yaml
 # Edit:
-#   global.tenantDefaultId: <UUID>           # required for external DBs with seeded persons
+#   authenticator.oidc.defaultTenantId: <UUID>  # the install's tenant; external DBs: the seeded one
 #   keycloak.deploy: true                    # in-stack local IdP; set false + point
 #   authenticator.oidc.issuerUrl: <idp>      #   authenticator.oidc.* at a real IdP
 #   <l2>.host / <l2>.port                    # only when <l2>.deploy=false

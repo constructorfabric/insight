@@ -20,6 +20,7 @@
 --     those names were missing from the modelled history altogether.
 
 SELECT
+    tenant_id,
     insight_source_id,
     data_source,
     issue_id,

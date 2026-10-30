@@ -2,6 +2,7 @@
 -- Failures indicate a bug in `core::emit_*_row` or snapshot accumulator.
 
 SELECT
+    tenant_id,
     insight_source_id,
     data_source,
     issue_id,

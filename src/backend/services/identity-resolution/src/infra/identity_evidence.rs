@@ -114,7 +114,8 @@ const FOLD_SQL_TEMPLATE: &str = r"
             AND lengthUTF8(value) <= {MAX_ID_CHARS}
         )                                               AS binding_id
     FROM identity.identity_inputs
-    WHERE source_account_id IS NOT NULL AND source_account_id != ''
+    WHERE insight_tenant_id = toUUID(?)
+      AND source_account_id IS NOT NULL AND source_account_id != ''
     GROUP BY source_type, source_id, account_id
 ";
 
@@ -251,34 +252,30 @@ pub struct AfterAccount<'a> {
     pub account_id: &'a str,
 }
 
-/// Reads folded evidence for the review surface.
+/// Reads one tenant's folded evidence for the review surface.
 pub struct ClickHouseEvidenceReader {
     client: Client,
+    tenant: Uuid,
 }
 
 impl ClickHouseEvidenceReader {
     #[must_use]
-    pub fn new(client: Client) -> Self {
-        Self { client }
+    pub fn new(client: Client, tenant: Uuid) -> Self {
+        Self { client, tenant }
     }
 
     /// Build from connection settings (empty user → no auth), like the seed's
     /// input reader.
     #[must_use]
-    pub fn connect(url: &str, database: &str, user: &str, password: &str) -> Self {
+    pub fn connect(url: &str, database: &str, user: &str, password: &str, tenant: Uuid) -> Self {
         let mut config = Config::new(url, database).with_query_timeout(READ_TIMEOUT);
         if !user.is_empty() {
             config = config.with_auth(user, password);
         }
-        Self::new(Client::new(config))
+        Self::new(Client::new(config), tenant)
     }
 
-    /// Every observed account with its folded evidence.
-    ///
-    /// The tenant is not a predicate here for the same reason the seed's reader
-    /// drops it: the evidence carries a producer-side hashed tenant that never
-    /// equals the caller's. Single-tenant deployments only — restoring the
-    /// filter is a multi-tenant prerequisite (see `identity_inputs`).
+    /// Every account the tenant's connectors observed, with its folded evidence.
     ///
     /// # Errors
     ///
@@ -296,7 +293,13 @@ impl ClickHouseEvidenceReader {
             "SELECT {FOLD_COLUMNS}, '' AS order_label FROM ({fold}) \
              ORDER BY source_type, source_id, account_id LIMIT {MAX_EVIDENCE_ACCOUNTS}"
         );
-        let rows: Vec<FoldedRow> = match self.client.query(&sql).fetch_all().await {
+        let read = self
+            .client
+            .query(&sql)
+            .bind(self.tenant.to_string())
+            .fetch_all()
+            .await;
+        let rows: Vec<FoldedRow> = match read {
             Ok(rows) => rows,
             Err(e) if MissingRelation::from_error(&e).is_some() => {
                 return Ok(EvidenceSnapshot {
@@ -346,7 +349,8 @@ impl ClickHouseEvidenceReader {
 const EXISTS_SQL: &str = r"
     SELECT count() AS hits
     FROM identity.identity_inputs
-    WHERE insight_source_type = ?
+    WHERE insight_tenant_id = toUUID(?)
+      AND insight_source_type = ?
       AND toString(insight_source_id) = ?
       AND source_account_id = ?
     LIMIT 1
@@ -382,7 +386,8 @@ const OBSERVED_ACCOUNT_SQL: &str = r"
             value_type = 'email' AND operation_type = 'UPSERT' AND value != ''
         )                                               AS email
     FROM identity.identity_inputs
-    WHERE insight_source_type = ?
+    WHERE insight_tenant_id = toUUID(?)
+      AND insight_source_type = ?
       AND source_account_id = ?
     GROUP BY insight_source_type, source_account_id
 ";
@@ -481,9 +486,9 @@ impl ClickHouseEvidenceReader {
     ) -> anyhow::Result<AccountPage> {
         let sql = list_sql(needle.is_some(), after.is_some());
 
-        let mut query = self.client.query(&sql);
-        // Bound in the order the placeholders appear: one probe per displayable
-        // value, then the resume tuple, then the page size.
+        // Bound in the order the placeholders appear: the tenant inside the
+        // fold, one probe per displayable value, the resume tuple, the page size.
+        let mut query = self.client.query(&sql).bind(self.tenant.to_string());
         if let Some(needle) = needle {
             for _ in 0..needle_probes() {
                 query = query.bind(needle);
@@ -536,6 +541,7 @@ impl ClickHouseEvidenceReader {
         let row: Result<Option<CountRow>, _> = self
             .client
             .query(EXISTS_SQL)
+            .bind(self.tenant.to_string())
             .bind(account.source_type.as_str())
             .bind(account.source_id.to_string())
             .bind(account.account_id.as_str())
@@ -567,6 +573,7 @@ impl ClickHouseEvidenceReader {
         let row: Result<Option<ObservedRow>, _> = self
             .client
             .query(OBSERVED_ACCOUNT_SQL)
+            .bind(self.tenant.to_string())
             .bind(source_type)
             .bind(account_id)
             .fetch_optional()
@@ -612,6 +619,42 @@ fn non_empty(value: String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TENANT_PREDICATE: &str = "insight_tenant_id = toUUID(?)";
+
+    #[test]
+    fn every_evidence_read_sees_only_the_callers_tenant() {
+        for (read, sql) in [
+            ("fold", fold_sql()),
+            ("listing", list_sql(true, true)),
+            ("existence", EXISTS_SQL.to_owned()),
+            ("login bootstrap", OBSERVED_ACCOUNT_SQL.to_owned()),
+        ] {
+            assert!(
+                sql.contains(TENANT_PREDICATE),
+                "should scope to one tenant: {read}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tenant_is_the_first_value_every_evidence_read_binds() {
+        for (read, sql) in [
+            ("fold", fold_sql()),
+            ("listing", list_sql(true, true)),
+            ("existence", EXISTS_SQL.to_owned()),
+            ("login bootstrap", OBSERVED_ACCOUNT_SQL.to_owned()),
+        ] {
+            let first_placeholder = sql.find('?');
+            let tenant_placeholder = sql
+                .find(TENANT_PREDICATE)
+                .map(|at| at + TENANT_PREDICATE.len() - 2);
+            assert_eq!(
+                first_placeholder, tenant_placeholder,
+                "the tenant must be bound first: {read}"
+            );
+        }
+    }
 
     #[test]
     fn the_fold_reads_a_stated_id_as_bindable_and_a_missing_one_as_not() -> anyhow::Result<()> {
@@ -737,14 +780,14 @@ mod tests {
 
     #[test]
     fn every_placeholder_of_the_listing_has_a_value_bound_to_it() {
-        // The bind list is written by hand — four needle probes, four resume
-        // values, the page size — so a placeholder without its value shifts
-        // every later binding and the resume lands in a needle slot.
+        // The bind list is written by hand — the tenant, the needle probes,
+        // four resume values, the page size — so a placeholder without its
+        // value shifts every later binding and the resume lands in a needle slot.
         for (case, filtered, resuming, expected) in [
-            ("browse", false, false, 1),
-            ("search", true, false, 1 + needle_probes()),
-            ("browse, resumed", false, true, 5),
-            ("search, resumed", true, true, 5 + needle_probes()),
+            ("browse", false, false, 2),
+            ("search", true, false, 2 + needle_probes()),
+            ("browse, resumed", false, true, 6),
+            ("search, resumed", true, true, 6 + needle_probes()),
         ] {
             assert_eq!(
                 list_sql(filtered, resuming).matches('?').count(),

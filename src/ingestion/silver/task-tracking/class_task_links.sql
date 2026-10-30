@@ -48,4 +48,4 @@ SELECT candidate.* FROM (
 -- YouTrack and Jira are reconciled whole by the pre_hooks, so their rows bypass
 -- the boundary: a Jira row can change without new evidence when a linked key
 -- first resolves to an id.
-{{ silver_incremental_watermark(['insight_source_id', 'data_source'], always_reread="candidate.data_source IN ('youtrack', 'jira')") }}
+{{ silver_incremental_watermark(['tenant_id', 'insight_source_id', 'data_source'], always_reread="candidate.data_source IN ('youtrack', 'jira')") }}

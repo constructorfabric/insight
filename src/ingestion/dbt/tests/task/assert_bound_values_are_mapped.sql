@@ -9,13 +9,14 @@
 
 WITH bound AS (
     SELECT
+        tenant_id,
         insight_source_id,
         data_source,
         field_id,
         argMax(role, (valid_from, recorded_at)) AS role
     FROM config.task_field_roles FINAL
     WHERE is_deleted = 0 AND valid_from <= now64(3)
-    GROUP BY insight_source_id, data_source, field_id
+    GROUP BY tenant_id, insight_source_id, data_source, field_id
     HAVING role IN ('status', 'issuetype')
 ),
 
@@ -25,13 +26,15 @@ WITH bound AS (
 -- the `issuetype` role.
 mapped AS (
     SELECT DISTINCT
+        m.tenant_id         AS tenant_id,
         m.insight_source_id AS insight_source_id,
         m.data_source       AS data_source,
         m.field_id          AS field_id,
         m.value_id          AS value_id
     FROM config.task_value_map AS m FINAL
     INNER JOIN bound AS b
-        ON b.insight_source_id = m.insight_source_id
+        ON b.tenant_id = m.tenant_id
+        AND b.insight_source_id = m.insight_source_id
         AND b.data_source = m.data_source
         AND b.field_id = m.field_id
     WHERE m.is_deleted = 0 AND m.valid_from <= now64(3)
@@ -40,13 +43,15 @@ mapped AS (
     UNION ALL
 
     SELECT DISTINCT
+        b.tenant_id         AS tenant_id,
         b.insight_source_id AS insight_source_id,
         b.data_source       AS data_source,
         b.field_id          AS field_id,
         m.source_key        AS value_id
     FROM config.field_value_map AS m FINAL
     INNER JOIN bound AS b
-        ON b.insight_source_id = m.insight_source_id
+        ON b.tenant_id = m.tenant_id
+        AND b.insight_source_id = m.insight_source_id
         AND b.data_source = m.data_source
     WHERE m.field = 'issue_type'
       AND m.is_deleted = 0 AND m.valid_from <= now64(3)
@@ -55,13 +60,15 @@ mapped AS (
 
 observed AS (
     SELECT DISTINCT
+        fh.tenant_id         AS tenant_id,
         fh.insight_source_id AS insight_source_id,
         fh.data_source       AS data_source,
         fh.field_id          AS field_id,
         fh.value_ids[1]      AS value_id
     FROM silver.class_task_field_history AS fh FINAL
     INNER JOIN bound AS b
-        ON b.insight_source_id = fh.insight_source_id
+        ON b.tenant_id = fh.tenant_id
+        AND b.insight_source_id = fh.insight_source_id
         AND b.data_source = fh.data_source
         AND b.field_id = fh.field_id
     WHERE fh.delta_action = 'set' AND fh.value_ids[1] != ''
@@ -73,7 +80,8 @@ observed AS (
 SELECT o.*
 FROM observed AS o
 LEFT ANTI JOIN mapped AS m
-    ON m.insight_source_id = o.insight_source_id
+    ON m.tenant_id = o.tenant_id
+    AND m.insight_source_id = o.insight_source_id
     AND m.data_source = o.data_source
     AND m.field_id = o.field_id
     AND m.value_id = o.value_id
