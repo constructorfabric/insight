@@ -29,7 +29,6 @@ import json
 import os
 import sys
 import tempfile
-import time
 from collections.abc import Callable, Generator
 from copy import copy
 from dataclasses import dataclass
@@ -69,39 +68,6 @@ FIELD_HISTORY_SELECTOR = "+jira__field_history_derived +jira__task_field_text +j
 # The journal and the links producer: a module about links asserts both, because
 # they resolve a linked issue's key through the same map.
 LINKS_SELECTOR = f"{FIELD_HISTORY_SELECTOR} +jira__task_links"
-
-
-@dataclass
-class SuiteStats:
-    started: float
-    tests: int = 0
-    builds: int = 0
-
-
-_SUITE_STATS = pytest.StashKey[SuiteStats]()
-
-
-def pytest_sessionstart(session: pytest.Session) -> None:
-    session.stash[_SUITE_STATS] = SuiteStats(started=time.monotonic())
-
-
-def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[object]) -> None:
-    if call.when == "setup":
-        item.session.stash[_SUITE_STATS].tests += 1
-
-
-def pytest_sessionfinish(session: pytest.Session) -> None:
-    stats = session.stash[_SUITE_STATS]
-    minutes = (time.monotonic() - stats.started) / 60
-    summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary:
-        with Path(summary).open("a", encoding="utf-8") as output:
-            output.write(f"Jira suite: {stats.tests} tests run, {stats.builds} dbt builds, {minutes:.1f} minutes.\n")
-
-    budget = os.environ.get("JIRA_SUITE_WARN_MINUTES")
-    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
-    if budget and minutes > float(budget) and reporter is not None:
-        reporter.write_line(f"::warning::Jira suite took {minutes:.1f} minutes; budget is {budget} minutes.")
 
 
 def _env(name: str) -> str:
@@ -162,13 +128,12 @@ class Dbt:
 class Warehouse:
     """The ClickHouse under test, plus the dbt invocation that targets it."""
 
-    def __init__(self, profiles_dir: Path, stats: SuiteStats) -> None:
+    def __init__(self, profiles_dir: Path) -> None:
         self.host = _env("CLICKHOUSE_HOST")
         self.port = int(_env("CLICKHOUSE_HTTP_PORT"))
         self.user = _env("CLICKHOUSE_USER")
         self.password = _env("CLICKHOUSE_PASSWORD")
         self.profiles_dir = profiles_dir
-        self._stats = stats
         # Bumped whenever bronze is truncated, so a shared build knows its rows
         # were taken out from under it.
         self.generation = 0
@@ -233,7 +198,6 @@ class Warehouse:
         # The catalogue refuses a full refresh, so it is emptied by hand.
         if full_refresh:
             self.execute("TRUNCATE TABLE IF EXISTS staging.jira__catalogue_first_seen")
-        self._stats.builds += 1
         self.dbt(
             "run",
             "--select",
@@ -262,7 +226,7 @@ SEEDED_CLASS_ARMS = (
 
 
 @pytest.fixture(scope="session")
-def warehouse(request: pytest.FixtureRequest) -> Warehouse:
+def warehouse() -> Warehouse:
     """Session setup: databases, bronze, the classes a module seeds, and a dbt
     profile pointing at them.
 
@@ -272,7 +236,7 @@ def warehouse(request: pytest.FixtureRequest) -> Warehouse:
     """
     with tempfile.TemporaryDirectory() as tmp:
         profiles_dir = Path(tmp)
-        wh = Warehouse(profiles_dir, request.session.stash[_SUITE_STATS])
+        wh = Warehouse(profiles_dir)
         # `password` is inlined rather than read through env_var: this profile is
         # written to a private temp dir for one session and never committed.
         profile = build_profile(

@@ -156,8 +156,6 @@ jobs:
 
       - name: Transformation tests
         working-directory: src/ingestion/dbt/tests/jira/transform
-        env:
-          JIRA_SUITE_WARN_MINUTES: "50"
         # A module's scenarios are seeded together, built once and asserted one
         # by one, each reading its own source id. The dbt singular tests — the
         # round trip above all — are asserted per scenario from inside the
