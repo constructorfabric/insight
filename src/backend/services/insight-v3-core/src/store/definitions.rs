@@ -59,15 +59,14 @@ const SELECT_IDS: &str = "SELECT id FROM {table} ORDER BY id";
 /// No ESCAPE clause: backslash is already the default LIKE escape here, and
 /// spelling it out needs a lone backslash in a string literal, which MariaDB
 /// reads as escaping the closing quote (error 1064).
-const PAGE_LISTED: &str = "SELECT id, name FROM {table}
+// INVARIANT: one search and order for every page of a library, so each reader and `COUNT_MATCHES` agree on what a page holds.
+const PAGE: &str = "SELECT {columns} FROM {table}
 WHERE name LIKE ? OR body LIKE ?
 ORDER BY name, id
 LIMIT ? OFFSET ?";
 
-const PAGE_ENTRIES: &str = "SELECT id, name, body, updated_at FROM {table}
-WHERE name LIKE ? OR body LIKE ?
-ORDER BY name, id
-LIMIT ? OFFSET ?";
+const LISTED_COLUMNS: &str = "id, name";
+const ENTRY_COLUMNS: &str = "id, name, body, updated_at";
 
 const NAMES_OF: &str = "SELECT id, name FROM {table} WHERE id IN ({ids})";
 
@@ -94,10 +93,14 @@ fn like_pattern(needle: &str) -> String {
 }
 
 /// One page of `template`'s rows matching `pattern` in a name or a body.
-fn page_statement(template: &str, kind: LibraryKind, pattern: &str, page: Page) -> Statement {
+fn page_sql(columns: &str, kind: DefinitionKind) -> String {
+    sql(&PAGE.replace("{columns}", columns), kind)
+}
+
+fn page_statement(columns: &str, kind: LibraryKind, pattern: &str, page: Page) -> Statement {
     Statement::from_sql_and_values(
         DbBackend::MySql,
-        sql(template, kind.kind()),
+        page_sql(columns, kind.kind()),
         [
             pattern.into(),
             pattern.into(),
@@ -344,9 +347,10 @@ impl Definitions for MariaDefinitions {
         page: Page,
     ) -> Result<ListedPage, DefinitionStoreError> {
         let pattern = like_pattern(needle);
-        let rows = ListedRow::find_by_statement(page_statement(PAGE_LISTED, kind, &pattern, page))
-            .all(&self.db)
-            .await?;
+        let rows =
+            ListedRow::find_by_statement(page_statement(LISTED_COLUMNS, kind, &pattern, page))
+                .all(&self.db)
+                .await?;
 
         Ok(ListedPage {
             items: rows.into_iter().map(ListedRow::into_listed).collect(),
@@ -361,7 +365,7 @@ impl Definitions for MariaDefinitions {
         page: Page,
     ) -> Result<LibraryPage, DefinitionStoreError> {
         let pattern = like_pattern(needle);
-        let rows = EntryRow::find_by_statement(page_statement(PAGE_ENTRIES, kind, &pattern, page))
+        let rows = EntryRow::find_by_statement(page_statement(ENTRY_COLUMNS, kind, &pattern, page))
             .all(&self.db)
             .await?;
         let items = rows

@@ -56,7 +56,7 @@ fn names_are_read_in_one_statement_binding_every_id() {
 #[test]
 fn a_catalogue_page_reads_each_body_and_its_last_change() {
     let page = Page::parse(Some(2), Some(4)).unwrap_or_else(|error| panic!("{error}"));
-    let statement = page_statement(PAGE_ENTRIES, LibraryKind::Widget, "%day%", page);
+    let statement = page_statement(ENTRY_COLUMNS, LibraryKind::Widget, "%day%", page);
 
     assert!(
         statement
@@ -87,7 +87,7 @@ fn reads_are_by_id_and_never_interpolate_it() {
 
 #[test]
 fn a_page_searches_name_and_body_and_orders_by_name_then_id() {
-    let statement = sql(PAGE_LISTED, DefinitionKind::Dashboard);
+    let statement = page_sql(LISTED_COLUMNS, DefinitionKind::Dashboard);
 
     assert!(
         statement.contains("SELECT id, name FROM dashboards"),
