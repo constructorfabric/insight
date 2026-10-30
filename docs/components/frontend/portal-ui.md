@@ -191,7 +191,7 @@ Every page and every independently loaded section distinguishes:
 - Delete: confirmation stating the consequence (folder: what happens to its dashboards). Same for anything widening who sees a dashboard (a grant; moving into a shared folder). Delete drawn destructive.
 - View-as: every screen says whose view it is, with a way back. Demonstration data: marked.
 - Light and dark themes; colour carries the same meaning in both.
-- Charts: lines and areas are smooth curves without point markers. A reading with no neighbours gets a dot, since it draws no line.
+- Charts: lines and areas join readings with straight segments. A line marks every reading up to 31 points and none beyond, where hover gives the value. A reading with no neighbours always gets a dot, since it draws no line.
 - Keyboard: every action reachable, visible focus; every control has an accessible name; loading, refusals, errors announced.
 
 ## Not yet

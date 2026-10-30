@@ -153,10 +153,20 @@ function ChartBar({
 }
 
 /**
- * Lines carry no per-point markers; the one exception is a value whose
- * neighbours are null, which draws no segment and would otherwise vanish.
+ * Above this many buckets per-point dots stop being readable and turn the line
+ * into noise, so they collapse to hover-only (`activeDot`).
  */
-function IsolatedDot({
+export const DOT_DENSITY_LIMIT = 31;
+
+/**
+ * The shared dot rule for every line/area in the app.
+ *
+ * Two jobs: mark the actual measurements while there are few enough of them to
+ * see, and ALWAYS mark a value whose neighbours are null — a lone reading in a
+ * gappy series draws no line segment at all, so without a dot the series looks
+ * like it has no data rather than one data point.
+ */
+function AdaptiveDot({
   cx,
   cy,
   index,
@@ -167,14 +177,20 @@ function IsolatedDot({
   if (value == null || cx == null || cy == null) return null;
   const isolated =
     points[index - 1]?.value == null && points[index + 1]?.value == null;
-  if (!isolated) return null;
-  return <circle cx={cx} cy={cy} r={3} fill={stroke} />;
+  if (!isolated && points.length > DOT_DENSITY_LIMIT) return null;
+  return <circle cx={cx} cy={cy} r={isolated ? 3 : 2.5} fill={stroke} />;
 }
 
+/**
+ * `type="linear"` on purpose: a monotone curve interpolates between buckets,
+ * inventing a shape for days we never measured. Straight segments say "these
+ * are the readings, joined" — and for step-like counters a caller can still
+ * pass `type="stepAfter"`.
+ */
 function ChartLine({
   isAnimationActive = false,
-  type = "monotone",
-  dot = IsolatedDot,
+  type = "linear",
+  dot = AdaptiveDot,
   activeDot = { r: 4 },
   ...props
 }: React.ComponentProps<typeof RechartsPrimitive.Line>) {
@@ -191,7 +207,7 @@ function ChartLine({
 
 function ChartArea({
   isAnimationActive = false,
-  type = "monotone",
+  type = "linear",
   ...props
 }: React.ComponentProps<typeof RechartsPrimitive.Area>) {
   return (

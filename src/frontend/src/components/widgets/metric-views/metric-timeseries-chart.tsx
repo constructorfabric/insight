@@ -243,8 +243,11 @@ export function MetricTimeseriesChart({
                 dataKey={series.key}
                 stroke={`var(--color-${series.key})`}
                 strokeWidth={2}
-                // INVARIANT: a gap must read as a gap, not as a line drawn
-                // across it.
+                // No local `dot`: ChartLine's AdaptiveDot generalises what the
+                // local IsolatedPoint did (always mark a reading whose
+                // neighbours are null) across every chart. `connectNulls` is a
+                // separate concern and stays — a gap must read as a gap, not as
+                // a straight line drawn across it.
                 connectNulls={false}
                 name={series.label}
               />

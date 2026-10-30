@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
- * The central line defaults every chart inherits: a smooth curve through the
- * readings, no per-point markers, and a dot only for a lone value that would
- * otherwise draw no line.
+ * The central line defaults every chart inherits: straight segments between
+ * real readings (no invented curve), dots while they are readable, and an
+ * always-visible dot for a lone value that would otherwise draw no line.
  */
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   ChartContainer,
   ChartLine,
+  DOT_DENSITY_LIMIT,
   LineChart,
   YAxis,
   type ChartConfig,
@@ -31,13 +32,25 @@ const series = (n: number) =>
   Array.from({ length: n }, (_, i) => ({ d: `2026-07-${i + 1}`, v: i + 1 }));
 
 describe("ChartLine defaults", () => {
-  it.each([3, 7, 90])("marks no reading of a connected %i-point series", (n) => {
-    const { container } = renderSeries(series(n));
-    expect(container.querySelectorAll("circle"), `points: ${n}`).toHaveLength(0);
+  it("draws a dot per reading on a short series", () => {
+    const { container } = renderSeries(series(7));
+    expect(container.querySelectorAll("circle")).toHaveLength(7);
   });
 
-  it("marks a lone reading between gaps, which draws no line", () => {
-    const data = Array.from({ length: 50 }, (_, i) => ({
+  it("drops per-point dots once the series gets dense", () => {
+    const { container } = renderSeries(series(DOT_DENSITY_LIMIT + 10));
+    expect(container.querySelectorAll("circle")).toHaveLength(0);
+  });
+
+  it("keeps the boundary readable — exactly at the limit dots still show", () => {
+    const { container } = renderSeries(series(DOT_DENSITY_LIMIT));
+    expect(container.querySelectorAll("circle")).toHaveLength(DOT_DENSITY_LIMIT);
+  });
+
+  it("always marks a lone reading between gaps, however dense the series", () => {
+    // One value surrounded by nulls draws no line segment at all: without a dot
+    // the chart would look empty rather than "one measurement".
+    const data = Array.from({ length: DOT_DENSITY_LIMIT + 20 }, (_, i) => ({
       d: `d${i}`,
       v: i === 15 ? 42 : null,
     }));
@@ -45,22 +58,22 @@ describe("ChartLine defaults", () => {
     expect(container.querySelectorAll("circle")).toHaveLength(1);
   });
 
-  it("marks neither side of a single gap, since both still join a neighbour", () => {
+  it("renders no dot for a null value", () => {
     const { container } = renderSeries([
       { d: "a", v: 1 },
-      { d: "b", v: 2 },
-      { d: "c", v: null },
-      { d: "d", v: 3 },
-      { d: "e", v: 4 },
+      { d: "b", v: null },
+      { d: "c", v: 3 },
     ]);
-    expect(container.querySelectorAll("circle")).toHaveLength(0);
+    // a and c are dotted; b contributes nothing.
+    expect(container.querySelectorAll("circle")).toHaveLength(2);
   });
 
-  it("joins readings with a smooth curve", () => {
+  it("joins readings with straight segments, not an interpolated curve", () => {
     const { container } = renderSeries(series(4));
     const path = container.querySelector("path.recharts-line-curve");
-    // A monotone curve emits cubic commands ("C").
-    expect(path?.getAttribute("d")).toMatch(/C/);
+    // A monotone curve emits cubic commands ("C"); linear segments only "L".
+    expect(path?.getAttribute("d")).not.toMatch(/C/);
+    expect(path?.getAttribute("d")).toMatch(/L/);
   });
 
   it("lets a caller override the curve for step-like counters", () => {
