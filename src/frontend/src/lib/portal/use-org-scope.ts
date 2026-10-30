@@ -29,7 +29,7 @@ export interface ManagerNode {
   directMemberCount: number;
 }
 
-/** The scope resolved against the viewer's own subtree — the permission boundary. */
+/** The scope resolved against the viewer's own subtree, or the whole roster under a flat policy. */
 export interface ResolvedScope {
   /** The scope pivot (root manager node); null while the tree loads. */
   pivot: IdentityPerson | null;
@@ -40,7 +40,7 @@ export interface ResolvedScope {
   rosterCount: number;
   /** Number of people represented by the scope selector, pivot included. */
   scopeMemberCount: number;
-  /** All manager nodes of the viewer's tree, for the ScopeSelect picker. */
+  /** All manager nodes of the viewer's tree. */
   managerNodes: ManagerNode[];
   /** Whether directOnly can change anything at this pivot. */
   canDirectOnly: boolean;

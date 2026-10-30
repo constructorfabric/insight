@@ -16,6 +16,7 @@ vi.mock("@tanstack/react-router", async () => {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MetricDefinitionListResponse } from "@/api/metric-definitions-client";
@@ -36,6 +37,7 @@ const roster = peopleFromIdentityTree(
 const mocks = vi.hoisted(() => ({
   definitions: { metrics: [] } as MetricDefinitionListResponse,
   isFlat: false,
+  managesNoOne: false,
 }));
 
 vi.mock("@/queries/identity-me", () => ({
@@ -75,6 +77,13 @@ vi.mock("@/queries/ic-dashboard", () => ({
   }),
 }));
 vi.mock("@/auth", () => ({ useViewer: () => ({ personId: pid("boss") }) }));
+vi.mock("@/lib/portal/use-viewer-reach", () => ({
+  useViewerReach: () => ({
+    canSeeOthers: !mocks.managesNoOne,
+    isManager: !mocks.managesNoOne,
+    isPending: false,
+  }),
+}));
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({
     period: "month",
@@ -82,9 +91,6 @@ vi.mock("@/hooks/use-portal-period", () => ({
     setPeriod: vi.fn(),
     setCustomRange: vi.fn(),
   }),
-}));
-vi.mock("@/components/portal/scope-select", () => ({
-  ScopeSelect: () => <div />,
 }));
 vi.mock("@/components/widgets/period-selector-bar", () => ({
   PeriodSelectorBar: () => <div />,
@@ -126,6 +132,7 @@ beforeEach(() => {
   })) as unknown as typeof window.matchMedia;
   mocks.definitions = { metrics: [] };
   mocks.isFlat = false;
+  mocks.managesNoOne = false;
   act(() => setPortalShowPlanned(true));
   portalRouter.reset();
 });
@@ -205,5 +212,51 @@ describe("PortalTopBar · planned sections", () => {
 
     act(() => setPortalShowPlanned(true));
     expect(screen.getByText("Cohort")).toBeInTheDocument();
+  });
+});
+
+describe("PortalTopBar · whose numbers Home shows", () => {
+  const subjectSwitch = () =>
+    screen.queryByRole("group", { name: "Whose numbers" });
+
+  it("starts a manager on their team and switches Home to them alone", async () => {
+    portalRouter.set({ zone: "overview" });
+    bar();
+
+    const team = await screen.findByRole("button", { name: "My team" });
+    expect(team).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.click(screen.getByRole("button", { name: "Me" }));
+    expect(portalRouter.search.who).toBe("me");
+
+    await userEvent.click(screen.getByRole("button", { name: "My team" }));
+    expect(portalRouter.search.who).toBeUndefined();
+  });
+
+  it("names the whole organisation under a flat policy", async () => {
+    mocks.isFlat = true;
+    portalRouter.set({ zone: "overview" });
+    bar();
+
+    expect(
+      await screen.findByRole("button", { name: "Organisation" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers no switch to a viewer without a cohort", async () => {
+    mocks.managesNoOne = true;
+    portalRouter.set({ zone: "overview" });
+    bar();
+
+    await waitFor(() => expect(filters()).toBeInTheDocument());
+    expect(subjectSwitch()).toBeNull();
+  });
+
+  it("offers no switch outside Home", async () => {
+    portalRouter.set({ zone: "directions" });
+    bar();
+
+    await waitFor(() => expect(filters()).toBeInTheDocument());
+    expect(subjectSwitch()).toBeNull();
   });
 });

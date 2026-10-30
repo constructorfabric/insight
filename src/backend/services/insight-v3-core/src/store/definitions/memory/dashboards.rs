@@ -4,13 +4,15 @@ use chrono::Utc;
 use super::{DASHBOARDS, MemoryDefinitions, Stored};
 use crate::domain::access::{Caller, DashboardStanding, Grantee, Level, Owner, PersonId};
 use crate::domain::dashboards::{
-    DashboardCatalogue, DashboardPage, DashboardQuery, ListedDashboard, Owned, Seen,
+    DashboardCatalogue, DashboardPage, DashboardQuery, ListedDashboard, Order, Owned, Seen,
+    Visibility,
 };
 use crate::domain::definition::{DefinitionId, DefinitionKind, DefinitionStoreError, Page};
 use crate::domain::folders::{FolderId, MAX_FOLDERS};
 use crate::domain::sharing::{
     Grant, Granting, Grants, Handover, Orphan, OrphanPage, Shared, Withdrawal,
 };
+use crate::domain::tags::TagName;
 
 impl Stored {
     fn keeps(&self, dashboard: &str, caller: Caller, query: &DashboardQuery) -> bool {
@@ -30,6 +32,39 @@ impl Stored {
             .is_none_or(|filter| self.carries_any(dashboard, filter));
 
         owned && filed && tagged
+    }
+
+    fn visibility(&self, dashboard: &str) -> Visibility {
+        let reach = |grantee: &Grantee| match grantee {
+            Grantee::Person(_) => Visibility::People,
+            Grantee::Everyone => Visibility::Everyone,
+        };
+        let dashboard_owner = self.owners.get(dashboard);
+        let own = self
+            .dashboard_grants
+            .keys()
+            .filter(|(held, _)| held == dashboard)
+            .map(|(_, grantee)| reach(grantee));
+        // INVARIANT: matches `folder_carrying` - a carrying folder shows the dashboard to its owner and its grantees.
+        let carried = self
+            .entries
+            .iter()
+            .filter(|((_, held), entry)| held == dashboard && entry.carries)
+            .filter_map(|((folder, _), _)| {
+                let owner = self.folders.get(folder)?.owner.person()?;
+                Some((folder, owner))
+            })
+            .flat_map(|(folder, owner)| {
+                let by_owner = (dashboard_owner != Some(&owner)).then_some(Visibility::People);
+                let by_grants = self
+                    .folder_grants
+                    .keys()
+                    .filter(move |(granting, _)| granting == folder)
+                    .map(|(_, grantee)| reach(grantee));
+                by_owner.into_iter().chain(by_grants)
+            });
+
+        own.chain(carried).max().unwrap_or(Visibility::Private)
     }
 
     fn grants(&self, shared: Shared<'_>) -> Vec<Grant> {
@@ -122,21 +157,51 @@ impl DashboardCatalogue for MemoryDefinitions {
         page: Page,
     ) -> Result<DashboardPage, DefinitionStoreError> {
         let stored = self.lock();
-        let matched: Vec<ListedDashboard> = stored
+        let mut matched: Vec<ListedDashboard> = stored
             .matching(DefinitionKind::Dashboard, &query.needle)
             .into_iter()
             .filter(|listed| stored.keeps(&listed.id, caller, query))
             .filter_map(|listed| {
                 let seen = Seen::of(caller, &stored.standing(&listed.id, caller)?)?;
+                let definition = stored.definitions.get(&(DASHBOARDS, listed.id.clone()))?;
+                let updated_at = definition.updated_at;
+                let title = definition
+                    .body
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+                let visibility = stored.visibility(&listed.id);
+                let mut carried = stored
+                    .tagged
+                    .get(&listed.id)
+                    .map(|tagged| tagged.names.clone())
+                    .unwrap_or_default();
+                carried.sort_by_key(TagName::folded);
+                let tags = carried
+                    .iter()
+                    .map(|name| name.as_str().to_owned())
+                    .collect();
 
                 Some(ListedDashboard {
                     id: listed.id,
                     name: listed.name,
                     owner: seen.owner,
                     access: seen.access,
+                    updated_at,
+                    visibility,
+                    title,
+                    tags,
                 })
             })
             .collect();
+        if query.order == Order::Recent {
+            matched.sort_by(|left, right| {
+                right
+                    .updated_at
+                    .cmp(&left.updated_at)
+                    .then_with(|| left.id.cmp(&right.id))
+            });
+        }
 
         let total = matched.len() as u64;
         let items = matched

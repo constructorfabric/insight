@@ -84,15 +84,22 @@ export interface MetricGroupsViewProps {
   personId: string;
   /** Which metric-family groups to render; empty ⇒ nothing available yet. */
   groupIds: readonly GroupId[];
-  /** Overview renders the KPI row + needs-attention; direction lenses don't. */
-  showKpis?: boolean;
+  /**
+   * The glance is the KPI row with needs-attention thinned against it;
+   * attention is the list alone; direction lenses show neither.
+   */
+  content?: MetricGroupsContent;
   /**
    * When set, a group card selects the group via this callback (e.g. to expand
    * it inline in a second sidebar level) instead of opening the drilldown
    * modal. Passing it also suppresses the modal sheets entirely.
    */
   onSelectGroup?: (id: GroupId) => void;
+  /** Rendered inside another page, which owns the padding and landmark. */
+  embedded?: boolean;
 }
+
+export type MetricGroupsContent = "glance" | "attention" | "none";
 
 /**
  * Catalog-driven metric-group screen — the reusable body behind the portal's
@@ -103,9 +110,12 @@ export interface MetricGroupsViewProps {
 export function MetricGroupsView({
   personId,
   groupIds,
-  showKpis = false,
+  content = "none",
   onSelectGroup,
+  embedded = false,
 }: MetricGroupsViewProps) {
+  const showKpis = content === "glance";
+  const showAttention = content !== "none";
   const cohortLabel = useCohortLabel();
   const { period, dateRange } = usePortalPeriod();
   const { focusMode } = useSettings();
@@ -214,7 +224,9 @@ export function MetricGroupsView({
     (showKpis && kpiData.isPending) ||
     collectionSetPending(groupData) ||
     cohortPending;
-  if (isLoading) return <CenteredSpinner className="min-h-[60vh]" />;
+  if (isLoading) {
+    return <CenteredSpinner className={embedded ? "min-h-40" : "min-h-[60vh]"} />;
+  }
 
   // Surface a backend failure as a retryable error, not empty section cards.
   const isError =
@@ -274,7 +286,7 @@ export function MetricGroupsView({
   // Thinned across groups AND against the row above: a metric and the one it
   // restates need not live in the same section, and the row is the more
   // prominent of the two places a fact can appear.
-  const attentionItems = showKpis
+  const attentionItems = showAttention
     ? orderAttentionItems(
         defs.flatMap((def) =>
           metricAttentionItems(
@@ -290,9 +302,29 @@ export function MetricGroupsView({
       )
     : [];
 
+  const Shell = embedded ? "div" : "main";
+
   return (
     <>
-      <main className="flex flex-1 flex-col gap-8 p-4 md:p-6">
+      <Shell
+        className={cn(
+          "flex flex-1 flex-col gap-8",
+          !embedded && "p-4 md:p-6"
+        )}
+      >
+        {content === "attention" ? (
+          attentionItems.length > 0 ? (
+            <IcNeedsAttention
+              items={attentionItems}
+              onOpenGroup={openOrSelect}
+              titled={false}
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Nothing needs attention this period.
+            </p>
+          )
+        ) : null}
         {showKpis ? (
           <>
             {/* Before the numbers, not after them. On a person's own page the
@@ -357,7 +389,7 @@ export function MetricGroupsView({
             />
           </>
         ) : null}
-      </main>
+      </Shell>
 
       {/* A click on a number is answered here, with the evidence behind it.
           This used to be gated on a `showSections` flag that also hid the

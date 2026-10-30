@@ -1,13 +1,13 @@
-import { Link } from "@tanstack/react-router";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
+import { NewDashboardButton } from "@/components/custom/create-dashboard-dialog";
 import { DashboardCard } from "@/components/custom/dashboard-card";
-import { NewLink } from "@/components/custom/editor/edit-link";
 import { Button } from "@/components/ui/button";
 import { useZoneNav } from "@/lib/portal/use-zone-nav";
 import { TEXT_EYEBROW } from "@/lib/type-scale";
-import { definitionPagesQuery } from "@/queries/custom";
-import { useIsAdmin } from "@/queries/identity-me";
+import { recentDashboardsQuery } from "@/queries/custom";
+
+const RECENT_COUNT = 3;
 
 export function HomeDashboards() {
   const { zones } = useZoneNav();
@@ -17,34 +17,23 @@ export function HomeDashboards() {
 }
 
 function DashboardSection() {
-  const dashboards = useInfiniteQuery(definitionPagesQuery("dashboards"));
-  const { isAdmin } = useIsAdmin();
-  const shown =
-    dashboards.data?.pages.flatMap((page) => page.items).slice(0, 3) ?? [];
+  const dashboards = useQuery(recentDashboardsQuery(RECENT_COUNT));
+  const shown = dashboards.data?.items ?? [];
+
+  // A viewer with no dashboard to open has no section; while that is unknown
+  // nothing is drawn, so the section never appears only to vanish.
+  if (dashboards.isPending) return null;
+  if (!dashboards.isError && shown.length === 0) return null;
 
   return (
     <section aria-labelledby="home-dashboards" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="home-dashboards" className={TEXT_EYEBROW}>
-          Dashboards
+          Recent dashboards
         </h2>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            nativeButton={false}
-            render={<Link to="/portal/custom" />}
-          >
-            All dashboards
-          </Button>
-          {isAdmin ? <NewLink kind="dashboards" noun="dashboard" /> : null}
-        </div>
+        <NewDashboardButton variant="outline" />
       </div>
-      {dashboards.isPending ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          Loading dashboards…
-        </p>
-      ) : dashboards.isError ? (
+      {dashboards.isError ? (
         <div
           role="alert"
           className="flex flex-wrap items-center gap-3 rounded-xl border bg-card p-4"
@@ -60,7 +49,7 @@ function DashboardSection() {
             Try again
           </Button>
         </div>
-      ) : shown.length ? (
+      ) : (
         <ul className="grid gap-4 @2xl:grid-cols-2">
           {shown.map((dashboard) => (
             <li
@@ -71,10 +60,6 @@ function DashboardSection() {
             </li>
           ))}
         </ul>
-      ) : (
-        <p className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
-          No dashboards yet.
-        </p>
       )}
     </section>
   );

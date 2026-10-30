@@ -57,6 +57,8 @@ export interface PortalSearch {
    * name and a link has to reproduce the one that was opened.
    */
   repo?: string;
+  /** Home and its themes about the viewer alone. Absent = their team, when they have one. */
+  who?: "me";
   /** Org-scope root: a manager's person id. Absent = the viewer's own subtree. */
   scope?: string;
   /** Narrow the scope to direct reports only. */
@@ -141,6 +143,7 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     // it as a string. An id outside the viewer's subtree (or a pre-cutover
     // email) resolves to nothing and the scope falls back to the viewer.
     scope: str(raw.scope)?.toLowerCase(),
+    who: raw.who === "me" ? "me" : undefined,
     // Omit rather than serialise `false`: a default has no business in a URL
     // people read and share.
     ...(raw.direct === true || raw.direct === "true" || raw.direct === 1
@@ -170,6 +173,7 @@ export const PORTAL_SEARCH_KEYS = [
   "lens",
   "repo",
   "scope",
+  "who",
   "direct",
   "slice",
   "period",

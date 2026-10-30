@@ -21,9 +21,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     removeFromFolder: vi.fn(),
   };
 });
-vi.mock("@/queries/person-name", () => ({
-  usePersonName: () => ({ isPending: false, data: "Jane Doe" }),
-}));
 const role = vi.hoisted(() => ({ isAdmin: true }));
 vi.mock("@/queries/identity-me", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-me")>()),
@@ -63,6 +60,7 @@ const READ = {
   name: "engineering",
   tags: [],
   ownerPersonId: null,
+  ownerName: null,
   access: "ownerless" as const,
   folders: [],
   carries: true,
@@ -203,7 +201,9 @@ describe("/portal/custom/$name", () => {
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText("Couldn't read gone.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("This widget is no longer on the dashboard.")
+    ).toBeInTheDocument();
     expect(customClient.runDashboardWidget).not.toHaveBeenCalled();
   });
 
@@ -276,11 +276,12 @@ describe("/portal/custom/$name", () => {
     ).toBeInTheDocument();
   });
 
-  it("names the owner, and offers a viewer neither Edit nor Share", async () => {
+  it("names the owner the read names, and offers a viewer neither Edit nor Share", async () => {
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
       ...READ,
       body: { title: "Engineering", widgets: [] },
       ownerPersonId: "01900000-0000-7000-8000-00000000000a",
+      ownerName: "Jane Doe",
       access: "viewer",
     });
     portalRouter.go("/portal/custom/engineering");

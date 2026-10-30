@@ -12,8 +12,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { usePortalNavActions, usePortalZone } from "@/lib/portal/portal-nav";
-import { landingDecision } from "@/lib/portal/landing-zone";
-import { zoneHidden, zonePlanned } from "@/lib/portal/nav-policy";
+import { bareLandingZone, landingDecision } from "@/lib/portal/landing-zone";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import {
   useShellLayout,
@@ -31,19 +30,17 @@ import { useIsAdmin } from "@/queries/identity-me";
  */
 export function PortalLayout() {
   const { replaceZone } = usePortalNavActions();
-  // Pin the landing zone exactly once, when the viewer's shape resolves: a
-  // manager lands on the Overview org rollup; an IC has no subtree, so their
-  // zone stays route-driven (their own Person page) — EXCEPT Manage, which
-  // the admin role opens regardless of reports. The rules live in
-  // `landingDecision` (pure, table-tested); this effect only applies them.
+  // Leave an org zone the viewer cannot see, once their shape resolves. The
+  // rules live in `landingDecision` (pure, table-tested); this effect only
+  // applies them, once, so a zone the reader picks later is never rewritten.
   const { canSeeOthers, isPending } = useViewerReach();
   const {
     isAdmin,
     isPending: adminPending,
     isError: adminError,
   } = useIsAdmin();
-  const showPlanned = usePortalShowPlanned();
   const zone = usePortalZone();
+  const homeShown = bareLandingZone(usePortalShowPlanned()) === "overview";
   const landed = useRef(false);
   useEffect(() => {
     if (landed.current) return;
@@ -57,12 +54,10 @@ export function PortalLayout() {
       // retries itself until an answer lands.
       adminPending: adminPending || adminError,
       isAdmin,
-      overviewVisible:
-        !zoneHidden("overview") && (!zonePlanned("overview") || showPlanned),
+      homeShown,
     });
     if (decision.kind === "wait") return;
     landed.current = true;
-    if (decision.kind === "pin-overview") replaceZone("overview");
     if (decision.kind === "reset") replaceZone(null);
   }, [
     isPending,
@@ -70,7 +65,7 @@ export function PortalLayout() {
     adminPending,
     adminError,
     isAdmin,
-    showPlanned,
+    homeShown,
     zone,
     replaceZone,
   ]);

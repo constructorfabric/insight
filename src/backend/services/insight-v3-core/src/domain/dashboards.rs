@@ -3,6 +3,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use crate::domain::access::{
@@ -72,6 +73,35 @@ pub(crate) enum OwnedError {
     NotOwned(&'static str),
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Order {
+    #[default]
+    Name,
+    Recent,
+}
+
+impl Order {
+    pub(crate) fn parse(kind: DefinitionKind, raw: &str) -> Result<Self, OrderError> {
+        if kind != DefinitionKind::Dashboard {
+            return Err(OrderError::Unsorted(kind.plural()));
+        }
+
+        match raw {
+            "name" => Ok(Self::Name),
+            "recent" => Ok(Self::Recent),
+            _ => Err(OrderError::Word),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum OrderError {
+    #[error("sort is `name` or `recent`")]
+    Word,
+    #[error("{0} list only by name")]
+    Unsorted(&'static str),
+}
+
 /// What a listing of dashboards keeps, beyond being visible to the caller.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DashboardQuery {
@@ -80,6 +110,7 @@ pub(crate) struct DashboardQuery {
     pub(crate) folder: Option<FolderFilter>,
     pub(crate) tags: Option<TagFilter>,
     pub(crate) owned: Option<Owned>,
+    pub(crate) order: Order,
 }
 
 impl DashboardQuery {
@@ -91,6 +122,7 @@ impl DashboardQuery {
         folder: Option<&str>,
         tags: &[String],
         owned: Option<&str>,
+        order: Option<&str>,
     ) -> Result<Self, QueryError> {
         let folder = folder
             .map(|raw| FolderFilter::parse(kind, raw))
@@ -101,12 +133,18 @@ impl DashboardQuery {
             .map(|raw| Owned::parse(kind, raw))
             .transpose()
             .map_err(QueryError::Owned)?;
+        let order = order
+            .map(|raw| Order::parse(kind, raw))
+            .transpose()
+            .map_err(QueryError::Order)?
+            .unwrap_or_default();
 
         Ok(Self {
             needle: needle.trim().to_owned(),
             folder,
             tags,
             owned,
+            order,
         })
     }
 }
@@ -119,6 +157,34 @@ pub(crate) enum QueryError {
     Tag(TagError),
     #[error(transparent)]
     Owned(OwnedError),
+    #[error(transparent)]
+    Order(OrderError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Visibility {
+    Private,
+    People,
+    Everyone,
+}
+
+impl Visibility {
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "private" => Some(Self::Private),
+            "people" => Some(Self::People),
+            "everyone" => Some(Self::Everyone),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Private => "private",
+            Self::People => "people",
+            Self::Everyone => "everyone",
+        }
+    }
 }
 
 /// One dashboard in a listing.
@@ -128,6 +194,10 @@ pub(crate) struct ListedDashboard {
     pub(crate) name: String,
     pub(crate) owner: Owner,
     pub(crate) access: Access,
+    pub(crate) updated_at: DateTime<Utc>,
+    pub(crate) visibility: Visibility,
+    pub(crate) title: Option<String>,
+    pub(crate) tags: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -173,3 +243,6 @@ pub(crate) async fn sight(
 
     Ok(standing.and_then(|standing| Seen::of(caller, &standing)))
 }
+
+#[cfg(test)]
+mod tests;

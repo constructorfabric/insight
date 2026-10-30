@@ -19,6 +19,7 @@ import {
   OrphanedChip,
   TransferOrphan,
 } from "@/components/custom/orphaned";
+import { CreateFolderDialog } from "@/components/custom/create-folder-dialog";
 import { refusal } from "@/components/custom/refusal";
 import { ShareDialog } from "@/components/custom/share-dialog";
 import { CountBadge } from "@/components/portal/pane-nav";
@@ -44,13 +45,11 @@ import { useIsAdmin } from "@/queries/identity-me";
 import {
   foldersQuery,
   orphanedPagesQuery,
-  useCreateFolder,
   useDeleteFolder,
   useRenameFolder,
 } from "@/queries/custom";
 
 const LIST_PATH = /^\/portal\/custom\/?$/;
-const NEW_FOLDER = "new";
 
 export function FoldersGroup() {
   const { data } = useQuery(foldersQuery());
@@ -60,6 +59,7 @@ export function FoldersGroup() {
     select: (s) => LIST_PATH.test(s.location.pathname),
   });
   const [editing, setEditing] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<FolderSummary | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [sharing, setSharing] = useState<FolderSummary | null>(null);
@@ -67,7 +67,6 @@ export function FoldersGroup() {
   // gone, so it keeps the last folder rather than unmounting mid-transition.
   const [shared, setShared] = useState(sharing);
   if (sharing !== null && sharing !== shared) setShared(sharing);
-  const create = useCreateFolder();
   const rename = useRenameFolder();
 
   const isShown = (id: string) => onList && shown === id;
@@ -132,24 +131,18 @@ export function FoldersGroup() {
               <CountBadge>{data.unfiled}</CountBadge>
             </SidebarMenuItem>
           ) : null}
-          {editing === NEW_FOLDER ? (
-            <FolderNameField
-              onSave={(name) => create.mutateAsync(name)}
-              onDone={() => setEditing(null)}
-            />
-          ) : (
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                className="text-muted-foreground"
-                onClick={() => setEditing(NEW_FOLDER)}
-              >
-                <Plus />
-                <span>New folder</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          )}
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              className="text-muted-foreground"
+              onClick={() => setCreating(true)}
+            >
+              <Plus />
+              <span>New folder</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarGroupContent>
+      <CreateFolderDialog open={creating} onClose={() => setCreating(false)} />
       <DeleteFolder
         folder={deleting}
         open={confirming}
@@ -266,11 +259,11 @@ function FolderMenu({
 }
 
 function FolderNameField({
-  initial = "",
+  initial,
   onSave,
   onDone,
 }: {
-  initial?: string;
+  initial: string;
   onSave: (name: string) => Promise<unknown>;
   onDone: () => void;
 }) {
@@ -314,6 +307,10 @@ function FolderNameField({
           }}
           onKeyDown={(event) => {
             if (event.key === "Escape") onDone();
+          }}
+          onBlur={() => {
+            if (saving) return;
+            if (value.trim() === "" || value === initial) onDone();
           }}
         />
         {error ? (

@@ -39,7 +39,7 @@ import {
   putDefinition,
   putGrant,
   removeFromFolder,
-  renameDefinition,
+  renameDashboard,
   renameFolder,
   runDashboardWidget,
   runMetric,
@@ -344,7 +344,7 @@ describe("an id or name that reached the client empty", () => {
     ["putDataset", () => putDataset("", {})],
     ["deleteDataset", () => deleteDataset("")],
     ["deleteDefinition", () => deleteDefinition("metrics", "")],
-    ["renameDefinition", () => renameDefinition("metrics", "", "to")],
+    ["renameDashboard", () => renameDashboard("", "to")],
     ["runMetric", () => runMetric("")],
     ["putDefinition", () => putDefinition("metrics", "", "name", {})],
     ["fetchGrants", () => fetchGrants({ kind: "dashboards", id: "" })],
@@ -535,7 +535,13 @@ describe("tags", () => {
     const folders = [{ id: "f1", name: "Platform" }];
     mockFetch
       .mockResolvedValueOnce(
-        response({ ...read, tags: ["Ops"], folders, carries: true })
+        response({
+          ...read,
+          owner_name: "Jane Doe",
+          tags: ["Ops"],
+          folders,
+          carries: true,
+        })
       )
       .mockResolvedValueOnce(response(read));
 
@@ -544,6 +550,7 @@ describe("tags", () => {
       body,
       tags: ["Ops"],
       ownerPersonId: null,
+      ownerName: "Jane Doe",
       access: "ownerless",
       folders,
       carries: true,
@@ -553,6 +560,7 @@ describe("tags", () => {
       body,
       tags: [],
       ownerPersonId: null,
+      ownerName: null,
       access: "ownerless",
       folders: [],
       carries: false,
@@ -714,19 +722,22 @@ describe("writing a definition", () => {
     });
   });
 
-  it("renames one by replacing it under the new name with the body it holds", async () => {
-    const body = { title: "Delivery", items: [] };
+  it("renames a dashboard by replacing its name and title together, keeping the rest of its body", async () => {
+    const body = { title: "Delivery", items: [{ widget: "w1" }] };
     mockFetch
       .mockResolvedValueOnce(response({ id: "d1", name: "Delivery", body }))
       .mockResolvedValueOnce(response(null, { status: 204 }));
 
-    await renameDefinition("dashboards", "d1", "Delivery 2026");
+    await renameDashboard("d1", "Delivery 2026");
 
     expect(mockFetch).toHaveBeenNthCalledWith(1, "/api/v3/v1/dashboards/d1");
     expect(mockFetch).toHaveBeenNthCalledWith(2, "/api/v3/v1/dashboards/d1", {
       method: "PUT",
       headers: JSON_POST,
-      body: JSON.stringify({ name: "Delivery 2026", body }),
+      body: JSON.stringify({
+        name: "Delivery 2026",
+        body: { ...body, title: "Delivery 2026" },
+      }),
     });
   });
 
@@ -734,7 +745,7 @@ describe("writing a definition", () => {
     mockFetch.mockResolvedValueOnce(response(null, { ok: false, status: 404 }));
 
     await expect(
-      renameDefinition("dashboards", "gone", "New")
+      renameDashboard("gone", "New")
     ).rejects.toMatchObject({ status: 404 });
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });

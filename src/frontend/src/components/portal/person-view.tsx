@@ -39,7 +39,7 @@ export function PersonView({ person }: { person: string }) {
         <MetricGroupsView
           personId={person}
           groupIds={groupIds}
-          showKpis
+          content="glance"
           onSelectGroup={(id) => setItem(id)}
         />
       )}

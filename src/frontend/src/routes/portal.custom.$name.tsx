@@ -14,7 +14,6 @@ import {
 } from "@/api/custom-client";
 import { DashboardFolders } from "@/components/custom/dashboard-folders";
 import { DashboardPageActions } from "@/components/custom/dashboard-page-actions";
-import { OwnerName } from "@/components/custom/person-name";
 import { RangePicker } from "@/components/custom/range-picker";
 import { selectedRange } from "@/lib/custom/board-range";
 import { dashboardIdFromPath } from "@/lib/custom/dashboard-path";
@@ -132,11 +131,10 @@ function CustomDashboardBody({
           <h1 className={cn(TEXT_TITLE, "shrink-0")}>
             {dashboard.title || read.name}
           </h1>
-          {read.ownerPersonId ? (
-            <OwnerName
-              personId={read.ownerPersonId}
-              className={cn(TEXT_LABEL, "text-muted-foreground")}
-            />
+          {read.ownerName ? (
+            <span className={cn(TEXT_LABEL, "text-muted-foreground")}>
+              Owner: {read.ownerName}
+            </span>
           ) : null}
           <DashboardFolders id={id} folders={read.folders} />
         </div>
@@ -278,7 +276,7 @@ function DashboardWidgetSlot({
       <Card>
         <CardContent>
           <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-            {`Couldn't read ${name}.`}
+            This widget is no longer on the dashboard.
           </p>
         </CardContent>
       </Card>

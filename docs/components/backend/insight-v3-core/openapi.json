@@ -1863,6 +1863,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "`name` (the default) orders by name, `recent` by last change, newest first",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {

@@ -89,13 +89,13 @@ describe("AccountPicker", () => {
     expect(screen.getByText("annlee")).toBeInTheDocument();
   });
 
-  // The answer to "why is nothing happening" should not wait for a debounce.
-  it("says a single character is too short to search", async () => {
+  it("searches on a single character", async () => {
+    hooks.search.data = { pages: [{ items: [match()] }] };
     pick();
 
     await userEvent.type(field(), "a");
 
-    expect(screen.getByText(/at least 2 characters/i)).toBeInTheDocument();
+    expect(screen.getByText("annlee")).toBeInTheDocument();
   });
 
   it("hands the picked account back and writes nothing itself", async () => {

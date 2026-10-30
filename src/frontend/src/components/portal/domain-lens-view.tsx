@@ -87,6 +87,7 @@ import {
 import { narrowedEvidenceSelection } from "@/lib/metrics/evidence-targets";
 import { evidenceMetricFor } from "@/lib/metrics/evidence-via";
 import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
+import { reachableMetricKeys } from "@/lib/insight/coverage";
 import {
   dayHourMatrix,
   HOUR_BLOCKS,
@@ -136,6 +137,7 @@ import { TEXT_EYEBROW, TEXT_FIGURE, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
+const OWN_NAME = "You";
 
 /**
  * One renderer for every Directions lens (design §4): sections come from the
@@ -148,9 +150,15 @@ export function DomainLensView({
   config: declared,
   gridKeys: gridKeysProp,
   embedded = false,
+  personId = null,
 }: {
   config: LensConfig;
   embedded?: boolean;
+  /**
+   * Read for this one person rather than the org scope. Only the trend and
+   * direction-card sections are built for one person.
+   */
+  personId?: string | null;
   /**
    * Direction-wide metric key union (see `directionMetricKeys`). When
    * provided, the fetched member grid requests this stable set instead of
@@ -211,16 +219,19 @@ export function DomainLensView({
   // source to reconcile — the legacy per-member batch this used to call was
   // removed upstream with the rest of the old metric UI.
   const members = useMemo<TeamMember[]>(
-    () => [
-      ...(pivot
-        ? [{ person_id: pivot.person_id, name: personDisplayName(pivot) }]
-        : []),
-      ...(roster ?? []).map((entry) => ({
-        person_id: entry.person_id,
-        name: personDisplayName(entry),
-      })),
-    ],
-    [pivot, roster]
+    () =>
+      personId
+        ? [{ person_id: personId, name: OWN_NAME }]
+        : [
+            ...(pivot
+              ? [{ person_id: pivot.person_id, name: personDisplayName(pivot) }]
+              : []),
+            ...(roster ?? []).map((entry) => ({
+              person_id: entry.person_id,
+              name: personDisplayName(entry),
+            })),
+          ],
+    [personId, pivot, roster]
   );
   const memberIds = useMemo(
     () => members.map((m) => normalizePersonId(m.person_id)),
@@ -235,6 +246,17 @@ export function DomainLensView({
         name: m.name,
       })),
     [members]
+  );
+
+  // One person's blank says nothing about the source, so whether it is
+  // connected comes from the tenant listing; null while that is unknown.
+  const definitions = useMetricDefinitionsResponse();
+  const personalReach = useMemo(
+    () =>
+      personId && definitions.data
+        ? reachableMetricKeys(definitions.data.metrics)
+        : null,
+    [personId, definitions.data]
   );
 
   // Lens's own keys drive the rule-6 observed-gate and every section below.
@@ -480,8 +502,8 @@ export function DomainLensView({
   );
 
   const gate = orgScopeGate({
-    viewerLoading: orgScope.isLoading,
-    viewerError: orgScope.isError,
+    viewerLoading: !personId && orgScope.isLoading,
+    viewerError: !personId && orgScope.isError,
     membersLoading: false,
     membersError: false,
     memberCount: members.length,
@@ -504,7 +526,13 @@ export function DomainLensView({
   // ingested" on the screen built to tell them which sources are not ingested
   // would withhold the answer at the moment it is worth most.
   const readsGrid = config.sections.some((s) => s.kind !== "coverage-levels");
-  if (readsGrid && !familyObserved(grid.byKey, lensKeys, memberIds)) {
+  const connected = sourceConnected(
+    lensKeys,
+    grid.byKey,
+    memberIds,
+    personId ? personalReach : undefined
+  );
+  if (readsGrid && !connected) {
     return (
       <Pending
         label={
@@ -534,7 +562,9 @@ export function DomainLensView({
       section.kind === "trend"
   );
   const charts =
-    trendSpec && trendBucket ? trendCharts(trendSpec, grid, trend, memberIds) : [];
+    trendSpec && trendBucket
+      ? trendCharts(trendSpec, grid, trend, memberIds, personId !== null)
+      : [];
   const drawable = charts.filter((c) => c.data.length > 1);
   // The roster the chart sums IS the drilldown's scope, so the two can never
   // disagree: under a flat policy that roster is the whole organisation, and
@@ -604,8 +634,9 @@ export function DomainLensView({
             {scoped ? (scopedLabel ?? scoped) : config.title}
           </h1>
           <p className="text-sm text-muted-foreground">
-            {members.length}{" "}
-            {members.length === 1 ? "person" : "people"} ·{" "}
+            {personId
+              ? null
+              : `${orgScope.label} · ${members.length} ${members.length === 1 ? "person" : "people"} · `}
             {config.tagline ?? "trend & balance"}
           </p>
         </div>
@@ -641,6 +672,8 @@ export function DomainLensView({
           tableIsError={tableData.isError}
           tableRefetch={tableData.refetch}
           memberIds={memberIds}
+          personal={personId !== null}
+          personalReach={personalReach}
           cohortOf={cohortOf}
           cohortLabel={cohortLabel}
           nameByEntity={nameByEntity}
@@ -657,7 +690,7 @@ export function DomainLensView({
         />
       ))}
 
-      {slice ? (
+      {slice && !personId ? (
         <ByUnitSection
           config={config}
           grid={grid.byKey}
@@ -674,6 +707,22 @@ export function DomainLensView({
       />
     </div>
   );
+}
+
+/**
+ * Whether a source feeds these metrics. A team's own readings answer it; one
+ * person's blank does not, so for one person the tenant listing does, and an
+ * unknown listing claims nothing.
+ */
+function sourceConnected(
+  keys: readonly string[],
+  byKey: Map<string, NormalizedMetricResult>,
+  memberIds: readonly string[],
+  personalReach: ReadonlySet<string> | null | undefined
+): boolean {
+  if (personalReach === undefined) return familyObserved(byKey, keys, memberIds);
+  if (personalReach === null) return true;
+  return keys.some((key) => personalReach.has(key));
 }
 
 /* ── Section dispatch ────────────────────────────────────────────────── */
@@ -705,6 +754,8 @@ function Section({
   tableIsError,
   tableRefetch,
   memberIds,
+  personal,
+  personalReach,
   cohortOf,
   cohortLabel,
   nameByEntity,
@@ -728,6 +779,9 @@ function Section({
   tableIsError: boolean;
   tableRefetch: () => void;
   memberIds: readonly string[];
+  /** One person is read: nothing routes into an org view. */
+  personal: boolean;
+  personalReach: ReadonlySet<string> | null;
   nameByEntity: Map<string, string>;
   personIdByEntity: Map<string, string>;
   cohortOf: (id: string) => string | null;
@@ -764,6 +818,7 @@ function Section({
           trend={trend}
           bucket={trendBucket}
           memberIds={memberIds}
+          personal={personal}
           onOpenChart={onOpenChart}
         />
       ) : (
@@ -879,6 +934,8 @@ function Section({
           variant={spec.variant}
           grid={grid}
           memberIds={memberIds}
+          personal={personal}
+          personalReach={personalReach}
         />
       );
     case "coverage-levels":
@@ -1456,7 +1513,8 @@ function trendCharts(
   spec: Extract<SectionSpec, { kind: "trend" }>,
   grid: GridData,
   trend: TrendData,
-  memberIds: readonly string[]
+  memberIds: readonly string[],
+  personal: boolean
 ): TrendChart[] {
   const charts = spec.metrics
     .map((key): TrendChart | null => {
@@ -1471,7 +1529,7 @@ function trendCharts(
         return {
           id: key,
           title: label,
-          description: "Median per person",
+          description: personal ? "Your value" : "Median per person",
           drilldownKey: key,
           derived: true,
           series: [{ key, label, type: "line" as const }],
@@ -1481,7 +1539,7 @@ function trendCharts(
       return {
         id: key,
         title: label,
-        description: "Team total",
+        description: personal ? "Your total" : "Team total",
         drilldownKey: key,
         series: [{ key, label, type: "line" as const }],
         data: buildTrendData([key], trend.byKey, memberIds),
@@ -1512,6 +1570,7 @@ function TrendSection({
   trend,
   bucket,
   memberIds,
+  personal,
   onOpenChart,
 }: {
   spec: Extract<SectionSpec, { kind: "trend" }>;
@@ -1519,9 +1578,10 @@ function TrendSection({
   trend: TrendData;
   bucket: MetricBucket;
   memberIds: readonly string[];
+  personal: boolean;
   onOpenChart: (chart: TrendChart, bucketStart?: string) => void;
 }) {
-  const charts = trendCharts(spec, grid, trend, memberIds);
+  const charts = trendCharts(spec, grid, trend, memberIds, personal);
 
   if (charts.length === 0) return null;
   if (trend.isError)
@@ -2721,10 +2781,14 @@ function DirectionCardsSection({
   variant,
   grid,
   memberIds,
+  personal,
+  personalReach,
 }: {
   variant: "compact" | "full";
   grid: GridData;
   memberIds: readonly string[];
+  personal: boolean;
+  personalReach: ReadonlySet<string> | null;
 }) {
   const { openDirection } = usePortalNavActions();
   const showPlanned = usePortalShowPlanned();
@@ -2742,12 +2806,12 @@ function DirectionCardsSection({
       if (!headline) return null;
       const keys =
         variant === "compact" ? headline.metrics.slice(0, 2) : headline.metrics;
-      const observed = familyObserved(
-        grid.byKey,
-        sectionMetricKeys(gated),
-        memberIds
-      );
-      return { id: d.id, name: d.name, keys, observed };
+      const familyKeys = sectionMetricKeys(gated);
+      const connected = personal
+        ? sourceConnected(familyKeys, grid.byKey, memberIds, personalReach)
+        : familyObserved(grid.byKey, familyKeys, memberIds);
+      const observed = familyObserved(grid.byKey, familyKeys, memberIds);
+      return { id: d.id, name: d.name, keys, connected, observed };
     })
     .filter((c): c is NonNullable<typeof c> => c != null);
   if (!cards.length) return null;
@@ -2760,16 +2824,19 @@ function DirectionCardsSection({
         By direction
       </p>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(16rem,1fr))] gap-3">
-        {cards.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            onClick={() => go(c.id)}
-            className="rounded-xl border bg-card text-left transition-colors hover:bg-card-hover"
-          >
+        {cards.map((c) => {
+          const body = (
             <div className="flex flex-col gap-2 p-4">
               <div className="text-sm font-semibold">{c.name}</div>
-              {c.observed ? (
+              {!c.connected ? (
+                <span className="text-xs text-muted-foreground">
+                  this data source is not connected yet
+                </span>
+              ) : !c.observed ? (
+                <span className="text-xs text-muted-foreground">
+                  nothing recorded this period
+                </span>
+              ) : (
                 c.keys.map((key) => {
                   const r = grid.byKey.get(key);
                   if (!r) return null;
@@ -2803,14 +2870,25 @@ function DirectionCardsSection({
                     </div>
                   );
                 })
-              ) : (
-                <span className="text-xs text-muted-foreground">
-                  this data source is not connected yet
-                </span>
               )}
             </div>
-          </button>
-        ))}
+          );
+
+          return personal ? (
+            <div key={c.id} className="rounded-xl border bg-card">
+              {body}
+            </div>
+          ) : (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => go(c.id)}
+              className="rounded-xl border bg-card text-left transition-colors hover:bg-card-hover"
+            >
+              {body}
+            </button>
+          );
+        })}
       </div>
     </section>
   );

@@ -6,9 +6,6 @@ vi.mock("@tanstack/react-router", async () => {
   };
 });
 vi.mock("@/api/custom-client");
-vi.mock("@/queries/person-name", () => ({
-  usePersonName: () => ({ isPending: false, data: "Jane Doe" }),
-}));
 const role = vi.hoisted(() => ({ isAdmin: true }));
 vi.mock("@/queries/identity-me", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-me")>()),
@@ -46,7 +43,14 @@ function item(
   name: string,
   access: DashboardAccess = "ownerless"
 ): DashboardListed {
-  return { id: name, name, owner_person_id: null, access };
+  return {
+    id: name,
+    name,
+    owner_person_id: null,
+    access,
+    updated_at: "2026-09-01T00:00:00Z",
+    visibility: "private" as const,
+  };
 }
 
 function listing(...names: string[]) {
@@ -56,6 +60,7 @@ function listing(...names: string[]) {
 const READ = {
   name: "delivery",
   ownerPersonId: null,
+  ownerName: null,
   access: "ownerless" as const,
   folders: [],
   carries: true,
@@ -88,17 +93,14 @@ describe("/portal/custom", () => {
     ).toBeInTheDocument();
   });
 
-  it("titles a card by the dashboard, keeping its name beneath it", async () => {
+  it("titles a card by the dashboard's title alone, not its name", async () => {
     vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("lines_of_code_dashboard"));
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({ ...READ, body: { title: "Lines of Code", widgets: [] }, tags: [] });
 
     render(<Component />, { wrapper });
 
-    // The reader picks a dashboard by its name, not by its slug.
-    expect(await screen.findByText("Lines of Code")).toBeInTheDocument();
-    expect(
-      await screen.findByText("lines_of_code_dashboard")
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Lines of Code")).toHaveAttribute("title", "Lines of Code");
+    expect(screen.queryByText("lines_of_code_dashboard")).toBeNull();
   });
 
   it("says so when there are no dashboards yet", async () => {
@@ -106,8 +108,8 @@ describe("/portal/custom", () => {
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText(/no dashboards yet/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New dashboard" })).toBeInTheDocument();
+    expect(await screen.findByText("No dashboards yet")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "New dashboard" })).toHaveLength(2);
   });
 
   it("offers a member nothing to create, and says nothing is shared yet", async () => {
@@ -117,7 +119,7 @@ describe("/portal/custom", () => {
     render(<Component />, { wrapper });
 
     expect(
-      await screen.findByText("Nothing is shared with you yet.")
+      await screen.findByText("No shared dashboards")
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New dashboard" })).toBeNull();
     expect(screen.queryByText(/ask the assistant/i)).toBeNull();
@@ -198,8 +200,9 @@ describe("/portal/custom in a folder", () => {
 
     expect(await screen.findByText(/that folder no longer exists/i)).toBeInTheDocument();
     await screen.findByRole("link", { name: "delivery" });
-    expect(askedFor()).toEqual([undefined]);
-    expect(screen.getByRole("heading", { level: 1, name: "Custom" })).toBeInTheDocument();
+    expect(askedFor()).toContain(undefined);
+    expect(askedFor()).not.toContain("gone");
+    expect(screen.getByRole("heading", { level: 1, name: "Dashboards" })).toBeInTheDocument();
   });
 
   it("says an empty folder is empty rather than that nothing exists", async () => {
@@ -209,9 +212,9 @@ describe("/portal/custom in a folder", () => {
     render(<Component />, { wrapper });
 
     expect(
-      await screen.findByText("No dashboards in this folder yet."),
+      await screen.findByText("This folder is empty"),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/no dashboards yet\. describe/i)).toBeNull();
+    expect(screen.queryByText("No dashboards yet")).toBeNull();
   });
 
   it("says every dashboard is filed when Unfiled is empty", async () => {
@@ -220,7 +223,7 @@ describe("/portal/custom in a folder", () => {
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText("Every dashboard is in a folder.")).toBeInTheDocument();
+    expect(await screen.findByText("Every dashboard is in a folder")).toBeInTheDocument();
   });
 });
 
@@ -241,7 +244,8 @@ describe("/portal/custom filtered by tag", () => {
   const askedFor = () =>
     vi
       .mocked(customClient.fetchDashboards)
-      .mock.calls.map(([page]) => ({ folder: page?.folder, tags: page?.tags }));
+      .mock.calls.filter(([page]) => page?.owned === undefined)
+      .map(([page]) => ({ folder: page?.folder, tags: page?.tags }));
 
   async function openFilter(name = "Tags") {
     const user = userEvent.setup();
@@ -294,17 +298,32 @@ describe("/portal/custom filtered by tag", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows each picked tag beside the filter, and drops one from there", async () => {
+    portalRouter.set({ tag: ["Ops", "Platform"] });
+    const user = userEvent.setup();
+
+    render(<Component />, { wrapper });
+    const pickedList = await screen.findByRole("list", { name: "Picked tags" });
+    expect(
+      within(pickedList).getAllByRole("listitem").map((item) => item.textContent)
+    ).toEqual(["Ops", "Platform"]);
+
+    await user.click(screen.getByRole("button", { name: "Remove tag Ops" }));
+
+    expect(portalRouter.search.tag).toEqual(["Platform"]);
+  });
+
   it("clears every pick, and offers no clearing while none is picked", async () => {
     render(<Component />, { wrapper });
     await openFilter();
     expect(
-      screen.getByRole("menuitem", { name: "Clear filters" })
+      screen.getByRole("menuitem", { name: "Clear tags" })
     ).toHaveAttribute("aria-disabled", "true");
     await userEvent.keyboard("{Escape}");
 
     portalRouter.set({ tag: ["Ops"] });
     const user = await openFilter("Tags · 1");
-    await user.click(screen.getByRole("menuitem", { name: "Clear filters" }));
+    await user.click(screen.getByRole("menuitem", { name: "Clear tags" }));
 
     expect(portalRouter.search.tag).toBeUndefined();
     expect(
@@ -391,7 +410,7 @@ describe("/portal/custom filtered by tag", () => {
 
     render(<Component />, { wrapper });
     expect(
-      await screen.findByText("No dashboard carries these tags.")
+      await screen.findByText("No dashboards with these tags")
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
 
@@ -529,31 +548,40 @@ describe("/portal/custom narrowed by ownership", () => {
     vi.mocked(customClient.fetchDashboards).mock.calls.map(([page]) => page?.owned);
 
   it.each([
-    ["me", "Owned by me", "You own no dashboards yet."],
-    ["shared", "Shared with me", "Nothing is shared with you yet."],
+    ["me", "My dashboards", "No dashboards yet"],
+    ["shared", "Shared with me", "No shared dashboards"],
   ] as const)(
-    "asks for owned=%s, heads the list %s, and says %s when it is empty",
-    async (owned, heading, empty) => {
+    "asks for owned=%s, marks the %s chip current, and says %s when it is empty",
+    async (owned, chip, empty) => {
       portalRouter.set({ owned });
       vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing());
 
       render(<Component />, { wrapper });
 
       expect(
-        await screen.findByRole("heading", { level: 1, name: heading })
+        await screen.findByRole("heading", { level: 1, name: "Dashboards" })
       ).toBeInTheDocument();
       expect(await screen.findByText(empty)).toBeInTheDocument();
-      expect(askedFor()).toEqual([owned]);
+      const browse = screen.getByRole("navigation", { name: "Browse dashboards" });
+      expect(
+        within(browse).getByRole("link", { name: (name) => name.startsWith(chip) })
+      ).toHaveAttribute("aria-current", "page");
+      expect(askedFor()).toContain(owned);
     }
   );
 
-  it("asks for everything visible when the link names no ownership", async () => {
+  it("marks All current when the link names no ownership", async () => {
     vi.mocked(customClient.fetchDashboards).mockResolvedValue(listing("delivery"));
 
     render(<Component />, { wrapper });
 
     await screen.findByRole("link", { name: "delivery" });
-    expect(askedFor()).toEqual([undefined]);
+    const browse = screen.getByRole("navigation", { name: "Browse dashboards" });
+    expect(within(browse).getByRole("link", { name: /^All/ })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+    expect(askedFor()).toContain(undefined);
   });
 
   it("names the owner on a card that has one", async () => {
@@ -563,6 +591,9 @@ describe("/portal/custom narrowed by ownership", () => {
           id: "0190aaaa-0000-7000-8000-000000000001",
           name: "delivery",
           owner_person_id: "01900000-0000-7000-8000-00000000000a",
+          owner_name: "Jane Doe",
+          updated_at: "2026-09-01T00:00:00Z",
+          visibility: "private" as const,
           access: "viewer",
         },
       ],
@@ -571,7 +602,7 @@ describe("/portal/custom narrowed by ownership", () => {
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText("Owner: Jane Doe")).toBeInTheDocument();
+    expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Open delivery" })
     ).toHaveAttribute(

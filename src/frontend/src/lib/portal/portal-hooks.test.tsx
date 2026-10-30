@@ -192,6 +192,13 @@ describe("useActiveZone", () => {
     );
   });
 
+  it("opens Home on a bare /portal", () => {
+    portalRouter.go("/portal");
+    expect(renderHook(() => useActiveZone()).result.current.activeZone).toBe(
+      "overview"
+    );
+  });
+
   it("falls back to the viewer for a non-person route", () => {
     portalRouter.go("/metrics");
     expect(renderHook(() => useActiveZone()).result.current.activePerson).toBe(
@@ -205,6 +212,7 @@ describe("useViewerIsManager", () => {
     expect(renderHook(() => useViewerIsManager()).result.current).toEqual({
       isManager: true,
       isPending: false,
+      isError: false,
     });
   });
 
@@ -219,7 +227,11 @@ describe("useViewerIsManager", () => {
     mocks.roster.roster = [];
     mocks.roster.isPending = true;
     const { result } = renderHook(() => useViewerIsManager());
-    expect(result.current).toEqual({ isManager: false, isPending: true });
+    expect(result.current).toEqual({
+      isManager: false,
+      isPending: true,
+      isError: false,
+    });
   });
 });
 

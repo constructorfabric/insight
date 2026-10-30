@@ -11,6 +11,15 @@ import {
 
 const SEPARATOR = " › ";
 
+const DASHBOARD_PAGES: Record<string, string> = {
+  metrics: "Metrics",
+  widgets: "Widgets",
+  datasets: "Datasets",
+  alerts: "Alerts",
+  new: "New",
+  edit: "Edit",
+};
+
 const PERSON_VIEWS: Record<string, string> = {
   personal: "Personal",
 };
@@ -32,6 +41,7 @@ function detailLabel(zone: string, third: string, fourth?: string): string {
     if (!fourth) return direction.name;
     return `${direction.name}${SEPARATOR}${lensBySlug(direction, fourth) ?? fourth}`;
   }
+  if (zone === "custom") return DASHBOARD_PAGES[third] ?? "Dashboard";
   const item = itemLabel(zone, third);
   if (zone === "manage" && third === "identities" && fourth) {
     return `${item}${SEPARATOR}${MODE_LABELS[fourth] ?? fourth}`;

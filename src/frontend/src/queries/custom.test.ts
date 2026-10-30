@@ -28,14 +28,13 @@ import {
   pinsQuery,
   tagsQuery,
   useAddToFolder,
-  useCreateFolder,
   useDeleteFolder,
   useDeleteGrant,
   useDuplicateDashboard,
   usePutGrant,
   useRemoveDefinition,
   useRemoveFromFolder,
-  useRenameDefinition,
+  useRenameDashboard,
   useRenameFolder,
   useSetDashboardTags,
   useSetPinned,
@@ -151,6 +150,7 @@ describe("dashboardQuery", () => {
       body: dashboard,
       tags: ["Ops"],
       ownerPersonId: null,
+      ownerName: null,
       access: "ownerless",
       folders: [],
       carries: true,
@@ -326,15 +326,6 @@ describe("the folder mutations", () => {
     });
   }
 
-  it("makes a folder, then refreshes the counts and the lists", async () => {
-    const { result, invalidated } = rendered(() => useCreateFolder());
-
-    await act(() => result.current.mutateAsync("Platform"));
-
-    expect(customClient.createFolder).toHaveBeenCalledWith("Platform");
-    expectCountsAndListsRefreshed(invalidated);
-  });
-
   it("renames a folder, then refreshes the counts and the lists", async () => {
     const { result, invalidated } = rendered(() => useRenameFolder());
 
@@ -372,15 +363,6 @@ describe("the folder mutations", () => {
       });
     },
   );
-
-  it("refreshes the counts and the lists after a taken name is refused", async () => {
-    vi.mocked(customClient.createFolder).mockRejectedValueOnce(new Error("taken"));
-    const { result, invalidated } = rendered(() => useCreateFolder());
-
-    await act(() => result.current.mutateAsync("Platform").catch(() => undefined));
-
-    expectCountsAndListsRefreshed(invalidated);
-  });
 
   it("refreshes the counts and the lists after an add into a gone folder is refused", async () => {
     vi.mocked(customClient.addToFolder).mockRejectedValueOnce(new Error("gone"));
@@ -631,9 +613,9 @@ describe("duplicating a dashboard", () => {
   });
 });
 
-describe("useRenameDefinition", () => {
+describe("useRenameDashboard", () => {
   it("renames by id and refreshes every cached read, keeping the id's entries", async () => {
-    vi.mocked(customClient.renameDefinition).mockResolvedValue(undefined);
+    vi.mocked(customClient.renameDashboard).mockResolvedValue(undefined);
     const queryClient = new QueryClient({
       defaultOptions: { mutations: { retry: false } },
     });
@@ -643,21 +625,13 @@ describe("useRenameDefinition", () => {
     });
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(QueryClientProvider, { client: queryClient }, children);
-    const { result } = renderHook(() => useRenameDefinition(), { wrapper });
+    const { result } = renderHook(() => useRenameDashboard(), { wrapper });
 
     await act(() =>
-      result.current.mutateAsync({
-        kind: "dashboards",
-        id: "d1",
-        to: "Platform",
-      }),
+      result.current.mutateAsync({ id: "d1", to: "Platform" }),
     );
 
-    expect(customClient.renameDefinition).toHaveBeenCalledWith(
-      "dashboards",
-      "d1",
-      "Platform",
-    );
+    expect(customClient.renameDashboard).toHaveBeenCalledWith("d1", "Platform");
     expect(
       queryClient.getQueryState(["custom", "dashboard", "d1"])?.isInvalidated,
     ).toBe(true);

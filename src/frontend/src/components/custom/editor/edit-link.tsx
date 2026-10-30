@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 
 import type { EditableKind } from "@/api/custom-client";
+import { NewDashboardButton } from "@/components/custom/create-dashboard-dialog";
 import { Button } from "@/components/ui/button";
 
 export function EditLink({
@@ -32,6 +33,8 @@ export function EditLink({
 }
 
 export function NewLink({ kind, noun }: { kind: EditableKind; noun: string }) {
+  if (kind === "dashboards") return <NewDashboardButton />;
+
   return (
     <Button
       variant="outline"

@@ -360,6 +360,67 @@ describe("rule 6: honest not-ingested gate", () => {
   });
 });
 
+describe("one person instead of the org scope", () => {
+  it("names the reader rather than counting the org scope", () => {
+    seedHappyOrg();
+    mocks.definitions = [
+      {
+        metric_key: "t.commits",
+        is_enabled: true,
+        schema_status: "ok",
+        schema_error_code: null,
+        last_observed_date: "2026-07-26",
+      },
+    ];
+    render(
+      <DomainLensView
+        config={{
+          title: "T",
+          tagline: "yours",
+          sections: [{ kind: "headline", metrics: ["t.commits"] }],
+        }}
+        personId={pid("a")}
+      />,
+    );
+
+    expect(screen.getByText(/^yours$/)).toBeInTheDocument();
+    expect(screen.queryByText(/people ·/)).toBeNull();
+  });
+
+  it.each([
+    ["a connected source the person did nothing in", "2026-07-26", false],
+    ["a source nothing feeds", null, true],
+  ] as const)(
+    "says the source is unconnected only for %s",
+    (_case, lastObserved, claimsUnconnected) => {
+      seedHappyOrg();
+      mocks.definitions = [
+        {
+          metric_key: "t.commits",
+          is_enabled: true,
+          schema_status: "ok",
+          schema_error_code: null,
+          last_observed_date: lastObserved,
+        },
+      ];
+      render(
+        <DomainLensView
+          config={{
+            title: "T",
+            sections: [{ kind: "headline", metrics: ["t.commits"] }],
+          }}
+          personId={pid("idle")}
+        />,
+      );
+
+      expect(
+        screen.queryByText(/not connected yet/) !== null,
+        `case: ${_case}`,
+      ).toBe(claimsUnconnected);
+    },
+  );
+});
+
 describe("org-scope gates", () => {
   it("shows the empty-roster label instead of a fabricated dashboard", () => {
     mocks.tree = undefined;

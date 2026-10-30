@@ -32,6 +32,8 @@ export function CustomWidget({
   pending,
   onRetry,
 }: CustomWidgetProps) {
+  const { isAdmin, isPending } = useIsAdmin();
+  const member = !isPending && !isAdmin;
   const busy = isBusy(error);
 
   if (busy && !pending) {
@@ -46,6 +48,16 @@ export function CustomWidget({
   }
 
   if (error && !busy) {
+    if (member) {
+      return (
+        <ComingSoon
+          variant="card"
+          state="error"
+          label="This widget couldn't be loaded."
+          onRetry={onRetry}
+        />
+      );
+    }
     return (
       <Alert variant="destructive">
         <AlertDescription>

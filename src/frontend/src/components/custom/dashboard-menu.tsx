@@ -4,6 +4,7 @@ import {
   FolderPlus,
   Pin,
   PinOff,
+  Share2,
   Tags,
   TextCursorInput,
   Trash2,
@@ -18,6 +19,7 @@ import {
 } from "@/components/custom/dashboard-dialogs";
 import { AddToFolder } from "@/components/custom/dashboard-folders";
 import { EditTags } from "@/components/custom/edit-tags";
+import { ShareDialog } from "@/components/custom/share-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -29,13 +31,14 @@ import {
 import { usePinToggle } from "@/hooks/use-pin-toggle";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
 
-type Asked = "rename" | "duplicate" | "delete" | "folder" | "tags";
+type Asked = "rename" | "duplicate" | "delete" | "folder" | "tags" | "share";
 
 export function DashboardMenu({
   id,
   name,
   title,
   access,
+  share,
   onDuplicated,
   onDeleted,
 }: {
@@ -43,6 +46,7 @@ export function DashboardMenu({
   name: string;
   title?: string;
   access: DashboardAccess;
+  share?: { ownerPersonId: string | null };
   onDuplicated?: (id: string) => void;
   onDeleted?: () => void;
 }) {
@@ -73,6 +77,12 @@ export function DashboardMenu({
             {pin.pinned ? <PinOff /> : <Pin />}
             {pin.pinned ? "Unpin" : "Pin"}
           </DropdownMenuItem>
+          {share ? (
+            <DropdownMenuItem onClick={() => setAsked("share")}>
+              <Share2 />
+              Share…
+            </DropdownMenuItem>
+          ) : null}
           {allows.edit ? (
             <>
               <DropdownMenuItem onClick={() => setAsked("rename")}>
@@ -109,6 +119,15 @@ export function DashboardMenu({
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
+      {share ? (
+        <ShareDialog
+          target={{ kind: "dashboards", id }}
+          title={title || name}
+          ownerPersonId={share.ownerPersonId}
+          open={asked === "share"}
+          onClose={done}
+        />
+      ) : null}
       <AddToFolder
         id={id}
         name={name}
@@ -129,7 +148,7 @@ export function DashboardMenu({
         <>
           <RenameDashboard
             id={id}
-            name={name}
+            name={title || name}
             open={asked === "rename"}
             onClose={done}
           />

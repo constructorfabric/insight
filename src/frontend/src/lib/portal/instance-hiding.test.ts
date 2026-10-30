@@ -8,7 +8,7 @@ import {
   visibleSections,
 } from "./lens-configs";
 import { DEFAULT_OVERVIEW_ITEM, OVERVIEW_ITEMS } from "./overview-configs";
-import { landingDecision } from "./landing-zone";
+import { bareLandingZone } from "./landing-zone";
 import { parseNavPolicy, visiblePersonSections } from "./nav-policy";
 import {
   DIRECTIONS,
@@ -246,28 +246,13 @@ describe("what the install policy must NOT touch", () => {
 });
 
 describe("landing under nav.hide", () => {
-  const resolved = { mgrPending: false, adminPending: false, isAdmin: false };
-
-  it("keeps the route-driven view instead of pinning a hidden Overview", () => {
-    const decision = landingDecision({
-      zone: null,
-      ...resolved,
-      canSeeOthers: true,
-      overviewVisible: false,
-    });
-
-    expect(decision.kind).toBe("keep");
-  });
-
-  it("still pins Overview when the install shows it", () => {
-    const decision = landingDecision({
-      zone: null,
-      ...resolved,
-      canSeeOthers: true,
-      overviewVisible: true,
-    });
-
-    expect(decision.kind).toBe("pin-overview");
+  it.each([
+    ["opens Home when the install shows it", parseNavPolicy({}), false, "overview"],
+    ["opens the viewer's own page when Home is hidden", hide(["zone:overview"]), false, "person"],
+    ["skips a planned Home while planned zones are off", planned(["zone:overview"]), false, "person"],
+    ["opens a planned Home while planned zones are on", planned(["zone:overview"]), true, "overview"],
+  ] as const)("%s", (_case, policy, showPlanned, expected) => {
+    expect(bareLandingZone(showPlanned, policy), `case: ${_case}`).toBe(expected);
   });
 });
 

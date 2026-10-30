@@ -42,6 +42,18 @@ struct Answer {
     body: Value,
 }
 
+fn listed_ids(listed: &Answer) -> Vec<&str> {
+    listed.body["items"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item["id"].as_str())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 impl Harness {
     fn new() -> Self {
         Self::build(true, Arc::new(MemoryDefinitions::new()))
@@ -501,20 +513,9 @@ async fn a_dashboard_list_narrows_to_one_folder_or_to_the_unfiled() {
         .await;
 
     assert_eq!(filed.status, StatusCode::OK);
-    assert_eq!(
-        filed.body["items"],
-        json!([{ "id": "delivery", "name": "delivery", "owner_person_id": ME, "access": "owner" }])
-    );
+    assert_eq!(listed_ids(&filed), ["delivery"], "{}", filed.body);
     assert_eq!(filed.body["total"], 1);
-    assert_eq!(
-        unfiled.body["items"],
-        json!([{
-            "id": "delivery_costs",
-            "name": "delivery_costs",
-            "owner_person_id": ME,
-            "access": "owner"
-        }])
-    );
+    assert_eq!(listed_ids(&unfiled), ["delivery_costs"], "{}", unfiled.body);
     assert_eq!(unfiled.body["total"], 1);
 }
 

@@ -29,10 +29,8 @@ import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
 import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
-  belowPersonFloor,
   listsAnyone,
   MAX_SEARCH_CHARS,
-  MIN_SEARCH_CHARS,
   type PersonListSource,
   SEARCH_DEBOUNCE_MS,
   usePersonList,
@@ -103,11 +101,6 @@ export function PersonPicker({
         )
     : [];
   const loading = list.isFetching && !list.isFetchingNextPage;
-  // Reads the live field rather than the debounced one: the answer to "why is
-  // nothing happening" should not wait for the debounce to expire. Only while
-  // nothing is listed, though — deleting a character from a searched term keeps
-  // its rows for one debounce, and a notice above them contradicts them.
-  const tooShort = results.length === 0 && belowPersonFloor(query);
   // These rows answer the term the query key carries, which is not the one in
   // the field until the debounce fires AND the fetch lands. Kept on screen so
   // the list does not blank between keystrokes — see `placeholderData` — and
@@ -137,24 +130,20 @@ export function PersonPicker({
         <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="search"
-          className="ps-8"
+          className={cn(
+            "ps-8",
+            loading && "pe-8 [&::-webkit-search-cancel-button]:hidden"
+          )}
           placeholder={t("identities.picker.placeholder")}
           aria-label={t("identities.picker.placeholder")}
           maxLength={MAX_SEARCH_CHARS}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        {loading ? (
+          <Spinner className="absolute end-2.5 top-1/2 size-4 -translate-y-1/2" />
+        ) : null}
       </div>
-      {loading ? (
-        <div className="flex justify-center py-2">
-          <Spinner className="size-4" />
-        </div>
-      ) : null}
-      {tooShort ? (
-        <p className="text-sm text-muted-foreground">
-          {t("identities.picker.min_chars", { min: MIN_SEARCH_CHARS })}
-        </p>
-      ) : null}
       {asked && list.isError ? (
         <p className="text-sm text-destructive">
           {t("identities.picker.failed")}

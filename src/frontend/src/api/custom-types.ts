@@ -118,10 +118,21 @@ export type DashboardAccess = "owner" | "editor" | "viewer" | "ownerless";
 
 export type FolderAccess = "owner" | "editor" | "viewer" | "ownerless";
 
+/** Who a dashboard's own grants reach besides its owner. */
+export type DashboardVisibility = "private" | "people" | "everyone";
+
 export interface DashboardListed extends Listed {
   /** Null for a dashboard nobody owns. */
   owner_person_id: string | null;
+  /** What identity calls the owner; null when it names nobody. */
+  owner_name?: string | null;
   access: DashboardAccess;
+  /** RFC 3339. Absent, as are the fields below, from a service that predates them. */
+  updated_at?: string;
+  visibility?: DashboardVisibility;
+  /** The body's title; null when it names none. */
+  title?: string | null;
+  tags?: string[];
 }
 
 export interface ListedPage<T extends Listed = Listed> {
@@ -145,6 +156,7 @@ export interface DefinitionResponse<T> {
 /** A dashboard as the service hands it back, with who owns it and what the caller may do. */
 export interface DashboardResponse extends DefinitionResponse<Dashboard> {
   owner_person_id: string | null;
+  owner_name?: string | null;
   access: DashboardAccess;
   /** The folders holding it that the caller can see. */
   folders?: Folder[];
@@ -158,6 +170,7 @@ export interface DashboardRead {
   tags: string[];
   updatedAt?: string;
   ownerPersonId: string | null;
+  ownerName: string | null;
   access: DashboardAccess;
   folders: Folder[];
   carries: boolean;

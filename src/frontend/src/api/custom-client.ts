@@ -145,19 +145,21 @@ export async function putDefinition(
   await ensureOk(res);
 }
 
-export async function renameDefinition(
-  kind: DefinitionKind,
-  id: string,
-  to: string
-): Promise<void> {
-  const stored = await fetchDefinition(kind, id);
-  await putDefinition(kind, id, to, stored.body);
+export async function renameDashboard(id: string, to: string): Promise<void> {
+  const stored = await fetchDefinition<Record<string, unknown>>(
+    "dashboards",
+    id
+  );
+  await putDefinition("dashboards", id, to, { ...stored.body, title: to });
 }
 
 export const DEFINITION_NAME_MAX = 128;
 
 /** Which dashboards a list narrows to by who owns them. */
 export type OwnedFilter = "me" | "shared";
+
+/** The order a dashboard list answers in; by name unless asked. */
+export type DashboardOrder = "name" | "recent";
 
 /** Which slice of a catalogue to ask for. The service caps limit at 200. */
 export interface PageRequest {
@@ -167,6 +169,7 @@ export interface PageRequest {
   folder?: FolderFilter;
   tags?: string[];
   owned?: OwnedFilter;
+  sort?: DashboardOrder;
 }
 
 function pageQuery({
@@ -176,6 +179,7 @@ function pageQuery({
   folder,
   tags = [],
   owned,
+  sort,
 }: PageRequest): string {
   const query = new URLSearchParams();
   if (search) query.set("q", search);
@@ -184,6 +188,7 @@ function pageQuery({
   if (folder) query.set("folder", folder);
   for (const tag of tags) query.append("tag", tag);
   if (owned) query.set("owned", owned);
+  if (sort) query.set("sort", sort);
   const asked = query.toString();
 
   return asked ? `?${asked}` : "";
@@ -204,6 +209,7 @@ export async function fetchDashboardRead(id: string): Promise<DashboardRead> {
     body: read.body,
     tags: read.tags ?? [],
     ownerPersonId: read.owner_person_id,
+    ownerName: read.owner_name ?? null,
     access: read.access,
     folders: read.folders ?? [],
     carries: read.carries ?? false,

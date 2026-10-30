@@ -56,6 +56,7 @@ function reading(read: Partial<DashboardRead> = {}) {
     body: { title: "Delivery", widgets: [] },
     tags: [],
     ownerPersonId: null,
+    ownerName: null,
     access: "owner",
     folders: [],
     carries: true,

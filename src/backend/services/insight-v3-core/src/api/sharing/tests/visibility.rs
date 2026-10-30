@@ -4,7 +4,8 @@
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use super::{Answer, Harness, OWNER, STRANGER, VIEWER};
+use super::{Answer, Harness, OWNER, STRANGER, VIEWER, administrators, person};
+use crate::store::identity::IdentityClient;
 
 /// Each route that addresses one dashboard, with the body it sends; the
 /// entry routes go through `folder`, one of the caller's own.
@@ -254,6 +255,78 @@ async fn a_listing_keeps_my_own_or_those_shared_with_me_and_otherwise_everything
         assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
         assert_eq!(super::field_of(refused), json!("owned"));
     }
+}
+
+#[tokio::test]
+async fn a_listing_sorted_by_recent_puts_the_last_changed_first() {
+    let harness = Harness::new();
+    let older = harness.dashboard_of(VIEWER, "A older").await;
+    let changed = harness.dashboard_of(VIEWER, "B changed").await;
+    let untouched = harness.dashboard_of(VIEWER, "C untouched").await;
+    let edit = harness
+        .send(
+            VIEWER,
+            "PUT",
+            &format!("/v1/dashboards/{changed}"),
+            Some(json!({ "name": "B changed", "body": { "title": "B", "widgets": [] } })),
+        )
+        .await;
+    assert!(edit.status.is_success(), "{}", edit.body);
+
+    let by_name = harness.send(VIEWER, "GET", "/v1/dashboards", None).await;
+    let recent = harness
+        .send(VIEWER, "GET", "/v1/dashboards?sort=recent", None)
+        .await;
+    let unknown = harness
+        .send(VIEWER, "GET", "/v1/dashboards?sort=oldest", None)
+        .await;
+    let metrics = harness
+        .send(VIEWER, "GET", "/v1/metrics?sort=recent", None)
+        .await;
+
+    assert_eq!(
+        ids(&by_name),
+        vec![older.clone(), changed.clone(), untouched.clone()]
+    );
+    assert_eq!(ids(&recent), vec![changed, untouched, older]);
+    for refused in [&unknown, &metrics] {
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+        assert_eq!(super::field_of(refused), json!("sort"));
+    }
+}
+
+#[tokio::test]
+async fn a_listing_and_a_read_carry_the_name_identity_gives_the_owner() {
+    let harness = Harness::build(
+        IdentityClient::fixed(true)
+            .with_administrators(&administrators())
+            .with_names(&[(person(OWNER).uuid(), "Ada Example")]),
+    );
+    let board = harness.dashboard_of(OWNER, "Board").await;
+
+    let listed = harness.send(OWNER, "GET", "/v1/dashboards", None).await;
+    let read = harness
+        .send(OWNER, "GET", &format!("/v1/dashboards/{board}"), None)
+        .await;
+
+    assert_eq!(listed.body["items"][0]["owner_name"], json!("Ada Example"));
+    assert_eq!(read.body["owner_name"], json!("Ada Example"));
+}
+
+#[tokio::test]
+async fn a_listing_answers_without_owner_names_when_identity_cannot() {
+    let harness = Harness::build(
+        IdentityClient::fixed(true)
+            .with_administrators(&administrators())
+            .with_names_unreachable(),
+    );
+    let board = harness.dashboard_of(OWNER, "Board").await;
+
+    let listed = harness.send(OWNER, "GET", "/v1/dashboards", None).await;
+
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+    assert_eq!(listed.body["items"][0]["id"], json!(board));
+    assert_eq!(listed.body["items"][0]["owner_name"], Value::Null);
 }
 
 #[tokio::test]

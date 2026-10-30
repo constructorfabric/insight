@@ -53,7 +53,9 @@ function PeopleViews({ nav }: { nav: ZoneNav }) {
   const item = resolveZoneItem("people", usePortalItem());
   const personZone = zones.find((zone) => zone.id === "person");
   const peopleZone = zones.find((zone) => zone.id === "people");
-  const teamViews = peopleZone ? orderByReadiness(peopleItemsFor(isFlat), showPlanned) : [];
+  const teamViews = peopleZone
+    ? orderByReadiness(peopleItemsFor(isFlat), showPlanned)
+    : [];
 
   return (
     <SidebarGroup>

@@ -2,21 +2,25 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-import type { DashboardListed, OwnedFilter } from "@/api/custom-client";
+import type { DashboardListed } from "@/api/custom-client";
 import {
   DefinitionCount,
   MoreDefinitions,
   type Paging,
 } from "@/components/custom/definition-paging";
+import { BrowseChips } from "@/components/custom/dashboard-browse";
 import { DashboardCard } from "@/components/custom/dashboard-card";
 import { DefinitionSearch } from "@/components/custom/definition-search";
 import { NewLink } from "@/components/custom/editor/edit-link";
 import { OrphanedDashboards } from "@/components/custom/orphaned";
-import { NoTaggedDashboards, TagFilter } from "@/components/custom/tag-filter";
+import { DashboardsEmpty } from "@/components/custom/dashboards-empty";
+import { PickedTags, TagFilter } from "@/components/custom/tag-filter";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
 import { useTagPicks } from "@/hooks/use-tag-picks";
+import type { FolderShown } from "@/lib/custom/dashboards-empty";
+import { useAssistantAvailable } from "@/lib/portal/use-assistant-available";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import { foldersQuery } from "@/queries/custom";
 import { useIsAdmin } from "@/queries/identity-me";
@@ -28,23 +32,11 @@ export const Route = createFileRoute("/portal/custom/")({
 });
 
 const UNFILED = "unfiled";
+const HEADING = "Dashboards";
 
-const OWNED_HEADING: Record<OwnedFilter, string> = {
-  me: "Owned by me",
-  shared: "Shared with me",
-};
-
-function emptyLabel(
-  folder: string | undefined,
-  owned: OwnedFilter | undefined,
-  isAdmin: boolean
-): string {
-  if (owned === "shared") return "Nothing is shared with you yet.";
-  if (owned === "me") return "You own no dashboards yet.";
-  if (folder === UNFILED) return "Every dashboard is in a folder.";
-  if (folder) return "No dashboards in this folder yet.";
-  if (!isAdmin) return "Nothing is shared with you yet.";
-  return "No dashboards yet. Describe one to the assistant and it will build it.";
+function folderShown(folder: string | undefined): FolderShown | undefined {
+  if (!folder) return undefined;
+  return folder === UNFILED ? "unfiled" : "named";
 }
 
 interface Shown {
@@ -55,26 +47,27 @@ interface Shown {
 }
 
 function useShownFolder(): Shown {
-  const { folder: asked, owned } = usePortalSearch();
+  const { folder: asked } = usePortalSearch();
   const folders = useQuery({
     ...foldersQuery(),
     enabled: asked != null && asked !== UNFILED,
   });
 
-  if (!asked) return { heading: owned ? OWNED_HEADING[owned] : "Custom" };
+  if (!asked) return { heading: HEADING };
   if (asked === UNFILED) return { folder: UNFILED, heading: "Unfiled" };
-  if (folders.isError) return { folder: asked, heading: "Custom" };
-  if (!folders.data) return { heading: "Custom", pending: true };
+  if (folders.isError) return { folder: asked, heading: HEADING };
+  if (!folders.data) return { heading: HEADING, pending: true };
 
   const found = folders.data.folders.find((folder) => folder.id === asked);
   return found
     ? { folder: found.id, heading: found.name }
-    : { heading: "Custom", lost: true };
+    : { heading: HEADING, lost: true };
 }
 
 function CustomDashboardIndex() {
-  const { owned } = usePortalSearch();
+  const { owned, tag, folder } = usePortalSearch();
   const { isAdmin } = useIsAdmin();
+  const assistant = useAssistantAvailable();
   const shown = useShownFolder();
   const tags = useTagPicks();
   const catalogue = useDefinitionCatalogue("dashboards", {
@@ -94,15 +87,7 @@ function CustomDashboardIndex() {
   return (
     <>
       <header className="mb-3 flex flex-wrap items-start gap-3">
-        <div className="min-w-0 grow">
-          <h1 className={TEXT_TITLE}>{shown.heading}</h1>
-          {isAdmin ? (
-            <p className={cn(TEXT_BODY, "text-muted-foreground")}>
-              Dashboards built from your own data. Ask the assistant for a new
-              one, or write one by hand.
-            </p>
-          ) : null}
-        </div>
+        <h1 className={cn(TEXT_TITLE, "min-w-0 grow")}>{shown.heading}</h1>
         {isAdmin ? <NewLink kind="dashboards" noun="dashboard" /> : null}
       </header>
       {shown.lost ? (
@@ -120,12 +105,16 @@ function CustomDashboardIndex() {
           onChange={catalogue.search.onChange}
         />
         <TagFilter tags={tags.tags} picked={tags.picked} onPick={tags.pick} />
+        <PickedTags picked={tags.picked} onPick={tags.pick} />
         <DefinitionCount
           total={catalogue.paging.total}
           noun="dashboards"
           searching={catalogue.paging.searching}
         />
       </div>
+      {folder || tags.pending ? null : (
+        <BrowseChips owned={owned} tag={tag} counted={tags.picked} />
+      )}
       <CustomDashboardList
         dashboards={catalogue.items}
         isLoading={catalogue.isLoading}
@@ -133,15 +122,19 @@ function CustomDashboardIndex() {
         onRetry={catalogue.refetch}
         paging={catalogue.paging}
         empty={
-          tags.picked.length > 0 ? (
-            <NoTaggedDashboards onClear={() => tags.pick([])} />
-          ) : (
-            <ComingSoon
-              variant="card"
-              state="empty"
-              label={emptyLabel(shown.folder, owned, isAdmin)}
-            />
-          )
+          <DashboardsEmpty
+            owned={owned}
+            folder={folderShown(shown.folder)}
+            searching={catalogue.paging.searching}
+            tagged={tags.picked.length > 0}
+            isAdmin={isAdmin}
+            assistant={assistant}
+            onClearSearch={() => catalogue.search.onChange("")}
+            onClearFilters={() => {
+              catalogue.search.onChange("");
+              tags.pick([]);
+            }}
+          />
         }
       />
       {isAdmin && unnarrowed ? <OrphanedDashboards /> : null}

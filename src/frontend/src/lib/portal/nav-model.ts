@@ -30,7 +30,6 @@ import {
   Star,
   Ticket,
   TrendingUp,
-  User,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -79,9 +78,16 @@ export const ZONES: readonly Zone[] = [
   { id: "people", label: "People", kind: "people" },
   { id: "aicost", label: "AI & Cost", kind: "theme" },
   { id: "reports", label: "Reports", kind: "theme" },
-  { id: "custom", label: "Custom", kind: "custom" },
+  { id: "custom", label: "Dashboards", kind: "custom" },
   { id: "manage", label: "Manage", kind: "manage" },
 ];
+
+/** Zones every viewer may open: Home, their own page and Dashboards. */
+export const ZONES_FOR_EVERYONE: ReadonlySet<string> = new Set([
+  "overview",
+  "person",
+  "custom",
+]);
 
 export function zoneIsPlanned(zone: Zone, policy: InstanceNavPolicy = navPolicy()): boolean {
   const items = zoneItems(zone.id);
@@ -312,15 +318,16 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
   ],
 };
 
-const MY_DASHBOARDS: PaneItem = { id: "mine", label: "My dashboards", icon: User, unbuilt: true };
-
 export const DASHBOARD_BROWSE_PLANNED: readonly PaneItem[] = [
   { id: "starred", label: "Starred", icon: Star, unbuilt: true },
+  { id: "starter", label: "Starter", icon: Sparkles, unbuilt: true },
 ];
 
-export const HOME_DASHBOARD_GROUP: PaneGroup = {
-  label: "Dashboards",
-  items: [{ ...MY_DASHBOARDS, icon: LayoutGrid }],
+export const STARTER_DASHBOARDS: PaneItem = {
+  id: "starter-dashboards",
+  label: "Starter dashboards",
+  icon: Sparkles,
+  unbuilt: true,
 };
 
 /* ── People zone ─────────────────────────────────────────────────────── */
@@ -344,7 +351,7 @@ const FLAT_PEOPLE_ITEMS: readonly PaneItem[] = [
 
 export function peopleItemsFor(
   isFlat: boolean,
-  policy: InstanceNavPolicy = navPolicy(),
+  policy: InstanceNavPolicy = navPolicy()
 ): readonly PaneItem[] {
   const items = isFlat ? FLAT_PEOPLE_ITEMS : PEOPLE_ITEMS;
   return items

@@ -40,10 +40,8 @@ import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import {
-  belowAccountFloor,
   listsAnyAccount,
   MAX_SEARCH_CHARS,
-  MIN_SEARCH_CHARS,
   SEARCH_DEBOUNCE_MS,
   useAccountList,
 } from "@/queries/identity-resolution";
@@ -75,11 +73,6 @@ export function AccountSearchView() {
   // matched" rather than "nothing is observed". The floor comes from the shared
   // rule, or the two disagree about what counts as one character.
   const asked = debounced.trim() !== "" && lists;
-  // Reads the live field rather than the debounced one: the answer to "why is
-  // nothing happening" should not wait for the debounce to expire. Only while
-  // nothing is listed, though — for one debounce the rows are still the ones
-  // the shorter field asked for, and a notice above them contradicts them.
-  const tooShort = items.length === 0 && belowAccountFloor(query);
   // What is listed answers the term the query key carries, not the one in the
   // field, until the debounce fires AND the fetch lands. Neither emptiness below
   // is a claim about the field's own needle while that is true.
@@ -125,18 +118,15 @@ export function AccountSearchView() {
           // accepts a paste it cannot search — an id, a url, a log line — and
           // the operator gets a refusal instead of a result.
           maxLength={MAX_SEARCH_CHARS}
-          className="ps-9"
+          className={cn(
+            "ps-9",
+            loading && "pe-9 [&::-webkit-search-cancel-button]:hidden"
+          )}
         />
         {loading ? (
           <Spinner className="absolute end-3 top-1/2 size-4 -translate-y-1/2" />
         ) : null}
       </div>
-
-      {tooShort ? (
-        <p className="text-sm text-muted-foreground">
-          {t("identities.accounts.min_chars", { min: MIN_SEARCH_CHARS })}
-        </p>
-      ) : null}
 
       {search.isError ? (
         <ComingSoon
@@ -150,12 +140,8 @@ export function AccountSearchView() {
           list. The second one does not claim the tenant is empty — the service
           answers an empty list for a fold it cannot read yet, and an operator
           cannot tell that from a tenant nobody has connected. */}
-      {!loading &&
-      !tooShort &&
-      !stale &&
-      items.length === 0 &&
-      !search.isError ? (
-        <Empty className="rounded-lg border">
+      {!loading && !stale && items.length === 0 && !search.isError ? (
+        <Empty>
           <EmptyHeader>
             {asked ? null : (
               <EmptyMedia variant="icon">

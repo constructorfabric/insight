@@ -18,7 +18,7 @@ vi.mock("@/queries/identity-me", async (importOriginal) => ({
 }));
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
@@ -59,76 +59,104 @@ beforeEach(() => {
   access.isAdmin = true;
 });
 
+const board = (id: string, access = "viewer") => ({
+  id,
+  name: id,
+  owner_person_id: "p1",
+  access,
+  updated_at: "2026-09-01T00:00:00Z",
+  visibility: "everyone",
+  title: `Board ${id}`,
+  tags: [],
+});
+
+const listing = (items: ReturnType<typeof board>[]) =>
+  HttpResponse.json({ items, total: items.length, limit: 3, offset: 0 });
+
 describe("Home dashboards", () => {
+  const region = () =>
+    screen.getByRole("region", { name: "Recent dashboards" });
+
   it("does not request dashboards when navigation excludes them", () => {
     access.dashboards = false;
     home();
-    expect(screen.queryByRole("region", { name: "Dashboards" })).toBeNull();
+    expect(screen.queryByRole("region")).toBeNull();
   });
 
-  it("shows at most three dashboards with existing open, menu and creation actions", async () => {
+  it("asks the service for the three dashboards the viewer can see changed most recently, in its order", async () => {
+    const asked: URLSearchParams[] = [];
     server.use(
-      http.get(`${base}/dashboards`, () =>
-        HttpResponse.json({
-          items: ["one", "two", "three", "four"].map((id) => ({
-            id,
-            name: id,
-            owner_person_id: null,
-            access: "ownerless",
-          })),
-          total: 4,
-          limit: 50,
-          offset: 0,
-        })
-      ),
-      http.get(`${base}/dashboards/:id`, ({ params }) =>
-        HttpResponse.json({
-          id: params.id,
-          name: params.id,
-          body: { title: `Board ${params.id}`, widgets: [] },
-          tags: [],
-          owner_person_id: null,
-          access: "ownerless",
-          folders: [],
-        })
-      )
+      http.get(`${base}/dashboards`, ({ request }) => {
+        asked.push(new URL(request.url).searchParams);
+        return listing([board("two"), board("three"), board("four")]);
+      })
     );
     home();
-    const section = screen.getByRole("region", { name: "Dashboards" });
-    await within(section).findByText("Board three");
-    expect(within(section).getAllByRole("listitem")).toHaveLength(3);
-    expect(within(section).queryByText("Board four")).toBeNull();
+    await within(
+      await screen.findByRole("region", { name: "Recent dashboards" })
+    ).findByText("Board two");
+    const shown = within(region())
+      .getAllByRole("listitem")
+      .map((item) =>
+        within(item)
+          .getByRole("link", { name: /^Open / })
+          .getAttribute("href")
+      );
+    expect(shown).toEqual([
+      "/portal/custom/two",
+      "/portal/custom/three",
+      "/portal/custom/four",
+    ]);
     expect(
-      within(section).getByRole("link", { name: "Open one" })
-    ).toHaveAttribute("href", "/portal/custom/one");
-    expect(
-      within(section).getByRole("button", { name: "More for one" })
-    ).toBeInTheDocument();
-    expect(
-      within(section).getByRole("button", { name: /New dashboard/i })
-    ).toHaveAttribute("href", "/portal/custom/new/dashboards");
-    expect(
-      within(section).getByRole("button", { name: "All dashboards" })
-    ).toHaveAttribute("href", "/portal/custom");
-    expect(
-      screen.queryByText(/starter|private|shared with|recent/i)
-    ).toBeNull();
+      asked.map((params) => [
+        params.get("owned"),
+        params.get("sort"),
+        params.get("limit"),
+      ])
+    ).toEqual([[null, "recent", "3"]]);
   });
 
-  it("keeps creation available when no dashboards exist", async () => {
+  it.each([
+    ["an administrator", true, true],
+    ["a member", false, false],
+  ])(
+    "offers creation to %s beside the dashboards shared with them",
+    async (_case, isAdmin, offered) => {
+      access.isAdmin = isAdmin;
+      server.use(http.get(`${base}/dashboards`, () => listing([board("two")])));
+      home();
+      await within(
+        await screen.findByRole("region", { name: "Recent dashboards" })
+      ).findByText("Board two");
+      expect(
+        within(region()).queryByRole("button", { name: /New dashboard/i }) !==
+          null,
+        `case: ${_case}`
+      ).toBe(offered);
+    }
+  );
+
+  it("leaves the section out for a viewer with no dashboard to open", async () => {
+    let answered = false;
     server.use(
-      http.get(`${base}/dashboards`, () =>
-        HttpResponse.json({ items: [], total: 0, limit: 50, offset: 0 })
-      )
+      http.get(`${base}/dashboards`, () => {
+        answered = true;
+        return listing([]);
+      })
     );
     home();
-    expect(await screen.findByText("No dashboards yet.")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /New dashboard/i })
-    ).toBeInTheDocument();
+    await waitFor(() => expect(answered).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("region")).toBeNull();
   });
 
-  it("retries a failed listing without blocking the creation link", async () => {
+  it("draws nothing while the listing loads", () => {
+    server.use(http.get(`${base}/dashboards`, () => new Promise(() => {})));
+    home();
+    expect(screen.queryByRole("region")).toBeNull();
+  });
+
+  it("retries a failed listing", async () => {
     server.use(
       http.get(
         `${base}/dashboards`,
@@ -139,39 +167,8 @@ describe("Home dashboards", () => {
     expect(
       await screen.findByText("Couldn't load dashboards.")
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /New dashboard/i })
-    ).toBeInTheDocument();
-    server.use(
-      http.get(`${base}/dashboards`, () =>
-        HttpResponse.json({ items: [], total: 0, limit: 50, offset: 0 })
-      )
-    );
+    server.use(http.get(`${base}/dashboards`, () => listing([board("two")])));
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByText("No dashboards yet.")).toBeInTheDocument();
-  });
-
-  it("keeps creation available while the listing loads", () => {
-    server.use(http.get(`${base}/dashboards`, () => new Promise(() => {})));
-    home();
-    expect(screen.getByRole("status")).toHaveTextContent("Loading dashboards");
-    expect(
-      screen.getByRole("button", { name: /New dashboard/i })
-    ).toBeInTheDocument();
-  });
-
-  it("offers a member the dashboards shared with them and nothing to create", async () => {
-    access.isAdmin = false;
-    server.use(
-      http.get(`${base}/dashboards`, () =>
-        HttpResponse.json({ items: [], total: 0, limit: 50, offset: 0 })
-      )
-    );
-    home();
-    expect(await screen.findByText("No dashboards yet.")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "All dashboards" })
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /New dashboard/i })).toBeNull();
+    expect(await screen.findByText("Board two")).toBeInTheDocument();
   });
 });

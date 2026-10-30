@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use super::AppState;
 use super::error::PersonSearchError;
-use super::gate::{require_admin, require_caller};
+use super::gate::{holds_admin, require_caller};
 use super::listing::{self, CursorRejected};
 use crate::infra::db::people_listing::{
     self, After, ListQuery, PeopleListingError, PersonListRow, Restrict, VisibleTo,
@@ -20,11 +20,15 @@ use crate::infra::db::people_listing::{
 
 const DEFAULT_LIMIT: u64 = 50;
 const MAX_LIMIT: u64 = 500;
+/// The most people one `ids` lookup names.
+const MAX_IDS: usize = 200;
 
 #[derive(Debug, Deserialize)]
 pub struct PeopleParams {
     pub visibility: Option<String>,
     pub q: Option<String>,
+    /// Comma-separated person ids, any one of whom a row may be.
+    pub ids: Option<String>,
     pub limit: Option<i64>,
     pub cursor: Option<String>,
 }
@@ -77,6 +81,16 @@ pub struct PeopleListItemResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for PeopleListItemResponse {}
 
+impl PeopleListItemResponse {
+    fn directory_entry(self) -> Self {
+        Self {
+            attributes: BTreeMap::new(),
+            manager_person_id: None,
+            ..self
+        }
+    }
+}
+
 impl From<PersonListRow> for PeopleListItemResponse {
     fn from(person: PersonListRow) -> Self {
         Self {
@@ -107,14 +121,18 @@ pub async fn list_people(
     let caller = require_caller(&ctx)?;
     let tenant = ctx.subject_tenant_id();
     let visibility = PeopleVisibility::parse(params.visibility.as_deref())?;
-    if visibility == PeopleVisibility::Tenant {
-        require_admin(&state.db, &ctx).await?;
-    }
+
+    // INVARIANT: outside an administrator's view the tenant roster is a
+    // directory — names and contact, not attributes or reporting lines,
+    // which the caller's own visibility still governs.
+    let directory_only =
+        visibility == PeopleVisibility::Tenant && !holds_admin(&state.db, &ctx, caller).await?;
 
     let terms = search_terms(params.q.as_deref())?;
+    let any_of = person_ids(params.ids.as_deref())?;
     let (named, values) = listing::partition_person_terms(&terms);
     let limit = listing::clamp_limit(params.limit, DEFAULT_LIMIT, MAX_LIMIT);
-    let query = cursor_query(visibility, caller, &terms.join(" "));
+    let query = cursor_query(visibility, caller, &cursor_terms(&terms, &any_of));
     let resume = resume_from(params.cursor.as_deref(), tenant, &query)?;
     let restrict = if visibility == PeopleVisibility::Caller {
         caller_restriction(&state, caller)
@@ -132,6 +150,7 @@ pub async fn list_people(
                 org_chart_source_type: &state.config.org_chart_source_type,
                 terms: &values,
                 person_ids: &named,
+                any_of: &any_of,
                 restrict,
                 after: resume.as_ref().map(|key| After {
                     order_key: &key.order_key,
@@ -154,7 +173,17 @@ pub async fn list_people(
             CanonicalError::internal("failed to list people").create()
         })?;
 
-    let items = rows.into_iter().map(PeopleListItemResponse::from).collect();
+    let items = rows
+        .into_iter()
+        .map(PeopleListItemResponse::from)
+        .map(|item| {
+            if directory_only {
+                item.directory_entry()
+            } else {
+                item
+            }
+        })
+        .collect();
     Ok(Json(PeopleListResponse { items, next_cursor }))
 }
 
@@ -173,6 +202,7 @@ pub async fn get_person(
             org_chart_source_type: &state.config.org_chart_source_type,
             terms: &[],
             person_ids: &person_ids,
+            any_of: &[],
             restrict: caller_restriction(&state, caller),
             after: None,
             limit: 1,
@@ -197,6 +227,32 @@ fn caller_restriction(state: &AppState, caller: Uuid) -> Restrict<'_> {
             policy: state.config.visibility_policy,
         }),
     }
+}
+
+fn person_ids(raw: Option<&str>) -> Result<Vec<Uuid>, CanonicalError> {
+    let Some(raw) = raw.filter(|raw| !raw.trim().is_empty()) else {
+        return Ok(Vec::new());
+    };
+
+    let ids = raw
+        .split(',')
+        .map(|id| Uuid::parse_str(id.trim()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| invalid("ids", "must be comma-separated person ids"))?;
+    if ids.len() > MAX_IDS {
+        return Err(invalid(
+            "ids",
+            &format!("at most {MAX_IDS} ids are accepted"),
+        ));
+    }
+
+    Ok(ids)
+}
+
+fn cursor_terms(terms: &[String], any_of: &[Uuid]) -> String {
+    let ids: Vec<String> = any_of.iter().map(Uuid::to_string).collect();
+
+    format!("{}|{}", terms.join(" "), ids.join(","))
 }
 
 fn search_terms(q: Option<&str>) -> Result<Vec<String>, CanonicalError> {
@@ -230,6 +286,26 @@ fn read_error(error: &PeopleListingError) -> CanonicalError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ids_are_read_as_a_comma_separated_list_and_refused_when_malformed_or_too_many() {
+        let first = Uuid::from_u128(1);
+        let second = Uuid::from_u128(2);
+        let too_many = vec![first.to_string(); MAX_IDS + 1].join(",");
+
+        assert!(person_ids(None).is_ok_and(|ids| ids.is_empty()));
+        assert!(person_ids(Some(" ")).is_ok_and(|ids| ids.is_empty()));
+        assert!(
+            person_ids(Some(&format!("{first}, {second}")))
+                .is_ok_and(|ids| ids == vec![first, second])
+        );
+        for refused in ["not-an-id", &format!("{first},"), &too_many] {
+            assert!(
+                person_ids(Some(refused)).is_err(),
+                "should refuse: {refused:?}"
+            );
+        }
+    }
 
     #[test]
     fn visibility_defaults_to_caller_and_rejects_unknown_values() {
