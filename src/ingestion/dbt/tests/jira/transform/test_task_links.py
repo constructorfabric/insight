@@ -1019,7 +1019,6 @@ def test_a_linked_issue_outside_the_sync_window_resolves_through_the_census(scen
     assert scenario.round_trip_holds()
 
 
-@phased
 def test_a_key_the_census_names_later_reaches_the_journal_without_a_full_refresh(scenario: Scenario) -> None:
     """The journal derives only the issues bronze moved. When the census later
     names the id of a key a link still holds, the owning issue has not moved,
@@ -1032,10 +1031,10 @@ def test_a_key_the_census_names_later_reaches_the_journal_without_a_full_refresh
             event("TST-1", 102, "2026-01-07T10:00:00", [_removed("ARC-7", "relates to")], jira_id="1001"),
         ],
     )
-    yield Build(LINKS_SELECTOR)
+    scenario.build(LINKS_SELECTOR)
     assert scenario.changelog_states(LINKS, issue="TST-1") == [["ARC-7"], []]
 
     scenario.warehouse.insert("bronze_jira.jira_issue_census", [census_entry("ARC-7", jira_id="9007")])
-    yield Build(LINKS_SELECTOR, full_refresh=False)
+    scenario.build(LINKS_SELECTOR, full_refresh=False)
 
     assert scenario.changelog_states(LINKS, issue="TST-1") == [["9007"], []]

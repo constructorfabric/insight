@@ -131,7 +131,8 @@ items.
 to itself and seeds and builds as it likes. These scenarios need it:
 
 - the scenario rewrites a whole bronze table half way through or needs
-  incompatible build phases or a dbt call other than `build`;
+  incompatible build phases or a dbt call other than `build`, or writes through
+  `warehouse.insert` or `warehouse.execute` rather than `scenario.seed`;
 - it expects a build to FAIL;
 - its round trip is meant NOT to reconcile. `invariants_hold()` and
   `round_trip_holds()` ask about the whole warehouse, so such a scenario would
