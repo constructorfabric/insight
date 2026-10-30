@@ -1,5 +1,7 @@
 //! Storing, reading and removing definitions, whatever kind they are.
 
+use std::collections::HashMap;
+
 use serde_json::Value;
 use thiserror::Error;
 
@@ -9,7 +11,7 @@ use crate::domain::datasets::{self, Datasets};
 use crate::domain::definition::arriving::Arriving;
 use crate::domain::definition::{
     Change, Definition, DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError,
-    LibraryKind, ListedPage, Page, StoredDefinition,
+    LibraryEntry, LibraryKind, LibraryPage, ListedPage, Page, StoredDefinition,
 };
 use crate::domain::folders::DefinitionStore;
 use crate::domain::kinds::dashboard::Item;
@@ -139,6 +141,39 @@ impl<'a> Surfaces<'a> {
     ) -> Result<ListedPage, CustomError> {
         self.definitions
             .page(kind, needle.trim(), page)
+            .await
+            .map_err(CustomError::Store)
+    }
+
+    /// The same page as [`Surfaces::page`], each definition with its body and
+    /// when it last changed.
+    pub(crate) async fn page_entries(
+        &self,
+        kind: LibraryKind,
+        needle: &str,
+        page: Page,
+    ) -> Result<LibraryPage, CustomError> {
+        self.definitions
+            .page_entries(kind, needle.trim(), page)
+            .await
+            .map_err(CustomError::Store)
+    }
+
+    /// The name of each metric these widgets draw that still exists, by id,
+    /// read in one go for the whole page.
+    pub(crate) async fn drawn_metric_names(
+        &self,
+        widgets: &[LibraryEntry],
+    ) -> Result<HashMap<String, String>, CustomError> {
+        let mut drawn: Vec<&str> = widgets
+            .iter()
+            .filter_map(|widget| kinds::widget::drawn_metric(&widget.body))
+            .collect();
+        drawn.sort_unstable();
+        drawn.dedup();
+
+        self.definitions
+            .names_of(LibraryKind::Metric, &drawn)
             .await
             .map_err(CustomError::Store)
     }

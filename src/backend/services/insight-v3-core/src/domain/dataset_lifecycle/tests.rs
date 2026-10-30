@@ -252,7 +252,7 @@ impl Datasets for LosesTheDataset {
         &self,
         needle: &str,
         page: crate::domain::definition::Page,
-    ) -> Result<crate::domain::definition::NamePage, DatasetStoreError> {
+    ) -> Result<crate::domain::datasets::DatasetPage, DatasetStoreError> {
         self.0.page(needle, page).await
     }
 
@@ -308,7 +308,7 @@ impl Datasets for StopsAnswering {
         &self,
         needle: &str,
         page: crate::domain::definition::Page,
-    ) -> Result<crate::domain::definition::NamePage, DatasetStoreError> {
+    ) -> Result<crate::domain::datasets::DatasetPage, DatasetStoreError> {
         self.0.page(needle, page).await
     }
 

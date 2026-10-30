@@ -1883,7 +1883,7 @@
                 }
               }
             },
-            "description": "One page of ids and names, dashboards with their owner and the caller's access, and how many match"
+            "description": "One page of ids and names, metrics and widgets with their body and last change, widgets with the name of the metric they draw, dashboards with their owner and the caller's access, and how many match"
           },
           "400": {
             "content": {
@@ -3162,7 +3162,7 @@
                 }
               }
             },
-            "description": "One page of names, and how many match"
+            "description": "One page of names, each with its title, field count and last change, and how many match"
           },
           "400": {
             "content": {
@@ -4521,7 +4521,7 @@
                 }
               }
             },
-            "description": "One page of ids and names, dashboards with their owner and the caller's access, and how many match"
+            "description": "One page of ids and names, metrics and widgets with their body and last change, widgets with the name of the metric they draw, dashboards with their owner and the caller's access, and how many match"
           },
           "400": {
             "content": {
@@ -5814,7 +5814,7 @@
                 }
               }
             },
-            "description": "One page of ids and names, dashboards with their owner and the caller's access, and how many match"
+            "description": "One page of ids and names, metrics and widgets with their body and last change, widgets with the name of the metric they draw, dashboards with their owner and the caller's access, and how many match"
           },
           "400": {
             "content": {

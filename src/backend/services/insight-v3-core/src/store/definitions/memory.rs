@@ -3,7 +3,7 @@
 //! It keeps definitions in a map, so a test that stores one and reads it back
 //! asserts on behaviour rather than on a database's wire protocol.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -15,7 +15,7 @@ use crate::domain::access::{
 };
 use crate::domain::definition::{
     Change, DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Definitions,
-    LibraryKind, Listed, ListedPage, Lookup, Page, StoredDefinition,
+    LibraryEntry, LibraryKind, LibraryPage, Listed, ListedPage, Lookup, Page, StoredDefinition,
 };
 use crate::domain::folders::{
     Folder, FolderError, FolderFilter, FolderId, FolderList, FolderName, FolderSummary, Folders,
@@ -305,9 +305,9 @@ impl Stored {
     }
 
     /// Ordered by name, then id, as the store's page is.
-    fn matching(&self, kind: DefinitionKind, needle: &str) -> Vec<Listed> {
+    fn matching(&self, kind: DefinitionKind, needle: &str) -> Vec<LibraryEntry> {
         let needle = needle.to_lowercase();
-        let mut matched: Vec<Listed> = self
+        let mut matched: Vec<LibraryEntry> = self
             .definitions
             .iter()
             .filter(|((table, _), _)| *table == kind.table())
@@ -315,9 +315,11 @@ impl Stored {
                 stored.name.to_lowercase().contains(&needle)
                     || stored.body.to_string().to_lowercase().contains(&needle)
             })
-            .map(|((_, id), stored)| Listed {
+            .map(|((_, id), stored)| LibraryEntry {
                 id: id.clone(),
                 name: stored.name.clone(),
+                body: stored.body.clone(),
+                updated_at: stored.updated_at,
             })
             .collect();
         matched.sort_by(|left, right| (&left.name, &left.id).cmp(&(&right.name, &right.id)));
@@ -326,7 +328,7 @@ impl Stored {
     }
 }
 
-fn paged(matched: Vec<Listed>, page: Page) -> ListedPage {
+fn paged(matched: Vec<LibraryEntry>, page: Page) -> LibraryPage {
     let total = matched.len() as u64;
     let items = matched
         .into_iter()
@@ -334,7 +336,7 @@ fn paged(matched: Vec<Listed>, page: Page) -> ListedPage {
         .take(usize::try_from(page.limit()).unwrap_or(usize::MAX))
         .collect();
 
-    ListedPage { items, total }
+    LibraryPage { items, total }
 }
 
 #[derive(Debug, Default)]
@@ -546,7 +548,47 @@ impl Definitions for MemoryDefinitions {
         needle: &str,
         page: Page,
     ) -> Result<ListedPage, DefinitionStoreError> {
+        let found = paged(self.lock().matching(kind.kind(), needle), page);
+        let items = found
+            .items
+            .into_iter()
+            .map(|entry| Listed {
+                id: entry.id,
+                name: entry.name,
+            })
+            .collect();
+
+        Ok(ListedPage {
+            items,
+            total: found.total,
+        })
+    }
+
+    async fn page_entries(
+        &self,
+        kind: LibraryKind,
+        needle: &str,
+        page: Page,
+    ) -> Result<LibraryPage, DefinitionStoreError> {
         Ok(paged(self.lock().matching(kind.kind(), needle), page))
+    }
+
+    async fn names_of(
+        &self,
+        kind: LibraryKind,
+        ids: &[&str],
+    ) -> Result<HashMap<String, String>, DefinitionStoreError> {
+        let stored = self.lock();
+
+        Ok(ids
+            .iter()
+            .filter_map(|id| {
+                stored
+                    .definitions
+                    .get(&(kind.kind().table(), (*id).to_owned()))
+                    .map(|found| ((*id).to_owned(), found.name.clone()))
+            })
+            .collect())
     }
 
     async fn delete(

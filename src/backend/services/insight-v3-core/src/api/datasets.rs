@@ -7,6 +7,7 @@ use axum::extract::{Extension, Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
+use chrono::SecondsFormat;
 use serde::{Deserialize, Serialize};
 use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
@@ -17,7 +18,7 @@ use super::errors::ApiErrors;
 use super::tags::tags_in;
 use crate::domain::dataset_lifecycle::{Broken, DatasetChangeError, Removal};
 use crate::domain::dataset_records::PreviewError;
-use crate::domain::datasets::Refused;
+use crate::domain::datasets::{Dataset, Refused};
 use crate::domain::definition::{DefinitionId, MAX_PAGE_LIMIT, Page};
 use crate::domain::kinds::dataset::state::DatasetState;
 use crate::domain::tags::TagError;
@@ -66,8 +67,43 @@ struct DatasetResponse {
 #[derive(Debug, Serialize, ToSchema)]
 struct DatasetNames {
     names: Vec<String>,
+    /// Each of `names`, in the same order, as the catalogue draws its card.
+    items: Vec<DatasetItem>,
     /// Every match, not the page - so a reader can say what is behind it.
     total: u64,
+}
+
+/// One dataset as the catalogue shows it.
+#[derive(Debug, Serialize, ToSchema)]
+struct DatasetItem {
+    name: String,
+    /// The declaration's title, or null when it has none.
+    title: Option<String>,
+    /// How many fields the declaration declares.
+    fields: usize,
+    /// When its row was last written, UTC to the millisecond.
+    updated_at: String,
+}
+
+impl DatasetItem {
+    fn of(dataset: &Dataset) -> Self {
+        let declaration = &dataset.declaration;
+
+        Self {
+            name: dataset.name.as_str().to_owned(),
+            title: declaration
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            fields: declaration
+                .get("fields")
+                .and_then(serde_json::Value::as_array)
+                .map_or(0, Vec::len),
+            updated_at: dataset
+                .updated_at
+                .to_rfc3339_opts(SecondsFormat::Millis, true),
+        }
+    }
 }
 
 /// What a dataset holds, as a reader is shown it: one page of records, how
@@ -196,7 +232,10 @@ pub(crate) fn register_routes(
             &format!("Page size, 1 to {MAX_PAGE_LIMIT}"),
         ))
         .param(query_param("offset", "integer", "Names to skip"))
-        .json_response(StatusCode::OK, "One page of names, and how many match")
+        .json_response(
+            StatusCode::OK,
+            "One page of names, each with its title, field count and last change, and how many match",
+        )
         .error_400(openapi)
         .error_403(openapi)
         .error_500(openapi)
@@ -309,8 +348,12 @@ async fn list_datasets(
         .await
         .map_err(DatasetApiError::dataset_store_error)?;
 
+    let items: Vec<DatasetItem> = found.datasets.iter().map(DatasetItem::of).collect();
+    let names = items.iter().map(|item| item.name.clone()).collect();
+
     Ok(Json(DatasetNames {
-        names: found.names,
+        names,
+        items,
         total: found.total,
     })
     .into_response())

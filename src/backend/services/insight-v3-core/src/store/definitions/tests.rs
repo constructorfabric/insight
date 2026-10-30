@@ -43,6 +43,32 @@ fn a_replace_updates_by_id_and_never_inserts() {
 }
 
 #[test]
+fn names_are_read_in_one_statement_binding_every_id() {
+    let statement = names_statement(LibraryKind::Metric, &["first", "second"]);
+
+    assert_eq!(
+        statement.sql,
+        "SELECT id, name FROM metrics WHERE id IN (?, ?)"
+    );
+    assert_eq!(bound(&statement), ["'first'", "'second'"]);
+}
+
+#[test]
+fn a_catalogue_page_reads_each_body_and_its_last_change() {
+    let page = Page::parse(Some(2), Some(4)).unwrap_or_else(|error| panic!("{error}"));
+    let statement = page_statement(PAGE_ENTRIES, LibraryKind::Widget, "%day%", page);
+
+    assert!(
+        statement
+            .sql
+            .starts_with("SELECT id, name, body, updated_at FROM widgets"),
+        "{}",
+        statement.sql
+    );
+    assert_eq!(bound(&statement), ["'%day%'", "'%day%'", "2", "4"]);
+}
+
+#[test]
 fn a_delete_is_by_id_in_the_kind_table() {
     assert_eq!(
         sql(DELETE_ONE, DefinitionKind::Dashboard),
