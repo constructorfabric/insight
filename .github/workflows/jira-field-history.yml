@@ -33,6 +33,7 @@ on:
       - src/ingestion/scripts/bootstrap-db/**
       - .github/workflows/jira-field-history.yml
       - .github/workflows/scripts/start-clickhouse.sh
+      - .github/workflows/scripts/db-footprint.sh
   push:
     branches: [main]
     paths:
@@ -50,6 +51,7 @@ on:
       - src/ingestion/scripts/bootstrap-db/**
       - .github/workflows/jira-field-history.yml
       - .github/workflows/scripts/start-clickhouse.sh
+      - .github/workflows/scripts/db-footprint.sh
   workflow_dispatch:
 
 concurrency:
@@ -167,6 +169,10 @@ jobs:
           # interpreter that runs pytest — so the venv's pytest is what pins the
           # adapter, and no `dbt` needs to be on PATH.
           "${VENV}/bin/pytest" -q --durations=10
+
+      - name: ClickHouse footprint
+        if: always()
+        run: .github/workflows/scripts/db-footprint.sh "${CLICKHOUSE_CONTAINER}" /var/lib/clickhouse
 
       - name: ClickHouse logs
         if: failure()

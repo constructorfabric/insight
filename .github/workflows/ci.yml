@@ -22,6 +22,7 @@ on:
       - ".github/workflows/ci.yml"
       # The rust matrix boots live_ch entries' ClickHouse through this script.
       - ".github/workflows/scripts/start-clickhouse.sh"
+      - ".github/workflows/scripts/db-footprint.sh"
       # The ingestion-scripts component root; also holds connectors-config.yaml
       # and pins.env, inputs to the connector wiring guard and the live ClickHouse.
       - "src/ingestion/scripts/**"
@@ -45,6 +46,7 @@ on:
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
       - ".github/workflows/scripts/start-clickhouse.sh"
+      - ".github/workflows/scripts/db-footprint.sh"
       - "src/ingestion/scripts/**"
       - "src/ingestion/silver/_shared/**"
       - "src/ingestion/tests/connectors/**"
@@ -294,7 +296,10 @@ jobs:
         if: ${{ matrix.entry.live_db && (matrix.entry.cover || matrix.entry.test) }}
         run: |
           set -euo pipefail
+          # Data on tmpfs: the live tests start from an empty server and never
+          # need it back, and InnoDB fsyncs every commit on a disk volume.
           docker run -d --name insight-maria \
+            --tmpfs /var/lib/mysql:rw,size=2g \
             -e MARIADB_DATABASE=${{ matrix.entry.live_db_name }} \
             -e MARIADB_USER=insight -e MARIADB_PASSWORD=insight \
             -e MARIADB_ROOT_PASSWORD=root \
@@ -416,6 +421,16 @@ jobs:
           INTEGRATION_TESTS_CLICKHOUSE_USER: ${{ matrix.entry.live_ch && 'insight' || '' }}
           INTEGRATION_TESTS_CLICKHOUSE_PASSWORD: ${{ matrix.entry.live_ch && 'insight' || '' }}
         run: ${{ matrix.entry.live_test }}
+
+      - name: DB footprint (${{ matrix.entry.name }})
+        if: ${{ always() && (matrix.entry.live_db || matrix.entry.live_ch) && (matrix.entry.cover || matrix.entry.test) }}
+        run: |
+          if [ "${{ matrix.entry.live_db }}" = "true" ]; then
+            .github/workflows/scripts/db-footprint.sh insight-maria /var/lib/mysql
+          fi
+          if [ "${{ matrix.entry.live_ch }}" = "true" ]; then
+            .github/workflows/scripts/db-footprint.sh insight-clickhouse /var/lib/clickhouse
+          fi
 
       - name: Upload Cobertura
         if: ${{ matrix.entry.cover }}

@@ -46,6 +46,7 @@ on:
       - ".github/workflows/warm-upgrade.yml"
       - ".github/workflows/scripts/warm-upgrade-sim.sh"
       - ".github/workflows/scripts/start-clickhouse.sh"
+      - ".github/workflows/scripts/db-footprint.sh"
   # Unfiltered on main: the paths filter sees at most 300 changed files, and
   # the merged tree is the one an installation upgrades to.
   push:
@@ -134,6 +135,10 @@ jobs:
 
       - name: Install the base release, then deploy this tree onto it
         run: .github/workflows/scripts/warm-upgrade-sim.sh
+
+      - name: ClickHouse footprint
+        if: always()
+        run: .github/workflows/scripts/db-footprint.sh "${CLICKHOUSE_CONTAINER}" /var/lib/clickhouse
 
       - name: ClickHouse logs on failure
         if: failure()

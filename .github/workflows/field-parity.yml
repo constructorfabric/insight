@@ -38,12 +38,14 @@ on:
       - src/ingestion/**
       - .github/workflows/field-parity.yml
       - .github/workflows/scripts/start-clickhouse.sh
+      - .github/workflows/scripts/db-footprint.sh
   push:
     branches: [main]
     paths:
       - src/ingestion/**
       - .github/workflows/field-parity.yml
       - .github/workflows/scripts/start-clickhouse.sh
+      - .github/workflows/scripts/db-footprint.sh
   workflow_dispatch:
 
 concurrency:
@@ -125,6 +127,10 @@ jobs:
             echo "::error title=Field parity::A staging contributor does not line up with its silver union target. ClickHouse unions branches BY POSITION and widens types silently, so this is a data-correctness gate, not style."
             exit 1
           fi
+
+      - name: ClickHouse footprint
+        if: always()
+        run: .github/workflows/scripts/db-footprint.sh "${CLICKHOUSE_CONTAINER}" /var/lib/clickhouse
 
       - name: ClickHouse logs
         if: failure()

@@ -22,6 +22,7 @@ on:
       - src/ingestion/scripts/dbt_profiles.py
       - .github/workflows/youtrack-transform.yml
       - .github/workflows/scripts/start-clickhouse.sh
+      - .github/workflows/scripts/db-footprint.sh
   push:
     branches: [main]
     paths:
@@ -41,6 +42,7 @@ on:
       - src/ingestion/scripts/dbt_profiles.py
       - .github/workflows/youtrack-transform.yml
       - .github/workflows/scripts/start-clickhouse.sh
+      - .github/workflows/scripts/db-footprint.sh
   workflow_dispatch:
 
 concurrency:
@@ -104,6 +106,10 @@ jobs:
         run: |
           set -euo pipefail
           "${VENV}/bin/pytest" -q --durations=10
+
+      - name: ClickHouse footprint
+        if: always()
+        run: .github/workflows/scripts/db-footprint.sh "${CLICKHOUSE_CONTAINER}" /var/lib/clickhouse
 
       - name: ClickHouse logs
         if: failure()

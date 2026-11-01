@@ -26,6 +26,7 @@ on:
       - src/ingestion/scripts/bootstrap-db/pins.env
       - .github/workflows/dbt-cold-start.yml
       - .github/workflows/scripts/start-clickhouse.sh
+      - .github/workflows/scripts/db-footprint.sh
   push:
     branches: [main]
     paths:
@@ -39,6 +40,7 @@ on:
       - src/ingestion/scripts/bootstrap-db/pins.env
       - .github/workflows/dbt-cold-start.yml
       - .github/workflows/scripts/start-clickhouse.sh
+      - .github/workflows/scripts/db-footprint.sh
   workflow_dispatch:
 
 concurrency:
@@ -97,6 +99,10 @@ jobs:
 
       - name: Cold-start tests
         run: src/ingestion/scripts/bootstrap-db/.venv/bin/pytest -q src/ingestion/dbt/tests/cold_start
+
+      - name: ClickHouse footprint
+        if: always()
+        run: .github/workflows/scripts/db-footprint.sh "${CLICKHOUSE_CONTAINER}" /var/lib/clickhouse
 
       - name: ClickHouse logs
         if: failure()
