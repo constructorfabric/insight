@@ -2,10 +2,10 @@ import { Layers, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { CountBadge, ItemBadge, ItemButton } from "@/components/portal/pane-nav";
+import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -105,7 +105,7 @@ function DirectionsGroup() {
   const directions = visibleDirections(showPlanned);
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Directions</SidebarGroupLabel>
+      <PaneGroupLabel>Directions</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {directions.map((d) => (
@@ -156,7 +156,7 @@ function AiCostGroup() {
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>AI &amp; Cost</SidebarGroupLabel>
+      <PaneGroupLabel>AI &amp; Cost</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {zoneSections("aicost").map((group, i) =>

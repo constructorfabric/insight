@@ -184,7 +184,7 @@ function VisitsChart({ days }: { days: UsageDay[] }) {
           axisLine={false}
         />
         <ChartTooltip content={<ChartTooltipContent />} />
-        <ChartBar dataKey="visits" fill="var(--color-visits)" radius={[2, 2, 0, 0]} />
+        <ChartBar dataKey="visits" fill="var(--color-visits)" />
       </BarChart>
     </ChartContainer>
   );

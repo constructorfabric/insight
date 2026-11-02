@@ -11,6 +11,7 @@ mod visibility;
 #[cfg(test)]
 pub(crate) mod memory;
 
+use std::collections::HashMap;
 use std::fmt;
 
 use async_trait::async_trait;
@@ -23,7 +24,7 @@ use sea_orm::{
 use crate::domain::access::Caller;
 use crate::domain::definition::{
     Change, DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Definitions,
-    LibraryKind, Listed, ListedPage, Lookup, Page, StoredDefinition,
+    LibraryEntry, LibraryKind, LibraryPage, Listed, ListedPage, Lookup, Page, StoredDefinition,
 };
 use crate::store::like_escaped;
 
@@ -58,10 +59,16 @@ const SELECT_IDS: &str = "SELECT id FROM {table} ORDER BY id";
 /// No ESCAPE clause: backslash is already the default LIKE escape here, and
 /// spelling it out needs a lone backslash in a string literal, which MariaDB
 /// reads as escaping the closing quote (error 1064).
-const PAGE_LISTED: &str = "SELECT id, name FROM {table}
+// INVARIANT: one search and order for every page of a library, so each reader and `COUNT_MATCHES` agree on what a page holds.
+const PAGE: &str = "SELECT {columns} FROM {table}
 WHERE name LIKE ? OR body LIKE ?
 ORDER BY name, id
 LIMIT ? OFFSET ?";
+
+const LISTED_COLUMNS: &str = "id, name";
+const ENTRY_COLUMNS: &str = "id, name, body, updated_at";
+
+const NAMES_OF: &str = "SELECT id, name FROM {table} WHERE id IN ({ids})";
 
 const COUNT_MATCHES: &str = "SELECT COUNT(*) AS total FROM {table}
 WHERE name LIKE ? OR body LIKE ?";
@@ -70,6 +77,37 @@ WHERE name LIKE ? OR body LIKE ?";
 /// of three literals — never anything a request carries. Every value is bound.
 fn sql(template: &str, kind: DefinitionKind) -> String {
     template.replace("{table}", kind.table())
+}
+
+/// One read of the names of `ids`, each bound rather than written into it.
+fn names_statement(kind: LibraryKind, ids: &[&str]) -> Statement {
+    let marks = vec!["?"; ids.len()].join(", ");
+    let template = NAMES_OF.replace("{ids}", &marks);
+    let values: Vec<sea_orm::Value> = ids.iter().map(|id| (*id).into()).collect();
+
+    Statement::from_sql_and_values(DbBackend::MySql, sql(&template, kind.kind()), values)
+}
+
+fn like_pattern(needle: &str) -> String {
+    format!("%{}%", like_escaped(needle))
+}
+
+/// One page of `template`'s rows matching `pattern` in a name or a body.
+fn page_sql(columns: &str, kind: DefinitionKind) -> String {
+    sql(&PAGE.replace("{columns}", columns), kind)
+}
+
+fn page_statement(columns: &str, kind: LibraryKind, pattern: &str, page: Page) -> Statement {
+    Statement::from_sql_and_values(
+        DbBackend::MySql,
+        page_sql(columns, kind.kind()),
+        [
+            pattern.into(),
+            pattern.into(),
+            page.limit().into(),
+            page.offset().into(),
+        ],
+    )
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -101,6 +139,25 @@ impl ListedRow {
             id: self.id,
             name: self.name,
         }
+    }
+}
+
+#[derive(Debug, FromQueryResult)]
+struct EntryRow {
+    id: String,
+    name: String,
+    body: String,
+    updated_at: NaiveDateTime,
+}
+
+impl EntryRow {
+    fn into_entry(self) -> Result<LibraryEntry, DefinitionStoreError> {
+        Ok(LibraryEntry {
+            id: self.id,
+            name: self.name,
+            body: serde_json::from_str(&self.body)?,
+            updated_at: self.updated_at.and_utc(),
+        })
     }
 }
 
@@ -289,33 +346,53 @@ impl Definitions for MariaDefinitions {
         needle: &str,
         page: Page,
     ) -> Result<ListedPage, DefinitionStoreError> {
-        let kind = kind.kind();
-        let pattern = format!("%{}%", like_escaped(needle));
-        let rows = ListedRow::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            sql(PAGE_LISTED, kind),
-            [
-                pattern.clone().into(),
-                pattern.clone().into(),
-                page.limit().into(),
-                page.offset().into(),
-            ],
-        ))
-        .all(&self.db)
-        .await?;
-
-        let counted = TotalRow::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            sql(COUNT_MATCHES, kind),
-            [pattern.clone().into(), pattern.into()],
-        ))
-        .one(&self.db)
-        .await?;
+        let pattern = like_pattern(needle);
+        let rows =
+            ListedRow::find_by_statement(page_statement(LISTED_COLUMNS, kind, &pattern, page))
+                .all(&self.db)
+                .await?;
 
         Ok(ListedPage {
             items: rows.into_iter().map(ListedRow::into_listed).collect(),
-            total: counted.map_or(0, |row| u64::try_from(row.total).unwrap_or(0)),
+            total: self.count_matches(kind, pattern).await?,
         })
+    }
+
+    async fn page_entries(
+        &self,
+        kind: LibraryKind,
+        needle: &str,
+        page: Page,
+    ) -> Result<LibraryPage, DefinitionStoreError> {
+        let pattern = like_pattern(needle);
+        let rows = EntryRow::find_by_statement(page_statement(ENTRY_COLUMNS, kind, &pattern, page))
+            .all(&self.db)
+            .await?;
+        let items = rows
+            .into_iter()
+            .map(EntryRow::into_entry)
+            .collect::<Result<_, _>>()?;
+
+        Ok(LibraryPage {
+            items,
+            total: self.count_matches(kind, pattern).await?,
+        })
+    }
+
+    async fn names_of(
+        &self,
+        kind: LibraryKind,
+        ids: &[&str],
+    ) -> Result<HashMap<String, String>, DefinitionStoreError> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let rows = ListedRow::find_by_statement(names_statement(kind, ids))
+            .all(&self.db)
+            .await?;
+
+        Ok(rows.into_iter().map(|row| (row.id, row.name)).collect())
     }
 
     async fn delete(
@@ -352,6 +429,24 @@ impl Definitions for MariaDefinitions {
         transaction.commit().await?;
 
         Ok(())
+    }
+}
+
+impl MariaDefinitions {
+    async fn count_matches(
+        &self,
+        kind: LibraryKind,
+        pattern: String,
+    ) -> Result<u64, DefinitionStoreError> {
+        let counted = TotalRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            sql(COUNT_MATCHES, kind.kind()),
+            [pattern.clone().into(), pattern.into()],
+        ))
+        .one(&self.db)
+        .await?;
+
+        Ok(counted.map_or(0, |row| u64::try_from(row.total).unwrap_or(0)))
     }
 }
 

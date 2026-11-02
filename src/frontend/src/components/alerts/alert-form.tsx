@@ -148,10 +148,7 @@ function Shell({
   children: ReactNode;
 }) {
   return (
-    <div
-      data-testid={testId}
-      className="flex max-w-3xl flex-col gap-4 p-4 md:p-6"
-    >
+    <div data-testid={testId} className="flex max-w-3xl flex-col gap-4">
       <header className="flex flex-col gap-1">
         <h1 className={cn(TEXT_TITLE, "break-words")}>{title}</h1>
         <Cancel id={backTo} />

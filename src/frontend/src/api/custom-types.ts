@@ -113,6 +113,27 @@ export interface Listed {
   name: string;
 }
 
+/** A metric as its catalogue lists it. */
+export interface MetricListed extends Listed {
+  updated_at: string;
+  body: MetricDefinition;
+}
+
+/** A widget as its catalogue lists it, with the name of the metric it draws. */
+export interface WidgetListed extends Listed {
+  updated_at: string;
+  body: Widget;
+  /** Null when the metric it names no longer exists. */
+  metric_name: string | null;
+}
+
+/** A dataset as its catalogue lists it. */
+export interface DatasetListed extends Listed {
+  title: string | null;
+  fields: number;
+  updated_at: string;
+}
+
 /** What the caller may do with a dashboard, as the service decides it. */
 export type DashboardAccess = "owner" | "editor" | "viewer" | "ownerless";
 
@@ -158,6 +179,7 @@ export interface DashboardResponse extends DefinitionResponse<Dashboard> {
   owner_person_id: string | null;
   owner_name?: string | null;
   access: DashboardAccess;
+  visibility?: DashboardVisibility;
   /** The folders holding it that the caller can see. */
   folders?: Folder[];
   /** Whether placing it in a folder would carry that folder's people to it. */
@@ -172,6 +194,7 @@ export interface DashboardRead {
   ownerPersonId: string | null;
   ownerName: string | null;
   access: DashboardAccess;
+  visibility: DashboardVisibility | null;
   folders: Folder[];
   carries: boolean;
 }

@@ -4,12 +4,10 @@ import { homeItemShown, homeSubject } from "./home-subject";
 
 describe("homeSubject", () => {
   it.each([
-    ["a viewer with a cohort, by default", true, undefined, "team"],
-    ["a viewer with a cohort who picked Me", true, "me", "me"],
-    ["a viewer without a cohort", false, undefined, "me"],
-    ["a viewer without a cohort, whatever the link says", false, "me", "me"],
-  ] as const)("reads %s", (_case, canSeeOthers, who, expected) => {
-    expect(homeSubject(canSeeOthers, who), `case: ${_case}`).toBe(expected);
+    ["a viewer with a cohort", true, "team"],
+    ["a viewer without a cohort", false, "me"],
+  ] as const)("reads %s", (_case, canSeeOthers, expected) => {
+    expect(homeSubject(canSeeOthers), `case: ${_case}`).toBe(expected);
   });
 });
 

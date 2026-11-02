@@ -88,7 +88,7 @@ function CustomDashboardIndex() {
     <>
       <header
         data-testid="page-custom-dashboards"
-        className="mb-3 flex flex-wrap items-start gap-3"
+        className="mb-4 flex flex-wrap items-start gap-3"
       >
         <h1 className={cn(TEXT_TITLE, "min-w-0 grow")}>{shown.heading}</h1>
         {isAdmin ? <NewLink kind="dashboards" noun="dashboard" /> : null}
@@ -178,7 +178,7 @@ function CustomDashboardList({
 
   return (
     <>
-      <ul className="grid gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">
+      <ul className="grid grid-cols-1 gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">
         {dashboards.map((dashboard) => (
           <li key={dashboard.id}>
             <DashboardCard dashboard={dashboard} />

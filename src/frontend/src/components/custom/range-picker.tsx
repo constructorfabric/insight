@@ -66,9 +66,10 @@ export function RangePicker({ offered, selected, onSelect }: RangePickerProps) {
       // wrapping; capping it at the container is what lets the wrap engage.
       className="max-w-full min-w-0 flex-wrap"
     >
-      {presets.map(({ token, label }) => (
-        <ToggleGroupItem key={token} value={token}>
-          {label}
+      {presets.map(({ token, label, short }) => (
+        <ToggleGroupItem key={token} value={token} aria-label={label}>
+          <span className="hidden sm:inline">{label}</span>
+          <span className="sm:hidden">{short}</span>
         </ToggleGroupItem>
       ))}
       <Popover

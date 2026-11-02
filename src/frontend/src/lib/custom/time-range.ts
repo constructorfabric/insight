@@ -12,16 +12,18 @@ import { parseISOCalendarDate } from "@/api/period-to-date-range";
 export interface RangePreset {
   token: string;
   label: string;
+  /** What a phone-width picker shows in its place. */
+  short: string;
 }
 
 export const RANGE_PRESETS: readonly RangePreset[] = [
-  { token: "PDC", label: "Yesterday" },
-  { token: "P7D", label: "Last 7 days" },
-  { token: "P30D", label: "Last 30 days" },
-  { token: "PMC", label: "Last month" },
-  { token: "PQC", label: "Last quarter" },
-  { token: "P1Y", label: "Last 365 days" },
-  { token: "inf", label: "All time" },
+  { token: "PDC", label: "Yesterday", short: "Yday" },
+  { token: "P7D", label: "Last 7 days", short: "7d" },
+  { token: "P30D", label: "Last 30 days", short: "30d" },
+  { token: "PMC", label: "Last month", short: "Month" },
+  { token: "PQC", label: "Last quarter", short: "Qtr" },
+  { token: "P1Y", label: "Last 365 days", short: "1y" },
+  { token: "inf", label: "All time", short: "All" },
 ] as const;
 
 const LABELS = new Map(RANGE_PRESETS.map(({ token, label }) => [token, label]));

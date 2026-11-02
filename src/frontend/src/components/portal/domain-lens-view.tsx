@@ -1738,7 +1738,6 @@ function DistributionSection({
               <ChartBar
                 dataKey="count"
                 name="People"
-                radius={[2, 2, 0, 0]}
                 fill="var(--chart-1)"
               />
             </BarChart>
@@ -1869,7 +1868,6 @@ function EventHistogramSection({
               <ChartBar
                 dataKey="count"
                 name="Events"
-                radius={[2, 2, 0, 0]}
                 fill="var(--chart-1)"
               />
             </BarChart>
@@ -2857,8 +2855,8 @@ function DirectionCardsSection({
                     >
                       <MetricName
                         metric={r}
-                        text={r.short_label ?? r.label}
-                        className="truncate text-muted-foreground"
+                        text={r.label}
+                        className="min-w-0 text-muted-foreground"
                       />
                       <span className="flex items-center gap-2">
                         <span className="font-medium tabular-nums">

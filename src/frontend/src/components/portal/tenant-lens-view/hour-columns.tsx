@@ -88,7 +88,6 @@ export function HourColumnsSection({
               <ChartBar
                 dataKey="value"
                 name={r.short_label ?? r.label}
-                radius={[2, 2, 0, 0]}
                 fill="var(--chart-1)"
               />
             </BarChart>

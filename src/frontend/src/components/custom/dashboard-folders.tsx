@@ -1,17 +1,19 @@
-import { Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { Folder as FolderIcon, X } from "lucide-react";
-import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Folder as FolderIcon, Plus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
-import type { DashboardAccess, Folder } from "@/api/custom-client";
-import { FieldSelect } from "@/components/alerts/field-select";
-import { ConfirmDialog } from "@/components/confirm-dialog";
+import type { DashboardAccess, FolderSummary } from "@/api/custom-client";
 import { refusal } from "@/components/custom/refusal";
-import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenuCheckboxItem,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/sonner";
-import { fileableFolders, folderAllows } from "@/lib/custom/dashboard-access";
-import { TEXT_BODY } from "@/lib/type-scale";
-import { cn } from "@/lib/utils";
+import { folderChoices, type FolderChoice } from "@/lib/custom/folder-choices";
 import { useIsAdmin } from "@/queries/identity-me";
 import {
   dashboardReadQuery,
@@ -21,159 +23,135 @@ import {
   useRemoveFromFolder,
 } from "@/queries/custom";
 
-export function DashboardFolders({
+export function FolderSubmenu({
   id,
-  folders,
-}: {
-  id: string;
-  folders: readonly Folder[];
-}) {
-  const { isAdmin } = useIsAdmin();
-  const listed = useQuery({ ...foldersQuery(), enabled: folders.length > 0 });
-  const remove = useRemoveFromFolder();
-
-  if (folders.length === 0) return null;
-
-  const access = new Map(
-    listed.data?.folders.map((folder) => [folder.id, folder.access])
-  );
-
-  return (
-    <ul aria-label="Folders" className="flex flex-wrap items-center gap-1">
-      {folders.map((folder) => {
-        const held = access.get(folder.id);
-        const editable = held ? folderAllows(held, isAdmin).edit : false;
-
-        return (
-          <li key={folder.id}>
-            <Badge variant="secondary" className="gap-1">
-              <FolderIcon aria-hidden />
-              <Link to="/portal/custom" search={{ folder: folder.id }}>
-                {folder.name}
-              </Link>
-              {editable ? (
-                <button
-                  type="button"
-                  aria-label={`Remove from ${folder.name}`}
-                  disabled={remove.isPending}
-                  className="-me-1 inline-flex size-6 items-center justify-center rounded-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() =>
-                    remove.mutate(
-                      { folder: folder.id, dashboard: id },
-                      {
-                        onError: (error) =>
-                          toast.error(
-                            refusal(
-                              error,
-                              "Couldn't remove it from the folder."
-                            )
-                          ),
-                      }
-                    )
-                  }
-                >
-                  <X className="size-3.5" aria-hidden />
-                </button>
-              ) : null}
-            </Badge>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-export function AddToFolder({
-  id,
-  name,
   access,
-  open,
-  onClose,
+  onNewFolder,
+  onShareInto,
 }: {
   id: string;
-  name: string;
   access: DashboardAccess;
-  open: boolean;
-  onClose: () => void;
+  /** Absent where a dashboard cannot go in a folder it creates. */
+  onNewFolder?: () => void;
+  /** Asked instead of filing when filing would show the dashboard to the folder's people. */
+  onShareInto: (folder: FolderSummary) => void;
 }) {
-  const folders = useQuery({ ...foldersQuery(), enabled: open });
+  const [open, setOpen] = useState(false);
+  const { isAdmin } = useIsAdmin();
+  const listed = useQuery({ ...foldersQuery(), enabled: open });
   const read = useQuery({ ...dashboardReadQuery(id), enabled: open });
   const add = useAddToFolder();
-  const [picked, setPicked] = useState("");
+  const remove = useRemoveFromFolder();
+  const queryClient = useQueryClient();
 
-  const offered = fileableFolders(
-    access,
-    folders.data?.folders ?? [],
-    read.data?.folders ?? []
-  );
-  const chosen = offered.find((folder) => folder.id === picked);
-  const ready = folders.isSuccess && read.isSuccess;
+  const ready = listed.isSuccess && read.isSuccess;
+  const choices = ready
+    ? folderChoices(access, listed.data.folders, read.data.folders, isAdmin)
+    : [];
+  const [moving, setMoving] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
-  function close() {
-    setPicked("");
-    add.reset();
-    onClose();
+  async function widensAudience(folder: FolderSummary): Promise<boolean> {
+    if (folder.access === "ownerless" || !read.data?.carries) return false;
+
+    // SAFETY: a folder whose people cannot be read is treated as if it had some.
+    return queryClient
+      .fetchQuery(grantsQuery({ kind: "folders", id: folder.id }))
+      .then((grants) => grants.length > 0)
+      .catch(() => true);
+  }
+
+  function settle(folder: string, holds: boolean | null) {
+    setMoving((now) => {
+      const next = new Map(now);
+      if (holds === null) next.delete(folder);
+      else next.set(folder, holds);
+      return next;
+    });
+  }
+
+  // INVARIANT: mutateAsync, not mutate — a second click before the first settles would drop the first call's callbacks.
+  async function toggle({ folder, holds, summary }: FolderChoice) {
+    if (moving.has(folder.id)) return;
+
+    const entry = { folder: folder.id, dashboard: id };
+    settle(folder.id, holds);
+    try {
+      if (!holds && summary && (await widensAudience(summary))) {
+        if (mounted.current) onShareInto(summary);
+        return;
+      }
+
+      settle(folder.id, !holds);
+      if (holds) {
+        await remove.mutateAsync(entry);
+      } else {
+        await add.mutateAsync(entry);
+      }
+      // INVARIANT: the read is patched before the tick is let go, so a refetch another toggle cancelled cannot flip it back.
+      queryClient.setQueryData(dashboardReadQuery(id).queryKey, (now) =>
+        now
+          ? {
+              ...now,
+              folders: holds
+                ? now.folders.filter((one) => one.id !== folder.id)
+                : [...now.folders, { id: folder.id, name: folder.name }],
+            }
+          : now
+      );
+    } catch (error) {
+      toast.error(
+        refusal(
+          error,
+          holds
+            ? "Couldn't remove it from the folder."
+            : "Couldn't add it to the folder."
+        )
+      );
+    } finally {
+      settle(folder.id, null);
+    }
   }
 
   return (
-    <ConfirmDialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) close();
-      }}
-      title={`Add ${name} to a folder`}
-      confirmLabel="Add"
-      isPending={add.isPending}
-      confirmDisabled={!chosen}
-      error={
-        add.isError
-          ? refusal(add.error, "Couldn't add it to the folder.")
-          : null
-      }
-      onConfirm={() => {
-        if (!chosen) return;
-        add.mutate({ folder: chosen.id, dashboard: id }, { onSuccess: close });
-      }}
-    >
-      {!ready ? null : offered.length === 0 ? (
-        <p className={cn(TEXT_BODY, "text-muted-foreground")}>
-          No folders to add it to.
-        </p>
-      ) : (
-        <FieldSelect
-          id="add-to-folder"
-          label="Folder"
-          value={picked}
-          placeholder="Folder"
-          options={offered.map((folder) => ({
-            value: folder.id,
-            label: folder.name,
-          }))}
-          onChange={setPicked}
-        />
-      )}
-      {chosen && chosen.access !== "ownerless" && read.data?.carries ? (
-        <FolderAudience folderId={chosen.id} folderName={chosen.name} />
-      ) : null}
-    </ConfirmDialog>
-  );
-}
-
-function FolderAudience({
-  folderId,
-  folderName,
-}: {
-  folderId: string;
-  folderName: string;
-}) {
-  const grants = useQuery(grantsQuery({ kind: "folders", id: folderId }));
-
-  if (grants.isPending) return null;
-  if (grants.isSuccess && grants.data.length === 0) return null;
-
-  return (
-    <p role="status" className={cn(TEXT_BODY, "text-muted-foreground")}>
-      People with access to {folderName} will see this dashboard.
-    </p>
+    <DropdownMenuSub open={open} onOpenChange={setOpen}>
+      <DropdownMenuSubTrigger>
+        <FolderIcon />
+        Folders
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="w-56">
+        {!ready ? (
+          <DropdownMenuItem disabled>Loading…</DropdownMenuItem>
+        ) : choices.length === 0 ? (
+          <DropdownMenuItem disabled>No folders to add it to</DropdownMenuItem>
+        ) : (
+          choices.map((choice) => (
+            <DropdownMenuCheckboxItem
+              key={choice.folder.id}
+              checked={moving.get(choice.folder.id) ?? choice.holds}
+              disabled={!choice.movable}
+              onCheckedChange={() => void toggle(choice)}
+            >
+              {choice.folder.name}
+            </DropdownMenuCheckboxItem>
+          ))
+        )}
+        {onNewFolder ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onNewFolder}>
+              <Plus />
+              New folder…
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
 }
