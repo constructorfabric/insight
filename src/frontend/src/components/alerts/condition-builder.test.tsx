@@ -396,17 +396,25 @@ describe("ConditionBuilder", () => {
     });
 
     it("starts a picked day at midnight when no time is set, and shows it", async () => {
-      const latest = at("");
+      // INVARIANT: with no stored day the picker opens on the current month.
+      // Pin local 2026-10-01 or the 15th is not a button on screen.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(2026, 9, 1, 12));
+      try {
+        const latest = at("");
 
-      await userEvent.click(leaf(1).getByLabelText("Value day"));
-      await userEvent.click(
-        await screen.findByRole("button", { name: /October 15th, 2026/ })
-      );
+        await userEvent.click(leaf(1).getByLabelText("Value day"));
+        await userEvent.click(
+          await screen.findByRole("button", { name: /October 15th, 2026/ })
+        );
 
-      expect(latest()).toMatchObject({
-        where: { value: "2026-10-15T00:00:00Z" },
-      });
-      expect(leaf(1).getByLabelText("Value time")).toHaveValue("00:00");
+        expect(latest()).toMatchObject({
+          where: { value: "2026-10-15T00:00:00Z" },
+        });
+        expect(leaf(1).getByLabelText("Value time")).toHaveValue("00:00");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("writes nothing for a time until a day is picked", () => {
