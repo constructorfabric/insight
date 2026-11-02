@@ -103,7 +103,7 @@ export function PlatformUsage() {
   // The reads are siblings, not a sequence: a section nested under the
   // summary's pending branch waits for the summary and vanishes when it fails.
   return (
-    <div className="flex w-full flex-col gap-6 p-6">
+    <div data-testid="page-manage-platform-usage" className="flex w-full flex-col gap-6 p-6">
       <PeriodSelectorBar
         period={period}
         customRange={customRange}

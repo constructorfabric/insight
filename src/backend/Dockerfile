@@ -6,7 +6,7 @@
 # git-cli-proxy, previews.
 
 # ─── toolchain ──────────────────────────────────────────────────────────────
-FROM lukemathwalker/cargo-chef:0.1.78-rust-1.99.0-bookworm@sha256:2ee6e8edf0b91b5a7295071299596601710bccb243bd9735e0b9abf6e114582b AS chef
+FROM lukemathwalker/cargo-chef:0.1.78-rust-1.99.1-bookworm@sha256:b75e76d787d5e11dabafa95eecc9fa1b50c38d5e03a38efb99cacb4e02125a76 AS chef
 
 # protobuf-compiler: grpc-hub -> prost-build. cmake + libcurl headers: the
 # authenticator vendors librdkafka, whose OAUTHBEARER path needs curl/curl.h.

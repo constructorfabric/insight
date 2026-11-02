@@ -100,7 +100,13 @@ function CustomDashboardBody({
   offered: string[] | undefined;
   onSelectRange: (token: string) => void;
 }) {
-  if (isLoading) return <CenteredSpinner className="min-h-40" />;
+  if (isLoading)
+    return (
+      <CenteredSpinner
+        data-testid="page-custom-dashboard"
+        className="min-h-40"
+      />
+    );
   if (isError) {
     if (error instanceof CustomApiError && error.status === 404) {
       return (
@@ -142,7 +148,10 @@ function CustomDashboardBody({
           />
         </div>
       ) : null}
-      <header className="mb-6 flex flex-col gap-1.5">
+      <header
+        data-testid="page-custom-dashboard"
+        className="mb-6 flex flex-col gap-1.5"
+      >
         <div className="flex items-start justify-between gap-3">
           <h1 className={cn(TEXT_TITLE, "min-w-0 break-words")}>
             {dashboard.title || read.name}

@@ -694,8 +694,10 @@ heal_collab_chat_table silver class_collab_chat_activity
 
 echo "=== Healing collab-meeting contract schema ==="
 # Same positional invariant: collab meeting rows gained the account triple
-# after data_source (zoom-guest attribution). Every row written before the
-# columns existed is keyed by its email, which the default states.
+# after data_source (zoom-guest attribution), then the attended meeting keys
+# after account_id. Every row written before the columns existed is keyed by
+# its email, which the default states, and names no meetings: gold then keeps
+# its count under the address until the descriptor's major bump rebuilds the day.
 heal_collab_meeting_table() {
   local db="$1" table="$2"
   ch_table_exists "$db" "$table" || return 0
@@ -707,6 +709,8 @@ ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS account_source_id String AFT
 ALTER TABLE ${db}.${table} MODIFY COLUMN account_source_id String AFTER account_source_type;
 ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS account_id String AFTER account_source_id;
 ALTER TABLE ${db}.${table} MODIFY COLUMN account_id String AFTER account_source_id;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS attended_meeting_keys Array(String) AFTER account_id;
+ALTER TABLE ${db}.${table} MODIFY COLUMN attended_meeting_keys Array(String) AFTER account_id;
 SQL
 }
 

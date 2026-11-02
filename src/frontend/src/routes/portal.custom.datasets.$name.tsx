@@ -41,13 +41,16 @@ function DatasetPage() {
   const name = datasetNameFromPath(pathname);
   const dataset = useQuery(datasetQuery(name));
 
-  if (dataset.isPending) return <CenteredSpinner className="min-h-40" />;
+  if (dataset.isPending)
+    return (
+      <CenteredSpinner data-testid="page-custom-dataset" className="min-h-40" />
+    );
 
   // A dataset mid-create or mid-removal is not found, so the page says which
   // one rather than asking for its records or what reads it.
   if (dataset.isError) {
     return (
-      <div className="flex flex-col gap-2">
+      <div data-testid="page-custom-dataset" className="flex flex-col gap-2">
         <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(dataset.error, "That dataset is not there.")}
@@ -68,7 +71,7 @@ function DatasetPage() {
   const { declaration } = dataset.data;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div data-testid="page-custom-dataset" className="flex flex-col gap-4">
       <header className="flex flex-wrap items-baseline gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>

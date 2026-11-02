@@ -22,6 +22,7 @@ import { TEXT_TITLE } from "@/lib/type-scale";
 
 /** A catalogue page: every definition of one kind, a card each. */
 export function DefinitionList<T extends { id: string }>({
+  "data-testid": testId,
   title,
   items,
   isLoading,
@@ -34,6 +35,7 @@ export function DefinitionList<T extends { id: string }>({
   paging,
   create,
 }: {
+  "data-testid"?: string;
   title: string;
   items: T[] | undefined;
   isLoading: boolean;
@@ -51,7 +53,10 @@ export function DefinitionList<T extends { id: string }>({
 }) {
   return (
     <>
-      <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
+      <header
+        data-testid={testId}
+        className="mb-4 flex flex-wrap items-start justify-between gap-3"
+      >
         <h1 className={TEXT_TITLE}>{title}</h1>
         {create}
       </header>

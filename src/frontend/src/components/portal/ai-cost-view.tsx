@@ -339,6 +339,7 @@ export function AiCostView({ item }: { item: string | null }) {
     );
 
   const gate = orgScopeGate({
+    "data-testid": `page-aicost-${item ?? "overview"}`,
     viewerLoading: orgScope.isLoading,
     viewerError: orgScope.isError,
     membersLoading: false,
@@ -389,7 +390,7 @@ export function AiCostView({ item }: { item: string | null }) {
   });
 
   return (
-    <div className="flex flex-col gap-6 p-4 md:p-6">
+    <div data-testid={`page-aicost-${item ?? "overview"}`} className="flex flex-col gap-6 p-4 md:p-6">
       <div>
         <h1 className="text-lg font-semibold tracking-tight">AI &amp; Cost</h1>
         <p className="text-sm text-muted-foreground">

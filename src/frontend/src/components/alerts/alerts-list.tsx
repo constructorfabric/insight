@@ -32,6 +32,7 @@ export function AlertsList() {
 
   return (
     <DefinitionList
+      data-testid="page-custom-alerts"
       title="Alerts"
       items={alerts}
       isLoading={pages.isPending}

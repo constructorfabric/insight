@@ -28,7 +28,14 @@ name: zoom
 #   console; the meeting feeder and the class gain the three account columns.
 #   MAJOR so reconcile runs the one-shot `dbt --full-refresh` that writes the
 #   guest rows back into history.
-version: "5.0.0"
+# 6.0.0 (major): the meeting feeder and the class name the meetings a day's
+#   count stands for, so a meeting joined from two of a person's addresses
+#   counts once. MAJOR so reconcile runs the one-shot `dbt --full-refresh` that
+#   fills the keys for history; a day without them keeps counting per address.
+# 6.0.1 (patch): the token login requester names Zoom's reason when Zoom rejects
+#   the credentials, instead of the CDK's generic 400 text (#3758). Patch bump
+#   per ADR-0015: republish only, NO full-refresh.
+version: "6.0.1"
 schedule: 0 3 * * *
 dbt_select: tag:zoom+
 workflow: sync

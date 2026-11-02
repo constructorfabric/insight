@@ -20,10 +20,12 @@ same limitation the analytics and authenticator documents carry.
 """
 
 from __future__ import annotations
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
-from uuid import UUID
-from typing import Any
+
 from enum import StrEnum
+from typing import Any
+from uuid import UUID
+
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 
 class AccountRef(BaseModel):

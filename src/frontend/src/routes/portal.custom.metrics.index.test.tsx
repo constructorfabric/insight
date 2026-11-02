@@ -47,6 +47,17 @@ async function openMenu(title: string) {
 }
 
 describe("/portal/custom/metrics", () => {
+  it("keeps its route-based page id while loading", () => {
+    vi.mocked(customClient.fetchMetrics).mockReturnValue(new Promise(() => {}));
+
+    const { container } = render(<Component />, { wrapper });
+
+    expect(container.firstElementChild).toBe(
+      screen.getByTestId("page-custom-metrics")
+    );
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
   it.each([
     [
       "a dataset",

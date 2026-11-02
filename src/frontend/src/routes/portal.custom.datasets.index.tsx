@@ -18,6 +18,7 @@ function DatasetsCatalogue() {
 
   return (
     <DefinitionList
+      data-testid="page-custom-datasets"
       title="Datasets"
       items={catalogue.items}
       isLoading={catalogue.isLoading}

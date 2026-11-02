@@ -23,6 +23,7 @@ function MetricsCatalogue() {
 
   return (
     <DefinitionList
+      data-testid="page-custom-metrics"
       title="Metrics"
       items={catalogue.items}
       isLoading={catalogue.isLoading}

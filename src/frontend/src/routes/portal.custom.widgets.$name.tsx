@@ -35,11 +35,14 @@ function WidgetPage() {
   const id = widgetIdFromPath(pathname);
   const widget = useQuery(widgetQuery(id));
 
-  if (widget.isPending) return <CenteredSpinner className="min-h-40" />;
+  if (widget.isPending)
+    return (
+      <CenteredSpinner data-testid="page-custom-widget" className="min-h-40" />
+    );
 
   if (widget.isError) {
     return (
-      <div className="flex flex-col gap-2">
+      <div data-testid="page-custom-widget" className="flex flex-col gap-2">
         <h1 className={cn(TEXT_HEADING, "font-mono")}>{id}</h1>
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(widget.error, "That widget is not there.")}
@@ -58,7 +61,7 @@ function WidgetPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div data-testid="page-custom-widget" className="flex flex-col gap-4">
       <header className="flex flex-wrap items-baseline gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <h1 className={TEXT_HEADING}>{widget.data.name}</h1>

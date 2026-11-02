@@ -199,6 +199,13 @@ models:
         description: "The account's id as identity states it (a normalized display name for zoom-guest); '' on an email-keyed row"
         tests:
           - not_null
+      - name: attended_meeting_keys
+        description: >
+          The meetings behind meetings_attended, one key per distinct logical
+          meeting attended with company (`logical_meeting_id`, or the session
+          uuid until the meeting is stitched). Empty when the source reports
+          only a daily count (M365). Gold emits one meetings_attended row per
+          key, so a person who joined a meeting from two addresses counts it once.
       - name: audio_duration_seconds
         description: >
           Seconds the participant spent with audio active.

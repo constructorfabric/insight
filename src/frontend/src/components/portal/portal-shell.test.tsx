@@ -75,13 +75,13 @@ vi.mock("@/components/portal/employees-view", () => ({
   EmployeesView: () => <div data-testid="employees" />,
 }));
 vi.mock("@/components/portal/metric-groups-view", () => ({
-  MetricGroupsView: ({ personId }: { personId: string }) => (
-    <div data-testid="metric-groups">{personId}</div>
+  MetricGroupsView: ({ personId, "data-testid": testId }: { personId: string; "data-testid"?: string }) => (
+    <div data-testid={testId ?? "metric-groups"}>{personId}</div>
   ),
 }));
 vi.mock("@/components/portal/single-group-view", () => ({
-  SingleGroupView: ({ groupId }: { groupId: string }) => (
-    <div data-testid="single-group">{groupId}</div>
+  SingleGroupView: ({ groupId, "data-testid": testId }: { groupId: string; "data-testid"?: string }) => (
+    <div data-testid={testId ?? "single-group"}>{groupId}</div>
   ),
 }));
 vi.mock("@/components/portal/person-header", () => ({
@@ -195,14 +195,22 @@ describe("PersonView", () => {
   it("defaults to the at-a-glance dashboard with the person's header", () => {
     render(<PersonView person={pid("a")} />);
     expect(screen.getByTestId("person-header")).toHaveTextContent(pid("a"));
-    expect(screen.getByTestId("metric-groups")).toHaveTextContent(pid("a"));
+    expect(screen.getByTestId("page-person-at-a-glance")).toHaveTextContent(pid("a"));
+    expect(screen.queryByTestId("page-person")).not.toBeInTheDocument();
   });
 
-  it("expands a selected metric group inline", () => {
-    act(() => portalRouter.set({ item: "git_output" }));
+  it.each([
+    ["task_delivery", "page-person-task-delivery"],
+    ["git_output", "page-person-git-output"],
+    ["collaboration", "page-person-collaboration"],
+    ["ai_adoption", "page-person-ai-adoption"],
+    ["wiki", "page-person-wiki"],
+  ])("identifies the selected %s section", (item, testId) => {
+    act(() => portalRouter.set({ item }));
     render(<PersonView person={pid("a")} />);
-    expect(screen.getByTestId("single-group")).toHaveTextContent("git_output");
-    expect(screen.queryByTestId("metric-groups")).not.toBeInTheDocument();
+    expect(screen.getByTestId(testId)).toHaveTextContent(item);
+    expect(screen.queryByTestId("page-person-at-a-glance")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("page-person")).not.toBeInTheDocument();
   });
 });
 

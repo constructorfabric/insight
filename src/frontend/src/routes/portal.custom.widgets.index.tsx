@@ -35,6 +35,7 @@ function WidgetsCatalogue() {
 
   return (
     <DefinitionList
+      data-testid="page-custom-widgets"
       title="Widgets"
       items={catalogue.items}
       isLoading={catalogue.isLoading}
