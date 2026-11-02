@@ -245,6 +245,30 @@ PAGE_SCENARIOS = (
     ),
     PageScenario(
         "People",
+        ("Task delivery",),
+        "Person Task delivery loads without errors",
+        "page-person-task-delivery",
+    ),
+    PageScenario(
+        "People",
+        ("Git output",),
+        "Person Git output loads without errors",
+        "page-person-git-output",
+    ),
+    PageScenario(
+        "People",
+        ("Collaboration",),
+        "Person Collaboration loads without errors",
+        "page-person-collaboration",
+    ),
+    PageScenario(
+        "People",
+        ("AI adoption",),
+        "Person AI adoption loads without errors",
+        "page-person-ai-adoption",
+    ),
+    PageScenario(
+        "People",
         ("My team",),
         "My team loads without errors",
         "page-people-roster",

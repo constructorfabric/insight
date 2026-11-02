@@ -33,16 +33,18 @@ SAFE_NAV = (
 class NavigationEntry:
     label: str
     expanded: str | None
+    href: str | None
 
 
 def navigation_entries(buttons: Locator) -> list[NavigationEntry]:
     return [
-        NavigationEntry(label=entry["label"], expanded=entry["expanded"])
+        NavigationEntry(label=entry["label"], expanded=entry["expanded"], href=entry["href"])
         for entry in buttons.evaluate_all(
             """elements => elements.map(element => ({
                 label: (element.querySelector(':scope > span')?.innerText
                     ?? element.innerText).trim(),
-                expanded: element.getAttribute('aria-expanded')
+                expanded: element.getAttribute('aria-expanded'),
+                href: element.getAttribute('href')
             })).filter(entry => entry.label)"""
         )
     ]
@@ -65,6 +67,7 @@ class PortalShell:
         self.rail = LensRail(page)
         self.pane_buttons = self.safe_navigation(page.locator(PANE_BUTTONS))
         self.main = page.locator('main[data-slot="sidebar-inset"]')
+        self.page_views = self.main.locator('[data-testid^="page-"]').filter(visible=True)
         self.loading_markers = self.main.locator(
             '[class*="skeleton"], .animate-pulse, [aria-busy="true"]'
         ).filter(visible=True)
@@ -96,6 +99,13 @@ class PortalShell:
 
     def page_view(self, test_id: str) -> Locator:
         return self.page.get_by_test_id(test_id)
+
+    def visible_page_ids(self) -> frozenset[str]:
+        return frozenset(
+            self.page_views.evaluate_all(
+                "elements => elements.map(element => element.getAttribute('data-testid'))"
+            )
+        )
 
     def open_zone(self, zone: str) -> None:
         with step(f"Open the {zone} zone"):

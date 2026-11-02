@@ -104,7 +104,7 @@ session cookie.
 
 ## Portal page smoke
 
-`ui/test_portal_pages.py` contains 39 catalogue-driven page visits and one
+`ui/test_portal_pages.py` contains 43 catalogue-driven page visits and one
 navigation test, marked `stand_smoke` and `reliability`. Each visit opens its
 zone, pane entry and optional sub-menu or first list item. Rail navigation
 moves the pointer into main and waits until the pane is uncovered.
@@ -119,8 +119,13 @@ starts immediately before the final hop, after previous requests settle.
 The catalogue assigns `ceo` to org-visible pages and `admin_operator` to entries
 requiring the identity-service admin grant: Home's My dashboards, the Dashboards
 Catalogue entries, Sources & connectors, Identities and Platform usage. Navigation
-checks each fixture's supported entries; uncatalogued extras are reported without
-failing. New actions, Planned / WorkChart groups and the org tree are excluded.
+checks each fixture's supported entries; discoveries are merged across personas
+into one report. Rendered page ids exclude aliases and covered dashboard filters;
+folder links with a `folder` parameter other than `unfiled` are not visited or
+reported. Unresolved page ids remain visible in the report. Me covers the same
+person overview as At a glance; Task delivery, Git output, Collaboration and AI
+adoption each have a separate person-page test. New actions, Planned / WorkChart
+groups and the org tree are excluded.
 Usage events are answered locally with 204. `INSIGHT_FORCE_500` accepts a
 Playwright URL glob for local 500 responses; when set, Sentry envelopes are
 inspected and answered locally too. Visits create or save nothing.

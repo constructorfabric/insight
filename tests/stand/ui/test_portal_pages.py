@@ -15,6 +15,7 @@ from insight_stand import Manifest
 from .catalogue import PAGE_SCENARIOS, PERSONAS, PageScenario, scenarios_for
 from .checks import Checks, verify_page
 from .navigation import open_scenario, verify_navigation
+from .navigation_report import NavigationPage, new_page_paths
 from .page_watch import PageWatch
 from .pages.portal_shell import PortalShell
 from .steps import report_metadata, step
@@ -55,16 +56,16 @@ def test_navigation_shows_every_expected_zone_and_entry(
         story="Navigation",
     )
     checks = Checks()
-    extras: list[str] = []
+    discoveries: list[NavigationPage] = []
     for persona in PERSONAS:
         scenarios = scenarios_for(persona, stand_manifest.capabilities)
         if not scenarios:
             continue
         with checks.check(f"Verify navigation for the {persona} persona"):
-            portal, _ = portal_smoke_for(persona)
-            observed = verify_navigation(portal, checks, scenarios)
-            extras.extend(f"{persona}: {entry}" for entry in observed)
+            portal, watch = portal_smoke_for(persona)
+            discoveries.extend(verify_navigation(portal, watch, checks, scenarios))
     with step("Report navigation entries absent from the catalogue"):
+        extras = new_page_paths(discoveries, (scenario.test_id for scenario in PAGE_SCENARIOS))
         navigation_extras.extend(extras)
         record_property("Navigation entries absent from the catalogue", extras)
     checks.finish()
