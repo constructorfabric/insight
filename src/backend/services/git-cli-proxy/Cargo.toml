@@ -36,7 +36,7 @@ rustix = { version = "1.1", features = ["fs", "process"] }
 # (`use … as _;` in main.rs is load-bearing). Deliberately minimal: no
 # api-gateway (this service hosts its own routes), and no authn / authz /
 # tenant-resolver plugins — see the auth note above.
-gear_orchestrator = { workspace = true }
+service_discovery = { workspace = true }
 grpc_hub = { workspace = true }
 types_registry = { workspace = true }
 

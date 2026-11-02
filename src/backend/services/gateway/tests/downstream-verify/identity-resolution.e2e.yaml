@@ -30,7 +30,7 @@ gears:
         description: "Identity Resolution service"
       auth_disabled: false
 
-  gear-orchestrator:
+  service-discovery:
     config: {}
 
   grpc-hub:

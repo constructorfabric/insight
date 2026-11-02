@@ -28,7 +28,7 @@ tenant-resolver = { workspace = true }
 single-tenant-tr-plugin = { workspace = true }
 static-authz-plugin = { workspace = true }
 grpc_hub = { workspace = true }
-gear_orchestrator = { workspace = true }
+service_discovery = { workspace = true }
 types_registry = { workspace = true }
 
 anyhow = { workspace = true }
