@@ -380,7 +380,9 @@ describe("filing a dashboard from the Folders submenu", () => {
     const dialog = await screen.findByRole("dialog", { name: "New folder" });
     await user.type(within(dialog).getByRole("textbox", { name: "Name" }), name);
     if (visibility) {
-      await user.click(within(dialog).getByRole("radio", { name: new RegExp(visibility) }));
+      await user.click(within(dialog).getByRole("radio", {
+          name: (accessible) => accessible.startsWith(visibility),
+        }));
     }
     await user.click(within(dialog).getByRole("button", { name: "Create" }));
   }
