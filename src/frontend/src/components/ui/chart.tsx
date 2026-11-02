@@ -215,15 +215,39 @@ function ChartLine({
   );
 }
 
+/** An area's reading arrives as `[base, value]`; the plotted value is the second. */
+function areaValue(value: unknown): unknown {
+  return Array.isArray(value) ? value[1] : value;
+}
+
+/** A lone reading draws no area between neighbours, so it gets a dot of its own. */
+function IsolatedDot({
+  cx,
+  cy,
+  index,
+  points,
+  stroke,
+  value,
+}: RechartsPrimitive.DotItemDotProps) {
+  if (areaValue(value) == null || cx == null || cy == null) return null;
+  const isolated =
+    areaValue(points[index - 1]?.value) == null &&
+    areaValue(points[index + 1]?.value) == null;
+  if (!isolated) return null;
+  return <circle cx={cx} cy={cy} r={3} fill={stroke} />;
+}
+
 function ChartArea({
   isAnimationActive = false,
   type = "linear",
+  dot = IsolatedDot,
   ...props
 }: React.ComponentProps<typeof RechartsPrimitive.Area>) {
   return (
     <RechartsPrimitive.Area
       isAnimationActive={isAnimationActive}
       type={type}
+      dot={dot}
       {...props}
     />
   );
@@ -234,7 +258,10 @@ function ChartScatter({
   ...props
 }: React.ComponentProps<typeof RechartsPrimitive.Scatter>) {
   return (
-    <RechartsPrimitive.Scatter isAnimationActive={isAnimationActive} {...props} />
+    <RechartsPrimitive.Scatter
+      isAnimationActive={isAnimationActive}
+      {...props}
+    />
   );
 }
 
