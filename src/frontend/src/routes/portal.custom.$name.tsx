@@ -19,7 +19,6 @@ import {
   type RunOptions,
 } from "@/api/custom-client";
 import { DashboardByline } from "@/components/custom/dashboard-byline";
-import { DashboardFolders } from "@/components/custom/dashboard-folders";
 import { DashboardPageActions } from "@/components/custom/dashboard-page-actions";
 import { RangePicker } from "@/components/custom/range-picker";
 import { selectedRange } from "@/lib/custom/board-range";
@@ -162,8 +161,8 @@ function CustomDashboardBody({
           updatedAt={read.updatedAt}
           visibility={read.visibility}
           access={read.access}
+          folders={read.folders}
         />
-        <DashboardFolders id={id} folders={read.folders} />
       </header>
       {items.length === 0 ? (
         <ComingSoon

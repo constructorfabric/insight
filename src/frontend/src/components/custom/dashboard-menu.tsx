@@ -3,7 +3,6 @@ import {
   Copy,
   Ellipsis,
   FileDown,
-  FolderPlus,
   Pin,
   PinOff,
   Share2,
@@ -11,7 +10,7 @@ import {
   TextCursorInput,
   Trash2,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import type { DashboardAccess } from "@/api/custom-client";
 import {
@@ -19,7 +18,9 @@ import {
   DuplicateDashboard,
   RenameDashboard,
 } from "@/components/custom/dashboard-dialogs";
-import { AddToFolder } from "@/components/custom/dashboard-folders";
+import { CreateFolderDialog } from "@/components/custom/create-folder-dialog";
+import { FolderSubmenu } from "@/components/custom/dashboard-folders";
+import { refusal } from "@/components/custom/refusal";
 import { EditTags } from "@/components/custom/edit-tags";
 import { ShareDialog } from "@/components/custom/share-dialog";
 import { Button } from "@/components/ui/button";
@@ -30,8 +31,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { toast } from "@/components/ui/sonner";
 import { usePinToggle } from "@/hooks/use-pin-toggle";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
+import { useAddToFolder } from "@/queries/custom";
 
 type Asked = "rename" | "duplicate" | "delete" | "folder" | "tags" | "share";
 
@@ -59,8 +62,22 @@ export function DashboardMenu({
   const [asked, setAsked] = useState<Asked | null>(null);
   const pin = usePinToggle(id, open);
   const allows = dashboardAllows(access);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const file = useAddToFolder();
 
   const done = () => setAsked(null);
+
+  // INVARIANT: a new folder has an owner, and an ownerless dashboard is filed only in ownerless folders.
+  function fileInNew(folder: string) {
+    if (access === "ownerless") return;
+    file.mutate(
+      { folder, dashboard: id },
+      {
+        onError: (error) =>
+          toast.error(refusal(error, "Couldn't add it to the folder.")),
+      }
+    );
+  }
 
   return (
     <>
@@ -68,6 +85,7 @@ export function DashboardMenu({
         <DropdownMenuTrigger
           render={
             <Button
+              ref={trigger}
               type="button"
               variant="ghost"
               size="icon-sm"
@@ -106,10 +124,11 @@ export function DashboardMenu({
             {pin.pinned ? <PinOff /> : <Pin />}
             {pin.pinned ? "Unpin" : "Pin"}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setAsked("folder")}>
-            <FolderPlus />
-            Add to folder…
-          </DropdownMenuItem>
+          <FolderSubmenu
+            id={id}
+            access={access}
+            onNewFolder={() => setAsked("folder")}
+          />
           {allows.edit ? (
             <DropdownMenuItem onClick={() => setAsked("tags")}>
               <Tags />
@@ -139,12 +158,10 @@ export function DashboardMenu({
           onClose={done}
         />
       ) : null}
-      <AddToFolder
-        id={id}
-        name={name}
-        access={access}
+      <CreateFolderDialog
         open={asked === "folder"}
         onClose={done}
+        onCreated={fileInNew}
       />
       {allows.remove ? (
         <DeleteDashboard
@@ -172,8 +189,8 @@ export function DashboardMenu({
           />
           <EditTags
             id={id}
-            name={name}
             open={asked === "tags"}
+            anchor={trigger}
             onClose={done}
           />
         </>

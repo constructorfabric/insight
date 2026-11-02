@@ -213,53 +213,48 @@ describe("/portal/custom/$name", () => {
     expect(customClient.runDashboardWidget).not.toHaveBeenCalled();
   });
 
-  it("lists the folders holding it, removable only where the caller edits the folder", async () => {
-    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
-      ...READ,
-      body: { title: "Engineering", widgets: [] },
-      access: "owner",
-      ownerPersonId: "01900000-0000-7000-8000-00000000000a",
-      folders: [
+  it.each([
+    ["one folder", [{ id: "f-mine", name: "Mine" }], "in Mine"],
+    [
+      "two folders",
+      [
         { id: "f-mine", name: "Mine" },
         { id: "f-viewed", name: "Viewed" },
       ],
+      "in Mine +1",
+    ],
+  ] as const)(
+    "says in its byline which folder holds it, for %s",
+    async (_case, folders, line) => {
+      vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+        ...READ,
+        body: { title: "Engineering", widgets: [] },
+        folders: [...folders],
+      });
+      portalRouter.go("/portal/custom/engineering");
+
+      render(<Component />, { wrapper });
+
+      expect(
+        await screen.findByRole("link", { name: "Mine" }),
+        `case: ${_case}`
+      ).toHaveAttribute("href", "/portal/custom?folder=f-mine");
+      expect(screen.getByText(/^in/).textContent).toBe(line);
+    }
+  );
+
+  it("names no folder for a dashboard filed nowhere", async () => {
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
+      body: { title: "Engineering", widgets: [] },
+      folders: [],
     });
-    vi.mocked(customClient.fetchFolders).mockResolvedValue({
-      folders: [
-        {
-          id: "f-mine",
-          name: "Mine",
-          owner_person_id: "p-1",
-          access: "owner",
-          dashboards: 1,
-        },
-        {
-          id: "f-viewed",
-          name: "Viewed",
-          owner_person_id: "p-2",
-          access: "viewer",
-          dashboards: 1,
-        },
-      ],
-      unfiled: 0,
-    });
-    vi.mocked(customClient.removeFromFolder).mockResolvedValue(undefined);
     portalRouter.go("/portal/custom/engineering");
 
     render(<Component />, { wrapper });
 
-    const folders = await screen.findByRole("list", { name: "Folders" });
-    expect(within(folders).getByText("Viewed")).toBeInTheDocument();
-    await userEvent.click(
-      await within(folders).findByRole("button", { name: "Remove from Mine" })
-    );
-    expect(
-      within(folders).queryByRole("button", { name: "Remove from Viewed" })
-    ).toBeNull();
-    expect(customClient.removeFromFolder).toHaveBeenCalledWith(
-      "f-mine",
-      "engineering"
-    );
+    await screen.findByRole("heading", { name: "Engineering" });
+    expect(screen.queryByText(/^in /)).toBeNull();
   });
 
   it("offers Edit and the ··· menu in the header", async () => {

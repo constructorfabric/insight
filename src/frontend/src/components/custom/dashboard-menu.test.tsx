@@ -9,6 +9,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchDashboardRead: vi.fn(),
     fetchGrants: vi.fn(),
     addToFolder: vi.fn(),
+    removeFromFolder: vi.fn(),
   };
 });
 vi.mock("@/components/ui/sonner", () => ({
@@ -20,7 +21,7 @@ import {
   QueryClientProvider,
   useQuery,
 } from "@tanstack/react-query";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -161,17 +162,14 @@ describe("what the ··· menu offers by access", () => {
   it.each([
     [
       "owner",
-      ["Duplicate…", "Rename…", "Pin", "Add to folder…", "Edit tags…", "Delete…"],
+      ["Duplicate…", "Rename…", "Pin", "Folders", "Edit tags…", "Delete…"],
     ],
-    [
-      "editor",
-      ["Duplicate…", "Rename…", "Pin", "Add to folder…", "Edit tags…"],
-    ],
+    ["editor", ["Duplicate…", "Rename…", "Pin", "Folders", "Edit tags…"]],
     [
       "ownerless",
-      ["Duplicate…", "Rename…", "Pin", "Add to folder…", "Edit tags…", "Delete…"],
+      ["Duplicate…", "Rename…", "Pin", "Folders", "Edit tags…", "Delete…"],
     ],
-    ["viewer", ["Pin", "Add to folder…"]],
+    ["viewer", ["Pin", "Folders"]],
   ] as const)("offers a caller with %s access %j", async (access, offered) => {
     await openMenu(access);
 
@@ -182,68 +180,103 @@ describe("what the ··· menu offers by access", () => {
   });
 });
 
-describe("adding a dashboard to a folder", () => {
-  async function openAdd(access: DashboardAccess) {
+describe("filing a dashboard from the Folders submenu", () => {
+  async function openFolders(access: DashboardAccess = "owner") {
     const user = await openMenu(access);
-    await user.click(screen.getByRole("menuitem", { name: "Add to folder…" }));
-    const dialog = await screen.findByRole("dialog");
+    await user.click(screen.getByRole("menuitem", { name: "Folders" }));
 
-    return { user, dialog };
+    return user;
   }
 
-  async function pick(
+  // WORKAROUND: Base UI leaves the open submenu at `pointer-events: none` in jsdom, so its rows are chosen from the keyboard.
+  async function choose(
     user: ReturnType<typeof userEvent.setup>,
-    dialog: HTMLElement,
-    name: string
+    item: HTMLElement
   ) {
-    await user.click(await within(dialog).findByRole("combobox", { name: "Folder" }));
-    await user.click(await screen.findByRole("option", { name }));
+    act(() => item.focus());
+    await user.keyboard("{Enter}");
   }
 
-  it.each([
-    ["owner", { folders: [] }, ["Mine", "Edited"]],
-    ["viewer", { folders: [] }, ["Mine", "Edited"]],
-    ["ownerless", { folders: [] }, ["Legacy"]],
-    ["owner", { folders: [{ id: "Mine", name: "Mine" }] }, ["Edited"]],
-  ] as const)(
-    "offers a %s dashboard held in %j only the folders %j",
-    async (access, held, offered) => {
-      vi.mocked(customClient.fetchFolders).mockResolvedValue({
-        folders: FOLDERS,
-        unfiled: 1,
-      });
-      reading({ access, folders: [...held.folders] });
-      const { user, dialog } = await openAdd(access);
+  const ticked = () =>
+    screen
+      .getAllByRole("menuitemcheckbox")
+      .map((item) => [item.textContent, item.getAttribute("aria-checked")]);
 
-      await user.click(
-        await within(dialog).findByRole("combobox", { name: "Folder" })
-      );
-      const options = await screen.findAllByRole("option");
-      expect(options.map((option) => option.textContent)).toEqual(offered);
-    }
-  );
-
-  it("says so when there is no folder to add it to", async () => {
-    const { dialog } = await openAdd("owner");
-
-    expect(
-      await within(dialog).findByText("No folders to add it to.")
-    ).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Add" })).toBeDisabled();
-  });
-
-  it("adds it to the picked folder", async () => {
+  beforeEach(() => {
     vi.mocked(customClient.fetchFolders).mockResolvedValue({
       folders: FOLDERS,
       unfiled: 1,
     });
-    const { user, dialog } = await openAdd("owner");
+    vi.mocked(customClient.removeFromFolder).mockResolvedValue(undefined);
+  });
 
-    await pick(user, dialog, "Edited");
-    await user.click(within(dialog).getByRole("button", { name: "Add" }));
+  it("ticks the folders holding it beside the ones it may go in", async () => {
+    reading({ folders: [{ id: "Mine", name: "Mine" }] });
+    await openFolders();
 
-    expect(customClient.addToFolder).toHaveBeenCalledWith("Edited", "dash-1");
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await screen.findByRole("menuitemcheckbox", { name: "Mine" });
+    expect(ticked()).toEqual([
+      ["Mine", "true"],
+      ["Edited", "false"],
+    ]);
+  });
+
+  it("says so when there is no folder to file it in", async () => {
+    vi.mocked(customClient.fetchFolders).mockResolvedValue({
+      folders: [],
+      unfiled: 1,
+    });
+    await openFolders();
+
+    expect(
+      await screen.findByRole("menuitem", { name: "No folders yet" })
+    ).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("files it in an unticked folder and takes it out of a ticked one", async () => {
+    reading({ folders: [{ id: "Mine", name: "Mine" }] });
+    const user = await openFolders();
+
+    await choose(user, await screen.findByRole("menuitemcheckbox", { name: "Edited" }));
+    await choose(user, screen.getByRole("menuitemcheckbox", { name: "Mine" }));
+
+    await waitFor(() => {
+      expect(customClient.addToFolder).toHaveBeenCalledWith("Edited", "dash-1");
+      expect(customClient.removeFromFolder).toHaveBeenCalledWith(
+        "Mine",
+        "dash-1"
+      );
+    });
+  });
+
+  it("ticks a folder as soon as it is picked, before the service answers", async () => {
+    vi.mocked(customClient.addToFolder).mockReturnValue(new Promise(() => {}));
+    const user = await openFolders();
+
+    const edited = await screen.findByRole("menuitemcheckbox", {
+      name: "Edited",
+    });
+    await choose(user, edited);
+
+    expect(edited).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "Mine" })
+    ).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("unticks a folder again when the service refuses", async () => {
+    vi.mocked(customClient.addToFolder).mockRejectedValue(
+      new customClient.CustomApiError(403, null)
+    );
+    const user = await openFolders();
+
+    const edited = await screen.findByRole("menuitemcheckbox", {
+      name: "Edited",
+    });
+    await choose(user, edited);
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(edited).toHaveAttribute("aria-checked", "false");
   });
 
   it.each([
@@ -251,12 +284,8 @@ describe("adding a dashboard to a folder", () => {
     ["carries, into a folder shared with no one", true, [], false],
     ["only files, into a shared folder", false, [{ grantee: "everyone" }], false],
   ] as const)(
-    "warns about the folder's people only when the entry %s",
-    async (_case, carries, grants, warned) => {
-      vi.mocked(customClient.fetchFolders).mockResolvedValue({
-        folders: FOLDERS,
-        unfiled: 1,
-      });
+    "tells about the folder's people only when the entry %s",
+    async (_case, carries, grants, told) => {
       vi.mocked(customClient.fetchGrants).mockResolvedValue(
         grants.map((grant) => ({
           ...grant,
@@ -266,56 +295,54 @@ describe("adding a dashboard to a folder", () => {
         }))
       );
       reading({ carries });
-      const { user, dialog } = await openAdd("owner");
+      const user = await openFolders();
 
-      await pick(user, dialog, "Mine");
+      await choose(user, await screen.findByRole("menuitemcheckbox", { name: "Mine" }));
+      await waitFor(() =>
+        expect(customClient.addToFolder).toHaveBeenCalledWith("Mine", "dash-1")
+      );
+      if (carries) {
+        await waitFor(() =>
+          expect(customClient.fetchGrants).toHaveBeenCalledWith({
+            kind: "folders",
+            id: "Mine",
+          })
+        );
+      }
+      await act(async () => {
+        await vi.mocked(customClient.fetchGrants).mock.results[0]?.value;
+      });
 
       const notice = "People with access to Mine will see this dashboard.";
-      if (warned) {
-        expect(await within(dialog).findByText(notice)).toBeInTheDocument();
-      } else {
-        await waitFor(() =>
-          expect(within(dialog).getByRole("button", { name: "Add" })).toBeEnabled()
-        );
-        if (carries) {
-          await waitFor(() =>
-            expect(customClient.fetchGrants).toHaveBeenCalledWith({
-              kind: "folders",
-              id: "Mine",
-            })
-          );
-          await act(async () => {
-            await vi.mocked(customClient.fetchGrants).mock.results[0]?.value;
-          });
-        }
-        expect(within(dialog).queryByText(notice), `case: ${_case}`).toBeNull();
-      }
+      expect(
+        vi.mocked(toast.success).mock.calls.some(([text]) => text === notice),
+        `case: ${_case}`
+      ).toBe(told);
     }
   );
-});
 
-describe("adding a dashboard to a folder whose people cannot be read", () => {
-  it("warns anyway when the entry carries", async () => {
-    vi.mocked(customClient.fetchFolders).mockResolvedValue({
-      folders: FOLDERS,
-      unfiled: 1,
-    });
+  it("tells about the folder's people anyway when they cannot be read", async () => {
     vi.mocked(customClient.fetchGrants).mockRejectedValue(
       new customClient.CustomApiError(403, null)
     );
-    const user = await openMenu("owner");
-    await user.click(screen.getByRole("menuitem", { name: "Add to folder…" }));
-    const dialog = await screen.findByRole("dialog");
+    const user = await openFolders();
 
-    await user.click(
-      await within(dialog).findByRole("combobox", { name: "Folder" })
-    );
-    await user.click(await screen.findByRole("option", { name: "Mine" }));
+    await choose(user, await screen.findByRole("menuitemcheckbox", { name: "Mine" }));
 
-    expect(
-      await within(dialog).findByText(
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
         "People with access to Mine will see this dashboard."
       )
+    );
+  });
+
+  it("opens the new-folder dialog from the submenu", async () => {
+    const user = await openFolders();
+
+    await choose(user, await screen.findByRole("menuitem", { name: "New folder…" }));
+
+    expect(
+      await screen.findByRole("dialog", { name: "New folder" })
     ).toBeInTheDocument();
   });
 });

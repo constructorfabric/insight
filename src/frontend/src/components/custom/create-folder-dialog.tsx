@@ -43,22 +43,24 @@ async function createShared({
 }: {
   name: string;
   grantees: Grantee[];
-}): Promise<{ shareFailure: { refused: unknown } | null }> {
+}): Promise<{ folder: string; shareFailure: { refused: unknown } | null }> {
   const folder = await createFolder(name);
   const shareFailure = await grantViewers(
     { kind: "folders", id: folder.id },
     grantees
   );
 
-  return { shareFailure };
+  return { folder: folder.id, shareFailure };
 }
 
 export function CreateFolderDialog({
   open,
   onClose,
+  onCreated,
 }: {
   open: boolean;
   onClose: () => void;
+  onCreated?: (folder: string) => void;
 }) {
   const queryClient = useQueryClient();
   const { isAdmin } = useIsAdmin();
@@ -101,6 +103,7 @@ export function CreateFolderDialog({
         grantees: isAdmin ? granteesFor(visibility, people) : [],
       });
       close();
+      onCreated?.(made.folder);
       if (made.shareFailure !== null) {
         toast.error(
           refusal(made.shareFailure.refused, "Created, but couldn't share it.")

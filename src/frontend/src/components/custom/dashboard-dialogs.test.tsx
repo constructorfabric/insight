@@ -125,7 +125,7 @@ describe("the card's ··· menu", () => {
       "Duplicate…",
       "Rename…",
       "Unpin",
-      "Add to folder…",
+      "Folders",
       "Edit tags…",
       "Delete…",
     ]);

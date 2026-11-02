@@ -156,7 +156,7 @@ describe("<DashboardPageActions>", () => {
       "Share…",
       "Rename…",
       "Pin",
-      "Add to folder…",
+      "Folders",
       "Edit tags…",
       "Delete…",
     ]);
@@ -188,7 +188,7 @@ describe("<DashboardPageActions>", () => {
       "Share…",
       "Rename…",
       "Pin",
-      "Add to folder…",
+      "Folders",
       "Edit tags…",
     ]);
   });
