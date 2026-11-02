@@ -157,7 +157,7 @@ jobs:
             .
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         with:
           # INVARIANT: only a version the pinned action already ships a checksum for —
@@ -203,7 +203,7 @@ jobs:
           trivy: "true"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.12.17"
 
@@ -303,7 +303,7 @@ jobs:
         # The hashFiles guard keeps a failed scan from producing a second, misleading error that
         # points at Code Scanning rather than at the scan that actually broke.
         if: ${{ always() && hashFiles('trivy-fs.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
@@ -397,7 +397,7 @@ jobs:
       - name: Upload rendered-chart SARIF
         # Own category: `.helm-rendered/*` paths do not exist in the tree.
         if: ${{ always() && hashFiles('trivy-helm.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy-helm.sarif
           category: trivy-helm
@@ -457,7 +457,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Code Scanning
         if: ${{ always() && hashFiles('semgrep.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: semgrep.sarif
           category: semgrep
