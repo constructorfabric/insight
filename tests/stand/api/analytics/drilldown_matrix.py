@@ -75,10 +75,10 @@ class Tier(StrEnum):
     EXACT_RATIO = "exact_ratio"
     #: Distinct count whose counted subject is the day itself.
     EXACT_DISTINCT_DATES = "exact_distinct_dates"
-    #: Sum of a day flag that collapses by `max` or `min` across a person's
+    #: Sum of a measure that collapses by `max` or `min` across a person's
     #: source accounts: evidence sums to at least the period scalar.
     COLLAPSE_BOUNDED_SUM = "collapse_bounded_sum"
-    #: Ratio whose denominator is such a day flag: the evidence ratio is at
+    #: Ratio whose denominator collapses that way: the evidence ratio is at
     #: most the period scalar.
     COLLAPSE_BOUNDED_RATIO = "collapse_bounded_ratio"
     #: Distinct count whose counted subject is projected nowhere; only the
@@ -187,7 +187,7 @@ MATRIX: Sequence[Expectation] = (
     ),
     Expectation("collab.meeting_free_days", "collab", Tier.COLLAPSE_BOUNDED_SUM),
     Expectation("collab.meeting_hours", "collab", Tier.EXACT_SUM),
-    Expectation("collab.meetings_count", "collab", Tier.EXACT_SUM),
+    Expectation("collab.meetings_count", "collab", Tier.COLLAPSE_BOUNDED_SUM),
     Expectation("collab.meetings_organized", "collab", Tier.EXACT_SUM),
     Expectation("collab.messages_sent", "collab", Tier.EXACT_SUM),
     Expectation("collab.msgs_per_active_day", "collab", Tier.EXACT_RATIO, scale=1.0),

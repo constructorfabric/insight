@@ -247,8 +247,9 @@ models:
   - name: collab_metric_evidence
     description: >
       Materialized MergeTree evidence serving table for collaboration source
-      measures. Connector class contracts retain daily summaries; focus,
-      activity, and meeting-free populations are marked as derived.
+      measures. Source summaries retain daily grain or one row per named attended
+      meeting, all marked as source_summary; focus, activity, and meeting-free
+      populations are marked as derived.
     columns: *metric_evidence_columns
 
   - name: task_metric_evidence
