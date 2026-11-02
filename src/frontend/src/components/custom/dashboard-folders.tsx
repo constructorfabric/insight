@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Folder as FolderIcon, Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { DashboardAccess, FolderSummary } from "@/api/custom-client";
 import { refusal } from "@/components/custom/refusal";
@@ -31,7 +31,8 @@ export function FolderSubmenu({
 }: {
   id: string;
   access: DashboardAccess;
-  onNewFolder: () => void;
+  /** Absent where a dashboard cannot go in a folder it creates. */
+  onNewFolder?: () => void;
   /** Asked instead of filing when filing would show the dashboard to the folder's people. */
   onShareInto: (folder: FolderSummary) => void;
 }) {
@@ -48,6 +49,13 @@ export function FolderSubmenu({
     ? folderChoices(access, listed.data.folders, read.data.folders, isAdmin)
     : [];
   const [moving, setMoving] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   async function widensAudience(folder: FolderSummary): Promise<boolean> {
     if (folder.access === "ownerless" || !read.data?.carries) return false;
@@ -76,7 +84,7 @@ export function FolderSubmenu({
     settle(folder.id, holds);
     try {
       if (!holds && summary && (await widensAudience(summary))) {
-        onShareInto(summary);
+        if (mounted.current) onShareInto(summary);
         return;
       }
 
@@ -86,6 +94,17 @@ export function FolderSubmenu({
       } else {
         await add.mutateAsync(entry);
       }
+      // INVARIANT: the read is patched before the tick is let go, so a refetch another toggle cancelled cannot flip it back.
+      queryClient.setQueryData(dashboardReadQuery(id).queryKey, (now) =>
+        now
+          ? {
+              ...now,
+              folders: holds
+                ? now.folders.filter((one) => one.id !== folder.id)
+                : [...now.folders, { id: folder.id, name: folder.name }],
+            }
+          : now
+      );
     } catch (error) {
       toast.error(
         refusal(
@@ -110,7 +129,7 @@ export function FolderSubmenu({
         {!ready ? (
           <DropdownMenuItem disabled>Loading…</DropdownMenuItem>
         ) : choices.length === 0 ? (
-          <DropdownMenuItem disabled>No folders yet</DropdownMenuItem>
+          <DropdownMenuItem disabled>No folders to add it to</DropdownMenuItem>
         ) : (
           choices.map((choice) => (
             <DropdownMenuCheckboxItem
@@ -123,11 +142,15 @@ export function FolderSubmenu({
             </DropdownMenuCheckboxItem>
           ))
         )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={onNewFolder}>
-          <Plus />
-          New folder…
-        </DropdownMenuItem>
+        {onNewFolder ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onNewFolder}>
+              <Plus />
+              New folder…
+            </DropdownMenuItem>
+          </>
+        ) : null}
       </DropdownMenuSubContent>
     </DropdownMenuSub>
   );

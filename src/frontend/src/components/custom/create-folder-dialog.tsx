@@ -60,7 +60,8 @@ export function CreateFolderDialog({
 }: {
   open: boolean;
   onClose: () => void;
-  onCreated?: (folder: string) => void;
+  /** `shared` says the folder was granted to people as it was made. */
+  onCreated?: (folder: { id: string; name: string }, shared: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const { isAdmin } = useIsAdmin();
@@ -103,7 +104,10 @@ export function CreateFolderDialog({
         grantees: isAdmin ? granteesFor(visibility, people) : [],
       });
       close();
-      onCreated?.(made.folder);
+      onCreated?.(
+        { id: made.folder, name: trimmed },
+        isAdmin && granteesFor(visibility, people).length > 0
+      );
       if (made.shareFailure !== null) {
         toast.error(
           refusal(made.shareFailure.refused, "Created, but couldn't share it.")

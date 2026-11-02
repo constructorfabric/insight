@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
-import type { DashboardAccess, FolderSummary } from "@/api/custom-client";
+import type { DashboardAccess, Folder } from "@/api/custom-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   DeleteDashboard,
@@ -65,20 +65,26 @@ export function DashboardMenu({
   const allows = dashboardAllows(access);
   const trigger = useRef<HTMLButtonElement>(null);
   const file = useAddToFolder();
-  const [sharing, setSharing] = useState<FolderSummary | null>(null);
+  const fileInNewFolder = useAddToFolder();
+  // INVARIANT: `sharing` outlives `askingShare`, so the dialog keeps the folder's name while it animates closed.
+  const [sharing, setSharing] = useState<Folder | null>(null);
+  const [askingShare, setAskingShare] = useState(false);
 
   const done = () => setAsked(null);
 
-  function closeSharing() {
+  function askShare(folder: Folder) {
     file.reset();
-    setSharing(null);
+    setSharing(folder);
+    setAskingShare(true);
   }
 
-  // INVARIANT: a new folder has an owner, and an ownerless dashboard is filed only in ownerless folders.
-  function fileInNew(folder: string) {
-    if (access === "ownerless") return;
-    file.mutate(
-      { folder, dashboard: id },
+  function fileInNew(folder: Folder, shared: boolean) {
+    if (shared) {
+      askShare(folder);
+      return;
+    }
+    fileInNewFolder.mutate(
+      { folder: folder.id, dashboard: id },
       {
         onError: (error) =>
           toast.error(refusal(error, "Couldn't add it to the folder.")),
@@ -134,10 +140,13 @@ export function DashboardMenu({
           <FolderSubmenu
             id={id}
             access={access}
-            onNewFolder={() => setAsked("folder")}
+            // INVARIANT: a new folder has an owner, and an ownerless dashboard is filed only in ownerless folders.
+            onNewFolder={
+              access === "ownerless" ? undefined : () => setAsked("folder")
+            }
             onShareInto={(folder) => {
               setOpen(false);
-              setSharing(folder);
+              askShare(folder);
             }}
           />
           {allows.edit ? (
@@ -175,9 +184,9 @@ export function DashboardMenu({
         onCreated={fileInNew}
       />
       <ConfirmDialog
-        open={sharing !== null}
+        open={askingShare}
         onOpenChange={(next) => {
-          if (!next) closeSharing();
+          if (!next) setAskingShare(false);
         }}
         title={`Add to ${sharing?.name ?? ""}?`}
         description={`People with access to ${sharing?.name ?? ""} will see this dashboard.`}
@@ -192,7 +201,7 @@ export function DashboardMenu({
           if (!sharing) return;
           file.mutate(
             { folder: sharing.id, dashboard: id },
-            { onSuccess: closeSharing }
+            { onSuccess: () => setAskingShare(false) }
           );
         }}
       />

@@ -83,7 +83,7 @@ export function DefinitionList<T extends { id: string }>({
           onRetry={onRetry}
         />
       ) : !items ? null : items.length === 0 ? (
-        search?.value.trim() ? (
+        (paging?.searching ?? Boolean(search?.value.trim())) ? (
           <NothingFound
             icon={Search}
             title={`No ${title.toLowerCase()} match your search`}
@@ -92,7 +92,7 @@ export function DefinitionList<T extends { id: string }>({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => search.onChange("")}
+                onClick={() => search?.onChange("")}
               >
                 Clear search
               </Button>
@@ -133,7 +133,9 @@ function NothingFound({
           <Icon aria-hidden />
         </EmptyMedia>
         <EmptyTitle>{title}</EmptyTitle>
-        {description ? <EmptyDescription>{description}</EmptyDescription> : null}
+        {description ? (
+          <EmptyDescription>{description}</EmptyDescription>
+        ) : null}
       </EmptyHeader>
       {action ? <EmptyActions>{action}</EmptyActions> : null}
     </Empty>

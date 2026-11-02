@@ -10,8 +10,15 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchGrants: vi.fn(),
     addToFolder: vi.fn(),
     removeFromFolder: vi.fn(),
+    createFolder: vi.fn(),
+    putGrant: vi.fn(),
   };
 });
+const admin = vi.hoisted(() => ({ isAdmin: false }));
+vi.mock("@/queries/identity-me", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-me")>()),
+  useIsAdmin: () => ({ isAdmin: admin.isAdmin, isPending: false }),
+}));
 vi.mock("@/components/ui/sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
@@ -208,6 +215,7 @@ describe("filing a dashboard from the Folders submenu", () => {
       unfiled: 1,
     });
     vi.mocked(customClient.removeFromFolder).mockResolvedValue(undefined);
+    admin.isAdmin = false;
   });
 
   it("ticks the folders holding it beside the ones it may go in", async () => {
@@ -229,7 +237,7 @@ describe("filing a dashboard from the Folders submenu", () => {
     await openFolders();
 
     expect(
-      await screen.findByRole("menuitem", { name: "No folders yet" })
+      await screen.findByRole("menuitem", { name: "No folders to add it to" })
     ).toHaveAttribute("aria-disabled", "true");
   });
 
@@ -360,13 +368,59 @@ describe("filing a dashboard from the Folders submenu", () => {
     expect(customClient.addToFolder).not.toHaveBeenCalled();
   });
 
-  it("opens the new-folder dialog from the submenu", async () => {
+  async function createFolderNamed(
+    user: ReturnType<typeof userEvent.setup>,
+    name: string,
+    visibility?: string
+  ) {
+    await choose(
+      user,
+      await screen.findByRole("menuitem", { name: "New folder…" })
+    );
+    const dialog = await screen.findByRole("dialog", { name: "New folder" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), name);
+    if (visibility) {
+      await user.click(within(dialog).getByRole("radio", { name: new RegExp(visibility) }));
+    }
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+  }
+
+  it("files it in the folder it creates", async () => {
+    vi.mocked(customClient.createFolder).mockResolvedValue({
+      id: "f-new",
+      name: "Quarterly",
+    });
     const user = await openFolders();
 
-    await choose(user, await screen.findByRole("menuitem", { name: "New folder…" }));
+    await createFolderNamed(user, "Quarterly");
+
+    await waitFor(() =>
+      expect(customClient.addToFolder).toHaveBeenCalledWith("f-new", "dash-1")
+    );
+    expect(screen.queryByRole("dialog", { name: /Add to/ })).toBeNull();
+  });
+
+  it("asks first before filing it in a new folder shared as it was made", async () => {
+    admin.isAdmin = true;
+    vi.mocked(customClient.createFolder).mockResolvedValue({
+      id: "f-new",
+      name: "Quarterly",
+    });
+    vi.mocked(customClient.putGrant).mockResolvedValue(undefined as never);
+    const user = await openFolders();
+
+    await createFolderNamed(user, "Quarterly", "Shared with org");
 
     expect(
-      await screen.findByRole("dialog", { name: "New folder" })
+      await screen.findByRole("dialog", { name: "Add to Quarterly?" })
     ).toBeInTheDocument();
+    expect(customClient.addToFolder).not.toHaveBeenCalled();
+  });
+
+  it("offers no new folder to an ownerless dashboard, which only ownerless folders hold", async () => {
+    await openFolders("ownerless");
+
+    await screen.findByRole("menuitemcheckbox", { name: "Legacy" });
+    expect(screen.queryByRole("menuitem", { name: "New folder…" })).toBeNull();
   });
 });

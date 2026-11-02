@@ -84,7 +84,10 @@ function FiledIn({ folders }: { folders: readonly Folder[] }) {
       {rest.length > 0 ? (
         <span title={rest.map((folder) => folder.name).join(", ")}>
           {" "}
-          +{rest.length}
+          <span aria-hidden>+{rest.length}</span>
+          <span className="sr-only">
+            {` and ${rest.map((folder) => folder.name).join(", ")}`}
+          </span>
         </span>
       ) : null}
     </span>

@@ -221,7 +221,7 @@ describe("/portal/custom/$name", () => {
         { id: "f-mine", name: "Mine" },
         { id: "f-viewed", name: "Viewed" },
       ],
-      "in Mine +1",
+      "in Mine +1 and Viewed",
     ],
   ] as const)(
     "says in its byline which folder holds it, for %s",
