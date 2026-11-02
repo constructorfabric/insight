@@ -11,9 +11,9 @@
 // dropped and never registers. Deliberately minimal set (no api-gateway host,
 // no authn / authz / tenant plugins — own bearer auth instead). The service's
 // own gear registers the same way from the lib crate.
-use gear_orchestrator as _;
 use git_cli_proxy as _;
 use grpc_hub as _;
+use service_discovery as _;
 use types_registry as _;
 
 use std::path::PathBuf;
