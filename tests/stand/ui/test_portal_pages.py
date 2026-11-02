@@ -10,6 +10,7 @@ so earlier zone and list traffic does not decide the page's verdict.
 from collections.abc import Callable
 
 import pytest
+from insight_stand import Manifest
 
 from .catalogue import PAGE_SCENARIOS, PERSONAS, PageScenario, scenarios_for
 from .checks import Checks, verify_page
@@ -46,6 +47,7 @@ def test_navigation_shows_every_expected_zone_and_entry(
     portal_smoke_for: Callable[[str], tuple[PortalShell, PageWatch]],
     record_property: Callable[[str, object], None],
     navigation_extras: list[str],
+    stand_manifest: Manifest,
 ) -> None:
     report_metadata(
         "Navigation shows every expected zone and entry",
@@ -55,9 +57,12 @@ def test_navigation_shows_every_expected_zone_and_entry(
     checks = Checks()
     extras: list[str] = []
     for persona in PERSONAS:
+        scenarios = scenarios_for(persona, stand_manifest.capabilities)
+        if not scenarios:
+            continue
         with checks.check(f"Verify navigation for the {persona} persona"):
             portal, _ = portal_smoke_for(persona)
-            observed = verify_navigation(portal, checks, scenarios_for(persona))
+            observed = verify_navigation(portal, checks, scenarios)
             extras.extend(f"{persona}: {entry}" for entry in observed)
     with step("Report navigation entries absent from the catalogue"):
         navigation_extras.extend(extras)

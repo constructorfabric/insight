@@ -73,6 +73,8 @@ BOOLEAN_CAPABILITIES: Final[frozenset[str]] = frozenset(
     {
         "ingestion",
         "service_principals",
+        "custom_catalogue",
+        "files_sharing",
         "portal_dashboards",
         "portal_metrics",
         "portal_widgets",
@@ -176,6 +178,8 @@ class Capabilities:
     portal_metrics: bool = False
     portal_widgets: bool = False
     portal_datasets: bool = False
+    custom_catalogue: bool = False
+    files_sharing: bool = False
 
     @classmethod
     def parse(cls, doc: Mapping[str, Any]) -> Capabilities:
@@ -190,6 +194,8 @@ class Capabilities:
             portal_metrics=_capability(doc, "portal_metrics"),
             portal_widgets=_capability(doc, "portal_widgets"),
             portal_datasets=_capability(doc, "portal_datasets"),
+            custom_catalogue=_capability(doc, "custom_catalogue"),
+            files_sharing=_capability(doc, "files_sharing"),
         )
 
     def has(self, name: str) -> bool:
@@ -206,6 +212,16 @@ class Capabilities:
         if name not in BOOLEAN_CAPABILITIES:
             known = ", ".join(sorted(BOOLEAN_CAPABILITIES))
             raise ValueError(f"{name!r} is not a boolean capability; known: {known}")
+        if name == "custom_catalogue":
+            return any(
+                (
+                    self.custom_catalogue,
+                    self.portal_dashboards,
+                    self.portal_metrics,
+                    self.portal_widgets,
+                    self.portal_datasets,
+                )
+            )
         return bool(getattr(self, name))
 
 

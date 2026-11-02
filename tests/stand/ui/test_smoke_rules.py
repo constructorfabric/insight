@@ -9,6 +9,7 @@ from urllib.parse import parse_qsl, urlsplit
 import pytest
 from insight_stand import Capabilities, ManifestError
 
+from .catalogue import PAGE_SCENARIOS, PERSONAS, missing_capabilities, scenarios_for
 from .checks import Checks
 from .envelopes import envelope_has_event
 from .login import password_form_url
@@ -69,11 +70,79 @@ def test_soft_verdict_reports_every_failed_check() -> None:
 
 
 @pytest.mark.parametrize(
-    "name", ["portal_dashboards", "portal_metrics", "portal_widgets", "portal_datasets"]
+    "name",
+    [
+        "portal_dashboards",
+        "portal_metrics",
+        "portal_widgets",
+        "portal_datasets",
+        "custom_catalogue",
+        "files_sharing",
+    ],
 )
-def test_definition_capabilities_require_explicit_boolean_declarations(name: str) -> None:
+def test_optional_capability_declarations_are_boolean(name: str) -> None:
     fields: dict[str, object] = {"ingestion": False, "idp": "keycloak"}
     assert not Capabilities.parse(fields).has(name)
     assert Capabilities.parse({**fields, name: True}).has(name)
     with pytest.raises(ManifestError, match="must be bool"):
         Capabilities.parse({**fields, name: "false"})
+
+
+@pytest.mark.parametrize(
+    "name", ["portal_dashboards", "portal_metrics", "portal_widgets", "portal_datasets"]
+)
+@pytest.mark.parametrize("catalogue", [None, False])
+def test_readable_definitions_imply_the_custom_catalogue_service(
+    name: str, catalogue: bool | None
+) -> None:
+    fields: dict[str, object] = {"ingestion": False, "idp": "keycloak", name: True}
+    if catalogue is not None:
+        fields["custom_catalogue"] = catalogue
+
+    assert Capabilities.parse(fields).has("custom_catalogue"), f"declaration: {fields!r}"
+
+
+@pytest.mark.parametrize(
+    ("declared", "expected"),
+    [
+        ({}, ("custom_catalogue", "portal_metrics")),
+        ({"custom_catalogue": True}, ("portal_metrics",)),
+        ({"portal_metrics": True}, ()),
+        ({"portal_widgets": True}, ("portal_metrics",)),
+    ],
+)
+def test_first_metric_requires_its_own_definition_and_the_service(
+    declared: dict[str, bool], expected: tuple[str, ...]
+) -> None:
+    capabilities = Capabilities.parse({"ingestion": False, "idp": "keycloak", **declared})
+    scenario = next(page for page in PAGE_SCENARIOS if page.first == "/portal/custom/metrics/")
+
+    assert missing_capabilities(scenario, capabilities) == expected, f"declaration: {declared!r}"
+
+
+@pytest.mark.parametrize(
+    ("declared", "expected"),
+    [
+        ({}, (False, False, False, False)),
+        ({"custom_catalogue": True}, (True, False, False, False)),
+        ({"portal_dashboards": True}, (True, True, False, False)),
+        ({"files_sharing": True}, (False, False, True, False)),
+        ({"ingestion": True}, (False, False, False, True)),
+    ],
+)
+def test_navigation_requires_only_entries_supported_by_the_stand(
+    declared: dict[str, bool], expected: tuple[bool, ...]
+) -> None:
+    capabilities = Capabilities.parse({"ingestion": False, "idp": "keycloak", **declared})
+    selected: set[str] = set()
+    for persona in PERSONAS:
+        selected.update(scenario.title for scenario in scenarios_for(persona, capabilities))
+
+    gated_titles = (
+        "All dashboards list loads without errors",
+        "First dashboard loads without errors",
+        "Collaboration Files and sharing loads without errors",
+        "Sources and connectors load without errors",
+    )
+    assert tuple(title in selected for title in gated_titles) == expected, declared
+    assert "At a glance loads without errors" in selected

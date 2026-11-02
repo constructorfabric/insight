@@ -119,7 +119,7 @@ starts immediately before the final hop, after previous requests settle.
 The catalogue assigns `ceo` to org-visible pages and `admin_operator` to entries
 requiring the identity-service admin grant: Home's My dashboards, the Dashboards
 Catalogue entries, Sources & connectors, Identities and Platform usage. Navigation
-checks each fixture's own entries; uncatalogued extras are reported without
+checks each fixture's supported entries; uncatalogued extras are reported without
 failing. New actions, Planned / WorkChart groups and the org tree are excluded.
 Usage events are answered locally with 204. `INSIGHT_FORCE_500` accepts a
 Playwright URL glob for local 500 responses; when set, Sentry envelopes are
@@ -168,6 +168,8 @@ requires `dev_lead` when collecting the whole UI directory.
   },
   "capabilities": {
     "idp": "keycloak", "ingestion": false,
+    "custom_catalogue": false,
+    "files_sharing": false,
     "portal_dashboards": false, "portal_metrics": false,
     "portal_widgets": false, "portal_datasets": false
   },
@@ -175,11 +177,22 @@ requires `dev_lead` when collecting the whole UI directory.
 }
 ```
 
-Each `portal_*` capability promises an existing definition readable by its
-catalogued persona. Absent or false capabilities skip the corresponding
-first-item visit at collection with a reason; list pages and navigation still
-run. The seed creates none of these custom definitions. To collect without a
-stand, supply a synthetic manifest and `--base-url https://example.com`.
+Missing requirements skip page visits at collection with a reason and exclude
+their navigation entries. The new capabilities default to false. Any `portal_*`
+definition capability implies `custom_catalogue`; each promises an existing
+definition readable by its catalogued persona. The seed creates none of these
+custom definitions. To collect without a stand, supply a synthetic manifest
+and `--base-url https://example.com`.
+
+| Capability | Catalogue pages and navigation entries requiring it |
+|---|---|
+| `custom_catalogue` | Home: My dashboards. Dashboards: All dashboards, Shared with me, Unfiled, Metrics, Widgets, Datasets, Alerts; all first-item visits. |
+| `portal_dashboards` | First dashboard (in addition to the service). |
+| `portal_metrics` | First metric (in addition to the service). |
+| `portal_widgets` | First widget (in addition to the service). |
+| `portal_datasets` | First dataset (in addition to the service). |
+| `files_sharing` | Explore → Collaboration → Files & sharing; requires its connected data source. |
+| `ingestion` | Manage → Sources & connectors. |
 
 ## CI required gate
 

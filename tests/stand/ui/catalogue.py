@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from insight_stand import Capabilities
+
 type PersonaName = Literal["ceo", "admin_operator"]
 
 
@@ -13,7 +15,7 @@ class PageScenario:
     title: str
     test_id: str
     first: str | None = None
-    capability: str | None = None
+    capabilities: tuple[str, ...] = ()
     persona: PersonaName = "ceo"
 
     @property
@@ -65,6 +67,7 @@ PAGE_SCENARIOS = (
         ("My dashboards",),
         "My dashboards from Home loads without errors",
         "page-custom-dashboards",
+        capabilities=("custom_catalogue",),
         persona="admin_operator",
     ),
     PageScenario(
@@ -72,6 +75,7 @@ PAGE_SCENARIOS = (
         ("All dashboards",),
         "All dashboards list loads without errors",
         "page-custom-dashboards",
+        capabilities=("custom_catalogue",),
     ),
     PageScenario(
         "Dashboards",
@@ -79,25 +83,28 @@ PAGE_SCENARIOS = (
         "First dashboard loads without errors",
         "page-custom-dashboard",
         first="/portal/custom/",
-        capability="portal_dashboards",
+        capabilities=("custom_catalogue", "portal_dashboards"),
     ),
     PageScenario(
         "Dashboards",
         ("Shared with me",),
         "Shared with me list loads without errors",
         "page-custom-dashboards",
+        capabilities=("custom_catalogue",),
     ),
     PageScenario(
         "Dashboards",
         ("Unfiled",),
         "Unfiled dashboards list loads without errors",
         "page-custom-dashboards",
+        capabilities=("custom_catalogue",),
     ),
     PageScenario(
         "Dashboards",
         ("Metrics",),
         "Metrics list loads without errors",
         "page-custom-metrics",
+        capabilities=("custom_catalogue",),
         persona="admin_operator",
     ),
     PageScenario(
@@ -106,7 +113,7 @@ PAGE_SCENARIOS = (
         "First metric loads without errors",
         "page-custom-metric",
         first="/portal/custom/metrics/",
-        capability="portal_metrics",
+        capabilities=("custom_catalogue", "portal_metrics"),
         persona="admin_operator",
     ),
     PageScenario(
@@ -114,6 +121,7 @@ PAGE_SCENARIOS = (
         ("Widgets",),
         "Widgets list loads without errors",
         "page-custom-widgets",
+        capabilities=("custom_catalogue",),
         persona="admin_operator",
     ),
     PageScenario(
@@ -122,7 +130,7 @@ PAGE_SCENARIOS = (
         "First widget loads without errors",
         "page-custom-widget",
         first="/portal/custom/widgets/",
-        capability="portal_widgets",
+        capabilities=("custom_catalogue", "portal_widgets"),
         persona="admin_operator",
     ),
     PageScenario(
@@ -130,6 +138,7 @@ PAGE_SCENARIOS = (
         ("Datasets",),
         "Datasets list loads without errors",
         "page-custom-datasets",
+        capabilities=("custom_catalogue",),
         persona="admin_operator",
     ),
     PageScenario(
@@ -138,7 +147,7 @@ PAGE_SCENARIOS = (
         "First dataset loads without errors",
         "page-custom-dataset",
         first="/portal/custom/datasets/",
-        capability="portal_datasets",
+        capabilities=("custom_catalogue", "portal_datasets"),
         persona="admin_operator",
     ),
     PageScenario(
@@ -146,6 +155,7 @@ PAGE_SCENARIOS = (
         ("Alerts",),
         "Alerts list loads without errors",
         "page-custom-alerts",
+        capabilities=("custom_catalogue",),
         persona="admin_operator",
     ),
     PageScenario(
@@ -207,6 +217,7 @@ PAGE_SCENARIOS = (
         ("Collaboration", "Files & sharing"),
         "Collaboration Files and sharing loads without errors",
         "page-directions-collab-files-sharing",
+        capabilities=("files_sharing",),
     ),
     PageScenario(
         "Explore",
@@ -255,6 +266,7 @@ PAGE_SCENARIOS = (
         ("Sources & connectors",),
         "Sources and connectors load without errors",
         "page-manage-connector-health",
+        capabilities=("ingestion",),
         persona="admin_operator",
     ),
     PageScenario(
@@ -283,5 +295,13 @@ ZONES = tuple(dict.fromkeys(scenario.zone for scenario in PAGE_SCENARIOS))
 PERSONAS = tuple(dict.fromkeys(scenario.persona for scenario in PAGE_SCENARIOS))
 
 
-def scenarios_for(persona: PersonaName) -> tuple[PageScenario, ...]:
-    return tuple(scenario for scenario in PAGE_SCENARIOS if scenario.persona == persona)
+def missing_capabilities(scenario: PageScenario, capabilities: Capabilities) -> tuple[str, ...]:
+    return tuple(name for name in scenario.capabilities if not capabilities.has(name))
+
+
+def scenarios_for(persona: PersonaName, capabilities: Capabilities) -> tuple[PageScenario, ...]:
+    return tuple(
+        scenario
+        for scenario in PAGE_SCENARIOS
+        if scenario.persona == persona and not missing_capabilities(scenario, capabilities)
+    )

@@ -47,7 +47,7 @@ from insight_stand.session import DEFAULT_MAX_SESSION_AGE_S
 from playwright.sync_api import Browser, Page, StorageState, expect
 from pytest_playwright.pytest_playwright import CreateContextCallback
 
-from .catalogue import PageScenario
+from .catalogue import PageScenario, missing_capabilities
 from .page_watch import USAGE_PATH, PageWatch
 from .pages.keycloak_login_page import KeycloakLoginPage
 from .pages.login_page import LoginPage
@@ -74,14 +74,15 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             continue
         callspec = getattr(item, "callspec", None)
         scenario = callspec.params.get("scenario") if callspec else None
-        if not isinstance(scenario, PageScenario) or scenario.capability is None:
+        if not isinstance(scenario, PageScenario):
             continue
-        if not manifest.has_capability(scenario.capability):
+        missing = missing_capabilities(scenario, manifest.capabilities)
+        if missing:
             item.add_marker(
                 pytest.mark.skip(
                     reason=(
-                        f"requires capability {scenario.capability!r}: no existing definition "
-                        f"declared for this first-item visit ({manifest.source_path})"
+                        f"requires capabilities {', '.join(missing)}: not advertised "
+                        f"by this stand ({manifest.source_path})"
                     )
                 )
             )
