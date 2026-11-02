@@ -56,11 +56,43 @@ uv run --project tests pytest tests/stand
 ```
 
 This host-side run is also exactly what CI's `ui-journeys` lane does. The
-verb still accepts `--image <ref>` to run a suite baked into a container
-joined to the gateway's network namespace, but no such image is published
-anymore — the lane ran from a published `ui-tests` image once, and the mode
-remains only as a mechanism. See `dev-compose.sh`'s
-`cmd_test_stand_help` for the full verb reference.
+verb also accepts `--image <ref>` to run the checkout's tests in a Playwright
+base image joined to the gateway's network namespace. The published suite
+image below runs its bundled tests directly against a deployed stand. See
+`dev-compose.sh`'s `cmd_test_stand_help` for the full verb reference.
+
+## Running from the published image
+
+`ghcr.io/constructorfabric/insight-ui-tests:<tag>` includes the suite, its
+locked Python dependencies and browsers for `linux/amd64` and `linux/arm64`.
+Use the build tag reported by the image workflow, or `latest` for the most
+recent image published from main. No checkout or Python installation is needed.
+
+Set `INSIGHT_STAND_BASE_URL` to the stand's HTTPS origin (for example,
+`https://stand.example.com`) and `INSIGHT_STAND_PERSONA_PASSWORD` to its persona
+password. Save the seed manifest as `stand-manifest.json` (see below), then run:
+
+```bash
+mkdir -p test-results
+chmod a+rwx test-results
+docker run --rm --init --ipc=host \
+  -e INSIGHT_STAND_BASE_URL \
+  -e INSIGHT_STAND_PERSONA_PASSWORD \
+  -e INSIGHT_STAND_ARTIFACT_DIR=/results \
+  -v "$PWD/stand-manifest.json:/stand/manifest.json:ro" \
+  -v "$PWD/test-results:/results" \
+  ghcr.io/constructorfabric/insight-ui-tests:<tag> \
+  /tests/stand/ui --stand-manifest /stand/manifest.json \
+  --junitxml=/results/junit.xml \
+  --tracing retain-on-failure --screenshot only-on-failure \
+  --output=/results/playwright
+```
+
+Arguments after the image name are pytest arguments. Replace `/tests/stand/ui`
+with a test file or node ID, or add `-k` / `-m` to select tests; omitting all
+arguments runs `/tests/stand`. The output directory must be writable by the
+image's non-root user. JUnit, retained failure traces, screenshots and the
+coverage ledger remain in the mounted `test-results` directory after exit.
 
 ## Running it against a deployed stand
 
