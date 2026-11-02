@@ -3,7 +3,7 @@ FROM airbyte/python-connector-base:4.1.1@sha256:a268b44c733ae699a60f5fbc06a32494
 # The base digest is pinned and ships no apt layer, so bookworm-security updates
 # only reach the image if this stage applies them. Runs before the USER switch.
 # Bump to re-run the upgrade when a fix lands without the base digest moving.
-ARG SECURITY_EPOCH=2026-10-06
+ARG SECURITY_EPOCH=2026-11-02
 RUN echo "security epoch ${SECURITY_EPOCH}" \
     && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
