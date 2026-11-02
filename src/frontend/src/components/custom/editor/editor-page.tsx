@@ -20,6 +20,11 @@ const CATALOGUE: Record<EditableKind, string> = {
   dashboards: "/portal/custom",
 };
 
+const BACK_LINK = cn(
+  TEXT_BODY,
+  "self-start underline decoration-dotted underline-offset-4"
+);
+
 const PAGE: Record<EditableKind, string> = {
   datasets: "/portal/custom/datasets/$name",
   metrics: "/portal/custom/metrics/$name",
@@ -53,20 +58,22 @@ export function EditorPage({
     void navigate({ to: PAGE[kind], params: { name: made } });
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">
+    <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
         <h1 className={TEXT_TITLE}>
           {id === undefined ? `New ${noun}` : (stored.data?.name ?? id)}
         </h1>
-        <Link
-          to={CATALOGUE[kind]}
-          className={cn(
-            TEXT_BODY,
-            "self-start underline decoration-dotted underline-offset-4"
-          )}
-        >
-          Back to the catalogue
-        </Link>
+        {id === undefined ? (
+          <Link to={CATALOGUE[kind]} className={BACK_LINK}>
+            {kind === "dashboards"
+              ? "Back to dashboards"
+              : "Back to the catalogue"}
+          </Link>
+        ) : (
+          <Link to={PAGE[kind]} params={{ name: id }} className={BACK_LINK}>
+            Back to the {noun}
+          </Link>
+        )}
       </div>
 
       {id === undefined ? (
