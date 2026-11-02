@@ -69,7 +69,7 @@ interface CardFrameProps {
   squeezed?: number;
   updatedAt?: string;
   menu: ReactNode;
-  /** A control the card acts on in place, set before the open link. */
+  /** A control the card acts on in place, set before the menu. */
   control?: ReactNode;
 }
 
@@ -89,23 +89,24 @@ export function CardFrame({
 
   return (
     <Card size="sm" className="h-full">
-      <CardContent className="flex flex-1 items-center gap-3">
-        <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+      <CardContent className="flex flex-1 gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           <Link
             {...open}
-            className={cn(
-              TEXT_NAME,
-              "min-w-0 truncate transition-opacity hover:opacity-80"
-            )}
-            title={title}
+            className="flex min-w-0 items-start gap-3 transition-opacity hover:opacity-80"
           >
-            {title}
+            <Icon
+              className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
+            <span className={cn(TEXT_NAME, "min-w-0 truncate")} title={title}>
+              {title}
+            </span>
           </Link>
           <p
             className={cn(
               TEXT_LABEL,
-              "flex min-w-0 gap-x-1.5 font-normal whitespace-nowrap"
+              "flex min-w-0 gap-x-1.5 ps-7 font-normal whitespace-nowrap"
             )}
           >
             {parts.map((part, index) => (
@@ -121,16 +122,16 @@ export function CardFrame({
             ))}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {control}
+        {control ? <div className="shrink-0 self-center">{control}</div> : null}
+        <div className="-my-1 flex shrink-0 flex-col items-center justify-between">
+          {menu}
           <Link
             {...open}
             aria-label={`Open ${title}`}
-            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <ChevronRight className="size-4" aria-hidden />
           </Link>
-          {menu}
         </div>
       </CardContent>
     </Card>

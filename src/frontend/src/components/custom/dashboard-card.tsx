@@ -22,50 +22,49 @@ export function DashboardCard({ dashboard }: { dashboard: DashboardListed }) {
 
   return (
     <Card size="sm" className="h-full">
-      <CardContent className="flex flex-1 items-center gap-3">
-        <LayoutDashboard
-          className="size-4 shrink-0 text-muted-foreground"
-          aria-hidden
-        />
+      <CardContent className="flex flex-1 gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           <Link
             to="/portal/custom/$name"
             params={{ name: id }}
-            className={cn(
-              TEXT_NAME,
-              "min-w-0 truncate transition-opacity hover:opacity-80"
-            )}
-            title={title}
+            className="flex min-w-0 items-start gap-3 transition-opacity hover:opacity-80"
           >
-            {title}
+            <LayoutDashboard
+              className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
+            <span className={cn(TEXT_NAME, "min-w-0 truncate")} title={title}>
+              {title}
+            </span>
           </Link>
           <DashboardByline
             owner={dashboard.owner_name}
             updatedAt={dashboard.updated_at}
             visibility={dashboard.visibility}
             access={access}
+            className="ps-7"
           />
           {tags.length > 0 ? (
-            <div className="h-5">
+            <div className="h-5 ps-7">
               <DashboardTags tags={tags} />
             </div>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Link
-            to="/portal/custom/$name"
-            params={{ name: id }}
-            aria-label={`Open ${name}`}
-            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <ChevronRight className="size-4" aria-hidden />
-          </Link>
+        <div className="-my-1 flex shrink-0 flex-col items-center justify-between">
           <DashboardMenu
             id={id}
             name={name}
             title={storedTitle ?? undefined}
             access={access}
           />
+          <Link
+            to="/portal/custom/$name"
+            params={{ name: id }}
+            aria-label={`Open ${name}`}
+            className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <ChevronRight className="size-4" aria-hidden />
+          </Link>
         </div>
       </CardContent>
     </Card>
