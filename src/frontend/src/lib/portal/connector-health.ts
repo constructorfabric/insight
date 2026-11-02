@@ -1,11 +1,27 @@
 import type {
+  AppliedSchedule,
   ConnectorHealth,
   ConnectorHealthSummary,
   ConnectorInstance,
   ConnectorInstanceRef,
+  ScheduleOrigin,
   SyncFact,
   SyncStatus,
 } from "@/api/connector-health-client";
+
+export const SCHEDULE_HEADING = "Schedule";
+
+const SCHEDULE_ORIGIN: Record<ScheduleOrigin, string> = {
+  annotation: "Secret annotation",
+  descriptor: "connector default",
+  default: "built-in default",
+};
+
+export function describeSchedule(schedule: AppliedSchedule): string {
+  const timezone = schedule.timezone ?? "controller time";
+  const origin = schedule.origin == null ? null : SCHEDULE_ORIGIN[schedule.origin];
+  return origin == null ? timezone : `${timezone} · ${origin}`;
+}
 
 /**
  * Every word this page says about a connector, and the one function that

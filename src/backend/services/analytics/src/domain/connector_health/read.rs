@@ -4,13 +4,16 @@
 //! meet. That is what lets this page answer while the mover, the cluster API
 //! and the ingestion pipeline are all unreachable.
 
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
 use chrono::{DateTime, Utc};
 use insight_clickhouse::MissingRelation;
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
-use std::sync::LazyLock;
 
-use super::model::{ConnectorSummary, InstanceKey, LastSync, LedgerFacts, SyncStatus};
+use super::model::{
+    AppliedSchedule, ConnectorSummary, InstanceKey, LastSync, LedgerFacts, SyncStatus,
+};
 use super::name::{SourceId, TenantId};
 
 /// DDL owned by `scripts/migrations/20260827000000_connector-sync-history.sql`;
@@ -165,7 +168,8 @@ static LAST_SYNC_SQL: LazyLock<String> = LazyLock::new(|| {
 /// The set the controller managed on one sealed tick.
 static CONFIGURED_SET_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "SELECT DISTINCT {INSTANCE_COLUMNS} FROM {TABLE} \
+        "SELECT DISTINCT {INSTANCE_COLUMNS}, schedules, schedule_timezone, schedule_origin \
+         FROM {TABLE} \
          WHERE event = '{CONNECTOR_CONFIGURED}' AND tick_id = ?"
     )
 });
@@ -273,15 +277,24 @@ struct ConnectorRow {
     connector: String,
     tenant_id: String,
     source_id: String,
+    schedules: Vec<String>,
+    schedule_timezone: String,
+    schedule_origin: String,
 }
 
 impl ConnectorRow {
-    fn into_key(self) -> InstanceKey {
-        InstanceKey {
+    fn into_entry(self) -> (InstanceKey, Option<AppliedSchedule>) {
+        let key = InstanceKey {
             connector: self.connector,
             tenant_id: self.tenant_id,
             source_id: self.source_id,
-        }
+        };
+        let schedule = AppliedSchedule::from_record(
+            self.schedules,
+            self.schedule_timezone,
+            &self.schedule_origin,
+        );
+        (key, schedule)
     }
 }
 
@@ -313,7 +326,7 @@ pub(crate) async fn read_health(
     // been read. Deriving this from the rows alone would make a sealed empty
     // install indistinguishable from one that has never recorded anything.
     let has_history = sealed.is_some() || !syncs.is_empty();
-    let summaries = merge(syncs, &configured);
+    let summaries = merge(syncs, configured);
     Ok(LedgerFacts {
         sealed_at: sealed.map(|tick| tick.sealed_at),
         typical_read_interval_ms: (interval.gaps >= MIN_GAPS_FOR_INTERVAL)
@@ -329,16 +342,16 @@ pub(crate) async fn read_health(
 async fn configured_set(
     ch: &insight_clickhouse::Client,
     tick_id: Option<&str>,
-) -> Result<HashSet<InstanceKey>, clickhouse::error::Error> {
+) -> Result<HashMap<InstanceKey, Option<AppliedSchedule>>, clickhouse::error::Error> {
     let Some(tick_id) = tick_id else {
-        return Ok(HashSet::new());
+        return Ok(HashMap::new());
     };
     let rows = ch
         .query(&CONFIGURED_SET_SQL)
         .bind(tick_id)
         .fetch_all::<ConnectorRow>()
         .await?;
-    Ok(rows.into_iter().map(ConnectorRow::into_key).collect())
+    Ok(rows.into_iter().map(ConnectorRow::into_entry).collect())
 }
 
 /// One connector's window, or one installation's.
@@ -389,9 +402,12 @@ impl HistoryRow {
 /// Two bounded relations union to twice the bound, so the cap is applied once
 /// more here — after the ordering, so what a truncated response keeps is what
 /// needs attention rather than an arbitrary half.
-fn merge(syncs: Vec<SyncRow>, configured: &HashSet<InstanceKey>) -> Vec<ConnectorSummary> {
+fn merge(
+    syncs: Vec<SyncRow>,
+    mut configured: HashMap<InstanceKey, Option<AppliedSchedule>>,
+) -> Vec<ConnectorSummary> {
     let mut by_instance: HashMap<InstanceKey, Option<LastSync>> = configured
-        .iter()
+        .keys()
         .map(|instance| (instance.clone(), None))
         .collect();
 
@@ -414,10 +430,14 @@ fn merge(syncs: Vec<SyncRow>, configured: &HashSet<InstanceKey>) -> Vec<Connecto
 
     let mut summaries: Vec<ConnectorSummary> = by_instance
         .into_iter()
-        .map(|(instance, last_sync)| ConnectorSummary {
-            configured: configured.contains(&instance),
-            instance,
-            last_sync,
+        .map(|(instance, last_sync)| {
+            let recorded = configured.remove(&instance);
+            ConnectorSummary {
+                configured: recorded.is_some(),
+                schedule: recorded.flatten(),
+                instance,
+                last_sync,
+            }
         })
         .collect();
     super::model::by_attention(&mut summaries);
@@ -600,17 +620,60 @@ mod guards {
     /// its ledger holds.
     #[test]
     fn the_summary_cannot_answer_with_more_instances_than_the_cap() {
-        let configured: HashSet<InstanceKey> = (0..CONNECTOR_LIMIT + 10)
-            .map(|n| InstanceKey {
-                connector: format!("connector-{n}"),
-                tenant_id: "example-tenant".to_owned(),
-                source_id: "main".to_owned(),
+        let configured = (0..CONNECTOR_LIMIT + 10)
+            .map(|n| {
+                (
+                    InstanceKey {
+                        connector: format!("connector-{n}"),
+                        tenant_id: "example-tenant".to_owned(),
+                        source_id: "main".to_owned(),
+                    },
+                    None,
+                )
             })
             .collect();
 
-        let summaries = merge(Vec::new(), &configured);
+        let summaries = merge(Vec::new(), configured);
 
         assert_eq!(summaries.len(), CONNECTOR_LIMIT as usize);
+    }
+
+    #[test]
+    fn only_the_configured_instance_carries_its_recorded_schedule() {
+        let (key, schedule) = ConnectorRow {
+            connector: "example-tracker".to_owned(),
+            tenant_id: "example-tenant".to_owned(),
+            source_id: "main".to_owned(),
+            schedules: vec!["0 22 * * *".to_owned()],
+            schedule_timezone: "Europe/Sofia".to_owned(),
+            schedule_origin: "annotation".to_owned(),
+        }
+        .into_entry();
+        let syncs = ["main", "removed"].map(|source| SyncRow {
+            connector: key.connector.clone(),
+            tenant_id: key.tenant_id.clone(),
+            source_id: source.to_owned(),
+            job_id: "1".to_owned(),
+            status: "succeeded".to_owned(),
+            started_at: None,
+            job_updated_at: None,
+            duration_ms: None,
+            records_reported: None,
+        });
+        let summaries = merge(Vec::from(syncs), HashMap::from([(key, schedule)]));
+
+        for summary in summaries {
+            let json = serde_json::to_value(super::super::model::ConnectorHealth::from(summary))
+                .unwrap_or_else(|error| panic!("serialisable: {error}"));
+            if json["source_id"] == "main" {
+                assert_eq!(json["schedule"]["crons"], serde_json::json!(["0 22 * * *"]));
+                assert_eq!(json["schedule"]["timezone"], "Europe/Sofia");
+                assert_eq!(json["schedule"]["origin"], "annotation");
+            } else {
+                assert_eq!(json["configured"], false);
+                assert_eq!(json["schedule"], serde_json::Value::Null);
+            }
+        }
     }
 
     #[test]

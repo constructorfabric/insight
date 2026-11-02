@@ -395,7 +395,8 @@ A handful of reads per request, all over the ledger alone. Pure functions merge 
 connector summaries, resolve the quiet states from the configured set, order rows by
 attention (FR-8), and mark unknowns explicitly (FR-7). Serves the bounded sync history for
 the expansion (FR-6), and measures the interval between the recent sealed ticks so the pane
-can date the picture it is showing (FR-12).
+can date the picture it is showing (FR-12). The configured-set read carries the recorded
+applied schedule, timezone and origin from that same sealed tick (FR-13).
 
 ##### Responsibility boundaries
 
@@ -421,11 +422,16 @@ answered a different question.
 
 One row per connector instance with the fields of FR-5; a row expands to the recent syncs of
 that instance, not of every instance sharing its connector's name. Two installations of one
-connector are told apart by the identity cell, which is the only thing in the row that
-differs. Decides the displayed state from the served facts in one documented function, so the
-precedence lives in one place rather than scattered across cells. Every state carries words
-as well as a tone, so colour is never the only signal. Dates the whole page by when the mover
-was last read, and says so when that read stands out against the ones before it (FR-12).
+connector are told apart by the identity cell. The Schedule column immediately after it
+shows the recorded cron expressions, one per line in monospace, with a muted line below:
+the timezone or `controller time`, then ` · ` and the origin wording when known. Origins
+read as `Secret annotation`, `connector default`, and `built-in default` for `annotation`,
+`descriptor`, and `default` respectively. A null origin adds nothing after the timezone;
+a null schedule renders as `—` (FR-13). Decides the displayed state from the served facts in
+one documented function, so the precedence lives in one place rather than scattered across
+cells. Every state carries words as well as a tone, so colour is never the only signal. Dates
+the whole page by when the mover was last read, and says so when that read stands out against
+the ones before it (FR-12).
 
 ##### Responsibility boundaries
 
@@ -458,6 +464,11 @@ design.
       "tenant_id": "example-tenant",
       "source_id": "example-tracker-main",
       "configured": true,
+      "schedule": {
+        "crons": ["0 22 * * *"],
+        "timezone": "Europe/Sofia",
+        "origin": "annotation"
+      },
       "last_sync": {
         "job_id": "8412",
         "status": "succeeded",
@@ -506,6 +517,12 @@ Shape rules that the generated contract enforces:
   what every other DTO on this service does — a lone shape with its own nullability convention
   would cost more than the looser contract does, since handling `null` handles both.
 - `last_sync` is null for a configured connector that has never synced.
+- `schedule` is the applied schedule recorded in the newest sealed configured set, dated by
+  `checked_at`, never an intended schedule. It is null outside that set or when its row has
+  an empty `schedules` array, including rows predating those columns. Otherwise `crons` is
+  the non-empty list as recorded; `timezone` is null for an empty recorded value, meaning
+  the Argo controller's timezone. `origin` is `annotation`, `descriptor`, or `default`, and
+  null for an empty or unknown recorded value. No value is inferred (FR-13).
 - **`as_of` and `checked_at` are different clocks and both are needed.** `as_of` is when the
   service computed the answer; `checked_at` is the newest sealed tick's own stamp — when the
   mover was last read. `as_of` dates the answer, `checked_at` dates the facts in it, and the

@@ -259,7 +259,8 @@ empty set, because an empty set is indistinguishable from "everything was remove
 
 Each connector occupies one row carrying: its name, whether it is configured now, when its
 last sync started, how long that sync took, how it ended, and the record count the mover
-reported for it. Values the ledger does not hold render as unknown.
+reported for it. It also shows the applied schedule of FR-13. Values the ledger does not
+hold render as unknown.
 
 #### FR-6 — A row expands to its recent syncs
 
@@ -294,6 +295,17 @@ most recent activity comes first.
 The surface is available only to the instance operator role and reports the whole install.
 A caller without that role is refused, and the refusal names the surface it was refused.
 
+#### FR-13 — The recorded applied schedule is visible
+
+- [ ] `p2` - **ID**: `cpt-insightspec-connhealth-fr-applied-schedule`
+
+Each connector instance shows the schedule the reconcile loop actually applied, with its
+timezone and where it came from, as recorded in the newest sealed configured set. The page
+shows the recorded cron expressions without computing a cadence or claiming an intended
+schedule. Outside that set, or where the row records no cron expressions, the schedule is
+unknown. An empty recorded timezone means controller time; an empty or unknown origin
+remains unknown. The page's last-checked stamp dates these facts too.
+
 ### 5.3 Degradation
 
 #### FR-10 — The page works with an empty ledger
@@ -323,10 +335,11 @@ when the mover was last read, dating everything below it; and when that read is 
 than the interval between the reads before it, the page says recording appears to have
 stopped and the connector states shown may no longer be current.
 
-Both the age and the interval are recorded facts, so the page asserts nothing about a
-schedule it cannot see. Where too few reads are recorded to establish an interval, the page
-shows the age and says the cadence is unmeasured — it does not conclude that recording
-stopped, because with no cadence recorded there is nothing for the age to be late against.
+Both the age and the interval are recorded facts about the recorder, independent of the
+connector's recorded applied schedule (FR-13). Where too few reads establish an interval,
+the page shows the age and says the cadence is unmeasured — it does not conclude that
+recording stopped, because with no cadence recorded there is nothing for the age to be late
+against.
 
 ## 6. Non-Functional Requirements
 
@@ -409,8 +422,9 @@ long series is out of scope for this surface.
 
 A connector's schedule disappears (a suspended or deleted workflow). No new syncs are
 recorded. The page shows how long ago the connector's last sync started, and the expansion
-lists the start times of the recent ones. The operator reads the gap from those timestamps;
-the product computes no cadence and claims no intended schedule.
+lists the start times of the recent ones. It also shows the applied schedule recorded on the
+newest sealed tick, or unknown when unrecorded (FR-13). The operator reads the gap from those
+timestamps; the product computes no cadence and claims no intended schedule.
 
 ### UC-3 — A fresh install is read correctly
 
@@ -442,6 +456,8 @@ it; listing it would mean reading storage the reader deliberately holds no acces
 - [ ] On a ledger-less install the first sweep populates history from the mover's retained
       jobs (FR-3).
 - [ ] The page renders one row per connector with the fields of FR-5, expandable per FR-6.
+- [ ] Each instance shows its recorded applied schedule, timezone and origin from the newest
+      sealed configured set; an unrecorded schedule renders as unknown (FR-13).
 - [ ] No fresh/stale verdict appears anywhere, no successful sync is described as delivery,
       and unknown states render as unknown (FR-7).
 - [ ] A non-operator caller is refused; the response is instance-wide for the operator

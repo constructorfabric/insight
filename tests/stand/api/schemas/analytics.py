@@ -900,6 +900,12 @@ class SavedQuerySummary(BaseModel):
     name: str
 
 
+class ScheduleOrigin(StrEnum):
+    annotation = 'annotation'
+    descriptor = 'descriptor'
+    default = 'default'
+
+
 class SchemaStatus(StrEnum):
     ok = 'ok'
     error = 'error'
@@ -1105,6 +1111,15 @@ class ValueTransform(BaseModel):
     offset: float | None = None
 
 
+class AppliedSchedule(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str] = Field(..., description="The non-empty list recorded from the instance's `CronWorkflow`.", min_length=1)
+    origin: ScheduleOrigin | None = None
+    timezone: str | None = Field(None, description="Absent when the `CronWorkflow` uses the Argo controller's timezone.")
+
+
 class BreakdownValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1123,6 +1138,7 @@ class ConnectorHealth(BaseModel):
     configured: bool = Field(..., description='Present in the newest sealed snapshot of the set the controller manages.')
     connector: str
     last_sync: SyncFact | None = None
+    schedule: AppliedSchedule | None = None
     source_id: str | None = Field(None, description="The installation's own id within that tenant. Absent with `tenant_id`.")
     tenant_id: str | None = Field(None, description='Tenant of the installation this row is. Absent together with\n`source_id` on history recorded before the ledger carried the identity\nthat no single instance could be shown to own — unattributed, which is a\ndifferent answer from attributed to something named "".')
 

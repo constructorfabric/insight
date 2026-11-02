@@ -21,6 +21,7 @@ import {
   describeDuration,
   describeInstance,
   describeRecording,
+  describeSchedule,
   describeSync,
   formatDuration,
   formatRecords,
@@ -29,6 +30,19 @@ import {
 } from "@/lib/portal/connector-health";
 
 const MINUTE = 60_000;
+
+describe("the recorded schedule", () => {
+  it.each([
+    ["Europe/Sofia", "annotation", "Europe/Sofia · Secret annotation"],
+    [null, "descriptor", "controller time · connector default"],
+    [null, "default", "controller time · built-in default"],
+    ["UTC", null, "UTC"],
+    [null, null, "controller time"],
+    [undefined, undefined, "controller time"],
+  ] as const)("describes timezone %s and origin %s", (timezone, origin, text) => {
+    expect(describeSchedule({ crons: ["0 22 * * *"], timezone, origin })).toBe(text);
+  });
+});
 
 function sync(over: Partial<SyncFact> = {}): SyncFact {
   return {

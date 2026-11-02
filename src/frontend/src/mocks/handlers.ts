@@ -1,5 +1,6 @@
 import { http, HttpResponse } from "msw";
 
+import type { AppliedSchedule } from "@/api/connector-health-client";
 import { FEEDBACK_MESSAGE_MAX } from "@/api/feedback-client";
 import type { MetricDrilldownRequest } from "@/api/metric-drilldown-client";
 import type { MetricResultsRequest } from "@/api/metric-results-client";
@@ -989,9 +990,14 @@ function connectorHealthHandlers() {
     "example-retired": [sync("7801", "succeeded", 60 * 26, 90_000, 55)],
   };
 
-  const summaryRow = (connector: string, configured: boolean) => ({
+  const summaryRow = (
+    connector: string,
+    configured: boolean,
+    schedule: AppliedSchedule | null
+  ) => ({
     connector,
     configured,
+    schedule,
     last_sync: histories[connector]?.[0] ?? null,
   });
 
@@ -1004,12 +1010,28 @@ function connectorHealthHandlers() {
         typical_read_interval_ms: 15 * 60_000,
         history_available: true,
         connectors: [
-          summaryRow("example-tracker", true),
-          summaryRow("example-directory", true),
-          summaryRow("example-messaging", true),
-          summaryRow("example-inbox", true),
-          summaryRow("example-warehouse", true),
-          summaryRow("example-retired", false),
+          summaryRow("example-tracker", true, {
+            crons: ["0 22 * * *", "0 10 * * *"],
+            timezone: "Europe/Sofia",
+            origin: "annotation",
+          }),
+          summaryRow("example-directory", true, {
+            crons: ["0 * * * *"],
+            timezone: null,
+            origin: "descriptor",
+          }),
+          summaryRow("example-messaging", true, {
+            crons: ["0 0 * * *"],
+            timezone: "UTC",
+            origin: "default",
+          }),
+          summaryRow("example-inbox", true, {
+            crons: ["*/30 * * * *"],
+            timezone: "Europe/Sofia",
+            origin: null,
+          }),
+          summaryRow("example-warehouse", true, null),
+          summaryRow("example-retired", false, null),
         ],
       });
     }),

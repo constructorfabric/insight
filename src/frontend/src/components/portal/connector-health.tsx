@@ -18,10 +18,12 @@ import {
 } from "@/components/ui/table";
 import {
   UNMEASURED,
+  SCHEDULE_HEADING,
   describeConnector,
   describeDuration,
   describeInstance,
   describeRecording,
+  describeSchedule,
   describeSync,
   formatRecords,
   formatStarted,
@@ -42,7 +44,7 @@ const TONE_STYLE: Record<ConnectorTone, string> = {
   idle: "bg-muted text-muted-foreground",
 };
 
-const COLUMNS = 6;
+const COLUMNS = 7;
 
 /**
  * A DOM id for one row's disclosure panel.
@@ -110,6 +112,7 @@ export function ConnectorHealthPane() {
                 {/* One connector can be configured more than once; this is the
                     only cell that tells those rows apart. */}
                 <TableHead>Instance</TableHead>
+                <TableHead>{SCHEDULE_HEADING}</TableHead>
                 <TableHead>State</TableHead>
                 <TableHead>Last sync started</TableHead>
                 <TableHead className="text-right">Duration</TableHead>
@@ -160,6 +163,7 @@ export function ConnectorHealthPane() {
                     <TableCell className="text-muted-foreground">
                       {describeInstance(row)}
                     </TableCell>
+                    <ScheduleCell schedule={row.schedule} />
                     <TableCell>
                       <Badge
                         variant="secondary"
@@ -190,6 +194,25 @@ export function ConnectorHealthPane() {
         </div>
       )}
     </div>
+  );
+}
+
+function ScheduleCell({ schedule }: { schedule: ConnectorHealth["schedule"] }) {
+  return (
+    <TableCell>
+      {schedule == null ? (
+        UNMEASURED
+      ) : (
+        <>
+          {schedule.crons.map((cron, index) => (
+            <div key={index} className="font-mono">
+              {cron}
+            </div>
+          ))}
+          <div className="text-muted-foreground">{describeSchedule(schedule)}</div>
+        </>
+      )}
+    </TableCell>
   );
 }
 

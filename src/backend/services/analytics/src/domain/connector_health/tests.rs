@@ -9,7 +9,8 @@
 use chrono::{DateTime, TimeZone, Utc};
 
 use super::model::{
-    Attention, ConnectorSummary, InstanceKey, LastSync, LedgerFacts, SyncStatus, by_attention,
+    AppliedSchedule, Attention, ConnectorSummary, InstanceKey, LastSync, LedgerFacts, SyncStatus,
+    by_attention,
 };
 use super::model::{ConnectorHealth, ConnectorHealthResponse, SyncFact, SyncHistoryResponse};
 use super::name::{ConnectorName, SourceId, TenantId};
@@ -45,6 +46,7 @@ fn summary(name: &str, configured: bool, last: Option<LastSync>) -> ConnectorSum
     ConnectorSummary {
         instance: instance(name, "main"),
         configured,
+        schedule: None,
         last_sync: last,
     }
 }
@@ -232,6 +234,75 @@ fn a_configured_connector_that_never_synced_ships_a_null_last_sync() {
     let health = ConnectorHealth::from(summary("a", true, None));
     assert!(health.configured);
     assert!(health.last_sync.is_none());
+}
+
+#[test]
+fn the_summary_carries_the_recorded_applied_schedule() {
+    let schedule = AppliedSchedule::from_record(
+        vec!["0 22 * * *".to_owned(), "0 10 * * *".to_owned()],
+        "Europe/Sofia".to_owned(),
+        "annotation",
+    );
+    let response = ConnectorHealthResponse::from_facts(
+        LedgerFacts {
+            sealed_at: Some(moment(0)),
+            summaries: vec![ConnectorSummary {
+                schedule,
+                ..summary("example-tracker", true, None)
+            }],
+            has_history: true,
+            ..LedgerFacts::default()
+        },
+        moment(10),
+    );
+    let json = serde_json::to_value(response).expect("serialisable");
+
+    assert_eq!(json["checked_at"], super::model::stamp(moment(0)));
+    assert_eq!(
+        json["connectors"][0]["schedule"],
+        serde_json::json!({
+            "crons": ["0 22 * * *", "0 10 * * *"],
+            "timezone": "Europe/Sofia",
+            "origin": "annotation",
+        })
+    );
+}
+
+#[test]
+fn an_empty_cron_list_has_no_schedule() {
+    let schedule = AppliedSchedule::from_record(Vec::new(), "UTC".to_owned(), "default");
+    let health = ConnectorHealth::from(ConnectorSummary {
+        schedule,
+        ..summary("example-tracker", true, None)
+    });
+    let json = serde_json::to_value(health).expect("serialisable");
+
+    assert_eq!(json["schedule"], serde_json::Value::Null);
+}
+
+#[test]
+fn empty_timezone_and_unrecorded_or_unknown_origin_cross_the_wire_as_null() {
+    for origin in ["", "unrecognised"] {
+        let schedule =
+            AppliedSchedule::from_record(vec!["0 22 * * *".to_owned()], String::new(), origin)
+                .expect("recorded cron");
+        let json = serde_json::to_value(schedule).expect("serialisable");
+
+        assert_eq!(json["timezone"], serde_json::Value::Null, "{origin:?}");
+        assert_eq!(json["origin"], serde_json::Value::Null, "{origin:?}");
+    }
+}
+
+#[test]
+fn every_known_schedule_origin_crosses_the_wire_unchanged() {
+    for origin in ["annotation", "descriptor", "default"] {
+        let schedule =
+            AppliedSchedule::from_record(vec!["0 22 * * *".to_owned()], "UTC".to_owned(), origin)
+                .expect("recorded cron");
+        let json = serde_json::to_value(schedule).expect("serialisable");
+
+        assert_eq!(json["origin"], origin);
+    }
 }
 
 #[test]
@@ -424,11 +495,13 @@ fn two_instances_of_one_connector_are_two_rows() {
     let first = ConnectorSummary {
         instance: instance("claude-team", "main"),
         configured: true,
+        schedule: None,
         last_sync: Some(sync(SyncStatus::Failed, Some(0))),
     };
     let second = ConnectorSummary {
         instance: instance("claude-team", "second"),
         configured: true,
+        schedule: None,
         last_sync: Some(sync(SyncStatus::Succeeded, Some(0))),
     };
     let mut rows = vec![second, first];
@@ -446,11 +519,13 @@ fn siblings_that_tie_break_on_the_identity_rather_than_the_name() {
         ConnectorSummary {
             instance: instance("claude-team", "second"),
             configured: true,
+            schedule: None,
             last_sync: None,
         },
         ConnectorSummary {
             instance: instance("claude-team", "main"),
             configured: true,
+            schedule: None,
             last_sync: None,
         },
     ];
@@ -475,6 +550,7 @@ fn an_identity_the_ledger_does_not_hold_crosses_the_wire_as_absent() {
             source_id: String::new(),
         },
         configured: false,
+        schedule: None,
         last_sync: Some(sync(SyncStatus::Succeeded, Some(0))),
     });
 
@@ -488,6 +564,7 @@ fn an_identity_the_ledger_holds_crosses_the_wire_intact() {
     let health = ConnectorHealth::from(ConnectorSummary {
         instance: instance("claude-team", "second"),
         configured: true,
+        schedule: None,
         last_sync: None,
     });
 

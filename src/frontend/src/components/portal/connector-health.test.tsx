@@ -72,6 +72,94 @@ beforeEach(() => {
 });
 
 describe("the pane prints what it was served", () => {
+  it("shows the recorded schedule after the instance, with each cron on its own line", () => {
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "example-tracker",
+          configured: true,
+          schedule: {
+            crons: ["0 22 * * *", "0 10 * * *"],
+            timezone: "Europe/Sofia",
+            origin: "annotation",
+          },
+          last_sync: null,
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const headings = screen
+      .getAllByRole("columnheader")
+      .map((cell) => cell.textContent);
+    expect(headings).toEqual([
+      "Connector",
+      "Instance",
+      "Schedule",
+      "State",
+      "Last sync started",
+      "Duration",
+      "Records reported",
+    ]);
+    const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
+    const first = within(cell).getByText("0 22 * * *");
+    const second = within(cell).getByText("0 10 * * *");
+    expect(first.tagName).toBe("DIV");
+    expect(second.tagName).toBe("DIV");
+    expect(first).toHaveClass("font-mono");
+    expect(second).toHaveClass("font-mono");
+    expect(within(cell).getByText("Europe/Sofia · Secret annotation")).toHaveClass(
+      "text-muted-foreground",
+    );
+  });
+
+  it.each([
+    [null, "descriptor", "controller time · connector default"],
+    [null, "default", "controller time · built-in default"],
+    ["UTC", null, "UTC"],
+    [null, null, "controller time"],
+  ] as const)(
+    "prints recorded timezone %s and origin %s",
+    (timezone, origin, detail) => {
+      mocks.summary.data = summary({
+        connectors: [
+          {
+            connector: "example-tracker",
+            configured: true,
+            schedule: { crons: ["0 22 * * *"], timezone, origin },
+            last_sync: null,
+          },
+        ],
+      });
+      render(<ConnectorHealthPane />);
+
+      const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
+      expect(within(cell).getByText(detail)).toBeInTheDocument();
+      expect(cell.textContent).not.toMatch(/ · $/);
+    },
+  );
+
+  it("prints an unrecorded schedule as unknown and spans all seven columns when expanded", async () => {
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "example-tracker",
+          configured: true,
+          schedule: null,
+          last_sync: null,
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
+    expect(cell).toHaveTextContent(/^—$/);
+    await userEvent.click(rowFor("example-tracker"));
+    expect(
+      screen.getByText(/no sync has been recorded/i).closest("td"),
+    ).toHaveAttribute("colspan", "7");
+  });
+
   it("keeps the served order rather than sorting again", () => {
     // Deliberately an order no local rule reproduces: not alphabetical, not
     // severity-first, not by job id. A two-row fixture whose served order also
@@ -226,15 +314,20 @@ describe("the pane prints what it was served", () => {
   });
 
   it("prints an unmeasured number as absence, not as a zero", () => {
+    // Named and scheduled, so the three absences below are the three numbers this
+    // test is about rather than the identity or schedule cell joining them.
     mocks.summary.data = summary({
       connectors: [
         {
           connector: "alpha",
-          // Named, so the three absences below are the three numbers this test
-          // is about rather than the identity cell joining them.
           tenant_id: "acme",
           source_id: "main",
           configured: true,
+          schedule: {
+            crons: ["0 * * * *"],
+            timezone: "UTC",
+            origin: "default",
+          },
           last_sync: {
             job_id: "1",
             status: "running",

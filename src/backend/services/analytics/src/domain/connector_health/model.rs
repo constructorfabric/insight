@@ -113,10 +113,11 @@ pub(crate) struct LastSync {
     pub records_reported: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct ConnectorSummary {
     pub instance: InstanceKey,
     pub configured: bool,
+    pub schedule: Option<AppliedSchedule>,
     pub last_sync: Option<LastSync>,
 }
 
@@ -201,6 +202,45 @@ pub struct SyncFact {
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleOrigin {
+    Annotation,
+    Descriptor,
+    Default,
+}
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct AppliedSchedule {
+    /// The non-empty list recorded from the instance's `CronWorkflow`.
+    #[schema(min_items = 1)]
+    pub crons: Vec<String>,
+    /// Absent when the `CronWorkflow` uses the Argo controller's timezone.
+    pub timezone: Option<String>,
+    /// Where the applied schedule came from; absent when unrecorded or unknown.
+    pub origin: Option<ScheduleOrigin>,
+}
+
+impl AppliedSchedule {
+    pub(crate) fn from_record(crons: Vec<String>, timezone: String, origin: &str) -> Option<Self> {
+        if crons.is_empty() {
+            return None;
+        }
+
+        let origin = match origin {
+            "annotation" => Some(ScheduleOrigin::Annotation),
+            "descriptor" => Some(ScheduleOrigin::Descriptor),
+            "default" => Some(ScheduleOrigin::Default),
+            _ => None,
+        };
+        Some(Self {
+            crons,
+            timezone: label(timezone),
+            origin,
+        })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ConnectorHealth {
     pub connector: String,
     /// Tenant of the installation this row is. Absent together with
@@ -212,6 +252,9 @@ pub struct ConnectorHealth {
     pub source_id: Option<String>,
     /// Present in the newest sealed snapshot of the set the controller manages.
     pub configured: bool,
+    /// Applied schedule recorded on the newest sealed tick. Absent outside its
+    /// configured set or when that row records no cron expressions.
+    pub schedule: Option<AppliedSchedule>,
     /// Absent for a configured connector that has never synced.
     pub last_sync: Option<SyncFact>,
 }
@@ -319,6 +362,7 @@ impl From<ConnectorSummary> for ConnectorHealth {
             tenant_id: label(summary.instance.tenant_id),
             source_id: label(summary.instance.source_id),
             configured: summary.configured,
+            schedule: summary.schedule,
             last_sync: summary.last_sync.map(Into::into),
         }
     }
