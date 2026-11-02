@@ -103,7 +103,7 @@ export function DefinitionList<T extends { id: string }>({
         )
       ) : (
         <>
-          <ul className="grid gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">
+          <ul className="grid grid-cols-1 gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">
             {items.map((item) => (
               <li key={item.id}>{renderRow(item)}</li>
             ))}
