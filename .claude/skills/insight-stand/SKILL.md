@@ -32,12 +32,20 @@ Two consequences you will meet immediately:
 ## Commands
 
 ```bash
-./dev-compose.sh test-stand up      # generate env, up, seed, block until dbt built gold
-./dev-compose.sh test-stand seed    # re-seed a running stand (default target: all)
-./dev-compose.sh test-stand test    # run the suite (uv, on the host)
-./dev-compose.sh test-stand test -k subchart        # args pass through to pytest, no `--`
-./dev-compose.sh test-stand down    # stop AND remove volumes
+./dev-compose.sh test-stand up --instance=worktree      # generate env, up, seed, block until dbt built gold
+./dev-compose.sh test-stand seed --instance=worktree    # re-seed a running stand (default target: all)
+./dev-compose.sh test-stand test --instance=worktree    # run the suite (uv, on the host)
+./dev-compose.sh test-stand test --instance=worktree -k subchart   # args pass through to pytest, no `--`
+./dev-compose.sh test-stand down --instance=worktree    # stop AND remove volumes
 ```
+
+**Pass the same `--instance` to every verb.** Without it the stand runs as the
+default `insight` compose project, the one `./dev-compose.sh up` uses, so `up`
+replaces a developer's own stack and `down` deletes its databases.
+`--instance=worktree` names the stand after the checkout directory and gives it
+its own containers, volumes, published ports, env file, realm and manifest;
+`test-stand env --instance=worktree` prints them without starting anything.
+Leave the flag off only where no other stack runs, such as a CI runner.
 
 `up` compiles the backend from source AND pnpm-builds the frontend (served by
 the front-built nginx), so the stand runs the checkout. `up --pinned` pulls the
@@ -64,6 +72,16 @@ silently, so the host runner and the `ui-tests` image stay identical:
 uv sync --project tests
 uv run --project tests --frozen playwright install chromium   # first time only, for ui/
 uv run --project tests --frozen pytest tests/stand
+```
+
+Against an instance, set the variables `test-stand test` sets. Without them the
+run reads the default stand's files, and then `.env.compose`:
+
+```bash
+INSIGHT_STAND_ENV_FILE=.env.compose.test-stand-<name> \
+INSIGHT_STAND_MANIFEST=src/ingestion/tools/seed/manifest-<name>.json \
+INSIGHT_STAND_REALM_EXPORT=deploy/compose/keycloak/realm-insight.generated-<name>.json \
+  uv run --project tests --frozen pytest tests/stand
 ```
 
 Verb reference: `./dev-compose.sh test-stand --help`. It omits `up --auth
@@ -132,7 +150,8 @@ constraint; `--image` remains for a locally built runner):
 
 Three preconditions, each refused up front rather than failing opaquely later:
 
-- **`GATEWAY_PORT` must be the container port (8080).** The realm registered
+- **`GATEWAY_PORT` must be the container port (8080)**, so this mode runs
+  against the default instance only. The realm registered
   `http://localhost:${GATEWAY_PORT}/auth/callback` while an in-namespace
   browser reaches the gateway at its *container* port; when they differ the
   login dies several steps later as an opaque IdP error.
@@ -240,7 +259,7 @@ tests that create rows. What you need here is the triage row below.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `UsageError: requires_seed: manifest is missing fixtures…` | stand seeded without those names, or seeded with an older roster | `./dev-compose.sh test-stand seed` |
+| `UsageError: requires_seed: manifest is missing fixtures…` | stand seeded without those names, or seeded with an older roster | `./dev-compose.sh test-stand seed --instance=worktree` |
 | `UsageError: stand manifest unusable` | wrong `--stand-manifest`, or `up` never finished seeding | check the path the message quotes |
 | `cannot resolve the stand's base URL — refusing to assume one` (lists what it tried) | no address from any source | `--base-url`, or run from the repo root where the env file lives |
 | `gateway is not answering on http://localhost:<port>/` | you aimed `test-stand test` at a stand that is not local | the wrapper preflights localhost — run pytest directly instead |

@@ -379,7 +379,7 @@ attendance_measures AS (
         toNullable(toFloat64(1)) AS value,
         toNullable(concat(insight_source_id, ':', meeting_key)) AS subject_key,
         tool_dimensions AS dimensions,
-        'event' AS granularity,
+        'source_summary' AS granularity,
         'meeting' AS record_label,
         map('meeting', meeting_key) AS details
     FROM meeting_source
