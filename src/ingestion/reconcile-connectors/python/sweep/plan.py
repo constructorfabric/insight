@@ -195,11 +195,7 @@ def duration_ms(duration: object) -> int | None:
     parts = matched.groupdict()
     if all(value is None for value in parts.values()):
         return None
-    total = sum(
-        float(parts[name]) * seconds
-        for name, seconds in _SECONDS_PER.items()
-        if parts[name] is not None
-    )
+    total = sum(float(parts[name]) * seconds for name, seconds in _SECONDS_PER.items() if parts[name] is not None)
     return _bounded(total * 1000)
 
 
@@ -238,9 +234,7 @@ def records_reported(entry: Mapping[str, Any]) -> int | None:
     return _bounded(value) if value >= 0 else None
 
 
-def sync_row(
-    entry: Mapping[str, Any], connectors: Mapping[str, Instance], tick_id: str
-) -> dict[str, Any] | Skipped:
+def sync_row(entry: Mapping[str, Any], connectors: Mapping[str, Instance], tick_id: str) -> dict[str, Any] | Skipped:
     """One ledger row for one listing entry, or the reason it cannot be recorded."""
     raw_id = entry.get("jobId")
     if raw_id is None or isinstance(raw_id, bool):
@@ -285,9 +279,7 @@ def sync_row(
         # SAFETY: an unfinished job's reported duration is not what this column
         # holds. Recorded as-is, the mover's zero reads as a sync that took no
         # time; how long such a job has been going is derived from its start.
-        "duration_ms": (
-            None if vocab.is_in_flight(status) else duration_ms(entry.get("duration"))
-        ),
+        "duration_ms": (None if vocab.is_in_flight(status) else duration_ms(entry.get("duration"))),
         "records_reported": records_reported(entry),
     }
 
@@ -317,9 +309,7 @@ def plan_syncs(
     return Plan(rows, skipped)
 
 
-def plan_abandoned(
-    jobs: Iterable[Mapping[str, str]], tick_id: str
-) -> list[dict[str, Any]]:
+def plan_abandoned(jobs: Iterable[Mapping[str, str]], tick_id: str) -> list[dict[str, Any]]:
     """Mark jobs the sweep can no longer read as unreadable.
 
     A job that has fallen below the read start will not be asked about again, so
@@ -375,10 +365,7 @@ def _bare_row(tick_id: str, event: str, instance: Instance) -> dict[str, Any]:
 
 def plan_snapshot(instances: Iterable[Instance], tick_id: str) -> list[dict[str, Any]]:
     """One row per connector instance the controller manages this tick."""
-    return [
-        _bare_row(tick_id, CONNECTOR_CONFIGURED, instance)
-        for instance in sorted(set(instances))
-    ]
+    return [_bare_row(tick_id, CONNECTOR_CONFIGURED, instance) for instance in sorted(set(instances))]
 
 
 def plan_seal(tick_id: str) -> dict[str, Any]:
