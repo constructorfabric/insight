@@ -21,7 +21,7 @@
 
 use chrono::{Duration, SecondsFormat, Utc};
 
-use super::model::SyncStatus;
+use super::model::{ScheduleOrigin, SyncStatus};
 use super::read::{absent_ledger, read_health, read_syncs};
 
 const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
@@ -29,9 +29,14 @@ const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 /// The table this reads comes from the migration itself, not a copy of it: a
 /// column added there and not here would otherwise pass every test and fail on
 /// the first install to deploy both.
-const MIGRATION: &str = include_str!(
-    "../../../../../../ingestion/scripts/migrations/20260827000000_connector-sync-history.sql"
-);
+const MIGRATIONS: [&str; 2] = [
+    include_str!(
+        "../../../../../../ingestion/scripts/migrations/20260827000000_connector-sync-history.sql"
+    ),
+    include_str!(
+        "../../../../../../ingestion/scripts/migrations/20261102000000_connector-sync-history-schedule.sql"
+    ),
+];
 
 const TABLE: &str = "ingestion_history.sync_events";
 
@@ -74,8 +79,8 @@ fn client_or_skip() -> Option<insight_clickhouse::Client> {
 /// The HTTP interface runs one statement per request, so the migration is
 /// fanned out the way `lib/ch-exec.sh` fans it out: drop whole-line comments,
 /// split on `;`.
-async fn apply_migration(ch: &insight_clickhouse::Client) {
-    let body: String = MIGRATION
+async fn apply_migration(ch: &insight_clickhouse::Client, migration: &str) {
+    let body: String = migration
         .lines()
         .filter(|line| !line.trim_start().starts_with("--"))
         .collect::<Vec<_>>()
@@ -117,6 +122,9 @@ struct Row<'a> {
     job_updated_at: Option<&'a str>,
     duration_ms: Option<u64>,
     records_reported: Option<u64>,
+    schedules: &'a [&'a str],
+    schedule_timezone: &'a str,
+    schedule_origin: &'a str,
 }
 
 impl<'a> Row<'a> {
@@ -137,8 +145,15 @@ impl Row<'_> {
             Some(count) => count.to_string(),
             None => "NULL".to_owned(),
         };
+        let schedules = self
+            .schedules
+            .iter()
+            .map(|cron| format!("'{cron}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
         format!(
-            "(toDateTime64('{}', 3, 'UTC'), '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, {}, {}, {})",
+            "(toDateTime64('{}', 3, 'UTC'), '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, {}, {}, {}, [{}], '{}', '{}')",
             self.ts,
             self.tick_id,
             self.job_id,
@@ -151,6 +166,9 @@ impl Row<'_> {
             moment(self.job_updated_at),
             number(self.duration_ms),
             number(self.records_reported),
+            schedules,
+            self.schedule_timezone,
+            self.schedule_origin,
         )
     }
 }
@@ -159,7 +177,8 @@ async fn insert(ch: &insight_clickhouse::Client, rows: &[Row<'_>]) {
     let values: Vec<String> = rows.iter().map(Row::values).collect();
     let sql = format!(
         "INSERT INTO {TABLE} (ts, tick_id, job_id, connector, tenant_id, source_id, \
-         event, status, started_at, job_updated_at, duration_ms, records_reported) VALUES {}",
+         event, status, started_at, job_updated_at, duration_ms, records_reported, \
+         schedules, schedule_timezone, schedule_origin) VALUES {}",
         values.join(", ")
     );
     ch.query(&sql).execute().await.expect("insert");
@@ -179,6 +198,9 @@ fn sync<'a>(job_id: &'a str, connector: &'a str, status: &'a str, updated: &'a s
         job_updated_at: Some(updated),
         duration_ms: Some(1_000),
         records_reported: Some(7),
+        schedules: &[],
+        schedule_timezone: "",
+        schedule_origin: "",
     }
 }
 
@@ -196,6 +218,9 @@ fn configured<'a>(connector: &'a str, tick_id: &'a str, at: &'a str) -> Row<'a> 
         job_updated_at: None,
         duration_ms: None,
         records_reported: None,
+        schedules: &["0 22 * * *"],
+        schedule_timezone: "Europe/Sofia",
+        schedule_origin: "annotation",
     }
 }
 
@@ -214,6 +239,9 @@ fn seal<'a>(tick_id: &'a str, at: &'a str) -> Row<'a> {
         job_updated_at: None,
         duration_ms: None,
         records_reported: None,
+        schedules: &[],
+        schedule_timezone: "",
+        schedule_origin: "",
     }
 }
 
@@ -244,7 +272,10 @@ impl Stamps {
 #[ignore = "needs a live ClickHouse"]
 async fn the_ledger_reads_answer_from_real_rows() {
     let Some(ch) = client_or_skip() else { return };
-    apply_migration(&ch).await;
+    for migration in MIGRATIONS {
+        apply_migration(&ch, migration).await;
+    }
+
     let at = Stamps::fresh();
 
     an_empty_ledger_says_so(&ch).await;
@@ -257,6 +288,9 @@ async fn the_ledger_reads_answer_from_real_rows() {
 
     truncate(&ch).await;
     two_instances_of_one_connector_resolve_separately(&ch, &at).await;
+
+    truncate(&ch).await;
+    empty_schedule_values_read_as_absent(&ch, &at).await;
 
     truncate(&ch).await;
     the_resolution_survives_every_way_it_used_to_be_wrong(&ch, &at).await;
@@ -400,11 +434,56 @@ async fn rows_cross_into_options(ch: &insight_clickhouse::Client, at: &Stamps) {
     assert!(alpha_sync.duration_ms.is_none());
     assert!(alpha_sync.records_reported.is_none());
     assert!(alpha.configured);
+    let schedule = alpha.schedule.as_ref().expect("alpha has a schedule");
+    assert_eq!(schedule.crons, ["0 22 * * *"]);
+    assert_eq!(schedule.timezone.as_deref(), Some("Europe/Sofia"));
+    assert!(matches!(schedule.origin, Some(ScheduleOrigin::Annotation)));
 
     assert_eq!(
         facts.summaries[0].instance.connector, "bravo",
         "a failed sync outranks a running one"
     );
+}
+
+async fn empty_schedule_values_read_as_absent(ch: &insight_clickhouse::Client, at: &Stamps) {
+    insert(
+        ch,
+        &[
+            Row {
+                schedules: &[],
+                ..configured("empty-schedule", "tick-3", &at.tick_3)
+            },
+            Row {
+                schedule_timezone: "",
+                ..configured("empty-timezone", "tick-3", &at.tick_3)
+            },
+            Row {
+                schedule_origin: "",
+                ..configured("empty-origin", "tick-3", &at.tick_3)
+            },
+            seal("tick-3", &at.tick_3),
+        ],
+    )
+    .await;
+
+    let facts = read_health(ch).await.expect("read");
+    let empty = summary_for(&facts.summaries, "empty-schedule");
+    assert!(empty.configured);
+    assert!(empty.schedule.is_none(), "no crons means no schedule");
+
+    let timezone = summary_for(&facts.summaries, "empty-timezone")
+        .schedule
+        .as_ref()
+        .expect("a schedule without a timezone");
+    assert!(timezone.timezone.is_none(), "an empty timezone is absent");
+    assert!(matches!(timezone.origin, Some(ScheduleOrigin::Annotation)));
+
+    let origin = summary_for(&facts.summaries, "empty-origin")
+        .schedule
+        .as_ref()
+        .expect("a schedule without an origin");
+    assert!(origin.origin.is_none(), "an empty origin is absent");
+    assert_eq!(origin.timezone.as_deref(), Some("Europe/Sofia"));
 }
 
 async fn two_rows_for_one_job_resolve_to_the_newer(ch: &insight_clickhouse::Client, at: &Stamps) {

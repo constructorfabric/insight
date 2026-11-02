@@ -470,6 +470,11 @@ mod guards {
         "../../../../../../ingestion/scripts/migrations/20260827000000_connector-sync-history.sql"
     );
 
+    /// The migration that adds the recorded schedule columns.
+    const SCHEDULE_MIGRATION: &str = include_str!(
+        "../../../../../../ingestion/scripts/migrations/20261102000000_connector-sync-history-schedule.sql"
+    );
+
     /// Every SQL statement this module issues, so a new one joins the guards
     /// automatically rather than being remembered into them.
     fn statements() -> [(&'static str, &'static str); 6] {
@@ -483,7 +488,7 @@ mod guards {
         ]
     }
 
-    /// The ledger's column names, read out of the `CREATE TABLE` block.
+    /// The ledger's column names, read out of `CREATE TABLE` and `ADD COLUMN`.
     fn ledger_columns() -> Vec<String> {
         let body = MIGRATION
             .split_once("CREATE TABLE")
@@ -495,6 +500,12 @@ mod guards {
             .take_while(|line| !line.starts_with(')'))
             .filter_map(|line| line.split_whitespace().next())
             .filter(|name| name.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+            .chain(
+                SCHEDULE_MIGRATION
+                    .lines()
+                    .filter_map(|line| line.trim().strip_prefix("ADD COLUMN IF NOT EXISTS "))
+                    .filter_map(|line| line.split_whitespace().next()),
+            )
             .map(str::to_owned)
             .collect()
     }
@@ -524,13 +535,16 @@ mod guards {
             "tenant_id",
             "source_id",
             "event",
+            "schedules",
+            "schedule_timezone",
+            "schedule_origin",
         ] {
             assert!(
                 columns.iter().any(|c| c == expected),
                 "missing {expected}: {columns:?}"
             );
         }
-        assert_eq!(columns.len(), 13, "{columns:?}");
+        assert_eq!(columns.len(), 16, "{columns:?}");
     }
 
     /// The summary answers one row per instance, so every one of the three
