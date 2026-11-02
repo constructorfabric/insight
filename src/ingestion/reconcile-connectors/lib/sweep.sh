@@ -132,7 +132,8 @@ sweep__build_work() {
       .items | map({key: .metadata.name, value: {
         schedules: (.spec.schedules // []),
         schedule_timezone: (.spec.timezone // ""),
-        schedule_origin: (.metadata.annotations["insight.cyberfabric.com/schedule-origin"] // "")
+        schedule_origin: (.metadata.annotations["insight.cyberfabric.com/schedule-origin"] // ""),
+        schedule_suspended: (.spec.suspend // false)
       }}) | from_entries')"; then
     log_line WARN "sweep: cannot read connector CronWorkflows; recording empty schedule fields" >&2
     schedules_by_name='{}'
@@ -179,7 +180,7 @@ sweep__build_work() {
     applied_schedule="$(printf '%s' "${schedules_by_name}" | jq -c --arg n "${cron_name}" '.[$n] // empty')"
     if [[ -z "${applied_schedule}" ]]; then
       log_line WARN "sweep: no CronWorkflow read for ${name}/${source_id}; recording empty schedule fields" >&2
-      applied_schedule='{"schedules":[],"schedule_timezone":"","schedule_origin":""}'
+      applied_schedule='{"schedules":[],"schedule_timezone":"","schedule_origin":"","schedule_suspended":false}'
     fi
     entries+=("$(jq -cn --arg n "${name}" --arg t "${tenant}" \
       --arg s "${source_id}" --arg c "${conn_id}" --argjson schedule "${applied_schedule}" \

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import type {
   ConnectorHealth,
@@ -17,11 +17,18 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   UNMEASURED,
   SCHEDULE_HEADING,
   describeConnector,
   describeDuration,
   describeInstance,
+  describeNextRun,
   describeRecording,
   describeSchedule,
   describeSync,
@@ -163,7 +170,7 @@ export function ConnectorHealthPane() {
                     <TableCell className="text-muted-foreground">
                       {describeInstance(row)}
                     </TableCell>
-                    <ScheduleCell schedule={row.schedule} />
+                    <ScheduleCell schedule={row.schedule} now={new Date(data.as_of)} />
                     <TableCell>
                       <Badge
                         variant="secondary"
@@ -197,20 +204,42 @@ export function ConnectorHealthPane() {
   );
 }
 
-function ScheduleCell({ schedule }: { schedule: ConnectorHealth["schedule"] }) {
+function ScheduleCell({
+  schedule,
+  now,
+}: {
+  schedule: ConnectorHealth["schedule"];
+  now: Date;
+}) {
+  const tooltipId = useId();
+
   return (
     <TableCell>
       {schedule == null ? (
         UNMEASURED
       ) : (
-        <>
-          {schedule.crons.map((cron, index) => (
-            <div key={index} className="font-mono">
-              {cron}
-            </div>
-          ))}
-          <div className="text-muted-foreground">{describeSchedule(schedule)}</div>
-        </>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              aria-describedby={tooltipId}
+              render={
+                <button type="button" className="cursor-help text-left" />
+              }
+            >
+              {schedule.crons.map((cron, index) => (
+                <span key={index} className="block font-mono">
+                  {cron}
+                </span>
+              ))}
+              <span className="block text-muted-foreground">
+                {describeSchedule(schedule)}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent id={tooltipId} role="tooltip">
+              {describeNextRun(schedule, now)}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       )}
     </TableCell>
   );

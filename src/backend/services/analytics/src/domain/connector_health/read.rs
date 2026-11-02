@@ -168,7 +168,7 @@ static LAST_SYNC_SQL: LazyLock<String> = LazyLock::new(|| {
 /// The set the controller managed on one sealed tick.
 static CONFIGURED_SET_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "SELECT DISTINCT {INSTANCE_COLUMNS}, schedules, schedule_timezone, schedule_origin \
+        "SELECT DISTINCT {INSTANCE_COLUMNS}, schedules, schedule_timezone, schedule_origin, schedule_suspended \
          FROM {TABLE} \
          WHERE event = '{CONNECTOR_CONFIGURED}' AND tick_id = ?"
     )
@@ -280,6 +280,7 @@ struct ConnectorRow {
     schedules: Vec<String>,
     schedule_timezone: String,
     schedule_origin: String,
+    schedule_suspended: bool,
 }
 
 impl ConnectorRow {
@@ -293,6 +294,7 @@ impl ConnectorRow {
             self.schedules,
             self.schedule_timezone,
             &self.schedule_origin,
+            self.schedule_suspended,
         );
         (key, schedule)
     }
@@ -537,13 +539,14 @@ mod guards {
             "schedules",
             "schedule_timezone",
             "schedule_origin",
+            "schedule_suspended",
         ] {
             assert!(
                 columns.iter().any(|c| c == expected),
                 "missing {expected}: {columns:?}"
             );
         }
-        assert_eq!(columns.len(), 16, "{columns:?}");
+        assert_eq!(columns.len(), 17, "{columns:?}");
     }
 
     /// The summary answers one row per instance, so every one of the three
@@ -660,6 +663,7 @@ mod guards {
             schedules: vec!["0 22 * * *".to_owned()],
             schedule_timezone: "Europe/Sofia".to_owned(),
             schedule_origin: "annotation".to_owned(),
+            schedule_suspended: true,
         }
         .into_entry();
         let syncs = ["main", "removed"].map(|source| SyncRow {
@@ -682,6 +686,7 @@ mod guards {
                 assert_eq!(json["schedule"]["crons"], serde_json::json!(["0 22 * * *"]));
                 assert_eq!(json["schedule"]["timezone"], "Europe/Sofia");
                 assert_eq!(json["schedule"]["origin"], "annotation");
+                assert_eq!(json["schedule"]["suspended"], true);
             } else {
                 assert_eq!(json["configured"], false);
                 assert_eq!(json["schedule"], serde_json::Value::Null);

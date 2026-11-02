@@ -60,6 +60,7 @@ export type ScheduleOrigin = "annotation" | "descriptor" | "default";
 
 export interface AppliedSchedule {
   crons: string[];
+  suspended: boolean;
   timezone?: string | null;
   origin?: ScheduleOrigin | null;
 }

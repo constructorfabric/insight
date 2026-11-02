@@ -123,9 +123,12 @@ def test_applied_schedules_are_recorded_and_lookup_failures_still_seal_the_tick(
                     "name": "example-main-default-sync",
                     "annotations": {"insight.cyberfabric.com/schedule-origin": "annotation"},
                 },
-                "spec": {"schedules": schedules, "timezone": "Europe/London"},
+                "spec": {"schedules": schedules, "timezone": "Europe/London", "suspend": True},
             },
-            {"metadata": {"name": "example-second-default-sync"}, "spec": {"schedules": ["0 8 * * *"]}},
+            {
+                "metadata": {"name": "example-second-default-sync"},
+                "spec": {"schedules": ["0 8 * * *"], "suspend": False},
+            },
         ]
     }
     listed = json.dumps(crons) if scenario == "applied" else '{"items":[]}'
@@ -150,6 +153,7 @@ def test_applied_schedules_are_recorded_and_lookup_failures_still_seal_the_tick(
             assert connector["schedules"] == []
             assert connector["schedule_timezone"] == ""
             assert connector["schedule_origin"] == ""
+            assert connector["schedule_suspended"] is False
 
     rows = ledger_rows
     assert run(io.StringIO(result.stdout)) == 0
@@ -157,9 +161,11 @@ def test_applied_schedules_are_recorded_and_lookup_failures_still_seal_the_tick(
     assert rows[0]["schedules"] == (schedules if scenario == "applied" else [])
     assert rows[0]["schedule_timezone"] == ("Europe/London" if scenario == "applied" else "")
     assert rows[0]["schedule_origin"] == ("annotation" if scenario == "applied" else "")
+    assert rows[0]["schedule_suspended"] is (scenario == "applied")
     assert rows[1]["schedules"] == (["0 8 * * *"] if scenario == "applied" else [])
     assert rows[1]["schedule_timezone"] == ""
     assert rows[1]["schedule_origin"] == ""
+    assert rows[1]["schedule_suspended"] is False
     assert "schedules" not in rows[2]
 
 

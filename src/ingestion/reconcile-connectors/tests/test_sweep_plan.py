@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 
 from sweep import plan
 from sweep import status as vocab
+from sweep.schedule import AppliedSchedule
 
 CONNECTOR = "example-tracker"
 TENANT = "tenant-under-test"
@@ -240,15 +241,22 @@ class TestCoverageSkipsWhatIsClosed:
 
 
 class TestRowClassColumns:
+    @pytest.mark.parametrize("suspended", [True, False])
+    def test_a_snapshot_carries_each_instances_applied_suspension(self, suspended: bool) -> None:
+        schedule = AppliedSchedule(("0 5 * * *",), "UTC", "annotation", suspended)
+        snapshot = plan.plan_snapshot([INSTANCE], TICK, {INSTANCE: schedule})[0]
+        assert snapshot["schedule_suspended"] is suspended
+
     def test_schedule_fields_are_only_supplied_on_configured_rows(self) -> None:
         sync = row()
         snapshot = plan.plan_snapshot([INSTANCE], TICK)[0]
         seal = plan.plan_seal(TICK)
-        assert set(snapshot) == set(sync) | {"schedules", "schedule_timezone", "schedule_origin"}
+        assert set(snapshot) == set(sync) | {"schedules", "schedule_timezone", "schedule_origin", "schedule_suspended"}
         assert set(seal) == set(sync)
         assert snapshot["schedules"] == []
         assert snapshot["schedule_timezone"] == ""
         assert snapshot["schedule_origin"] == ""
+        assert snapshot["schedule_suspended"] is False
 
     def test_a_snapshot_row_names_its_connector_and_nothing_else(self) -> None:
         snapshot = plan.plan_snapshot([INSTANCE], TICK)[0]

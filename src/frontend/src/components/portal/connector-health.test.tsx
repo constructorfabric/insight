@@ -72,6 +72,33 @@ beforeEach(() => {
 });
 
 describe("the pane prints what it was served", () => {
+  it.each(["hover", "focus"] as const)("exposes the schedule forecast on %s", async (gesture) => {
+    mocks.summary.data = summary({
+      connectors: [{
+        connector: "example-tracker",
+        configured: true,
+        schedule: { crons: ["0 22 * * *"], timezone: "Europe/Sofia", suspended: false },
+        last_sync: null,
+      }],
+    });
+    render(<ConnectorHealthPane />);
+
+    const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
+    const trigger = within(cell).getByRole("button");
+    const user = userEvent.setup();
+    if (gesture === "hover") {
+      await user.hover(trigger);
+    } else {
+      await user.tab();
+      await user.tab();
+      expect(trigger).toHaveFocus();
+    }
+
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Next run 2026-01-15 22:00 Europe/Sofia (in 8h 0m)");
+    expect(trigger).toHaveAttribute("aria-describedby", tooltip.id);
+    expect(rowFor("example-tracker")).toHaveAttribute("aria-expanded", "false");
+  });
   it("shows the recorded schedule after the instance, with each cron on its own line", () => {
     mocks.summary.data = summary({
       connectors: [
@@ -79,6 +106,7 @@ describe("the pane prints what it was served", () => {
           connector: "example-tracker",
           configured: true,
           schedule: {
+            suspended: false,
             crons: ["0 22 * * *", "0 10 * * *"],
             timezone: "Europe/Sofia",
             origin: "annotation",
@@ -104,8 +132,8 @@ describe("the pane prints what it was served", () => {
     const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
     const first = within(cell).getByText("0 22 * * *");
     const second = within(cell).getByText("0 10 * * *");
-    expect(first.tagName).toBe("DIV");
-    expect(second.tagName).toBe("DIV");
+    expect(first).toHaveClass("block");
+    expect(second).toHaveClass("block");
     expect(first).toHaveClass("font-mono");
     expect(second).toHaveClass("font-mono");
     expect(within(cell).getByText("Europe/Sofia · Secret annotation")).toHaveClass(
@@ -126,7 +154,7 @@ describe("the pane prints what it was served", () => {
           {
             connector: "example-tracker",
             configured: true,
-            schedule: { crons: ["0 22 * * *"], timezone, origin },
+            schedule: { crons: ["0 22 * * *"], timezone, origin, suspended: false },
             last_sync: null,
           },
         ],
@@ -154,6 +182,8 @@ describe("the pane prints what it was served", () => {
 
     const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
     expect(cell).toHaveTextContent(/^—$/);
+    expect(cell.querySelector('[data-slot="tooltip-trigger"]')).toBeNull();
+    expect(within(cell).queryByRole("button")).not.toBeInTheDocument();
     await userEvent.click(rowFor("example-tracker"));
     expect(
       screen.getByText(/no sync has been recorded/i).closest("td"),
@@ -324,6 +354,7 @@ describe("the pane prints what it was served", () => {
           source_id: "main",
           configured: true,
           schedule: {
+            suspended: false,
             crons: ["0 * * * *"],
             timezone: "UTC",
             origin: "default",

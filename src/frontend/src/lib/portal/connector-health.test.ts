@@ -33,6 +33,12 @@ const MINUTE = 60_000;
 
 describe("the recorded schedule", () => {
   it.each([
+    ["Europe/Sofia", "annotation", "Europe/Sofia · Secret annotation · suspended"],
+    [null, null, "controller time · suspended"],
+  ] as const)("shows suspension with timezone %s and origin %s", (timezone, origin, text) => {
+    expect(describeSchedule({ crons: ["0 22 * * *"], timezone, origin, suspended: true })).toBe(text);
+  });
+  it.each([
     ["Europe/Sofia", "annotation", "Europe/Sofia · Secret annotation"],
     [null, "descriptor", "controller time · connector default"],
     [null, "default", "controller time · built-in default"],
@@ -40,7 +46,7 @@ describe("the recorded schedule", () => {
     [null, null, "controller time"],
     [undefined, undefined, "controller time"],
   ] as const)("describes timezone %s and origin %s", (timezone, origin, text) => {
-    expect(describeSchedule({ crons: ["0 22 * * *"], timezone, origin })).toBe(text);
+    expect(describeSchedule({ crons: ["0 22 * * *"], timezone, origin, suspended: false })).toBe(text);
   });
 });
 

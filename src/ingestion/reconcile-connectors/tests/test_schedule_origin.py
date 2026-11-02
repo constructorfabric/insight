@@ -7,7 +7,32 @@ from pathlib import Path
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
+
+from sweep.schedule import AppliedSchedule, read_schedule
+
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("suspended", [True, False])
+def test_recorded_suspension_crosses_into_the_ledger(suspended: bool) -> None:
+    work = {
+        "schedules": ["0 5 * * *"],
+        "schedule_timezone": "UTC",
+        "schedule_origin": "annotation",
+        "schedule_suspended": suspended,
+    }
+    assert read_schedule(work).row_fields() == work
+
+
+@pytest.mark.parametrize("suspended", [None, "false", 0, 1, [], {}])
+def test_unreadable_suspension_leaves_the_schedule_unknown(suspended: object) -> None:
+    work = {"schedules": ["0 5 * * *"], "schedule_suspended": suspended}
+    assert read_schedule(work) == AppliedSchedule(), f"should reject: {suspended!r}"
+
+
+def test_unrecorded_suspension_defaults_to_false() -> None:
+    assert read_schedule({"schedules": ["0 5 * * *"]}).suspended is False
 
 
 @pytest.mark.parametrize(

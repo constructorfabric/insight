@@ -81,6 +81,10 @@
               }
             ]
           },
+          "suspended": {
+            "description": "Whether the recorded `CronWorkflow` is suspended.",
+            "type": "boolean"
+          },
           "timezone": {
             "description": "Absent when the `CronWorkflow` uses the Argo controller's timezone.",
             "type": [
@@ -90,7 +94,8 @@
           }
         },
         "required": [
-          "crons"
+          "crons",
+          "suspended"
         ],
         "type": "object"
       },

@@ -39,6 +39,16 @@ fn the_summary_contract_describes_the_recorded_schedule() -> Result<(), Box<dyn 
         1
     );
     assert_eq!(
+        schemas["AppliedSchedule"]["properties"]["suspended"]["type"],
+        "boolean"
+    );
+    assert!(
+        schemas["AppliedSchedule"]["required"]
+            .as_array()
+            .ok_or("required fields must be an array")?
+            .contains(&serde_json::json!("suspended"))
+    );
+    assert_eq!(
         schemas["ScheduleOrigin"]["enum"],
         serde_json::json!(["annotation", "descriptor", "default"])
     );

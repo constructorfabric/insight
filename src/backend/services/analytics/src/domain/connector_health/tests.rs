@@ -242,6 +242,7 @@ fn the_summary_carries_the_recorded_applied_schedule() {
         vec!["0 22 * * *".to_owned(), "0 10 * * *".to_owned()],
         "Europe/Sofia".to_owned(),
         "annotation",
+        true,
     );
     let response = ConnectorHealthResponse::from_facts(
         LedgerFacts {
@@ -264,13 +265,14 @@ fn the_summary_carries_the_recorded_applied_schedule() {
             "crons": ["0 22 * * *", "0 10 * * *"],
             "timezone": "Europe/Sofia",
             "origin": "annotation",
+            "suspended": true,
         })
     );
 }
 
 #[test]
 fn an_empty_cron_list_has_no_schedule() {
-    let schedule = AppliedSchedule::from_record(Vec::new(), "UTC".to_owned(), "default");
+    let schedule = AppliedSchedule::from_record(Vec::new(), "UTC".to_owned(), "default", false);
     let health = ConnectorHealth::from(ConnectorSummary {
         schedule,
         ..summary("example-tracker", true, None)
@@ -283,9 +285,13 @@ fn an_empty_cron_list_has_no_schedule() {
 #[test]
 fn empty_timezone_and_unrecorded_or_unknown_origin_cross_the_wire_as_null() {
     for origin in ["", "unrecognised"] {
-        let schedule =
-            AppliedSchedule::from_record(vec!["0 22 * * *".to_owned()], String::new(), origin)
-                .expect("recorded cron");
+        let schedule = AppliedSchedule::from_record(
+            vec!["0 22 * * *".to_owned()],
+            String::new(),
+            origin,
+            false,
+        )
+        .expect("recorded cron");
         let json = serde_json::to_value(schedule).expect("serialisable");
 
         assert_eq!(json["timezone"], serde_json::Value::Null, "{origin:?}");
@@ -296,12 +302,17 @@ fn empty_timezone_and_unrecorded_or_unknown_origin_cross_the_wire_as_null() {
 #[test]
 fn every_known_schedule_origin_crosses_the_wire_unchanged() {
     for origin in ["annotation", "descriptor", "default"] {
-        let schedule =
-            AppliedSchedule::from_record(vec!["0 22 * * *".to_owned()], "UTC".to_owned(), origin)
-                .expect("recorded cron");
+        let schedule = AppliedSchedule::from_record(
+            vec!["0 22 * * *".to_owned()],
+            "UTC".to_owned(),
+            origin,
+            false,
+        )
+        .expect("recorded cron");
         let json = serde_json::to_value(schedule).expect("serialisable");
 
         assert_eq!(json["origin"], origin);
+        assert_eq!(json["suspended"], false);
     }
 }
 

@@ -1011,21 +1011,25 @@ function connectorHealthHandlers() {
         history_available: true,
         connectors: [
           summaryRow("example-tracker", true, {
+            suspended: false,
             crons: ["0 22 * * *", "0 10 * * *"],
             timezone: "Europe/Sofia",
             origin: "annotation",
           }),
           summaryRow("example-directory", true, {
+            suspended: false,
             crons: ["0 * * * *"],
             timezone: null,
             origin: "descriptor",
           }),
           summaryRow("example-messaging", true, {
+            suspended: false,
             crons: ["0 0 * * *"],
             timezone: "UTC",
             origin: "default",
           }),
           summaryRow("example-inbox", true, {
+            suspended: true,
             crons: ["*/30 * * * *"],
             timezone: "Europe/Sofia",
             origin: null,

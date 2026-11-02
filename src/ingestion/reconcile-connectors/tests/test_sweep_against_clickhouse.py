@@ -371,6 +371,29 @@ class TestSweptRowsLandAndResolve:
         syncs = _rows(f"SELECT job_id FROM {TABLE} WHERE event = 'sync.completed' ORDER BY job_id")
         assert len(syncs) == 8, "seven closed jobs plus the running one"
 
+    @pytest.mark.parametrize("suspended", [True, False])
+    def test_a_configured_schedule_preserves_suspension(self, suspended: bool) -> None:
+        schedule = {
+            "schedules": ["0 5 * * *"],
+            "schedule_timezone": "UTC",
+            "schedule_origin": "annotation",
+            "schedule_suspended": suspended,
+        }
+        work = {
+            "tick_id": "tick-schedule",
+            "connectors": [
+                {"name": CONNECTOR, "tenant_id": TENANT, "source_id": SOURCE, "connection_id": CONNECTION, **schedule}
+            ],
+        }
+        with _StubMover():
+            assert self.entry.run(io.StringIO(json.dumps(work))) == 0
+
+        rows = _rows(
+            f"SELECT schedules, schedule_timezone, schedule_origin, schedule_suspended "
+            f"FROM {TABLE} WHERE event = 'connector.configured'"
+        )
+        assert rows == [schedule]
+
     def test_a_later_tick_reads_from_the_watermark_not_from_the_start(self) -> None:
         with _StubMover() as mover:
             self._tick("tick-a")

@@ -1117,6 +1117,7 @@ class AppliedSchedule(BaseModel):
     )
     crons: list[str] = Field(..., description="The non-empty list recorded from the instance's `CronWorkflow`.", min_length=1)
     origin: ScheduleOrigin | None = None
+    suspended: bool = Field(..., description='Whether the recorded `CronWorkflow` is suspended.')
     timezone: str | None = Field(None, description="Absent when the `CronWorkflow` uses the Argo controller's timezone.")
 
 

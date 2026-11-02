@@ -125,6 +125,7 @@ struct Row<'a> {
     schedules: &'a [&'a str],
     schedule_timezone: &'a str,
     schedule_origin: &'a str,
+    schedule_suspended: bool,
 }
 
 impl<'a> Row<'a> {
@@ -153,7 +154,7 @@ impl Row<'_> {
             .join(", ");
 
         format!(
-            "(toDateTime64('{}', 3, 'UTC'), '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, {}, {}, {}, [{}], '{}', '{}')",
+            "(toDateTime64('{}', 3, 'UTC'), '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, {}, {}, {}, [{}], '{}', '{}', {})",
             self.ts,
             self.tick_id,
             self.job_id,
@@ -169,6 +170,7 @@ impl Row<'_> {
             schedules,
             self.schedule_timezone,
             self.schedule_origin,
+            self.schedule_suspended,
         )
     }
 }
@@ -178,7 +180,7 @@ async fn insert(ch: &insight_clickhouse::Client, rows: &[Row<'_>]) {
     let sql = format!(
         "INSERT INTO {TABLE} (ts, tick_id, job_id, connector, tenant_id, source_id, \
          event, status, started_at, job_updated_at, duration_ms, records_reported, \
-         schedules, schedule_timezone, schedule_origin) VALUES {}",
+         schedules, schedule_timezone, schedule_origin, schedule_suspended) VALUES {}",
         values.join(", ")
     );
     ch.query(&sql).execute().await.expect("insert");
@@ -201,6 +203,7 @@ fn sync<'a>(job_id: &'a str, connector: &'a str, status: &'a str, updated: &'a s
         schedules: &[],
         schedule_timezone: "",
         schedule_origin: "",
+        schedule_suspended: false,
     }
 }
 
@@ -221,6 +224,7 @@ fn configured<'a>(connector: &'a str, tick_id: &'a str, at: &'a str) -> Row<'a> 
         schedules: &["0 22 * * *"],
         schedule_timezone: "Europe/Sofia",
         schedule_origin: "annotation",
+        schedule_suspended: false,
     }
 }
 
@@ -242,6 +246,7 @@ fn seal<'a>(tick_id: &'a str, at: &'a str) -> Row<'a> {
         schedules: &[],
         schedule_timezone: "",
         schedule_origin: "",
+        schedule_suspended: false,
     }
 }
 
@@ -411,7 +416,10 @@ async fn rows_cross_into_options(ch: &insight_clickhouse::Client, at: &Stamps) {
                 ..sync("2", "alpha", "running", &at.job_newer)
             },
             sync("3", "bravo", "failed", &at.job_oldest),
-            configured("alpha", "tick-1", &at.tick_1),
+            Row {
+                schedule_suspended: true,
+                ..configured("alpha", "tick-1", &at.tick_1)
+            },
             configured("bravo", "tick-1", &at.tick_1),
             seal("tick-1", &at.tick_1),
         ],
@@ -438,6 +446,7 @@ async fn rows_cross_into_options(ch: &insight_clickhouse::Client, at: &Stamps) {
     assert_eq!(schedule.crons, ["0 22 * * *"]);
     assert_eq!(schedule.timezone.as_deref(), Some("Europe/Sofia"));
     assert!(matches!(schedule.origin, Some(ScheduleOrigin::Annotation)));
+    assert!(schedule.suspended);
 
     assert_eq!(
         facts.summaries[0].instance.connector, "bravo",

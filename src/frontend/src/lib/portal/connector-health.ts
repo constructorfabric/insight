@@ -1,3 +1,5 @@
+import { Cron } from "croner";
+
 import type {
   AppliedSchedule,
   ConnectorHealth,
@@ -20,7 +22,57 @@ const SCHEDULE_ORIGIN: Record<ScheduleOrigin, string> = {
 export function describeSchedule(schedule: AppliedSchedule): string {
   const timezone = schedule.timezone ?? "controller time";
   const origin = schedule.origin == null ? null : SCHEDULE_ORIGIN[schedule.origin];
-  return origin == null ? timezone : `${timezone} · ${origin}`;
+  const description = origin == null ? timezone : `${timezone} · ${origin}`;
+  return schedule.suspended ? `${description} · suspended` : description;
+}
+
+export function describeNextRun(schedule: AppliedSchedule, now: Date): string {
+  if (schedule.suspended) return "Suspended: no run is scheduled.";
+  if (schedule.timezone == null) {
+    return "Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.";
+  }
+
+  const unreadable = "Next run unknown: a recorded expression cannot be read.";
+  try {
+    let earliest = Infinity;
+    for (const expression of schedule.crons) {
+      const cron = new Cron(expression, {
+        timezone: schedule.timezone,
+        mode: "5-part",
+        domAndDow: false,
+        sloppyRanges: true,
+      });
+      const next = cron.nextRun(now);
+      if (
+        cron.getPattern() == null ||
+        next == null ||
+        next.getTime() <= now.getTime()
+      ) {
+        return unreadable;
+      }
+      earliest = Math.min(earliest, next.getTime());
+    }
+
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: schedule.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    const parts = Object.fromEntries(
+      formatter
+        .formatToParts(new Date(earliest))
+        .map(({ type, value }) => [type, value]),
+    );
+    const date = `${parts.year}-${parts.month}-${parts.day}`;
+    const time = `${parts.hour}:${parts.minute}`;
+    return `Next run ${date} ${time} ${schedule.timezone} (in ${formatDuration(earliest - now.getTime())})`;
+  } catch {
+    return unreadable;
+  }
 }
 
 /**

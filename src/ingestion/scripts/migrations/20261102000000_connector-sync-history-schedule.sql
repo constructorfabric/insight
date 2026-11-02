@@ -8,3 +8,6 @@ ALTER TABLE ingestion_history.sync_events
 
 ALTER TABLE ingestion_history.sync_events
     ADD COLUMN IF NOT EXISTS schedule_origin LowCardinality(String) DEFAULT '';
+
+ALTER TABLE ingestion_history.sync_events
+    ADD COLUMN IF NOT EXISTS schedule_suspended Bool DEFAULT false;

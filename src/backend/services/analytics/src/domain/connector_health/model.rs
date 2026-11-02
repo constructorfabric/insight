@@ -218,10 +218,17 @@ pub struct AppliedSchedule {
     pub timezone: Option<String>,
     /// Where the applied schedule came from; absent when unrecorded or unknown.
     pub origin: Option<ScheduleOrigin>,
+    /// Whether the recorded `CronWorkflow` is suspended.
+    pub suspended: bool,
 }
 
 impl AppliedSchedule {
-    pub(crate) fn from_record(crons: Vec<String>, timezone: String, origin: &str) -> Option<Self> {
+    pub(crate) fn from_record(
+        crons: Vec<String>,
+        timezone: String,
+        origin: &str,
+        suspended: bool,
+    ) -> Option<Self> {
         if crons.is_empty() {
             return None;
         }
@@ -236,6 +243,7 @@ impl AppliedSchedule {
             crons,
             timezone: label(timezone),
             origin,
+            suspended,
         })
     }
 }
