@@ -12,7 +12,8 @@ import {
 } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
-import type { DashboardAccess } from "@/api/custom-client";
+import type { DashboardAccess, FolderSummary } from "@/api/custom-client";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   DeleteDashboard,
   DuplicateDashboard,
@@ -64,8 +65,14 @@ export function DashboardMenu({
   const allows = dashboardAllows(access);
   const trigger = useRef<HTMLButtonElement>(null);
   const file = useAddToFolder();
+  const [sharing, setSharing] = useState<FolderSummary | null>(null);
 
   const done = () => setAsked(null);
+
+  function closeSharing() {
+    file.reset();
+    setSharing(null);
+  }
 
   // INVARIANT: a new folder has an owner, and an ownerless dashboard is filed only in ownerless folders.
   function fileInNew(folder: string) {
@@ -128,6 +135,10 @@ export function DashboardMenu({
             id={id}
             access={access}
             onNewFolder={() => setAsked("folder")}
+            onShareInto={(folder) => {
+              setOpen(false);
+              setSharing(folder);
+            }}
           />
           {allows.edit ? (
             <DropdownMenuItem onClick={() => setAsked("tags")}>
@@ -162,6 +173,28 @@ export function DashboardMenu({
         open={asked === "folder"}
         onClose={done}
         onCreated={fileInNew}
+      />
+      <ConfirmDialog
+        open={sharing !== null}
+        onOpenChange={(next) => {
+          if (!next) closeSharing();
+        }}
+        title={`Add to ${sharing?.name ?? ""}?`}
+        description={`People with access to ${sharing?.name ?? ""} will see this dashboard.`}
+        confirmLabel="Add"
+        isPending={file.isPending}
+        error={
+          file.isError
+            ? refusal(file.error, "Couldn't add it to the folder.")
+            : null
+        }
+        onConfirm={() => {
+          if (!sharing) return;
+          file.mutate(
+            { folder: sharing.id, dashboard: id },
+            { onSuccess: closeSharing }
+          );
+        }}
       />
       {allows.remove ? (
         <DeleteDashboard

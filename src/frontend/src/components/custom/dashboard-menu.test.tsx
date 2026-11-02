@@ -21,7 +21,7 @@ import {
   QueryClientProvider,
   useQuery,
 } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -284,8 +284,8 @@ describe("filing a dashboard from the Folders submenu", () => {
     ["carries, into a folder shared with no one", true, [], false],
     ["only files, into a shared folder", false, [{ grantee: "everyone" }], false],
   ] as const)(
-    "tells about the folder's people only when the entry %s",
-    async (_case, carries, grants, told) => {
+    "asks first only when the entry %s",
+    async (_case, carries, grants, asked) => {
       vi.mocked(customClient.fetchGrants).mockResolvedValue(
         grants.map((grant) => ({
           ...grant,
@@ -297,43 +297,67 @@ describe("filing a dashboard from the Folders submenu", () => {
       reading({ carries });
       const user = await openFolders();
 
-      await choose(user, await screen.findByRole("menuitemcheckbox", { name: "Mine" }));
-      await waitFor(() =>
-        expect(customClient.addToFolder).toHaveBeenCalledWith("Mine", "dash-1")
+      await choose(
+        user,
+        await screen.findByRole("menuitemcheckbox", { name: "Mine" })
       );
-      if (carries) {
-        await waitFor(() =>
-          expect(customClient.fetchGrants).toHaveBeenCalledWith({
-            kind: "folders",
-            id: "Mine",
-          })
-        );
-      }
-      await act(async () => {
-        await vi.mocked(customClient.fetchGrants).mock.results[0]?.value;
-      });
 
-      const notice = "People with access to Mine will see this dashboard.";
-      expect(
-        vi.mocked(toast.success).mock.calls.some(([text]) => text === notice),
-        `case: ${_case}`
-      ).toBe(told);
+      if (asked) {
+        expect(
+          await screen.findByRole("dialog", { name: "Add to Mine?" }),
+          `case: ${_case}`
+        ).toHaveTextContent(
+          "People with access to Mine will see this dashboard."
+        );
+        expect(customClient.addToFolder).not.toHaveBeenCalled();
+      } else {
+        await waitFor(() =>
+          expect(customClient.addToFolder).toHaveBeenCalledWith("Mine", "dash-1")
+        );
+        expect(screen.queryByRole("dialog"), `case: ${_case}`).toBeNull();
+      }
     }
   );
 
-  it("tells about the folder's people anyway when they cannot be read", async () => {
+  it("files it in the shared folder once the reader confirms", async () => {
+    vi.mocked(customClient.fetchGrants).mockResolvedValue([
+      {
+        grantee: "everyone",
+        level: "viewer",
+        granted_by: "p-1",
+        created_at: "2026-09-01T00:00:00Z",
+      },
+    ]);
+    const user = await openFolders();
+
+    await choose(
+      user,
+      await screen.findByRole("menuitemcheckbox", { name: "Mine" })
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Add to Mine?" });
+    await user.click(within(dialog).getByRole("button", { name: "Add" }));
+
+    await waitFor(() =>
+      expect(customClient.addToFolder).toHaveBeenCalledWith("Mine", "dash-1")
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("asks first when the folder's people cannot be read", async () => {
     vi.mocked(customClient.fetchGrants).mockRejectedValue(
       new customClient.CustomApiError(403, null)
     );
     const user = await openFolders();
 
-    await choose(user, await screen.findByRole("menuitemcheckbox", { name: "Mine" }));
-
-    await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith(
-        "People with access to Mine will see this dashboard."
-      )
+    await choose(
+      user,
+      await screen.findByRole("menuitemcheckbox", { name: "Mine" })
     );
+
+    expect(
+      await screen.findByRole("dialog", { name: "Add to Mine?" })
+    ).toBeInTheDocument();
+    expect(customClient.addToFolder).not.toHaveBeenCalled();
   });
 
   it("opens the new-folder dialog from the submenu", async () => {

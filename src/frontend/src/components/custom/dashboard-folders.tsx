@@ -27,10 +27,13 @@ export function FolderSubmenu({
   id,
   access,
   onNewFolder,
+  onShareInto,
 }: {
   id: string;
   access: DashboardAccess;
   onNewFolder: () => void;
+  /** Asked instead of filing when filing would show the dashboard to the folder's people. */
+  onShareInto: (folder: FolderSummary) => void;
 }) {
   const [open, setOpen] = useState(false);
   const { isAdmin } = useIsAdmin();
@@ -46,19 +49,14 @@ export function FolderSubmenu({
     : [];
   const [moving, setMoving] = useState<ReadonlyMap<string, boolean>>(new Map());
 
-  async function tellAudience(folder: FolderSummary) {
-    if (folder.access === "ownerless" || !read.data?.carries) return;
+  async function widensAudience(folder: FolderSummary): Promise<boolean> {
+    if (folder.access === "ownerless" || !read.data?.carries) return false;
 
-    // SAFETY: a folder whose people cannot be read is told about as if it had some.
-    const shared = await queryClient
+    // SAFETY: a folder whose people cannot be read is treated as if it had some.
+    return queryClient
       .fetchQuery(grantsQuery({ kind: "folders", id: folder.id }))
       .then((grants) => grants.length > 0)
       .catch(() => true);
-    if (shared) {
-      toast.success(
-        `People with access to ${folder.name} will see this dashboard.`
-      );
-    }
   }
 
   function settle(folder: string, holds: boolean | null) {
@@ -75,13 +73,18 @@ export function FolderSubmenu({
     if (moving.has(folder.id)) return;
 
     const entry = { folder: folder.id, dashboard: id };
-    settle(folder.id, !holds);
+    settle(folder.id, holds);
     try {
+      if (!holds && summary && (await widensAudience(summary))) {
+        onShareInto(summary);
+        return;
+      }
+
+      settle(folder.id, !holds);
       if (holds) {
         await remove.mutateAsync(entry);
       } else {
         await add.mutateAsync(entry);
-        if (summary) void tellAudience(summary);
       }
     } catch (error) {
       toast.error(
