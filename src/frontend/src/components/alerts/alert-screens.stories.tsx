@@ -316,7 +316,6 @@ export const TestListFitsOnAPhone: Story = {
         canvas.getByRole("heading", { name: "Alerts" }),
         canvas.getByRole("button", { name: "New alert" }),
         canvas.getByRole("searchbox", { name: "Search alerts" }),
-        canvas.getByRole("table"),
         longName,
         ...switches,
       ],

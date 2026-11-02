@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Database } from "lucide-react";
-import { expect, userEvent } from "storybook/test";
+import { expect, userEvent, within } from "storybook/test";
 
 import { CustomPageShell } from "@/components/custom/custom-page-shell";
 import { DefinitionList } from "@/components/custom/definition-list";
@@ -50,7 +50,9 @@ export const TestAssistantTogglesClearTheCreateButton: Story = {
   ],
   tags: ["test"],
   play: async ({ canvas }) => {
-    const create = canvas.getByRole("button", { name: "New dataset" });
+    const create = within(canvas.getByRole("banner")).getByRole("button", {
+      name: "New dataset",
+    });
     const open = canvas.getByRole("button", { name: "Open assistant" });
 
     await expect(create).toBeVisible();
