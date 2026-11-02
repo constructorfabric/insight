@@ -396,10 +396,9 @@ describe("ConditionBuilder", () => {
     });
 
     it("starts a picked day at midnight when no time is set, and shows it", async () => {
-      // INVARIANT: with no stored day the picker opens on the current month.
-      // Pin local 2026-10-01 or the 15th is not a button on screen.
+      // INVARIANT: an empty day opens the picker on today.
       vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(new Date(2026, 9, 1, 12));
+      vi.setSystemTime(new Date(2026, 9, 15, 12)); // local 2026-10-15
       try {
         const latest = at("");
 
