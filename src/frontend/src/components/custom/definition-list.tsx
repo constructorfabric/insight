@@ -1,3 +1,4 @@
+import { Search, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import {
@@ -6,6 +7,15 @@ import {
   type Paging,
 } from "@/components/custom/definition-paging";
 import { DefinitionSearch } from "@/components/custom/definition-search";
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyActions,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { TEXT_TITLE } from "@/lib/type-scale";
@@ -16,8 +26,9 @@ export function DefinitionList<T extends { id: string }>({
   items,
   isLoading,
   isError,
+  errorLabel,
   onRetry,
-  emptyLabel,
+  empty,
   renderRow,
   search,
   paging,
@@ -27,8 +38,11 @@ export function DefinitionList<T extends { id: string }>({
   items: T[] | undefined;
   isLoading: boolean;
   isError: boolean;
+  /** What the service said when it refused, where it said something. */
+  errorLabel?: string;
   onRetry: () => void;
-  emptyLabel: string;
+  /** What an empty catalogue shows before anything is searched for. */
+  empty: { icon: LucideIcon; title: string; description?: string };
   renderRow: (item: T) => ReactNode;
   search?: { label: string; value: string; onChange: (needle: string) => void };
   paging?: Paging;
@@ -65,11 +79,28 @@ export function DefinitionList<T extends { id: string }>({
         <ComingSoon
           variant="card"
           state="error"
-          label={`Couldn't load the ${title.toLowerCase()}.`}
+          label={errorLabel ?? `Couldn't load the ${title.toLowerCase()}.`}
           onRetry={onRetry}
         />
       ) : !items ? null : items.length === 0 ? (
-        <ComingSoon variant="card" state="empty" label={emptyLabel} />
+        search?.value.trim() ? (
+          <NothingFound
+            icon={Search}
+            title={`No ${title.toLowerCase()} match your search`}
+            action={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => search.onChange("")}
+              >
+                Clear search
+              </Button>
+            }
+          />
+        ) : (
+          <NothingFound {...empty} action={create} />
+        )
       ) : (
         <>
           <ul className="grid gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">
@@ -81,5 +112,30 @@ export function DefinitionList<T extends { id: string }>({
         </>
       )}
     </>
+  );
+}
+
+function NothingFound({
+  icon: Icon,
+  title,
+  description,
+  action,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description?: string;
+  action?: ReactNode;
+}) {
+  return (
+    <Empty>
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <Icon aria-hidden />
+        </EmptyMedia>
+        <EmptyTitle>{title}</EmptyTitle>
+        {description ? <EmptyDescription>{description}</EmptyDescription> : null}
+      </EmptyHeader>
+      {action ? <EmptyActions>{action}</EmptyActions> : null}
+    </Empty>
   );
 }

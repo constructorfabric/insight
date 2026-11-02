@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { Database } from "lucide-react";
 import { expect, userEvent } from "storybook/test";
 
 import { CustomPageShell } from "@/components/custom/custom-page-shell";
@@ -19,7 +20,7 @@ function Catalogue() {
         isError={false}
         onRetry={() => {}}
         create={<NewLink kind="datasets" noun="dataset" />}
-        emptyLabel="No datasets yet. Declare one to send records into it."
+        empty={{ icon: Database, title: "No datasets yet" }}
         renderRow={() => null}
       />
     </CustomPageShell>

@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, type LinkOptions } from "@tanstack/react-router";
 import { ChevronRight, Ellipsis, Eye, Pencil, Trash2 } from "lucide-react";
 import { useState, type ComponentType, type ReactNode } from "react";
 
@@ -42,22 +42,48 @@ export function CatalogueCard({
   id,
   name,
   title,
-  icon: Icon,
-  facts,
-  squeezed = 0,
-  updatedAt,
+  ...frame
 }: {
   kind: PreviewedKind;
   id: string;
   name: string;
   title: string;
+} & Omit<CardFrameProps, "open" | "title" | "menu" | "control">) {
+  return (
+    <CardFrame
+      {...frame}
+      title={title}
+      open={{ to: PREVIEWED[kind], params: { name: id } }}
+      menu={<CatalogueMenu kind={kind} id={id} name={name} title={title} />}
+    />
+  );
+}
+
+interface CardFrameProps {
+  title: string;
+  open: LinkOptions;
   icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   /** What it is, each part a short phrase. */
   facts: ReactNode[];
   /** The one fact cut short when the line runs out of room. */
   squeezed?: number;
   updatedAt?: string;
-}) {
+  menu: ReactNode;
+  /** A control the card acts on in place, set before the open link. */
+  control?: ReactNode;
+}
+
+/** A catalogue card's layout, for a kind whose menu is its own. */
+export function CardFrame({
+  title,
+  open,
+  icon: Icon,
+  facts,
+  squeezed = 0,
+  updatedAt,
+  menu,
+  control,
+}: CardFrameProps) {
   const changed = updatedAt ? changedAgo(updatedAt) : null;
   const parts = changed ? [...facts, changed] : facts;
 
@@ -67,8 +93,7 @@ export function CatalogueCard({
         <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           <Link
-            to={PREVIEWED[kind]}
-            params={{ name: id }}
+            {...open}
             className={cn(
               TEXT_NAME,
               "min-w-0 truncate transition-opacity hover:opacity-80"
@@ -97,15 +122,15 @@ export function CatalogueCard({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {control}
           <Link
-            to={PREVIEWED[kind]}
-            params={{ name: id }}
+            {...open}
             aria-label={`Open ${title}`}
             className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <ChevronRight className="size-4" aria-hidden />
           </Link>
-          <CatalogueMenu kind={kind} id={id} name={name} title={title} />
+          {menu}
         </div>
       </CardContent>
     </Card>

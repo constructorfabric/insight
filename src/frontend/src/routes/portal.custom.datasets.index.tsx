@@ -26,7 +26,11 @@ function DatasetsCatalogue() {
       search={{ label: "Search datasets", ...catalogue.search }}
       paging={catalogue.paging}
       create={<NewLink kind="datasets" noun="dataset" />}
-      emptyLabel="No datasets yet. Declare one to send records into it."
+      empty={{
+        icon: Database,
+        title: "No datasets yet",
+        description: "Declare one to send records into it.",
+      }}
       renderRow={(item) => <DatasetCard item={item} />}
     />
   );

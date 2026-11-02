@@ -43,11 +43,11 @@ function WidgetsCatalogue() {
       search={{ label: "Search widgets", ...catalogue.search }}
       paging={catalogue.paging}
       create={<NewLink kind="widgets" noun="widget" />}
-      emptyLabel={
-        assistant
-          ? "No widgets yet. Ask the assistant for one."
-          : "No widgets yet."
-      }
+      empty={{
+        icon: LayoutGrid,
+        title: "No widgets yet",
+        description: assistant ? "Ask the assistant for one." : undefined,
+      }}
       renderRow={(item) => <WidgetCard item={item} />}
     />
   );

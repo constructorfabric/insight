@@ -32,11 +32,11 @@ function MetricsCatalogue() {
       search={{ label: "Search metrics", ...catalogue.search }}
       paging={catalogue.paging}
       create={<NewLink kind="metrics" noun="metric" />}
-      emptyLabel={
-        assistant
-          ? "No metrics yet. Ask the assistant for one."
-          : "No metrics yet."
-      }
+      empty={{
+        icon: Sigma,
+        title: "No metrics yet",
+        description: assistant ? "Ask the assistant for one." : undefined,
+      }}
       renderRow={(item) => <MetricCard item={item} />}
     />
   );
