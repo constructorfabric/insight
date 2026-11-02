@@ -23,8 +23,6 @@ PANE_BUTTONS = (
 SAFE_NAV = (
     ':not([data-testid="org-tree"] *)'
     ':not([data-slot="sidebar-group"]:has('
-    '[data-slot="sidebar-group-label"]:text-is("Planned")) *)'
-    ':not([data-slot="sidebar-group"]:has('
     '[data-slot="sidebar-group-label"]:text-is("WorkChart")) *)'
 )
 

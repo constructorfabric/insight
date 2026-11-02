@@ -61,6 +61,7 @@ def any_role_session(request: pytest.FixtureRequest) -> PersonaSession:
 
 
 @pytest.mark.stand_smoke
+@pytest.mark.requires_seed("ceo", "dev_lead", "development_ic")
 def test_auth_me_names_the_authenticated_persona(
     any_role_session: PersonaSession, stand_manifest: Manifest
 ) -> None:

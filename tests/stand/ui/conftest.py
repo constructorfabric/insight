@@ -27,6 +27,7 @@ https origin. Every one of them matches the stand's registered
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections.abc import Callable, Iterator
@@ -44,7 +45,7 @@ from insight_stand import (
     verify_realm_roles,
 )
 from insight_stand.session import DEFAULT_MAX_SESSION_AGE_S
-from playwright.sync_api import Browser, Page, StorageState, expect
+from playwright.sync_api import Browser, BrowserContext, Page, StorageState, expect
 from pytest_playwright.pytest_playwright import CreateContextCallback
 
 from .catalogue import PageScenario, missing_capabilities
@@ -104,6 +105,14 @@ def navigation_extras(pytestconfig: pytest.Config) -> list[str]:
     return extras
 
 
+def _show_planned_sections(context: BrowserContext, base_url: str) -> None:
+    context.add_init_script(
+        f"""if (window.location.origin === new URL({json.dumps(base_url)}).origin) {{
+            window.localStorage.setItem("insight.portal.showPlanned", "true");
+        }}"""
+    )
+
+
 @pytest.fixture(scope="session")
 def browser_state_for(
     browser: Browser, stand_manifest: Manifest, base_url: str
@@ -122,6 +131,7 @@ def browser_state_for(
 
         with step(f"Sign in to Insight as the {name} persona"):
             context = browser.new_context(base_url=base_url, service_workers="block")
+            _show_planned_sections(context, base_url)
             context.route(f"**{USAGE_PATH}", lambda route: route.fulfill(status=204))
             try:
                 page = context.new_page()
@@ -147,11 +157,14 @@ def browser_state_for(
 
 @pytest.fixture
 def browser_page_for(
-    browser_state_for: Callable[[str], StorageState], new_context: CreateContextCallback
+    browser_state_for: Callable[[str], StorageState],
+    new_context: CreateContextCallback,
+    base_url: str,
 ) -> Callable[[str], Page]:
     def page_for(name: str) -> Page:
         state = browser_state_for(name)
         context = new_context(storage_state=state, service_workers="block")
+        _show_planned_sections(context, base_url)
         context.route(f"**{USAGE_PATH}", lambda route: route.fulfill(status=204))
         return context.new_page()
 

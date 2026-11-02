@@ -84,13 +84,13 @@ docker run --rm --init --ipc=host \
   -v "$PWD/stand-manifest.json:/stand/manifest.json:ro" \
   -v "$PWD/test-results:/results" \
   ghcr.io/constructorfabric/insight-ui-tests:<tag> \
-  /tests/stand/ui --stand-manifest /stand/manifest.json \
+  /tests/stand -m stand_smoke --stand-manifest /stand/manifest.json \
   --junitxml=/results/junit.xml \
   --tracing retain-on-failure --screenshot only-on-failure \
   --output=/results/playwright
 ```
 
-Arguments after the image name are pytest arguments. Replace `/tests/stand/ui`
+Arguments after the image name are pytest arguments. Replace `/tests/stand`
 with a test file or node ID, or add `-k` / `-m` to select tests; omitting all
 arguments runs `/tests/stand`. The output directory must be writable by the
 image's non-root user. JUnit, retained failure traces, screenshots and the
@@ -140,6 +140,7 @@ session cookie.
 navigation test, marked `stand_smoke` and `reliability`. Each visit opens its
 zone, pane entry and optional sub-menu or first list item. Rail navigation
 moves the pointer into main and waits until the pane is uncovered.
+Run them with the rest of the smoke suite using `pytest tests/stand -m stand_smoke`.
 
 Four soft checks report together: the expected page test id is visible; main
 has no visible loading marker and same-origin fetch/XHR stays idle for one
@@ -156,8 +157,9 @@ into one report. Rendered page ids exclude aliases and covered dashboard filters
 folder links with a `folder` parameter other than `unfiled` are not visited or
 reported. Unresolved page ids remain visible in the report. Me covers the same
 person overview as At a glance; Task delivery, Git output, Collaboration and AI
-adoption each have a separate person-page test. New actions, Planned / WorkChart
-groups and the org tree are excluded.
+adoption each have a separate person-page test. Planned sections are enabled
+before page scripts run and included in navigation discovery. New actions,
+WorkChart groups and the org tree are excluded.
 Usage events are answered locally with 204. `INSIGHT_FORCE_500` accepts a
 Playwright URL glob for local 500 responses; when set, Sentry envelopes are
 inspected and answered locally too. Visits create or save nothing.
@@ -171,7 +173,7 @@ unchanged. For an Allure report:
 
 ```bash
 uv run --project tests --frozen --with "allure-pytest>=2.15" \
-  pytest tests/stand/ui/test_portal_pages.py \
+  pytest tests/stand -m stand_smoke \
   --stand-manifest /path/to/stand-manifest.json --alluredir /path/to/allure-results
 ```
 
@@ -181,8 +183,8 @@ This synthetic version-2 example names one person with org visibility and the
 active identity admin grant under both fixture aliases. Both entries describe
 the same actual realm roles; a seeded manifest instead names separate personas.
 `email` carries the login name; unused metadata may stay empty. The smoke uses
-neither seed steps nor service URLs. The existing landing journey additionally
-requires `dev_lead` when collecting the whole UI directory.
+neither seed steps nor service URLs. When `seeded` is empty, seed-dependent
+smoke tests skip with a reason naming the missing fixtures.
 
 ```json
 {
