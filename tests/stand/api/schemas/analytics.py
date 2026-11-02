@@ -25,11 +25,13 @@ service serialises timestamps with no offset. See `common.UnzonedDatetime`.
 from __future__ import annotations
 
 from .common import UnzonedDatetime
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+
+from datetime import date as date_aliased
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
-from datetime import date as date_aliased
+
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
 class AiConfigResponse(BaseModel):
