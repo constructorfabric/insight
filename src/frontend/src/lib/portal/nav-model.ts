@@ -395,8 +395,8 @@ export const MANAGE_GROUPS: readonly PaneGroup[] = [
         icon: Plug,
         adminOnly: true,
       },
-      { id: "exclusions", label: "Data exclusions", icon: Filter },
-      { id: "snapshots", label: "Org snapshots", icon: Clock },
+      { id: "exclusions", label: "Data exclusions", icon: Filter, unbuilt: true },
+      { id: "snapshots", label: "Org snapshots", icon: Clock, unbuilt: true },
     ],
   },
   {
@@ -409,7 +409,7 @@ export const MANAGE_GROUPS: readonly PaneGroup[] = [
         adminOnly: true,
       },
       { id: "access", label: "Access", icon: Lock, unbuilt: true },
-      { id: "group-mgmt", label: "Group management", icon: Users },
+      { id: "group-mgmt", label: "Group management", icon: Users, unbuilt: true },
     ],
   },
   {
@@ -420,9 +420,9 @@ export const MANAGE_GROUPS: readonly PaneGroup[] = [
       { id: "ai-assistant", label: "AI assistant config", icon: Sparkles },
       { id: "whats-new", label: "What's new", icon: Megaphone },
       { id: "platform-usage", label: "Platform usage", icon: Activity, adminOnly: true },
-      { id: "mcp", label: "MCP servers", icon: Server },
-      { id: "config", label: "Config & setup", icon: Settings2 },
-      { id: "scorecard-mgmt", label: "Scorecard management", icon: BarChart3 },
+      { id: "mcp", label: "MCP servers", icon: Server, unbuilt: true },
+      { id: "config", label: "Config & setup", icon: Settings2, unbuilt: true },
+      { id: "scorecard-mgmt", label: "Scorecard management", icon: BarChart3, unbuilt: true },
     ],
   },
 ];
@@ -452,5 +452,5 @@ export function resolveZoneItem(
   const live = (i: PaneItem) => !itemPlanned(zoneId, i.id, policy);
   const items = zoneItems(zoneId);
   if (item && items.some((i) => i.id === item && shown(i))) return item;
-  return items.find((i) => live(i) && shown(i) && !i.adminOnly)?.id ?? null;
+  return items.find((i) => live(i) && shown(i) && !i.adminOnly && !i.previewsGated)?.id ?? null;
 }

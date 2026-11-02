@@ -662,7 +662,7 @@ describe("ContextPane highlight", () => {
     ["overview", "At a glance"],
     ["aicost", "Overview"],
     ["people", "My team"],
-    ["manage", "Data exclusions"],
+    ["manage", "AI assistant config"],
   ])("highlights the default item of %s when the URL names none", (zone, label) => {
     inZone(zone);
     pane();
