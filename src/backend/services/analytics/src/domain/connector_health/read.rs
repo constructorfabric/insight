@@ -470,7 +470,6 @@ mod guards {
         "../../../../../../ingestion/scripts/migrations/20260827000000_connector-sync-history.sql"
     );
 
-    /// The migration that adds the recorded schedule columns.
     const SCHEDULE_MIGRATION: &str = include_str!(
         "../../../../../../ingestion/scripts/migrations/20261102000000_connector-sync-history-schedule.sql"
     );
