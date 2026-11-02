@@ -52,6 +52,7 @@ DROP TABLE IF EXISTS insight.jira_closed_tasks;
 DROP TABLE IF EXISTS insight.task_issue_current_state;
 DROP TABLE IF EXISTS insight.people;
 
+DROP TABLE IF EXISTS staging.active_directory__bronze_promoted;
 DROP TABLE IF EXISTS staging.bamboohr__bronze_promoted;
 DROP TABLE IF EXISTS staging.bitbucket_cloud__bronze_promoted;
 DROP TABLE IF EXISTS staging.chatgpt_team__bronze_promoted;
@@ -72,6 +73,7 @@ DROP TABLE IF EXISTS staging.ms_entra__bronze_promoted;
 DROP TABLE IF EXISTS staging.outline__bronze_promoted;
 DROP TABLE IF EXISTS staging.slack__bronze_promoted;
 DROP TABLE IF EXISTS staging.youtrack__bronze_promoted;
+DROP TABLE IF EXISTS staging.zendesk__bronze_promoted;
 DROP TABLE IF EXISTS staging.zoom__bronze_promoted;
 DROP TABLE IF EXISTS staging.zulip_proxy__bronze_promoted;
 DROP TABLE IF EXISTS staging.claude_admin__ai_api_usage;
@@ -83,6 +85,7 @@ DROP TABLE IF EXISTS silver.class_comms_events;
 DROP TABLE IF EXISTS silver.class_task_daily;
 DROP TABLE IF EXISTS silver.to_ai_cost;
 DROP TABLE IF EXISTS silver.to_ai_tool_usage;
+DROP TABLE IF EXISTS silver.zendesk__support_event;
 
 DROP TABLE IF EXISTS identity.bootstrap_inputs;
 DROP TABLE IF EXISTS identity.seed_aliases_from_claude_admin;

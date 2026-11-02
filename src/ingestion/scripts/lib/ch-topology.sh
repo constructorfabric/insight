@@ -120,7 +120,7 @@ ch_replicated_prefix() {
 #   `ENGINE = /*@@REPLICATED@@*/ReplacingMergeTree(_version)`.
 # `/*@@ON_CLUSTER@@*/` is the cluster clause of a relation in an Atomic
 # database (the `bronze_*` ones the destination creates):
-#   `DROP TABLE IF EXISTS bronze_jira._boards /*@@ON_CLUSTER@@*/`.
+#   `DROP TABLE IF EXISTS bronze_<connector>.<table> /*@@ON_CLUSTER@@*/`.
 # INVARIANT: a relation in a Replicated database never takes the clause — the
 # server rejects it there, and the database replays the DDL itself.
 CH_TOPOLOGY_MARKER='/*@@REPLICATED@@*/'

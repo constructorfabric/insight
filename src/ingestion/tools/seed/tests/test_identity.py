@@ -3,7 +3,7 @@
 A stdlib `unittest` test against a minimal fake cursor, locking two
 regressions:
 
-1. Idempotency: migration 004 (`004_persons_relax_constraints.sql`) put
+1. Idempotency: migration 004 (now squashed into `000_baseline.sql`) put
    `created_at` in `persons`' unique key, so `INSERT IGNORE` alone no longer
    dedupes a re-run (each insert gets a fresh `created_at`, so the unique key
    never collides). Every writer must check for an existing row explicitly.
