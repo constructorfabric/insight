@@ -161,6 +161,7 @@ argo_render_cronworkflow() {
     --connector "$connector" \
     --connection-name "$connection_name" \
     --schedule "$schedule" \
+    --schedule-origin "${7:-default}" \
     --tenant "$tenant" \
     --cron-name "$cron_name" \
     --insight-source-id "$insight_source_id" \
@@ -183,7 +184,7 @@ argo_apply_cronworkflow() {
   local rendered apply_out
   rendered="$(argo_render_cronworkflow "$connector" "$connection_name" \
                 "$schedule" "$tenant" "$insight_source_id" \
-                "$dbt_select")" || return 1
+                "$dbt_select" "${7:-default}")" || return 1
   if ! apply_out="$(printf '%s' "$rendered" | kubectl apply -f - 2>&1)"; then
     printf '%s: kubectl apply failed: %s\n' \
       "$connector" "$apply_out" >&2

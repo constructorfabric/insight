@@ -31,6 +31,7 @@ import insight_logging
 from . import heal, plan
 from .ledger import Ledger, LedgerError
 from .mover import Mover, MoverError
+from .schedule import AppliedSchedule, read_schedule
 
 _LOG = logging.getLogger("sweep")
 
@@ -51,6 +52,7 @@ class Connector(NamedTuple):
     #: connection for yet. It is still configured — that is the first thing the
     #: page answers — it simply has nothing to read.
     connection_id: str | None
+    schedule: AppliedSchedule = AppliedSchedule()
 
     @property
     def instance(self) -> plan.Instance:
@@ -105,7 +107,7 @@ def _read_work(stream: Any) -> tuple[str, list[Connector], dict[str, str]]:
         connection_id = item.get("connection_id")
         if connection_id is not None and not isinstance(connection_id, str):
             raise UnreadableWork(f"connector {name!r} carries an unusable connection id")
-        connectors.append(Connector(name, tenant_id, source_id, connection_id or None))
+        connectors.append(Connector(name, tenant_id, source_id, connection_id or None, read_schedule(item)))
     return tick_id.strip(), connectors, namespaces
 
 
@@ -271,7 +273,8 @@ def run(stream: Any) -> int:
         return 1
 
     try:
-        written += ledger.insert(plan.plan_snapshot(configured, tick_id))
+        schedules = {c.instance: c.schedule for c in connectors}
+        written += ledger.insert(plan.plan_snapshot(configured, tick_id, schedules))
         written += ledger.insert([plan.plan_seal(tick_id)])
     except LedgerError as error:
         _LOG.error(f"cannot seal this tick: {error}")

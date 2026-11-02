@@ -1,0 +1,37 @@
+{
+  "schedules": [
+    "0 4 * * *"
+  ],
+  "concurrencyPolicy": "Forbid",
+  "startingDeadlineSeconds": 300,
+  "workflowSpec": {
+    "serviceAccountName": "insight-reconcile",
+    "workflowTemplateRef": {
+      "name": "ingestion-pipeline"
+    },
+    "arguments": {
+      "parameters": [
+        {
+          "name": "connection_name",
+          "value": "example-connector-main-example-conn"
+        },
+        {
+          "name": "insight_source_id",
+          "value": "main"
+        },
+        {
+          "name": "data_source",
+          "value": "example-connector"
+        },
+        {
+          "name": "dbt_select",
+          "value": ""
+        },
+        {
+          "name": "dbt_select_staging",
+          "value": ""
+        }
+      ]
+    }
+  }
+}

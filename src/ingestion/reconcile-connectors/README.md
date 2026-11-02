@@ -55,6 +55,13 @@ The tick's last layer copies the mover's account of every sync into
 `lib/sweep.sh` gathers — connector to connection map, token — and
 `python3 -m sweep` plans and writes.
 
+Each `connector.configured` row carries `schedules`, `schedule_timezone` and
+`schedule_origin` from its live CronWorkflow's `spec.schedules`, `spec.timezone`
+and `insight.cyberfabric.com/schedule-origin` annotation. The sweep lists connector
+CronWorkflows once per tick and matches each instance by the name reconcile uses.
+Missing or unreadable CronWorkflows leave these fields empty; absent timezone and
+origin fields are empty too. These values are never recomputed from desired inputs.
+
 It cannot fail a tick: `sweep_run` always returns 0, so a broken recorder costs
 the page its freshness and costs reconciliation nothing. It adds no environment
 of its own, reusing the `RECONCILE_DEST_CLICKHOUSE_*` credentials the Bronze

@@ -279,7 +279,10 @@ for x in json.load(sys.stdin): print(x)')
     printf 'CHANGE  %s: would create/update Argo CronWorkflow\n' "${name}"
   else
     local conn_name; conn_name="$(reconcile_compute_connection_name "${name}" "${source_id_label}")"
-    local schedule;  schedule="$(reconcile_compute_schedule "${name}" "${secret_name}")"
+    local schedule_details schedule_origin schedule
+    schedule_details="$(reconcile_resolve_schedule "${name}" "${secret_name}")"
+    schedule_origin="${schedule_details%%$'\n'*}"
+    schedule="${schedule_details#*$'\n'}"
     local tenant;    tenant="$(reconcile_compute_tenant "${name}")"
     # `source_id_label` — read above off the connector's one instance — is what
     # the rendered CronWorkflow carries as `insight_source_id` for
@@ -287,7 +290,7 @@ for x in json.load(sys.stdin): print(x)')
     # ADOPT_DRY_RUN guarded above (would_call branch).
     local apply_rc=0
     argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                            "${source_id_label}" "${dbt_select}" >/dev/null 2>&1 \
+                            "${source_id_label}" "${dbt_select}" "${schedule_origin}" >/dev/null 2>&1 \
       || apply_rc=$?
     if [[ "${apply_rc}" -eq 0 ]]; then
       log_line INFO "${name}: created Argo CronWorkflow $(argo_cron_workflow_name "${name}" "${tenant}" "${source_id_label}")"

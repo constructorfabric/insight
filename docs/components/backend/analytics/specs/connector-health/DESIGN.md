@@ -174,7 +174,7 @@ One table holds three kinds of row, told apart by `event`.
 | Event | Written when | Carries |
 |---|---|---|
 | `sync.completed` | the sweep sees a job in the mover's history | job identity, connector, outcome, timestamps, duration, reported records |
-| `connector.configured` | each tick, one row per configured connector instance | the instance identity, tick identity |
+| `connector.configured` | each tick, one row per configured connector instance | the instance identity, tick identity, applied schedules, timezone and schedule origin read from its live CronWorkflow |
 | `sweep.completed` | each tick, last | tick identity — the marker that seals the snapshot |
 
 **Configured is what it means to the reconcile loop: a shipped descriptor that has a
@@ -203,6 +203,9 @@ column the reader and the writer will disagree about.
 | `job_updated_at` | always present | NULL | NULL |
 | `duration_ms` | between the mover's own two stamps; NULL until terminal | NULL | NULL |
 | `records_reported` | the last attempt's count; NULL if it reported none | NULL | NULL |
+| `schedules` | empty array | live CronWorkflow `spec.schedules`; empty array if unreadable or missing | empty array |
+| `schedule_timezone` | empty | live CronWorkflow `spec.timezone`; empty if absent, unreadable or missing | empty |
+| `schedule_origin` | empty | live CronWorkflow annotation `insight.cyberfabric.com/schedule-origin` (`annotation`, `descriptor`, `default`); empty if absent, unreadable or missing | empty |
 
 Empty rather than NULL where a column is inapplicable to a row class. Those columns are
 `String` and `LowCardinality(String)`, and every read filters by `event` before touching
@@ -696,6 +699,9 @@ customer extracts, which must never carry service rows.
 | `job_updated_at` | `Nullable(DateTime64(3, 'UTC'))` | the mover's last word about the job — its last update, or its start while it is still in flight. The axis the watermark moves along and the field the listing is ordered and filtered by; never NULL on a sync row |
 | `duration_ms` | `Nullable(UInt64)` | between the mover's own start and end stamps; NULL while a job is in flight and where either stamp is missing, which a zero could not express |
 | `records_reported` | `Nullable(UInt64)` | the mover's own count; NULL where it reported none |
+| `schedules` | `Array(String) DEFAULT []` | on configured rows, `spec.schedules` read from the instance's live CronWorkflow; empty otherwise or when unreadable or missing |
+| `schedule_timezone` | `LowCardinality(String) DEFAULT ''` | on configured rows, the live CronWorkflow's `spec.timezone`; empty otherwise or when absent, unreadable or missing |
+| `schedule_origin` | `LowCardinality(String) DEFAULT ''` | on configured rows, the live CronWorkflow's `insight.cyberfabric.com/schedule-origin` annotation; empty otherwise or when absent, unreadable or missing |
 
 `ENGINE = /*@@REPLICATED@@*/MergeTree` (`MergeTree` on a single node, `ReplicatedMergeTree` on a
 cluster), `PARTITION BY toYYYYMM(ts)`,

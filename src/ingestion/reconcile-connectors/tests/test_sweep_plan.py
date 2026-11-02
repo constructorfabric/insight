@@ -89,9 +89,7 @@ class TestStatusKeepsTheMoversWord:
 
     @pytest.mark.parametrize("word", ["SUCCEEDED_PARTIALLY", "", None, 7, "  "])
     def test_an_undocumented_word_is_stored_as_unknown(self, word: object) -> None:
-        assert row(status=word)["status"] == vocab.UNKNOWN, (
-            f"should not pass through: {word!r}"
-        )
+        assert row(status=word)["status"] == vocab.UNKNOWN, f"should not pass through: {word!r}"
 
     def test_case_and_padding_do_not_produce_an_unknown(self) -> None:
         assert row(status=" Succeeded ")["status"] == "succeeded"
@@ -110,13 +108,9 @@ class TestAJobMustBePlaceable:
     def test_a_job_with_neither_stamp_readable_is_refused(self, absent: object) -> None:
         """Both, because either one places the job. A case that blanks only the
         update stamp stops testing the refusal the moment a fallback exists."""
-        planned = plan.sync_row(
-            entry(lastUpdatedAt=absent, startTime=absent), CONNECTORS, TICK
-        )
+        planned = plan.sync_row(entry(lastUpdatedAt=absent, startTime=absent), CONNECTORS, TICK)
 
-        assert isinstance(planned, plan.Skipped), (
-            f"should refuse both stamps = {absent!r}"
-        )
+        assert isinstance(planned, plan.Skipped), f"should refuse both stamps = {absent!r}"
 
     def test_a_job_with_no_identity_is_refused(self) -> None:
         planned = plan.sync_row(entry(jobId=None), CONNECTORS, TICK)
@@ -127,20 +121,13 @@ class TestAJobMustBePlaceable:
         assert isinstance(planned, plan.Skipped)
 
     def test_a_refusal_carries_its_reason(self) -> None:
-        planned = plan.sync_row(
-            entry(lastUpdatedAt=None, startTime=None), CONNECTORS, TICK
-        )
+        planned = plan.sync_row(entry(lastUpdatedAt=None, startTime=None), CONNECTORS, TICK)
         assert "moment" in planned.reason
 
 
 class TestAbsenceIsNotZero:
     def test_a_job_not_started_has_no_start_and_no_duration(self) -> None:
-        bare = {
-            "jobId": 1,
-            "connectionId": CONNECTION,
-            "status": "pending",
-            "lastUpdatedAt": UPDATED,
-        }
+        bare = {"jobId": 1, "connectionId": CONNECTION, "status": "pending", "lastUpdatedAt": UPDATED}
         planned = plan.sync_row(bare, CONNECTORS, TICK)
         assert planned["started_at"] is None
         assert planned["duration_ms"] is None
@@ -158,9 +145,7 @@ class TestAbsenceIsNotZero:
         assert row(rowsSynced=-1)["records_reported"] is None
 
     @pytest.mark.parametrize("absent", [float("nan"), float("inf"), float("-inf")])
-    def test_a_non_finite_number_is_absent_rather_than_an_exception(
-        self, absent: float
-    ) -> None:
+    def test_a_non_finite_number_is_absent_rather_than_an_exception(self, absent: float) -> None:
         """`int(inf)` raises, and one malformed field would cost the whole tick
         its seal — which stops the page's own clock."""
         assert row(duration=absent)["duration_ms"] is None
@@ -204,25 +189,13 @@ class TestWhatIsRead:
     def test_an_epoch_number_is_not_a_stamp(self) -> None:
         """The listing sends strings. A number here would be a different
         endpoint's shape, and guessing at it would date every job to 1970."""
-        planned = plan.sync_row(
-            entry(lastUpdatedAt=1_700_000_000, startTime=1_700_000_000),
-            CONNECTORS,
-            TICK,
-        )
+        planned = plan.sync_row(entry(lastUpdatedAt=1_700_000_000, startTime=1_700_000_000), CONNECTORS, TICK)
         assert isinstance(planned, plan.Skipped)
 
     @pytest.mark.parametrize(
-        ("text", "expected"),
-        [
-            ("PT1M37S", 97_000),
-            ("PT2H3M4.5S", 7_384_500),
-            ("P1DT1S", 86_401_000),
-            ("PT0.25S", 250),
-        ],
+        ("text", "expected"), [("PT1M37S", 97_000), ("PT2H3M4.5S", 7_384_500), ("P1DT1S", 86_401_000), ("PT0.25S", 250)]
     )
-    def test_the_duration_is_read_as_an_iso_8601_duration(
-        self, text: str, expected: int
-    ) -> None:
+    def test_the_duration_is_read_as_an_iso_8601_duration(self, text: str, expected: int) -> None:
         assert row(duration=text)["duration_ms"] == expected
 
     def test_the_reported_count_is_read_from_the_entry(self) -> None:
@@ -250,9 +223,7 @@ class TestAJobMustBelongToAManagedConnection:
 
 class TestCoverageSkipsWhatIsClosed:
     def test_a_job_already_terminal_in_the_ledger_is_left_alone(self) -> None:
-        planned = plan.plan_syncs(
-            [entry()], CONNECTORS, TICK, frozenset({"8412"})
-        )
+        planned = plan.plan_syncs([entry()], CONNECTORS, TICK, frozenset({"8412"}))
         assert planned.rows == []
 
     def test_a_job_not_yet_closed_is_recorded_again(self) -> None:
@@ -261,26 +232,23 @@ class TestCoverageSkipsWhatIsClosed:
 
     def test_refusals_are_reported_beside_the_rows(self) -> None:
         planned = plan.plan_syncs(
-            [entry(), entry(jobId=7, lastUpdatedAt=None, startTime=None)],
-            CONNECTORS,
-            TICK,
-            frozenset(),
+            [entry(), entry(jobId=7, lastUpdatedAt=None, startTime=None)], CONNECTORS, TICK, frozenset()
         )
         assert len(planned.rows) == 1
         assert len(planned.skipped) == 1
         assert planned.skipped[0].job_id == "7"
 
 
-class TestEveryRowClassFillsEveryColumn:
-    """The insert names no columns, so a row missing one would silently take a
-    DEFAULT — and a row carrying an extra one would be rejected outright."""
-
-    def test_the_three_classes_agree_on_their_columns(self) -> None:
+class TestRowClassColumns:
+    def test_schedule_fields_are_only_supplied_on_configured_rows(self) -> None:
         sync = row()
         snapshot = plan.plan_snapshot([INSTANCE], TICK)[0]
         seal = plan.plan_seal(TICK)
-        assert set(snapshot) == set(sync)
+        assert set(snapshot) == set(sync) | {"schedules", "schedule_timezone", "schedule_origin"}
         assert set(seal) == set(sync)
+        assert snapshot["schedules"] == []
+        assert snapshot["schedule_timezone"] == ""
+        assert snapshot["schedule_origin"] == ""
 
     def test_a_snapshot_row_names_its_connector_and_nothing_else(self) -> None:
         snapshot = plan.plan_snapshot([INSTANCE], TICK)[0]
@@ -322,10 +290,7 @@ class TestOneConnectorCanBeInstalledTwice:
     def test_two_instances_of_one_connector_record_separately(self) -> None:
         both = {CONNECTION: INSTANCE, SIBLING_CONNECTION: SIBLING}
         planned = plan.plan_syncs(
-            [entry(), entry(jobId=8413, connectionId=SIBLING_CONNECTION)],
-            both,
-            TICK,
-            frozenset(),
+            [entry(), entry(jobId=8413, connectionId=SIBLING_CONNECTION)], both, TICK, frozenset()
         )
 
         recorded = {(r["connector"], r["source_id"]) for r in planned.rows}
@@ -388,9 +353,7 @@ class TestTheListingsOwnShape:
     def test_a_creation_stamp_does_not_place_a_job(self) -> None:
         """The listing filters on creation and reports none, so an entry
         carrying only a creation stamp is one the mover cannot have sent."""
-        invented = {
-            k: v for k, v in entry().items() if k not in ("lastUpdatedAt", "startTime")
-        }
+        invented = {k: v for k, v in entry().items() if k not in ("lastUpdatedAt", "startTime")}
         invented["createdAt"] = "2026-08-27T08:00:00Z"
 
         planned = plan.sync_row(invented, CONNECTORS, TICK)
@@ -442,9 +405,7 @@ class TestAJobStillRunningIsPlaceable:
         """A sync that started after the last one finished is the newer fact,
         and the summary orders along the same column the planner writes."""
         finished = entry(jobId=8900, lastUpdatedAt="2026-08-27T07:00:00Z")
-        planned = plan.plan_syncs(
-            [finished, self.RUNNING], CONNECTORS, TICK, frozenset()
-        )
+        planned = plan.plan_syncs([finished, self.RUNNING], CONNECTORS, TICK, frozenset())
 
         placed = {r["job_id"]: r["job_updated_at"] for r in planned.rows}
         assert len(placed) == 2

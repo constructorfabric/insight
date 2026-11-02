@@ -27,7 +27,7 @@ valsec_check_secret()    { return 0; }
 reconcile_definitions()  { printf 'noop\\tnone\\tdef-1\\n'; }
 reconcile_rename_former_tenant() { return 0; }
 reconcile_classify_change() { printf 'noop'; }
-reconcile_compute_schedule() { printf '0 0 * * *'; }
+reconcile_resolve_schedule() { printf 'default\\n0 0 * * *'; }
 ab_workspace_id()        { printf 'ws-1'; }
 ab_list_sources()        { cat "$SOURCES"; }
 ab_list_connections()    { cat "$CONNECTIONS"; }

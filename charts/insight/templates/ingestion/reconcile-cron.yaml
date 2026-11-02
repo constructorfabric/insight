@@ -73,6 +73,8 @@ spec:
               value: {{ include "insight.airbyte.url" . | quote }}
             - name: INSIGHT_NAMESPACE
               value: {{ .Release.Namespace | quote }}
+            - name: RECONCILE_SCHEDULE_TIMEZONE
+              value: {{ .Values.ingestion.reconcile.scheduleTimezone | quote }}
             # Airbyte's auth Secret lives in Airbyte's namespace, which may
             # differ from the app's (issue #1885). lib/airbyte.sh reads it
             # from there via the K8s API; RBAC comes from

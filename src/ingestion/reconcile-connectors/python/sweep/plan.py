@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
 from . import status as vocab
+from .schedule import AppliedSchedule
 
 SYNC_COMPLETED = "sync.completed"
 CONNECTOR_CONFIGURED = "connector.configured"
@@ -363,9 +364,15 @@ def _bare_row(tick_id: str, event: str, instance: Instance) -> dict[str, Any]:
     }
 
 
-def plan_snapshot(instances: Iterable[Instance], tick_id: str) -> list[dict[str, Any]]:
+def plan_snapshot(
+    instances: Iterable[Instance], tick_id: str, schedules: Mapping[Instance, AppliedSchedule] | None = None
+) -> list[dict[str, Any]]:
     """One row per connector instance the controller manages this tick."""
-    return [_bare_row(tick_id, CONNECTOR_CONFIGURED, instance) for instance in sorted(set(instances))]
+    return [
+        _bare_row(tick_id, CONNECTOR_CONFIGURED, instance)
+        | (schedules or {}).get(instance, AppliedSchedule()).row_fields()
+        for instance in sorted(set(instances))
+    ]
 
 
 def plan_seal(tick_id: str) -> dict[str, Any]:

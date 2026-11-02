@@ -31,6 +31,8 @@ kind: CronWorkflow
 metadata:
   name: ${CRON_NAME}
   namespace: ${INSIGHT_NAMESPACE}
+  annotations:
+    insight.cyberfabric.com/schedule-origin: ${SCHEDULE_ORIGIN}
   labels:
     app.kubernetes.io/name: insight-reconcile
     app.kubernetes.io/component: connector-sync
@@ -43,7 +45,7 @@ spec:
   # `unknown field "spec.schedule"` error (same fix as the chart's
   # reconcile-cron.yaml, PR #549).
   schedules: ${SCHEDULES}
-  concurrencyPolicy: Forbid
+${TIMEZONE}  concurrencyPolicy: Forbid
   startingDeadlineSeconds: 300
   workflowSpec:
     serviceAccountName: ${ARGO_SERVICE_ACCOUNT}

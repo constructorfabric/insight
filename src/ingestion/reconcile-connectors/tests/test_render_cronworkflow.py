@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 RECONCILE_DIR = Path(__file__).resolve().parents[1]
 RENDERER = RECONCILE_DIR / "python" / "render_cronworkflow.py"
@@ -37,6 +38,7 @@ CHILD_ENV = {
     "INSIGHT_NAMESPACE": "insight",
     "ARGO_SERVICE_ACCOUNT": "insight-reconcile",
     "ARGO_INSTANCE_ID": "",
+    "RECONCILE_SCHEDULE_TIMEZONE": "",
 }
 
 DESCRIPTOR_CASES = (
@@ -49,11 +51,11 @@ DESCRIPTOR_CASES = (
 )
 
 
-def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, env=CHILD_ENV, capture_output=True, text=True, encoding="utf-8", check=False)
+def _run(argv: list[str], **env: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(argv, env={**CHILD_ENV, **env}, capture_output=True, text=True, encoding="utf-8", check=False)
 
 
-def _render(schedule: str) -> subprocess.CompletedProcess[str]:
+def _render(schedule: str, *, timezone: str = "", origin: str = "default") -> subprocess.CompletedProcess[str]:
     return _run(
         [
             sys.executable,
@@ -64,6 +66,8 @@ def _render(schedule: str) -> subprocess.CompletedProcess[str]:
             "example-connector-main-example-conn",
             "--schedule",
             schedule,
+            "--schedule-origin",
+            origin,
             "--tenant",
             "example",
             "--cron-name",
@@ -72,7 +76,8 @@ def _render(schedule: str) -> subprocess.CompletedProcess[str]:
             "main",
             "--tpl",
             str(TEMPLATE),
-        ]
+        ],
+        RECONCILE_SCHEDULE_TIMEZONE=timezone,
     )
 
 
@@ -94,6 +99,35 @@ def _rendered_name(document: str) -> str:
 
 
 class TestRenderer:
+    def test_an_unset_timezone_preserves_the_existing_spec(self) -> None:
+        result = _render("0 4 * * *")
+        baseline = Path(__file__).parent / "fixtures" / "cronworkflow-default-spec.json"
+
+        assert result.returncode == 0, result.stderr
+        assert yaml.safe_load(result.stdout)["spec"] == json.loads(baseline.read_text())
+
+    def test_a_timezone_is_rendered_in_the_spec(self) -> None:
+        result = _render("0 4 * * *", timezone="Europe/London")
+
+        assert result.returncode == 0, result.stderr
+        assert yaml.safe_load(result.stdout)["spec"]["timezone"] == "Europe/London"
+
+    @pytest.mark.parametrize("timezone", ["Example/Invalid", "../UTC", "/UTC"])
+    def test_an_invalid_timezone_is_rejected(self, timezone: str) -> None:
+        result = _render("0 4 * * *", timezone=timezone)
+
+        assert result.returncode != 0
+        assert "invalid IANA timezone" in result.stderr
+        assert result.stdout == ""
+
+    @pytest.mark.parametrize("origin", ["annotation", "descriptor", "default"])
+    def test_the_origin_is_stamped_on_metadata(self, origin: str) -> None:
+        result = _render("0 4 * * *", origin=origin)
+
+        assert result.returncode == 0, result.stderr
+        annotations = yaml.safe_load(result.stdout)["metadata"]["annotations"]
+        assert annotations["insight.cyberfabric.com/schedule-origin"] == origin
+
     def test_a_single_cron_renders_exactly_one_entry(self) -> None:
         result = _render("0 4 * * *")
 
@@ -193,6 +227,23 @@ argo_apply_cronworkflow \"$@\"
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == f"{connector}-i-tenantid-sync"
         assert len(result.stdout.strip()) == 52
+
+    def test_an_invalid_timezone_never_reaches_kubectl(self) -> None:
+        result = self._run_argo(
+            'source "$ARGO_SCRIPT"\nargo_apply_cronworkflow "$@"',
+            "example-connector",
+            "example-connection",
+            "0 4 * * *",
+            "example",
+            "main",
+            "",
+            "descriptor",
+            RECONCILE_SCHEDULE_TIMEZONE="Example/Invalid",
+        )
+
+        assert result.returncode == 1
+        assert "invalid IANA timezone" in result.stderr
+        assert self._kubectl_calls() == []
 
     def test_a_53_character_name_is_rejected_before_kubectl(self) -> None:
         connector = "c" * 37

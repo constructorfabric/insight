@@ -35,7 +35,7 @@ log_line()          { printf '%s\\n' "$*" >&2; }
 log_event()         { :; }
 adopt_warn_orphan() { printf '%s\\n' "$*" >&2; }
 reconcile_compute_connection_name() { printf 'conn-name'; }
-reconcile_compute_schedule()        { printf '0 4 * * *'; }
+reconcile_resolve_schedule()        { printf 'descriptor\\n0 4 * * *'; }
 reconcile_compute_tenant()          { printf 'example-tenant'; }
 adopt_match_definition() { printf 'DEFINITION %s\\n' "$1" >> "$CALLS"; }
 adopt_tag_connection()   { printf 'TAG-CONNECTION %s %s\\n' "$1" "$2" >> "$CALLS"; }

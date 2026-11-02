@@ -1544,16 +1544,18 @@ _reconcile_one_connector() {
   fi
 
   # CronWorkflow apply (idempotent — kubectl apply no-op when YAML unchanged).
-  local conn_name schedule tenant
+  local conn_name schedule tenant schedule_details schedule_origin
   conn_name="$(reconcile_compute_connection_name "${name}" "${source_id_label}")"
-  schedule="$(reconcile_compute_schedule "${name}" "${secret_name}")"
+  schedule_details="$(reconcile_resolve_schedule "${name}" "${secret_name}")"
+  schedule_origin="${schedule_details%%$'\n'*}"
+  schedule="${schedule_details#*$'\n'}"
   tenant="$(reconcile_compute_tenant "${name}")"
   if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
     log_line INFO "${name}: would create/update Argo CronWorkflow"
   else
     local apply_rc=0
     argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                            "${source_id_label}" "${dbt_select}" >/dev/null 2>&1 \
+                            "${source_id_label}" "${dbt_select}" "${schedule_origin}" >/dev/null 2>&1 \
       || apply_rc=$?
     if [[ "${apply_rc}" -eq 2 ]]; then
       log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")"
