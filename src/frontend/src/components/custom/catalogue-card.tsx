@@ -63,25 +63,24 @@ export function CatalogueCard({
 
   return (
     <Card size="sm" className="h-full">
-      <CardContent className="flex flex-1 gap-3">
+      <CardContent className="flex flex-1 items-center gap-3">
+        <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           <Link
             to={PREVIEWED[kind]}
             params={{ name: id }}
-            className="flex min-w-0 items-start gap-3 transition-opacity hover:opacity-80"
+            className={cn(
+              TEXT_NAME,
+              "min-w-0 truncate transition-opacity hover:opacity-80"
+            )}
+            title={title}
           >
-            <Icon
-              className="mt-0.5 size-4 shrink-0 text-muted-foreground"
-              aria-hidden
-            />
-            <span className={cn(TEXT_NAME, "min-w-0 truncate")} title={title}>
-              {title}
-            </span>
+            {title}
           </Link>
           <p
             className={cn(
               TEXT_LABEL,
-              "flex min-w-0 gap-x-1.5 ps-7 font-normal whitespace-nowrap"
+              "flex min-w-0 gap-x-1.5 font-normal whitespace-nowrap"
             )}
           >
             {parts.map((part, index) => (
@@ -97,16 +96,16 @@ export function CatalogueCard({
             ))}
           </p>
         </div>
-        <div className="-my-1 flex shrink-0 flex-col items-center justify-between gap-1">
-          <CatalogueMenu kind={kind} id={id} name={name} title={title} />
+        <div className="flex shrink-0 items-center gap-1">
           <Link
             to={PREVIEWED[kind]}
             params={{ name: id }}
             aria-label={`Open ${title}`}
-            className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <ChevronRight className="size-4" aria-hidden />
           </Link>
+          <CatalogueMenu kind={kind} id={id} name={name} title={title} />
         </div>
       </CardContent>
     </Card>
