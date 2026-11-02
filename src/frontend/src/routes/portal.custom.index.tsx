@@ -86,7 +86,7 @@ function CustomDashboardIndex() {
 
   return (
     <>
-      <header className="mb-3 flex flex-wrap items-start gap-3">
+      <header className="mb-4 flex flex-wrap items-start gap-3">
         <h1 className={cn(TEXT_TITLE, "min-w-0 grow")}>{shown.heading}</h1>
         {isAdmin ? <NewLink kind="dashboards" noun="dashboard" /> : null}
       </header>
