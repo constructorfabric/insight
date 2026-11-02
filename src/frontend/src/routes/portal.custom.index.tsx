@@ -175,7 +175,7 @@ function CustomDashboardList({
 
   return (
     <>
-      <ul className="grid gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">
+      <ul className="grid grid-cols-1 gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">
         {dashboards.map((dashboard) => (
           <li key={dashboard.id}>
             <DashboardCard dashboard={dashboard} />

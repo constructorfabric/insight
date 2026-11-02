@@ -50,7 +50,7 @@ function DashboardSection() {
           </Button>
         </div>
       ) : (
-        <ul className="grid gap-4 @2xl:grid-cols-2">
+        <ul className="grid grid-cols-1 gap-4 @2xl:grid-cols-2">
           {shown.map((dashboard) => (
             <li
               key={dashboard.id}
