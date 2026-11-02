@@ -33,13 +33,14 @@ vi.mock("@/components/custom/share-dialog", () => ({
 }));
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import * as customClient from "@/api/custom-client";
 import type { DashboardAccess } from "@/api/custom-client";
+import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 import { portalRouter } from "@/test/portal-router";
 
 import { DashboardPageActions } from "./dashboard-page-actions";
@@ -51,6 +52,7 @@ const OWNER = "01900000-0000-7000-8000-00000000000a";
 
 beforeEach(() => {
   vi.resetAllMocks();
+  act(() => setPortalShowPlanned(false));
   portalRouter.reset(`/portal/custom/${ID}`);
   vi.mocked(customClient.fetchPins).mockResolvedValue([]);
   vi.mocked(customClient.pinDashboard).mockResolvedValue(undefined);
@@ -143,7 +145,7 @@ describe("<DashboardPageActions>", () => {
     }
   );
 
-  it("offers the owner duplicate, share, the planned exports, rename, pin, filing, tags and delete", async () => {
+  it("offers the owner duplicate, share, rename, pin, filing, tags and delete", async () => {
     await openMenu();
 
     await screen.findByRole("menuitem", { name: "Pin" });
@@ -152,14 +154,27 @@ describe("<DashboardPageActions>", () => {
     ).toEqual([
       "Duplicate…",
       "Share…",
-      "Export snapshot (PDF)Planned",
-      "Schedule report…Planned",
       "Rename…",
       "Pin",
       "Add to folder…",
       "Edit tags…",
       "Delete…",
     ]);
+  });
+
+  it("lists the planned exports only for a reader who shows planned sections", async () => {
+    act(() => setPortalShowPlanned(true));
+    await openMenu();
+
+    await screen.findByRole("menuitem", { name: "Pin" });
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent)
+    ).toEqual(
+      expect.arrayContaining([
+        "Export snapshot (PDF)Planned",
+        "Schedule report…Planned",
+      ])
+    );
   });
 
   it("offers an editor everything but delete", async () => {
@@ -171,8 +186,6 @@ describe("<DashboardPageActions>", () => {
     ).toEqual([
       "Duplicate…",
       "Share…",
-      "Export snapshot (PDF)Planned",
-      "Schedule report…Planned",
       "Rename…",
       "Pin",
       "Add to folder…",

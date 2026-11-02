@@ -5,6 +5,7 @@ import type { DashboardAccess } from "@/api/custom-client";
 import { DashboardMenu } from "@/components/custom/dashboard-menu";
 import { Button } from "@/components/ui/button";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 
 export function DashboardPageActions({
   id,
@@ -23,6 +24,7 @@ export function DashboardPageActions({
 }) {
   const navigate = useNavigate();
   const allows = dashboardAllows(access);
+  const showPlanned = usePortalShowPlanned();
 
   return (
     <span className="flex shrink-0 items-center gap-1">
@@ -48,7 +50,7 @@ export function DashboardPageActions({
         title={title}
         access={access}
         share={allows.share && carries ? { ownerPersonId } : undefined}
-        planned
+        planned={showPlanned}
         onDuplicated={(copy) =>
           void navigate({ to: "/portal/custom/$name", params: { name: copy } })
         }
