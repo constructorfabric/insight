@@ -54,7 +54,7 @@ describe("/portal/custom/metrics", () => {
         dataset: "commits",
         fields: [{ field: "lines", type: "int", as_name: "lines" }],
       },
-      ["commits", "1 column"],
+      ["1 column"],
     ],
     [
       "a table",
@@ -65,10 +65,10 @@ describe("/portal/custom/metrics", () => {
           { agg: "count", type: "int", as_name: "total" },
         ],
       },
-      ["silver.example", "2 columns"],
+      ["2 columns"],
     ],
   ])(
-    "says what a metric over %s reads and how many columns it answers",
+    "counts the columns a metric over %s answers",
     async (_, body, facts) => {
       vi.mocked(customClient.fetchMetrics).mockResolvedValue({
         items: [metricListed("m-1", "Lines per day", body)],

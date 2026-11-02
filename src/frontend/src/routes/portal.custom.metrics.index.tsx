@@ -6,7 +6,6 @@ import { CatalogueCard } from "@/components/custom/catalogue-card";
 import { DefinitionList } from "@/components/custom/definition-list";
 import { NewLink } from "@/components/custom/editor/edit-link";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
-import { metricSource } from "@/lib/custom/metric-source";
 import { useAssistantAvailable } from "@/lib/portal/use-assistant-available";
 
 /**
@@ -43,7 +42,6 @@ function MetricsCatalogue() {
 }
 
 function MetricCard({ item }: { item: MetricListed }) {
-  const source = metricSource(item.body);
   const fields = item.body.fields?.length ?? 0;
 
   return (
@@ -53,7 +51,7 @@ function MetricCard({ item }: { item: MetricListed }) {
       name={item.name}
       title={item.name}
       icon={Sigma}
-      facts={[source.named, `${fields} ${fields === 1 ? "column" : "columns"}`]}
+      facts={[`${fields} ${fields === 1 ? "column" : "columns"}`]}
       updatedAt={item.updated_at}
     />
   );
