@@ -39,7 +39,7 @@ function WidgetPage() {
 
   if (widget.isError) {
     return (
-      <div className="flex flex-col gap-2 p-4 md:p-6">
+      <div className="flex flex-col gap-2">
         <h1 className={cn(TEXT_HEADING, "font-mono")}>{id}</h1>
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(widget.error, "That widget is not there.")}
@@ -58,7 +58,7 @@ function WidgetPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">
+    <div className="flex flex-col gap-4">
       <header className="flex flex-wrap items-baseline gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <h1 className={TEXT_HEADING}>{widget.data.name}</h1>
