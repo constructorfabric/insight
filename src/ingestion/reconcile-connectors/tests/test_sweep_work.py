@@ -76,7 +76,7 @@ def build_work(
     export INSIGHT_NAMESPACE=example-namespace
     source "{ROOT}/lib/sweep.sh"
     kubectl() {{ printf 'kubectl %s\\n' "$*" >&2; {list_crons}; }}
-    log_line() {{ printf '%s\\n' "$*" >&2; }}
+    source "{ROOT}/lib/log.sh"
     disc_load_instances() {{ {loader}; }}
     reconcile_compute_tenant() {{ printf 'default'; }}
     reconcile_compute_connection_name() {{ printf '%s-%s-default-conn' "$1" "$2"; }}
@@ -111,7 +111,7 @@ def ledger_rows(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
     return rows
 
 
-@pytest.mark.parametrize("scenario", ["applied", "missing", "list-failed"])
+@pytest.mark.parametrize("scenario", ["applied", "missing", "list-failed", "list-unreadable"])
 def test_applied_schedules_are_recorded_and_lookup_failures_still_seal_the_tick(
     scenario: str, ledger_rows: list[dict[str, object]]
 ) -> None:
@@ -128,16 +128,28 @@ def test_applied_schedules_are_recorded_and_lookup_failures_still_seal_the_tick(
             {"metadata": {"name": "example-second-default-sync"}, "spec": {"schedules": ["0 8 * * *"]}},
         ]
     }
+    listed = json.dumps(crons) if scenario == "applied" else '{"items":[]}'
+    if scenario == "list-unreadable":
+        listed = "not JSON"
     result = build_work(
         "\\n".join([plan_row("example", "example-main"), plan_row("example", "example-second")]),
-        cronworkflows=json.dumps(crons) if scenario == "applied" else '{"items":[]}',
+        cronworkflows=listed,
         list_failed=scenario == "list-failed",
     )
 
     assert result.returncode == 0, result.stderr
+    work = json.loads(result.stdout)
+    assert [(c["name"], c["source_id"]) for c in work["connectors"]] == [
+        ("example", "example-main"),
+        ("example", "example-second"),
+    ]
     assert result.stderr.count("get cronworkflows.argoproj.io") == 1
     if scenario != "applied":
-        assert "WARN" in result.stderr
+        assert '"level":"warn"' in result.stderr
+        for connector in work["connectors"]:
+            assert connector["schedules"] == []
+            assert connector["schedule_timezone"] == ""
+            assert connector["schedule_origin"] == ""
 
     rows = ledger_rows
     assert run(io.StringIO(result.stdout)) == 0
@@ -184,7 +196,9 @@ class TestConfiguredMeansTheInstallHasIt:
         result = build_work(unreadable=True)
 
         assert result.returncode == 1
-        assert result.stdout.strip() == ""
+        logged = json.loads(result.stdout)
+        assert logged["level"] == "warn"
+        assert "tick_id" not in logged
 
     def test_no_descriptor_carries_a_secret_and_the_set_is_empty(self) -> None:
         """An empty set is not an error here. The caller refuses to seal it —

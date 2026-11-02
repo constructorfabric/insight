@@ -127,14 +127,14 @@ sweep__build_work() {
   schedules_by_name='{}'
   if ! cronworkflows="$(kubectl -n "${INSIGHT_NAMESPACE}" get cronworkflows.argoproj.io \
       -l 'app.kubernetes.io/component=connector-sync' -o json)"; then
-    log_line WARN "sweep: cannot list connector CronWorkflows; recording empty schedule fields"
+    log_line WARN "sweep: cannot list connector CronWorkflows; recording empty schedule fields" >&2
   elif ! schedules_by_name="$(printf '%s' "${cronworkflows}" | jq -ce '
       .items | map({key: .metadata.name, value: {
         schedules: (.spec.schedules // []),
         schedule_timezone: (.spec.timezone // ""),
         schedule_origin: (.metadata.annotations["insight.cyberfabric.com/schedule-origin"] // "")
       }}) | from_entries')"; then
-    log_line WARN "sweep: cannot read connector CronWorkflows; recording empty schedule fields"
+    log_line WARN "sweep: cannot read connector CronWorkflows; recording empty schedule fields" >&2
     schedules_by_name='{}'
   fi
 
@@ -178,7 +178,7 @@ sweep__build_work() {
     cron_name="$(argo_cron_workflow_name "${name}" "${tenant}" "${source_id}" 2>/dev/null)" || cron_name=""
     applied_schedule="$(printf '%s' "${schedules_by_name}" | jq -c --arg n "${cron_name}" '.[$n] // empty')"
     if [[ -z "${applied_schedule}" ]]; then
-      log_line WARN "sweep: no CronWorkflow read for ${name}/${source_id}; recording empty schedule fields"
+      log_line WARN "sweep: no CronWorkflow read for ${name}/${source_id}; recording empty schedule fields" >&2
       applied_schedule='{"schedules":[],"schedule_timezone":"","schedule_origin":""}'
     fi
     entries+=("$(jq -cn --arg n "${name}" --arg t "${tenant}" \
