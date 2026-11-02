@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 
+import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuBadge,
   SidebarMenuButton,
@@ -126,7 +126,7 @@ export function GroupsNav({
       {groups.map((g, i) =>
         split[i]!.live.length ? (
           <SidebarGroup key={g.label ?? i}>
-            {g.label ? <SidebarGroupLabel>{g.label}</SidebarGroupLabel> : null}
+            {g.label ? <PaneGroupLabel>{g.label}</PaneGroupLabel> : null}
             <SidebarGroupContent>
               <SidebarMenu>
                 {split[i]!.live.map((it) => (
@@ -139,7 +139,7 @@ export function GroupsNav({
       )}
       {planned.length ? (
         <SidebarGroup>
-          <SidebarGroupLabel>{PLANNED_GROUP_LABEL}</SidebarGroupLabel>
+          <PaneGroupLabel>{PLANNED_GROUP_LABEL}</PaneGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {planned.map((it) => (

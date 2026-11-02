@@ -5,10 +5,10 @@ import { OrgTree } from "@/components/org-tree";
 import { ItemButton } from "@/components/portal/pane-nav";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -59,7 +59,7 @@ function PeopleViews({ nav }: { nav: ZoneNav }) {
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Views</SidebarGroupLabel>
+      <PaneGroupLabel>Views</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {personZone ? (
@@ -120,7 +120,7 @@ function WorkChart() {
   // draw its scrollbar and rows over the search.
   return (
     <SidebarGroup className="min-h-0 flex-1">
-      {isFlat ? null : <SidebarGroupLabel>WorkChart</SidebarGroupLabel>}
+      {isFlat ? null : <PaneGroupLabel>WorkChart</PaneGroupLabel>}
       <SidebarGroupContent className="flex min-h-0 flex-1 flex-col gap-2">
         {find}
         <ScrollArea className="min-h-0 flex-1">
@@ -145,7 +145,7 @@ function PersonSectionsNav() {
   const glance = useSelectedPersonSection() == null;
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Sections</SidebarGroupLabel>
+      <PaneGroupLabel>Sections</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           <SidebarMenuItem>

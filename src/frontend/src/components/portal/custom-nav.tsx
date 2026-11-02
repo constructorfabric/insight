@@ -11,10 +11,10 @@ import { useDashboardBrowse } from "@/lib/custom/dashboard-browse";
 import { FoldersGroup } from "@/components/portal/folder-rows";
 import { CountBadge, UnbuiltRow } from "@/components/portal/pane-nav";
 import { PinnedGroup } from "@/components/portal/pinned-rows";
+import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -53,7 +53,7 @@ export function CustomNav() {
   return (
     <>
       <SidebarGroup>
-        <SidebarGroupLabel>Browse</SidebarGroupLabel>
+        <PaneGroupLabel>Browse</PaneGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
             {browse.map(({ owned: narrowed, label, icon: Icon, count }) => (
@@ -88,7 +88,7 @@ export function CustomNav() {
 function CatalogueGroup({ pathname }: { pathname: string }) {
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Catalogue</SidebarGroupLabel>
+      <PaneGroupLabel>Catalogue</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {CATALOGUES.map(({ to, label, icon: Icon }) => (
@@ -116,7 +116,7 @@ export function HomeDashboardsGroup() {
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Dashboards</SidebarGroupLabel>
+      <PaneGroupLabel>Dashboards</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {mine ? (
