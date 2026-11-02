@@ -195,6 +195,7 @@ Every page and every independently loaded section distinguishes:
 - View-as: every screen says whose view it is, with a way back. Demonstration data: marked.
 - Light and dark themes; colour carries the same meaning in both.
 - Charts: lines and areas join readings with straight segments. A line marks every reading up to 31 points and none beyond, where hover gives the value. A reading with no neighbours always gets a dot, since it draws no line.
+- Chart colours: twelve series slots built on FrontX's Fabric palette, in the order blue, amber, cyan, teal, pink, violet, then six further hues chosen to stay apart from the first six. A one-series chart is blue. Each slot keeps its hue in dark, a lighter step of it. From seven series on, colour alone cannot keep every pair apart under colour blindness, so the legend names each series.
 - Keyboard: every action reachable, visible focus; every control has an accessible name; loading, refusals, errors announced.
 
 ## Not yet

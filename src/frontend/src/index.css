@@ -66,13 +66,6 @@
 
 :root {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --chart-6: oklch(0.58 0.2 300);
-  --chart-7: oklch(0.62 0.2 340);
-  --chart-8: oklch(0.59 0.16 145);
-  --chart-9: oklch(0.54 0.2 255);
-  --chart-10: oklch(0.64 0.14 210);
-  --chart-11: oklch(0.6 0.22 25);
-  --chart-12: oklch(0.68 0.16 120);
   --brand-slack: oklch(0.46 0.16 325);
   --brand-m365: oklch(0.62 0.19 40);
   --brand-zoom: oklch(0.55 0.21 262);
@@ -114,13 +107,6 @@
 
 .dark {
   color-scheme: dark;
-  --chart-6: oklch(0.7 0.18 300);
-  --chart-7: oklch(0.72 0.18 340);
-  --chart-8: oklch(0.72 0.16 145);
-  --chart-9: oklch(0.68 0.18 255);
-  --chart-10: oklch(0.76 0.13 210);
-  --chart-11: oklch(0.7 0.2 25);
-  --chart-12: oklch(0.78 0.15 120);
   --brand-slack: oklch(0.68 0.14 325);
   --brand-m365: oklch(0.7 0.17 42);
   --brand-zoom: oklch(0.7 0.16 258);
