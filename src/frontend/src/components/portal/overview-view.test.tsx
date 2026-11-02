@@ -90,52 +90,46 @@ describe("<OverviewView>", () => {
   it.each([
     [
       "an IC: their glance and dashboards, no org rollup",
-      { canSeeOthers: false, who: undefined, item: null },
+      { canSeeOthers: false, item: null },
       ["Recent dashboards", "Glance for me-1"],
     ],
     [
-      "a viewer with a cohort: the team's rollup alone",
-      { canSeeOthers: true, who: undefined, item: null },
-      ["Lens Overview"],
-    ],
-    [
-      "a viewer with a cohort who picked Me: Home without the rollup",
-      { canSeeOthers: true, who: "me", item: null },
-      ["Recent dashboards", "Glance for me-1"],
+      "a viewer with a cohort: their dashboards, then the team's rollup",
+      { canSeeOthers: true, item: null },
+      ["Recent dashboards", "Lens Overview"],
     ],
     [
       "a viewer with a cohort who opens a theme: the team's",
-      { canSeeOthers: true, who: undefined, item: "trend" },
+      { canSeeOthers: true, item: "trend" },
       ["Lens Overview · Trend"],
     ],
     [
       "an IC who opens the trend: their own",
-      { canSeeOthers: false, who: undefined, item: "trend" },
+      { canSeeOthers: false, item: "trend" },
       ["Lens Trend for me-1"],
     ],
     [
-      "a manager on Me who opens By direction: their own",
-      { canSeeOthers: true, who: "me", item: "by-direction" },
-      ["Lens By direction for me-1"],
+      "a viewer with a cohort who opens By direction: the team's",
+      { canSeeOthers: true, item: "by-direction" },
+      ["Lens Overview · By direction"],
     ],
     [
       "an IC who opens Attention needed: their own list",
-      { canSeeOthers: false, who: undefined, item: "attention" },
+      { canSeeOthers: false, item: "attention" },
       ["Attention for me-1"],
     ],
     [
       "an IC who opens Data coverage: their own sections",
-      { canSeeOthers: false, who: undefined, item: "health" },
+      { canSeeOthers: false, item: "health" },
       ["Coverage for me-1"],
     ],
     [
       "an IC who opens the split of work between people: Home instead",
-      { canSeeOthers: false, who: undefined, item: "contribution" },
+      { canSeeOthers: false, item: "contribution" },
       ["Recent dashboards", "Glance for me-1"],
     ],
-  ] as const)("shows %s", (_case, { canSeeOthers, who, item }, expected) => {
+  ] as const)("shows %s", (_case, { canSeeOthers, item }, expected) => {
     viewer.canSeeOthers = canSeeOthers;
-    act(() => portalRouter.set({ who }));
 
     render(<OverviewView item={item} />);
 

@@ -54,23 +54,26 @@ Presets are the server's tokens; portal and services resolve them identically.
 
 ## Home
 
-A manager, and anyone in a flat organisation, switches between **Me** and **My team** (**Organisation** when flat); My team is the default. Everyone else reads Me. Home holds its content until it is known which applies.
+Home is about whoever the viewer can see: a manager, and anyone in a flat organisation, reads their team (the whole organisation when flat); everyone else reads their own numbers. Home holds its content until it is known which applies. A manager reaches their own numbers through People → Me.
 
-Me, in order:
+Both read, in order:
 
 1. **Starter dashboards for your sources** (planned): one card for each connected source. Question it answers; chip per source read, with connection state (connected / partial / missing). Actions: Open; Save as dashboard (administrators).
 2. **Recent dashboards**: three most recently changed dashboards the viewer can open; left out when there are none. New dashboard button (those who may create). Cards as in the Dashboards list.
-3. **At a glance**: the viewer's own tiles, each with change vs previous period and the team median.
-4. **Needs attention**: the viewer's own flagged metrics.
 
-My team, in order:
+Then, for the viewer alone:
+
+1. **At a glance**: the viewer's own tiles, each with change vs previous period and the team median.
+2. **Needs attention**: the viewer's own flagged metrics.
+
+Or, for a team:
 
 1. **Per person**: six tiles: commits, pull requests merged, tasks closed, messages sent, AI cost, AI extra usage cost. Each: change vs previous period of the same length (none for All time); "team total · N per active person".
 2. **AI adoption**: people using AI, as a share of the team.
 3. **Needs attention**: collapsible rows, one per metric, with people count.
 4. **By direction**: one card per direction.
 
-Each theme in the pane reads the same subject as the switch. Pane: At a glance, By direction, Trend, Attention needed, Data coverage, Contribution breakdown (My team only); Dashboards group: My dashboards with count, Starter dashboards (planned).
+Each theme in the pane reads the same subject as Home. Pane: At a glance, By direction, Trend, Attention needed, Data coverage, Contribution breakdown (team only); Dashboards group: My dashboards with count, Starter dashboards (planned).
 
 ## Dashboards
 
