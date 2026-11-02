@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from playwright.sync_api import Locator, Page
+from urllib.parse import urljoin
+
+from playwright.sync_api import APIResponse, Locator, Page
+
+from ..login import password_form_url
 
 
 class LoginPage:
@@ -22,3 +26,10 @@ class LoginPage:
 
     def sign_in_control(self) -> Locator:
         return self.page.get_by_role("link", name="Log in")
+
+    def start(self) -> APIResponse:
+        return self.page.request.get("/auth/login", max_redirects=0)
+
+    def open_password_form(self, location: str, base_url: str) -> None:
+        target = password_form_url(urljoin(base_url, location))
+        self.page.goto(target, wait_until="domcontentloaded")

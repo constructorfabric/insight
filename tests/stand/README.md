@@ -5,7 +5,9 @@ against the SPA, and an API-contract suite — all run against a local
 `docker-compose` stand seeded deterministically for tests
 (`src/ingestion/tools/seed`).
 
-This suite assumes an **already-running, already-seeded** stand. It never
+This suite assumes an **already-running stand described by a manifest**. API
+and persona journeys need the seed fixtures they declare; the portal page smoke
+also accepts the minimal, runner-supplied manifest below without a seed. It never
 starts compose, applies migrations, or spawns service processes itself —
 see `conftest.py`'s module docstring for why that split matters. The shared
 library it imports (`insight_stand`, session handling, the manifest reader,
@@ -99,6 +101,85 @@ It names personas and in-cluster addresses, so it stays on the machine that
 read it. Browser journeys need `playwright install chromium` as above; they
 work against any `https://` origin, which is trustworthy enough to store the
 session cookie.
+
+## Portal page smoke
+
+`ui/test_portal_pages.py` contains 39 catalogue-driven page visits and one
+navigation test, marked `stand_smoke` and `reliability`. Each visit opens its
+zone, pane entry and optional sub-menu or first list item. Rail navigation
+moves the pointer into main and waits until the pane is uncovered.
+
+Four soft checks report together: the expected page test id is visible; main
+has no visible loading marker and same-origin fetch/XHR stays idle for one
+continuous second within 30 seconds; no Something went wrong alert or
+destructive status widget is visible; and the page's requests have no 5xx,
+unanswered failure other than `net::ERR_ABORTED`, or Sentry event. Observation
+starts immediately before the final hop, after previous requests settle.
+
+The catalogue assigns `ceo` to org-visible pages and `admin_operator` to entries
+requiring the identity-service admin grant: Home's My dashboards, the Dashboards
+Catalogue entries, Sources & connectors, Identities and Platform usage. Navigation
+checks each fixture's own entries; uncatalogued extras are reported without
+failing. New actions, Planned / WorkChart groups and the org tree are excluded.
+Usage events are answered locally with 204. `INSIGHT_FORCE_500` accepts a
+Playwright URL glob for local 500 responses; when set, Sentry envelopes are
+inspected and answered locally too. Visits create or save nothing.
+
+Set `INSIGHT_STAND_BASE_URL` and `INSIGHT_STAND_PERSONA_PASSWORD` as above. Login
+adds an empty `kc_idp_hint=` to the authorize redirect before opening the password
+form. Browser state is cached in memory by login name, shared between fixture
+aliases, and renewed after five minutes. Each test gets a fresh context.
+Steps use Allure when installed and are no-ops otherwise; dependencies stay
+unchanged. For an Allure report:
+
+```bash
+uv run --project tests --frozen --with "allure-pytest>=2.15" \
+  pytest tests/stand/ui/test_portal_pages.py \
+  --stand-manifest /path/to/stand-manifest.json --alluredir /path/to/allure-results
+```
+
+### Minimal page-smoke manifest
+
+This synthetic version-2 example names one person with org visibility and the
+active identity admin grant under both fixture aliases. Both entries describe
+the same actual realm roles; a seeded manifest instead names separate personas.
+`email` carries the login name; unused metadata may stay empty. The smoke uses
+neither seed steps nor service URLs. The existing landing journey additionally
+requires `dev_lead` when collecting the whole UI directory.
+
+```json
+{
+  "manifest_version": 2,
+  "tenant": "",
+  "realm": {"name": "example", "issuer": ""},
+  "personas": [],
+  "service_urls": {},
+  "fixtures": {
+    "ceo": {
+      "uuid": "", "email": "user@example.com", "display_name": "",
+      "team": null, "org_unit": "", "role": "ceo",
+      "realm_roles": ["insight-admin", "insight-lead"]
+    },
+    "admin_operator": {
+      "uuid": "", "email": "user@example.com", "display_name": "",
+      "team": null, "org_unit": "", "role": "ceo",
+      "realm_roles": ["insight-admin", "insight-lead"]
+    }
+  },
+  "capabilities": {
+    "idp": "keycloak", "ingestion": false,
+    "portal_dashboards": false, "portal_metrics": false,
+    "portal_widgets": false, "portal_datasets": false
+  },
+  "seed_revision": "", "data_window": "", "anchor_date": "", "seeded": []
+}
+```
+
+Each `portal_*` capability promises an existing definition readable by its
+catalogued persona. Absent or false capabilities skip the corresponding
+first-item visit at collection with a reason; list pages and navigation still
+run. The seed creates none of these custom definitions. To collect without a
+stand, supply a synthetic manifest and `--base-url https://example.com`.
 
 ## CI required gate
 

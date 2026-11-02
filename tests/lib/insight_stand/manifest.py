@@ -69,7 +69,16 @@ SUPPORTED_MANIFEST_VERSION: Final[int] = 2
 
 # Capability fields that answer yes/no, and so can back a `requires_*` marker.
 # `idp` is excluded on purpose: it carries a value, not a yes/no.
-BOOLEAN_CAPABILITIES: Final[frozenset[str]] = frozenset({"ingestion", "service_principals"})
+BOOLEAN_CAPABILITIES: Final[frozenset[str]] = frozenset(
+    {
+        "ingestion",
+        "service_principals",
+        "portal_dashboards",
+        "portal_metrics",
+        "portal_widgets",
+        "portal_datasets",
+    }
+)
 
 
 def _require(doc: Mapping[str, Any], key: str, kind: type | tuple[type, ...], where: str) -> Any:
@@ -90,6 +99,15 @@ def _optional_str(doc: Mapping[str, Any], key: str, where: str) -> str | None:
     if value is None or isinstance(value, str):
         return value
     raise ManifestError(f"{where}: field {key!r} must be str or null, got {type(value).__name__}")
+
+
+def _capability(doc: Mapping[str, Any], key: str) -> bool:
+    if key not in doc:
+        return False
+    value = doc[key]
+    if not isinstance(value, bool):
+        raise ManifestError(f"manifest.capabilities: field {key!r} must be bool")
+    return value
 
 
 @dataclass(frozen=True)
@@ -154,6 +172,10 @@ class Capabilities:
     ingestion: bool
     service_principals: bool
     idp: str
+    portal_dashboards: bool = False
+    portal_metrics: bool = False
+    portal_widgets: bool = False
+    portal_datasets: bool = False
 
     @classmethod
     def parse(cls, doc: Mapping[str, Any]) -> Capabilities:
@@ -164,6 +186,10 @@ class Capabilities:
             # False, which skips the S2S tests rather than failing to parse.
             service_principals=bool(doc.get("service_principals", False)),
             idp=_require(doc, "idp", str, where),
+            portal_dashboards=_capability(doc, "portal_dashboards"),
+            portal_metrics=_capability(doc, "portal_metrics"),
+            portal_widgets=_capability(doc, "portal_widgets"),
+            portal_datasets=_capability(doc, "portal_datasets"),
         )
 
     def has(self, name: str) -> bool:
