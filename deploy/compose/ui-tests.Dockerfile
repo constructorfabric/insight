@@ -1,5 +1,5 @@
 # INVARIANT: The base tag must match the playwright version in tests/uv.lock.
-FROM mcr.microsoft.com/playwright/python:v1.62.0-noble@sha256:aa81288e738725378becba5b3e06cb0f3a7f012a610e87e8d767a090ea3f740d
+FROM mcr.microsoft.com/playwright/python:v1.64.1-noble@sha256:330d401ae23c905896a0c26c66c36fc971b621519e7b11b435a8328d7bf6e031
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.0@sha256:606e70c71c852d03f611b1e56a195d08648507018a7057fab82c4974c4eae105 /uv /uvx /bin/
 
@@ -12,7 +12,7 @@ ENV UV_LINK_MODE=copy \
     UV_PYTHON_INSTALL_DIR=/opt/uv-python \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     INSIGHT_STAND_ARTIFACT_DIR=/tests/.artifacts
-RUN uv sync --frozen --no-dev
+RUN uv sync --locked --no-dev
 
 ENV HOME=/tmp \
     XDG_CACHE_HOME=/tmp/.cache
