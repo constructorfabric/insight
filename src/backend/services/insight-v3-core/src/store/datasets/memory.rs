@@ -12,10 +12,10 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::domain::datasets::{
-    Attempt, Dataset, DatasetStoreError, Datasets, Finish, Held, Lease, OperationToken, Owning,
-    Refused, Taken, Taking, finishing, taking,
+    Attempt, Dataset, DatasetPage, DatasetStoreError, Datasets, Finish, Held, Lease,
+    OperationToken, Owning, Refused, Taken, Taking, finishing, taking,
 };
-use crate::domain::definition::{DefinitionId, NamePage, Page};
+use crate::domain::definition::{DefinitionId, Page};
 use crate::domain::kinds::dataset::state::{DatasetState, Operation};
 
 #[cfg(test)]
@@ -84,6 +84,7 @@ impl MemoryDatasets {
                         state: DatasetState::Claimed,
                         physical_table: None,
                         held: Some(held),
+                        updated_at: now,
                     },
                 );
             }
@@ -93,6 +94,7 @@ impl MemoryDatasets {
                 };
                 dataset.state = state;
                 dataset.held = Some(held);
+                dataset.updated_at = now;
                 if let Some(declaration) = declaration {
                     dataset.declaration = declaration.clone();
                 }
@@ -119,24 +121,23 @@ impl Datasets for MemoryDatasets {
         Ok(self.lock().keys().cloned().collect())
     }
 
-    async fn page(&self, needle: &str, page: Page) -> Result<NamePage, DatasetStoreError> {
+    async fn page(&self, needle: &str, page: Page) -> Result<DatasetPage, DatasetStoreError> {
         let held = self.lock();
-        let mut matched: Vec<String> = held
+        let matched: Vec<&Dataset> = held
             .values()
             .filter(|dataset| dataset.state == DatasetState::Ready)
             .filter(|dataset| matches(dataset, needle))
-            .map(|dataset| dataset.name.as_str().to_owned())
             .collect();
-        matched.sort();
 
         let total = matched.len() as u64;
-        let names = matched
+        let datasets = matched
             .into_iter()
             .skip(usize::try_from(page.offset()).unwrap_or(usize::MAX))
             .take(usize::try_from(page.limit()).unwrap_or(usize::MAX))
+            .cloned()
             .collect();
 
-        Ok(NamePage { names, total })
+        Ok(DatasetPage { datasets, total })
     }
 
     async fn take_create(
@@ -160,6 +161,7 @@ impl Datasets for MemoryDatasets {
         name: &DefinitionId,
         declaration: &Value,
     ) -> Result<bool, DatasetStoreError> {
+        let now = self.now();
         let mut stored = self.lock();
         let Some(dataset) = stored
             .get_mut(name.as_str())
@@ -168,6 +170,7 @@ impl Datasets for MemoryDatasets {
             return Ok(false);
         };
         dataset.declaration = declaration.clone();
+        dataset.updated_at = now;
 
         Ok(true)
     }
@@ -178,6 +181,7 @@ impl Datasets for MemoryDatasets {
         token: &OperationToken,
         finish: Finish,
     ) -> Result<Owning, DatasetStoreError> {
+        let now = self.now();
         let mut stored = self.lock();
 
         if finishing(stored.get(name.as_str()), token) == Owning::Lost {
@@ -188,12 +192,14 @@ impl Datasets for MemoryDatasets {
             Finish::Provisioned(table) => {
                 if let Some(dataset) = stored.get_mut(name.as_str()) {
                     dataset.physical_table = Some(table);
+                    dataset.updated_at = now;
                 }
             }
             Finish::Ready => {
                 if let Some(dataset) = stored.get_mut(name.as_str()) {
                     dataset.state = DatasetState::Ready;
                     dataset.held = None;
+                    dataset.updated_at = now;
                 }
             }
             Finish::Removed => {

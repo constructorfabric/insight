@@ -51,6 +51,7 @@ function reading() {
     tags: [],
     ownerPersonId: null,
     ownerName: null,
+    visibility: null,
     access: "ownerless",
     folders: [],
     carries: true,

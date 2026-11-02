@@ -12,7 +12,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::Value;
 use thiserror::Error;
 
-use super::definition::{DefinitionId, NamePage, Page};
+use super::definition::{DefinitionId, Page};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::dataset::state::{DatasetState, Operation};
 
@@ -81,6 +81,16 @@ pub(crate) struct Dataset {
     /// The table holding its records, absent until one is provisioned.
     pub(crate) physical_table: Option<String>,
     pub(crate) held: Option<Held>,
+    /// When its row was last written.
+    pub(crate) updated_at: DateTime<Utc>,
+}
+
+/// One page of the datasets a reader may open, and how many it is a page of.
+#[derive(Debug)]
+pub(crate) struct DatasetPage {
+    pub(crate) datasets: Vec<Dataset>,
+    /// Every match, not the page — so a reader can say what is behind it.
+    pub(crate) total: u64,
 }
 
 impl Dataset {
@@ -300,7 +310,7 @@ pub(crate) trait Datasets: Send + Sync + fmt::Debug {
     ///
     /// A dataset mid-create or mid-removal is left out rather than shown in a
     /// state nothing can be done with.
-    async fn page(&self, needle: &str, page: Page) -> Result<NamePage, DatasetStoreError>;
+    async fn page(&self, needle: &str, page: Page) -> Result<DatasetPage, DatasetStoreError>;
 
     /// Takes a create for a fresh attempt, holding the row for the whole
     /// decision. The declaration is the one this attempt means to publish, so

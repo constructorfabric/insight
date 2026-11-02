@@ -53,10 +53,7 @@ export function AlertPage({ id }: { id: string }) {
     );
   if (alert.isError) {
     return (
-      <div
-        data-testid="page-custom-alert"
-        className="flex flex-col gap-2 p-4 md:p-6"
-      >
+      <div data-testid="page-custom-alert" className="flex flex-col gap-2">
         <h1 className={TEXT_TITLE}>Alert</h1>
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(alert.error, "Alert not found.")}
@@ -67,10 +64,7 @@ export function AlertPage({ id }: { id: string }) {
   }
 
   return (
-    <div
-      data-testid="page-custom-alert"
-      className="flex flex-col gap-4 p-4 md:p-6"
-    >
+    <div data-testid="page-custom-alert" className="flex flex-col gap-4">
       <Header alert={alert.data} />
       <div className="grid gap-4 @3xl:grid-cols-2">
         <Rule alert={alert.data} />

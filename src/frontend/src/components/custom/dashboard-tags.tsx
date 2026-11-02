@@ -4,8 +4,6 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { fittingCount } from "@/lib/custom/fitting-tags";
 import { cn } from "@/lib/utils";
 
-const MOST_SHOWN_TAGS = 3;
-
 const CHIP =
   "inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border px-1.5 text-xs whitespace-nowrap text-muted-foreground";
 
@@ -19,10 +17,10 @@ function naturalWidth(chip: HTMLElement): number {
   return chip.offsetWidth + label.scrollWidth - label.clientWidth;
 }
 
-function useFittingCount(candidates: string[], overflowing: boolean) {
+function useFittingCount(tags: string[]) {
   const row = useRef<HTMLUListElement>(null);
-  const [fitting, setFitting] = useState(candidates.length);
-  const shape = `${candidates.join("\u0000")}\u0000${overflowing}`;
+  const [fitting, setFitting] = useState(tags.length);
+  const shape = tags.join("\u0000");
 
   useLayoutEffect(() => {
     const list = row.current;
@@ -40,7 +38,7 @@ function useFittingCount(candidates: string[], overflowing: boolean) {
           available: list.clientWidth,
           gap: Number.parseFloat(getComputedStyle(list).columnGap) || 0,
           moreWidth,
-          overflowing,
+          overflowing: false,
         })
       );
     };
@@ -51,19 +49,14 @@ function useFittingCount(candidates: string[], overflowing: boolean) {
     const observer = new ResizeObserver(fit);
     observer.observe(list);
     return () => observer.disconnect();
-    // INVARIANT: `shape` stands in for `candidates` and `overflowing`, a new array every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // INVARIANT: `shape` stands in for `tags`, a new array every render.
   }, [shape]);
 
   return { row, fitting };
 }
 
 export function DashboardTags({ tags }: { tags: string[] }) {
-  const candidates = tags.slice(0, MOST_SHOWN_TAGS);
-  const { row, fitting } = useFittingCount(
-    candidates,
-    tags.length > MOST_SHOWN_TAGS
-  );
+  const { row, fitting } = useFittingCount(tags);
 
   if (tags.length === 0) return null;
 
@@ -75,7 +68,7 @@ export function DashboardTags({ tags }: { tags: string[] }) {
       aria-label="Tags"
       className="relative flex min-w-0 gap-1.5 overflow-hidden"
     >
-      {candidates.map((tag, index) => {
+      {tags.map((tag, index) => {
         const shown = index < fitting;
 
         return (

@@ -1,15 +1,11 @@
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 
-import type {
-  DatasetDeclaration,
-  MetricDefinition,
-  MetricRead,
-  Widget,
-} from "@/api/custom-client";
+import type { MetricDefinition, MetricRead, Widget } from "@/api/custom-client";
 import { MetricName } from "@/components/custom/metric-name";
 import { Badge } from "@/components/ui/badge";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
+import { metricSource } from "@/lib/custom/metric-source";
 import { cn } from "@/lib/utils";
 
 /**
@@ -47,51 +43,6 @@ function reads(field: MetricDefinition["fields"][number]): string {
 }
 
 /** What the metric reads, named as the body names it. */
-function over(definition: MetricDefinition): { label: string; named: string } {
-  if (definition.dataset !== undefined) {
-    return { label: "Dataset", named: definition.dataset };
-  }
-  const table = definition.table ?? "";
-  const named =
-    definition.database && !table.includes(".")
-      ? `${definition.database}.${table}`
-      : table;
-
-  return { label: "Table", named };
-}
-
-/** What a dataset says about its records, as a catalogue row reads it. */
-export function DatasetSummary({
-  declaration,
-}: {
-  declaration: DatasetDeclaration;
-}) {
-  const identity = declaration.row_identity ?? [];
-  const clock = declaration.fields.find((field) => field.default_clock);
-
-  return (
-    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
-      <Row label="Title">{declaration.title}</Row>
-      <Row label="Fields">
-        <span className="font-mono">
-          {declaration.fields
-            .map((field) => `${field.name} (${field.type})`)
-            .join(", ")}
-        </span>
-      </Row>
-      {clock ? (
-        <Row label="Main date">
-          <span className="font-mono">{clock.name}</span>
-        </Row>
-      ) : null}
-      {identity.length ? (
-        <Row label="One record per">
-          <span className="font-mono">{identity.join(", ")}</span>
-        </Row>
-      ) : null}
-    </dl>
-  );
-}
 
 export function MetricSummary({
   definition,
@@ -101,7 +52,7 @@ export function MetricSummary({
   const grouped = definition.group_by ?? [];
   const filters = definition.filters ?? [];
 
-  const read = over(definition);
+  const read = metricSource(definition);
 
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">

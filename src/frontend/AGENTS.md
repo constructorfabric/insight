@@ -30,7 +30,6 @@ tag must track the `playwright` version in `package.json`.
 ## Conventions
 
 - Route files under `src/routes/` stay thin — they wrap a screen component and nothing else.
-- `src/components/ui/` is vendored shadcn/ui. Regenerate rather than hand-edit.
 - API access goes through the clients in `src/api/` and the hooks in `src/queries/`; components do
   not call `fetch` directly.
 - Metric semantics are server-owned. Do not invent user-facing metric names, descriptions or units

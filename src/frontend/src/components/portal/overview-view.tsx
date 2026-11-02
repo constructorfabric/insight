@@ -28,9 +28,9 @@ export function OverviewView({ item }: { item: string | null }) {
   const gridKeys = useMemo(() => overviewMetricKeys(), []);
   const { subject, isPending } = useHomeSubject();
   const asked = item ?? DEFAULT_OVERVIEW_ITEM;
-  // A manager's item would otherwise open on their own view, then switch to
+  // A manager's Home would otherwise open on their own view, then switch to
   // the team's once their reach is known.
-  if (isPending && asked !== DEFAULT_OVERVIEW_ITEM) {
+  if (isPending) {
     return (
       <CenteredSpinner
         data-testid={
@@ -53,8 +53,8 @@ export function OverviewView({ item }: { item: string | null }) {
         className="@container flex flex-col gap-6 p-4 md:p-6"
       >
         <h1 className={TEXT_TITLE}>Home</h1>
-        <OwnGlance />
         <HomeDashboards />
+        {subject === "me" ? <OwnGlance /> : null}
         {subject === "team" && rollup ? (
           <DomainLensView config={rollup} gridKeys={gridKeys} embedded />
         ) : null}

@@ -22,10 +22,11 @@ use super::tags::{names_json, tag_error, tags_in};
 use crate::domain::access::{Caller, DASHBOARD_NOT_EDITOR, DASHBOARD_NOT_OWNER, Owner, PersonId};
 use crate::domain::dashboards::{DashboardQuery, ListedDashboard, QueryError};
 use crate::domain::definition::{
-    DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Listed, MAX_PAGE_LIMIT,
-    Page, PageError, StoredDefinition,
+    DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, LibraryEntry, LibraryKind,
+    Listed, MAX_PAGE_LIMIT, Page, PageError, StoredDefinition,
 };
 use crate::domain::kinds::metric::answerable::EffectiveClock;
+use crate::domain::kinds::widget::drawn_metric;
 use crate::domain::surfaces::{CustomError, Surfaces};
 use crate::domain::violation::Violation;
 
@@ -166,7 +167,7 @@ fn register_list(
     builder
         .json_response(
             StatusCode::OK,
-            "One page of ids and names, dashboards with their owner and the caller's access, and how many match",
+            "One page of ids and names, metrics and widgets with their body and last change, widgets with the name of the metric they draw, dashboards with their owner and the caller's access, and how many match",
         )
         .error_400(openapi)
         .error_403(openapi)
@@ -292,6 +293,8 @@ struct DashboardMeta {
     owner_person_id: Option<String>,
     owner_name: Option<String>,
     access: &'static str,
+    /// Who beyond its owner sees it: `private`, `people` or `everyone`.
+    visibility: &'static str,
     /// Whether an entry the caller adds now carries a folder's audience.
     carries: bool,
     /// The folders the caller sees that hold it.
@@ -351,6 +354,7 @@ async fn dashboard_meta(
     stored: &StoredDefinition,
 ) -> Result<DashboardMeta, CanonicalError> {
     let seen = surfaces.seen(id).await.map_err(custom_error)?;
+    let visibility = surfaces.visibility(id).await.map_err(custom_error)?;
     let names = owner_names(state, authorization, std::iter::once(seen.owner)).await;
     let folders = state
         .folders()
@@ -363,6 +367,7 @@ async fn dashboard_meta(
         owner_person_id: owner_json(seen.owner),
         owner_name: owner_name_json(seen.owner, &names),
         access: seen.access.as_str(),
+        visibility: visibility.as_str(),
         carries: seen.entry.carries(),
         folders: folders.iter().map(holding_json).collect(),
         tags: names_json(&tags),
@@ -696,9 +701,16 @@ async fn listed_page(
         return Ok((dashboards_json(&found.items, Some(&names)), found.total));
     };
 
-    let found = surfaces.page(library, &query.needle, page).await?;
+    let found = surfaces.page_entries(library, &query.needle, page).await?;
+    let metric_names = match library {
+        LibraryKind::Metric => None,
+        LibraryKind::Widget => Some(surfaces.drawn_metric_names(&found.items).await?),
+    };
 
-    Ok((listed_json(&found.items), found.total))
+    Ok((
+        library_json(&found.items, metric_names.as_ref()),
+        found.total,
+    ))
 }
 
 async fn list_definitions(
@@ -747,6 +759,37 @@ pub(crate) fn listed_json(items: &[Listed]) -> serde_json::Value {
         items
             .iter()
             .map(|listed| serde_json::json!({ "id": listed.id, "name": listed.name }))
+            .collect(),
+    )
+}
+
+/// Metrics or widgets as the catalogue shows them: each with its body and
+/// when it last changed, and a widget with the name of the metric it draws -
+/// null for one that no longer exists. `metric_names` is present for widgets.
+fn library_json(
+    items: &[LibraryEntry],
+    metric_names: Option<&HashMap<String, String>>,
+) -> serde_json::Value {
+    serde_json::Value::Array(
+        items
+            .iter()
+            .map(|entry| {
+                let mut item = serde_json::json!({
+                    "id": entry.id,
+                    "name": entry.name,
+                    "updated_at": entry
+                        .updated_at
+                        .to_rfc3339_opts(SecondsFormat::Millis, true),
+                    "body": entry.body,
+                });
+                if let Some(names) = metric_names {
+                    item["metric_name"] = drawn_metric(&entry.body)
+                        .and_then(|metric| names.get(metric))
+                        .map(String::as_str)
+                        .into();
+                }
+                item
+            })
             .collect(),
     )
 }

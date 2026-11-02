@@ -641,14 +641,12 @@ describe("Home pane", () => {
   });
 
   it.each([
-    ["a viewer without a cohort", false, undefined, false],
-    ["a viewer looking at their team", true, undefined, true],
-    ["a viewer with a cohort who picked Me", true, "me", false],
+    ["a viewer without a cohort", false, false],
+    ["a viewer looking at their team", true, true],
   ] as const)(
     "lists the split of work between people only for %s",
-    (_case, canSeeOthers, who, shown) => {
+    (_case, canSeeOthers, shown) => {
       mocks.canSeeOthers = canSeeOthers;
-      act(() => portalRouter.set({ who }));
       pane();
       expect(screen.getByText("Trend")).toBeInTheDocument();
       expect(
@@ -664,7 +662,7 @@ describe("ContextPane highlight", () => {
     ["overview", "At a glance"],
     ["aicost", "Overview"],
     ["people", "My team"],
-    ["manage", "Data exclusions"],
+    ["manage", "AI assistant config"],
   ])("highlights the default item of %s when the URL names none", (zone, label) => {
     inZone(zone);
     pane();

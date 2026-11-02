@@ -1,4 +1,4 @@
-import { Tag, X } from "lucide-react";
+import { ChevronDown, Tag, X } from "lucide-react";
 
 import type { TagSummary } from "@/api/custom-client";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,7 @@ export function TagFilter({
         render={
           <Button type="button" variant="outline" size="sm" icon={<Tag />}>
             {picked.length > 0 ? `Tags · ${picked.length}` : "Tags"}
+            <ChevronDown aria-hidden />
           </Button>
         }
       />
