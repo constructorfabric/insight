@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { blankLeaf, type ColumnKind } from "@/lib/alerts/condition";
 import type { FieldErrors } from "@/lib/alerts/draft";
@@ -396,6 +396,12 @@ describe("ConditionBuilder", () => {
     });
 
     it("starts a picked day at midnight when no time is set, and shows it", async () => {
+      // INVARIANT: an empty value opens the calendar on today's month, so the picked day must fall in it.
+      vi.useFakeTimers({
+        toFake: ["Date"],
+        now: new Date("2026-10-20T12:00:00Z"),
+      });
+      onTestFinished(() => void vi.useRealTimers());
       const latest = at("");
 
       await userEvent.click(leaf(1).getByLabelText("Value day"));
