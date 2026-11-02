@@ -139,7 +139,8 @@ function Run({ id, windowed }: { id: string; windowed: boolean }) {
         ) : (
           <>
             <p className={cn(TEXT_LABEL, "mb-2 text-muted-foreground")}>
-              {result.data.rows.length} rows
+              {result.data.rows.length}{" "}
+              {result.data.rows.length === 1 ? "row" : "rows"}
             </p>
             <CustomTable result={result.data} />
           </>
