@@ -38,7 +38,7 @@ gears:
       # maps its claims into the SecurityContext. No auth_disabled path.
       auth_disabled: false
 
-  gear-orchestrator:
+  service-discovery:
     config: {}
 
   grpc-hub:

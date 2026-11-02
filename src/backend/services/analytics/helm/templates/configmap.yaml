@@ -67,7 +67,7 @@ data:
             version: "0.1.0"
             description: "Read-only query service over predefined ClickHouse metrics"
 
-      gear-orchestrator:
+      service-discovery:
         config: {}
 
       grpc-hub:
