@@ -266,7 +266,7 @@ the gate's central rule and the reason `template` exists.
 ```bash
 # `--tree` picks the directories (repeatable); a bare path is unioned with
 # the default `tests/stand`, so name the tree.
-./dev-compose.sh test-stand test --tree=tests/stand/api/identity -k subchart
+./dev-compose.sh test-stand test --instance=worktree --tree=tests/stand/api/identity -k subchart
 
 # a single file still needs pytest directly
 uv run --project tests --frozen pytest tests/stand/api/identity/test_subchart.py
@@ -274,6 +274,9 @@ uv run --project tests --frozen pytest tests/stand/api/identity/test_subchart.py
 uv run --project tests --frozen ruff check tests/
 uv run --project tests --frozen python tests/generate_schemas.py --check
 ```
+
+A direct pytest run against an instance needs the variables `insight-stand`
+lists under Commands.
 
 Then reconcile the gate, which is what "closing a coverage gap" means:
 

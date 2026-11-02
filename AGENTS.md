@@ -10,6 +10,22 @@ ALWAYS resolve and enforce prerequisites of skills/workflows/commands BEFORE app
 
 NEVER put an identifier containing `_` in a Markdown heading a table of contents links to — the TOC generator drops the underscore while GitHub keeps it, so the anchor breaks (markdownlint MD051). Word the heading in prose and keep the identifier in the body.
 
+## Run the compose stand suite before a pull request
+
+CI runs `tests/stand` against a compose stand only nightly or on a manual dispatch. On pull requests and in the merge queue its lanes report as skipped, so a green check says nothing about that suite.
+
+When a change touches what a deployed Insight serves — `src/backend/`, `src/frontend/`, the dbt models or the seed under `src/ingestion/`, `deploy/compose/`, `docker-compose.yml`, `dev-compose.sh`, or `tests/stand/` — run the suite locally before opening the pull request:
+
+```bash
+./dev-compose.sh test-stand up --instance=worktree
+./dev-compose.sh test-stand test --instance=worktree --ignore=tests/stand/ui
+./dev-compose.sh test-stand down --instance=worktree
+```
+
+`--instance=worktree` names the stand after the checkout directory and raises it beside the default `./dev-compose.sh up` stack. Keep the flag on all three commands: `down` removes the stand's volumes, and without the flag those are the default stack's databases. `up` builds the services from the checkout. `up --pinned` pulls the released images instead and is valid only when nothing under `src/backend/` or `src/frontend/` differs from main. `--ignore=tests/stand/ui` runs the API lane; drop it when the change reaches the UI. The `insight-stand` skill covers aiming, seeding and triage.
+
+This rule advises; it never blocks. When the suite cannot run — no Docker, not enough memory, no time — finish the work anyway. Tell your operator in your final report that the change is in the suite's scope, that the suite did not run, and the commands above. The pull request's **Verified** line names the same gap.
+
 ## Never expose production-derived information
 
 Do not include any information derived from, observed in, inferred from, or resembling real deployed environments in anything that may become visible in the repository or on GitHub.

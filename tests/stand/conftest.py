@@ -179,8 +179,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     """Resolve the stand's address into pytest-base-url's own option.
 
-    pytest-base-url — installed as a dependency of pytest-playwright — already
-    owns the idea of "the address under test". It offers three ways to set one
+    pytest-base-url — installed via pytest-playwright's `base-url` extra — owns
+    the idea of "the address under test". It offers three ways to set one
     (`--base-url`, the `base_url` ini key, `$PYTEST_BASE_URL`), folds them into
     `config.option.base_url`, and serves the result from a session-scoped
     `base_url` fixture. pytest-playwright reads exactly that fixture to set
