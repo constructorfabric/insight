@@ -15,6 +15,52 @@ function schedule(over: Partial<AppliedSchedule> = {}): AppliedSchedule {
 }
 
 describe("the next scheduled start", () => {
+  it("skips a start in the missing spring hour", () => {
+    expect(
+      describeNextRun(
+        schedule({ crons: ["30 2 * * *"], timezone: "Europe/Berlin" }),
+        new Date("2026-03-28T23:00:00Z"),
+      ),
+    ).toBe("Next run 2026-03-30 02:30 Europe/Berlin (in 25h 30m)");
+  });
+
+  it.each([
+    ["2026-10-25T00:30:00Z", "1h 0m"],
+    ["2026-10-25T00:40:00Z", "50m 0s"],
+    ["2026-10-25T01:10:00Z", "20m 0s"],
+  ])("includes the second start in the repeated autumn hour from %s", (now, relative) => {
+    expect(
+      describeNextRun(
+        schedule({ crons: ["30 2 * * *"], timezone: "Europe/Berlin" }),
+        new Date(now),
+      ),
+    ).toBe(`Next run 2026-10-25 02:30 Europe/Berlin (in ${relative})`);
+  });
+
+  it("does not invent a start one hour after an ordinary match", () => {
+    expect(
+      describeNextRun(
+        schedule({ crons: ["30 2 * * *"], timezone: "Europe/Berlin" }),
+        new Date("2026-10-24T00:40:00Z"),
+      ),
+    ).toBe("Next run 2026-10-25 02:30 Europe/Berlin (in 23h 50m)");
+  });
+
+  it.each([
+    ["0 14 * * *", "0 13 * * *"],
+    ["0 13 * * *", "0 14 * * *"],
+  ])("takes the earliest future start in order %j", (...crons) => {
+    expect(describeNextRun(schedule({ crons, timezone: "UTC" }), NOW)).toBe(
+      "Next run 2026-01-15 13:00 UTC (in 1h 0m)",
+    );
+  });
+
+  it("a wildcard day of month leaves the weekday restricted to Mondays", () => {
+    expect(describeNextRun(schedule({ crons: ["0 0 * * 1"], timezone: "UTC" }), NOW)).toBe(
+      "Next run 2026-01-19 00:00 UTC (in 84h 0m)",
+    );
+  });
+
   it.each<[string[], string, string]>([
     [
       ["0 22 * * *"],

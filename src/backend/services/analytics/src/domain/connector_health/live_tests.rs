@@ -19,10 +19,12 @@
     reason = "a live-server setup failure should fail the test loudly"
 )]
 
-use chrono::{Duration, SecondsFormat, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 
 use super::model::{ScheduleOrigin, SyncStatus};
 use super::read::{absent_ledger, read_health, read_syncs};
+
+mod schedules;
 
 const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 
@@ -44,14 +46,14 @@ const TABLE: &str = "ingestion_history.sync_events";
 const TENANT: &str = "tenant-under-test";
 const SOURCE: &str = "main";
 
-/// Stamps are anchored to now, not to a fixed date.
+/// Stamps are anchored to a shared current instant, not to a fixed date.
 ///
 /// The table's TTL runs from `ts`, so a row stamped further back than the
 /// retention window is dropped the moment it lands — which reads exactly like a
 /// query that returned nothing. Fixed dates in a test therefore rot silently
 /// into a false failure the day retention passes them.
-fn ago(minutes: i64) -> String {
-    (Utc::now() - Duration::minutes(minutes))
+fn ago(now: DateTime<Utc>, minutes: i64) -> String {
+    (now - Duration::minutes(minutes))
         .to_rfc3339_opts(SecondsFormat::Millis, false)
         .replace('T', " ")
         .replace("+00:00", "")
@@ -262,13 +264,15 @@ struct Stamps {
 
 impl Stamps {
     fn fresh() -> Self {
+        let now = Utc::now();
+
         Self {
-            tick_1: ago(40),
-            tick_2: ago(25),
-            tick_3: ago(10),
-            job_oldest: ago(70),
-            job_older: ago(60),
-            job_newer: ago(45),
+            tick_1: ago(now, 40),
+            tick_2: ago(now, 25),
+            tick_3: ago(now, 10),
+            job_oldest: ago(now, 70),
+            job_older: ago(now, 60),
+            job_newer: ago(now, 45),
         }
     }
 }
@@ -282,6 +286,14 @@ async fn the_ledger_reads_answer_from_real_rows() {
     }
 
     let at = Stamps::fresh();
+
+    schedules::a_configured_row_before_the_schedule_migration_reads_as_unknown(&ch, &at).await;
+
+    truncate(&ch).await;
+    schedules::configured_siblings_keep_their_own_schedules(&ch, &at).await;
+
+    truncate(&ch).await;
+    schedules::the_newest_sealed_tick_supplies_the_schedule(&ch, &at).await;
 
     an_empty_ledger_says_so(&ch).await;
     a_sealed_empty_sweep_still_counts_as_history(&ch, &at).await;

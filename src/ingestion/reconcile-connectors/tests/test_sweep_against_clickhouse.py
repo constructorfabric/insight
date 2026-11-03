@@ -351,17 +351,70 @@ class TestSweptRowsLandAndResolve:
         """Each case states its own history, so it starts from no rows at all."""
         _query(f"TRUNCATE TABLE {TABLE}")
 
-    def _tick(self, tick_id: str, descriptors: list[dict] | None = None) -> int:
+    def _tick(
+        self, tick_id: str, descriptors: list[dict] | None = None, *, schedule: dict[str, object] | None = None
+    ) -> int:
         work = json.dumps(
             {
                 "tick_id": tick_id,
                 "connectors": [
-                    {"name": CONNECTOR, "tenant_id": TENANT, "source_id": SOURCE, "connection_id": CONNECTION}
+                    {
+                        "name": CONNECTOR,
+                        "tenant_id": TENANT,
+                        "source_id": SOURCE,
+                        "connection_id": CONNECTION,
+                        **(schedule or {}),
+                    }
                 ],
                 "descriptors": descriptors or [],
             }
         )
         return self.entry.run(io.StringIO(work))
+
+    def test_a_tick_before_the_schedule_migration_lands_and_defaults_to_unknown(self) -> None:
+        try:
+            _query(f"DROP TABLE {TABLE}")
+            _apply_migration(MIGRATIONS / "20260827000000_connector-sync-history.sql")
+
+            with _StubMover():
+                assert (
+                    self._tick(
+                        "tick-before-schedule",
+                        schedule={
+                            "schedules": ["0 5 * * *", "0 17 * * *"],
+                            "schedule_timezone": "UTC",
+                            "schedule_origin": "annotation",
+                            "schedule_suspended": True,
+                        },
+                    )
+                    == 0
+                )
+
+            assert _count(f"SELECT count() AS n FROM {TABLE} WHERE event = 'sync.completed'") == 8
+            assert _count(f"SELECT count() AS n FROM {TABLE} WHERE event = 'connector.configured'") == 1
+            assert _count(f"SELECT count() AS n FROM {TABLE} WHERE event = 'sweep.completed'") == 1
+
+            _apply_migration(MIGRATIONS / "20261102000000_connector-sync-history-schedule.sql")
+
+            rows = _rows(
+                f"SELECT connector, tenant_id, source_id, schedules, schedule_timezone, schedule_origin, schedule_suspended "
+                f"FROM {TABLE} WHERE event = 'connector.configured'"
+            )
+            assert rows == [
+                {
+                    "connector": CONNECTOR,
+                    "tenant_id": TENANT,
+                    "source_id": SOURCE,
+                    "schedules": [],
+                    "schedule_timezone": "",
+                    "schedule_origin": "",
+                    "schedule_suspended": False,
+                }
+            ]
+        finally:
+            _query(f"DROP TABLE IF EXISTS {TABLE}")
+            for migration in sorted(MIGRATIONS.glob("*connector-sync-history*.sql")):
+                _apply_migration(migration)
 
     def test_a_first_sweep_lands_the_whole_retained_history(self) -> None:
         with _StubMover() as mover:

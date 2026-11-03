@@ -72,6 +72,80 @@ beforeEach(() => {
 });
 
 describe("the pane prints what it was served", () => {
+  it("shows suspension and exposes its forecast on keyboard focus", async () => {
+    mocks.summary.data = summary({
+      connectors: [{
+        connector: "example-tracker",
+        configured: true,
+        schedule: { crons: ["0 22 * * *"], timezone: "UTC", origin: "annotation", suspended: true },
+        last_sync: null,
+      }],
+    });
+    render(<ConnectorHealthPane />);
+
+    const row = rowFor("example-tracker");
+    expect(within(row).getByText("UTC · Secret annotation · suspended")).toHaveClass("text-muted-foreground");
+    const trigger = within(row).getByRole("button");
+    const user = userEvent.setup();
+    await user.tab();
+    await user.tab();
+    expect(trigger).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Suspended: no run is scheduled.");
+  });
+
+  it("keeps each sibling's cron and muted schedule line on its own row", () => {
+    const schedules = [
+      { crons: ["0 5 * * *"], timezone: "UTC", origin: "annotation", suspended: true },
+      { crons: ["0 17 * * *"], timezone: "Europe/Berlin", origin: "descriptor", suspended: false },
+    ] as const;
+    mocks.summary.data = summary({
+      connectors: schedules.map((schedule, index) => ({
+        connector: "example-tracker",
+        tenant_id: "example-tenant",
+        source_id: `source-${index}`,
+        configured: true,
+        schedule: { ...schedule, crons: [...schedule.crons] },
+        last_sync: null,
+      })),
+    });
+    render(<ConnectorHealthPane />);
+
+    const rows = screen.getAllByRole("row", { expanded: false });
+    expect(rows).toHaveLength(2);
+    for (const [index, detail] of ["UTC · Secret annotation · suspended", "Europe/Berlin · connector default"].entries()) {
+      const cell = within(rows[index]).getAllByRole("cell")[2];
+      expect(within(cell).getByText(schedules[index].crons[0])).toHaveClass("font-mono");
+      expect(within(cell).getByText(detail)).toHaveClass("text-muted-foreground");
+      expect(within(cell).queryByText(schedules[1 - index].crons[0])).not.toBeInTheDocument();
+    }
+  });
+
+  it.each(["click", "Enter", "Space"])("the schedule button leaves expansion unchanged on %s", async (gesture) => {
+    mocks.summary.data = summary({
+      connectors: [{
+        connector: "example-tracker",
+        configured: true,
+        schedule: { crons: ["0 22 * * *"], timezone: "UTC", suspended: false },
+        last_sync: null,
+      }],
+    });
+    render(<ConnectorHealthPane />);
+
+    const row = rowFor("example-tracker");
+    const trigger = within(row).getByRole("button");
+    const user = userEvent.setup();
+    for (const expanded of [false, true]) {
+      if (expanded) await user.click(within(row).getByRole("cell", { name: "example-tracker" }));
+      trigger.focus();
+      if (gesture === "click") {
+        await user.click(trigger);
+      } else {
+        await user.keyboard(gesture === "Enter" ? "{Enter}" : " ");
+      }
+      expect(row).toHaveAttribute("aria-expanded", String(expanded));
+    }
+  });
+
   it.each(["hover", "focus"] as const)("exposes the schedule forecast on %s", async (gesture) => {
     mocks.summary.data = summary({
       connectors: [{

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -38,7 +39,7 @@ def test_unrecorded_suspension_defaults_to_false() -> None:
 @pytest.mark.parametrize(
     ("annotation", "descriptor", "origin", "schedule"),
     [
-        ("0 1 * * *", "schedule: '0 2 * * *'", "annotation", "0 1 * * *"),
+        ("0 1 * * *\n0 13 * * *", "schedule: '0 2 * * *'", "annotation", "0 1 * * *\n0 13 * * *"),
         ("", "schedule: '0 2 * * *'", "descriptor", "0 2 * * *"),
         ("", "schedule:\n  - '0 2 * * *'\n  - '0 3 * * *'", "descriptor", "0 2 * * *\n0 3 * * *"),
         ("", "", "default", "0 0 * * *"),
@@ -51,10 +52,22 @@ def test_schedule_and_origin_share_the_same_precedence(
     directory = tmp_path / "example-area" / "example-connector"
     directory.mkdir(parents=True)
     (directory / "descriptor.yaml").write_text(f"name: example-connector\n{descriptor}\n")
+    lookup = [
+        "-n",
+        "example-namespace",
+        "get",
+        "secret",
+        "example-secret",
+        "-o",
+        r"jsonpath={.metadata.annotations.insight\.cyberfabric\.com/schedule}",
+    ]
     script = f"""
     set -euo pipefail
     source "{ROOT}/lib/connector-naming.sh"
-    kubectl() {{ printf '%s' "$EXAMPLE_SCHEDULE"; }}
+    kubectl() {{
+      [[ "$#" -eq 7 && "$*" == {shlex.quote(" ".join(lookup))} ]] || return 1
+      printf '%s' "$EXAMPLE_SCHEDULE"
+    }}
     reconcile_resolve_schedule example-connector example-secret
     printf '\\n'
     reconcile_compute_schedule example-connector example-secret

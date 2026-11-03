@@ -18,6 +18,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 
 CONNECTOR = "claude-team"
@@ -35,12 +37,16 @@ log_line()          { printf '%s\\n' "$*" >&2; }
 log_event()         { :; }
 adopt_warn_orphan() { printf '%s\\n' "$*" >&2; }
 reconcile_compute_connection_name() { printf 'conn-name'; }
-reconcile_resolve_schedule()        { printf 'descriptor\\n0 4 * * *'; }
+reconcile_resolve_schedule()        { printf 'descriptor\\n0 4 * * *\\n0 16 * * *'; }
 reconcile_compute_tenant()          { printf 'example-tenant'; }
 adopt_match_definition() { printf 'DEFINITION %s\\n' "$1" >> "$CALLS"; }
 adopt_tag_connection()   { printf 'TAG-CONNECTION %s %s\\n' "$1" "$2" >> "$CALLS"; }
-argo_apply_cronworkflow() { printf 'APPLY-CRONWORKFLOW %s\\n' "$5" >> "$CALLS"; }
-argo_cron_workflow_name() { printf 'cron-name'; }
+kubectl() {
+  if [[ "$*" == 'apply -f -' ]]; then
+    cat > "$APPLIED_YAML"
+    printf 'APPLY-CRONWORKFLOW\\n' >> "$CALLS"
+  fi
+}
 """
 
 
@@ -55,6 +61,7 @@ def adopt(secret_rows: list[str], tmp_path: Path) -> tuple[int, list[str], str]:
     export AIRBYTE_URL=http://127.0.0.1:1
     export INSIGHT_TENANT_ID=example-tenant
     export CALLS="{calls}"
+    export APPLIED_YAML="{tmp_path / "applied.yaml"}" ARGO_SERVICE_ACCOUNT=example-account
     source "{ROOT}/lib/reconcile.sh"
     {STUBS}
     disc_load_secrets() {{ printf '%b\\n' {json.dumps(secrets)}; }}
@@ -95,11 +102,15 @@ class TestOneSecretStillAdopts:
         code, calls, stderr = adopt([secret_row("claude-team-main", "secret-main")], tmp_path)
 
         assert code == 0, stderr
-        assert calls == [
-            f"DEFINITION {DEFINITION}",
-            f"TAG-CONNECTION {CONNECTION} hash",
-            "APPLY-CRONWORKFLOW claude-team-main",
-        ]
+        assert calls == [f"DEFINITION {DEFINITION}", f"TAG-CONNECTION {CONNECTION} hash", "APPLY-CRONWORKFLOW"]
+
+    def test_adoption_applies_the_selected_cron_list_and_origin(self, tmp_path: Path) -> None:
+        code, _, stderr = adopt([secret_row("claude-team-main", "secret-main")], tmp_path)
+
+        assert code == 0, stderr
+        applied = yaml.safe_load((tmp_path / "applied.yaml").read_text())
+        assert applied["spec"]["schedules"] == ["0 4 * * *", "0 16 * * *"]
+        assert applied["metadata"]["annotations"]["insight.cyberfabric.com/schedule-origin"] == "descriptor"
 
     def test_no_secret_is_a_skip_rather_than_a_failure(self, tmp_path: Path) -> None:
         """Unchanged: a descriptor this install never configured is not a fault."""

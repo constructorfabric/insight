@@ -655,6 +655,60 @@ mod guards {
     }
 
     #[test]
+    fn configured_siblings_keep_their_own_schedules_through_the_merge() {
+        let configured = [
+            ("main", "0 5 * * *", "UTC", "annotation", true),
+            ("second", "0 17 * * *", "Europe/Berlin", "descriptor", false),
+        ]
+        .map(|(source, cron, timezone, origin, suspended)| {
+            ConnectorRow {
+                connector: "example-tracker".to_owned(),
+                tenant_id: "example-tenant".to_owned(),
+                source_id: source.to_owned(),
+                schedules: vec![cron.to_owned()],
+                schedule_timezone: timezone.to_owned(),
+                schedule_origin: origin.to_owned(),
+                schedule_suspended: suspended,
+            }
+            .into_entry()
+        });
+        let syncs = ["main", "second"].map(|source| SyncRow {
+            connector: "example-tracker".to_owned(),
+            tenant_id: "example-tenant".to_owned(),
+            source_id: source.to_owned(),
+            job_id: "1".to_owned(),
+            status: "succeeded".to_owned(),
+            started_at: None,
+            job_updated_at: None,
+            duration_ms: None,
+            records_reported: None,
+        });
+
+        let summaries = merge(Vec::from(syncs), HashMap::from(configured));
+
+        assert_eq!(summaries.len(), 2);
+        for (source, expected) in [
+            (
+                "main",
+                serde_json::json!({"crons": ["0 5 * * *"], "timezone": "UTC", "origin": "annotation", "suspended": true}),
+            ),
+            (
+                "second",
+                serde_json::json!({"crons": ["0 17 * * *"], "timezone": "Europe/Berlin", "origin": "descriptor", "suspended": false}),
+            ),
+        ] {
+            let summary = summaries
+                .iter()
+                .find(|row| row.instance.source_id == source)
+                .unwrap_or_else(|| panic!("missing {source}"));
+            assert!(summary.configured, "{source}");
+            let schedule = serde_json::to_value(&summary.schedule)
+                .unwrap_or_else(|error| panic!("serialisable: {error}"));
+            assert_eq!(schedule, expected, "{source}");
+        }
+    }
+
+    #[test]
     fn only_the_configured_instance_carries_its_recorded_schedule() {
         let (key, schedule) = ConnectorRow {
             connector: "example-tracker".to_owned(),

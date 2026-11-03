@@ -75,7 +75,7 @@ def build_work(
     set -uo pipefail
     export INSIGHT_NAMESPACE=example-namespace
     source "{ROOT}/lib/sweep.sh"
-    kubectl() {{ printf 'kubectl %s\\n' "$*" >&2; {list_crons}; }}
+    kubectl() {{ printf 'kubectl-arg:%s\\n' "$@" >&2; {list_crons}; }}
     source "{ROOT}/lib/log.sh"
     disc_load_instances() {{ {loader}; }}
     reconcile_compute_tenant() {{ printf 'default'; }}
@@ -146,7 +146,7 @@ def test_applied_schedules_are_recorded_and_lookup_failures_still_seal_the_tick(
         ("example", "example-main"),
         ("example", "example-second"),
     ]
-    assert result.stderr.count("get cronworkflows.argoproj.io") == 1
+    assert result.stderr.count("kubectl-arg:cronworkflows.argoproj.io\n") == 1
     if scenario != "applied":
         assert '"level":"warn"' in result.stderr
         for connector in work["connectors"]:
@@ -167,6 +167,105 @@ def test_applied_schedules_are_recorded_and_lookup_failures_still_seal_the_tick(
     assert rows[1]["schedule_origin"] == ""
     assert rows[1]["schedule_suspended"] is False
     assert "schedules" not in rows[2]
+
+
+def test_the_sweep_lists_only_connector_cronworkflows_in_its_namespace() -> None:
+    result = build_work()
+
+    assert result.returncode == 0, result.stderr
+    arguments = [
+        line.removeprefix("kubectl-arg:") for line in result.stderr.splitlines() if line.startswith("kubectl-arg:")
+    ]
+    assert arguments == [
+        "-n",
+        "example-namespace",
+        "get",
+        "cronworkflows.argoproj.io",
+        "-l",
+        "app.kubernetes.io/component=connector-sync",
+        "-o",
+        "json",
+    ]
+
+
+@pytest.mark.parametrize("malformed", [{"schedules": "0 5 * * *"}, {"suspend": "false"}])
+def test_a_malformed_cronworkflow_loses_only_its_own_schedule(
+    malformed: dict[str, object], ledger_rows: list[dict[str, object]]
+) -> None:
+    crons = {
+        "items": [
+            {
+                "metadata": {
+                    "name": f"example-{source}-default-sync",
+                    "annotations": {"insight.cyberfabric.com/schedule-origin": "annotation"},
+                },
+                "spec": {
+                    "schedules": ["0 5 * * *"],
+                    "timezone": "UTC",
+                    "suspend": True,
+                    **(malformed if source == "main" else {}),
+                },
+            }
+            for source in ["main", "second"]
+        ]
+    }
+    result = build_work(
+        "\\n".join([plan_row("example", "main"), plan_row("example", "second")]), cronworkflows=json.dumps(crons)
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert run(io.StringIO(result.stdout)) == 0
+    assert [row["event"] for row in ledger_rows] == ["connector.configured", "connector.configured", "sweep.completed"]
+    assert [row["source_id"] for row in ledger_rows[:2]] == ["main", "second"]
+    expected = [
+        {"schedules": [], "schedule_timezone": "", "schedule_origin": "", "schedule_suspended": False},
+        {
+            "schedules": ["0 5 * * *"],
+            "schedule_timezone": "UTC",
+            "schedule_origin": "annotation",
+            "schedule_suspended": True,
+        },
+    ]
+    for row, fields in zip(ledger_rows, expected, strict=False):
+        assert {key: row[key] for key in fields} == fields, f"should isolate: {malformed!r}"
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [{"schedules": "0 5 * * *"}, {"schedules": ["0 5 * * *", 7]}, {"schedule_timezone": 7}, {"schedule_origin": 7}],
+)
+def test_each_bad_schedule_shape_keeps_the_instance_configured_and_seals(
+    malformed: dict[str, object], ledger_rows: list[dict[str, object]]
+) -> None:
+    work = {
+        "tick_id": "example-tick",
+        "connectors": [
+            {
+                "name": "example",
+                "tenant_id": "example-tenant",
+                "source_id": "main",
+                "schedules": ["0 5 * * *"],
+                "schedule_timezone": "UTC",
+                "schedule_origin": "annotation",
+                "schedule_suspended": True,
+                **malformed,
+            }
+        ],
+    }
+
+    assert run(io.StringIO(json.dumps(work))) == 0
+    assert [row["event"] for row in ledger_rows] == ["connector.configured", "sweep.completed"]
+    configured = ledger_rows[0]
+    assert (configured["connector"], configured["tenant_id"], configured["source_id"]) == (
+        "example",
+        "example-tenant",
+        "main",
+    )
+    assert configured["schedules"] == [], f"should reject: {malformed!r}"
+    assert configured["schedule_timezone"] == ""
+    assert configured["schedule_origin"] == ""
+    assert configured["schedule_suspended"] is False
+    assert ledger_rows[1]["tick_id"] == "example-tick"
 
 
 def names(result: subprocess.CompletedProcess) -> list[str]:

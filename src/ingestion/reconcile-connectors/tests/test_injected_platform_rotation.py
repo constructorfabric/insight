@@ -13,6 +13,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 CONNECTOR_DIR = ROOT.parent / "connectors" / "git" / "bitbucket-cloud"
 TENANT = "0f6b3c2e-5d4a-4e7b-9c1d-2a3b4c5d6e7f"
@@ -22,17 +24,22 @@ SECRET_HASH = "c" * 64
 #: Airbyte answered from files the test writes; every write is recorded, and
 #: the tag write lands in the listing so the next tick reads it back.
 STUBS = """
-kubectl()                { printf '{"stringData": {"bitbucket_token": "t", "bitbucket_workspaces": "acme"}}'; }
+kubectl() {
+  if [[ "$*" == 'apply -f -' ]]; then
+    cat > "$APPLIED_YAML"
+  else
+    printf '{"stringData": {"bitbucket_token": "t", "bitbucket_workspaces": "example-workspace"}}'
+  fi
+}
 valsec_check_secret()    { return 0; }
 reconcile_definitions()  { printf 'noop\\tnone\\tdef-1\\n'; }
 reconcile_rename_former_tenant() { return 0; }
 reconcile_classify_change() { printf 'noop'; }
-reconcile_resolve_schedule() { printf 'default\\n0 0 * * *'; }
+reconcile_resolve_schedule() { printf 'annotation\\n0 5 * * *\\n0 17 * * *'; }
 ab_workspace_id()        { printf 'ws-1'; }
 ab_list_sources()        { cat "$SOURCES"; }
 ab_list_connections()    { cat "$CONNECTIONS"; }
 ab_update_source()       { printf 'UPDATE_SOURCE %s\\n' "$1" >> "$CALLS"; }
-argo_apply_cronworkflow() { return 0; }
 argo_delete_former_tenant_cronworkflows() { return 0; }
 argo_submit_sync_trigger() { printf 'SYNC_TRIGGER %s\\n' "$1" >> "$CALLS"; }
 adopt_tag_connection() {
@@ -56,6 +63,7 @@ def tick(tmp_path: Path, proxy_token: str) -> list[str]:
     export INSIGHT_NAMESPACE=insight INSIGHT_TENANT_ID={TENANT} CONNECTORS_DIR="{ROOT.parent / "connectors"}"
     export AIRBYTE_URL=http://127.0.0.1:1 GIT_PROXY_URL=https://proxy.example.com GIT_PROXY_TOKEN={proxy_token}
     export SOURCES="{tmp_path / "sources.json"}" CONNECTIONS="{tmp_path / "connections.json"}" CALLS="{calls}"
+    export APPLIED_YAML="{tmp_path / "applied.yaml"}" ARGO_SERVICE_ACCOUNT=example-account
     source "{ROOT}/lib/reconcile.sh"
     {STUBS}
     _reconcile_one_connector bitbucket-cloud "{CONNECTOR_DIR}" 1.0.0 nocode "" "" \\
@@ -95,3 +103,12 @@ def test_a_steady_tick_pushes_nothing_and_a_rotated_proxy_token_is_pushed_once(t
         "SYNC_TRIGGER bitbucket-cloud",
     ], rotated
     assert settled == [], f"the tick after a rotation is steady again: {settled}"
+
+
+def test_reconcile_applies_the_selected_cron_list_and_origin(tmp_path: Path) -> None:
+    seed(tmp_path)
+    tick(tmp_path, "example-token")
+
+    applied = yaml.safe_load((tmp_path / "applied.yaml").read_text())
+    assert applied["spec"]["schedules"] == ["0 5 * * *", "0 17 * * *"]
+    assert applied["metadata"]["annotations"]["insight.cyberfabric.com/schedule-origin"] == "annotation"

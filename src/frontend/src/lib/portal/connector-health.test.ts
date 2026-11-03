@@ -125,6 +125,26 @@ describe("which installation of a connector a row is", () => {
 });
 
 describe("what a row says", () => {
+  it.each<SyncStatus | null>([
+    "pending", "running", "incomplete", "succeeded", "failed", "cancelled", "unknown", null,
+  ])("keeps the state word and tone independent of the schedule for %s", (status) => {
+    const facts = row({ last_sync: status == null ? null : sync({ status }) });
+    const verdict = describeConnector(facts);
+    for (const configured of [true, false]) {
+      const expected = configured ? verdict : describeConnector({ ...facts, configured });
+      for (const schedule of [
+        null,
+        { crons: ["0 10 * * *"], timezone: "UTC", suspended: false },
+        { crons: ["1 12 * * *"], timezone: "UTC", suspended: false },
+        { crons: ["0 0 1 1 *"], timezone: "UTC", suspended: false },
+        { crons: ["0 10 * * *"], timezone: "UTC", suspended: true },
+        { crons: ["unreadable"], timezone: null, suspended: false },
+      ]) {
+        expect(describeConnector({ ...facts, configured, schedule })).toEqual(expected);
+      }
+    }
+  });
+
   it("gives every recorded status its own word", () => {
     const words: Record<SyncStatus, string> = {
       pending: "queued",

@@ -19,6 +19,43 @@ const SCHEDULE_ORIGIN: Record<ScheduleOrigin, string> = {
   default: "built-in default",
 };
 
+const MAX_SCHEDULE_CANDIDATES = 8;
+
+function repeatedRunAfter(
+  cron: Cron,
+  previous: Date | undefined,
+  now: Date,
+): Date | null {
+  if (previous == null || !cron.match(previous)) return null;
+
+  const repeated = new Date(previous.getTime() + HOUR_MS);
+  return repeated.getTime() > now.getTime() && cron.match(repeated) ? repeated : null;
+}
+
+function nextArgoRun(cron: Cron, now: Date): Date | null {
+  if (cron.getPattern() == null) return null;
+
+  const previous = cron.match(now)
+    ? new Date(Math.floor(now.getTime() / 1000) * 1000)
+    : cron.previousRuns(1, now)[0];
+  const repeated = repeatedRunAfter(cron, previous, now);
+  let cursor = now;
+  for (let attempt = 0; attempt < MAX_SCHEDULE_CANDIDATES; attempt++) {
+    const next = cron.nextRun(cursor);
+    if (next == null) return repeated;
+    if (next.getTime() <= cursor.getTime()) {
+      return repeatedRunAfter(cron, next, now) ?? repeated;
+    }
+
+    // WORKAROUND: Argo skips missing local times and runs both occurrences of a repeated hour.
+    if (cron.match(next)) {
+      return repeated != null && repeated.getTime() < next.getTime() ? repeated : next;
+    }
+    cursor = next;
+  }
+  return repeated;
+}
+
 export function describeSchedule(schedule: AppliedSchedule): string {
   const timezone = schedule.timezone ?? "controller time";
   const origin = schedule.origin == null ? null : SCHEDULE_ORIGIN[schedule.origin];
@@ -42,12 +79,8 @@ export function describeNextRun(schedule: AppliedSchedule, now: Date): string {
         domAndDow: false,
         sloppyRanges: true,
       });
-      const next = cron.nextRun(now);
-      if (
-        cron.getPattern() == null ||
-        next == null ||
-        next.getTime() <= now.getTime()
-      ) {
+      const next = nextArgoRun(cron, now);
+      if (next == null) {
         return unreadable;
       }
       earliest = Math.min(earliest, next.getTime());
