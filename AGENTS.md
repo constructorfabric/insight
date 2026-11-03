@@ -114,7 +114,7 @@ Tooling owns layout and correctness lints: rustfmt plus clippy pedantic (deny) i
 - Test names state the rule, not the mechanics.
 - Table-driven cases over copy-paste; the assert message carries the failing case (`"should reject: {value!r}"`).
 - A new test counts as coverage once it has failed against a deliberately broken implementation.
-- A live test builds each relation it reads from all of that relation's numbered migrations, in filename order, as the deploy hook does. A migration added to a relation joins every live test that builds it.
+- A live test builds each relation it reads by applying that relation's numbered migration whole, its `CREATE` and every `ALTER`, as the deploy hook does. A test of the upgrade path builds the older shape itself, then applies the same migration over it.
 - Timestamps a test compares derive from one captured instant. Separate `now()` calls drift apart under load and turn an exact assertion on their difference flaky.
 
 ### Readability
