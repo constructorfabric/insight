@@ -66,6 +66,7 @@ Every seeded user's tokens (id / access / userinfo) carry these claims, on both 
 | Claim | Source | Consumed by |
 |-------|--------|-------------|
 | `tenant_id` | static seed tenant UUID (string) | **the authenticator** — becomes the gateway JWT's `tenant_id` |
+| `idp_sub` | user attribute holding the roster UUID | **the authenticator** wherever `externalIdClaim` names it (compose uses `sub`) |
 | `org_unit` | user attribute = team (`executive` for CEO) | — |
 | `groups` | `/development /sales /hr /support /executive` | — |
 | `roles` | realm role (`insight-admin`/`insight-lead`/`insight-member`) | — |

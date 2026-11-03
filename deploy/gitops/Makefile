@@ -467,6 +467,7 @@ resolve-local-ingress: values-present
 	if [ -z "$$ADDRESS" ]; then \
 	  echo "No Envoy LoadBalancer address; replace __INGRESS_LB_IP__ in $(VALUES) by hand." >&2; exit 1; \
 	fi; \
+	case "$$ADDRESS" in *:*) ADDRESS="[$$ADDRESS]" ;; esac; \
 	REPLACEMENT=$$(printf '%s' "$$ADDRESS" | sed 's/[\&|]/\\&/g'); \
 	TMP=$$(mktemp "$(VALUES).XXXXXX"); trap 'rm -f "$$TMP"' EXIT; \
 	sed "s|__INGRESS_LB_IP__|$$REPLACEMENT|g" "$(VALUES)" > "$$TMP"; \

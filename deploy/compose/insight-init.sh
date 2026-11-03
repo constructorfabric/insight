@@ -498,7 +498,7 @@ write_k8s_local() {
   local secrets_store_out="$gitops_dir/secrets-store.yaml"
   local secrets_store_tmpl="$gitops_dir/secrets-store.yaml.template"
 
-  for f in "$inventory_out" "$values_out" "$secrets_store_out"; do
+  for f in "$inventory_out" "$values_out" "$env_local_out" "$secrets_store_out"; do
     if [[ -e "$f" ]]; then
       echo "ERROR: $f already exists — delete it first to re-run the wizard." >&2
       [[ "$f" == "$secrets_store_out" ]] && echo "       (Contains cleartext passwords; verify you're not overwriting real state.)" >&2
@@ -632,6 +632,11 @@ write_k8s_local() {
   fi
   echo "" >&2
 
+  local core_token signing_key
+  core_token=$(openssl rand -hex 32)
+  signing_key=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve)
+  signing_key=$(printf '%s\n' "$signing_key" | sed 's/^/      /')
+
   # ── Write inventory.yaml ─────────────────────────────────────────
   cp "$inventory_tmpl" "$inventory_out"
   yq -i ".kubeContext = \"$kube_ctx\"" "$inventory_out"
@@ -673,10 +678,6 @@ write_k8s_local() {
   mdb_root_esc=$(yaml_escape "$MARIADB_ROOT_PASSWORD")
   mdb_pass_esc=$(yaml_escape "$MARIADB_PASSWORD")
   ch_pass_esc=$(yaml_escape  "$CLICKHOUSE_PASSWORD")
-  local core_token signing_key
-  core_token=$(openssl rand -hex 32)
-  signing_key=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve)
-  signing_key=$(printf '%s\n' "$signing_key" | sed 's/^/      /')
   cat > "$secrets_store_out" <<EOF
 ##
 ## secrets-store.yaml — local cleartext store consumed by
@@ -776,6 +777,10 @@ EOF
     entry="insight-local-$name"
     ENTRY="$entry" yq -e 'has(strenv(ENTRY))' "$secrets_store_out" >/dev/null || {
       echo "ERROR: missing $entry in $secrets_store_out" >&2
+      rm -f "$inventory_out" "$secrets_store_out"
+      if [[ "$sys_airbyte" == "true" ]]; then
+        rm -f "$env_local_out"
+      fi
       exit 1
     }
   done <<< "$enabled_secrets"
@@ -791,6 +796,10 @@ EOF
   cp "$values_tmpl" "$values_out"
   yq -i ".global.tenantDefaultId = \"$TENANT_DEFAULT_ID\"" "$values_out"
   yq -i ".ingestion.reconcile.tenantId = \"$TENANT_DEFAULT_ID\"" "$values_out"
+  if [[ "$sys_airbyte" == "false" || "$sys_argo" == "false" ]]; then
+    yq -i '.ingestion.templates.enabled = false' "$values_out"
+  fi
+
   # Full auth: the dev login identity is a realm user (must exist in
   # identity's `persons`), not a frontend impersonation escape hatch.
   yq -i ".keycloak.devUserEmail  = \"$DEV_USER_EMAIL\""    "$values_out"
