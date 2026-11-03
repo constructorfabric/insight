@@ -1,4 +1,4 @@
-from .checks import mark_page_requests, verify_page
+from .checks import mark_page_requests, verify_page_loaded
 from .page_watch import PageWatch
 from .pages.portal_shell import PortalShell
 from .steps import step
@@ -32,5 +32,5 @@ class PortalPage:
         self.shell.open_list_item(label, href)
         self.page_name = label.removeprefix("All ").removesuffix("s").lower()
 
-    def verify_page_works(self, test_id: str) -> None:
-        verify_page(self.shell, self.watch, test_id, self.page_name)
+    def verify_page_loaded(self, test_id: str) -> None:
+        verify_page_loaded(self.shell, self.watch, test_id, self.page_name)

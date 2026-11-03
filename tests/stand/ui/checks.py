@@ -65,7 +65,7 @@ def mark_page_requests(portal: PortalShell, watch: PageWatch) -> None:
         watch.mark()
 
 
-def verify_page(portal: PortalShell, watch: PageWatch, test_id: str, page_name: str) -> None:
+def verify_page_loaded(portal: PortalShell, watch: PageWatch, test_id: str, page_name: str) -> None:
     checks = Checks()
     with checks.check(f"Verify the {page_name} page is shown"):
         expect(
