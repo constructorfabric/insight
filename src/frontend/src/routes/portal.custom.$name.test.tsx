@@ -649,6 +649,26 @@ describe("/portal/custom/$name — a widget expanded over the window", () => {
     expect(expand).toHaveFocus();
   });
 
+  it("runs a widget again from the expanded view when the service was too busy", async () => {
+    boardOfCommits();
+    vi.mocked(customClient.runDashboardWidget).mockRejectedValueOnce(
+      new customClient.CustomApiError(429, { detail: "busy" })
+    );
+    portalRouter.set({ widget: "commits_table" });
+    render(<Component />, { wrapper: cachedWrapper });
+
+    const dialog = await screen.findByRole("dialog");
+    const busy = await within(dialog).findByRole("status", {
+      name: "Busy, try again.",
+    });
+    await userEvent.click(within(busy).getByRole("button", { name: "Retry" }));
+
+    expect(
+      await within(dialog).findByRole("cell", { name: "59" })
+    ).toBeInTheDocument();
+    expect(customClient.runDashboardWidget).toHaveBeenCalledTimes(2);
+  });
+
   it("opens nothing for a widget the board does not draw", async () => {
     boardOfCommits();
     portalRouter.set({ widget: "not_on_this_board" });
