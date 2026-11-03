@@ -5,10 +5,10 @@ import { OrgTree } from "@/components/org-tree";
 import { ItemButton } from "@/components/portal/pane-nav";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -18,6 +18,7 @@ import {
   orderByReadiness,
   peopleItemsFor,
   resolveZoneItem,
+  zoneIsPlanned,
 } from "@/lib/portal/nav-model";
 import { personSectionPlanned } from "@/lib/portal/nav-policy";
 import { usePortalItem, usePortalNavActions } from "@/lib/portal/portal-nav";
@@ -53,16 +54,19 @@ function PeopleViews({ nav }: { nav: ZoneNav }) {
   const item = resolveZoneItem("people", usePortalItem());
   const personZone = zones.find((zone) => zone.id === "person");
   const peopleZone = zones.find((zone) => zone.id === "people");
-  const teamViews = peopleZone ? orderByReadiness(peopleItemsFor(isFlat), showPlanned) : [];
+  const teamViews = peopleZone
+    ? orderByReadiness(peopleItemsFor(isFlat), showPlanned)
+    : [];
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Views</SidebarGroupLabel>
+      <PaneGroupLabel>Views</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {personZone ? (
             <SidebarMenuItem>
               <SidebarMenuButton
+                data-planned={zoneIsPlanned(personZone) || undefined}
                 isActive={activeZone === "person" && activePerson === me}
                 onClick={() => {
                   selectZone(personZone);
@@ -118,7 +122,7 @@ function WorkChart() {
   // draw its scrollbar and rows over the search.
   return (
     <SidebarGroup className="min-h-0 flex-1">
-      {isFlat ? null : <SidebarGroupLabel>WorkChart</SidebarGroupLabel>}
+      {isFlat ? null : <PaneGroupLabel>WorkChart</PaneGroupLabel>}
       <SidebarGroupContent className="flex min-h-0 flex-1 flex-col gap-2">
         {find}
         <ScrollArea className="min-h-0 flex-1">
@@ -143,7 +147,7 @@ function PersonSectionsNav() {
   const glance = useSelectedPersonSection() == null;
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Sections</SidebarGroupLabel>
+      <PaneGroupLabel>Sections</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           <SidebarMenuItem>
@@ -163,6 +167,7 @@ function PersonSectionsNav() {
             return (
               <SidebarMenuItem key={g.id}>
                 <SidebarMenuButton
+                  data-planned={personSectionPlanned(g.id) || undefined}
                   isActive={active === g.id}
                   className={
                     personSectionPlanned(g.id) ? "text-muted-foreground" : undefined

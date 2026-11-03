@@ -1,6 +1,5 @@
 import {
   ChevronRight,
-  Minus,
   Sparkles,
   TrendingDownIcon,
   TrendingUpIcon,
@@ -133,9 +132,7 @@ export function KpiTile({
                 STATUS_TEXT_CLASS[tile.delta.status]
               )}
             >
-              {tile.delta.status === "neutral" ? (
-                <Minus className="size-3.5" />
-              ) : tile.delta.down ? (
+              {tile.delta.status === "neutral" ? null : tile.delta.down ? (
                 <TrendingDownIcon className="size-3.5" />
               ) : (
                 <TrendingUpIcon className="size-3.5" />

@@ -4,7 +4,7 @@ vi.mock("@/lib/portal/use-cohort-label", () => ({
 }));
 /**
  * MetricGroupsView routing/gating semantics: honest empty + error + loading
- * states, KPI-row gating via showKpis, section-card wiring and the
+ * states, KPI-row gating via content, section-card wiring and the
  * inline-select vs modal-drilldown split. The v2 leaf widgets (KpiTile,
  * MetricGroupCard, drilldown) predate this PR and are stubbed; assertions
  * target THIS view's own decisions.
@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
     range: { from: string; to: string };
     compareTo?: { from: string; to: string };
   }>,
+  collectionEntities: [] as Array<{ type: string; ids?: string[] }>,
 }));
 
 // usePersonSectionStandings now reads source availability from the tenant's
@@ -52,7 +53,13 @@ vi.mock("@/queries/metric-definitions", async (orig) => ({
   }),
 }));
 vi.mock("@/queries/metric-results", () => ({
-  useMetricCollection: () => mocks.collection,
+  useMetricCollection: (
+    _collection: unknown,
+    entity: { type: string; ids?: string[] },
+  ) => {
+    mocks.collectionEntities.push(entity);
+    return mocks.collection;
+  },
   useMetricCollectionSet: (
     collections: unknown,
     entity: { type: string; ids?: string[] },
@@ -156,6 +163,7 @@ beforeEach(() => {
   mocks.collection.isPending = false;
   mocks.collection.isError = false;
   mocks.cohort = [];
+  mocks.collectionEntities = [];
   mocks.setCalls.length = 0;
   seedSet();
 });
@@ -192,14 +200,23 @@ describe("MetricGroupsView", () => {
     expect(screen.queryByTestId("needs-attention")).not.toBeInTheDocument();
   });
 
-  it("shows the KPI row + needs-attention only with showKpis", () => {
-    render(<MetricGroupsView personId="p@x" groupIds={GROUPS} showKpis />);
+  it("shows the KPI row + needs-attention only on the glance", () => {
+    render(<MetricGroupsView personId="p@x" groupIds={GROUPS} content="glance" />);
     expect(screen.getByText("At a glance")).toBeInTheDocument();
     expect(screen.getByTestId("needs-attention")).toBeInTheDocument();
   });
 
+  it("shows the attention list alone, without asking for the KPI row", () => {
+    render(<MetricGroupsView personId="p@x" groupIds={GROUPS} content="attention" />);
+
+    expect(screen.queryByText("At a glance")).not.toBeInTheDocument();
+    expect(
+      mocks.collectionEntities.every((entity) => (entity.ids?.length ?? 0) === 0),
+    ).toBe(true);
+  });
+
   it("asks for the sections over one window pair, not a shifted second request", () => {
-    render(<MetricGroupsView personId="p@x" groupIds={GROUPS} showKpis />);
+    render(<MetricGroupsView personId="p@x" groupIds={GROUPS} content="glance" />);
     // Attention compares against the previous period. Asking for it over a
     // SHIFTED range is the duplicate round trip this view stopped making
     // (#2651), so every request runs over the period on screen.
@@ -222,7 +239,7 @@ describe("MetricGroupsView", () => {
 
   it("asks for the slice cohort under one signature too", () => {
     mocks.cohort = ["a@x", "b@x"];
-    render(<MetricGroupsView personId="p@x" groupIds={GROUPS} showKpis />);
+    render(<MetricGroupsView personId="p@x" groupIds={GROUPS} content="glance" />);
     // The same trap one hook over: the page and the nav mark each named their
     // own group list for the cohort, so a narrower one would split it into a
     // second key and a second request per section.
@@ -267,7 +284,7 @@ describe("MetricGroupsView", () => {
       <MetricGroupsView
         personId="p@x"
         groupIds={GROUPS}
-        showKpis
+        content="glance"
         onSelectGroup={onSelect}
       />,
     );

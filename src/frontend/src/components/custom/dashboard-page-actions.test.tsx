@@ -10,7 +10,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     pinDashboard: vi.fn(),
     unpinDashboard: vi.fn(),
     fetchFolders: vi.fn(),
-    renameDefinition: vi.fn(),
+    renameDashboard: vi.fn(),
     duplicateDashboard: vi.fn(),
     deleteDefinition: vi.fn(),
   };
@@ -33,13 +33,14 @@ vi.mock("@/components/custom/share-dialog", () => ({
 }));
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import * as customClient from "@/api/custom-client";
 import type { DashboardAccess } from "@/api/custom-client";
+import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 import { portalRouter } from "@/test/portal-router";
 
 import { DashboardPageActions } from "./dashboard-page-actions";
@@ -51,6 +52,7 @@ const OWNER = "01900000-0000-7000-8000-00000000000a";
 
 beforeEach(() => {
   vi.resetAllMocks();
+  act(() => setPortalShowPlanned(false));
   portalRouter.reset(`/portal/custom/${ID}`);
   vi.mocked(customClient.fetchPins).mockResolvedValue([]);
   vi.mocked(customClient.pinDashboard).mockResolvedValue(undefined);
@@ -59,7 +61,7 @@ beforeEach(() => {
     folders: [],
     unfiled: 1,
   });
-  vi.mocked(customClient.renameDefinition).mockResolvedValue(undefined);
+  vi.mocked(customClient.renameDashboard).mockResolvedValue(undefined);
   vi.mocked(customClient.duplicateDashboard).mockResolvedValue("dash-2");
   vi.mocked(customClient.deleteDefinition).mockResolvedValue(undefined);
 });
@@ -115,28 +117,27 @@ describe("<DashboardPageActions>", () => {
     ["viewer", false, false, false],
   ] as const)(
     "a caller with %s access, carrying %s, is offered Share: %s, Edit: %s",
-    (access, carries, share, edit) => {
+    async (access, carries, share, edit) => {
+      const user = userEvent.setup();
       actions(access, carries);
 
       expect(
-        screen.queryByRole("button", { name: "Share delivery" }) !== null
-      ).toBe(share);
-      expect(
         screen.queryByRole("button", { name: "Edit delivery" }) !== null
       ).toBe(edit);
-      expect(
-        screen.getByRole("button", { name: "More for delivery" })
-      ).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "More for delivery" }));
+      await screen.findByRole("menu");
+      expect(screen.queryByRole("menuitem", { name: "Share…" }) !== null).toBe(
+        share
+      );
     }
   );
 
   it.each(["owner", "editor"] as const)(
     "opens the dashboard's share dialog for an %s",
     async (access) => {
-      const user = userEvent.setup();
-      actions(access);
+      const user = await openMenu(access);
 
-      await user.click(screen.getByRole("button", { name: "Share delivery" }));
+      await user.click(await screen.findByRole("menuitem", { name: "Share…" }));
 
       expect(
         await screen.findByRole("dialog", { name: "Share" })
@@ -144,20 +145,36 @@ describe("<DashboardPageActions>", () => {
     }
   );
 
-  it("offers pin, rename, duplicate, filing, tags and delete to the owner", async () => {
+  it("offers the owner duplicate, share, rename, pin, filing, tags and delete", async () => {
     await openMenu();
 
     await screen.findByRole("menuitem", { name: "Pin" });
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent)
     ).toEqual([
-      "Pin",
-      "Rename…",
       "Duplicate…",
-      "Add to folder…",
+      "Share…",
+      "Rename…",
+      "Pin",
+      "Folders",
       "Edit tags…",
       "Delete…",
     ]);
+  });
+
+  it("lists the planned exports only for a reader who shows planned sections", async () => {
+    act(() => setPortalShowPlanned(true));
+    await openMenu();
+
+    await screen.findByRole("menuitem", { name: "Pin" });
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent)
+    ).toEqual(
+      expect.arrayContaining([
+        "Export snapshot (PDF)Planned",
+        "Schedule report…Planned",
+      ])
+    );
   });
 
   it("offers an editor everything but delete", async () => {
@@ -166,7 +183,14 @@ describe("<DashboardPageActions>", () => {
     await screen.findByRole("menuitem", { name: "Pin" });
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent)
-    ).toEqual(["Pin", "Rename…", "Duplicate…", "Add to folder…", "Edit tags…"]);
+    ).toEqual([
+      "Duplicate…",
+      "Share…",
+      "Rename…",
+      "Pin",
+      "Folders",
+      "Edit tags…",
+    ]);
   });
 
   it("pins the dashboard on screen by its id", async () => {
@@ -201,11 +225,7 @@ describe("<DashboardPageActions>", () => {
     await user.type(field, "shipping{Enter}");
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(customClient.renameDefinition).toHaveBeenCalledWith(
-      "dashboards",
-      ID,
-      "shipping"
-    );
+    expect(customClient.renameDashboard).toHaveBeenCalledWith(ID, "shipping");
     expect(portalRouter.navigations).toHaveLength(0);
   });
 
@@ -235,7 +255,7 @@ describe("<DashboardPageActions>", () => {
     [
       "Rename…",
       "Rename",
-      customClient.renameDefinition,
+      customClient.renameDashboard,
       "only the owner may change it",
     ],
     [

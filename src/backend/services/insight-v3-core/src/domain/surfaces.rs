@@ -1,15 +1,17 @@
 //! Storing, reading and removing definitions, whatever kind they are.
 
+use std::collections::HashMap;
+
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::domain::access::{Caller, DASHBOARD_NOT_EDITOR, DASHBOARD_NOT_OWNER, PersonId, Refused};
-use crate::domain::dashboards::{DashboardPage, DashboardQuery, Seen, sight};
+use crate::domain::dashboards::{DashboardPage, DashboardQuery, Seen, Visibility, sight};
 use crate::domain::datasets::{self, Datasets};
 use crate::domain::definition::arriving::Arriving;
 use crate::domain::definition::{
     Change, Definition, DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError,
-    LibraryKind, ListedPage, Page, StoredDefinition,
+    LibraryEntry, LibraryKind, LibraryPage, ListedPage, Page, StoredDefinition,
 };
 use crate::domain::folders::DefinitionStore;
 use crate::domain::kinds::dashboard::Item;
@@ -143,6 +145,39 @@ impl<'a> Surfaces<'a> {
             .map_err(CustomError::Store)
     }
 
+    /// The same page as [`Surfaces::page`], each definition with its body and
+    /// when it last changed.
+    pub(crate) async fn page_entries(
+        &self,
+        kind: LibraryKind,
+        needle: &str,
+        page: Page,
+    ) -> Result<LibraryPage, CustomError> {
+        self.definitions
+            .page_entries(kind, needle.trim(), page)
+            .await
+            .map_err(CustomError::Store)
+    }
+
+    /// The name of each metric these widgets draw that still exists, by id,
+    /// read in one go for the whole page.
+    pub(crate) async fn drawn_metric_names(
+        &self,
+        widgets: &[LibraryEntry],
+    ) -> Result<HashMap<String, String>, CustomError> {
+        let mut drawn: Vec<&str> = widgets
+            .iter()
+            .filter_map(|widget| kinds::widget::drawn_metric(&widget.body))
+            .collect();
+        drawn.sort_unstable();
+        drawn.dedup();
+
+        self.definitions
+            .names_of(LibraryKind::Metric, &drawn)
+            .await
+            .map_err(CustomError::Store)
+    }
+
     /// One page of the dashboards the caller sees that match `query`.
     pub(crate) async fn page_dashboards(
         &self,
@@ -160,6 +195,15 @@ impl<'a> Surfaces<'a> {
             .list(kind)
             .await
             .map_err(CustomError::Store)
+    }
+
+    /// Who beyond its owner sees a dashboard the caller has already been shown.
+    pub(crate) async fn visibility(&self, id: &DefinitionId) -> Result<Visibility, CustomError> {
+        self.definitions
+            .visibility(id)
+            .await
+            .map_err(CustomError::Store)?
+            .ok_or_else(|| not_found(DefinitionKind::Dashboard, id))
     }
 
     /// How the caller sees a dashboard; one they cannot see is not found.

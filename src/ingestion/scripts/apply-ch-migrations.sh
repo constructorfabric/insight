@@ -8,7 +8,13 @@
 #   1. Run create-databases.sh — every database this release owns, plus the
 #      role/user provisioning that reads them. It is the only creation site:
 #      the migrations below and the dbt hooks assume their database stands.
-#   2. Apply migrations/*.sql in lexicographic order.
+#   2. Refuse a warehouse older than the floor this release upgrades from
+#      (lib/warehouse-floor.sh), before any migration or heal runs.
+#   3. Apply migrations/*.sql in lexicographic order, then the heals.
+#
+# A heal stays while an install it has not reached yet can exist; once every
+# supported upgrade path has run it, it is retired and its outcome becomes a
+# floor fact.
 #
 # No relation is pre-created. Every staging, silver and gold relation is dbt's,
 # built by the sync that feeds it; one no sync has built yet does not exist,
@@ -62,8 +68,12 @@ source "$SCRIPT_DIR/lib/retired-relations.sh"
 source "$SCRIPT_DIR/lib/heal-identity-map-tenant.sh"
 source "$SCRIPT_DIR/lib/heal-youtrack-field-observation-tenant.sh"
 source "$SCRIPT_DIR/lib/heal-task-producer-tenant.sh"
+source "$SCRIPT_DIR/lib/warehouse-floor.sh"
 
 bash "$SCRIPT_DIR/create-databases.sh"
+
+echo "=== Verifying the warehouse is at the floor this release upgrades from ==="
+ch_assert_floor
 
 # The cohort and coverage relations are dbt VIEWs (identity resolves at query
 # time). A cluster that predates that holds them as MergeTree TABLEs, and dbt's
@@ -130,46 +140,13 @@ drop_retired_table_if_empty insight raw_data
 drop_retired_table_if_empty identity aliases
 drop_orphaned_inner_tables insight
 
-echo "=== Healing GitHub Projects V2 bronze keys ==="
-# Both relations were briefly keyed with the collection day inside `unique_key`.
-# That keeps every observation permanently current instead of collapsing onto
-# the entity — the shape `union_by_tag` names outright (ADR-0001, ADR-0004).
-#
-# The rows cannot be repaired in place, because the key IS the identity: a
-# day-keyed row and its entity-keyed replacement are different rows forever, and
-# no merge will ever reconcile them. Bronze is derivable from the API, so the
-# stale generation is dropped instead.
-#
-# Guarded on the stale rows themselves, so this is a no-op on a fresh cluster
-# and a no-op on the second deploy. It must run BEFORE dbt: the SCD2 snapshots
-# above these tables key on `unique_key`, and a day-keyed row would enter them
-# as its own entity and stay there.
-#
-# `project_fields` is full refresh, so the next sync rewrites it whole.
-# `project_items` is cursored, so it refills as the cursor advances — clearing
-# that stream's state makes it immediate. Nothing reads either relation yet, so
-# the gap costs nothing either way.
-heal_github_project_day_keys() {
-  local table="$1" stale
-  ch_table_exists bronze_github "${table}" || return 0
-  stale="$(ch_scalar "SELECT count() FROM bronze_github.${table} WHERE match(unique_key, ':[0-9]{4}-[0-9]{2}-[0-9]{2}$')")"
-  [[ "${stale}" -gt 0 ]] || return 0
-  echo "  bronze_github.${table}: ${stale} day-keyed row(s) — dropping, the connector refills them"
-  run_ch <<SQL
-TRUNCATE TABLE bronze_github.${table};
-SQL
-}
-
-heal_github_project_day_keys project_fields
-heal_github_project_day_keys project_items
-
 echo "=== Healing Jira bronze schema ==="
 # A descriptor bump reaches an already-created bronze table only from here: the
 # destination adds missing columns but never retypes one, and the reconciler
 # adds snapshot columns but cannot rewrite a value. Guarded on the table —
 # ClickHouse has no table-level IF EXISTS on ALTER, and a bronze table exists
 # only once that connector has synced. Runs before the identity heals below,
-# which read the column it adds.
+# which join on the column it retypes.
 heal_jira_issue_jira_id_type() {
   ch_table_exists bronze_jira jira_issue || return 0
   echo "  bronze_jira.jira_issue"
@@ -178,41 +155,7 @@ ALTER TABLE bronze_jira.jira_issue MODIFY COLUMN IF EXISTS jira_id Nullable(Stri
 SQL
 }
 
-heal_jira_substream_jira_id_column() {
-  local table="$1"
-  ch_table_exists bronze_jira "${table}" || return 0
-  echo "  bronze_jira.${table}"
-  run_ch <<SQL
-ALTER TABLE bronze_jira.${table} ADD COLUMN IF NOT EXISTS jira_id Nullable(String) AFTER id_readable;
-SQL
-}
-
-# Rows written while the stream declared `items` as anyOf [string, array] hold
-# the render JSON-encoded a second time, and JSONExtractArrayRaw reads such a
-# value as a scalar — the field-history journal silently skips the row.
-# Idempotent: after one pass no value starts with a quote.
-#
-# INVARIANT: every mutation here runs `mutations_sync = 2` — it returns once
-# EVERY replica applied it (on one node, the same as 1). With a replica down
-# it blocks until the transport ceiling fails the deploy, which is the
-# intended outcome: a replica still holding the old rows is not a healed
-# warehouse.
-heal_jira_history_items_escaping() {
-  ch_table_exists bronze_jira jira_issue_history || return 0
-  echo "  bronze_jira.jira_issue_history items"
-  run_ch <<SQL
-ALTER TABLE bronze_jira.jira_issue_history
-    UPDATE items = JSONExtractString(items)
-    WHERE startsWith(items, '"')
-    SETTINGS mutations_sync = 2;
-SQL
-}
-
 heal_jira_issue_jira_id_type
-heal_jira_substream_jira_id_column jira_issue_history
-heal_jira_substream_jira_id_column jira_comments
-heal_jira_substream_jira_id_column jira_worklogs
-heal_jira_history_items_escaping
 
 echo "=== Healing Jira bronze issue identity ==="
 # Two heals, in this order, both guarded on the rows they would change so a
@@ -516,56 +459,6 @@ heal_jira_catalogue_first_seen
 echo "=== Healing YouTrack field observation tenants ==="
 heal_youtrack_field_observation_tenant
 
-echo "=== Healing AI staging contract schemas ==="
-# Physical column order must equal the model's SELECT order (positional
-# incremental inserts, positional union). Labels left the contract (they
-# derive in gold — macros/ai_labels.sql): DROP converges every table
-# state. conversation_count and seat_status are data: ADD/MODIFY pin their
-# position. All four contributors in one deploy — a class unions them
-# positionally, so healing per-sync mismatches the column counts.
-# Guarded (staging tables exist only after the connector's first run);
-# idempotent (re-runs are no-ops).
-heal_ai_dev_staging() {
-  local table="$1"
-  ch_table_exists staging "${table}" || return 0
-  echo "  staging.${table}"
-  run_ch <<SQL
-ALTER TABLE staging.${table} DROP COLUMN IF EXISTS tool_label;
-ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS conversation_count Nullable(UInt32) AFTER session_count;
-ALTER TABLE staging.${table} MODIFY COLUMN conversation_count Nullable(UInt32) AFTER session_count;
-ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS seat_status Nullable(String) AFTER _version;
-ALTER TABLE staging.${table} MODIFY COLUMN seat_status Nullable(String) AFTER _version;
-SQL
-}
-
-heal_ai_assistant_staging() {
-  local table="$1"
-  ch_table_exists staging "${table}" || return 0
-  echo "  staging.${table}"
-  run_ch <<SQL
-ALTER TABLE staging.${table} DROP COLUMN IF EXISTS tool_label;
-ALTER TABLE staging.${table} DROP COLUMN IF EXISTS surface_label;
-SQL
-}
-
-heal_ai_invoice_staging() {
-  local table="$1"
-  ch_table_exists staging "${table}" || return 0
-  echo "  staging.${table}"
-  run_ch <<SQL
-ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS tier_ref Nullable(String) AFTER tier_label;
-ALTER TABLE staging.${table} MODIFY COLUMN tier_ref Nullable(String) AFTER tier_label;
-SQL
-}
-
-heal_ai_dev_staging cursor__ai_dev_usage
-heal_ai_dev_staging claude_enterprise__ai_dev_usage
-heal_ai_dev_staging claude_team__ai_dev_usage
-heal_ai_dev_staging chatgpt_team__ai_dev_usage
-heal_ai_assistant_staging claude_enterprise__ai_assistant_usage
-heal_ai_assistant_staging chatgpt_team__ai_assistant_usage
-heal_ai_invoice_staging claude_team__ai_invoice
-
 echo "=== Healing Allure staging test results ==="
 heal_allure_test_results_staging() {
   ch_table_exists staging allure__test_results || return 0
@@ -592,119 +485,83 @@ SQL
 
 heal_allure_test_results_staging
 
-echo "=== Healing task field-history staging arms ==="
+echo "=== Healing task field-history relations ==="
 run_ch <<'SQL'
 DROP TABLE IF EXISTS staging.jira__task_field_history;
 SQL
 
-# The class contract changed twice and the three incremental Jira arms have to
-# follow: `author_display`, `delta_value_id`, `delta_value_display` and then
-# `title` left it, and the four discriminators became LowCardinality(String).
-# The silver side is in migrations/*.sql; the arms change here because a
-# staging table exists only after dbt has built it, and dbt runs on the next
-# sync, after these migrations.
-#
-# They cannot be skipped. All three models are `incremental`, so their tables
-# survive a run carrying whatever columns they were created with, and
-# `class_task_field_history` unions them with `SELECT *` — an arm still holding
-# a dropped column fails the union with "different number of columns in
-# queries", and an arm still typed Enum8 fails the field-parity audit. The
-# GitHub arm and the derived Jira journal need no heal: both are `table`,
-# rebuilt every run.
-heal_task_field_history_arm() {
-  local table="$1"
-  ch_table_exists staging "${table}" || return 0
-  echo "  staging.${table}"
-  run_ch <<SQL
-ALTER TABLE staging.${table} DROP COLUMN IF EXISTS author_display;
-ALTER TABLE staging.${table} DROP COLUMN IF EXISTS delta_value_id;
-ALTER TABLE staging.${table} DROP COLUMN IF EXISTS delta_value_display;
-ALTER TABLE staging.${table} DROP COLUMN IF EXISTS title;
-ALTER TABLE staging.${table} MODIFY COLUMN event_kind LowCardinality(String);
-ALTER TABLE staging.${table} MODIFY COLUMN field_cardinality LowCardinality(String);
-ALTER TABLE staging.${table} MODIFY COLUMN delta_action LowCardinality(String);
-ALTER TABLE staging.${table} MODIFY COLUMN value_id_type LowCardinality(String);
-SQL
-}
-
-heal_task_field_history_arm jira__availability_events
-heal_task_field_history_arm jira__comment_lifecycle_events
-heal_task_field_history_arm jira__worklog_lifecycle_events
-
-# `event_order` joined the class right after `_seq`
-# (migrations/20260925000000_task-field-history-event-order.sql), and every arm
-# must carry it there before the class unions them — the GitHub arm and the
-# derived journal too, because a class build can run before their own models
-# rebuild them. Rows already stored get the migration's approximation, so the
-# class never folds zeros in; the full refresh the major versions dispatch
-# writes the real values. The guard keeps a re-run from mutating anything:
-# only a row whose approximation is itself 0 still matches it.
-heal_task_field_history_event_order() {
-  local table="$1"
-  ch_table_exists staging "${table}" || return 0
-  echo "  staging.${table}"
-  run_ch <<SQL
-ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS event_order Int64 AFTER _seq;
-ALTER TABLE staging.${table} MODIFY COLUMN event_order Int64 AFTER _seq;
-ALTER TABLE staging.${table}
-    UPDATE event_order = toUnixTimestamp64Milli(event_at) * 1000000
+# `event_order` joined the class right after `_seq`, and every arm must carry
+# it there before the class unions them — the GitHub arm and the derived
+# journal too, because a class build can run before their own models rebuild
+# them; the class itself carries it in the same place. Rows already stored get
+# an approximation, so the class never folds zeros in; the full refresh the
+# major versions dispatch writes the real values. The mutation is issued only
+# while a row still matches it: only a row whose approximation is itself 0
+# can, and a mutation scans the whole table and waits for every replica.
+_EVENT_ORDER_APPROXIMATION="toUnixTimestamp64Milli(event_at) * 1000000
                        + multiIf(event_kind = 'synthetic_initial', 0, event_kind = 'changelog', 1, 2) * 100000
-                       + _seq
-    WHERE event_order = 0
-      AND toUnixTimestamp64Milli(event_at) * 1000000
-          + multiIf(event_kind = 'synthetic_initial', 0, event_kind = 'changelog', 1, 2) * 100000
-          + _seq != 0
+                       + _seq"
+
+heal_task_field_history_event_order() {
+  local db="$1" table="$2" pending
+  ch_table_exists "${db}" "${table}" || return 0
+  echo "  ${db}.${table}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS event_order Int64 AFTER _seq;
+ALTER TABLE ${db}.${table} MODIFY COLUMN event_order Int64 AFTER _seq;
+SQL
+
+  pending="$(ch_scalar "SELECT count() FROM ${db}.${table} WHERE event_order = 0 AND ${_EVENT_ORDER_APPROXIMATION} != 0")"
+  [[ "${pending}" -gt 0 ]] || return 0
+  echo "  ${db}.${table}: ${pending} row(s) without an event order"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table}
+    UPDATE event_order = ${_EVENT_ORDER_APPROXIMATION}
+    WHERE event_order = 0 AND ${_EVENT_ORDER_APPROXIMATION} != 0
     SETTINGS mutations_sync = 2;
 SQL
 }
 
-heal_task_field_history_event_order jira__field_history_derived
-heal_task_field_history_event_order jira__availability_events
-heal_task_field_history_event_order jira__comment_lifecycle_events
-heal_task_field_history_event_order jira__worklog_lifecycle_events
-heal_task_field_history_event_order github__task_field_history
+heal_task_field_history_event_order staging jira__field_history_derived
+heal_task_field_history_event_order staging jira__availability_events
+heal_task_field_history_event_order staging jira__comment_lifecycle_events
+heal_task_field_history_event_order staging jira__worklog_lifecycle_events
+heal_task_field_history_event_order staging github__task_field_history
 
-echo "=== Healing CRM staging contract schemas ==="
-# The CRM overflow blob left the contract — the connectors carry the
-# unabridged record in raw_data — so the column must leave the physical
-# tables too, or the positional incremental insert misaligns. The silver
-# side drops in migrations/*.sql; staging drops here because these tables
-# exist only after the connector's first run. Idempotent.
-heal_crm_staging() {
-  local table="$1"
-  ch_table_exists staging "${table}" || return 0
-  echo "  staging.${table}"
+# The class takes the approximation once, on the deploy that adds the column:
+# afterwards a 0 there is the model's own value (a sync rewrites those rows
+# every run), and approximating it on every deploy would mutate the whole class
+# for a value the next sync writes back.
+heal_task_field_history_class_event_order() {
+  local present
+  ch_table_exists silver class_task_field_history || return 0
+  present="$(ch_scalar "SELECT count() FROM system.columns
+    WHERE database = 'silver' AND table = 'class_task_field_history' AND name = 'event_order'")"
+  if [[ "${present}" -gt 0 ]]; then
+    run_ch <<SQL
+ALTER TABLE silver.class_task_field_history MODIFY COLUMN event_order Int64 AFTER _seq;
+SQL
+    return 0
+  fi
+
+  echo "  silver.class_task_field_history: adding event_order, approximated for the rows it holds"
   run_ch <<SQL
-ALTER TABLE staging.${table} DROP COLUMN IF EXISTS custom_fields;
+ALTER TABLE silver.class_task_field_history ADD COLUMN IF NOT EXISTS event_order Int64 AFTER _seq;
+ALTER TABLE silver.class_task_field_history
+    UPDATE event_order = ${_EVENT_ORDER_APPROXIMATION}
+    WHERE event_order = 0
+    SETTINGS mutations_sync = 2;
 SQL
 }
 
-for _crm_grain in accounts activities contacts deals users; do
-  heal_crm_staging "hubspot__crm_${_crm_grain}"
-done
-
-echo "=== Healing collab-chat contract schema ==="
-# Same positional invariant: collab chat's direct_and_group_messages
-# (#266) was added mid-SELECT without a rebuild.
-heal_collab_chat_table() {
-  local db="$1" table="$2"
-  ch_table_exists "$db" "$table" || return 0
-  echo "  ${db}.${table}"
-  run_ch <<SQL
-ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS direct_and_group_messages Nullable(Int64) AFTER group_chat_messages;
-ALTER TABLE ${db}.${table} MODIFY COLUMN direct_and_group_messages Nullable(Int64) AFTER group_chat_messages;
-SQL
-}
-
-heal_collab_chat_table staging m365__collab_chat_activity
-heal_collab_chat_table staging slack__collab_chat_activity
-heal_collab_chat_table staging zulip_proxy__collab_chat_activity
-heal_collab_chat_table silver class_collab_chat_activity
+heal_task_field_history_class_event_order
 
 echo "=== Healing collab-meeting contract schema ==="
 # Same positional invariant: collab meeting rows gained the account triple
-# after data_source (zoom-guest attribution). Every row written before the
-# columns existed is keyed by its email, which the default states.
+# after data_source (zoom-guest attribution), then the attended meeting keys
+# after account_id. Every row written before the columns existed is keyed by
+# its email, which the default states, and names no meetings: gold then keeps
+# its count under the address until the descriptor's major bump rebuilds the day.
 heal_collab_meeting_table() {
   local db="$1" table="$2"
   ch_table_exists "$db" "$table" || return 0
@@ -716,6 +573,8 @@ ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS account_source_id String AFT
 ALTER TABLE ${db}.${table} MODIFY COLUMN account_source_id String AFTER account_source_type;
 ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS account_id String AFTER account_source_id;
 ALTER TABLE ${db}.${table} MODIFY COLUMN account_id String AFTER account_source_id;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS attended_meeting_keys Array(String) AFTER account_id;
+ALTER TABLE ${db}.${table} MODIFY COLUMN attended_meeting_keys Array(String) AFTER account_id;
 SQL
 }
 
@@ -723,95 +582,14 @@ heal_collab_meeting_table staging m365__collab_meeting_activity
 heal_collab_meeting_table staging zoom__collab_meeting_activity
 heal_collab_meeting_table silver class_collab_meeting_activity
 
-# Same positional invariant: the task-users staging views gained tenant_id
-# mid-SELECT (after unique_key) for the task observation attribution, and
-# class_task_users inherits its column order from that union. Pre-existing
-# tables lack the column; existing rows heal to NULL tenant and converge on
-# the next sync (bronze jira_user is full_refresh + overwrite, so every row
-# re-emits with a fresh _version). Staging needs no heal — both members are
-# views, recreated on every run.
-heal_task_users_table() {
-  local db="$1" table="$2"
-  ch_table_exists "$db" "$table" || return 0
-  echo "  ${db}.${table}"
-  run_ch <<SQL
-ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS tenant_id Nullable(String) AFTER unique_key;
-ALTER TABLE ${db}.${table} MODIFY COLUMN tenant_id Nullable(String) AFTER unique_key;
-SQL
-}
-
-heal_task_users_table silver class_task_users
-
-# The `title` heal that used to live here is gone with the column. It added
-# `title` to class_task_field_history after `id_readable` (#2739) so evidence
-# rows could name the work item; the title is now an ordinary field in the
-# journal, bound to the `title` role, and the column is dropped by
-# migrations/20260912000000_task-field-history-cutover.sql. Leaving the heal in
-# place would ADD the column straight back after that migration ran — heals
-# run after the .sql files.
-
-echo "=== Healing git file-change object id columns ==="
-# The file-change object ids arrive at the tail of every projection that feeds
-# class_git_file_changes. Pre-existing tables lack them and the positional
-# insert misaligns; the silver side heals in migrations/*.sql, the rest heals
-# here because these tables exist only after a connector has run.
-#
-# bronze_github.file_changes is healed for a different reason: the GitHub
-# staging model READS the two columns, and nothing but the destination widens
-# that table — so a deploy that lands between an upgrade and the first sync
-# would otherwise leave the staging model (and every git model downstream of it)
-# failing on an unknown identifier.
-#
-# Existing rows heal to NULL and carry an oid from the first sync that
-# re-collects them. Idempotent.
-heal_git_file_change_oids() {
-  local db="$1" table="$2" anchor="$3"
-  ch_table_exists "${db}" "${table}" || return 0
-  echo "  ${db}.${table}"
-  run_ch <<SQL
-ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS pre_image_oid Nullable(String) AFTER ${anchor};
-ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS post_image_oid Nullable(String) AFTER pre_image_oid;
-ALTER TABLE ${db}.${table} MODIFY COLUMN pre_image_oid Nullable(String) AFTER ${anchor};
-ALTER TABLE ${db}.${table} MODIFY COLUMN post_image_oid Nullable(String) AFTER pre_image_oid;
-SQL
-}
-
-# Bronze's tail is patch_truncated; every staging projection ends with
-# _airbyte_extracted_at.
-heal_git_file_change_oids bronze_github file_changes patch_truncated
-
-for _git_source in github gitlab bitbucket_cloud; do
-  heal_git_file_change_oids staging "${_git_source}__file_changes" _airbyte_extracted_at
-done
-
-echo "=== Healing git commit patch id column ==="
-# Same positional invariant: every projection feeding class_git_commits gained
-# patch_id at the tail (commit-content identity for counting an authored
-# change once, #2792). The silver side heals in migrations/*.sql; staging
-# heals here because these tables exist only after a connector has run.
-# Existing rows heal to NULL and carry a patch id from the first sync that
-# re-collects them. Idempotent.
-heal_git_commit_patch_id() {
-  local table="$1"
-  ch_table_exists staging "${table}" || return 0
-  echo "  staging.${table}"
-  run_ch <<SQL
-ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS patch_id Nullable(String) AFTER _airbyte_extracted_at;
-ALTER TABLE staging.${table} MODIFY COLUMN patch_id Nullable(String) AFTER _airbyte_extracted_at;
-SQL
-}
-
-for _git_source in github gitlab bitbucket_cloud; do
-  heal_git_commit_patch_id "${_git_source}__commits"
-done
-
 echo "=== Healing git commit committer date column ==="
 # Same positional invariant: every projection feeding class_git_commits gained
 # committer_date at the tail. `date` now carries the AUTHOR date (#3153), which
 # a rebase preserves — so the committer date is the only field left that tells
-# a rebase copy from its original, and two readers rank on it. The silver side
-# heals in migrations/*.sql; staging heals here because these tables exist only
-# after a connector has run. Existing rows heal to NULL and carry a committer
+# a rebase copy from its original, and two readers rank on it. Staging heals
+# here because these tables exist only after a connector has run; every install
+# this release upgrades from already carries it in the class. Existing rows
+# heal to NULL and carry a committer
 # date from the first sync that re-collects them. Idempotent.
 heal_git_commit_committer_date() {
   local table="$1"
@@ -827,47 +605,26 @@ for _git_source in github gitlab bitbucket_cloud; do
   heal_git_commit_committer_date "${_git_source}__commits"
 done
 
-echo "=== Healing git pull-request author account column ==="
-# Same positional invariant: every projection feeding class_git_pull_requests
-# gained author_account_id after author_email (account-first person
-# attribution, #2819). The silver side heals in migrations/*.sql; staging
-# heals here because these tables exist only after a connector has run.
-# Existing rows heal to '' and carry the account id from the first sync that
-# re-collects them — the rollout's full refresh backfills the rest. Idempotent.
-heal_git_pr_author_account() {
-  local table="$1"
-  ch_table_exists staging "${table}" || return 0
-  echo "  staging.${table}"
-  run_ch <<SQL
-ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS author_account_id String AFTER author_email;
-ALTER TABLE staging.${table} MODIFY COLUMN author_account_id String AFTER author_email;
-SQL
-}
-
-for _git_source in github gitlab bitbucket_cloud; do
-  heal_git_pr_author_account "${_git_source}__pull_requests"
-done
-
 echo "=== Healing git pull-request reported close-time column ==="
 # Same positional invariant: every projection feeding class_git_pull_requests
 # gained closed_on_reported after closed_on — the close time as the source
 # stated it, which the duration measures read so a recovered one cannot pose as
-# a measurement (#3362). Staging heals here because these tables exist only
-# after a connector has run; the silver column is added in migrations/*.sql.
-# Idempotent.
+# a measurement (#3362). The class carries it in the same place, and must
+# before the backfill below reads it. Idempotent.
 heal_git_pr_close_time_reported() {
-  local table="$1"
-  ch_table_exists staging "${table}" || return 0
-  echo "  staging.${table}"
+  local db="$1" table="$2"
+  ch_table_exists "${db}" "${table}" || return 0
+  echo "  ${db}.${table}"
   run_ch <<SQL
-ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS closed_on_reported Nullable(DateTime) AFTER closed_on;
-ALTER TABLE staging.${table} MODIFY COLUMN closed_on_reported Nullable(DateTime) AFTER closed_on;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS closed_on_reported Nullable(DateTime) AFTER closed_on;
+ALTER TABLE ${db}.${table} MODIFY COLUMN closed_on_reported Nullable(DateTime) AFTER closed_on;
 SQL
 }
 
 for _git_source in github gitlab bitbucket_cloud; do
-  heal_git_pr_close_time_reported "${_git_source}__pull_requests"
+  heal_git_pr_close_time_reported staging "${_git_source}__pull_requests"
 done
+heal_git_pr_close_time_reported silver class_git_pull_requests
 
 echo "=== Backfilling git pull-request reported close time from the sources ==="
 # The rows a warm warehouse already holds must be filled from the SOURCE
@@ -1022,105 +779,72 @@ SQL
 
 backfill_git_pr_reported_close
 
-echo "=== Healing git repository default-branch column ==="
-# class_git_repositories gained `default_branch` at the projection tail; the
-# silver side heals in migrations/*.sql, the staging members heal here because
-# those tables exist only after their connector has run. Existing rows heal to
-# NULL and carry a branch from the next repositories sync. Idempotent.
-heal_git_repository_default_branch() {
+echo "=== Healing task relationship ID columns ==="
+# Same positional invariant: comments and worklogs gained their issue's
+# immutable id after _version, links their source and target ids, in every
+# projection and in the class that unions them.
+heal_task_parent_id() {
   local db="$1" table="$2"
   ch_table_exists "${db}" "${table}" || return 0
   echo "  ${db}.${table}"
   run_ch <<SQL
-ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS default_branch Nullable(String) AFTER _airbyte_extracted_at;
-ALTER TABLE ${db}.${table} MODIFY COLUMN default_branch Nullable(String) AFTER _airbyte_extracted_at;
-SQL
-}
-
-for _git_source in github gitlab bitbucket_cloud; do
-  heal_git_repository_default_branch staging "${_git_source}__repositories"
-done
-
-echo "=== Healing git size column types ==="
-# Every projection feeding the git classes wraps its size columns in
-# toNullable(), so the model's type is Nullable(Int64). A table created before
-# that keeps the narrower non-null type ClickHouse inferred from the values it
-# then held, and dbt aborts an incremental model whose source and target types
-# differ — freezing the relation at its last successful build. MODIFY converges
-# warm tables; non-null to Nullable is lossless. Type only, no AFTER anchor:
-# the columns already sit at their contract positions. Guarded: staging tables
-# exist only after the connector's first run. Idempotent.
-heal_git_size_column() {
-  local table="$1" column="$2"
-  ch_table_exists staging "$table" || return 0
-  echo "  staging.${table}.${column}"
-  run_ch <<SQL
-ALTER TABLE staging.${table} MODIFY COLUMN IF EXISTS ${column} Nullable(Int64);
-SQL
-}
-
-for _git_source in github gitlab bitbucket_cloud; do
-  for _size_column in files_changed lines_added lines_removed; do
-    heal_git_size_column "${_git_source}__commits" "${_size_column}"
-    heal_git_size_column "${_git_source}__pull_requests" "${_size_column}"
-  done
-  for _size_column in lines_added lines_removed; do
-    heal_git_size_column "${_git_source}__file_changes" "${_size_column}"
-  done
-done
-
-echo "=== Healing jira task id column types (#1743) ==="
-# #1892 retyped the jira staging id projections (worklog_id, comment_id)
-# from raw bronze Decimal(38,9) to toString(...), but pre-existing
-# incremental-append staging tables keep the Decimal column, and the
-# positional union with the youtrack String twins fails with NO_COMMON_TYPE,
-# blanking Task Delivery / Code Quality. MODIFY converges warm tables (and
-# silver targets built from them) to the snapshot's String; Decimal->String
-# is lossless. Guarded: staging tables exist only after the first jira sync.
-heal_task_id_column() {
-  local db="$1" table="$2" column="$3"
-  ch_table_exists "$db" "$table" || return 0
-  echo "  ${db}.${table}.${column}"
-  run_ch <<SQL
-ALTER TABLE ${db}.${table} MODIFY COLUMN IF EXISTS ${column} Nullable(String);
-SQL
-}
-
-heal_task_id_column staging jira__task_worklogs worklog_id
-heal_task_id_column staging jira__task_comments comment_id
-heal_task_id_column silver class_task_worklogs worklog_id
-heal_task_id_column silver class_task_comments comment_id
-
-echo "=== Healing task relationship ID columns ==="
-heal_task_parent_id() {
-  local table="$1"
-  ch_table_exists staging "${table}" || return 0
-  echo "  staging.${table}"
-  run_ch <<SQL
-ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS issue_id Nullable(String) AFTER _version;
-ALTER TABLE staging.${table} MODIFY COLUMN issue_id Nullable(String) AFTER _version;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS issue_id Nullable(String) AFTER _version;
+ALTER TABLE ${db}.${table} MODIFY COLUMN issue_id Nullable(String) AFTER _version;
 SQL
 }
 
 heal_task_link_ids() {
-  local table="$1"
-  ch_table_exists staging "${table}" || return 0
-  echo "  staging.${table}"
+  local db="$1" table="$2"
+  ch_table_exists "${db}" "${table}" || return 0
+  echo "  ${db}.${table}"
   run_ch <<SQL
-ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS issue_id Nullable(String) AFTER _version;
-ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS target_id Nullable(String) AFTER issue_id;
-ALTER TABLE staging.${table} MODIFY COLUMN issue_id Nullable(String) AFTER _version;
-ALTER TABLE staging.${table} MODIFY COLUMN target_id Nullable(String) AFTER issue_id;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS issue_id Nullable(String) AFTER _version;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS target_id Nullable(String) AFTER issue_id;
+ALTER TABLE ${db}.${table} MODIFY COLUMN issue_id Nullable(String) AFTER _version;
+ALTER TABLE ${db}.${table} MODIFY COLUMN target_id Nullable(String) AFTER issue_id;
 SQL
 }
 
 for _task_parent_table in jira__task_comments jira__task_worklogs youtrack__task_comments youtrack__task_worklogs; do
-  heal_task_parent_id "${_task_parent_table}"
+  heal_task_parent_id staging "${_task_parent_table}"
 done
+heal_task_parent_id silver class_task_comments
+heal_task_parent_id silver class_task_worklogs
 
 for _task_link_table in github__task_links youtrack__task_links; do
-  heal_task_link_ids "${_task_link_table}"
+  heal_task_link_ids staging "${_task_link_table}"
 done
+heal_task_link_ids silver class_task_links
+
+echo "=== Healing focus metrics ==="
+# Focus rows record the newest meeting-row version they were derived from, so an
+# incremental build re-derives exactly the person-days whose meetings changed;
+# rows stored before the column read 0 and are re-derived once. Rows derived
+# before the 8 h fallback hold a zero working day, which the model no longer
+# writes; the mutation is issued only while such a row remains.
+heal_focus_metrics() {
+  local pending
+  ch_table_exists silver class_focus_metrics || return 0
+  echo "  silver.class_focus_metrics"
+  run_ch <<SQL
+ALTER TABLE silver.class_focus_metrics ADD COLUMN IF NOT EXISTS source_version Int64 AFTER _version;
+ALTER TABLE silver.class_focus_metrics MODIFY COLUMN source_version Int64 AFTER _version;
+SQL
+
+  pending="$(ch_scalar "SELECT count() FROM silver.class_focus_metrics WHERE working_hours_per_day = 0")"
+  [[ "${pending}" -gt 0 ]] || return 0
+  echo "  silver.class_focus_metrics: ${pending} row(s) without a working day"
+  run_ch <<SQL
+ALTER TABLE silver.class_focus_metrics
+    UPDATE working_hours_per_day = 8.0,
+           focus_time_pct        = round(greatest(toFloat64(0), 100.0 - (meeting_hours / 8.0) * 100.0), 2),
+           dev_time_h            = round(greatest(toFloat64(0), 8.0 - meeting_hours), 4)
+    WHERE working_hours_per_day = 0
+    SETTINGS mutations_sync = 2;
+SQL
+}
+
+heal_focus_metrics
 
 echo "=== Healing task class tenants ==="
 heal_task_class_tenants

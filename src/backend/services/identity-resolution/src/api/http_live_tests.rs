@@ -906,7 +906,7 @@ async fn people_hide_a_manager_outside_the_callers_visible_set() -> TestResult {
 }
 
 #[tokio::test]
-async fn tenant_people_visibility_requires_admin_and_lists_the_tenant_roster() -> TestResult {
+async fn tenant_people_visibility_lists_the_tenant_roster_to_any_member() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -915,10 +915,6 @@ async fn tenant_people_visibility_requires_admin_and_lists_the_tenant_roster() -
     let unrelated = f.person(&format!("tenant-{marker}@http-live.test")).await?;
     let uri = format!("/v1/people?visibility=tenant&q=tenant-{marker}");
 
-    let (status, _) = get(app(&f, caller), &uri).await?;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-
-    grant_admin(&f, caller).await?;
     let (status, body) = get(app(&f, caller), &uri).await?;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(found_ids(&body)?, vec![unrelated.to_string()]);
@@ -926,6 +922,62 @@ async fn tenant_people_visibility_requires_admin_and_lists_the_tenant_roster() -
     let (status, _) = get(app(&f, caller), "/v1/people?visibility=all").await?;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     Ok(())
+}
+
+#[tokio::test]
+async fn tenant_people_by_ids_names_each_and_shows_a_member_only_the_directory() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("people-directory-caller@http-live.test").await?;
+    let named = f.person("people-directory-named@http-live.test").await?;
+    let manager = f.person("people-directory-manager@http-live.test").await?;
+    let attributes = BTreeMap::from([("job_title".to_owned(), "Engineer".to_owned())]);
+    f.project_person_with_attributes(
+        named,
+        ProjectedPerson {
+            email: Some("people-directory-named@http-live.test"),
+            username: None,
+            display_name: Some("Ada Example"),
+            first_name: None,
+            last_name: None,
+            attributes: &attributes,
+        },
+    )
+    .await?;
+    f.reports_to(named, manager).await?;
+    let uri = format!("/v1/people?visibility=tenant&ids={named},{manager}&limit=2");
+
+    let (status, body) = get(app(&f, caller), &uri).await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut found = found_ids(&body)?;
+    found.sort();
+    let mut expected = vec![named.to_string(), manager.to_string()];
+    expected.sort();
+    assert_eq!(found, expected);
+    let entry = item_of(&body, named)?;
+    assert_eq!(entry["display_name"], json!("Ada Example"));
+    assert_eq!(entry["attributes"], json!({}));
+    assert_eq!(entry["manager_person_id"], Value::Null);
+
+    grant_admin(&f, caller).await?;
+    let (_, body) = get(app(&f, caller), &uri).await?;
+    let entry = item_of(&body, named)?;
+    assert_eq!(entry["attributes"]["job_title"], json!("Engineer"));
+    assert_eq!(entry["manager_person_id"], json!(manager.to_string()));
+    Ok(())
+}
+
+fn item_of(payload: &Value, person: Uuid) -> anyhow::Result<Value> {
+    payload["items"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["person_id"] == json!(person.to_string()))
+        })
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("{person} is not listed in {payload}"))
 }
 
 #[tokio::test]

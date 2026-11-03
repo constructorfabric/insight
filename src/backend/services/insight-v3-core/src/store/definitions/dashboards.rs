@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
+use chrono::NaiveDateTime;
 use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
 
 use super::folders::statement;
@@ -12,7 +13,8 @@ use super::visibility::{
 use super::{MariaDefinitions, TotalRow};
 use crate::domain::access::{Caller, DashboardStanding, FolderStanding, Level, Owner, PersonId};
 use crate::domain::dashboards::{
-    DashboardCatalogue, DashboardPage, DashboardQuery, ListedDashboard, Owned, Seen,
+    DashboardCatalogue, DashboardPage, DashboardQuery, ListedDashboard, Order, Owned, Seen,
+    Visibility,
 };
 use crate::domain::definition::{DefinitionId, DefinitionStoreError, Page};
 use crate::domain::folders::FolderFilter;
@@ -25,11 +27,40 @@ WHERE tags.name IN ({names}))";
 
 const OWNER_OF: &str = "SELECT id, owner_person_id FROM dashboards WHERE id = ?";
 
-const PAGE_DASHBOARDS: &str = "SELECT dashboards.id, dashboards.owner_person_id, dashboards.name
+// INVARIANT: the carrying terms match `folder_carrying` - a carrying folder shows the dashboard to its owner and its grantees.
+const VISIBILITY: &str = "CASE
+WHEN EXISTS (SELECT 1 FROM dashboard_grants WHERE dashboard_grants.dashboard = dashboards.id
+AND dashboard_grants.grantee = 'everyone')
+OR EXISTS (SELECT 1 FROM folder_entries carrying
+JOIN folders carrier ON carrier.id = carrying.folder_id
+JOIN folder_grants ON folder_grants.folder_id = carrier.id
+WHERE carrying.dashboard = dashboards.id AND carrying.carries
+AND carrier.owner_person_id IS NOT NULL AND folder_grants.grantee = 'everyone') THEN 'everyone'
+WHEN EXISTS (SELECT 1 FROM dashboard_grants WHERE dashboard_grants.dashboard = dashboards.id)
+OR EXISTS (SELECT 1 FROM folder_entries carrying
+JOIN folders carrier ON carrier.id = carrying.folder_id
+WHERE carrying.dashboard = dashboards.id AND carrying.carries
+AND carrier.owner_person_id IS NOT NULL
+AND (NOT carrier.owner_person_id <=> dashboards.owner_person_id
+OR EXISTS (SELECT 1 FROM folder_grants WHERE folder_grants.folder_id = carrier.id))) THEN 'people'
+ELSE 'private'
+END";
+
+const VISIBILITY_OF: &str =
+    "SELECT {visibility} AS visibility FROM dashboards WHERE dashboards.id = ?";
+
+const PAGE_DASHBOARDS: &str = "SELECT dashboards.id, dashboards.owner_person_id, dashboards.name,
+dashboards.updated_at, JSON_VALUE(dashboards.body, '$.title') AS title,
+{visibility} AS visibility
 FROM dashboards
 WHERE {where}
-ORDER BY dashboards.name, dashboards.id
+ORDER BY {order}
 LIMIT ? OFFSET ?";
+
+const TAGS_OF_PAGE: &str = "SELECT dashboard_tags.dashboard, tags.name
+FROM dashboard_tags JOIN tags ON tags.id = dashboard_tags.tag_id
+WHERE dashboard_tags.dashboard IN ({ids})
+ORDER BY tags.name";
 
 const COUNT_DASHBOARDS: &str = "SELECT COUNT(*) AS total FROM dashboards WHERE {where}";
 
@@ -68,6 +99,11 @@ pub(super) fn level_of(column: &str) -> Result<Level, DefinitionStoreError> {
 }
 
 #[derive(Debug, FromQueryResult)]
+struct VisibilityRow {
+    visibility: String,
+}
+
+#[derive(Debug, FromQueryResult)]
 struct OwnedRow {
     id: String,
     owner_person_id: Option<String>,
@@ -77,6 +113,15 @@ struct OwnedRow {
 struct DashboardRow {
     id: String,
     owner_person_id: Option<String>,
+    name: String,
+    updated_at: NaiveDateTime,
+    visibility: String,
+    title: Option<String>,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct TagRow {
+    dashboard: String,
     name: String,
 }
 
@@ -164,7 +209,16 @@ pub(super) fn page_statement(caller: Caller, query: &DashboardQuery, page: Page)
     values.push(page.limit().into());
     values.push(page.offset().into());
 
-    statement(&PAGE_DASHBOARDS.replace("{where}", &clause), values)
+    let order = match query.order {
+        Order::Name => "dashboards.name, dashboards.id",
+        Order::Recent => "dashboards.updated_at DESC, dashboards.id",
+    };
+    let sql = PAGE_DASHBOARDS
+        .replace("{visibility}", VISIBILITY)
+        .replace("{where}", &clause)
+        .replace("{order}", order);
+
+    statement(&sql, values)
 }
 
 pub(super) fn count_statement(caller: Caller, query: &DashboardQuery) -> Statement {
@@ -180,6 +234,27 @@ fn over_ids(template: &str, caller: Caller, ids: &[&str]) -> Statement {
     values.extend(ids.iter().map(|id| Value::from(*id)));
 
     statement(&template.replace("{ids}", &marks), values)
+}
+
+async fn tags_of_page<C: ConnectionTrait>(
+    db: &C,
+    ids: &[&str],
+) -> Result<BTreeMap<String, Vec<String>>, DefinitionStoreError> {
+    let mut tags: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    if ids.is_empty() {
+        return Ok(tags);
+    }
+
+    let marks = vec!["?"; ids.len()].join(", ");
+    let values = ids.iter().map(|id| Value::from(*id)).collect();
+    let rows = TagRow::find_by_statement(statement(&TAGS_OF_PAGE.replace("{ids}", &marks), values))
+        .all(db)
+        .await?;
+    for row in rows {
+        tags.entry(row.dashboard).or_default().push(row.name);
+    }
+
+    Ok(tags)
 }
 
 /// What decides `caller`'s access to each of these owned dashboards, read
@@ -279,25 +354,55 @@ impl DashboardCatalogue for MariaDefinitions {
             owners.push((row.id.clone(), owner_of(row.owner_person_id.as_deref())?));
         }
         let standings = standings(&self.db, owners, caller).await?;
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        let mut tags = tags_of_page(&self.db, &ids).await?;
 
-        let items = rows
-            .into_iter()
-            .filter_map(|row| {
-                let seen = Seen::of(caller, standings.get(&row.id)?)?;
+        let mut items = Vec::with_capacity(rows.len());
+        for row in rows {
+            let Some(seen) = standings
+                .get(&row.id)
+                .and_then(|standing| Seen::of(caller, standing))
+            else {
+                continue;
+            };
+            let visibility = Visibility::parse(&row.visibility)
+                .ok_or(DefinitionStoreError::UnreadableRow("visibility"))?;
 
-                Some(ListedDashboard {
-                    id: row.id,
-                    name: row.name,
-                    owner: seen.owner,
-                    access: seen.access,
-                })
-            })
-            .collect();
+            let tags = tags.remove(&row.id).unwrap_or_default();
+
+            items.push(ListedDashboard {
+                id: row.id,
+                name: row.name,
+                owner: seen.owner,
+                access: seen.access,
+                updated_at: row.updated_at.and_utc(),
+                visibility,
+                title: row.title,
+                tags,
+            });
+        }
 
         Ok(DashboardPage {
             items,
             total: u64::try_from(total).unwrap_or(0),
         })
+    }
+    async fn visibility(
+        &self,
+        dashboard: &DefinitionId,
+    ) -> Result<Option<Visibility>, DefinitionStoreError> {
+        let sql = VISIBILITY_OF.replace("{visibility}", VISIBILITY);
+        let row =
+            VisibilityRow::find_by_statement(statement(&sql, vec![dashboard.as_str().into()]))
+                .one(&self.db)
+                .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Visibility::parse(&row.visibility)
+            .map(Some)
+            .ok_or(DefinitionStoreError::UnreadableRow("visibility"))
     }
 }
 

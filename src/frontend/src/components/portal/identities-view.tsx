@@ -90,7 +90,7 @@ export function IdentitiesView() {
   const active: string = resolveMode(mode);
 
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 p-6">
+    <div data-testid="page-manage-identities" className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 p-6">
       <header className="shrink-0">
         <h1 className="text-lg font-semibold tracking-tight">
           {t("identities.title")}

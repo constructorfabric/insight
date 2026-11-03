@@ -189,12 +189,17 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .query_param(
             "visibility",
             false,
-            "`caller` (default) returns people visible to the caller; `tenant` returns the entire tenant roster and requires admin",
+            "`caller` (default) returns people visible to the caller; `tenant` returns the entire tenant roster to any member: names and contact for everyone, attributes and managers for administrators only",
         )
         .query_param(
             "q",
             false,
             "Search display name, first name, last name, username, or email; every whitespace-separated term must match",
+        )
+        .query_param(
+            "ids",
+            false,
+            "Comma-separated person ids, at most 200; a row is any one of them",
         )
         .query_param_typed(
             "limit",

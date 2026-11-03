@@ -3,30 +3,25 @@ import {
   Bell,
   Database,
   LayoutDashboard,
-  LayoutGrid,
-  Share2,
   Sigma,
-  User,
   type LucideIcon,
 } from "lucide-react";
-import { useInfiniteQuery } from "@tanstack/react-query";
 
-import type { OwnedFilter } from "@/api/custom-client";
+import { useDashboardBrowse } from "@/lib/custom/dashboard-browse";
 import { FoldersGroup } from "@/components/portal/folder-rows";
 import { CountBadge, UnbuiltRow } from "@/components/portal/pane-nav";
 import { PinnedGroup } from "@/components/portal/pinned-rows";
+import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { DASHBOARD_BROWSE_PLANNED } from "@/lib/portal/nav-model";
+import { DASHBOARD_BROWSE_PLANNED, STARTER_DASHBOARDS } from "@/lib/portal/nav-model";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import { definitionPagesQuery } from "@/queries/custom";
 import { useIsAdmin } from "@/queries/identity-me";
 
 const CATALOGUES: readonly {
@@ -44,17 +39,6 @@ const CATALOGUES: readonly {
   { to: "/portal/custom/alerts", label: "Alerts", icon: Bell },
 ];
 
-const OWNED: readonly {
-  owned: OwnedFilter;
-  label: string;
-  icon: LucideIcon;
-  /** Only an administrator owns dashboards. */
-  adminOnly: boolean;
-}[] = [
-  { owned: "me", label: "Owned by me", icon: User, adminOnly: true },
-  { owned: "shared", label: "Shared with me", icon: Share2, adminOnly: false },
-];
-
 const DASHBOARD_ROUTES = new Set(["/portal/custom/", "/portal/custom/$name"]);
 
 export function CustomNav() {
@@ -63,44 +47,29 @@ export function CustomNav() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const routeId = useRouterState({ select: (s) => s.matches.at(-1)?.routeId });
   const { folder, tag, owned } = usePortalSearch();
-  const { data } = useInfiniteQuery(definitionPagesQuery("dashboards"));
-  const total = data?.pages[0]?.total;
+  const browse = useDashboardBrowse(tag);
   const onDashboards = routeId != null && DASHBOARD_ROUTES.has(routeId);
 
   return (
     <>
       <SidebarGroup>
-        <SidebarGroupLabel>Browse</SidebarGroupLabel>
+        <PaneGroupLabel>Browse</PaneGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                isActive={onDashboards && !folder && !owned}
-                render={<Link to="/portal/custom" search={{ tag }} />}
-              >
-                <LayoutGrid />
-                <span>All dashboards</span>
-              </SidebarMenuButton>
-              {total != null ? <CountBadge>{total}</CountBadge> : null}
-            </SidebarMenuItem>
-            {OWNED.filter((item) => isAdmin || !item.adminOnly).map(
-              ({ owned: narrowed, label, icon: Icon }) => (
-                <SidebarMenuItem key={narrowed}>
-                  <SidebarMenuButton
-                    isActive={onDashboards && owned === narrowed}
-                    render={
-                      <Link
-                        to="/portal/custom"
-                        search={{ owned: narrowed, tag }}
-                      />
-                    }
-                  >
-                    <Icon />
-                    <span>{label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )
-            )}
+            {browse.map(({ owned: narrowed, label, icon: Icon, count }) => (
+              <SidebarMenuItem key={narrowed ?? "all"}>
+                <SidebarMenuButton
+                  isActive={onDashboards && !folder && owned === narrowed}
+                  render={
+                    <Link to="/portal/custom" search={{ owned: narrowed, tag }} />
+                  }
+                >
+                  <Icon />
+                  <span>{label}</span>
+                </SidebarMenuButton>
+                {count != null ? <CountBadge>{count}</CountBadge> : null}
+              </SidebarMenuItem>
+            ))}
             {showPlanned
               ? DASHBOARD_BROWSE_PLANNED.map((item) => (
                   <UnbuiltRow key={item.id} item={item} />
@@ -119,7 +88,7 @@ export function CustomNav() {
 function CatalogueGroup({ pathname }: { pathname: string }) {
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Catalogue</SidebarGroupLabel>
+      <PaneGroupLabel>Catalogue</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {CATALOGUES.map(({ to, label, icon: Icon }) => (
@@ -133,6 +102,35 @@ function CatalogueGroup({ pathname }: { pathname: string }) {
               </SidebarMenuButton>
             </SidebarMenuItem>
           ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
+export function HomeDashboardsGroup() {
+  const showPlanned = usePortalShowPlanned();
+  const mine = useDashboardBrowse().find((row) => row.owned === "me");
+
+  if (!mine && !showPlanned) return null;
+
+  return (
+    <SidebarGroup>
+      <PaneGroupLabel>Dashboards</PaneGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          {mine ? (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/portal/custom" search={{ owned: "me" }} />}
+              >
+                <mine.icon />
+                <span>{mine.label}</span>
+              </SidebarMenuButton>
+              {mine.count != null ? <CountBadge>{mine.count}</CountBadge> : null}
+            </SidebarMenuItem>
+          ) : null}
+          {showPlanned ? <UnbuiltRow item={STARTER_DASHBOARDS} /> : null}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>

@@ -1,6 +1,8 @@
 //! Metric, widget and dashboard definition HTTP endpoints.
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query, RawQuery};
@@ -17,15 +19,19 @@ use super::AppState;
 use super::errors::ApiErrors;
 use super::folders::{folder_error, holding_json};
 use super::tags::{names_json, tag_error, tags_in};
-use crate::domain::access::{Caller, DASHBOARD_NOT_EDITOR, DASHBOARD_NOT_OWNER, Owner};
+use crate::domain::access::{Caller, DASHBOARD_NOT_EDITOR, DASHBOARD_NOT_OWNER, Owner, PersonId};
 use crate::domain::dashboards::{DashboardQuery, ListedDashboard, QueryError};
 use crate::domain::definition::{
-    DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, Listed, MAX_PAGE_LIMIT,
-    Page, PageError, StoredDefinition,
+    DefinitionId, DefinitionKind, DefinitionLabel, DefinitionStoreError, LibraryEntry, LibraryKind,
+    Listed, MAX_PAGE_LIMIT, Page, PageError, StoredDefinition,
 };
 use crate::domain::kinds::metric::answerable::EffectiveClock;
+use crate::domain::kinds::widget::drawn_metric;
 use crate::domain::surfaces::{CustomError, Surfaces};
 use crate::domain::violation::Violation;
+
+/// How long a listing waits for its owners' names before answering without.
+const OWNER_NAMES_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The query string on a list: what to look for, in a name or in a body, and
 /// which page of the matches to answer with.
@@ -37,6 +43,7 @@ struct Search {
     offset: Option<u64>,
     folder: Option<String>,
     owned: Option<String>,
+    sort: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -148,6 +155,11 @@ fn register_list(
                 "string",
                 "`me` for the caller's own dashboards, `shared` for those shared with them; absent lists every visible one",
             ))
+            .param(query_param(
+                "sort",
+                "string",
+                "`name` (the default) orders by name, `recent` by last change, newest first",
+            ))
     } else {
         builder
     };
@@ -155,7 +167,7 @@ fn register_list(
     builder
         .json_response(
             StatusCode::OK,
-            "One page of ids and names, dashboards with their owner and the caller's access, and how many match",
+            "One page of ids and names, metrics and widgets with their body and last change, widgets with the name of the metric they draw, dashboards with their owner and the caller's access, and how many match",
         )
         .error_400(openapi)
         .error_403(openapi)
@@ -279,7 +291,10 @@ struct DefinitionResponse {
 #[derive(Debug, Serialize)]
 struct DashboardMeta {
     owner_person_id: Option<String>,
+    owner_name: Option<String>,
     access: &'static str,
+    /// Who beyond its owner sees it: `private`, `people` or `everyone`.
+    visibility: &'static str,
     /// Whether an entry the caller adds now carries a folder's audience.
     carries: bool,
     /// The folders the caller sees that hold it.
@@ -293,13 +308,54 @@ pub(crate) fn owner_json(owner: Owner) -> Option<String> {
     owner.person().map(|person| person.to_string())
 }
 
+fn owner_name_json(owner: Owner, names: &HashMap<PersonId, String>) -> Option<String> {
+    owner
+        .person()
+        .and_then(|person| names.get(&person).cloned())
+}
+
+/// One identity read for every owner on the page. A listing without names is
+/// still worth showing, so a slow or failed read answers none.
+async fn owner_names(
+    state: &AppState,
+    authorization: Option<&str>,
+    owners: impl Iterator<Item = Owner>,
+) -> HashMap<PersonId, String> {
+    let mut people: Vec<PersonId> = owners.filter_map(Owner::person).collect();
+    people.sort_unstable();
+    people.dedup();
+    if people.is_empty() {
+        return HashMap::new();
+    }
+
+    let read = tokio::time::timeout(
+        OWNER_NAMES_TIMEOUT,
+        state.identity().names(authorization, &people),
+    )
+    .await;
+    match read {
+        Ok(Ok(names)) => names,
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "owner names could not be read from identity");
+            HashMap::new()
+        }
+        Err(_) => {
+            tracing::warn!("owner names were not read from identity in time");
+            HashMap::new()
+        }
+    }
+}
+
 async fn dashboard_meta(
     state: &AppState,
     surfaces: &Surfaces<'_>,
+    authorization: Option<&str>,
     id: &DefinitionId,
     stored: &StoredDefinition,
 ) -> Result<DashboardMeta, CanonicalError> {
     let seen = surfaces.seen(id).await.map_err(custom_error)?;
+    let visibility = surfaces.visibility(id).await.map_err(custom_error)?;
+    let names = owner_names(state, authorization, std::iter::once(seen.owner)).await;
     let folders = state
         .folders()
         .folders_holding(id, surfaces.caller())
@@ -309,7 +365,9 @@ async fn dashboard_meta(
 
     Ok(DashboardMeta {
         owner_person_id: owner_json(seen.owner),
+        owner_name: owner_name_json(seen.owner, &names),
         access: seen.access.as_str(),
+        visibility: visibility.as_str(),
         carries: seen.entry.carries(),
         folders: folders.iter().map(holding_json).collect(),
         tags: names_json(&tags),
@@ -595,7 +653,8 @@ async fn get_definition(
 
     let clock = surfaces.clock_of(kind, &stored.body).await;
     let meta = if kind == DefinitionKind::Dashboard {
-        Some(dashboard_meta(&state, &surfaces, &id, &stored).await?)
+        let authorization = crate::api::forwarded_authorization(&headers);
+        Some(dashboard_meta(&state, &surfaces, authorization, &id, &stored).await?)
     } else {
         None
     };
@@ -616,6 +675,7 @@ pub(crate) fn query_error(error: &QueryError) -> CanonicalError {
         QueryError::Folder(_) => "folder",
         QueryError::Tag(_) => "tag",
         QueryError::Owned(_) => "owned",
+        QueryError::Order(_) => "sort",
     };
 
     DefinitionApiError::invalid_field(field, error.to_string())
@@ -623,19 +683,34 @@ pub(crate) fn query_error(error: &QueryError) -> CanonicalError {
 
 /// One page of what the caller may list of this kind, as the wire shows it.
 async fn listed_page(
+    state: &AppState,
     surfaces: &Surfaces<'_>,
+    authorization: Option<&str>,
     kind: DefinitionKind,
     query: &DashboardQuery,
     page: Page,
 ) -> Result<(serde_json::Value, u64), CustomError> {
     let Some(library) = kind.library() else {
         let found = surfaces.page_dashboards(query, page).await?;
-        return Ok((dashboards_json(&found.items), found.total));
+        let names = owner_names(
+            state,
+            authorization,
+            found.items.iter().map(|item| item.owner),
+        )
+        .await;
+        return Ok((dashboards_json(&found.items, Some(&names)), found.total));
     };
 
-    let found = surfaces.page(library, &query.needle, page).await?;
+    let found = surfaces.page_entries(library, &query.needle, page).await?;
+    let metric_names = match library {
+        LibraryKind::Metric => None,
+        LibraryKind::Widget => Some(surfaces.drawn_metric_names(&found.items).await?),
+    };
 
-    Ok((listed_json(&found.items), found.total))
+    Ok((
+        library_json(&found.items, metric_names.as_ref()),
+        found.total,
+    ))
 }
 
 async fn list_definitions(
@@ -655,11 +730,20 @@ async fn list_definitions(
         search.folder.as_deref(),
         &tags,
         search.owned.as_deref(),
+        search.sort.as_deref(),
     )
     .map_err(|error| query_error(&error))?;
-    let (items, total) = listed_page(&state.surfaces(caller), kind, &query, page)
-        .await
-        .map_err(custom_error)?;
+    let authorization = crate::api::forwarded_authorization(&headers);
+    let (items, total) = listed_page(
+        &state,
+        &state.surfaces(caller),
+        authorization,
+        kind,
+        &query,
+        page,
+    )
+    .await
+    .map_err(custom_error)?;
 
     Ok(Json(serde_json::json!({
         "items": items,
@@ -679,19 +763,63 @@ pub(crate) fn listed_json(items: &[Listed]) -> serde_json::Value {
     )
 }
 
-/// Dashboards as a listing shows them: with their owner and how the caller
-/// sees each.
-pub(crate) fn dashboards_json(items: &[ListedDashboard]) -> serde_json::Value {
+/// Metrics or widgets as the catalogue shows them: each with its body and
+/// when it last changed, and a widget with the name of the metric it draws -
+/// null for one that no longer exists. `metric_names` is present for widgets.
+fn library_json(
+    items: &[LibraryEntry],
+    metric_names: Option<&HashMap<String, String>>,
+) -> serde_json::Value {
+    serde_json::Value::Array(
+        items
+            .iter()
+            .map(|entry| {
+                let mut item = serde_json::json!({
+                    "id": entry.id,
+                    "name": entry.name,
+                    "updated_at": entry
+                        .updated_at
+                        .to_rfc3339_opts(SecondsFormat::Millis, true),
+                    "body": entry.body,
+                });
+                if let Some(names) = metric_names {
+                    item["metric_name"] = drawn_metric(&entry.body)
+                        .and_then(|metric| names.get(metric))
+                        .map(String::as_str)
+                        .into();
+                }
+                item
+            })
+            .collect(),
+    )
+}
+
+/// Dashboards as a listing shows them: with their owner, how the caller sees
+/// each, when it last changed and who its grants reach.
+pub(crate) fn dashboards_json(
+    items: &[ListedDashboard],
+    names: Option<&HashMap<PersonId, String>>,
+) -> serde_json::Value {
     serde_json::Value::Array(
         items
             .iter()
             .map(|listed| {
-                serde_json::json!({
+                let mut item = serde_json::json!({
                     "id": listed.id,
                     "name": listed.name,
                     "owner_person_id": owner_json(listed.owner),
                     "access": listed.access.as_str(),
-                })
+                    "updated_at": listed
+                        .updated_at
+                        .to_rfc3339_opts(SecondsFormat::Millis, true),
+                    "visibility": listed.visibility.as_str(),
+                    "title": listed.title,
+                    "tags": listed.tags,
+                });
+                if let Some(names) = names {
+                    item["owner_name"] = owner_name_json(listed.owner, names).into();
+                }
+                item
             })
             .collect(),
     )

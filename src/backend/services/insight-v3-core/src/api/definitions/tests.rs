@@ -11,6 +11,7 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::api::AppState;
 use crate::chat::ChatClient;
+use crate::domain::definition::Definitions as _;
 use crate::domain::folders::DefinitionStore;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
@@ -316,14 +317,30 @@ fn day_metric() -> serde_json::Value {
     })
 }
 
-/// The names a listing answers, in its order.
-fn names(listed: &serde_json::Value) -> Vec<String> {
+/// The items a listing answers, in its order.
+fn items(listed: &serde_json::Value) -> &[serde_json::Value] {
     listed["items"]
         .as_array()
         .unwrap_or_else(|| panic!("a listing answers items: {listed}"))
+}
+
+/// The names a listing answers, in its order.
+fn names(listed: &serde_json::Value) -> Vec<String> {
+    items(listed)
         .iter()
         .map(|item| item["name"].as_str().unwrap_or_default().to_owned())
         .collect()
+}
+
+/// A stamp written as UTC to the millisecond: `YYYY-MM-DDTHH:mm:ss.sssZ`.
+fn assert_millisecond_utc(stamp: &serde_json::Value, case: &str) {
+    let written = stamp.as_str().unwrap_or_default();
+    let shape = chrono::NaiveDateTime::parse_from_str(written, "%Y-%m-%dT%H:%M:%S%.3fZ");
+
+    assert!(
+        shape.is_ok() && written.len() == "2026-01-01T00:00:00.000Z".len(),
+        "{case}: `{written}` should read YYYY-MM-DDTHH:mm:ss.sssZ"
+    );
 }
 
 /// A reader is shown what a removal would break before they ask for one.
@@ -565,18 +582,107 @@ async fn list_answers_each_definition_by_id_and_name_in_name_order() {
     let got = harness.list_json("/v1/metrics").await;
 
     assert_eq!(got.status(), StatusCode::OK);
+    let listed = got.json().await;
+    let ids: Vec<&str> = items(&listed)
+        .iter()
+        .map(|item| item["id"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(ids, [commits.as_str(), lines.as_str()], "{listed}");
+    assert_eq!(names(&listed), ["Commits per day", "Lines per day"]);
     assert_eq!(
-        got.json().await,
-        json!({
-            "items": [
-                { "id": commits, "name": "Commits per day" },
-                { "id": lines, "name": "Lines per day" }
-            ],
-            "total": 2,
-            "limit": 50,
-            "offset": 0
-        })
+        (&listed["total"], &listed["limit"], &listed["offset"]),
+        (&json!(2), &json!(50), &json!(0))
     );
+}
+
+#[tokio::test]
+async fn a_catalogue_item_carries_its_body_and_when_it_last_changed() {
+    let harness = TestHarness::new().await;
+    let chain = harness.seed_chain().await;
+    let cases = [
+        (
+            "metrics",
+            chain.metric.as_str(),
+            json!({
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
+            }),
+        ),
+        (
+            "widgets",
+            chain.widget.as_str(),
+            json!({ "type": "table", "metric": chain.metric, "columns": ["day"] }),
+        ),
+    ];
+
+    for (segment, id, body) in cases {
+        let listed = harness
+            .list_json(&format!("/v1/{segment}"))
+            .await
+            .json()
+            .await;
+        let [item] = items(&listed) else {
+            panic!("{segment} should list one item: {listed}");
+        };
+
+        assert_eq!(item["id"], json!(id), "{segment}: {item}");
+        assert_eq!(item["body"], body, "{segment}: {item}");
+        assert_millisecond_utc(&item["updated_at"], segment);
+    }
+}
+
+#[tokio::test]
+async fn a_widget_item_names_the_metric_it_draws_and_null_for_one_that_is_gone() {
+    let definitions = Arc::new(MemoryDefinitions::new());
+    let store = Arc::clone(&definitions) as Arc<dyn DefinitionStore>;
+    let harness = TestHarness::build(true, &store);
+    let chain = harness.seed_chain().await;
+    let orphan = DefinitionId::parse("orphan_widget")
+        .unwrap_or_else(|error| panic!("the fixture id parses: {error}"));
+    let label = DefinitionLabel::parse("Orphaned table")
+        .unwrap_or_else(|error| panic!("the fixture name parses: {error}"));
+    definitions
+        .create(
+            DefinitionKind::Widget,
+            &orphan,
+            &label,
+            &json!({ "type": "table", "metric": "removed_metric", "columns": ["day"] }),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("the orphan widget is stored: {error}"));
+
+    let listed = harness.list_json("/v1/widgets").await.json().await;
+
+    let drawn: Vec<(&str, &serde_json::Value)> = items(&listed)
+        .iter()
+        .map(|item| {
+            (
+                item["id"].as_str().unwrap_or_default(),
+                &item["metric_name"],
+            )
+        })
+        .collect();
+    assert_eq!(
+        drawn,
+        [
+            (chain.widget.as_str(), &json!("Commits per day")),
+            ("orphan_widget", &serde_json::Value::Null),
+        ],
+        "{listed}"
+    );
+}
+
+#[tokio::test]
+async fn a_metric_item_carries_no_metric_name() {
+    let harness = TestHarness::new().await;
+    harness.seed_chain().await;
+
+    let listed = harness.list_json("/v1/metrics").await.json().await;
+
+    let [item] = items(&listed) else {
+        panic!("one metric should be listed: {listed}");
+    };
+    assert!(item.get("metric_name").is_none(), "{item}");
 }
 
 #[tokio::test]

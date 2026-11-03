@@ -374,6 +374,7 @@ function RailItemButton({
   return (
     <SidebarMenuItem className="relative z-10">
       <SidebarMenuButton
+        data-planned={item.planned || undefined}
         isActive={active}
         title={item.label}
         // 40px shut, the full open width while open — see note 2 above. The

@@ -1,9 +1,10 @@
-import { Line, LineChart } from "recharts";
+import { LineChart } from "recharts";
 
 import type { MetricResult } from "@/api/custom-client";
 import { points, seriesConfig } from "@/components/custom/chart-data";
 import { unitFor } from "@/components/custom/chart-format";
 import { ChartFrame, SeriesAxes } from "@/components/custom/chart-frame";
+import { ChartLine } from "@/components/ui/chart";
 
 export interface CustomLineChartProps {
   result: MetricResult;
@@ -22,14 +23,7 @@ export function CustomLineChart({ result, x, y }: CustomLineChartProps) {
           categories={data.map((point) => point[x])}
           unit={unitFor(result.percents, y)}
         />
-        <Line
-          dataKey={y}
-          type="monotone"
-          stroke={`var(--color-${y})`}
-          strokeWidth={2}
-          dot={false}
-          activeDot={{ r: 4 }}
-        />
+        <ChartLine dataKey={y} stroke={`var(--color-${y})`} strokeWidth={2} />
       </LineChart>
     </ChartFrame>
   );

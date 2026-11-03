@@ -237,7 +237,7 @@ uv run --project tests --frozen playwright install chromium        # first time 
 
 # The verb appends your path to a hardcoded `tests/stand` and pytest unions path
 # arguments — so a path here does NOT narrow the run. Use -k, or pytest directly.
-./dev-compose.sh test-stand test -k login --headed
+./dev-compose.sh test-stand test --instance=worktree -k login --headed
 
 uv run --project tests --frozen pytest tests/stand/ui                  # a real subset
 uv run --project tests --frozen pytest tests/stand/ui/test_login.py --headed
@@ -247,6 +247,9 @@ uv run --project tests --frozen pytest tests/stand/ui/test_login.py --headed
 # the mode remains for a locally built one.
 ./dev-compose.sh test-stand test --image <locally-built-suite-image>
 ```
+
+A direct pytest run against an instance needs the variables `insight-stand`
+lists under Commands.
 
 In `--image` mode test paths are **image-side** (`/tests/stand/ui`), and
 pytest-playwright's artefacts still land in `./test-results`.

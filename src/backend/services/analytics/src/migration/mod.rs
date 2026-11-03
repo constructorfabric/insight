@@ -1,76 +1,11 @@
 //! Database migrations for the Analytics API service.
 
-mod m20260414_000001_init;
-mod m20260422_000001_seed_metrics;
-mod m20260423_000001_seed_metrics_honest_nulls;
-mod m20260428_000001_collab_metrics_update;
-mod m20260429_000001_task_delivery_silver_rewrite;
-mod m20260430_000001_update_git_bullet;
-mod m20260507_000001_seed_crm_metrics;
-mod m20260515_000001_task_delivery_bullet_rewrite;
-mod m20260518_000001_collab_bullet_rewrite;
-mod m20260519_000001_ai_bullet_rewrite;
-mod m20260520_000001_code_quality_bullet_rewrite;
-mod m20260522_000001_metric_catalog;
-mod m20260522_000002_metric_threshold;
-mod m20260522_000003_threshold_lock_audit;
-mod m20260527_000001_seed_metric_catalog;
-mod m20260527_000002_seed_metric_views;
-mod m20260529_000001_metric_query_catalog_link;
-mod m20260601_000001_ai_claude_team_metrics;
-mod m20260601_000002_seed_claude_team_metrics_catalog;
-mod m20260603_000001_seed_crm_metric_catalog;
-mod m20260603_000002_link_crm_query_catalog;
-mod m20260604_000001_task_delivery_bullet_distribution;
-mod m20260604_000002_collab_bullet_distribution;
-mod m20260604_000004_code_quality_bullet_distribution;
-mod m20260604_000005_git_bullet_distribution;
-mod m20260604_000006_ic_kpis_peer_median;
-mod m20260604_000009_member_metric_values;
-mod m20260606_000001_dept_metric_distributions;
-mod m20260609_000001_ai_chatgpt_team_metrics;
-mod m20260609_000002_seed_chatgpt_team_metrics_catalog;
-mod m20260610_000001_fix_ai_label_drift;
-mod m20260611_000001_ai_bullet_dept_reconcile;
-mod m20260612_000001_support_metrics;
-mod m20260612_000001_team_git_bullet;
-mod m20260612_000002_seed_support_catalog;
-mod m20260612_000003_link_support_query_catalog;
-mod m20260618_000001_ai_claude_team_overage_metric;
-mod m20260618_000002_seed_claude_team_overage_catalog;
-mod m20260620_000001_seed_wiki_metrics;
-mod m20260620_000002_seed_wiki_catalog;
-mod m20260623_000001_ai_personal_queries;
-mod m20260623_000002_seed_ai_personal_metric_catalog;
-mod m20260624_000001_collab_zulip_chat;
-mod m20260624_000002_seed_zulip_collab_catalog;
-mod m20260624_000003_ic_chart_loc_git_breakdown;
-mod m20260625_000001_metric_definitions;
-mod m20260701_000001_devendor_email_labels;
-mod m20260702_000001_collab_messaging_queries;
-mod m20260702_000002_seed_collab_messaging_catalog;
-mod m20260709_000001_metric_median_computation;
-mod m20260710_000001_metric_distinct_count_computation;
-mod m20260714_000001_metric_value_transform;
-mod m20260721_000001_metric_definition_short_label;
-mod m20260722_000001_metric_definition_last_observed;
-mod m20260727_000001_metric_evidence;
-mod m20260730_000001_saved_queries;
-mod m20260805_000001_semantic_definition_core;
-mod m20260806_000001_metric_custom_observation_sql;
-mod m20260810_000001_metric_definition_subject;
-mod m20260810_000002_metric_definition_tags;
-mod m20260811_000001_metric_source_measure_alias_collapse;
-pub mod m20260822_000001_feedback;
-pub mod m20260822_000002_ai_assist;
-mod m20260823_000001_ratio_denominator_aggregation;
-mod m20260824_000001_metric_percentile_stddev_computation;
-mod m20260825_000001_metric_evidence_presentation;
-mod m20260903_000001_metric_definition_first_observed;
+pub(crate) mod ai_assist_schema;
+pub(crate) mod feedback_schema;
 mod m20261014_000001_drop_unread_catalog_tables;
-pub(crate) use m20260822_000001_feedback::feedback_schema;
-pub(crate) use m20260822_000002_ai_assist::ai_assist_schema;
+mod m20261030_000001_baseline;
 
+use insight_migration::squash;
 use sea_orm_migration::prelude::*;
 
 pub struct Migrator;
@@ -78,113 +13,67 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![
-            Box::new(m20260414_000001_init::Migration),
-            Box::new(m20260422_000001_seed_metrics::Migration),
-            Box::new(m20260423_000001_seed_metrics_honest_nulls::Migration),
-            Box::new(m20260428_000001_collab_metrics_update::Migration),
-            Box::new(m20260429_000001_task_delivery_silver_rewrite::Migration),
-            Box::new(m20260430_000001_update_git_bullet::Migration),
-            Box::new(m20260507_000001_seed_crm_metrics::Migration),
-            Box::new(m20260515_000001_task_delivery_bullet_rewrite::Migration),
-            Box::new(m20260518_000001_collab_bullet_rewrite::Migration),
-            Box::new(m20260519_000001_ai_bullet_rewrite::Migration),
-            Box::new(m20260520_000001_code_quality_bullet_rewrite::Migration),
-            Box::new(m20260522_000001_metric_catalog::Migration),
-            Box::new(m20260522_000002_metric_threshold::Migration),
-            Box::new(m20260522_000003_threshold_lock_audit::Migration),
-            Box::new(m20260527_000001_seed_metric_catalog::Migration),
-            Box::new(m20260527_000002_seed_metric_views::Migration),
-            Box::new(m20260529_000001_metric_query_catalog_link::Migration),
-            Box::new(m20260601_000001_ai_claude_team_metrics::Migration),
-            Box::new(m20260601_000002_seed_claude_team_metrics_catalog::Migration),
-            Box::new(m20260603_000001_seed_crm_metric_catalog::Migration),
-            Box::new(m20260603_000002_link_crm_query_catalog::Migration),
-            Box::new(m20260604_000001_task_delivery_bullet_distribution::Migration),
-            Box::new(m20260604_000002_collab_bullet_distribution::Migration),
-            Box::new(m20260604_000004_code_quality_bullet_distribution::Migration),
-            Box::new(m20260604_000005_git_bullet_distribution::Migration),
-            Box::new(m20260604_000006_ic_kpis_peer_median::Migration),
-            Box::new(m20260604_000009_member_metric_values::Migration),
-            Box::new(m20260606_000001_dept_metric_distributions::Migration),
-            Box::new(m20260609_000001_ai_chatgpt_team_metrics::Migration),
-            Box::new(m20260609_000002_seed_chatgpt_team_metrics_catalog::Migration),
-            Box::new(m20260610_000001_fix_ai_label_drift::Migration),
-            Box::new(m20260611_000001_ai_bullet_dept_reconcile::Migration),
-            Box::new(m20260612_000001_support_metrics::Migration),
-            Box::new(m20260612_000001_team_git_bullet::Migration),
-            Box::new(m20260612_000002_seed_support_catalog::Migration),
-            Box::new(m20260612_000003_link_support_query_catalog::Migration),
-            Box::new(m20260618_000001_ai_claude_team_overage_metric::Migration),
-            Box::new(m20260618_000002_seed_claude_team_overage_catalog::Migration),
-            Box::new(m20260620_000001_seed_wiki_metrics::Migration),
-            Box::new(m20260620_000002_seed_wiki_catalog::Migration),
-            Box::new(m20260623_000001_ai_personal_queries::Migration),
-            Box::new(m20260623_000002_seed_ai_personal_metric_catalog::Migration),
-            Box::new(m20260624_000001_collab_zulip_chat::Migration),
-            Box::new(m20260624_000002_seed_zulip_collab_catalog::Migration),
-            Box::new(m20260624_000003_ic_chart_loc_git_breakdown::Migration),
-            Box::new(m20260625_000001_metric_definitions::Migration),
-            Box::new(m20260701_000001_devendor_email_labels::Migration),
-            Box::new(m20260702_000001_collab_messaging_queries::Migration),
-            Box::new(m20260702_000002_seed_collab_messaging_catalog::Migration),
-            Box::new(m20260709_000001_metric_median_computation::Migration),
-            Box::new(m20260710_000001_metric_distinct_count_computation::Migration),
-            Box::new(m20260714_000001_metric_value_transform::Migration),
-            Box::new(m20260721_000001_metric_definition_short_label::Migration),
-            Box::new(m20260722_000001_metric_definition_last_observed::Migration),
-            Box::new(m20260727_000001_metric_evidence::Migration),
-            Box::new(m20260730_000001_saved_queries::Migration),
-            Box::new(m20260805_000001_semantic_definition_core::Migration),
-            Box::new(m20260806_000001_metric_custom_observation_sql::Migration),
-            Box::new(m20260810_000001_metric_definition_subject::Migration),
-            Box::new(m20260810_000002_metric_definition_tags::Migration),
-            Box::new(m20260811_000001_metric_source_measure_alias_collapse::Migration),
-            Box::new(m20260822_000001_feedback::Migration),
-            Box::new(m20260822_000002_ai_assist::Migration),
-            Box::new(m20260823_000001_ratio_denominator_aggregation::Migration),
-            Box::new(m20260824_000001_metric_percentile_stddev_computation::Migration),
-            Box::new(m20260825_000001_metric_evidence_presentation::Migration),
-            Box::new(m20260903_000001_metric_definition_first_observed::Migration),
-            Box::new(m20261014_000001_drop_unread_catalog_tables::Migration),
-        ]
+        // INVARIANT: the baseline runs before the squashed names are recorded;
+        // recorded first, they would read as a complete history and the
+        // baseline would skip building the schema.
+        let mut migrations: Vec<Box<dyn MigrationTrait>> =
+            vec![Box::new(m20261030_000001_baseline::Migration)];
+        migrations.extend(squash::squashed(m20261030_000001_baseline::SQUASHED));
+        migrations.push(Box::new(
+            m20261014_000001_drop_unread_catalog_tables::Migration,
+        ));
+        migrations
     }
 }
 
 /// Per-table CHECK constraint names that the startup probe asserts present.
 ///
 /// Source of truth for the probe in `infra/db/check_probe.rs`. Each entry maps
-/// a table name to the CHECK names the corresponding migration emits.
+/// a table name to the CHECK names the baseline creates.
 pub const REQUIRED_CHECKS_BY_TABLE: &[(&str, &[&str])] = &[
     (
         "metric_sources",
-        m20260625_000001_metric_definitions::REQUIRED_SOURCE_CHECKS,
+        m20261030_000001_baseline::REQUIRED_SOURCE_CHECKS,
     ),
     (
         "metric_source_measures",
-        m20260625_000001_metric_definitions::REQUIRED_SOURCE_MEASURE_CHECKS,
+        m20261030_000001_baseline::REQUIRED_SOURCE_MEASURE_CHECKS,
     ),
     (
         "metric_source_dimensions",
-        m20260625_000001_metric_definitions::REQUIRED_SOURCE_DIMENSION_CHECKS,
+        m20261030_000001_baseline::REQUIRED_SOURCE_DIMENSION_CHECKS,
     ),
     (
         "metric_definitions",
-        m20260625_000001_metric_definitions::REQUIRED_DEFINITION_CHECKS,
+        m20261030_000001_baseline::REQUIRED_DEFINITION_CHECKS,
     ),
     (
         "metric_definition_dimensions",
-        m20260625_000001_metric_definitions::REQUIRED_DIMENSION_CHECKS,
+        m20261030_000001_baseline::REQUIRED_DIMENSION_CHECKS,
     ),
     (
         "metric_definition_tags",
-        m20260810_000002_metric_definition_tags::REQUIRED_TAG_CHECKS,
+        m20261030_000001_baseline::REQUIRED_TAG_CHECKS,
     ),
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_baseline_runs_first_and_the_squashed_names_follow_in_order() {
+        let migrations = Migrator::migrations();
+        let names: Vec<&str> = migrations.iter().map(|m| m.name()).collect();
+        let squashed = m20261030_000001_baseline::SQUASHED;
+
+        assert_eq!(names.first(), Some(&"m20261030_000001_baseline"));
+        assert_eq!(&names[1..=squashed.len()], squashed);
+        assert_eq!(
+            names.get(squashed.len() + 1),
+            Some(&"m20261014_000001_drop_unread_catalog_tables")
+        );
+    }
 
     /// A table whose migration declares CHECKs must be registered in
     /// [`REQUIRED_CHECKS_BY_TABLE`], or the probe never reports them missing.
@@ -196,27 +85,27 @@ mod tests {
         let expected: &[(&str, &[&str])] = &[
             (
                 "metric_sources",
-                m20260625_000001_metric_definitions::REQUIRED_SOURCE_CHECKS,
+                m20261030_000001_baseline::REQUIRED_SOURCE_CHECKS,
             ),
             (
                 "metric_source_measures",
-                m20260625_000001_metric_definitions::REQUIRED_SOURCE_MEASURE_CHECKS,
+                m20261030_000001_baseline::REQUIRED_SOURCE_MEASURE_CHECKS,
             ),
             (
                 "metric_source_dimensions",
-                m20260625_000001_metric_definitions::REQUIRED_SOURCE_DIMENSION_CHECKS,
+                m20261030_000001_baseline::REQUIRED_SOURCE_DIMENSION_CHECKS,
             ),
             (
                 "metric_definitions",
-                m20260625_000001_metric_definitions::REQUIRED_DEFINITION_CHECKS,
+                m20261030_000001_baseline::REQUIRED_DEFINITION_CHECKS,
             ),
             (
                 "metric_definition_dimensions",
-                m20260625_000001_metric_definitions::REQUIRED_DIMENSION_CHECKS,
+                m20261030_000001_baseline::REQUIRED_DIMENSION_CHECKS,
             ),
             (
                 "metric_definition_tags",
-                m20260810_000002_metric_definition_tags::REQUIRED_TAG_CHECKS,
+                m20261030_000001_baseline::REQUIRED_TAG_CHECKS,
             ),
         ];
 

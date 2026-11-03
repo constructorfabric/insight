@@ -200,7 +200,7 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
               axisLine={false}
             />
             <ChartTooltip content={<ChartTooltipContent className="min-w-40" />} />
-            <ChartBar dataKey={COUNT_KEY} name="Count" radius={[2, 2, 0, 0]}>
+            <ChartBar dataKey={COUNT_KEY} name="Count">
               {rows.map((row) => (
                 <Cell
                   key={row.label}

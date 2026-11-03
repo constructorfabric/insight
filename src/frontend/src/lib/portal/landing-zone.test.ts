@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 
 import { landingDecision, type LandingDecision } from "./landing-zone";
 
-const resolved = { mgrPending: false, adminPending: false };
+const resolved = { mgrPending: false, adminPending: false, homeShown: true };
+const unresolved = { mgrPending: true, adminPending: true, homeShown: true };
 
 describe("landingDecision", () => {
   it.each<
@@ -21,13 +22,45 @@ describe("landingDecision", () => {
         canSeeOthers: false,
         adminPending: false,
         isAdmin: false,
+        homeShown: true,
       },
       "wait",
     ],
     [
-      "manager on bare /portal lands on the org rollup",
-      { zone: null, ...resolved, canSeeOthers: true, isAdmin: false },
-      "pin-overview",
+      "anyone on bare /portal lands on Home without waiting",
+      { zone: null, ...unresolved, canSeeOthers: false, isAdmin: false },
+      "keep",
+    ],
+    [
+      "Home stands without waiting",
+      { zone: "overview", ...unresolved, canSeeOthers: false, isAdmin: false },
+      "keep",
+    ],
+    [
+      "the viewer's own page stands without waiting",
+      { zone: "person", ...unresolved, canSeeOthers: false, isAdmin: false },
+      "keep",
+    ],
+    [
+      "Dashboards stand without waiting",
+      { zone: "custom", ...unresolved, canSeeOthers: false, isAdmin: false },
+      "keep",
+    ],
+    [
+      "Home is left when the install does not show it",
+      {
+        zone: "overview",
+        ...resolved,
+        homeShown: false,
+        canSeeOthers: true,
+        isAdmin: false,
+      },
+      "reset",
+    ],
+    [
+      "an IC keeps Home",
+      { zone: "overview", ...resolved, canSeeOthers: false, isAdmin: false },
+      "keep",
     ],
     [
       "manager keeps whatever zone they picked",
@@ -35,24 +68,8 @@ describe("landingDecision", () => {
       "keep",
     ],
     [
-      "manager stays route-driven when Overview is absent from navigation",
-      {
-        zone: null,
-        ...resolved,
-        canSeeOthers: true,
-        isAdmin: false,
-        overviewVisible: false,
-      },
-      "keep",
-    ],
-    [
-      "an IC keeps the route-driven person view",
-      { zone: null, ...resolved, canSeeOthers: false, isAdmin: false },
-      "keep",
-    ],
-    [
       "an IC on an org zone is reset",
-      { zone: "overview", ...resolved, canSeeOthers: false, isAdmin: false },
+      { zone: "directions", ...resolved, canSeeOthers: false, isAdmin: false },
       "reset",
     ],
     [
@@ -63,6 +80,7 @@ describe("landingDecision", () => {
         canSeeOthers: false,
         adminPending: true,
         isAdmin: false,
+        homeShown: true,
       },
       "wait",
     ],

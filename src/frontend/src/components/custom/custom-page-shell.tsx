@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { PanelRightClose, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { useAssistantDraft } from "@/lib/custom/assistant-draft";
 
 const HIDDEN_KEY = "insight.custom.assistant-hidden";
 
@@ -23,7 +24,14 @@ export function CustomPageShell({
   /** Absent for a caller the assistant is not open to. */
   chat?: ReactNode;
 }) {
-  const [hidden, setHidden] = useState(remembered);
+  const asked = useAssistantDraft();
+  const [hidden, setHidden] = useState(() => asked === null && remembered());
+  const [seenDraft, setSeenDraft] = useState(asked);
+
+  if (asked !== seenDraft) {
+    setSeenDraft(asked);
+    if (asked !== null) setHidden(false);
+  }
 
   if (chat === undefined) {
     return (

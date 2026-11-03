@@ -58,7 +58,7 @@ logging:
   default:
     console_level: info
 gears:
-  gear-orchestrator:
+  service-discovery:
     config: {{}}
   grpc-hub:
     config:

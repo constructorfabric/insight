@@ -20,12 +20,10 @@ function EditDefinition() {
 
 function NoSuchKind() {
   return (
-    <div className="p-4 md:p-6">
-      <ComingSoon
-        variant="card"
-        state="empty"
-        label="There is no such kind of definition."
-      />
-    </div>
+    <ComingSoon
+      variant="card"
+      state="empty"
+      label="There is no such kind of definition."
+    />
   );
 }

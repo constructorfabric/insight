@@ -10,6 +10,7 @@ import type {
   ChatTurn,
   DashboardAccess,
   DashboardListed,
+  DatasetListed,
   DashboardRead,
   DrilldownPage,
   DrilldownRequest,
@@ -18,6 +19,8 @@ import type {
   EditableKind,
   FolderFilter,
   Listed,
+  MetricListed,
+  WidgetListed,
   GrantLevel,
   GrantTarget,
   Grantee,
@@ -31,7 +34,6 @@ import type {
 import {
   addToFolder,
   createDefinition,
-  createFolder,
   deleteDataset,
   deleteDefinition,
   deleteFolder,
@@ -62,7 +64,7 @@ import {
   putDefinition,
   putGrant,
   removeFromFolder,
-  renameDefinition,
+  renameDashboard,
   renameFolder,
   runDashboardWidget,
   runMetric,
@@ -92,17 +94,19 @@ const ORPHANED_PREFIX = ["custom", "orphaned"] as const;
 const DASHBOARD_PREFIX = ["custom", "dashboard"] as const;
 
 interface Catalogued {
-  metrics: Listed;
-  widgets: Listed;
+  metrics: MetricListed;
+  widgets: WidgetListed;
   dashboards: DashboardListed;
-  datasets: Listed;
+  datasets: DatasetListed;
 }
 
-async function fetchDatasetPage(page: PageRequest): Promise<ListedPage> {
+async function fetchDatasetPage(
+  page: PageRequest
+): Promise<ListedPage<DatasetListed>> {
   const read = await fetchDatasetNames(page);
 
   return {
-    items: read.names.map((name) => ({ id: name, name })),
+    items: read.items.map((item) => ({ ...item, id: item.name })),
     total: read.total,
   };
 }
@@ -164,6 +168,14 @@ export function definitionPagesQuery<K extends EditableKind>(
       const read = pages.reduce((count, page) => count + page.items.length, 0);
       return read < last.total ? read : undefined;
     },
+  });
+}
+
+/** The caller's own dashboards, most recently changed first. */
+export function recentDashboardsQuery(count: number) {
+  return queryOptions({
+    queryKey: [...NAME_PAGES_PREFIX, "dashboards", "recent", count],
+    queryFn: () => fetchDashboards({ sort: "recent", limit: count }),
   });
 }
 
@@ -497,30 +509,28 @@ export function useStoreDefinition() {
   });
 }
 
-export function useRenameDefinition() {
+export function useRenameDashboard() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      kind,
-      id,
-      to,
-    }: {
-      kind: DefinitionKind;
-      id: string;
-      to: string;
-    }) => renameDefinition(kind, id, to),
+    mutationFn: ({ id, to }: { id: string; to: string }) =>
+      renameDashboard(id, to),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["custom"] }),
   });
 }
 
-export function useCreateFolder() {
-  const queryClient = useQueryClient();
+export async function grantViewers(
+  target: GrantTarget,
+  grantees: readonly Grantee[]
+): Promise<{ refused: unknown } | null> {
+  const shares = await Promise.allSettled(
+    grantees.map((grantee) => putGrant(target, grantee, "viewer"))
+  );
+  const refused = shares.find(
+    (share): share is PromiseRejectedResult => share.status === "rejected"
+  );
 
-  return useMutation({
-    mutationFn: (name: string) => createFolder(name),
-    onSettled: () => invalidateDashboardList(queryClient),
-  });
+  return refused ? { refused: refused.reason } : null;
 }
 
 export function useRenameFolder() {

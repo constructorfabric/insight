@@ -20,15 +20,22 @@ export interface ViewerReach {
   isManager: boolean;
   /** Neither answer is in yet; callers should wait rather than collapse. */
   isPending: boolean;
+  /** The roster failed, so the wait will not end on its own. */
+  isError: boolean;
 }
 
 export function useViewerReach(): ViewerReach {
-  const { isManager, isPending: treePending } = useViewerIsManager();
+  const {
+    isManager,
+    isPending: treePending,
+    isError: treeError,
+  } = useViewerIsManager();
   const policy = useVisibilityPolicy();
 
   return {
     canSeeOthers: policy.isFlat || isManager,
     isManager,
     isPending: treePending || policy.isPending,
+    isError: treeError,
   };
 }

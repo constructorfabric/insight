@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 
+import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuBadge,
   SidebarMenuButton,
@@ -26,9 +26,20 @@ const BADGE_TONE: Record<string, string> = {
   error: "bg-destructive/15 text-destructive",
 };
 
-export function CountBadge({ children }: { children: ReactNode }) {
+export function CountBadge({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <SidebarMenuBadge className="rounded-full bg-muted px-1.5 font-normal text-muted-foreground">
+    <SidebarMenuBadge
+      className={cn(
+        "rounded-full bg-muted px-1.5 font-normal text-muted-foreground",
+        className
+      )}
+    >
       {children}
     </SidebarMenuBadge>
   );
@@ -53,6 +64,7 @@ export function UnbuiltRow({ item }: { item: PaneItem }) {
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
+        data-planned
         aria-disabled
         className="text-muted-foreground aria-disabled:opacity-100"
       >
@@ -83,6 +95,7 @@ export function ItemButton({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
+        data-planned={item.readiness != null || undefined}
         isActive={active}
         onClick={() => {
           if (onPick) onPick();
@@ -115,7 +128,7 @@ export function GroupsNav({
       {groups.map((g, i) =>
         split[i]!.live.length ? (
           <SidebarGroup key={g.label ?? i}>
-            {g.label ? <SidebarGroupLabel>{g.label}</SidebarGroupLabel> : null}
+            {g.label ? <PaneGroupLabel>{g.label}</PaneGroupLabel> : null}
             <SidebarGroupContent>
               <SidebarMenu>
                 {split[i]!.live.map((it) => (
@@ -128,7 +141,7 @@ export function GroupsNav({
       )}
       {planned.length ? (
         <SidebarGroup>
-          <SidebarGroupLabel>{PLANNED_GROUP_LABEL}</SidebarGroupLabel>
+          <PaneGroupLabel>{PLANNED_GROUP_LABEL}</PaneGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {planned.map((it) => (

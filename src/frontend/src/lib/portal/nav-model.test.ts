@@ -30,7 +30,7 @@ describe("zone item defaults", () => {
       aicost: "overview",
       reports: "report-builder",
       custom: null,
-      manage: "exclusions",
+      manage: "ai-assistant",
     });
   });
 
@@ -103,7 +103,7 @@ describe("resolveZoneItem", () => {
 
   it("keeps a Manage item the URL names, and falls back for one it does not", () => {
     expect(resolveZoneItem("manage", "connector-health")).toBe("connector-health");
-    expect(resolveZoneItem("manage", "trend")).toBe("exclusions");
+    expect(resolveZoneItem("manage", "trend")).toBe("ai-assistant");
   });
 
   it("stays null for a zone with no catalog items", () => {
@@ -112,7 +112,7 @@ describe("resolveZoneItem", () => {
 
   it("never opens a row that has nothing behind it yet", () => {
     expect(resolveZoneItem("reports", "snapshots")).toBe("report-builder");
-    expect(resolveZoneItem("manage", "access")).toBe("exclusions");
+    expect(resolveZoneItem("manage", "exclusions")).toBe("ai-assistant");
   });
 });
 

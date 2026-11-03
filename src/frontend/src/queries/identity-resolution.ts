@@ -164,18 +164,6 @@ export type PersonListSource = "identities" | "roster";
 export type AccountListIntent = "browse" | "match";
 
 /**
- * How much has to be typed before a term searches at all.
- *
- * A single character names most of the roster, so the answer is no use to the
- * operator — and the service still pays a pass over the person journal to
- * produce it. Two is where a term starts to mean something: it is also the whole
- * of a name in scripts that write one glyph per syllable, which a higher floor
- * would put out of reach entirely. A blank field is a different question and
- * keeps its own answer.
- */
-export const MIN_SEARCH_CHARS = 2;
-
-/**
  * The ceiling the identity search surfaces check server-side —
  * `listing::MAX_QUERY_CHARS` on `/v1/persons`, `/v1/visible-persons`,
  * `/v1/people`, and `/v1/resolution/accounts`. Declared here so a field can
@@ -192,76 +180,19 @@ export const MAX_SEARCH_CHARS = 200;
 export const SEARCH_DEBOUNCE_MS = 400;
 
 /**
- * Characters as the person typing counts them. `String.length` counts UTF-16
- * units, so one astral glyph reads as two and would buy a search on its own.
- */
-function typedLength(q: string): number {
-  return [...q].length;
-}
-
-/**
- * The shortest predicate the person search would actually send.
- *
- * INVARIANT: measured per TERM, not per field. The service splits `q` on
- * whitespace and matches every term against the journal on its own, so `a b` is
- * two one-character passes — the field length would call that three characters
- * and wave through exactly the query the floor exists to stop.
- */
-function shortestTerm(q: string): number {
-  const terms = q.split(/\s+/).filter((term) => term.length > 0);
-  return terms.length === 0 ? 0 : Math.min(...terms.map(typedLength));
-}
-
-/**
- * The account needle is ONE predicate, its spaces included — `ada ex` matches a
- * display name across the gap — so there the field's own length is the measure.
- */
-function needleLength(q: string): number {
-  return typedLength(q.trim());
-}
-
-/**
- * Whether these terms ask for anything under this intent.
+ * Whether these terms ask for anything under this intent: any typed character
+ * searches, and a blank field lists only where a listing is wanted.
  *
  * INVARIANT: one rule, used by both the query's fetch gate and the caller's
  * display. A picker that renders rows the query never asked for is showing
- * another caller's cache — and one that renders rows for terms too short to
- * search is showing the answer to a different question.
+ * another caller's cache.
  */
 export function listsAnyone(q: string, intent: PersonListIntent): boolean {
-  return searches(shortestTerm(q), intent === "browse");
+  return q.trim() !== "" || intent === "browse";
 }
 
-/**
- * The same question for the account listing. Its needle is one predicate, so the
- * floor measures the field; what a blank field means is the caller's to say.
- */
 export function listsAnyAccount(q: string, intent: AccountListIntent): boolean {
-  return searches(needleLength(q), intent === "browse");
-}
-
-/**
- * Typed something, but not yet enough to search — what the person field says
- * instead of going silent. The message names the term, because that is what the
- * floor measures.
- */
-export function belowPersonFloor(q: string): boolean {
-  return belowFloor(shortestTerm(q));
-}
-
-/** The same for the account field, over its single needle. */
-export function belowAccountFloor(q: string): boolean {
-  return belowFloor(needleLength(q));
-}
-
-/** The floor itself: blank asks for a listing only where one is wanted. */
-function searches(measured: number, blankLists: boolean): boolean {
-  if (measured === 0) return blankLists;
-  return measured >= MIN_SEARCH_CHARS;
-}
-
-function belowFloor(measured: number): boolean {
-  return measured > 0 && measured < MIN_SEARCH_CHARS;
+  return q.trim() !== "" || intent === "browse";
 }
 
 export function usePersonList(

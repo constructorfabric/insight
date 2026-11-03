@@ -1,9 +1,10 @@
-import { Area, AreaChart } from "recharts";
+import { AreaChart } from "recharts";
 
 import type { MetricResult } from "@/api/custom-client";
 import { points, seriesConfig } from "@/components/custom/chart-data";
 import { unitFor } from "@/components/custom/chart-format";
 import { ChartFrame, SeriesAxes } from "@/components/custom/chart-frame";
+import { ChartArea } from "@/components/ui/chart";
 
 export interface CustomAreaChartProps {
   result: MetricResult;
@@ -37,9 +38,8 @@ export function CustomAreaChart({ result, x, y }: CustomAreaChartProps) {
           categories={data.map((point) => point[x])}
           unit={unitFor(result.percents, y)}
         />
-        <Area
+        <ChartArea
           dataKey={y}
-          type="monotone"
           stroke={`var(--color-${y})`}
           strokeWidth={2}
           fill={`url(#${gradient})`}

@@ -25,7 +25,7 @@ gears:
         description: "OIDC login, opaque sessions, and the cookie-to-JWT exchange (BFF / token-handler)"
       auth_disabled: false
 
-  gear-orchestrator:
+  service-discovery:
     config: {}
 
   grpc-hub:

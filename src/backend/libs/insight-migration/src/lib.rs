@@ -20,6 +20,8 @@
 //! makes it impossible to hand this function a pool that would scatter those
 //! statements across sessions.
 
+pub mod squash;
+
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::time::Duration;

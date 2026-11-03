@@ -16,9 +16,11 @@ same limitation the other generated documents carry.
 """
 
 from __future__ import annotations
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+
 from enum import StrEnum
 from typing import Any
+
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 
 class CreateExperimentRequest(BaseModel):

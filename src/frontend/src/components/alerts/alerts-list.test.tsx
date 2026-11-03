@@ -47,7 +47,7 @@ beforeEach(() => {
 });
 
 describe("AlertsList", () => {
-  it("lists each alert with its metric by name and links to both by id", async () => {
+  it("lists each alert with its metric by name and links to it by id", async () => {
     vi.mocked(alertsClient.fetchAlerts).mockResolvedValue(page([SUMMARY]));
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
       name: "Open pull requests",
@@ -59,9 +59,7 @@ describe("AlertsList", () => {
     expect(
       await screen.findByRole("link", { name: "Too many open PRs" })
     ).toHaveAttribute("href", "/portal/custom/alerts/a1");
-    expect(
-      await screen.findByRole("link", { name: "Open pull requests" })
-    ).toHaveAttribute("href", "/portal/custom/metrics/prs-open");
+    expect(await screen.findByText("Open pull requests")).toBeInTheDocument();
     expect(customClient.fetchMetric).toHaveBeenCalledWith("prs-open");
     expect(screen.getByRole("button", { name: "New alert" })).toHaveAttribute(
       "href",
@@ -244,6 +242,8 @@ describe("AlertsList", () => {
         ),
       { timeout: 2_000 }
     );
-    expect(await screen.findByText("No matching alerts")).toBeInTheDocument();
+    expect(
+      await screen.findByText("No alerts match your search")
+    ).toBeInTheDocument();
   });
 });

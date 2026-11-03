@@ -1,23 +1,29 @@
 import {
+  CalendarClock,
   Copy,
   Ellipsis,
-  FolderPlus,
+  FileDown,
   Pin,
   PinOff,
+  Share2,
   Tags,
   TextCursorInput,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
-import type { DashboardAccess } from "@/api/custom-client";
+import type { DashboardAccess, Folder } from "@/api/custom-client";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   DeleteDashboard,
   DuplicateDashboard,
   RenameDashboard,
 } from "@/components/custom/dashboard-dialogs";
-import { AddToFolder } from "@/components/custom/dashboard-folders";
+import { CreateFolderDialog } from "@/components/custom/create-folder-dialog";
+import { FolderSubmenu } from "@/components/custom/dashboard-folders";
+import { refusal } from "@/components/custom/refusal";
 import { EditTags } from "@/components/custom/edit-tags";
+import { ShareDialog } from "@/components/custom/share-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -26,16 +32,20 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { toast } from "@/components/ui/sonner";
 import { usePinToggle } from "@/hooks/use-pin-toggle";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
+import { useAddToFolder } from "@/queries/custom";
 
-type Asked = "rename" | "duplicate" | "delete" | "folder" | "tags";
+type Asked = "rename" | "duplicate" | "delete" | "folder" | "tags" | "share";
 
 export function DashboardMenu({
   id,
   name,
   title,
   access,
+  share,
+  planned = false,
   onDuplicated,
   onDeleted,
 }: {
@@ -43,6 +53,9 @@ export function DashboardMenu({
   name: string;
   title?: string;
   access: DashboardAccess;
+  share?: { ownerPersonId: string | null };
+  /** Whether to list the actions not built yet, as an open dashboard does. */
+  planned?: boolean;
   onDuplicated?: (id: string) => void;
   onDeleted?: () => void;
 }) {
@@ -50,8 +63,34 @@ export function DashboardMenu({
   const [asked, setAsked] = useState<Asked | null>(null);
   const pin = usePinToggle(id, open);
   const allows = dashboardAllows(access);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const file = useAddToFolder();
+  const fileInNewFolder = useAddToFolder();
+  // INVARIANT: `sharing` outlives `askingShare`, so the dialog keeps the folder's name while it animates closed.
+  const [sharing, setSharing] = useState<Folder | null>(null);
+  const [askingShare, setAskingShare] = useState(false);
 
   const done = () => setAsked(null);
+
+  function askShare(folder: Folder) {
+    file.reset();
+    setSharing(folder);
+    setAskingShare(true);
+  }
+
+  function fileInNew(folder: Folder, shared: boolean) {
+    if (shared) {
+      askShare(folder);
+      return;
+    }
+    fileInNewFolder.mutate(
+      { folder: folder.id, dashboard: id },
+      {
+        onError: (error) =>
+          toast.error(refusal(error, "Couldn't add it to the folder.")),
+      }
+    );
+  }
 
   return (
     <>
@@ -59,6 +98,7 @@ export function DashboardMenu({
         <DropdownMenuTrigger
           render={
             <Button
+              ref={trigger}
               type="button"
               variant="ghost"
               size="icon-sm"
@@ -68,27 +108,47 @@ export function DashboardMenu({
             />
           }
         />
-        <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuContent align="end" className={planned ? "w-64" : "w-56"}>
+          {allows.edit ? (
+            <DropdownMenuItem onClick={() => setAsked("duplicate")}>
+              <Copy />
+              Duplicate…
+            </DropdownMenuItem>
+          ) : null}
+          {share ? (
+            <DropdownMenuItem onClick={() => setAsked("share")}>
+              <Share2 />
+              Share…
+            </DropdownMenuItem>
+          ) : null}
+          {planned ? (
+            <>
+              <PlannedItem icon={<FileDown />} label="Export snapshot (PDF)" />
+              <PlannedItem icon={<CalendarClock />} label="Schedule report…" />
+            </>
+          ) : null}
+          {allows.edit ? (
+            <DropdownMenuItem onClick={() => setAsked("rename")}>
+              <TextCursorInput />
+              Rename…
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem disabled={!pin.ready} onClick={pin.toggle}>
             {pin.pinned ? <PinOff /> : <Pin />}
             {pin.pinned ? "Unpin" : "Pin"}
           </DropdownMenuItem>
-          {allows.edit ? (
-            <>
-              <DropdownMenuItem onClick={() => setAsked("rename")}>
-                <TextCursorInput />
-                Rename…
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setAsked("duplicate")}>
-                <Copy />
-                Duplicate…
-              </DropdownMenuItem>
-            </>
-          ) : null}
-          <DropdownMenuItem onClick={() => setAsked("folder")}>
-            <FolderPlus />
-            Add to folder…
-          </DropdownMenuItem>
+          <FolderSubmenu
+            id={id}
+            access={access}
+            // INVARIANT: a new folder has an owner, and an ownerless dashboard is filed only in ownerless folders.
+            onNewFolder={
+              access === "ownerless" ? undefined : () => setAsked("folder")
+            }
+            onShareInto={(folder) => {
+              setOpen(false);
+              askShare(folder);
+            }}
+          />
           {allows.edit ? (
             <DropdownMenuItem onClick={() => setAsked("tags")}>
               <Tags />
@@ -109,12 +169,41 @@ export function DashboardMenu({
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
-      <AddToFolder
-        id={id}
-        name={name}
-        access={access}
+      {share ? (
+        <ShareDialog
+          target={{ kind: "dashboards", id }}
+          title={title || name}
+          ownerPersonId={share.ownerPersonId}
+          open={asked === "share"}
+          onClose={done}
+        />
+      ) : null}
+      <CreateFolderDialog
         open={asked === "folder"}
         onClose={done}
+        onCreated={fileInNew}
+      />
+      <ConfirmDialog
+        open={askingShare}
+        onOpenChange={(next) => {
+          if (!next) setAskingShare(false);
+        }}
+        title={`Add to ${sharing?.name ?? ""}?`}
+        description={`People with access to ${sharing?.name ?? ""} will see this dashboard.`}
+        confirmLabel="Add"
+        isPending={file.isPending}
+        error={
+          file.isError
+            ? refusal(file.error, "Couldn't add it to the folder.")
+            : null
+        }
+        onConfirm={() => {
+          if (!sharing) return;
+          file.mutate(
+            { folder: sharing.id, dashboard: id },
+            { onSuccess: () => setAskingShare(false) }
+          );
+        }}
       />
       {allows.remove ? (
         <DeleteDashboard
@@ -129,7 +218,7 @@ export function DashboardMenu({
         <>
           <RenameDashboard
             id={id}
-            name={name}
+            name={title || name}
             open={asked === "rename"}
             onClose={done}
           />
@@ -142,12 +231,22 @@ export function DashboardMenu({
           />
           <EditTags
             id={id}
-            name={name}
             open={asked === "tags"}
+            anchor={trigger}
             onClose={done}
           />
         </>
       ) : null}
     </>
+  );
+}
+
+function PlannedItem({ icon, label }: { icon: ReactNode; label: string }) {
+  return (
+    <DropdownMenuItem disabled>
+      {icon}
+      {label}
+      <span className="ms-auto text-xs text-muted-foreground">Planned</span>
+    </DropdownMenuItem>
   );
 }

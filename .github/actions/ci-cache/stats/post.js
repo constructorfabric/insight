@@ -1,10 +1,13 @@
 // Append `sccache --show-stats` to the job summary. Never fails the job.
-const { execFileSync } = require("child_process");
-const fs = require("fs");
+const { execFileSync } = require("node:child_process");
+const fs = require("node:fs");
 
+// Absolute path, exported by setup.sh when it started the server.
+const sccache = process.env.CI_CACHE_SCCACHE;
 let stats;
 try {
-  stats = execFileSync("sccache", ["--show-stats"], { encoding: "utf8", timeout: 30000 });
+  if (!sccache) throw new Error("CI_CACHE_SCCACHE is not set");
+  stats = execFileSync(sccache, ["--show-stats"], { encoding: "utf8", timeout: 30000 });
 } catch (e) {
   stats = `sccache --show-stats failed: ${e.message}`;
 }

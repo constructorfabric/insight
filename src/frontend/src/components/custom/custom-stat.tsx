@@ -1,7 +1,6 @@
 import type { MetricResult } from "@/api/custom-client";
 import { groupedNumber, unitFor } from "@/components/custom/chart-format";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
-import { cn } from "@/lib/utils";
 
 export interface CustomStatProps {
   result: MetricResult;
@@ -24,7 +23,7 @@ export function CustomStat({ result, value, label }: CustomStatProps) {
       <span className={TEXT_FIGURE}>
         {groupedNumber(first?.[at], unitFor(result.percents, value))}
       </span>
-      <span className={cn(TEXT_LABEL, "font-mono")}>{label ?? value}</span>
+      <span className={TEXT_LABEL}>{label ?? value}</span>
     </div>
   );
 }

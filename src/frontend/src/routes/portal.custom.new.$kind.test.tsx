@@ -26,6 +26,7 @@ import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as customClient from "@/api/custom-client";
+import { datasetNames } from "@/test/catalogue";
 import { portalRouter } from "@/test/portal-router";
 
 import { Route } from "./portal.custom.new.$kind";
@@ -52,10 +53,7 @@ beforeEach(() => {
   ]) {
     vi.mocked(page).mockResolvedValue(NO_ITEMS);
   }
-  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
-    names: [],
-    total: 0,
-  });
+  vi.mocked(customClient.fetchDatasetNames).mockResolvedValue(datasetNames([]));
 });
 
 describe("/portal/custom/new/$kind", () => {

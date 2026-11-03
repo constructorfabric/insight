@@ -49,7 +49,7 @@ data:
             version: "1.0.0"
             description: "Preview experiments API"
 
-      gear-orchestrator:
+      service-discovery:
         config: {}
 
       grpc-hub:

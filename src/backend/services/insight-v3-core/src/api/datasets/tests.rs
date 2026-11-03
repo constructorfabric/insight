@@ -220,6 +220,93 @@ async fn every_dataset_is_listed_by_name_with_how_many_there_are() {
 }
 
 #[tokio::test]
+async fn each_listed_dataset_carries_its_title_and_field_count_in_the_order_of_names() {
+    let harness = TestHarness::new();
+    let declared = [
+        (
+            "reviews",
+            json!({
+                "title": "Reviews",
+                "fields": [{ "name": "author", "path": "author", "type": "string" }]
+            }),
+        ),
+        ("commits", declaration()),
+    ];
+    for (named, body) in declared {
+        harness.a_free_name();
+        harness.put(named, body).await;
+    }
+
+    let (listed, body) = harness.get("/v1/datasets").await;
+
+    assert_eq!(listed, StatusCode::OK);
+    let answered = read(&body);
+    assert_eq!(
+        answered["names"],
+        json!(["commits", "reviews"]),
+        "{answered}"
+    );
+    let items = answered["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the listing answers items: {answered}"));
+    let cards: Vec<(&serde_json::Value, &serde_json::Value, &serde_json::Value)> = items
+        .iter()
+        .map(|item| (&item["name"], &item["title"], &item["fields"]))
+        .collect();
+    assert_eq!(
+        cards,
+        [
+            (&json!("commits"), &json!("Commits"), &json!(2)),
+            (&json!("reviews"), &json!("Reviews"), &json!(1)),
+        ],
+        "{answered}"
+    );
+    for item in items {
+        let stamp = item["updated_at"].as_str().unwrap_or_default();
+        let shape = chrono::NaiveDateTime::parse_from_str(stamp, "%Y-%m-%dT%H:%M:%S%.3fZ");
+        assert!(
+            shape.is_ok() && stamp.len() == "2026-01-01T00:00:00.000Z".len(),
+            "`{stamp}` should read YYYY-MM-DDTHH:mm:ss.sssZ: {item}"
+        );
+    }
+}
+
+#[test]
+fn a_card_reads_what_the_declaration_has_and_nothing_it_lacks() {
+    let cases = [
+        (declaration(), json!("Commits"), 2),
+        (json!({ "fields": [] }), serde_json::Value::Null, 0),
+        (json!({ "title": "Untyped" }), json!("Untyped"), 0),
+    ];
+
+    for (declared, title, fields) in cases {
+        let dataset = Dataset {
+            name: DefinitionId::parse("commits")
+                .unwrap_or_else(|error| panic!("the fixture name parses: {error}")),
+            declaration: declared.clone(),
+            state: DatasetState::Ready,
+            physical_table: None,
+            held: None,
+            updated_at: chrono::DateTime::UNIX_EPOCH,
+        };
+
+        let card = serde_json::to_value(DatasetItem::of(&dataset))
+            .unwrap_or_else(|error| panic!("a card serializes: {error}"));
+
+        assert_eq!(
+            card,
+            json!({
+                "name": "commits",
+                "title": title,
+                "fields": fields,
+                "updated_at": "1970-01-01T00:00:00.000Z"
+            }),
+            "should read: {declared}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn datasets_are_not_listed_by_tag() {
     let harness = TestHarness::new();
 

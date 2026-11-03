@@ -689,7 +689,7 @@ Identity-attribute observation history for persons, stored in MariaDB. Each row 
 
 **Database**: MariaDB, database `identity` — dedicated to identity-resolution-domain tables, reached via the service's `database_url` configuration. The service does not assume co-location with any other MariaDB database; any other service owning MariaDB tables configures its own connection independently. Each backend service owns and applies its own schema — see ADR-0006.
 
-**DDL**: SeaORM migrations in `src/backend/services/identity-resolution/src/migration/` (applied by the service's `migrate` subcommand). The shape below reflects the migration chain as of `m20260724_000014` — notably migration 004, which (a) moved the natural-key UNIQUE from `value_hash` to `created_at` so that legitimate value re-transitions (Active → Inactive → Active) are recordable, and (b) switched `value_id` to case-insensitive collation. The migrations are authoritative; on divergence, trust them over this table.
+**DDL**: SeaORM migrations in `src/backend/services/identity-resolution/src/migration/` (applied by the service's `migrate` subcommand). The table is built by the baseline `m20261030_000001_baseline`, which squashed the earlier history — notably migration 004, which (a) moved the natural-key UNIQUE from `value_hash` to `created_at` so that legitimate value re-transitions (Active → Inactive → Active) are recordable, and (b) switched `value_id` to case-insensitive collation. The migrations are authoritative; on divergence, trust them over this table.
 
 ##### Columns
 

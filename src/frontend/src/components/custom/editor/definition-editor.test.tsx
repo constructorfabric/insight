@@ -24,6 +24,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as customClient from "@/api/custom-client";
+import { datasetNames } from "@/test/catalogue";
 
 import { mockCatalogues, wrapper, writeText } from "./editor-test-helpers";
 import { DefinitionEditor } from "./definition-editor";
@@ -206,10 +207,9 @@ describe("<DefinitionEditor> holding one document", () => {
 
   it("refuses to create a dataset under a name the catalogue already holds", async () => {
     const user = userEvent.setup();
-    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
-      names: ["commits"],
-      total: 1,
-    });
+    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue(
+      datasetNames(["commits"])
+    );
 
     render(<DefinitionEditor kind="datasets" onStored={vi.fn()} />, {
       wrapper,

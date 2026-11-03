@@ -84,17 +84,18 @@ Architecture-shaping decisions are captured as ADRs in
 | [`cpt-insightspec-fr-identity-lookup-subordinates`](PRD.md#recursively-expand-subordinates) | `handlers::resolve_subordinates` walks `persons_repo::current_children_for_parent` recursively via `hydrate_children`, filters edges to the configured `org_chart_source_type`, hydrates each child with the same recursion (depth-counted), and feeds the resulting list into the response's `subordinates`. Cycle protection is a visited-set of `person_id`s; depth cap reads from the gear config's `max_depth`. The same recursion serves `/v1/profiles`. |
 | [`cpt-insightspec-fr-identity-routing-name-split`](PRD.md#display-name-split-fallback) | The display-name split fallback runs after assembly when both `first_name` and `last_name` observations are missing. |
 | [`cpt-insightspec-fr-identity-migrations-startup`](PRD.md#service-owned-migrations-at-startup) | The service's `migrate` subcommand runs the SeaORM migrator (`src/migration/`, SQL embedded from `src/migration/sql/`) before the service serves traffic; in Kubernetes it runs as an initContainer. |
-| [`cpt-insightspec-fr-identity-schema-relax-uniqueness`](PRD.md#schema-allows-recording-state-transitions) | Migration `004_persons_relax_constraints.sql` drops `UNIQUE uq_person_observation` on `(..., value_hash)` and adds the same name on `(..., created_at)`. The seeder's `INSERT IGNORE` in step 7 now dedupes by `created_at` (re-runs idempotent) while genuine transitions on the same partition (Active->Inactive->Active) persist as separate rows. ADR-0011 documents the design decision. |
+| [`cpt-insightspec-fr-identity-schema-relax-uniqueness`](PRD.md#schema-allows-recording-state-transitions) | Migration `004_persons_relax_constraints.sql` (since squashed into `000_baseline.sql`) moved `UNIQUE uq_person_observation` from `(..., value_hash)` to `(..., created_at)`. The seeder's `INSERT IGNORE` in step 7 now dedupes by `created_at` (re-runs idempotent) while genuine transitions on the same partition (Active->Inactive->Active) persist as separate rows. ADR-0011 documents the design decision. |
 | [`cpt-insightspec-fr-identity-schema-case-insensitive-value-id`](PRD.md#value-comparisons-are-case-insensitive) | The same migration `ALTER COLUMN value_id MODIFY ... COLLATE utf8mb4_unicode_ci`. `idx_value_id` rebuilds under the new collation; existing SQL (`WHERE value_id = @x`) is now case-insensitive without code changes. `value_full_text` is already `utf8mb4_unicode_ci`; `value` (TEXT) uses table default `utf8mb4_unicode_ci`; `value_hash` (CHAR ascii) stays `ascii_bin` as it is a SHA-256 digest. |
 | [`cpt-insightspec-fr-identity-profile-resolve`](PRD.md#resolve-profile-by-email-or-source-native-id) | The `POST /v1/profiles` handler (`api/handlers.rs::resolve_profile`) routes by the request's `value_type` (`email` or `id`) to `persons_repo::resolve_person_ids_by_email` / `resolve_person_ids_by_source_id`. Both queries are CTEs with partition `(insight_tenant_id, person_id, insight_source_type, insight_source_id, value_type)` and `rn=1` filter — the canonical latest-per-source-instance projection. |
 | `cpt-insightspec-fr-identity-visible-persons-batch` | `POST /v1/visible-persons` (`api/visible_persons.rs::filter_visible_persons`) answers which of the requested canonical person ids (UUIDs) the caller may see. `subchart_repo::visible_targets` materialises the visible-set union once — caller, active grants, the whole tenant on a wildcard grant, `org_chart` descendants — and joins the requested ids against it; `has_wildcard_grant` short-circuits the traversal (echoing the request, so its answer is a subset of the input rather than a tenant-existence check). No email resolution step exists: the metrics runtime keys on `person_id` since the identity cutover, so the ids arrive canonical. Roles are absent from the predicate, so the `admin` role confers no visibility (ADR-0015). |
 | `cpt-insightspec-fr-identity-visible-persons-policy` | The visible set follows `visibility_policy` (`config.rs::VisibilityPolicy`): `org_chart` unions the caller, their active grants and the `org_chart` descendants of both; `flat` unions the tenant's persons instead, for an organisation whose roster carries no reporting lines. Bound as one parameter into the same CTEs, so the batch filter, the profile gate, the subchart reads and the roster cannot disagree. Nothing is written to `visibility`, and grants and roles keep their meaning under either policy. `GET /v1/me` reports the policy so a consumer need not infer it from an empty `subordinates` list. |
 | `cpt-insightspec-fr-identity-visible-persons-roster` | `GET /v1/visible-persons` (`api/visible_persons.rs::list_visible_persons`) enumerates the persons the caller may see, a page at a time. It is the operator listing (`infra::db::person_listing::list_persons`) restricted by `VisibleTo`, so the roster and the picker share one label rule, one order and one keyset cursor — the restriction adds the `visible_set` CTE and an `EXISTS` over it, nothing else. The cursor carries its own `PagePosition::KIND`, so a picker position cannot resume a roster listing. Self-scoped and not admin-gated, on the same ground as the batch read (ADR-0015): it enumerates only what the caller's visible set already contains. |
+| `cpt-insightspec-fr-identity-tenant-directory` | `GET /v1/people?visibility=tenant` (`api/people.rs::list_people`) lists the whole tenant to any member as a directory: id, names, username and email. Who works in the organisation is not withheld; what each person did is, and stays behind the visible set. Attributes and reporting lines therefore reach only an administrator, so a member cannot rebuild the org chart the `org_chart` policy keeps from them. `ids` (comma-separated, at most 200) names people any one of whom a row may be, so a service resolves a page of owners in one read. |
 | [`cpt-insightspec-fr-identity-profile-ambiguous-422`](PRD.md#surface-single-result-invariant-via-422) | The resolve step distinguishes found / not-found / ambiguous. When the reader returns `>1` distinct `person_id`, the handler emits an RFC 7807 extension body carrying the lookup body + the matched `person_ids` list with status 422. |
 | [`cpt-insightspec-fr-identity-profile-ids-list`](PRD.md#project-full-alias-list-on-response) | `persons_repo::current_source_ids_for_person` returns the latest `value_type='id'` per source instance; the profile assembler ships the list unchanged into the `ProfileResponse` wire shape (`domain/profile.rs::ProfileIdEntry`). |
 | [`cpt-insightspec-fr-identity-profile-org-tree`](PRD.md#project-the-same-org-tree-shape-as-v1persons) | The profile handler hydrates the same `Person` tree (`hydrate_person`) that the retired GET endpoint returned, copying `supervisor_email` / `supervisor_name` / `parent_email` / `parent_id` / `parent_person_id` / `subordinates` straight off the projection. Identical `Person` shape across callers — guaranteed by reusing the recursion. |
 | [`cpt-insightspec-fr-identity-profile-validation`](PRD.md#validate-the-request-body) | Request-body validation in the handler expresses the cross-field rules (`value_type=='id'` requires source coordinates; `value_type=='email'` forbids them) before resolving the tenant; first-error wins. |
-| [`cpt-insightspec-fr-identity-org-chart-table`](PRD.md#materialised-parentchild-edge-cache) | Migration `003_org_chart.sql` adds the SCD2 edge table with PK `(tenant, source_type, source_id, child, valid_from)`, CHECK `no_self_loop`, and indexes on current-parent / current-children / cross-source views; ADR-0010 records the design decision. |
+| [`cpt-insightspec-fr-identity-org-chart-table`](PRD.md#materialised-parentchild-edge-cache) | The baseline migration (`000_baseline.sql`, squashing `003_org_chart.sql`) creates the SCD2 edge table with PK `(tenant, source_type, source_id, child, valid_from)`, CHECK `no_self_loop`, and indexes on current-parent / current-children / cross-source views; ADR-0010 records the design decision. |
 | [`cpt-insightspec-fr-identity-org-chart-rebuild`](PRD.md#rebuild-edges-from-persons-deterministically) | The persons-seed rebuilds `org_chart` from a UNION of `value_type='parent_person_id'` (Source 1, future reconciliation) and `value_type='parent_email'` JOINed to the latest `value_type='email'` observation per `(tenant, value_id)` partition (Source 2, current pipeline); Source 1 wins via NOT EXISTS guard. Step 5 sorts accounts BambooHR-first so the canonical `supervisorEmail` source establishes `person_id`s before downstream connectors. Source 2 intersects each `parent_email` period with the child's **active intervals** derived from `value_type='status'` observations (Active/Inactive/Terminated, with LAG to collapse duplicates and LEAD to compute interval ends); children without any status observation get a synthetic [-inf,+inf) interval. Re-activation (Inactive -> Active) produces a fresh row rather than reopening the closed one — SCD2 history is preserved. Two-table swap via `RENAME` mirrors step 8. Parent_emails with no email-bearer in `persons` are skipped and counted in the seeder log (no stubs created — see ADR-0010). Post-swap two-hop cycle detection self-joins CURRENT edges and emits a WARN line if `(A->B)` and `(B->A)` co-exist; deeper cycles are bounded structurally by the Phase-3 subchart endpoint's depth parameter. |
 | [`cpt-insightspec-fr-identity-org-chart-read`](PRD.md#read-current-parent-and-children-edges) | `persons_repo::current_parents_for_child` / `current_children_for_parent` issue `SELECT ... WHERE child_person_id=? AND valid_to IS NULL` (respectively `parent_person_id=?`); the query strings live with the repository, materialised as `OrgChartEdge` rows. |
 
@@ -202,6 +203,9 @@ The SeaORM migrator is the migration mechanism (see ADR-0006). Migration steps l
 `src/migration/` (one Rust file per step) and embed their SQL from
 `src/migration/sql/`. They are applied via the service's `migrate`
 subcommand, which also runs the migrate-time first-admin bootstrap.
+The history through `m20260901_000018_people` is squashed into one
+baseline, `m20261030_000001_baseline` (`sql/000_baseline.sql`); see
+the `seaql_migrations` table below for how the squashed names are kept.
 
 #### `BINARY(16)` for every UUID
 
@@ -519,7 +523,7 @@ The service is a **reader** of `persons` and the migrator of the
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dbtable-identity-persons`
 
-Defined in `src/migration/sql/001_persons.sql`
+Defined in `src/migration/sql/000_baseline.sql`
 (applied by the SeaORM migrator via the `migrate` subcommand).
 Canonical column reference:
 [docs/domain/identity-resolution/specs/DESIGN.md §"Table: persons"](../../../../../domain/identity-resolution/specs/DESIGN.md#table-persons-mariadb).
@@ -566,7 +570,7 @@ hydrate CTE bounded by per-person observation count (typically
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dbtable-identity-org-chart`
 
-Defined in `src/migration/sql/003_org_chart.sql`
+Defined in `src/migration/sql/000_baseline.sql`
 (see ADR-0010). The service migrates and reads the table — the
 persons-seed
 rebuilds it as an SCD2 cache of direct parent->child edges
@@ -616,6 +620,25 @@ visible set.
 SeaORM's migration tracker table. Created automatically on the first
 `migrate` run if absent; the service does not interact with it
 directly. Provides idempotency for pod restarts.
+
+The baseline migration keeps the names of the 18 migrations it
+squashed in the migrator as steps that apply nothing, so the ledger
+reads the same whichever way a database got there:
+
+- an empty ledger gets the baseline schema and every squashed name;
+- a ledger holding every squashed name gets nothing from the baseline;
+- a ledger holding only some squashed names is refused before anything
+  is written, and so is an empty ledger over tables the squashed
+  history built (the retired applier's ledger, the dropped
+  `account_person_map`, or `persons` before migration 009). Such a
+  database must first be migrated by a release that still carries the
+  unsquashed history: Insight umbrella 0.7.169, or a
+  `release-2026.09` build from 0.6.92 on.
+
+Rolling the image back is supported for the server only: the boot gate
+tolerates the baseline's ledger row, but an older release's `migrate`
+refuses a ledger naming a migration it does not embed (the baseline, like
+any newer migration), so a rollback must not run the older `migrate` step.
 
 ### 3.8 Schema + Naming Conventions
 

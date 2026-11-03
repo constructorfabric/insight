@@ -73,6 +73,8 @@ pub struct ListQuery<'a> {
     pub org_chart_source_type: &'a str,
     pub terms: &'a [String],
     pub person_ids: &'a [Uuid],
+    /// People any one of whom a row may be; empty asks for no such narrowing.
+    pub any_of: &'a [Uuid],
     pub restrict: Restrict<'a>,
     pub after: Option<After<'a>>,
     pub limit: u64,
@@ -140,6 +142,7 @@ fn build_query(tenant_id: Uuid, query: ListQuery<'_>) -> (String, Vec<sea_orm::V
     values.extend(scope.values);
 
     append_filters(&mut filters, &mut values, query.terms, query.person_ids);
+    append_any_of(&mut filters, &mut values, query.any_of);
 
     let resume = query.after.map_or_else(String::new, |_| {
         " WHERE (order_key > ? OR (order_key = ? AND person_id > ?))".to_owned()
@@ -221,6 +224,18 @@ fn build_query(tenant_id: Uuid, query: ListQuery<'_>) -> (String, Vec<sea_orm::V
     );
 
     (sql, values)
+}
+
+fn append_any_of(filters: &mut String, values: &mut Vec<sea_orm::Value>, any_of: &[Uuid]) {
+    if any_of.is_empty() {
+        return;
+    }
+
+    let marks = vec!["?"; any_of.len()].join(", ");
+    filters.push_str(" AND p.person_id IN (");
+    filters.push_str(&marks);
+    filters.push(')');
+    values.extend(any_of.iter().map(|id| id.as_bytes().to_vec().into()));
 }
 
 fn append_filters(
@@ -325,6 +340,7 @@ mod tests {
                 org_chart_source_type: "directory",
                 terms,
                 person_ids,
+                any_of: &[],
                 restrict,
                 after,
                 limit: 50,
@@ -345,6 +361,27 @@ mod tests {
         assert!(sql.contains("manager.valid_to IS NULL"));
         assert!(sql.contains("ORDER BY order_key, person_id"));
         assert!(sql.contains("NULLIF(TRIM(CONCAT_WS(' ',"));
+        assert_eq!(sql.matches('?').count(), values.len());
+    }
+
+    #[test]
+    fn people_asked_for_by_id_widen_into_one_any_of_match() {
+        let any_of = [Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4)];
+        let (sql, values) = build_query(
+            Uuid::from_u128(1),
+            ListQuery {
+                org_chart_source_type: "directory",
+                terms: &[],
+                person_ids: &[],
+                any_of: &any_of,
+                restrict: Restrict::UNRESTRICTED,
+                after: None,
+                limit: 3,
+            },
+        );
+
+        assert!(sql.contains("p.person_id IN (?, ?, ?)"), "{sql}");
+        assert!(!sql.contains("p.person_id = ?"), "{sql}");
         assert_eq!(sql.matches('?').count(), values.len());
     }
 

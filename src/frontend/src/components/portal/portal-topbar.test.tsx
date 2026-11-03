@@ -83,9 +83,6 @@ vi.mock("@/hooks/use-portal-period", () => ({
     setCustomRange: vi.fn(),
   }),
 }));
-vi.mock("@/components/portal/scope-select", () => ({
-  ScopeSelect: () => <div />,
-}));
 vi.mock("@/components/widgets/period-selector-bar", () => ({
   PeriodSelectorBar: () => <div />,
 }));
