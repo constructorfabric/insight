@@ -39,3 +39,12 @@ export const TestIconsSitCentredInTheirButtons: Story = {
     }
   },
 };
+
+export const TestLogoSitsCentredInTheRail: Story = {
+  tags: ["test"],
+  play: async ({ canvas }) => {
+    const logo = await canvas.findByRole("img", { name: "Constructor Fabric" });
+
+    expectHorizontallyCentred(canvas.getByTestId("lens-rail"), logo, "Logo");
+  },
+};

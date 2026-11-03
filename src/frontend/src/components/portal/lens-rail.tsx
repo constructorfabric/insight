@@ -232,7 +232,7 @@ export function LensRail() {
           style={{ width: OPEN_WIDTH }}
           onClick={close}
         />
-        <SidebarHeader className="relative z-10 items-start ps-3">
+        <SidebarHeader className="relative z-10 items-start ps-[11px]">
           <div className="flex items-center gap-2">
             <img
               src={brandSymbol}
