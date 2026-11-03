@@ -432,8 +432,8 @@ When `suspended` is true the muted line appends ` · suspended`. A null schedule
 `—` without a tooltip (FR-13).
 
 A non-null schedule has a tooltip on hover or keyboard focus, exposed to assistive
-technology. Its next start is computed at view time against `as_of`, the same clock used
-for relative times, from the recorded expressions and timezone. Precedence is:
+technology. Its next start is computed against the viewer's clock at the moment the tooltip
+opens, kept current while it stays open, from the recorded expressions and timezone. Precedence is:
 
 1. Suspended: `Suspended: no run is scheduled.`
 2. Null timezone: `Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.`

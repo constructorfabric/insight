@@ -308,7 +308,8 @@ time; an empty or unknown origin remains unknown. The page's last-checked stamp 
 facts too.
 
 On demand, the page shows the next scheduled start, computed from the recorded cron
-expressions and timezone against the time the answer was served. This is a forecast from
+expressions and timezone against the viewer's clock at the moment the tooltip opens,
+kept current while it stays open. This is a forecast from
 recorded facts, never a measured fact or a late, fresh or stale verdict. The next start is
 unknown when the timezone is not recorded or an expression cannot be read; there is none
 when the CronWorkflow is suspended. Argo skips a start while the previous run of that

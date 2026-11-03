@@ -6,9 +6,9 @@
  * number renders as absence rather than a zero, and that a stopped recorder
  * reaches a screen reader as an alert rather than as ordinary prose.
  */
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   ConnectorHealthSummary,
@@ -61,6 +61,8 @@ function summary(over: Partial<ConnectorHealthSummary> = {}): ConnectorHealthSum
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
   mocks.summary.refetch.mockClear();
   mocks.syncs.refetch.mockClear();
   mocks.summary.isPending = false;
@@ -69,6 +71,72 @@ beforeEach(() => {
   mocks.syncs.isPending = false;
   mocks.syncs.isError = false;
   mocks.syncs.data = { connector: "alpha", syncs: [], window: 50 };
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("the schedule forecast follows the viewer's clock", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    vi.setSystemTime(NOW);
+    mocks.summary.data = summary({
+      connectors: [{
+        connector: "example-tracker",
+        configured: true,
+        schedule: { crons: ["0 * * * *"], timezone: "UTC", suspended: false },
+        last_sync: null,
+      }],
+    });
+  });
+
+  function forecast() {
+    render(<ConnectorHealthPane />);
+    return within(rowFor("example-tracker")).getByRole("button");
+  }
+
+  it("uses the clock at opening rather than the response time or render time", async () => {
+    const trigger = forecast();
+    vi.setSystemTime(new Date("2026-01-15T14:00:00.000Z"));
+
+    await act(async () => { trigger.focus(); });
+
+    expect(trigger).toHaveFocus();
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 15:00 UTC (in 1h 0m)");
+  });
+
+  it("moves to the following start on the next 30-second tick without a refetch", async () => {
+    const openingTime = "2026-01-15T12:59:45.000Z";
+    vi.setSystemTime(new Date(openingTime));
+    mocks.summary.data!.as_of = openingTime;
+    const trigger = forecast();
+
+    await act(async () => { trigger.focus(); });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 13:00 UTC (in 15.0 s)");
+
+    await act(async () => { vi.advanceTimersByTime(29_999); });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 13:00 UTC (in 15.0 s)");
+
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 14:00 UTC (in 59m 45s)");
+    expect(mocks.summary.refetch).not.toHaveBeenCalled();
+  });
+
+  it("captures the new clock when reopened after time passes while closed", async () => {
+    const trigger = forecast();
+
+    await act(async () => { trigger.focus(); });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 13:00 UTC (in 1h 0m)");
+
+    await act(async () => { trigger.blur(); });
+    await act(async () => { vi.advanceTimersByTime(2 * 60 * 60 * 1_000); });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    await act(async () => { trigger.focus(); });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 15:00 UTC (in 1h 0m)");
+  });
 });
 
 describe("the pane prints what it was served", () => {
