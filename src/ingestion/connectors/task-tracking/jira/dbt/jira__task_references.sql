@@ -163,7 +163,7 @@ comment_keys AS (
     FROM {{ ref('jira__task_comments') }} FINAL
     ARRAY JOIN arrayDistinct({{ jira_adf_issue_keys('COALESCE(body, \'\')') }}) AS written_key
     WHERE ifNull(is_deleted, 0) = 0
-      AND issue_id IS NOT NULL
+      AND nullIf(issue_id, '') IS NOT NULL
 ),
 
 written_keys AS (
