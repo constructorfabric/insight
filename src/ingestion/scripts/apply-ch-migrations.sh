@@ -134,6 +134,7 @@ for database in bronze_claude_admin bronze_figma bronze_github_copilot bronze_op
 done
 drop_retired_table_if_empty insight raw_data
 drop_retired_table_if_empty identity aliases
+# INVARIANT: can fire at the floor: any dropped materialized view leaves its inner table behind.
 drop_orphaned_inner_tables insight
 
 echo "=== Healing Jira bronze schema ==="
