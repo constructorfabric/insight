@@ -5,7 +5,9 @@ against the SPA, and an API-contract suite — all run against a local
 `docker-compose` stand seeded deterministically for tests
 (`src/ingestion/tools/seed`).
 
-This suite assumes an **already-running, already-seeded** stand. It never
+This suite assumes an **already-running stand described by a manifest**. API
+and persona journeys need the seed fixtures they declare; the portal page smoke
+also accepts the minimal, runner-supplied manifest below without a seed. It never
 starts compose, applies migrations, or spawns service processes itself —
 see `conftest.py`'s module docstring for why that split matters. The shared
 library it imports (`insight_stand`, session handling, the manifest reader,
@@ -82,13 +84,13 @@ docker run --rm --init --ipc=host \
   -v "$PWD/stand-manifest.json:/stand/manifest.json:ro" \
   -v "$PWD/test-results:/results" \
   ghcr.io/constructorfabric/insight-ui-tests:<tag> \
-  /tests/stand/ui --stand-manifest /stand/manifest.json \
+  /tests/stand -m stand_smoke --stand-manifest /stand/manifest.json \
   --junitxml=/results/junit.xml \
   --tracing retain-on-failure --screenshot only-on-failure \
   --output=/results/playwright
 ```
 
-Arguments after the image name are pytest arguments. Replace `/tests/stand/ui`
+Arguments after the image name are pytest arguments. Replace `/tests/stand`
 with a test file or node ID, or add `-k` / `-m` to select tests; omitting all
 arguments runs `/tests/stand`. The output directory must be writable by the
 image's non-root user. JUnit, retained failure traces, screenshots and the
@@ -131,6 +133,78 @@ It names personas and in-cluster addresses, so it stays on the machine that
 read it. Browser journeys need `playwright install chromium` as above; they
 work against any `https://` origin, which is trustworthy enough to store the
 session cookie.
+
+## Portal page smoke
+
+The six zone modules `ui/test_portal_{home,dashboards,explore,people,reports,manage}.py`
+contain 43 explicit page test functions. Adding a page means writing a function
+with its navigation steps and expected page id. Each requests `ceo_portal` or
+`admin_operator_portal`, signed in through the manifest persona's Keycloak
+password form. Capability markers skip pages a stand lacks, with a reason.
+All page tests and `ui/test_portal_navigation.py` carry `stand_smoke` and
+`reliability`; run them with `-m stand_smoke`.
+
+Page checks cover rendering, loading completion, visible errors and failed
+requests. Navigation keeps its expected zones and entries in the test and
+reports additional entries without failing. Planned display mode is enabled
+before page scripts run; the Planned group, New actions, WorkChart and the org
+tree are excluded from visits and discovery. Dashboard folders are excluded,
+and rendered page ids suppress aliases in the report. Usage events receive a
+local 204. `INSIGHT_FORCE_500` enables local fault injection. Tests save nothing.
+
+Set `INSIGHT_STAND_BASE_URL` and `INSIGHT_STAND_PERSONA_PASSWORD` as above.
+Each test gets a fresh context; sign-in state is cached and renewed after five
+minutes. Steps use Allure when installed and are no-ops otherwise:
+
+```bash
+uv run --project tests --frozen --with "allure-pytest>=2.15" \
+  pytest tests/stand -m stand_smoke \
+  --stand-manifest /path/to/stand-manifest.json --alluredir /path/to/allure-results
+```
+
+### Minimal page-smoke manifest
+
+This synthetic version-2 example names one person with org visibility and the
+active identity admin grant under both fixture aliases. Both entries describe
+the same actual realm roles; a seeded manifest instead names separate personas.
+`email` carries the login name; unused metadata may stay empty. The smoke uses
+neither seed steps nor service URLs. When `seeded` is empty, seed-dependent
+smoke tests skip with a reason naming the missing fixtures.
+
+```json
+{
+  "manifest_version": 2,
+  "tenant": "",
+  "realm": {"name": "example", "issuer": ""},
+  "personas": [],
+  "service_urls": {},
+  "fixtures": {
+    "ceo": {
+      "uuid": "", "email": "user@example.com", "display_name": "",
+      "team": null, "org_unit": "", "role": "ceo",
+      "realm_roles": ["insight-admin", "insight-lead"]
+    },
+    "admin_operator": {
+      "uuid": "", "email": "user@example.com", "display_name": "",
+      "team": null, "org_unit": "", "role": "ceo",
+      "realm_roles": ["insight-admin", "insight-lead"]
+    }
+  },
+  "capabilities": {
+    "idp": "keycloak", "ingestion": false,
+    "custom_catalogue": false,
+    "files_sharing": false,
+    "portal_dashboards": false, "portal_metrics": false,
+    "portal_widgets": false, "portal_datasets": false
+  },
+  "seed_revision": "", "data_window": "", "anchor_date": "", "seeded": []
+}
+```
+
+Any `portal_*` definition capability implies `custom_catalogue` and promises an
+existing definition readable by the test's persona. The seed creates no custom
+definitions. To collect without a stand, supply a synthetic manifest and
+`--base-url https://example.com`.
 
 ## CI required gate
 

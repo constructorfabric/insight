@@ -13,9 +13,9 @@ Two rules follow from that split:
 * The stand must describe itself. Every fixture name, capability and seeded
   fact comes from `src/ingestion/tools/seed/manifest.json`. If it is missing or unparseable
   the session aborts; nothing here has a default to fall back to.
-* Unsatisfiable data requirements are a COLLECTION-time abort, not a run-time
-  failure. Finding out on test #47 that the stand was never seeded wastes the
-  run and buries the cause.
+* Missing canonical fixtures on a seeded stand are a COLLECTION-time abort,
+  not a run-time failure. A manifest recording no seed steps instead skips
+  tests whose fixture requirements it cannot meet.
 """
 
 from __future__ import annotations
@@ -68,6 +68,12 @@ from insight_stand import (  # noqa: E402  (import follows the sys.path bootstra
 CAPABILITY_MARKERS: dict[str, str] = {
     "requires_ingestion": "ingestion",
     "requires_service_principal": "service_principals",
+    "requires_custom_catalogue": "custom_catalogue",
+    "requires_files_sharing": "files_sharing",
+    "requires_portal_dashboards": "portal_dashboards",
+    "requires_portal_metrics": "portal_metrics",
+    "requires_portal_widgets": "portal_widgets",
+    "requires_portal_datasets": "portal_datasets",
 }
 
 # `requires_seed` fixtures a stand may legitimately not have, mapped to why.
@@ -262,9 +268,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
       test aborts the session like a seeding defect. Checked here, over the
       FULL collected tree, deliberately before `-m` deselection — a vector
       marker missing anywhere is a defect of the suite, whatever subset runs.
-    * `requires_seed` — a missing fixture means the stand was seeded wrong and
-      the session aborts. That check lives in `pytest_collection_finish`,
-      AFTER `-m` deselection, so it judges only the tests that will run.
+    * `requires_seed` — a missing canonical fixture on a seeded stand aborts;
+      without recorded seed steps, unmet requirements skip. That check lives
+      in `pytest_collection_finish`, AFTER `-m` deselection, so it judges only
+      the tests that will run.
     * `rebuild_lane` — OPT-IN, skipped unless `--rebuild-lane` was passed.
       Neither a capability nor a seeding fact: these tests mutate shared stand
       state (a scoped dbt rebuild of a gold evidence relation) and shell out to
@@ -334,12 +341,12 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
-    """Abort ONCE if the manifest lacks fixtures the SELECTED tests need.
+    """Skip unmet requirements without seed steps; abort missing canonical fixtures otherwise.
 
-    Every selected test is inspected, every missing name is gathered, and the
-    session aborts once with all of them listed. Failing per-test would report
-    the same root cause dozens of times; failing on the first miss would hide
-    the rest and force a fix-rerun-discover loop.
+    On seeded stands, every selected test is inspected, every missing canonical
+    name is gathered, and the session aborts once with all of them listed.
+    Failing per-test would report the same root cause dozens of times; failing
+    on the first miss would hide the rest and force a fix-rerun-discover loop.
 
     Deliberately this hook and not `pytest_collection_modifyitems`: it runs
     after the mark plugin's `-m` deselection, so `session.items` is the set
@@ -349,10 +356,6 @@ def pytest_collection_finish(session: pytest.Session) -> None:
     """
     missing: dict[str, list[str]] = {}
     for item in session.items:
-        # Per item, not per name: a name in OPTIONAL_SEED_FIXTURES describes
-        # the stand rather than a fault, so an item whose EVERY missing name
-        # is optional skips like a capability marker — but one canonical name
-        # absent still aborts, however many optional ones sit beside it.
         absent = [
             str(name)
             for marker in item.iter_markers(name="requires_seed")
@@ -361,6 +364,21 @@ def pytest_collection_finish(session: pytest.Session) -> None:
         ]
         if not absent:
             continue
+        # INVARIANT: Without recorded seed steps, unmet seed requirements skip.
+        if not _manifest().seeded:
+            item.add_marker(
+                pytest.mark.skip(
+                    reason=(
+                        f"requires_seed: {', '.join(sorted(absent))} missing; "
+                        f"manifest records no seed steps ({_manifest().source_path})"
+                    )
+                )
+            )
+            continue
+        # Per item, not per name: a name in OPTIONAL_SEED_FIXTURES describes
+        # the stand rather than a fault, so an item whose EVERY missing name
+        # is optional skips like a capability marker — but one canonical name
+        # absent still aborts, however many optional ones sit beside it.
         if all(name in OPTIONAL_SEED_FIXTURES for name in absent):
             item.add_marker(
                 pytest.mark.skip(

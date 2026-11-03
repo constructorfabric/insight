@@ -543,7 +543,7 @@ jobs:
       - name: 'Stage 4/5 — smoke the stand through its public URL'
         id: smoke
         if: steps.stages.outputs.run_smoke == 'true'
-        timeout-minutes: 5
+        timeout-minutes: 15
         env:
           # The variable tests/stand/conftest.py reads for every lane.
           INSIGHT_STAND_BASE_URL: ${{ vars.TEST_STAND_BASE_URL }}

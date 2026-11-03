@@ -68,6 +68,7 @@ def test_subchart_is_200_with_a_session(lead_session: PersonaSession) -> None:
 
 @pytest.mark.security
 @pytest.mark.stand_smoke
+@pytest.mark.requires_seed("dev_lead")
 def test_the_session_belongs_to_the_persona_who_logged_in(lead_session: PersonaSession) -> None:
     """A session that authenticates as somebody else is worse than none.
 
