@@ -102,10 +102,10 @@ beforeEach(() => {
   mocks.roster = peopleFromIdentityTree(mocks.tree);
   mocks.grid.isPending = false;
   mocks.grid.isError = false;
-  // git.commits is a real headline key (GROUPS card.preview) — the view
+  // git.default_branch_commits is a real headline key (GROUPS card.preview) — the view
   // only renders columns from that set.
   mocks.grid.byKey = new Map([
-    ["git.commits", metric("git.commits", [[pid("boss"), 50], [pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { label: "Commits" })],
+    ["git.default_branch_commits", metric("git.default_branch_commits", [[pid("boss"), 50], [pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { label: "Commits" })],
     // a ratio metric: must roll up as MEDIAN, not a summed percentage
     ["collab.focus_time_pct", metric("collab.focus_time_pct", [[pid("boss"), 80], [pid("a"), 40], [pid("b"), 50], [pid("c"), 60], [pid("d"), 70]], {
       computation: "avg",
@@ -251,8 +251,8 @@ describe("TeamStateView", () => {
 
   it("includes the manager in needs attention", () => {
     mocks.grid.byKey.set(
-      "git.commits",
-      metric("git.commits", [[pid("boss"), 0], [pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { label: "Commits" }),
+      "git.default_branch_commits",
+      metric("git.default_branch_commits", [[pid("boss"), 0], [pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { label: "Commits" }),
     );
 
     render(<TeamStateView />);

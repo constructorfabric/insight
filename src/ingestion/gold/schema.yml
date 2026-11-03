@@ -674,6 +674,8 @@ models:
                   - non_default_pr_created
                   - default_pr_merged
                   - non_default_pr_merged
+                  - default_commit_day
+                  - default_pr_created_merged
       - name: value
         description: >
           Measure value. Rows are emitted only when the source provides a
@@ -684,7 +686,8 @@ models:
       - name: subject_key
         description: >
           Distinct-count subject for future distinct-count semantics. NULL
-          except on commit_day, where it contains the active calendar date.
+          except on commit_day and default_commit_day, where it contains the
+          active calendar date.
       - name: dimensions
         description: >
           Array(Tuple(key, value, label)). `source` carries the git source

@@ -26,8 +26,8 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
         // the org's top line was three-quarters code and cost, and the work
         // that never touches a repo went unrepresented.
         metrics: [
-          "git.commits",
-          "git.prs_merged",
+          "git.default_branch_commits",
+          "git.default_branch_prs_merged",
           "tasks.closed",
           "collab.messages_sent",
           "ai.cost",
@@ -59,8 +59,11 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     sections: [
       {
         kind: "trend",
-        metrics: ["git.prs_merged", "git.code_lines"],
-        activeContributorsFor: "git.prs_merged",
+        metrics: [
+          "git.default_branch_prs_merged",
+          "git.default_branch_code_lines",
+        ],
+        activeContributorsFor: "git.default_branch_prs_merged",
       },
     ],
   },
@@ -86,11 +89,15 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     sections: [
       // Headline gives the per-capita + delta rollup AND feeds the automatic
       // by-unit comparison when a slice is active (review decision).
-      { kind: "headline", metrics: ["git.commits"] },
-      { kind: "concentration", metrics: ["git.commits"], framing: "bus-factor" },
+      { kind: "headline", metrics: ["git.default_branch_commits"] },
+      {
+        kind: "concentration",
+        metrics: ["git.default_branch_commits"],
+        framing: "bus-factor",
+      },
       {
         kind: "distribution",
-        metric: "git.commits",
+        metric: "git.default_branch_commits",
         title: "How many commits people made",
         caption:
           "How many people fall in each commit-count band — when the bars stretch far to the right, a few people account for most of it.",
@@ -123,7 +130,13 @@ export const OWN_OVERVIEW_ITEMS: Record<string, OwnOverviewItem> = {
       title: "Trend",
       tagline: "your totals over time",
       sections: [
-        { kind: "trend", metrics: ["git.prs_merged", "git.code_lines"] },
+        {
+          kind: "trend",
+          metrics: [
+            "git.default_branch_prs_merged",
+            "git.default_branch_code_lines",
+          ],
+        },
       ],
     },
   },

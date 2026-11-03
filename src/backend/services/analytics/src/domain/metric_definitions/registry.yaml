@@ -58,6 +58,9 @@ sources:
       - key: commit_day
         evidence_granularity: derived_population
         alias_collapse: max
+      - key: default_commit_day
+        evidence_granularity: derived_population
+        alias_collapse: max
       - key: commit_change_size
         evidence_granularity: event
         evidence_presentation: *commit_row
@@ -83,6 +86,9 @@ sources:
             - { key: branch_scope, label: Branch scope }
             - { key: destination_branch, label: Target branch }
       - key: pr_created_merged
+        evidence_granularity: event
+        evidence_presentation: *pull_request_counted
+      - key: default_pr_created_merged
         evidence_granularity: event
         evidence_presentation: *pull_request_counted
       - key: pr_abandoned
@@ -984,9 +990,10 @@ metrics:
   - metric_key: git.commits
     source_key: git
     subject: commits
-    label: Commits
-    description: Authored commits
-    explanation: Distinct authored commits across connected git sources, excluding merge commits.
+    label: Commits on any branch
+    short_label: Commits (all)
+    description: Authored commits on any branch
+    explanation: Distinct authored commits on any branch across connected git sources, excluding merge commits.
     unit: commits
     format: integer
     direction: higher_is_better
@@ -1005,8 +1012,7 @@ metrics:
   - metric_key: git.default_branch_commits
     source_key: git
     subject: commits
-    label: Commits that reached the default branch
-    short_label: Commits (default)
+    label: Commits
     description: Authored commits that reached the default branch
     explanation: >-
       Authored commits reachable from the repository's default branch, or
@@ -1057,9 +1063,9 @@ metrics:
   - metric_key: git.code_lines
     source_key: git
     subject: code_changes
-    label: Code lines added
-    short_label: Code lines
-    description: Lines added to code files
+    label: Code lines added on any branch
+    short_label: Code lines (all)
+    description: Lines added to code files on any branch
     explanation: >-
       Lines added to files classified as code — tests, configuration, and
       documentation excluded. A commit whose diff was never collected has no
@@ -1085,8 +1091,8 @@ metrics:
   - metric_key: git.default_branch_code_lines
     source_key: git
     subject: code_changes
-    label: Code lines that reached the default branch
-    short_label: Code lines (default)
+    label: Code lines added
+    short_label: Code lines
     description: Lines added to code files that reached the default branch
     explanation: >-
       Code lines whose commit is reachable from the repository's default
@@ -1137,9 +1143,9 @@ metrics:
   - metric_key: git.lines_added
     source_key: git
     subject: code_changes
-    label: Lines added
-    short_label: Lines +
-    description: All lines added, by file category
+    label: Lines added on any branch
+    short_label: Lines + (all)
+    description: All lines added on any branch, by file category
     explanation: >-
       Lines added, attributed by file category when file changes are
       available; a commit whose diff was never collected contributes its
@@ -1166,8 +1172,8 @@ metrics:
   - metric_key: git.default_branch_lines_added
     source_key: git
     subject: code_changes
-    label: Lines added that reached the default branch
-    short_label: Lines + (default)
+    label: Lines added
+    short_label: Lines +
     description: All lines added that reached the default branch
     explanation: >-
       Lines added whose commit is reachable from the repository's default
@@ -1245,9 +1251,9 @@ metrics:
   - metric_key: git.lines_removed
     source_key: git
     subject: code_changes
-    label: Lines removed
-    short_label: Lines −
-    description: All lines removed, by file category
+    label: Lines removed on any branch
+    short_label: Lines − (all)
+    description: All lines removed on any branch, by file category
     explanation: >-
       Lines removed, attributed by file category when file changes are
       available; a commit whose diff was never collected contributes its
@@ -1274,8 +1280,8 @@ metrics:
   - metric_key: git.default_branch_lines_removed
     source_key: git
     subject: code_changes
-    label: Lines removed that reached the default branch
-    short_label: Lines − (default)
+    label: Lines removed
+    short_label: Lines −
     description: All lines removed that reached the default branch
     explanation: >-
       Lines removed whose commit is reachable from the repository's default
@@ -1327,10 +1333,10 @@ metrics:
   - metric_key: git.prs_created
     source_key: git
     subject: pull_requests
-    label: Pull requests created
-    short_label: PRs opened
-    description: Authored pull requests
-    explanation: Pull requests opened, dated by creation.
+    label: Pull requests created into any branch
+    short_label: PRs opened (all)
+    description: Authored pull requests into any branch
+    explanation: Pull requests opened into any branch, dated by creation.
     unit: PRs
     format: integer
     direction: higher_is_better
@@ -1349,8 +1355,8 @@ metrics:
   - metric_key: git.default_branch_prs_created
     source_key: git
     subject: pull_requests
-    label: Pull requests created into the default branch
-    short_label: PRs opened (default)
+    label: Pull requests created
+    short_label: PRs opened
     description: Authored pull requests targeting the default branch
     explanation: >-
       Pull requests opened against the repository's default branch, dated by
@@ -1398,9 +1404,9 @@ metrics:
   - metric_key: git.prs_merged
     source_key: git
     subject: pull_requests
-    label: Pull requests merged
-    short_label: PRs merged
-    description: Authored pull requests merged
+    label: Pull requests merged into any branch
+    short_label: PRs merged (all)
+    description: Authored pull requests merged into any branch
     explanation: >-
       Authored pull requests that merged, dated by the merge in UTC — so a request
       counts in the period it landed and can carry commits written in earlier
@@ -1424,8 +1430,8 @@ metrics:
   - metric_key: git.default_branch_prs_merged
     source_key: git
     subject: pull_requests
-    label: Pull requests merged into the default branch
-    short_label: PRs merged (default)
+    label: Pull requests merged
+    short_label: PRs merged
     description: Authored pull requests merged into the default branch
     explanation: >-
       Pull requests that merged into the repository's default branch, dated by
@@ -1476,10 +1482,10 @@ metrics:
     subject: pull_requests
     tags:
       - rate
-    label: PR merge rate
-    short_label: Merge %
-    description: Share of created pull requests that merged
-    explanation: Of the pull requests created in the period, the share that have merged. Requests opened near the end of the period may not have merged yet, which lowers the rate at period edges.
+    label: PR merge rate into any branch
+    short_label: Merge % (all)
+    description: Share of pull requests created into any branch that merged
+    explanation: Of the pull requests created into any branch in the period, the share that have merged. Requests opened near the end of the period may not have merged yet, which lowers the rate at period edges.
     format: percent
     direction: higher_is_better
     entity_type: person
@@ -1493,6 +1499,31 @@ metrics:
         measure_key: pr_created
     dimensions:
       - branch_scope
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.default_branch_merge_rate
+    source_key: git
+    subject: pull_requests
+    tags:
+      - rate
+    label: PR merge rate
+    short_label: Merge %
+    description: Share of pull requests created into the default branch that merged
+    explanation: Of the pull requests created into the default branch in the period, the share that have merged. Requests opened near the end of the period may not have merged yet, which lowers the rate at period edges.
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: default_pr_created_merged
+      - input_role: denominator
+        measure_key: default_pr_created
+    dimensions:
       - destination_branch
       - project
       - repository
@@ -1631,9 +1662,9 @@ metrics:
   - metric_key: git.active_days
     source_key: git
     subject: commits
-    label: Active commit days
-    short_label: Active days
-    description: Distinct days with at least one authored commit
+    label: Active commit days on any branch
+    short_label: Active days (all)
+    description: Distinct days with at least one authored commit on any branch
     explanation: Distinct calendar days with authored, non-merge commits. Repository breakdowns count active days independently; the total still counts each calendar day once across repositories.
     unit: days
     format: integer
@@ -1648,15 +1679,35 @@ metrics:
       - project
       - repository
       - source
+  - metric_key: git.default_branch_active_days
+    source_key: git
+    subject: commits
+    label: Active commit days
+    short_label: Active days
+    description: Distinct days with at least one authored commit that reached the default branch
+    explanation: Distinct calendar days with authored, non-merge commits that reached the default branch. A commit joins when its branch lands, so a past period's figure rises as work merges. Repository breakdowns count active days independently; the total still counts each calendar day once across repositories.
+    unit: days
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: distinct_count
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: default_commit_day
+    dimensions:
+      - project
+      - repository
+      - source
   - metric_key: git.commits_per_active_day
     source_key: git
     subject: commits
     tags:
       - rate
-    label: Commits per active day
-    short_label: Commits/day
-    description: Commit cadence on days with commits
-    explanation: Commits divided by the number of days with at least one commit.
+    label: Commits per active day on any branch
+    short_label: Commits/day (all)
+    description: Cadence of commits on any branch, on days with commits
+    explanation: Commits on any branch divided by the number of days with at least one commit.
     format: decimal
     direction: higher_is_better
     entity_type: person
@@ -1669,6 +1720,31 @@ metrics:
         measure_key: commit_count
       - input_role: denominator
         measure_key: commit_day
+    dimensions:
+      - project
+      - repository
+      - source
+  - metric_key: git.default_branch_commits_per_active_day
+    source_key: git
+    subject: commits
+    tags:
+      - rate
+    label: Commits per active day
+    short_label: Commits/day
+    description: Commits that reached the default branch, per day with at least one
+    explanation: Commits that reached the default branch, divided by the number of days with at least one such commit. A commit joins when its branch lands, so a past period's figure rises as work merges.
+    format: decimal
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 1.0
+      denominator_aggregation: distinct_count
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: default_commit_count
+      - input_role: denominator
+        measure_key: default_commit_day
     dimensions:
       - project
       - repository

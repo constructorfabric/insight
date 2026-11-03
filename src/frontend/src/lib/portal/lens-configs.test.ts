@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { GROUPS } from "@/lib/insight/groups";
+import { GROUPS, HEATMAP_METRIC_KEYS, KPI_ROW } from "@/lib/insight/groups";
+import { OVERVIEW_ITEMS } from "@/lib/portal/overview-configs";
 import { DIRECTIONS } from "@/lib/portal/nav-model";
 import { parseNavPaths } from "@/lib/portal/nav-policy";
 import {
@@ -54,25 +55,43 @@ describe("DIRECTION_LENSES registry", () => {
     }
   });
 
-  it("puts each default-branch reading next to the total it refines", () => {
-    const entry = lensEntry("dev", "Git output");
-    const headline = (entry as LensConfig).sections.find(
-      (section): section is Extract<SectionSpec, { kind: "headline" }> =>
-        section.kind === "headline",
-    );
-    const metrics = headline?.metrics ?? [];
+  it("reads git work on the default branch only, on every surface", () => {
+    const anyBranch = new Set([
+      "git.commits",
+      "git.prs_created",
+      "git.prs_merged",
+      "git.lines_added",
+      "git.lines_removed",
+      "git.code_lines",
+      "git.active_days",
+      "git.commits_per_active_day",
+      "git.merge_rate",
+      "git.non_default_branch_commits",
+      "git.non_default_branch_prs_created",
+      "git.non_default_branch_prs_merged",
+      "git.non_default_branch_lines_added",
+      "git.non_default_branch_lines_removed",
+      "git.non_default_branch_code_lines",
+    ]);
+    const surfaces: Array<[string, readonly string[]]> = [
+      ["dev lenses", directionMetricKeys("dev")],
+      ...Object.entries(OVERVIEW_ITEMS).map(
+        ([item, config]) => [`overview ${item}`, sectionMetricKeys(config)] as [string, string[]],
+      ),
+      ...GROUPS.flatMap((group) => [
+        [`${group.id} collection`, group.collection.metrics.map((m) => m.key)] as [string, string[]],
+        [`${group.id} preview`, group.card.preview] as [string, readonly string[]],
+        [
+          `${group.id} drilldown`,
+          group.drilldown.flatMap((block) => ("metrics" in block ? block.metrics : [])),
+        ] as [string, string[]],
+      ]),
+      ["KPI row", KPI_ROW],
+      ["heatmap", HEATMAP_METRIC_KEYS],
+    ];
 
-    // Adjacency is the rule, not the exact tile list: a split read apart from
-    // its total says nothing, because "landed" only means something against
-    // the whole. Asserting the whole array instead would fail on any unrelated
-    // tile, under a name that would not explain why.
-    for (const [total, split] of [
-      ["git.commits", "git.default_branch_commits"],
-      ["git.prs_merged", "git.default_branch_prs_merged"],
-    ]) {
-      const at = metrics.indexOf(total);
-      expect(at, `${total} is in the headline`).toBeGreaterThanOrEqual(0);
-      expect(metrics[at + 1], `the tile after ${total}`).toBe(split);
+    for (const [surface, keys] of surfaces) {
+      expect(keys.filter((key) => anyBranch.has(key)), surface).toEqual([]);
     }
   });
 
@@ -197,7 +216,7 @@ describe("sectionMetricKeys — Overview section kinds", () => {
       title: "t",
       sections: [{ kind: "direction-cards", variant: "full" }],
     });
-    expect(keys).toContain("git.commits");
+    expect(keys).toContain("git.default_branch_commits");
     expect(keys).toContain("collab.messages_sent");
     expect(keys).toContain("wiki.pages_created");
   });
