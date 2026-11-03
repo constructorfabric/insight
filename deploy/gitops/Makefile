@@ -450,7 +450,7 @@ local-up: local-wizard
 .PHONY: resolve-local-ingress
 resolve-local-ingress: values-present
 	@set -euo pipefail; \
-	if ! grep -q '__INGRESS_LB_IP__' "$(VALUES)"; then \
+	if ! grep -q '^[^#]*__INGRESS_LB_IP__' "$(VALUES)"; then \
 	  echo "No __INGRESS_LB_IP__ placeholder in $(VALUES); skipping."; exit 0; \
 	fi; \
 	[ -n "$(KUBE_CTX)" ] || { echo "KUBE_CTX is required to resolve __INGRESS_LB_IP__"; exit 1; }; \
@@ -458,7 +458,7 @@ resolve-local-ingress: values-present
 	while [ "$$SECONDS" -lt "$$DEADLINE" ]; do \
 	  ADDRESS=$$(kubectl --context "$(KUBE_CTX)" -n "$(ENVOY_GATEWAY_NAMESPACE)" \
 	    --request-timeout=5s get services \
-	    -l gateway.envoyproxy.io/owning-gateway-name=insight -o json \
+	    -l gateway.envoyproxy.io/owning-gateway-name=insight,gateway.envoyproxy.io/owning-gateway-namespace=$(NS_INFRA) -o json \
 	    | jq -r '[.items[].status.loadBalancer.ingress[0]? | (.ip | select(. != "")) // .hostname | select(. != null and . != "")][0] // empty') || { \
 	      echo "Cannot resolve __INGRESS_LB_IP__; edit $(VALUES) by hand." >&2; exit 1; }; \
 	  [ -z "$$ADDRESS" ] || break; \

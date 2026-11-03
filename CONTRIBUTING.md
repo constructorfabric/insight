@@ -427,7 +427,9 @@ they're slow to re-pull). After prune, next `up` re-runs the wizard.
 ### Live ClickHouse tests
 
 Tests that need a real ClickHouse skip unless a server is named. CI names one;
-locally, start a throwaway server and point the suites at it:
+locally, start a throwaway server and point the suites at it. The suites run on
+the host, so besides Docker they need the Rust toolchain the workspace pins
+(`rust-version` in `src/backend/Cargo.toml`) and a Python with `pytest`:
 
 ```bash
 docker run -d --rm --name ch-live -p 18123:8123 \
@@ -435,7 +437,8 @@ docker run -d --rm --name ch-live -p 18123:8123 \
   clickhouse/clickhouse-server:25.8
 
 # Both suites need the database; the sweep also needs the sync-history migration
-( export CLICKHOUSE_URL=http://localhost:18123 CLICKHOUSE_USER=insight CLICKHOUSE_PASSWORD=insight
+( set -euo pipefail
+  export CLICKHOUSE_URL=http://localhost:18123 CLICKHOUSE_USER=insight CLICKHOUSE_PASSWORD=insight
   source src/ingestion/scripts/lib/ch-exec.sh
   echo "CREATE DATABASE IF NOT EXISTS ingestion_history" | run_ch
   for f in src/ingestion/scripts/migrations/*connector-sync-history*.sql; do run_ch < "$f"; done )
