@@ -106,7 +106,7 @@ already-correct deny responses; the integrity invariant (no orphan
   recreated with the same name, it gets a new `role_id` — anyone
   who cached the old id holds a dangling reference. Mitigated by
   the `Roles.Admin` constant being pinned at a deterministic UUID
-  in migration `007_roles.sql` (the role that matters most can't
+  in migration `007_roles.sql`, since squashed into `000_baseline.sql` (the role that matters most can't
   be DELETEd anyway — see §"More Information").
 - **Positive:** `roles` stays strict-minimum. No additional columns
   to migrate, no SCD2 query complexity.

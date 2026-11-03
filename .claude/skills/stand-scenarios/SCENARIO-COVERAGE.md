@@ -248,10 +248,12 @@ confirmation.
 
 **2 · R11's exclusion half is unbuilt.** "Where a conclusion would rest on a
 defective metric, the metric is excluded by name" depends on conclusions (S-2),
-which do not exist. Narrower point: the metric caveats that *are* written down
-live in migration comments
+which do not exist. Narrower point: the metric caveats that *were* written down
+lived only in migration comments
 (`m20260601_000002_seed_claude_team_metrics_catalog.rs`,
-`m20260606_000001_dept_metric_distributions.rs`) and reach no surface at all.
+`m20260606_000001_dept_metric_distributions.rs`; the analytics migration squash
+removed both, so they survive only in git history at `cb8aaf153`) and reach no
+surface at all.
 
 **3 · Appendix C's first open point is answerable now** — see §2. ADMIN gaining
 no implicit data visibility is enforced at the API and tested.

@@ -23,7 +23,7 @@
   SCHEMA CONTRACT: this DDL is a byte-for-byte copy of COLUMNS_DDL in
   src/backend/services/identity-resolution/src/infra/identity_persons.rs —
   the service owns the schema (it mirrors its own MariaDB `persons` log,
-  `001_persons.sql`, minus the generated `value_hash`, plus the `_synced_at`
+  `000_baseline.sql`, minus the generated `value_hash`, plus the `_synced_at`
   watermark). If the service changes the schema, change THIS macro in the
   same PR. A drifted hook is mostly harmless (CREATE IF NOT EXISTS never
   alters an existing table; the service's own staging-swap upgrades the live

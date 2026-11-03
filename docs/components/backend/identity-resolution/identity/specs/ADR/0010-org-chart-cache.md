@@ -191,7 +191,7 @@ detected here; the Phase-3 `/v1/subchart/{person_id}?depth=N`
 endpoint will bound recursion by `depth` so unbounded walks
 become structurally impossible regardless of source data quality.
 
-Schema (`src/backend/services/identity-resolution/src/migration/sql/003_org_chart.sql`):
+Schema (`src/backend/services/identity-resolution/src/migration/sql/003_org_chart.sql`, since squashed into `sql/000_baseline.sql`):
 
 ```sql
 CREATE TABLE org_chart (
