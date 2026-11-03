@@ -35,7 +35,7 @@ definitions:
             predicate: >-
               {{ headers.get('X-Seraph-LoginReason', '') in ['AUTHENTICATED_FAILED', 'AUTHENTICATION_DENIED'] }}
             error_message: >-
-              Jira refused the sign-in: check jira_email and jira_api_token.
+              Jira refused the sign-in: check jira_email and jira_api_token, and whether the account is locked or must clear a CAPTCHA in a browser.
           - type: HttpResponseFilter
             action: RETRY
             http_codes:

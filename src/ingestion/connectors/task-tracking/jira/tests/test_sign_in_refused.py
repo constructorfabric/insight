@@ -11,7 +11,7 @@ import json
 import logging
 
 import pytest
-from airbyte_cdk.models import FailureType, Status
+from airbyte_cdk.models import AirbyteConnectionStatus, FailureType, Status
 from config import JIRA_URL, JiraConfigBuilder
 from connector_tests import ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse, get_source, read_stream
 
@@ -25,16 +25,19 @@ def _empty_projects(headers: dict[str, str] | None = None) -> HttpResponse:
     return HttpResponse(body=json.dumps({"values": [], "isLast": True}), status_code=200, headers=headers or {})
 
 
-def _check_status(config: dict[str, object]) -> Status:
+def _check(config: dict[str, object]) -> AirbyteConnectionStatus:
     source = get_source(_CONNECTOR, config)
-    return source.check(logging.getLogger("test"), config).status
+    return source.check(logging.getLogger("test"), config)
 
 
 def test_check_fails_when_jira_marks_the_sign_in_refused(http_mocker: HttpMocker) -> None:
     config = JiraConfigBuilder().build()
     http_mocker.get(HttpRequest(_PROJECTS_URL, query_params=ANY_QUERY_PARAMS), _empty_projects(_REFUSED))
 
-    assert _check_status(config) == Status.FAILED
+    result = _check(config)
+
+    assert result.status == Status.FAILED
+    assert "Jira refused the sign-in" in (result.message or ""), f"should name the refusal: {result.message!r}"
 
 
 def test_check_fails_when_only_the_user_listing_refuses_the_caller(http_mocker: HttpMocker) -> None:
@@ -45,7 +48,7 @@ def test_check_fails_when_only_the_user_listing_refuses_the_caller(http_mocker: 
         HttpResponse(body=json.dumps({"errorMessages": ["Forbidden"]}), status_code=403),
     )
 
-    assert _check_status(config) == Status.FAILED
+    assert _check(config).status == Status.FAILED
 
 
 def test_check_passes_for_an_account_jira_accepts(http_mocker: HttpMocker) -> None:
@@ -59,7 +62,7 @@ def test_check_passes_for_an_account_jira_accepts(http_mocker: HttpMocker) -> No
         HttpResponse(body=json.dumps([{"accountId": "acc-1"}]), status_code=200),
     )
 
-    assert _check_status(config) == Status.SUCCEEDED
+    assert _check(config).status == Status.SUCCEEDED
 
 
 @pytest.mark.parametrize("stream", ["jira_projects", "jira_issue"])
