@@ -10,13 +10,23 @@ export interface CustomLineChartProps {
   result: MetricResult;
   x: string;
   y: string;
+  fillHeight?: boolean;
 }
 
-export function CustomLineChart({ result, x, y }: CustomLineChartProps) {
+export function CustomLineChart({
+  result,
+  x,
+  y,
+  fillHeight,
+}: CustomLineChartProps) {
   const data = points(result, [x, y]);
 
   return (
-    <ChartFrame config={seriesConfig(y)} testId="custom-line-chart">
+    <ChartFrame
+      config={seriesConfig(y)}
+      testId="custom-line-chart"
+      fillHeight={fillHeight}
+    >
       <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
         <SeriesAxes
           x={x}

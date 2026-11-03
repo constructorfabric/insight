@@ -10,14 +10,24 @@ export interface CustomBarChartProps {
   result: MetricResult;
   x: string;
   y: string;
+  fillHeight?: boolean;
 }
 
 /** A count per category — the shape most questions about "per" answer with. */
-export function CustomBarChart({ result, x, y }: CustomBarChartProps) {
+export function CustomBarChart({
+  result,
+  x,
+  y,
+  fillHeight,
+}: CustomBarChartProps) {
   const data = points(result, [x, y]);
 
   return (
-    <ChartFrame config={seriesConfig(y)} testId="custom-bar-chart">
+    <ChartFrame
+      config={seriesConfig(y)}
+      testId="custom-bar-chart"
+      fillHeight={fillHeight}
+    >
       <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
         <SeriesAxes
           x={x}

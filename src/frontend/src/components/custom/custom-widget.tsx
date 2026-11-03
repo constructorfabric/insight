@@ -22,6 +22,8 @@ export interface CustomWidgetProps {
   /** Whether the run is still in flight, which is not the same as empty. */
   pending?: boolean;
   onRetry?: () => void;
+  /** Whether a chart takes its container's height instead of the card's. */
+  fillHeight?: boolean;
 }
 
 export function CustomWidget({
@@ -31,6 +33,7 @@ export function CustomWidget({
   windowed,
   pending,
   onRetry,
+  fillHeight = false,
 }: CustomWidgetProps) {
   const { isAdmin, isPending } = useIsAdmin();
   const member = !isPending && !isAdmin;
@@ -95,19 +98,34 @@ export function CustomWidget({
     case "line":
       return (
         drawable(widget.metric, [widget.x, widget.y], result) ?? (
-          <CustomLineChart result={result} x={widget.x} y={widget.y} />
+          <CustomLineChart
+            result={result}
+            x={widget.x}
+            y={widget.y}
+            fillHeight={fillHeight}
+          />
         )
       );
     case "bar":
       return (
         drawable(widget.metric, [widget.x, widget.y], result) ?? (
-          <CustomBarChart result={result} x={widget.x} y={widget.y} />
+          <CustomBarChart
+            result={result}
+            x={widget.x}
+            y={widget.y}
+            fillHeight={fillHeight}
+          />
         )
       );
     case "area":
       return (
         drawable(widget.metric, [widget.x, widget.y], result) ?? (
-          <CustomAreaChart result={result} x={widget.x} y={widget.y} />
+          <CustomAreaChart
+            result={result}
+            x={widget.x}
+            y={widget.y}
+            fillHeight={fillHeight}
+          />
         )
       );
     case "stat":
@@ -127,6 +145,7 @@ export function CustomWidget({
             result={result}
             label={widget.label}
             value={widget.value}
+            fillHeight={fillHeight}
           />
         )
       );
@@ -153,7 +172,11 @@ function drawable(
   if (missing.length === 0) return null;
 
   return (
-    <MissingColumns metric={metric} missing={missing} returned={result.columns} />
+    <MissingColumns
+      metric={metric}
+      missing={missing}
+      returned={result.columns}
+    />
   );
 }
 

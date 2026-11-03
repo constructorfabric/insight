@@ -245,3 +245,16 @@ describe("the dashboard ownership param", () => {
     expect(PORTAL_SEARCH_KEYS).not.toContain("owned");
   });
 });
+
+describe("the expanded widget", () => {
+  it("keeps a widget id and drops an empty one", () => {
+    expect(validatePortalSearch({ widget: "commits_table" }).widget).toBe(
+      "commits_table",
+    );
+    expect(validatePortalSearch({ widget: "" }).widget).toBeUndefined();
+  });
+
+  it("stays on the dashboard it was opened on", () => {
+    expect(PORTAL_SEARCH_KEYS).not.toContain("widget");
+  });
+});

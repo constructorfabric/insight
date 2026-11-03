@@ -80,7 +80,7 @@ vi.mock("recharts", async (importOriginal) => {
   };
 });
 
-import { CustomApiError } from "@/api/custom-client";
+import { CustomApiError, type Widget } from "@/api/custom-client";
 import { wrapper } from "@/test/alerts";
 
 import { CustomWidget } from "./custom-widget";
@@ -118,6 +118,28 @@ describe("<CustomWidget>", () => {
 
     expect(screen.getByTestId("custom-line-chart")).toBeInTheDocument();
   });
+
+  it.each([
+    ["line", { type: "line", metric: "m", x: "day", y: "lines" }],
+    ["bar", { type: "bar", metric: "m", x: "day", y: "lines" }],
+    ["area", { type: "area", metric: "m", x: "day", y: "lines" }],
+    ["pie", { type: "pie", metric: "m", label: "day", value: "lines" }],
+  ] as const)(
+    "draws a %s chart at the card's height unless asked to fill its container",
+    (kind, widget: Widget) => {
+      const { rerender } = render(
+        <CustomWidget widget={widget} result={result} />
+      );
+      expect(screen.getByTestId(`custom-${kind}-chart`), kind).toHaveClass(
+        "h-64"
+      );
+
+      rerender(<CustomWidget widget={widget} result={result} fillHeight />);
+      expect(screen.getByTestId(`custom-${kind}-chart`), kind).toHaveClass(
+        "h-full"
+      );
+    }
+  );
 
   it("maps the widget's x and y fields to the chart axes and row values", () => {
     render(
@@ -186,7 +208,9 @@ describe("<CustomWidget>", () => {
     );
 
     expect(screen.queryByText("Busy, try again.")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry" })
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
   });
@@ -396,8 +420,16 @@ describe("<CustomWidget>", () => {
       role.isPending = false;
       render(
         <CustomWidget
-          widget={{ type: "line", metric: "lines_per_day", x: "day", y: "lines" }}
-          result={{ columns: ["day", "total_lines"], rows: [["2026-09-01", 132]] }}
+          widget={{
+            type: "line",
+            metric: "lines_per_day",
+            x: "day",
+            y: "lines",
+          }}
+          result={{
+            columns: ["day", "total_lines"],
+            rows: [["2026-09-01", 132]],
+          }}
         />,
         { wrapper }
       );
@@ -423,7 +455,9 @@ describe("<CustomWidget>", () => {
         />
       );
 
-      expect(screen.getByText("This widget couldn't be loaded.")).toBeInTheDocument();
+      expect(
+        screen.getByText("This widget couldn't be loaded.")
+      ).toBeInTheDocument();
       expect(screen.queryByText(/may not name a `table`/)).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: /retry|try again/i }));
       expect(onRetry).toHaveBeenCalled();

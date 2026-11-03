@@ -572,3 +572,125 @@ describe("/portal/custom/$name — a widget the service is too busy to run", () 
     expect(customClient.runDashboardWidget).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("/portal/custom/$name — a widget expanded over the window", () => {
+  function cachedWrapper({ children }: { children: ReactNode }) {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    return createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      children
+    );
+  }
+
+  it("expands a widget into a dialog named in the URL, on the rows and window the card already ran", async () => {
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
+      body: {
+        title: "Engineering",
+        widgets: ["commits_table"],
+        time_ranges: ["P30D"],
+        default_range: "P30D",
+      },
+    });
+    vi.mocked(customClient.fetchDashboardWidgets).mockResolvedValue([
+      { ...COMMITS_TABLE, clock: CLOCK },
+    ]);
+    vi.mocked(customClient.runDashboardWidget).mockResolvedValue({
+      columns: ["day", "lines"],
+      rows: [["2026-09-01", 59]],
+    });
+    portalRouter.go("/portal/custom/engineering");
+    render(<Component />, { wrapper: cachedWrapper });
+
+    expect(await screen.findByRole("cell", { name: "59" })).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Expand Widget" })
+    );
+
+    expect(portalRouter.search.widget).toBe("commits_table");
+    const dialog = await screen.findByRole("dialog", { name: "Widget" });
+    expect(
+      within(dialog).getByRole("cell", { name: "59" })
+    ).toBeInTheDocument();
+    expect(customClient.runDashboardWidget).toHaveBeenCalledTimes(1);
+    expect(customClient.runDashboardWidget).toHaveBeenCalledWith(
+      "engineering",
+      "commits_table",
+      { range: "P30D", bucket: false }
+    );
+  });
+
+  it("opens on the widget the URL already names", async () => {
+    boardOfCommits();
+    portalRouter.set({ widget: "commits_table" });
+    render(<Component />, { wrapper });
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByRole("cell", { name: "59" })
+    ).toBeInTheDocument();
+  });
+
+  it("closes in place, so Back does not reopen it, and returns focus to Expand", async () => {
+    boardOfCommits();
+    render(<Component />, { wrapper });
+
+    const expand = await screen.findByRole("button", { name: "Expand Widget" });
+    await userEvent.click(expand);
+    await screen.findByRole("dialog");
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(portalRouter.search.widget).toBeUndefined();
+    expect(portalRouter.navigations.at(-1)).toMatchObject({ replace: true });
+    expect(expand).toHaveFocus();
+  });
+
+  it("opens nothing for a widget the board does not draw", async () => {
+    boardOfCommits();
+    portalRouter.set({ widget: "not_on_this_board" });
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByRole("cell", { name: "59" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("offers a member the expanded view too", async () => {
+    role.isAdmin = false;
+    boardOfCommits({ access: "viewer" });
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("button", { name: "Expand Widget" })
+    ).toBeInTheDocument();
+  });
+
+  it("never expands a stat, which is one number, even when the URL names it", async () => {
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
+      body: { title: "Engineering", widgets: ["merged_stat"] },
+    });
+    vi.mocked(customClient.fetchDashboardWidgets).mockResolvedValue([
+      drawn("merged_stat", {
+        type: "stat",
+        metric: "merged",
+        value: "total",
+        label: "Merged",
+      }),
+    ]);
+    vi.mocked(customClient.runDashboardWidget).mockResolvedValue({
+      columns: ["total"],
+      rows: [[7]],
+    });
+    portalRouter.go("/portal/custom/engineering");
+    portalRouter.set({ widget: "merged_stat" });
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByText("7")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Expand/ })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});

@@ -17,6 +17,7 @@ import {
   shortDate,
   spansYears,
 } from "@/components/custom/chart-format";
+import { cn } from "@/lib/utils";
 
 /**
  * The chrome every chart shares: the kit's container, its palette, its
@@ -27,14 +28,19 @@ import {
 export function ChartFrame({
   config,
   testId,
+  fillHeight = false,
   children,
 }: {
   config: ChartConfig;
   testId: string;
+  fillHeight?: boolean;
   children: ReactElement;
 }) {
   return (
-    <div data-testid={testId} className="h-64 w-full">
+    <div
+      data-testid={testId}
+      className={cn("w-full", fillHeight ? "h-full" : "h-64")}
+    >
       <ChartContainer config={config} className="h-full w-full">
         {children}
       </ChartContainer>

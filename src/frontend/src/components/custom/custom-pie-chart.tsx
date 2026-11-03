@@ -23,10 +23,16 @@ export interface CustomPieChartProps {
   result: MetricResult;
   label: string;
   value: string;
+  fillHeight?: boolean;
 }
 
 /** A share of a total: one slice per row, painted round the kit's palette. */
-export function CustomPieChart({ result, label, value }: CustomPieChartProps) {
+export function CustomPieChart({
+  result,
+  label,
+  value,
+  fillHeight,
+}: CustomPieChartProps) {
   const data = points(result, [label, value]);
   const unit = unitFor(result.percents, value);
   const config: ChartConfig = Object.fromEntries(
@@ -40,7 +46,11 @@ export function CustomPieChart({ result, label, value }: CustomPieChartProps) {
   );
 
   return (
-    <ChartFrame config={config} testId="custom-pie-chart">
+    <ChartFrame
+      config={config}
+      testId="custom-pie-chart"
+      fillHeight={fillHeight}
+    >
       <PieChart>
         <ChartTooltip
           content={
