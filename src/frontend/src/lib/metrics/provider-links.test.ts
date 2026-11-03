@@ -44,6 +44,12 @@ describe("evidenceRefText", () => {
   it("keeps other reference formats intact", () => {
     expect(evidenceRefText("tasks.closed", "PROJ-7")).toBe("PROJ-7");
   });
+
+  it("abbreviates a commit sha to seven characters, as git does", () => {
+    const sha = "e0f4823a55ac28276cf068f066ebf66f872a059c";
+    expect(evidenceRefText("git.commits", sha)).toBe("e0f4823");
+    expect(evidenceRefText("git.commits", "e0f4823")).toBe("e0f4823");
+  });
 });
 
 describe("activityEventLabel", () => {
