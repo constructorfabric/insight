@@ -418,6 +418,41 @@ def seed_pull_requests(
     }
 
 
+def seed_branches(
+    client: clickhouse_connect.driver.client.Client,
+    tenant_uuid: str,
+) -> int:
+    """The repository's default branch, which every seeded request targets.
+
+    Gold scopes a request by comparing its target with the repository's declared
+    default branch, so without this row every request reads as outside it.
+    """
+    truncate(client, "bronze_github", "branches")
+    cols = [
+        *AIRBYTE_COLS,
+        *IDENTITY_COLS,
+        "repository",
+        "name",
+        "head_sha",
+        "head_committed_date",
+        "is_default",
+    ]
+    row = _positioned(
+        cols,
+        {
+            **_envelope(tenant_uuid),
+            "_airbyte_raw_id": deterministic_uuid("git.branch.raw", REPO_SLUG),
+            "unique_key": f"{tenant_uuid}:{SOURCE_ID}:{REPO_SLUG}:main",
+            "repository": f"https://github.com/{REPO_SLUG}.git",
+            "name": "main",
+            "head_sha": "",
+            "head_committed_date": None,
+            "is_default": True,
+        },
+    )
+    return bulk_insert(client, "bronze_github", "branches", cols, [row])
+
+
 def seed_commit_authors(
     client: clickhouse_connect.driver.client.Client,
     history: Sequence[DayHistory],
@@ -480,6 +515,8 @@ def generate(
     truncate(client, "silver", "class_git_file_changes")
     truncate(client, "silver", "class_git_pull_requests")
     truncate(client, "silver", "class_git_pull_requests_commits")
+    truncate(client, "staging", "github__repository_branches")
+    truncate(client, "silver", "class_git_repository_branches")
 
     if history is None:
         history = build_history(roster, days)
@@ -488,5 +525,6 @@ def generate(
         "bronze_github.commits": seed_commits(client, history, tenant_uuid),
         "bronze_github.file_changes": seed_file_changes(client, history, tenant_uuid),
         "bronze_github.commit_authors": seed_commit_authors(client, history, tenant_uuid),
+        "bronze_github.branches": seed_branches(client, tenant_uuid),
         **seed_pull_requests(client, history, tenant_uuid),
     }
