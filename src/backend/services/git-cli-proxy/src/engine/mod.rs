@@ -3,6 +3,8 @@
 
 pub mod author_index;
 pub mod disk;
+#[cfg(test)]
+pub(crate) mod fake_git;
 pub mod index;
 pub mod key;
 pub mod meta;
