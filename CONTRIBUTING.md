@@ -26,6 +26,7 @@ Open a PR after reading [AGENTS.md](AGENTS.md).
    - [Edit code](#edit-code)
    - [Auto-reload mechanic](#auto-reload-mechanic)
    - [Common operations](#common-operations)
+   - [Live ClickHouse tests](#live-clickhouse-tests)
 7. [Seeding](#seeding)
    - [Compose](#compose)
    - [Kubernetes](#kubernetes)
@@ -152,8 +153,9 @@ On first run the wizard generates (and gitignores) the local artifacts:
 - `environments/local/.env.local` (Airbyte setup creds — only when
   `system.airbyte=true`)
 
-Then the chain runs: `bootstrap → fetch-cert → seal → system →
-deploy-app`. Subsequent runs skip the wizard and reconcile the stack.
+Then the chain runs: `bootstrap → resolve-local-ingress → fetch-cert → seal →
+system → keycloak-realm → deploy-app`. Subsequent runs skip the wizard
+and reconcile the stack.
 
 K8s and compose can coexist — disjoint host ports by default. Demo-data
 seeding on k8s is one command
@@ -183,10 +185,10 @@ cp environments/local/values.yaml.template environments/local/values.yaml
 #   authenticator.oidc.issuerUrl: <idp>      #   authenticator.oidc.* at a real IdP
 #   <l2>.host / <l2>.port                    # only when <l2>.deploy=false
 # The `__INGRESS_LB_IP__` placeholders (authenticator.oidc.issuerUrl,
-# keycloak.hostname) must be replaced with the address of the Envoy
-# data-plane Service that Envoy Gateway creates for the shared Gateway:
-# (`kubectl -n envoy-gateway-system get svc \
-#    -l gateway.envoyproxy.io/owning-gateway-name=insight`).
+# keycloak.hostname) are filled after bootstrap by
+# `make resolve-local-ingress ENV=local` (also part of `make deploy ENV=local`).
+# If the Envoy data-plane Service has no LoadBalancer address, replace them
+# by hand in environments/local/values.yaml with a reachable ingress address.
 
 # 3. Cleartext secret store (read by `make seal`, never committed).
 cp secrets-store.yaml.template secrets-store.yaml
@@ -421,6 +423,38 @@ docker compose --profile build run --rm build-rust cargo test -p analytics
 interactive — no `--yes` switch. Asks separately whether to also remove
 pulled `ghcr.io/constructorfabric/insight-*` images (defaults to no —
 they're slow to re-pull). After prune, next `up` re-runs the wizard.
+
+### Live ClickHouse tests
+
+Tests that need a real ClickHouse skip unless a server is named. CI names one;
+locally, start a throwaway server and point the suites at it. The suites run on
+the host, so besides Docker they need the Rust toolchain the workspace pins
+(`rust-version` in `src/backend/Cargo.toml`) and a Python with `pytest`:
+
+```bash
+docker run -d --rm --name ch-live -p 18123:8123 \
+  -e CLICKHOUSE_USER=insight -e CLICKHOUSE_PASSWORD=insight \
+  clickhouse/clickhouse-server:25.8
+
+# Both suites need the database; the sweep also needs the sync-history migration
+( set -euo pipefail
+  export CLICKHOUSE_URL=http://localhost:18123 CLICKHOUSE_USER=insight CLICKHOUSE_PASSWORD=insight
+  source src/ingestion/scripts/lib/ch-exec.sh
+  echo "CREATE DATABASE IF NOT EXISTS ingestion_history" | run_ch
+  for f in src/ingestion/scripts/migrations/*connector-sync-history*.sql; do run_ch < "$f"; done )
+
+# Analytics (Rust): the live tests are #[ignore]d and apply their own migrations
+INTEGRATION_TESTS_CLICKHOUSE_URL=http://localhost:18123 \
+INTEGRATION_TESTS_CLICKHOUSE_USER=insight INTEGRATION_TESTS_CLICKHOUSE_PASSWORD=insight \
+  cargo test --manifest-path src/backend/Cargo.toml -p analytics -- --ignored
+
+# Reconcile sweep (Python)
+SWEEP_TEST_CH_URL=http://localhost:18123 SWEEP_TEST_CH_USER=insight SWEEP_TEST_CH_PASSWORD=insight \
+  pytest src/ingestion/reconcile-connectors/tests
+```
+
+The sweep reads an empty password as a missing credential, so its server needs
+a user with a password, as above.
 
 ### Point the authenticator at a real IdP
 

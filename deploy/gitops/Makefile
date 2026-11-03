@@ -415,7 +415,8 @@ diff: sync-clean values-present chart-present vpn-up kube-ctx gateway-realip-arg
 		"$(CHART)" "$(VALUES)" "$(RENDER_DIR)" "$(INSIGHT_VERSION)"
 
 # Top-level deploy. For ENV=local (sandbox), `deploy` chains the full
-# bring-up: wizard → bootstrap → fetch-cert → seal → system → deploy-app.
+# bring-up: wizard → bootstrap → resolve-local-ingress → fetch-cert → seal →
+# system → keycloak-realm → deploy-app.
 # For any other env, `deploy` keeps the narrow behavior (just upgrade
 # the L3 umbrella); each cluster picks which L2 services it self-hosts
 # vs. swaps for managed endpoints, so chaining `system` would be wrong.
@@ -439,11 +440,39 @@ local-up: local-wizard
 	    echo "$(C_RED)ERROR$(C_RST): inventory.yaml missing .kubeContext after wizard"; exit 1; \
 	  fi; \
 	  $(MAKE) --no-print-directory bootstrap      ENV=local KUBE_CTX=$$CTX && \
+	  $(MAKE) --no-print-directory resolve-local-ingress ENV=local KUBE_CTX=$$CTX && \
 	  $(MAKE) --no-print-directory fetch-cert     ENV=local KUBE_CTX=$$CTX && \
 	  $(MAKE) --no-print-directory seal           ENV=local KUBE_CTX=$$CTX && \
 	  $(MAKE) --no-print-directory system         ENV=local KUBE_CTX=$$CTX && \
 	  $(MAKE) --no-print-directory keycloak-realm ENV=local KUBE_CTX=$$CTX && \
 	  $(MAKE) --no-print-directory deploy-app     ENV=local KUBE_CTX=$$CTX
+
+.PHONY: resolve-local-ingress
+resolve-local-ingress: values-present
+	@set -euo pipefail; \
+	if ! grep -q '^[^#]*__INGRESS_LB_IP__' "$(VALUES)"; then \
+	  echo "No __INGRESS_LB_IP__ placeholder in $(VALUES); skipping."; exit 0; \
+	fi; \
+	[ -n "$(KUBE_CTX)" ] || { echo "KUBE_CTX is required to resolve __INGRESS_LB_IP__"; exit 1; }; \
+	ADDRESS=""; DEADLINE=$$((SECONDS + 120)); \
+	while [ "$$SECONDS" -lt "$$DEADLINE" ]; do \
+	  ADDRESS=$$(kubectl --context "$(KUBE_CTX)" -n "$(ENVOY_GATEWAY_NAMESPACE)" \
+	    --request-timeout=5s get services \
+	    -l gateway.envoyproxy.io/owning-gateway-name=insight,gateway.envoyproxy.io/owning-gateway-namespace=$(NS_INFRA) -o json \
+	    | jq -r '[.items[].status.loadBalancer.ingress[0]? | (.ip | select(. != "")) // .hostname | select(. != null and . != "")][0] // empty') || { \
+	      echo "Cannot resolve __INGRESS_LB_IP__; edit $(VALUES) by hand." >&2; exit 1; }; \
+	  [ -z "$$ADDRESS" ] || break; \
+	  sleep 2; \
+	done; \
+	if [ -z "$$ADDRESS" ]; then \
+	  echo "No Envoy LoadBalancer address; replace __INGRESS_LB_IP__ in $(VALUES) by hand." >&2; exit 1; \
+	fi; \
+	case "$$ADDRESS" in *:*) ADDRESS="[$$ADDRESS]" ;; esac; \
+	REPLACEMENT=$$(printf '%s' "$$ADDRESS" | sed 's/[\&|]/\\&/g'); \
+	TMP=$$(mktemp "$(VALUES).XXXXXX"); trap 'rm -f "$$TMP"' EXIT; \
+	sed "s|__INGRESS_LB_IP__|$$REPLACEMENT|g" "$(VALUES)" > "$$TMP"; \
+	mv "$$TMP" "$(VALUES)"; \
+	echo "Resolved __INGRESS_LB_IP__ in $(VALUES)."
 
 # Run the wizard only when inventory.yaml is missing. The wizard itself
 # enforces non-TTY rejection. If the file is present (re-run on the

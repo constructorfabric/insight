@@ -66,10 +66,10 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: "insight-authenticator-dev-secret"
     redirectUri: "http://localhost/auth/callback"
-    # Realm users' `sub` is their roster uuid; persons-seed fixtures key
-    # their id rows on this source_type.
+    # persons-seed fixtures key their id rows on this source_type.
     sourceType: "keycloak"
-    externalIdClaim: "sub"
+    # keycloak-config-cli assigns user ids; idp_sub preserves the roster uuid.
+    externalIdClaim: "idp_sub"
 
 # `hostname` is the advertised issuer base; no route here, so the concrete
 # Service FQDN (the keycloak-realm recipe reads it raw — no tpl string).

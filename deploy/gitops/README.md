@@ -72,9 +72,9 @@ deploy/gitops/
 The wizard at `../compose/insight-init.sh` is shared with the
 docker-compose stack. For `ENV=local`, `make deploy ENV=local`
 auto-invokes it whenever `environments/local/inventory.yaml` is
-missing, then chains `bootstrap → fetch-cert → seal → system →
-deploy-app`. For other envs the operator copies the template manually
-and runs each target individually.
+missing, then chains `bootstrap → resolve-local-ingress → fetch-cert → seal →
+system → keycloak-realm → deploy-app`. For other envs the operator copies
+the template manually and runs each target individually.
 
 ## Layer model
 
@@ -167,7 +167,8 @@ tenant ID, then writes:
   wizard collected
 
 After the wizard, the same `make deploy ENV=local` continues with the
-full chain: `bootstrap → fetch-cert → seal → system → deploy-app`.
+full chain: `bootstrap → resolve-local-ingress → fetch-cert → seal →
+system → keycloak-realm → deploy-app`.
 Subsequent `make deploy ENV=local` calls skip the wizard (inventory
 already exists) and re-run the chain idempotently.
 
