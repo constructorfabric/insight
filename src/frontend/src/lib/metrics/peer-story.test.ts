@@ -103,26 +103,24 @@ describe("partitionPeerStory", () => {
   const entries = buildPeerStoryEntries(COLLECTION, byKey, "me@x.com");
 
   it("puts the most severe outlier in the hero slot, bottom first", () => {
-    const { hero, folded } = partitionPeerStory(entries, "all");
+    const { hero, folded } = partitionPeerStory(entries);
     expect(hero?.key).toBe("m.issue");
     expect(folded.map((e) => e.key)).toEqual(["m.par"]);
   });
 
-  it("focus critical shows only bottom outliers", () => {
-    const { focusedOutliers } = partitionPeerStory(entries, "critical");
-    expect(focusedOutliers.map((e) => e.key)).toEqual(["m.issue"]);
+  it("lists behind outliers before ahead ones", () => {
+    const { hero, sideCards } = partitionPeerStory(entries);
+    expect([hero, ...sideCards].map((e) => e?.key)).toEqual([
+      "m.issue",
+      "m.win",
+    ]);
   });
 
-  it("focus rewards shows only top outliers", () => {
-    const { focusedOutliers, hero } = partitionPeerStory(entries, "rewards");
-    expect(focusedOutliers.map((e) => e.key)).toEqual(["m.win"]);
-    expect(hero?.key).toBe("m.win");
-  });
-
-  it("neutral focus surfaces no outliers", () => {
-    const { hero, focusedOutliers } = partitionPeerStory(entries, "neutral");
+  it("gives a profile with no outliers no hero", () => {
+    const onPar = entries.filter((entry) => entry.key === "m.par");
+    const { hero, sideCards, chips } = partitionPeerStory(onPar);
     expect(hero).toBeNull();
-    expect(focusedOutliers).toHaveLength(0);
+    expect([...sideCards, ...chips]).toHaveLength(0);
   });
 });
 

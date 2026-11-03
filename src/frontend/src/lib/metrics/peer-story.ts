@@ -6,7 +6,7 @@ import {
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
 import { derivePeerStanding } from "@/lib/metrics/peer-standing";
-import type { FocusMode, PeerStats, PeerStatusWithNeutral } from "@/lib/peers";
+import type { PeerStats, PeerStatusWithNeutral } from "@/lib/peers";
 import {
   evidenceSelection,
   type MetricEvidenceSelection,
@@ -99,8 +99,6 @@ export function worstEntry(entries: PeerStoryEntry[]): PeerStoryEntry | null {
 }
 
 export interface PeerStoryPartition {
-  /** Outliers under the active focus mode, severity-ranked. */
-  focusedOutliers: PeerStoryEntry[];
   hero: PeerStoryEntry | null;
   sideCards: PeerStoryEntry[];
   chips: PeerStoryEntry[];
@@ -108,8 +106,7 @@ export interface PeerStoryPartition {
 }
 
 export function partitionPeerStory(
-  entries: PeerStoryEntry[],
-  focusMode: FocusMode
+  entries: PeerStoryEntry[]
 ): PeerStoryPartition {
   const bottom = entries
     .filter((entry) => entry.status === "bottom")
@@ -124,23 +121,13 @@ export function partitionPeerStory(
       return a.status === "neutral" ? 1 : -1;
     });
 
-  const focusedOutliers =
-    focusMode === "critical"
-      ? bottom
-      : focusMode === "rewards"
-        ? top
-        : focusMode === "all"
-          ? bottom.length > 0
-            ? [...bottom, ...top]
-            : top
-          : [];
-  const hero = focusedOutliers[0] ?? null;
+  const outliers = [...bottom, ...top];
+  const hero = outliers[0] ?? null;
 
   return {
-    focusedOutliers,
     hero,
-    sideCards: hero ? focusedOutliers.slice(1, 4) : [],
-    chips: hero ? focusedOutliers.slice(4) : [],
+    sideCards: outliers.slice(1, 4),
+    chips: outliers.slice(4),
     folded,
   };
 }

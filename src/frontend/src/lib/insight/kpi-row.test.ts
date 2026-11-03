@@ -48,7 +48,7 @@ describe("metricKpiTiles", () => {
       { person_id: "me@x.com", period_overlap: period, compare_to_overlap: previous },
     ]);
     const before = normalizeMetricResults([metricResult("git.commits", 100)]);
-    const [tile] = metricKpiTiles(current, before, "me@x.com", "all");
+    const [tile] = metricKpiTiles(current, before, "me@x.com");
     expect(tile?.value).toBe("3");
     expect(tile?.delta).toMatchObject({ text: "-97%", status: "neutral" });
     expect(tile?.medianLabel).toBe("median 10");
@@ -65,7 +65,7 @@ describe("metricKpiTiles", () => {
       metricResult("ai.active_days", 12),
       metricResult("ai.accepted_lines", 1000),
     ]);
-    const tiles = metricKpiTiles(byKey, previous, "me@x.com", "all");
+    const tiles = metricKpiTiles(byKey, previous, "me@x.com");
     expect(tiles.map((t) => t.key)).toEqual([
       "ai.active_days",
       "ai.accepted_lines",
@@ -102,8 +102,7 @@ describe("metricKpiTiles", () => {
     const tiles = metricKpiTiles(
       normalizeMetricResults([result]),
       null,
-      "me@x.com",
-      "all"
+      "me@x.com"
     );
     expect(tiles[0]?.gapStatus).toBe("neutral");
     expect(tiles[0]?.medianLabel).toBeNull();
@@ -122,8 +121,7 @@ describe("metricKpiTiles", () => {
     const tiles = metricKpiTiles(
       normalizeMetricResults([result]),
       null,
-      "me@x.com",
-      "all"
+      "me@x.com"
     );
     expect(tiles).toEqual([]);
   });
@@ -136,8 +134,7 @@ describe("metricKpiTiles", () => {
     const tiles = metricKpiTiles(
       normalizeMetricResults([result]),
       null,
-      "me@x.com",
-      "all"
+      "me@x.com"
     );
     expect(tiles.map((t) => t.key)).toEqual(["ai.active_days"]);
   });
@@ -157,8 +154,7 @@ describe("metricKpiTiles", () => {
     const tiles = metricKpiTiles(
       normalizeMetricResults([current]),
       normalizeMetricResults([previous]),
-      "me@x.com",
-      "all"
+      "me@x.com"
     );
     expect(tiles[0]?.delta?.text).toBe("+5 pp");
   });
@@ -174,8 +170,7 @@ describe("one finding, one mark", () => {
     const tiles = metricKpiTiles(
       normalizeMetricResults([result]),
       null,
-      "me@x.com",
-      "all"
+      "me@x.com"
     );
     expect(tiles[0]?.gapStatus).toBe("bad");
     expect(tiles[0]?.gapText).not.toBeNull();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyFocus, peerStatusVsQuartiles } from "@/lib/peers";
+import { peerStatusVsQuartiles } from "@/lib/peers";
 
 describe("peerStatusVsQuartiles", () => {
   it("keeps inclusive quartile boundaries when they sit beyond the median", () => {
@@ -43,28 +43,3 @@ describe("peerStatusVsQuartiles", () => {
     expect(peerStatusVsQuartiles(1, tiedHigh, true)).toBe("bottom");
   });
 });
-
-describe("applyFocus", () => {
-  it("passes everything through in 'all' mode", () => {
-    expect(applyFocus("top", "all")).toBe("top");
-    expect(applyFocus("bottom", "all")).toBe("bottom");
-    expect(applyFocus("neutral", "all")).toBe("neutral");
-  });
-
-  it("keeps only 'bottom' in critical mode", () => {
-    expect(applyFocus("bottom", "critical")).toBe("bottom");
-    expect(applyFocus("top", "critical")).toBe("neutral");
-    expect(applyFocus("in_pack", "critical")).toBe("neutral");
-  });
-
-  it("keeps only 'top' in rewards mode", () => {
-    expect(applyFocus("top", "rewards")).toBe("top");
-    expect(applyFocus("bottom", "rewards")).toBe("neutral");
-  });
-
-  it("mutes everything in neutral mode", () => {
-    expect(applyFocus("top", "neutral")).toBe("neutral");
-    expect(applyFocus("bottom", "neutral")).toBe("neutral");
-  });
-});
-

@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { MetricSummaryCard } from "@/components/widgets/metric-views/metric-summary-card";
 import {
@@ -8,10 +8,6 @@ import {
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
 import type { MetricResult } from "@/api/metric-results-client";
-
-vi.mock("@/hooks/use-settings", () => ({
-  useSettings: () => ({ focusMode: "all", showExplanations: true }),
-}));
 
 function summaryMetric(
   opts: {

@@ -10,7 +10,6 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { GroupCardEmpty } from "@/components/widgets/group-card-empty";
-import { useSettings } from "@/hooks/use-settings";
 import { formatMetricValue } from "@/lib/format";
 import { absenceLabel } from "@/lib/metrics/absence";
 import type { MetricGroup } from "@/lib/insight/groups";
@@ -31,7 +30,7 @@ import {
   rankCounts,
   sectionStandingPhrase,
 } from "@/lib/scoring";
-import { STATUS_BG_CLASS, applyFocusStatus } from "@/lib/status";
+import { STATUS_BG_CLASS } from "@/lib/status";
 import type { MetricCollectionResult } from "@/queries/metric-results";
 import { TEXT_HEADING } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -73,8 +72,6 @@ export function MetricGroupCard({
   subtitle,
   rankByMetricKey,
 }: MetricGroupCardProps) {
-  const { focusMode } = useSettings();
-
   if (data.isPending) {
     // Keep the card's identity while it loads: the name in the header, a
     // spinner in the body. Not interactive — nothing to open yet.
@@ -137,7 +134,7 @@ export function MetricGroupCard({
     (row) => row.rank
   );
   const counts = rankCounts(counted.map((row) => ({ row, rank: row.rank })));
-  const status = applyFocusStatus(gradeSectionStanding(counts), focusMode);
+  const status = gradeSectionStanding(counts);
   const badgeText = sectionStandingPhrase(counts);
 
   const headlineRow = pickHeadlineRow(rows);
@@ -247,10 +244,7 @@ export function MetricGroupCard({
             {preview.length > 0 ? (
               <ul className="flex flex-col gap-1.5">
                 {preview.map((row) => {
-                  const previewStatus = applyFocusStatus(
-                    peerStatusToStatus(row.rank),
-                    focusMode
-                  );
+                  const previewStatus = peerStatusToStatus(row.rank);
                   // Only the lead carries its comparison: it is the reason the
                   // card is worth opening, and putting "vs median" on every row
                   // is how the old summary line and the rows ended up saying

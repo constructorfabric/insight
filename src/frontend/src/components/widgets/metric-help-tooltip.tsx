@@ -61,6 +61,8 @@ export interface MetricNameProps {
   /** Overrides the rendered text (e.g. a short label) — the help is the same. */
   text?: string;
   className?: string;
+  /** Makes the name a tab stop. Only where no control encloses it. */
+  focusable?: boolean;
 }
 
 /**
@@ -70,19 +72,29 @@ export interface MetricNameProps {
  * on a surface of their own: they are rows inside a card that is itself a
  * button, so the name cannot be a second focusable element without nesting one
  * interactive control in another. The trigger is therefore a plain span —
- * hover and pointer only. A keyboard reader opens the card, where the same
- * copy is written out. Where the surface IS the control (a KPI tile, an
- * attention row), use `MetricHelpTooltip` on that control instead, which
- * answers focus too.
+ * hover and pointer only, unless the name sits on a surface that is not a
+ * control, where `focusable` lets a keyboard reader open it too. Where the
+ * surface IS the control (a KPI tile, an attention row), use
+ * `MetricHelpTooltip` on that control instead, which answers focus too.
  */
-export function MetricName({ metric, text, className }: MetricNameProps) {
+export function MetricName({
+  metric,
+  text,
+  className,
+  focusable = false,
+}: MetricNameProps) {
   const label = text ?? metric.label;
   const help = metricHelp(metric);
   if (!help) return <span className={className}>{label}</span>;
   return (
     <>
       <MetricHelpTooltip help={help}>
-        <span className={cn("cursor-help", className)}>{label}</span>
+        <span
+          tabIndex={focusable ? 0 : undefined}
+          className={cn("cursor-help", className)}
+        >
+          {label}
+        </span>
       </MetricHelpTooltip>
       {/* The tooltip answers a pointer and nothing else, because its trigger
           cannot be made focusable here: these names sit inside cards that are

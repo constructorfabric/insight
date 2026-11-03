@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/tooltip";
 import { PeerComparison } from "@/components/widgets/metric-views/peer-comparison";
 import { MetricCardActions } from "@/components/widgets/metric-views/metric-card-actions";
-import { useSettings } from "@/hooks/use-settings";
 import {
   formatMetricNumber,
   formatMetricValue,
@@ -396,10 +395,6 @@ function FlatGrid({
   );
 }
 
-function EmptyState({ label }: { label: string }) {
-  return <Card className="p-6 text-sm text-muted-foreground">{label}</Card>;
-}
-
 function SupportingFold({
   entries,
   cohortLabel,
@@ -515,11 +510,7 @@ export function PeerStory({
   emptyLabel = "No counter data yet.",
   className,
 }: PeerStoryProps) {
-  const { focusMode } = useSettings();
-  const { hero, sideCards, chips, folded } = partitionPeerStory(
-    entries,
-    focusMode
-  );
+  const { hero, sideCards, chips, folded } = partitionPeerStory(entries);
 
   if (entries.length === 0) {
     return (
@@ -532,26 +523,16 @@ export function PeerStory({
     );
   }
 
-  if (focusMode === "neutral") {
-    return <FlatGrid entries={entries} className={className} />;
-  }
-
-  if (focusMode === "all" && !hero) {
+  if (!hero) {
     return <FlatGrid entries={entries} className={className} />;
   }
 
   return (
     <div className={cn("flex flex-col gap-4", className)}>
-      {hero ? (
-        <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
-          <HeroCard entry={hero} cohortLabel={cohortLabel} />
-          <SideCards entries={sideCards} cohortLabel={cohortLabel} />
-        </div>
-      ) : focusMode === "critical" ? (
-        <EmptyState label="Nothing stands out as behind this period" />
-      ) : focusMode === "rewards" ? (
-        <EmptyState label="Nothing stands out as ahead this period" />
-      ) : null}
+      <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
+        <HeroCard entry={hero} cohortLabel={cohortLabel} />
+        <SideCards entries={sideCards} cohortLabel={cohortLabel} />
+      </div>
       <OutlierChips entries={chips} cohortLabel={cohortLabel} />
       <SupportingFold entries={folded} cohortLabel={cohortLabel} />
     </div>

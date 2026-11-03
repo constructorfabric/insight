@@ -20,8 +20,7 @@ import {
   deltaStatus,
   formatTileDelta,
 } from "@/lib/metrics/delta";
-import type { FocusMode } from "@/lib/peers";
-import { applyFocusStatus, type Status } from "@/lib/status";
+import type { Status } from "@/lib/status";
 import { absenceLabel } from "@/lib/metrics/absence";
 
 /**
@@ -51,8 +50,8 @@ export interface KpiTileData {
    */
   gapStatus: Status;
   /**
-   * The catalog's own words for the metric — shown on hover or focus, and
-   * inline when explanations are enabled. Null when the catalog has none.
+   * The catalog's own words for the metric — shown on hover or focus. Null
+   * when the catalog has none.
    */
   help: MetricHelpText | null;
   groupId: GroupId | null;
@@ -62,8 +61,7 @@ export interface KpiTileData {
 export function metricKpiTiles(
   byKey: Map<string, NormalizedMetricResult>,
   previousByKey: Map<string, NormalizedMetricResult> | null,
-  entityId: string,
-  focusMode: FocusMode
+  entityId: string
 ): KpiTileData[] {
   const tiles = KPI_ROW.flatMap((metricKey) => {
     const metric = byKey.get(metricKey);
@@ -83,10 +81,7 @@ export function metricKpiTiles(
     // color follows the same rank mapping as every card and the peer story
     // — red means bottom quartile, in-pack is normal and stays uncolored.
     const standing = derivePeerStanding(metric.direction, data);
-    const gapStatus = applyFocusStatus(
-      peerStatusToStatus(standing.rank),
-      focusMode
-    );
+    const gapStatus = peerStatusToStatus(standing.rank);
 
     const previousMetric = previousByKey?.get(metricKey) ?? null;
     const previousValue = previousMetric
@@ -103,10 +98,9 @@ export function metricKpiTiles(
       rawDelta && deltaText
         ? {
             text: deltaText,
-            status: applyFocusStatus(
-              leaveLabel ? "neutral" : deltaStatus(rawDelta, metric.direction),
-              focusMode
-            ),
+            status: leaveLabel
+              ? "neutral"
+              : deltaStatus(rawDelta, metric.direction),
             down: rawDelta.value < 0,
           }
         : null;

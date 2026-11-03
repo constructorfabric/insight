@@ -8,7 +8,6 @@ import {
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { Spinner } from "@/components/ui/spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { useSettings } from "@/hooks/use-settings";
 import type { MetricGroup } from "@/lib/insight/groups";
 import { countableSignals } from "@/lib/insight/metric-containment";
 import {
@@ -20,8 +19,8 @@ import {
   rankCounts,
   sectionStandingPhrase,
 } from "@/lib/scoring";
-import { applyFocus, PEER_TEXT } from "@/lib/peers";
-import { STATUS_BG_CLASS, applyFocusStatus } from "@/lib/status";
+import { PEER_TEXT } from "@/lib/peers";
+import { STATUS_BG_CLASS } from "@/lib/status";
 import type { MetricCollectionResult } from "@/queries/metric-results";
 import { TEXT_HEADING } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -47,8 +46,6 @@ export function TeamMetricGroupCard({
   onOpen,
   subtitle,
 }: TeamMetricGroupCardProps) {
-  const { focusMode } = useSettings();
-
   if (data.isPending) {
     // Keep the card's identity while it loads: the name in the header, a
     // spinner in the body. Not interactive — nothing to open yet.
@@ -91,7 +88,7 @@ export function TeamMetricGroupCard({
       (standing) => standing.verdict
     ).map((standing) => ({ row: standing, rank: standing.verdict }))
   );
-  const status = applyFocusStatus(gradeSectionStanding(counts), focusMode);
+  const status = gradeSectionStanding(counts);
   const badgeText = sectionStandingPhrase(counts);
 
   // Preview rows keep their slot even with nobody scorable — a silently
@@ -153,7 +150,7 @@ export function TeamMetricGroupCard({
                     metric={standing.metric}
                     className="min-w-0 truncate text-muted-foreground"
                   />
-                  <RowStanding standing={standing} focusMode={focusMode} />
+                  <RowStanding standing={standing} />
                 </li>
               )
             )}
@@ -171,10 +168,8 @@ export function TeamMetricGroupCard({
  */
 function RowStanding({
   standing,
-  focusMode,
 }: {
   standing: TeamMetricStanding;
-  focusMode: ReturnType<typeof useSettings>["focusMode"];
 }) {
   const { top, bottom, scored } = standing;
   if (scored === 0) {
@@ -189,7 +184,7 @@ function RowStanding({
       <span
         className={cn(
           "shrink-0 text-xs tabular-nums",
-          PEER_TEXT[applyFocus("bottom", focusMode)]
+          PEER_TEXT.bottom
         )}
       >
         {bottom} behind
@@ -201,7 +196,7 @@ function RowStanding({
       <span
         className={cn(
           "shrink-0 text-xs tabular-nums",
-          PEER_TEXT[applyFocus("top", focusMode)]
+          PEER_TEXT.top
         )}
       >
         {top} ahead

@@ -1,3 +1,4 @@
+import { useId } from "react";
 import {
   ChevronRight,
   Sparkles,
@@ -14,7 +15,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { useSettings } from "@/hooks/use-settings";
 import type { KpiTileData } from "@/lib/insight/kpi-row";
 import type { GroupId } from "@/lib/insight/groups";
 import { STATUS_TEXT_CLASS } from "@/lib/status";
@@ -46,9 +46,12 @@ export function KpiTile({
   trend,
   onOpenGroup,
 }: KpiTileProps) {
-  const { showExplanations } = useSettings();
   const primaryGroup = onOpenGroup ? tile.groupId : null;
   const interactive = primaryGroup != null;
+  const descriptionId = useId();
+  const description = [tile.help?.description, tile.help?.explanation]
+    .filter(Boolean)
+    .join(". ");
 
   return (
     <MetricHelpTooltip help={tile.help}>
@@ -64,6 +67,7 @@ export function KpiTile({
               type="button"
               onClick={() => onOpenGroup?.(primaryGroup)}
               aria-label={`Open ${tile.label} details`}
+              aria-describedby={description ? descriptionId : undefined}
             />
           ) : undefined
         }
@@ -89,10 +93,12 @@ export function KpiTile({
           >
             {tile.label}
           </CardDescription>
-          {showExplanations ? (
-            <CardDescription className={cn(TEXT_LABEL, "col-span-full line-clamp-2 min-h-[2lh] min-w-0 font-normal")}>
-              {tile.help?.description}
-            </CardDescription>
+          {/* The kit's tooltip does not describe its trigger, and the button's
+              label replaces its contents, so the copy is linked explicitly. */}
+          {description ? (
+            <span id={descriptionId} className="sr-only">
+              {description}
+            </span>
           ) : null}
           {/* Plain ink, and the badge is gone: its content moved into the
               line below, where it can say what it is comparing against
@@ -158,16 +164,12 @@ export function KpiTile({
 }
 
 export function KpiTilePlaceholder({ label }: { label?: string }) {
-  const { showExplanations } = useSettings();
   return (
     <Card className={CARD_SURFACE}>
       <CardHeader>
         <CardDescription className="min-w-0 truncate">
           {label ?? " "}
         </CardDescription>
-        {showExplanations ? (
-          <CardDescription className="col-span-full min-h-[2lh]" />
-        ) : null}
         <CardTitle className={TEXT_FIGURE}>—</CardTitle>
       </CardHeader>
       <CardFooter className={cn("gap-1.5", TEXT_LABEL)}>
