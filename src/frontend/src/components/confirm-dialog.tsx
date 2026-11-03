@@ -67,12 +67,17 @@ export function ConfirmDialog({
             <DialogDescription>{description}</DialogDescription>
           ) : null}
         </DialogHeader>
-        {children}
-        {error ? (
-          <Alert variant="destructive">
-            <TriangleAlert />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
+        {/* INVARIANT: the kit insets each direct child of DialogContent with its own padding, so the body sits in one wrapper. */}
+        {children || error ? (
+          <div className="flex flex-col gap-3">
+            {children}
+            {error ? (
+              <Alert variant="destructive">
+                <TriangleAlert />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+          </div>
         ) : null}
         <DialogFooter>
           <Button

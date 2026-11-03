@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MetricEvidenceTable } from "@/components/metric-evidence-table";
 
@@ -444,6 +444,78 @@ describe("MetricEvidenceTable", () => {
       screen.getByText(/Showing the first 5,000 rows/)
     ).toBeInTheDocument();
   });
+  describe("sizing columns from their values", () => {
+    const GLYPH_PX = 8;
+    const sizedColumns = [
+      { key: "person", label: "Who", type: "string" as const },
+      { key: "title", label: "Title", type: "string" as const },
+    ];
+    const sizedRows = [
+      { values: { person: "Ann Lee", title: "x".repeat(80) } },
+    ];
+
+    function tracksAt(viewportPx: number) {
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          readonly report: (
+            entries: { contentRect: { width: number } }[]
+          ) => void;
+          constructor(
+            report: (entries: { contentRect: { width: number } }[]) => void
+          ) {
+            this.report = report;
+          }
+          observe() {
+            this.report([{ contentRect: { width: viewportPx } }]);
+          }
+          disconnect() {}
+        }
+      );
+      vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(
+        function (this: HTMLElement) {
+          return (this.textContent?.length ?? 0) * GLYPH_PX;
+        }
+      );
+
+      renderTable({ columns: sizedColumns, rows: sizedRows });
+      const header = screen.getAllByRole("row")[0]!;
+      return {
+        tracks: header.style.gridTemplateColumns.split(" ").slice(1),
+        minWidth: screen.getByRole("table").style.minWidth,
+      };
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    // Who needs 82px and Title 666px; neither may go below 82px and 122px. The
+    // expander takes 36px of the viewport.
+    it.each([
+      [
+        "a row with room spreads the spare by natural width",
+        1036,
+        ["109.6px", "890.4px"],
+      ],
+      ["a crowded row cuts only the long column", 400, ["82.0px", "282.0px"]],
+      [
+        "a row narrower than the minimums keeps them and scrolls",
+        100,
+        ["82.0px", "122.0px"],
+      ],
+    ])("%s", (_case, viewportPx, expected) => {
+      const { tracks, minWidth } = tracksAt(viewportPx);
+      const total = expected.reduce((sum, track) => sum + parseFloat(track), 0);
+
+      expect(tracks, `case: ${_case}`).toEqual(expected);
+      const minimumPx = Number(/([\d.]+)px/.exec(minWidth)?.[1]);
+      expect(minWidth, `case: ${_case}`).toContain("2.25rem");
+      expect(minimumPx, `case: ${_case}`).toBeCloseTo(total, 1);
+    });
+  });
+
   describe("linking a record to its page", () => {
     const SHA = "e0f4823a55ac28276cf068f066ebf66f872a059c";
     const linkColumns = [
