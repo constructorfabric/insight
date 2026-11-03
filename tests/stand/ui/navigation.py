@@ -97,7 +97,7 @@ def verify_navigation(
     ]
     for zone in dict.fromkeys((*expected, *known)):
         entries = expected.get(zone, {})
-        entry = portal.entry(portal.rail.zones(), zone)
+        entry = portal.entry(portal.safe_navigation(portal.rail.zones()), zone)
         if entries:
             with checks.check(f"Verify the {zone} zone is visible"):
                 expect(entry).to_be_visible(timeout=30_000)

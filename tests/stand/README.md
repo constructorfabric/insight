@@ -203,7 +203,9 @@ smoke tests skip with a reason naming the missing fixtures.
 
 Any `portal_*` definition capability implies `custom_catalogue` and promises an
 existing definition readable by the test's persona. The seed creates no custom
-definitions. To collect without a stand, supply a synthetic manifest and
+definitions, and a seeded stand's manifest advertises none of these capabilities,
+so it skips those pages. A stand that has them declares them in its manifest.
+To collect without a stand, supply a synthetic manifest and
 `--base-url https://example.com`.
 
 ## CI required gate
