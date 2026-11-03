@@ -90,6 +90,7 @@ TASK_PRODUCER_VIEWS=(
   github__task_field_metadata github__task_issuetypes github__task_projects github__task_statuses
 )
 
+# INVARIANT: repairs releases without #3885 (main before its first release); delete once every CH_FLOOR_RELEASES release runs it.
 heal_task_class_tenants() {
   local class
   for class in "${TASK_CLASSES[@]}"; do
@@ -97,6 +98,7 @@ heal_task_class_tenants() {
   done
 }
 
+# INVARIANT: repairs releases without #3885 (main before its first release); delete once every CH_FLOOR_RELEASES release runs it.
 heal_task_producer_tenants() {
   local table
   for table in "${TASK_PRODUCERS[@]}"; do
