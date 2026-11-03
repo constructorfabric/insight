@@ -996,6 +996,8 @@ function connectorHealthHandlers() {
     schedule: AppliedSchedule | null
   ) => ({
     connector,
+    tenant_id: "00000000-0000-4000-8000-000000000001",
+    source_id: `${connector}-main`,
     configured,
     schedule,
     last_sync: histories[connector]?.[0] ?? null,

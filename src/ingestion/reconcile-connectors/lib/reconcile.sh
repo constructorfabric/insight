@@ -1553,15 +1553,16 @@ _reconcile_one_connector() {
   if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
     log_line INFO "${name}: would create/update Argo CronWorkflow"
   else
-    local apply_rc=0
-    argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                            "${source_id_label}" "${dbt_select}" "${schedule_origin}" >/dev/null 2>&1 \
+    local apply_rc=0 apply_error
+    apply_error="$(argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
+                            "${source_id_label}" "${dbt_select}" "${schedule_origin}" 2>&1 >/dev/null)" \
       || apply_rc=$?
+    apply_error="$(argo_error_reason "${apply_error}")"
     if [[ "${apply_rc}" -eq 2 ]]; then
-      log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")"
+      log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")${apply_error:+: ${apply_error}}"
       rc=1
     elif [[ "${apply_rc}" -ne 0 ]]; then
-      log_line ERROR "${name}: failed to create/update Argo CronWorkflow"
+      log_line ERROR "${name}: failed to create/update Argo CronWorkflow${apply_error:+: ${apply_error}}"
       rc=1
     elif ! argo_delete_former_tenant_cronworkflows "${name}" "${tenant}" "${source_id_label}" >/dev/null; then
       log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove the ones named for a former tenant"

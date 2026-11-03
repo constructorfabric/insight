@@ -170,6 +170,10 @@ argo_render_cronworkflow() {
 }
 # @cpt-end:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
 
+argo_error_reason() {
+  printf '%s' "$1" | awk 'BEGIN { RS = "[[:space:]]+" } NF { printf "%s%s", separator, $0; separator = " " }'
+}
+
 argo_apply_cronworkflow() {
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
   local insight_source_id="$5" dbt_select="$6"

@@ -167,9 +167,7 @@ export function ConnectorHealthPane() {
                     className="cursor-pointer select-text"
                   >
                     <TableCell className="font-medium">{row.connector}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {describeInstance(row)}
-                    </TableCell>
+                    <InstanceCell instance={row} />
                     <ScheduleCell schedule={row.schedule} />
                     <TableCell>
                       <Badge
@@ -201,6 +199,26 @@ export function ConnectorHealthPane() {
         </div>
       )}
     </div>
+  );
+}
+
+function InstanceCell({ instance }: { instance: ConnectorInstanceRef }) {
+  const label = describeInstance(instance);
+
+  return (
+    <TableCell aria-label={label}>
+      {label === UNMEASURED ? UNMEASURED : (
+        <>
+          <span className="block">{instance.source_id || UNMEASURED}</span>
+          <span
+            className="block max-w-40 truncate text-xs text-muted-foreground"
+            title={instance.tenant_id || UNMEASURED}
+          >
+            {instance.tenant_id || UNMEASURED}
+          </span>
+        </>
+      )}
+    </TableCell>
   );
 }
 

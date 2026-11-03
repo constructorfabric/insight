@@ -389,6 +389,64 @@ describe("the pane prints what it was served", () => {
     expect(rowFor("bravo")).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("truncates a UUID-length tenant below its source while retaining the full identity", () => {
+    const tenant = "00000000-0000-4000-8000-000000000001";
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "example-tracker",
+          tenant_id: tenant,
+          source_id: "example-tracker-main",
+          configured: true,
+          last_sync: null,
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const cell = within(rowFor("example-tracker")).getAllByRole("cell")[1];
+    const tenantLine = within(cell).getByText(tenant);
+    const sourceLine = within(cell).getByText("example-tracker-main");
+    expect(tenantLine).toHaveClass("max-w-40", "truncate", "text-xs", "text-muted-foreground");
+    expect(tenantLine).toHaveAttribute("title", tenant);
+    expect(sourceLine).toHaveClass("block");
+    expect(sourceLine.nextElementSibling).toBe(tenantLine);
+    expect(cell).toHaveAccessibleName(`${tenant} / example-tracker-main`);
+  });
+
+  it.each([
+    [undefined, undefined, "—", ["—"]],
+    [null, null, "—", ["—"]],
+    ["", "", "—", ["—"]],
+    ["acme", undefined, "acme / —", ["—", "acme"]],
+    ["acme", "", "acme / —", ["—", "acme"]],
+    [undefined, "main", "— / main", ["main", "—"]],
+    ["", "main", "— / main", ["main", "—"]],
+  ] as const)(
+    "keeps missing identity values explicit for tenant %s and source %s",
+    (tenant, source, label, lines) => {
+      mocks.summary.data = summary({
+        connectors: [
+          {
+            connector: "example-tracker",
+            tenant_id: tenant,
+            source_id: source,
+            configured: true,
+            last_sync: null,
+          },
+        ],
+      });
+      render(<ConnectorHealthPane />);
+
+      const cell = within(rowFor("example-tracker")).getAllByRole("cell")[1];
+      const visibleLines = cell.children.length === 0
+        ? [cell.textContent]
+        : Array.from(cell.children, (child) => child.textContent);
+      expect(cell).toHaveAccessibleName(label);
+      expect(visibleLines).toEqual(lines);
+    },
+  );
+
   it("gives two installations of one connector a row each", () => {
     // They share a name, so the identity cell is the only thing that tells the
     // rows apart — and a page that collapsed them would report one
@@ -404,7 +462,7 @@ describe("the pane prints what it was served", () => {
         },
         {
           connector: "claude-team",
-          tenant_id: "acme",
+          tenant_id: "example-tenant",
           source_id: "claude-team-second",
           configured: true,
           last_sync: null,
@@ -414,12 +472,16 @@ describe("the pane prints what it was served", () => {
     render(<ConnectorHealthPane />);
 
     expect(screen.getAllByRole("cell", { name: "claude-team" })).toHaveLength(2);
-    expect(
-      screen.getByRole("cell", { name: "acme / claude-team-main" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("cell", { name: "acme / claude-team-second" }),
-    ).toBeInTheDocument();
+    for (const [source, tenant] of [
+      ["claude-team-main", "acme"],
+      ["claude-team-second", "example-tenant"],
+    ]) {
+      const sourceLine = screen.getByText(source);
+      expect(sourceLine).toBeInTheDocument();
+      const cell = sourceLine.closest("td")!;
+      expect(within(cell).getByText(tenant)).toBeInTheDocument();
+      expect(cell).toHaveAccessibleName(`${tenant} / ${source}`);
+    }
   });
 
   it("opens one installation without opening its sibling", async () => {
@@ -448,9 +510,11 @@ describe("the pane prints what it was served", () => {
 
     const expanded = screen.getAllByRole("row", { expanded: true });
     expect(expanded).toHaveLength(1);
-    expect(
-      within(expanded[0]).getByRole("cell", { name: "acme / claude-team-second" }),
-    ).toBeInTheDocument();
+    const sourceLine = within(expanded[0]).getByText("claude-team-second");
+    expect(sourceLine).toBeInTheDocument();
+    const cell = sourceLine.closest("td")!;
+    expect(within(cell).getByText("acme")).toBeInTheDocument();
+    expect(cell).toHaveAccessibleName("acme / claude-team-second");
   });
 
   it("points two rows at two disclosures when an identity carries a separator", () => {
