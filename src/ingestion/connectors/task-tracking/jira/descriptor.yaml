@@ -165,11 +165,11 @@ name: jira
 # returns ids alone, so `id_readable` stayed empty. MINOR per ADR-0015: the
 # manifest changes, the next sync rewrites the census in full, and nothing
 # stored changes meaning.
-# 18.1.1: a response Jira marks with a refused sign-in fails the request as a
+# 18.4.1: a response Jira marks with a refused sign-in fails the request as a
 # config error, and the check also reads `jira_user`, so invalid credentials
 # fail both the check and the sync instead of collecting nothing (#3744, #3746).
 # PATCH per ADR-0015: the manifest changes and nothing stored changes.
-version: "18.1.1"
+version: "18.4.1"
 # 22:10 and 10:10 UTC: clear of the 02:00-06:00 daily block and of github's
 # 4-hourly ticks, which rebuild the same task chain; :10 misses the */15
 # reconcile and identity-seed ticks.

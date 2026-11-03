@@ -89,12 +89,12 @@ export function MetricEvidenceDialog({
     setPeopleSearch("");
   }
   const activeTarget = people
-    ? drilled?.target ?? null
-    : records?.targets.find(
+    ? (drilled?.target ?? null)
+    : (records?.targets.find(
         (target) => target.selection.metric_key === records.activeMetricKey
       ) ??
       records?.targets[0] ??
-      null;
+      null);
   /** The list itself is on screen only until a row is taken further. */
   const showPeople = people != null && drilled == null;
   const allRecords = people?.allRecords ?? null;
@@ -300,7 +300,7 @@ export function MetricEvidenceDialog({
                 </button>
               </div>
             ) : null}
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex min-h-8 items-center justify-between gap-4">
               {records && records.targets.length > 1 && activeTarget ? (
                 <>
                   {/* INVARIANT: the dialog is named for what it shows — a
@@ -363,34 +363,45 @@ export function MetricEvidenceDialog({
                     <ArrowUpRight className="size-3.5" aria-hidden />
                   </Link>
                 ) : null}
+                {showPeople && allRecords ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      goToStep({ target: allRecords, personId: null })
+                    }
+                  >
+                    All records
+                  </Button>
+                ) : null}
                 {/* Export serves the record table; a people list is a read of
                     values this session already had. */}
                 {showPeople ? null : (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  disabled={
-                    exporting ||
-                    query.isPending ||
-                    (query.isError && !query.data)
-                  }
-                  render={
-                    <Button variant="outline" size="sm">
-                      {exporting ? <Spinner /> : <Download />}
-                      Export
-                    </Button>
-                  }
-                />
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => void exportRows("csv")}>
-                    <FileText />
-                    CSV
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => void exportRows("xlsx")}>
-                    <FileSpreadsheet />
-                    Excel
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      disabled={
+                        exporting ||
+                        query.isPending ||
+                        (query.isError && !query.data)
+                      }
+                      render={
+                        <Button variant="outline" size="sm">
+                          {exporting ? <Spinner /> : <Download />}
+                          Export
+                        </Button>
+                      }
+                    />
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => void exportRows("csv")}>
+                        <FileText />
+                        CSV
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => void exportRows("xlsx")}>
+                        <FileSpreadsheet />
+                        Excel
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
               </div>
             </div>
@@ -418,18 +429,6 @@ export function MetricEvidenceDialog({
                 >
                   {peopleCount(visiblePeople.length, people.rows.length)}
                 </p>
-                {allRecords ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="ms-auto"
-                    onClick={() =>
-                      goToStep({ target: allRecords, personId: null })
-                    }
-                  >
-                    All records
-                  </Button>
-                ) : null}
               </div>
             ) : query.isPending || (query.isError && !query.data) ? null : (
               <div className="flex flex-wrap items-center gap-3">

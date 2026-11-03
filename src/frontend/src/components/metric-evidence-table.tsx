@@ -30,6 +30,11 @@ import {
   evidenceRowKeys,
   summaryLine,
 } from "@/lib/metrics/evidence-rows";
+import {
+  fairWidths,
+  typicalWidth,
+  type ColumnNeed,
+} from "@/lib/metrics/evidence-widths";
 import { evidenceRefText } from "@/lib/metrics/provider-links";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +54,15 @@ function columnLayout(column: MetricEvidenceColumn) {
   return { basisRem: 9, grow: 1 };
 }
 
+const CELL_PADDING_PX = 24;
+/** offsetWidth rounds down, so a measured text can come up a pixel short. */
+const ROUNDING_PX = 2;
+const SORT_ICON_PX = 18;
+const COPY_BUTTON_PX = 28;
+const READABLE_CHARACTERS = 12;
+/** The first page: widths settle on it and do not shift as more rows load. */
+const MEASURED_ROWS = 100;
+
 const EXPANDER_REM = 2.25;
 const NUMBER_REM = 3.5;
 const LEADING_REM: readonly number[] = [EXPANDER_REM];
@@ -60,6 +74,96 @@ const NUMBERED_LEADING_REM: readonly number[] = [NUMBER_REM, EXPANDER_REM];
  * around all of that is a paragraph-sized target, not something to click.
  */
 const SUMMARY_ONLY_LINKS: ReadonlySet<string> = new Set(["title"]);
+
+/** The text a cell shows on its one line. */
+function cellLine(
+  row: MetricEvidenceRow,
+  column: MetricEvidenceColumn,
+  metricKey: string | null
+): { full: string; line: string } {
+  const full = summaryLine(cellText(row.values[column.key], column.type));
+  // The ref column shows the issue number alone; the tooltip keeps the
+  // repository, which is the only place a row states it when the metric
+  // declares no `source` to link from.
+  const line =
+    column.key === "ref" ? evidenceRefText(metricKey ?? "", full) : full;
+  return { full, line };
+}
+
+/**
+ * Lays every text out once, hidden, inside the table, so each takes the cells'
+ * own font, digits and spacing; a canvas measures neither tabular digits nor
+ * letter-spacing.
+ */
+function measureTexts(
+  element: HTMLElement,
+  texts: readonly { text: string; header: boolean }[]
+): number[] {
+  const probe = document.createElement("div");
+  probe.className =
+    "pointer-events-none invisible absolute top-0 left-0 flex flex-col items-start";
+  probe.setAttribute("aria-hidden", "true");
+  for (const { text, header } of texts) {
+    const span = document.createElement("span");
+    span.className = header
+      ? "font-medium whitespace-nowrap"
+      : "tabular-nums whitespace-nowrap";
+    span.textContent = text;
+    probe.append(span);
+  }
+  element.append(probe);
+  // offsetWidth, not getBoundingClientRect: the dialog may still be scaling in.
+  const widths = [...probe.children].map(
+    (child) => (child as HTMLElement).offsetWidth
+  );
+  probe.remove();
+  return widths;
+}
+
+/** What each column needs to show its header and nine values in ten whole. */
+function columnNeeds(
+  element: HTMLElement,
+  columns: readonly MetricEvidenceColumn[],
+  rows: readonly MetricEvidenceRow[],
+  metricKey: string | null
+): ColumnNeed[] | null {
+  const sample = rows.slice(0, MEASURED_ROWS);
+  const texts = [
+    { text: "0".repeat(READABLE_CHARACTERS), header: false },
+    ...columns.flatMap((column) => [
+      { text: column.label, header: true },
+      ...sample.map((row) => ({
+        text: cellLine(row, column, metricKey).line,
+        header: false,
+      })),
+    ]),
+  ];
+  const widths = measureTexts(element, texts);
+  if (widths.every((width) => width === 0)) return null;
+  const readable = widths[0]!;
+  const perColumn = sample.length + 1;
+
+  return columns.map((column, index) => {
+    const start = 1 + index * perColumn;
+    const header =
+      widths[start]! +
+      CELL_PADDING_PX +
+      ROUNDING_PX +
+      (column.sortable ? SORT_ICON_PX : 0);
+    const extra =
+      CELL_PADDING_PX +
+      ROUNDING_PX +
+      (column.key === "ref" ? COPY_BUTTON_PX : 0);
+    const values = widths
+      .slice(start + 1, start + perColumn)
+      .map((width) => width + extra);
+    const natural = Math.max(header, typicalWidth(values));
+    return {
+      natural,
+      minimum: Math.max(header, Math.min(natural, readable + extra)),
+    };
+  });
+}
 
 function SortIcon({ state }: { state: "asc" | "desc" | null }) {
   if (state === "asc") return <ArrowUp className="size-3.5 shrink-0" />;
@@ -102,6 +206,7 @@ export function MetricEvidenceTable({
   numbered?: boolean;
 }) {
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const rowKeys = useMemo(() => evidenceRowKeys(rows), [rows]);
   const virtualizer = useVirtualizer({
@@ -120,22 +225,50 @@ export function MetricEvidenceTable({
   const virtualBodyHeight = virtualizer.getTotalSize();
   const last = virtualRows.at(-1)?.index ?? 0;
   const leadingRem = numbered ? NUMBERED_LEADING_REM : LEADING_REM;
-  const minimumWidth = columns.reduce(
-    (total, column) => total + columnLayout(column).basisRem,
-    leadingRem.reduce((total, rem) => total + rem, 0)
-  );
+  const leadingTotalRem = leadingRem.reduce((total, rem) => total + rem, 0);
+
+  useEffect(() => {
+    if (!viewport || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setViewportWidth(entry.contentRect.width);
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [viewport]);
+
+  // Widths come from the values themselves, measured on the page's own font;
+  // until a viewport has a width to share, the type-based layout stands in.
+  const measured = useMemo(() => {
+    if (!viewport || viewportWidth === 0) return null;
+    const needs = columnNeeds(viewport, columns, rows, metricKey);
+    if (!needs) return null;
+    const remPx =
+      parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    return fairWidths(needs, viewportWidth - leadingTotalRem * remPx);
+  }, [viewport, viewportWidth, columns, rows, metricKey, leadingTotalRem]);
+
+  const minimumWidth = measured
+    ? `calc(${leadingTotalRem}rem + ${measured.reduce((total, px) => total + px, 0)}px)`
+    : `${columns.reduce(
+        (total, column) => total + columnLayout(column).basisRem,
+        leadingTotalRem
+      )}rem`;
   // INVARIANT: the header and every body row lay out on THIS template. Two
   // rows sizing themselves independently drift apart as soon as one of them
   // has different free space to grow into, and a value under the wrong
   // heading is worse than no value.
   const gridTemplate = useMemo(() => {
-    const tracks = columns.map((column) => {
-      const { basisRem, grow } = columnLayout(column);
-      return grow > 0 ? `minmax(${basisRem}rem, ${grow}fr)` : `${basisRem}rem`;
-    });
+    const tracks = measured
+      ? measured.map((px) => `${px.toFixed(1)}px`)
+      : columns.map((column) => {
+          const { basisRem, grow } = columnLayout(column);
+          return grow > 0
+            ? `minmax(${basisRem}rem, ${grow}fr)`
+            : `${basisRem}rem`;
+        });
     const leading = leadingRem.map((rem) => `${rem}rem`);
     return [...leading, ...tracks].join(" ");
-  }, [columns, leadingRem]);
+  }, [columns, leadingRem, measured]);
 
   function toggleRow(key: string): void {
     setExpanded((current) => {
@@ -176,7 +309,7 @@ export function MetricEvidenceTable({
         containerClassName="h-full overflow-auto"
         className="grid min-w-full"
         style={{
-          minWidth: `${minimumWidth}rem`,
+          minWidth: minimumWidth,
           height: virtualBodyHeight + 40,
           gridTemplateRows: "2.5rem 1fr",
         }}
@@ -317,15 +450,7 @@ export function MetricEvidenceTable({
                 </TableCell>
                 {columns.map((column) => {
                   const value = row.values[column.key];
-                  const text = cellText(value, column.type);
-                  const full = summaryLine(text);
-                  // The ref column shows the issue number alone; the tooltip
-                  // keeps the repository, which is the only place a row states
-                  // it when the metric declares no `source` to link from.
-                  const line =
-                    column.key === "ref"
-                      ? evidenceRefText(metricKey ?? "", full)
-                      : full;
+                  const { full, line } = cellLine(row, column, metricKey);
                   return (
                     <TableCell
                       role="cell"
