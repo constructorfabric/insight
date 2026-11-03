@@ -8,10 +8,6 @@ import {
 } from "@/components/widgets/dashboard/kpi-tile";
 import type { KpiTileData } from "@/lib/insight/kpi-row";
 
-vi.mock("@/hooks/use-settings", () => ({
-  useSettings: () => ({ focusMode: "all", showExplanations: true }),
-}));
-
 function tile(overrides: Partial<KpiTileData> = {}): KpiTileData {
   return {
     key: "ai.active_days",
@@ -49,9 +45,16 @@ describe("KpiTile", () => {
     // value — a bare "+17%" was readable as either comparison.
     expect(screen.getByText(/\+17% since last month/)).toBeInTheDocument();
     expect(screen.getByText(/Team median 11/)).toBeInTheDocument();
-    expect(
-      screen.getByText("Days with any AI tool activity")
-    ).toBeInTheDocument();
+  });
+
+  it("gives the catalog description to assistive technology without writing it on the tile", () => {
+    render(<KpiTile periodNoun="month" tile={tile()} onOpenGroup={vi.fn()} />);
+    expect(screen.getByRole("button")).toHaveAccessibleDescription(
+      "Days with any AI tool activity. Counted from tool events, one day per person."
+    );
+    expect(screen.getByText(/^Days with any AI tool activity/)).toHaveClass(
+      "sr-only"
+    );
   });
 
   it("shows the divergence gap next to the median", () => {

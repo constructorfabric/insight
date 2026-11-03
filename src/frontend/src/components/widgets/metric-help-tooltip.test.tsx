@@ -30,4 +30,13 @@ describe("MetricName", () => {
     const { container } = render(<MetricName metric={{ label: "Commits" }} />);
     expect(container.textContent).toBe("Commits");
   });
+
+  it("becomes a tab stop only when asked, on a surface that is not a control", () => {
+    const metric = { label: "Commits", description: "Every commit pushed" };
+    const { rerender } = render(<MetricName metric={metric} />);
+    expect(screen.getByText("Commits")).not.toHaveAttribute("tabindex");
+
+    rerender(<MetricName metric={metric} focusable />);
+    expect(screen.getByText("Commits")).toHaveAttribute("tabindex", "0");
+  });
 });

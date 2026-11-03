@@ -13,6 +13,8 @@
 # migration) can break again. A change that brings a column back, or drops one
 # stated `present` here, removes or rewrites the fact in the same change.
 #
+# The heals behind these facts: docs/operations/CLICKHOUSE-UPGRADE-FLOOR.md.
+#
 # Sourced by apply-ch-migrations.sh after lib/ch-exec.sh. Exposes:
 #   ch_assert_floor — refuse a warehouse holding a shape below the floor
 
@@ -76,6 +78,7 @@ _floor_facts() {
     _floor_fact staging "${source}__file_changes" pre_image_oid present
     _floor_fact staging "${source}__file_changes" post_image_oid present
     _floor_fact staging "${source}__commits" patch_id present
+    _floor_fact staging "${source}__commits" committer_date present
     _floor_fact staging "${source}__pull_requests" author_account_id present
     _floor_fact staging "${source}__repositories" default_branch present
     for column in files_changed lines_added lines_removed; do
@@ -92,6 +95,7 @@ _floor_facts() {
   _floor_fact silver class_task_comments comment_id string
 
   _floor_fact_each bronze_jira jira_id present jira_issue_history jira_comments jira_worklogs
+  _floor_fact bronze_jira jira_issue jira_id string
 }
 
 _floor_violations_sql() {

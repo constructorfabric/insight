@@ -80,6 +80,12 @@ reconcile_compute_connection_name() {
 # give both whichever schedule the API listed first.
 # ---------------------------------------------------------------------------
 reconcile_compute_schedule() {
+  local resolved
+  resolved="$(reconcile_resolve_schedule "$@")" || return 1
+  printf '%s' "${resolved#*$'\n'}"
+}
+
+reconcile_resolve_schedule() {
   local connector="$1"
   local secret_name="${2:-}"
   local namespace="${INSIGHT_NAMESPACE}"
@@ -90,7 +96,7 @@ reconcile_compute_schedule() {
     schedule="$(kubectl -n "${namespace}" get secret "${secret_name}" \
       -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/schedule}' \
       2>/dev/null || true)"
-    [[ -n "${schedule}" ]] && { printf '%s' "${schedule}"; return 0; }
+    [[ -n "${schedule}" ]] && { printf 'annotation\n%s' "${schedule}"; return 0; }
   fi
   # Resolve descriptor path by glob — connectors are nested under an area
   # directory (e.g. ${CONNECTORS_DIR}/collaboration/m365/), so the slug
@@ -103,9 +109,9 @@ reconcile_compute_schedule() {
     schedule="$(python3 "${_CN_PY_DIR}/parse_descriptor.py" \
       --descriptor "${desc_path}" \
       --field schedule 2>/dev/null || true)"
-    [[ -n "${schedule}" ]] && { printf '%s' "${schedule}"; return 0; }
+    [[ -n "${schedule}" ]] && { printf 'descriptor\n%s' "${schedule}"; return 0; }
   fi
-  printf '0 0 * * *'
+  printf 'default\n0 0 * * *'
 }
 
 # ---------------------------------------------------------------------------

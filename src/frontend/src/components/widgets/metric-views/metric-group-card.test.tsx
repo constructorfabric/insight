@@ -11,10 +11,6 @@ import {
 import type { MetricCollectionResult } from "@/queries/metric-results";
 import type { MetricResult } from "@/api/metric-results-client";
 
-vi.mock("@/hooks/use-settings", () => ({
-  useSettings: () => ({ focusMode: "all", showExplanations: true }),
-}));
-
 function aiMetric(
   key: string,
   value: number | null,

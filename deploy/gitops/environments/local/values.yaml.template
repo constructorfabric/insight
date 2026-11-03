@@ -66,15 +66,14 @@ redpanda:
   # the other subcharts. Single broker for the local sandbox.
   brokers: "redpanda.insight-infra.svc.cluster.local:9093"
 
-# ─── Ingestion off for local ───────────────────────────────────────────────
-# The umbrella ships Argo WorkflowTemplate objects into its own namespace
-# (`insight`); the Argo controller in insight-infra only watches its own
-# namespace today. Keep the templates off for the local sandbox. Airbyte
-# is still installed at L2 — this only disables the umbrella's
-# WorkflowTemplates.
+airbyte:
+  namespace: insight-infra
+
 ingestion:
   templates:
-    enabled: false
+    enabled: true
+  reconcile:
+    argoInstanceId: argo-workflows-insight-infra
 
 # ─── App services ──────────────────────────────────────────────────────────
 #
@@ -136,11 +135,8 @@ authenticator:
     # (constructorfabric/insight#1960): the login-bootstrap resolve
     # (GET /internal/persons/by-external-id) is scoped to it.
     sourceType: "keycloak"
-    # id_token claim carrying the stable external user id for sourceType.
-    # The realm generator pins each realm user's `id` to their OWN roster uuid
-    # (src/ingestion/tools/seed/insight_seed/keycloak_realm.py), so `sub`
-    # already IS that stable id — no Entra-style non-default claim needed here.
-    externalIdClaim: "sub"
+    # keycloak-config-cli assigns user ids; idp_sub preserves the roster uuid.
+    externalIdClaim: "idp_sub"
     # The install's one tenant, the seeded demo tenant: the realm stamps it as
     # the `tenant_id` claim, and data, identity and authorization read it from
     # here. `tenantClaim` names that claim (default `tenant_id`; Entra: `tid`).

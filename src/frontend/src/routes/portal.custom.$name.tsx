@@ -1,7 +1,7 @@
 import { createFileRoute, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Ellipsis, Table2 } from "lucide-react";
+import { Ellipsis, Maximize2, Table2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +30,7 @@ import {
 } from "@/lib/portal/portal-search";
 import { dashboardItems } from "@/lib/custom/dashboard-items";
 import { CustomWidget } from "@/components/custom/custom-widget";
+import { ExpandedWidget } from "@/components/custom/expanded-widget";
 import { refusal } from "@/components/custom/refusal";
 import { WidgetDrilldown } from "@/components/custom/widget-drilldown";
 import { Badge } from "@/components/ui/badge";
@@ -195,8 +196,12 @@ function DashboardItems({
   items: ReturnType<typeof dashboardItems>;
   range: string | undefined;
 }) {
+  const search = usePortalSearch();
+  const setSearch = useSetPortalSearch();
   const widgets = useQuery(dashboardWidgetsQuery(dashboard));
   const byId = new Map(widgets.data?.map((widget) => [widget.id, widget]));
+  const named = search.widget ? byId.get(search.widget) : undefined;
+  const expanded = named && expands(named) ? named : undefined;
 
   if (widgets.isError) {
     return (
@@ -210,41 +215,82 @@ function DashboardItems({
   }
 
   return (
-    <div className="grid items-start gap-4 @3xl:grid-cols-2">
-      {items.map((item, index) =>
-        "widget" in item ? (
-          <DashboardWidgetSlot
-            key={`${index}-${item.widget}`}
-            dashboard={dashboard}
-            id={item.widget}
-            widget={byId.get(item.widget)}
-            pending={widgets.isPending}
-            range={range}
-          />
-        ) : "heading" in item ? (
-          // The eyebrow label the portal's own sections use, and the whole
-          // row: it introduces the widgets under it rather than sitting
-          // beside one.
-          <h2
-            key={`${index}-heading`}
-            className="col-span-full mt-2 text-xs font-medium tracking-wider text-muted-foreground uppercase first:mt-0"
-          >
-            {item.heading}
-          </h2>
-        ) : (
-          <p
-            key={`${index}-text`}
-            className={cn(
-              TEXT_BODY,
-              "col-span-full max-w-prose text-muted-foreground"
-            )}
-          >
-            {item.text}
-          </p>
-        )
-      )}
-    </div>
+    <>
+      <div className="grid items-start gap-4 @3xl:grid-cols-2">
+        {items.map((item, index) =>
+          "widget" in item ? (
+            <DashboardWidgetSlot
+              key={`${index}-${item.widget}`}
+              dashboard={dashboard}
+              id={item.widget}
+              widget={byId.get(item.widget)}
+              pending={widgets.isPending}
+              range={range}
+              onExpand={() => setSearch({ widget: item.widget })}
+            />
+          ) : "heading" in item ? (
+            // The eyebrow label the portal's own sections use, and the whole
+            // row: it introduces the widgets under it rather than sitting
+            // beside one.
+            <h2
+              key={`${index}-heading`}
+              className="col-span-full mt-2 text-xs font-medium tracking-wider text-muted-foreground uppercase first:mt-0"
+            >
+              {item.heading}
+            </h2>
+          ) : (
+            <p
+              key={`${index}-text`}
+              className={cn(
+                TEXT_BODY,
+                "col-span-full max-w-prose text-muted-foreground"
+              )}
+            >
+              {item.text}
+            </p>
+          )
+        )}
+      </div>
+      {expanded ? (
+        <ExpandedWidget
+          dashboard={dashboard}
+          widget={expanded}
+          heading={widgetHeading(expanded)}
+          options={runOptions(expanded, range)}
+          allTime={drawnOverAllTime(expanded, range)}
+          onClose={() => setSearch({ widget: undefined }, { replace: true })}
+        />
+      ) : null}
+    </>
   );
+}
+
+// Whether a window has a date to select by decides the request. The metric's
+// body cannot answer it - the date may be the dataset's - so the service
+// reports the one in force with the widget.
+function runOptions(
+  widget: DashboardWidget,
+  range: string | undefined
+): RunOptions | undefined {
+  return range && widget.clock
+    ? { range, bucket: drawsBucket(widget.body) }
+    : undefined;
+}
+
+function drawnOverAllTime(
+  widget: DashboardWidget,
+  range: string | undefined
+): boolean {
+  return Boolean(range) && !widget.clock;
+}
+
+// A stat is one number: drawn bigger, it says nothing more.
+function expands(widget: DashboardWidget): boolean {
+  return widget.body.type !== "stat";
+}
+
+function widgetHeading(widget: DashboardWidget): string {
+  return widget.body.title ?? widget.name;
 }
 
 function DashboardWidgetSlot({
@@ -253,6 +299,7 @@ function DashboardWidgetSlot({
   widget,
   pending,
   range,
+  onExpand,
 }: {
   dashboard: string;
   id: string;
@@ -260,19 +307,13 @@ function DashboardWidgetSlot({
   widget: DashboardWidget | undefined;
   pending: boolean;
   range: string | undefined;
+  onExpand: () => void;
 }) {
   const { isAdmin } = useIsAdmin();
   const [drilldown, setDrilldown] = useState(false);
   const name = widget?.name ?? id;
 
-  // Whether a window has a date to select by decides the request. The
-  // metric's body cannot answer it - the date may be the dataset's - so the
-  // service reports the one in force with the widget.
-  const clocked = Boolean(widget?.clock);
-  const options: RunOptions | undefined =
-    range && clocked && widget
-      ? { range, bucket: drawsBucket(widget.body) }
-      : undefined;
+  const options = widget ? runOptions(widget, range) : undefined;
 
   const resultState = useQuery({
     ...dashboardWidgetResultQuery(dashboard, id, options),
@@ -300,7 +341,7 @@ function DashboardWidgetSlot({
     );
   }
 
-  const heading = widget.body.title ?? name;
+  const heading = widgetHeading(widget);
   const drawn = (
     <CustomWidget
       widget={widget.body}
@@ -309,6 +350,7 @@ function DashboardWidgetSlot({
       windowed={Boolean(options)}
       pending={resultState.isPending || resultState.isFetching}
       onRetry={() => void resultState.refetch()}
+      onPointClick={isAdmin ? () => setDrilldown(true) : undefined}
     />
   );
 
@@ -318,10 +360,20 @@ function DashboardWidgetSlot({
         <CardTitle className={cn(TEXT_HEADING, "min-w-0 flex-1")}>
           {heading}
         </CardTitle>
-        {range && !clocked ? (
+        {drawnOverAllTime(widget, range) ? (
           <Badge variant="secondary" className="shrink-0">
             All time
           </Badge>
+        ) : null}
+        {expands(widget) ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Expand ${heading}`}
+            className="-my-1 text-muted-foreground"
+            icon={<Maximize2 />}
+            onClick={onExpand}
+          />
         ) : null}
         {isAdmin ? (
           <DropdownMenu>

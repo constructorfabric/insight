@@ -67,10 +67,10 @@ authenticator:
     redirectUri: "http://localhost/auth/callback"
     # The install's one tenant; every consumer reads it from here.
     defaultTenantId: "00000000-df51-5b42-9538-d2b56b7ee953"
-    # Realm users' `sub` is their roster uuid; persons-seed fixtures key
-    # their id rows on this source_type.
+    # persons-seed fixtures key their id rows on this source_type.
     sourceType: "keycloak"
-    externalIdClaim: "sub"
+    # keycloak-config-cli assigns user ids; idp_sub preserves the roster uuid.
+    externalIdClaim: "idp_sub"
 
 # `hostname` is the advertised issuer base; no route here, so the concrete
 # Service FQDN (the keycloak-realm recipe reads it raw — no tpl string).

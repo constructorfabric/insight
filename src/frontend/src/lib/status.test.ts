@@ -1,29 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyFocusStatus, statusVsMedian } from "@/lib/status";
-
-describe("applyFocusStatus", () => {
-  it("passes everything through in 'all' mode", () => {
-    expect(applyFocusStatus("good", "all")).toBe("good");
-    expect(applyFocusStatus("bad", "all")).toBe("bad");
-  });
-
-  it("keeps only 'bad' in critical mode", () => {
-    expect(applyFocusStatus("bad", "critical")).toBe("bad");
-    expect(applyFocusStatus("good", "critical")).toBe("neutral");
-    expect(applyFocusStatus("warn", "critical")).toBe("neutral");
-  });
-
-  it("keeps only 'good' in rewards mode", () => {
-    expect(applyFocusStatus("good", "rewards")).toBe("good");
-    expect(applyFocusStatus("bad", "rewards")).toBe("neutral");
-  });
-
-  it("mutes everything in neutral mode", () => {
-    expect(applyFocusStatus("good", "neutral")).toBe("neutral");
-    expect(applyFocusStatus("bad", "neutral")).toBe("neutral");
-  });
-});
+import { statusVsMedian } from "@/lib/status";
 
 describe("statusVsMedian", () => {
   it("is neutral when either operand is not finite", () => {

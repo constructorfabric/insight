@@ -21,6 +21,7 @@ import {
   describeDuration,
   describeInstance,
   describeRecording,
+  describeSchedule,
   describeSync,
   formatDuration,
   formatRecords,
@@ -29,6 +30,37 @@ import {
 } from "@/lib/portal/connector-health";
 
 const MINUTE = 60_000;
+
+describe("the recorded schedule", () => {
+  it.each(["annotation", "descriptor", "default"] as const)(
+    "keeps the muted schedule line independent of %s origin",
+    (origin) => {
+      const schedule = { crons: ["0 22 * * *"], origin, suspended: false };
+
+      expect(describeSchedule({ ...schedule, timezone: "UTC" })).toBe("UTC");
+      expect(describeSchedule({ ...schedule, timezone: null })).toBe("controller time");
+      expect(describeSchedule({ ...schedule, timezone: "UTC", suspended: true })).toBe("UTC · suspended");
+      expect(describeSchedule({ ...schedule, timezone: null, suspended: true })).toBe("controller time · suspended");
+    },
+  );
+
+  it.each([
+    ["Europe/Sofia", "annotation", "Europe/Sofia · suspended"],
+    [null, null, "controller time · suspended"],
+  ] as const)("shows suspension with timezone %s without origin %s", (timezone, origin, text) => {
+    expect(describeSchedule({ crons: ["0 22 * * *"], timezone, origin, suspended: true })).toBe(text);
+  });
+  it.each([
+    ["Europe/Sofia", "annotation", "Europe/Sofia"],
+    [null, "descriptor", "controller time"],
+    [null, "default", "controller time"],
+    ["UTC", null, "UTC"],
+    [null, null, "controller time"],
+    [undefined, undefined, "controller time"],
+  ] as const)("describes timezone %s without origin %s", (timezone, origin, text) => {
+    expect(describeSchedule({ crons: ["0 22 * * *"], timezone, origin, suspended: false })).toBe(text);
+  });
+});
 
 function sync(over: Partial<SyncFact> = {}): SyncFact {
   return {
@@ -105,6 +137,26 @@ describe("which installation of a connector a row is", () => {
 });
 
 describe("what a row says", () => {
+  it.each<SyncStatus | null>([
+    "pending", "running", "incomplete", "succeeded", "failed", "cancelled", "unknown", null,
+  ])("keeps the state word and tone independent of the schedule for %s", (status) => {
+    const facts = row({ last_sync: status == null ? null : sync({ status }) });
+    const verdict = describeConnector(facts);
+    for (const configured of [true, false]) {
+      const expected = configured ? verdict : describeConnector({ ...facts, configured });
+      for (const schedule of [
+        null,
+        { crons: ["0 10 * * *"], timezone: "UTC", suspended: false },
+        { crons: ["1 12 * * *"], timezone: "UTC", suspended: false },
+        { crons: ["0 0 1 1 *"], timezone: "UTC", suspended: false },
+        { crons: ["0 10 * * *"], timezone: "UTC", suspended: true },
+        { crons: ["unreadable"], timezone: null, suspended: false },
+      ]) {
+        expect(describeConnector({ ...facts, configured, schedule })).toEqual(expected);
+      }
+    }
+  });
+
   it("gives every recorded status its own word", () => {
     const words: Record<SyncStatus, string> = {
       pending: "queued",

@@ -3,7 +3,7 @@
 Built from the SAME roster the database seed writes (`profiles.build_seeded_roster`),
 so every user in the realm matches a row in `identity.persons`, and emits an
 importable Keycloak realm JSON: 26 users (the 25-person org plus the admin
-operator), the `insight` + `insight-authenticator` clients, their 5 shared
+operator), the `insight` + `insight-authenticator` clients, their 6 shared
 protocol mappers, the 4 team groups + `executive` + `operations`, and the 3
 realm roles.
 
@@ -87,7 +87,7 @@ def _org_unit(person: Person) -> str:
 
 
 def _protocol_mappers(tenant_id: str) -> list[dict[str, Any]]:
-    """The 5 shared mappers, identical on both clients (Input table)."""
+    """The 6 shared mappers, identical on both clients (Input table)."""
     common = {
         "id.token.claim": "true",
         "access.token.claim": "true",
@@ -117,6 +117,18 @@ def _protocol_mappers(tenant_id: str) -> list[dict[str, Any]]:
                 **common,
                 "user.attribute": "tenant_id",
                 "claim.name": "tenant_id",
+                "jsonType.label": "String",
+            },
+        },
+        {
+            "name": "idp_sub",
+            "protocol": "openid-connect",
+            "protocolMapper": "oidc-usermodel-attribute-mapper",
+            "consentRequired": False,
+            "config": {
+                **common,
+                "user.attribute": "idp_sub",
+                "claim.name": "idp_sub",
                 "jsonType.label": "String",
             },
         },
@@ -222,7 +234,11 @@ def _user(person: Person, tenant_id: str) -> dict[str, Any]:
         "enabled": True,
         "emailVerified": True,
         "credentials": [{"type": "password", "value": DEV_PASSWORD, "temporary": False}],
-        "attributes": {"org_unit": [org_unit], "tenant_id": [tenant_id]},
+        "attributes": {
+            "org_unit": [org_unit],
+            "tenant_id": [tenant_id],
+            "idp_sub": [person.uuid],
+        },
         "groups": [f"/{org_unit}"],
         "realmRoles": _ROLE_TO_REALM_ROLES[person.role],
     }
@@ -233,6 +249,64 @@ DEFAULT_AUTHENTICATOR_REDIRECTS = [
     "http://localhost:8080/auth/callback",  # compose gateway edge (curl/e2e)
 ]
 DEFAULT_AUTHENTICATOR_SECRET = "insight-authenticator-dev-secret"
+
+
+def _user_profile() -> dict[str, Any]:
+    attributes: list[dict[str, Any]] = [
+        {
+            "name": "username",
+            "displayName": "${username}",
+            "validations": {
+                "length": {"min": 3, "max": 255},
+                "username-prohibited-characters": {},
+                "up-username-not-idn-homograph": {},
+            },
+            "permissions": {"view": ["admin", "user"], "edit": ["admin", "user"]},
+            "multivalued": False,
+        },
+        {
+            "name": "email",
+            "displayName": "${email}",
+            "validations": {"length": {"max": 255}, "email": {}},
+            "required": {"roles": ["user"]},
+            "permissions": {"view": ["admin", "user"], "edit": ["admin", "user"]},
+            "multivalued": False,
+        },
+        {
+            "name": "firstName",
+            "displayName": "${firstName}",
+            "validations": {
+                "length": {"max": 255},
+                "person-name-prohibited-characters": {},
+            },
+            "required": {"roles": ["user"]},
+            "permissions": {"view": ["admin", "user"], "edit": ["admin", "user"]},
+            "multivalued": False,
+        },
+        {
+            "name": "lastName",
+            "displayName": "${lastName}",
+            "validations": {
+                "length": {"max": 255},
+                "person-name-prohibited-characters": {},
+            },
+            "required": {"roles": ["user"]},
+            "permissions": {"view": ["admin", "user"], "edit": ["admin", "user"]},
+            "multivalued": False,
+        },
+    ]
+
+    return {
+        "attributes": attributes,
+        "groups": [
+            {
+                "name": "user-metadata",
+                "displayHeader": "User metadata",
+                "displayDescription": "Attributes, which refer to user metadata",
+            }
+        ],
+        "unmanagedAttributePolicy": "ADMIN_EDIT",
+    }
 
 
 def build_realm(
@@ -253,6 +327,15 @@ def build_realm(
         "realm": REALM_NAME,
         "enabled": True,
         "sslRequired": "none",
+        "components": {
+            "org.keycloak.userprofile.UserProfileProvider": [
+                {
+                    "providerId": "declarative-user-profile",
+                    "subComponents": {},
+                    "config": {"kc.user.profile.config": [json.dumps(_user_profile())]},
+                }
+            ]
+        },
         "roles": {"realm": [{"name": name} for name in REALM_ROLES]},
         "groups": [{"name": team, "path": f"/{team}"} for team in TEAMS],
         "users": [

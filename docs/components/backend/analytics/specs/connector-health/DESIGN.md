@@ -174,7 +174,7 @@ One table holds three kinds of row, told apart by `event`.
 | Event | Written when | Carries |
 |---|---|---|
 | `sync.completed` | the sweep sees a job in the mover's history | job identity, connector, outcome, timestamps, duration, reported records |
-| `connector.configured` | each tick, one row per configured connector instance | the instance identity, tick identity |
+| `connector.configured` | each tick, one row per configured connector instance | the instance identity, tick identity, applied schedules, timezone, schedule origin and suspension read from its live CronWorkflow |
 | `sweep.completed` | each tick, last | tick identity — the marker that seals the snapshot |
 
 **Configured is what it means to the reconcile loop: a shipped descriptor that has a
@@ -203,10 +203,19 @@ column the reader and the writer will disagree about.
 | `job_updated_at` | always present | NULL | NULL |
 | `duration_ms` | between the mover's own two stamps; NULL until terminal | NULL | NULL |
 | `records_reported` | the last attempt's count; NULL if it reported none | NULL | NULL |
+| `schedules` | empty array | live CronWorkflow `spec.schedules`; empty array if unreadable or missing | empty array |
+| `schedule_timezone` | empty | live CronWorkflow `spec.timezone`; empty if absent, unreadable or missing | empty |
+| `schedule_origin` | empty | live CronWorkflow annotation `insight.cyberfabric.com/schedule-origin` (`annotation`, `descriptor`, `default`); empty if absent, unreadable or missing | empty |
+| `schedule_suspended` | false | live CronWorkflow `spec.suspend`; false if absent, unreadable or missing | false |
 
-Empty rather than NULL where a column is inapplicable to a row class. Those columns are
-`String` and `LowCardinality(String)`, and every read filters by `event` before touching
-them, so an absent-value type would buy nothing and cost a nullable read on the hot path.
+Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
+cron expressions read in UTC. The sweep still reads the live value: a CronWorkflow
+applied before this change may lack a timezone and records an empty string, which the
+API and page continue to treat as controller time.
+
+Empty strings and arrays, or false for suspension, rather than NULL where these columns are
+inapplicable to a row class. Every read filters by `event` before touching them, so an
+absent-value type would buy nothing and cost a nullable read on the hot path.
 
 **Every value is range-checked before it is written.** ClickHouse does not reject an
 out-of-range one — it clamps a `DateTime64` and wraps a `UInt64`. A year-1000 stamp lands as
@@ -392,7 +401,8 @@ A handful of reads per request, all over the ledger alone. Pure functions merge 
 connector summaries, resolve the quiet states from the configured set, order rows by
 attention (FR-8), and mark unknowns explicitly (FR-7). Serves the bounded sync history for
 the expansion (FR-6), and measures the interval between the recent sealed ticks so the pane
-can date the picture it is showing (FR-12).
+can date the picture it is showing (FR-12). The configured-set read carries the recorded
+applied schedule, timezone, origin and suspension from that same sealed tick (FR-13).
 
 ##### Responsibility boundaries
 
@@ -418,11 +428,36 @@ answered a different question.
 
 One row per connector instance with the fields of FR-5; a row expands to the recent syncs of
 that instance, not of every instance sharing its connector's name. Two installations of one
-connector are told apart by the identity cell, which is the only thing in the row that
-differs. Decides the displayed state from the served facts in one documented function, so the
+connector are told apart by the identity cell. The Schedule column immediately after it
+shows the recorded cron expressions, one per line in monospace, with a muted line below:
+the timezone or `controller time`. When `suspended` is true the muted line appends
+` · suspended`. The page does not display the schedule origin; the API still serves it.
+A null schedule renders as `—` without a tooltip (FR-13). Header text may wrap onto two
+lines in this table; body cells retain their existing wrapping.
+
+A non-null schedule has a tooltip on hover or keyboard focus, exposed to assistive
+technology. Its next start is computed against the viewer's clock at the moment the tooltip
+opens, kept current while it stays open, from the recorded expressions and timezone. Precedence is:
+
+1. Suspended: `Suspended: no run is scheduled.`
+2. Null timezone: `Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.`
+3. Any unreadable expression: `Next run unknown: a recorded expression cannot be read.`
+4. Otherwise: `Next run <date> <time> <timezone> (in <relative>)`, taking the earliest start
+   strictly after that clock across all expressions. The date and time use the recorded
+   timezone and `yyyy-MM-dd HH:mm`; relative time uses the page's duration formatting.
+
+Croner uses five fields and day-of-month/day-of-week OR semantics to match Argo's
+robfig/cron v3, including `@hourly`, `@daily`, `@weekly`, `@monthly` and `@yearly`.
+Unreadable expressions such as `@every 5m` never throw through rendering. The tooltip is
+a forecast from recorded facts, never a measured fact or a late, fresh or stale verdict.
+Argo's `concurrencyPolicy: Forbid` skips a start while the previous run of that CronWorkflow
+is still going, so a forecast start may not happen.
+
+Decides the displayed state from the served facts in one documented function, so the
 precedence lives in one place rather than scattered across cells. Every state carries words
-as well as a tone, so colour is never the only signal. Dates the whole page by when the mover
-was last read, and says so when that read stands out against the ones before it (FR-12).
+as well as a tone, so colour is never the only signal. Dates
+the whole page by when the mover was last read, and says so when that read stands out against
+the ones before it (FR-12).
 
 ##### Responsibility boundaries
 
@@ -455,6 +490,12 @@ design.
       "tenant_id": "example-tenant",
       "source_id": "example-tracker-main",
       "configured": true,
+      "schedule": {
+        "crons": ["0 22 * * *"],
+        "timezone": "Europe/Sofia",
+        "origin": "annotation",
+        "suspended": false
+      },
       "last_sync": {
         "job_id": "8412",
         "status": "succeeded",
@@ -503,6 +544,13 @@ Shape rules that the generated contract enforces:
   what every other DTO on this service does — a lone shape with its own nullability convention
   would cost more than the looser contract does, since handling `null` handles both.
 - `last_sync` is null for a configured connector that has never synced.
+- `schedule` is the applied schedule recorded in the newest sealed configured set, dated by
+  `checked_at`, never an intended schedule. It is null outside that set or when its row has
+  an empty `schedules` array, including rows predating those columns. Otherwise `crons` is
+  the non-empty list as recorded; `timezone` is null for an empty recorded value, meaning
+  the Argo controller's timezone. `origin` is `annotation`, `descriptor`, or `default`, and
+  null for an empty or unknown recorded value. `suspended` is an always-present boolean
+  read from `schedule_suspended`, defaulting to false. No value is inferred (FR-13).
 - **`as_of` and `checked_at` are different clocks and both are needed.** `as_of` is when the
   service computed the answer; `checked_at` is the newest sealed tick's own stamp — when the
   mover was last read. `as_of` dates the answer, `checked_at` dates the facts in it, and the
@@ -696,6 +744,10 @@ customer extracts, which must never carry service rows.
 | `job_updated_at` | `Nullable(DateTime64(3, 'UTC'))` | the mover's last word about the job — its last update, or its start while it is still in flight. The axis the watermark moves along and the field the listing is ordered and filtered by; never NULL on a sync row |
 | `duration_ms` | `Nullable(UInt64)` | between the mover's own start and end stamps; NULL while a job is in flight and where either stamp is missing, which a zero could not express |
 | `records_reported` | `Nullable(UInt64)` | the mover's own count; NULL where it reported none |
+| `schedules` | `Array(String) DEFAULT []` | on configured rows, `spec.schedules` read from the instance's live CronWorkflow; empty otherwise or when unreadable or missing |
+| `schedule_timezone` | `LowCardinality(String) DEFAULT ''` | on configured rows, the live CronWorkflow's `spec.timezone`; empty otherwise or when absent, unreadable or missing |
+| `schedule_origin` | `LowCardinality(String) DEFAULT ''` | on configured rows, the live CronWorkflow's `insight.cyberfabric.com/schedule-origin` annotation; empty otherwise or when absent, unreadable or missing |
+| `schedule_suspended` | `Bool DEFAULT false` | on configured rows, the live CronWorkflow's `spec.suspend`; false otherwise or when absent, unreadable or missing |
 
 `ENGINE = /*@@REPLICATED@@*/MergeTree` (`MergeTree` on a single node, `ReplicatedMergeTree` on a
 cluster), `PARTITION BY toYYYYMM(ts)`,

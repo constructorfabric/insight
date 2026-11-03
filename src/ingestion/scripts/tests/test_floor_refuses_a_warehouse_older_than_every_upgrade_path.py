@@ -86,6 +86,8 @@ def test_a_probe_that_did_not_answer_is_not_read_as_at_the_floor(tmp_path: Path)
         "('staging', 'jira__availability_events', 'event_kind', 'string')",
         "('staging', 'gitlab__pull_requests', 'lines_added', 'nullable')",
         "('bronze_jira', 'jira_comments', 'jira_id', 'present')",
+        "('bronze_jira', 'jira_issue', 'jira_id', 'string')",
+        "('staging', 'bitbucket_cloud__commits', 'committer_date', 'present')",
     ],
 )
 def test_the_probe_states_each_kind_of_fact(fact: str, tmp_path: Path) -> None:

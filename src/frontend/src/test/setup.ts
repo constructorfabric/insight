@@ -20,12 +20,10 @@ installIntersectionObserver();
 // between tests or one case that scrolled leaks into the next.
 afterEach(scrollEndOutOfView);
 
-// jsdom in vitest's worker pool can race against module init: modules
-// that read `window.localStorage` at top level (e.g. `use-settings.ts`)
-// occasionally see `window.localStorage` as undefined when imported
-// before jsdom finishes wiring the Storage globals. Define a minimal
-// in-memory Storage shim before any user module loads so component
-// tests that pull in `useSettings()` transitively don't crash.
+// WORKAROUND: jsdom in vitest's worker pool can race against module init,
+// so code that reads `window.localStorage` on import (the i18n language
+// detector, `portal-store.ts`) or a test's own setup can see it undefined.
+// An in-memory Storage shim stands in before any user module loads.
 if (typeof window !== "undefined" && !window.localStorage) {
   const store = new Map<string, string>();
   const shim: Storage = {

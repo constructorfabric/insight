@@ -31,6 +31,7 @@ import insight_logging
 from . import heal, plan
 from .ledger import Ledger, LedgerError
 from .mover import Mover, MoverError
+from .schedule import AppliedSchedule, read_schedule
 
 _LOG = logging.getLogger("sweep")
 
@@ -51,6 +52,7 @@ class Connector(NamedTuple):
     #: connection for yet. It is still configured — that is the first thing the
     #: page answers — it simply has nothing to read.
     connection_id: str | None
+    schedule: AppliedSchedule = AppliedSchedule()
 
     @property
     def instance(self) -> plan.Instance:
@@ -105,15 +107,11 @@ def _read_work(stream: Any) -> tuple[str, list[Connector], dict[str, str]]:
         connection_id = item.get("connection_id")
         if connection_id is not None and not isinstance(connection_id, str):
             raise UnreadableWork(f"connector {name!r} carries an unusable connection id")
-        connectors.append(Connector(name, tenant_id, source_id, connection_id or None))
+        connectors.append(Connector(name, tenant_id, source_id, connection_id or None, read_schedule(item)))
     return tick_id.strip(), connectors, namespaces
 
 
-def _recover_from_recorded_data(
-    ledger: Ledger,
-    wanted: list[str],
-    namespaces: dict[str, str],
-) -> list[plan.Instance]:
+def _recover_from_recorded_data(ledger: Ledger, wanted: list[str], namespaces: dict[str, str]) -> list[plan.Instance]:
     """What connectors recorded about themselves, for the ones nothing else names.
 
     A connector that ever moved a row wrote the identity it ran under into that
@@ -138,11 +136,7 @@ def _recover_from_recorded_data(
     return recovered
 
 
-def _adopt_unidentified_rows(
-    ledger: Ledger,
-    managed: list[plan.Instance],
-    namespaces: dict[str, str],
-) -> None:
+def _adopt_unidentified_rows(ledger: Ledger, managed: list[plan.Instance], namespaces: dict[str, str]) -> None:
     """Hand history recorded before the ledger carried identity to its instance.
 
     Never fatal, and never a reason not to record this tick: it corrects the
@@ -160,9 +154,7 @@ def _adopt_unidentified_rows(
     entries = [heal.Unidentified(connector, has_syncs) for connector, has_syncs in unidentified]
     named_by_secret = {instance.connector for instance in managed}
     recovered = _recover_from_recorded_data(
-        ledger,
-        [entry.connector for entry in entries if entry.connector not in named_by_secret],
-        namespaces,
+        ledger, [entry.connector for entry in entries if entry.connector not in named_by_secret], namespaces
     )
 
     adoption = heal.plan_adoption(entries, managed, recovered)
@@ -171,8 +163,7 @@ def _adopt_unidentified_rows(
         # unresolvable until its rows age out, so a line each would repeat every
         # tick for as long as the ledger retains them.
         _LOG.warning(
-            "history left without an identity: "
-            + "; ".join(f"{u.connector} ({u.reason})" for u in adoption.unresolved)
+            "history left without an identity: " + "; ".join(f"{u.connector} ({u.reason})" for u in adoption.unresolved)
         )
     for claim in adoption.claimed:
         instance = claim.instance
@@ -282,15 +273,14 @@ def run(stream: Any) -> int:
         return 1
 
     try:
-        written += ledger.insert(plan.plan_snapshot(configured, tick_id))
+        schedules = {c.instance: c.schedule for c in connectors}
+        written += ledger.insert(plan.plan_snapshot(configured, tick_id, schedules))
         written += ledger.insert([plan.plan_seal(tick_id)])
     except LedgerError as error:
         _LOG.error(f"cannot seal this tick: {error}")
         return 1
 
-    _LOG.info(
-        f"tick {tick_id}: {written} rows across {len(configured)} connector instances"
-    )
+    _LOG.info(f"tick {tick_id}: {written} rows across {len(configured)} connector instances")
     return 1 if incomplete else 0
 
 

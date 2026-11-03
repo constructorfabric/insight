@@ -7,9 +7,9 @@
 #   argo_assert_distinct_cron_names      CONNECTOR TENANT SOURCE_ID...
 #   argo_cron_workflow_name_full_tenant  CONNECTOR TENANT
 #   argo_render_cronworkflow CONNECTOR CONNECTION_NAME SCHEDULE TENANT \
-#                            INSIGHT_SOURCE_ID DBT_SELECT
+#                            INSIGHT_SOURCE_ID DBT_SELECT SCHEDULE_ORIGIN
 #   argo_apply_cronworkflow  CONNECTOR CONNECTION_NAME SCHEDULE TENANT \
-#                            INSIGHT_SOURCE_ID DBT_SELECT
+#                            INSIGHT_SOURCE_ID DBT_SELECT SCHEDULE_ORIGIN
 #   argo_delete_cronworkflow CONNECTOR TENANT SOURCE_ID
 #   argo_submit_sync_trigger CONNECTOR CONNECTION_NAME TENANT \
 #                            INSIGHT_SOURCE_ID DBT_SELECT [BUMP_KIND]
@@ -153,6 +153,7 @@ _argo_delete_cronworkflow_named() {
 
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
 argo_render_cronworkflow() {
+  local schedule_origin="${7:?schedule origin must be supplied as argument 7 (annotation, descriptor or default)}"
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
   local insight_source_id="$5" dbt_select="$6"
   local cron_name
@@ -161,6 +162,7 @@ argo_render_cronworkflow() {
     --connector "$connector" \
     --connection-name "$connection_name" \
     --schedule "$schedule" \
+    --schedule-origin "$schedule_origin" \
     --tenant "$tenant" \
     --cron-name "$cron_name" \
     --insight-source-id "$insight_source_id" \
@@ -169,7 +171,12 @@ argo_render_cronworkflow() {
 }
 # @cpt-end:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
 
+argo_error_reason() {
+  printf '%s' "$1" | awk 'BEGIN { RS = "[[:space:]]+" } NF { printf "%s%s", separator, $0; separator = " " }'
+}
+
 argo_apply_cronworkflow() {
+  local schedule_origin="${7:?schedule origin must be supplied as argument 7 (annotation, descriptor or default)}"
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
   local insight_source_id="$5" dbt_select="$6"
 
@@ -183,7 +190,7 @@ argo_apply_cronworkflow() {
   local rendered apply_out
   rendered="$(argo_render_cronworkflow "$connector" "$connection_name" \
                 "$schedule" "$tenant" "$insight_source_id" \
-                "$dbt_select")" || return 1
+                "$dbt_select" "$schedule_origin")" || return 1
   if ! apply_out="$(printf '%s' "$rendered" | kubectl apply -f - 2>&1)"; then
     printf '%s: kubectl apply failed: %s\n' \
       "$connector" "$apply_out" >&2

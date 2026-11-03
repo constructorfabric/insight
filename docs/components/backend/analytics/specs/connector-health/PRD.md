@@ -259,7 +259,8 @@ empty set, because an empty set is indistinguishable from "everything was remove
 
 Each connector occupies one row carrying: its name, whether it is configured now, when its
 last sync started, how long that sync took, how it ended, and the record count the mover
-reported for it. Values the ledger does not hold render as unknown.
+reported for it. It also shows the applied schedule of FR-13. Values the ledger does not
+hold render as unknown.
 
 #### FR-6 — A row expands to its recent syncs
 
@@ -294,6 +295,31 @@ most recent activity comes first.
 The surface is available only to the instance operator role and reports the whole install.
 A caller without that role is refused, and the refusal names the surface it was refused.
 
+#### FR-13 — The recorded applied schedule is visible
+
+- [ ] `p2` - **ID**: `cpt-insightspec-connhealth-fr-applied-schedule`
+
+Each connector instance shows the schedule the reconcile loop actually applied, with its
+timezone and whether the CronWorkflow is suspended, as recorded in the newest sealed
+configured set. The page shows the recorded cron expressions without computing
+a cadence or claiming an intended schedule. Outside that set, or where the row records no
+cron expressions, the schedule is unknown. An empty recorded timezone means controller
+time. The API also serves the recorded schedule origin, which the page does not display;
+an empty or unknown origin remains unknown. The page's last-checked stamp dates these facts too.
+
+Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
+cron expressions read in UTC. A CronWorkflow applied before this change may have no
+timezone; its empty recorded value still means controller time.
+
+On demand, the page shows the next scheduled start, computed from the recorded cron
+expressions and timezone against the viewer's clock at the moment the tooltip opens,
+kept current while it stays open. This is a forecast from
+recorded facts, never a measured fact or a late, fresh or stale verdict. The next start is
+unknown when the timezone is not recorded or an expression cannot be read; there is none
+when the CronWorkflow is suspended. Argo skips a start while the previous run of that
+CronWorkflow is still going (`concurrencyPolicy: Forbid`), so a forecast start may not
+happen.
+
 ### 5.3 Degradation
 
 #### FR-10 — The page works with an empty ledger
@@ -323,10 +349,11 @@ when the mover was last read, dating everything below it; and when that read is 
 than the interval between the reads before it, the page says recording appears to have
 stopped and the connector states shown may no longer be current.
 
-Both the age and the interval are recorded facts, so the page asserts nothing about a
-schedule it cannot see. Where too few reads are recorded to establish an interval, the page
-shows the age and says the cadence is unmeasured — it does not conclude that recording
-stopped, because with no cadence recorded there is nothing for the age to be late against.
+Both the age and the interval are recorded facts about the recorder, independent of the
+connector's recorded applied schedule (FR-13). Where too few reads establish an interval,
+the page shows the age and says the cadence is unmeasured — it does not conclude that
+recording stopped, because with no cadence recorded there is nothing for the age to be late
+against.
 
 ## 6. Non-Functional Requirements
 
@@ -407,10 +434,14 @@ long series is out of scope for this surface.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-usecase-silent-stop`
 
-A connector's schedule disappears (a suspended or deleted workflow). No new syncs are
-recorded. The page shows how long ago the connector's last sync started, and the expansion
-lists the start times of the recent ones. The operator reads the gap from those timestamps;
-the product computes no cadence and claims no intended schedule.
+A connector's CronWorkflow is suspended or deleted. No new syncs are recorded. The page
+shows how long ago the connector's last sync started, and the expansion lists the start
+times of the recent ones. A suspended CronWorkflow retains its cron expressions: the page
+shows them with suspension and offers no next start. A deleted workflow leaves the schedule
+unknown once the next sealed tick records its absence (FR-13). Otherwise, an on-demand next
+start is a forecast from recorded expressions and timezone, not evidence of a run. The
+operator reads the gap from timestamps; the product computes no cadence and claims no
+intended schedule.
 
 ### UC-3 — A fresh install is read correctly
 
@@ -442,6 +473,13 @@ it; listing it would mean reading storage the reader deliberately holds no acces
 - [ ] On a ledger-less install the first sweep populates history from the mover's retained
       jobs (FR-3).
 - [ ] The page renders one row per connector with the fields of FR-5, expandable per FR-6.
+- [ ] Each instance shows its recorded applied schedule, timezone and suspension
+      from the newest sealed configured set; an unrecorded schedule renders as unknown. On
+      demand, the next start is a forecast computed against the viewer's clock when the
+      tooltip opens and refreshed while it stays open, never a
+      measured fact or a late, fresh or stale verdict; it is unknown without a timezone or
+      readable expressions and absent when suspended. A forecast start may be skipped by
+      `concurrencyPolicy: Forbid` while the previous run is still going (FR-13).
 - [ ] No fresh/stale verdict appears anywhere, no successful sync is described as delivery,
       and unknown states render as unknown (FR-7).
 - [ ] A non-operator caller is refused; the response is instance-wide for the operator

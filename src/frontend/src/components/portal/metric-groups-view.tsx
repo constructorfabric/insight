@@ -9,7 +9,6 @@ import { PersonCoverage } from "@/components/widgets/dashboard/person-coverage";
 import { KpiTile } from "@/components/widgets/dashboard/kpi-tile";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import type { PeriodValue } from "@/types/insight";
-import { useSettings } from "@/hooks/use-settings";
 import {
   metricAttentionItems,
   orderAttentionItems,
@@ -120,7 +119,6 @@ export function MetricGroupsView({
   const showAttention = content !== "none";
   const cohortLabel = useCohortLabel();
   const { period, dateRange } = usePortalPeriod();
-  const { focusMode } = useSettings();
   const entityId = normalizePersonId(personId);
   // Whose page this is. A person reading their own page and a manager
   // reading it want different things first — see `orderAttentionItems`.
@@ -267,7 +265,7 @@ export function MetricGroupsView({
   const peerPool = showKpis ? typicalPeerPool(kpiByKey, entityId) : null;
 
   const tiles = showKpis
-    ? metricKpiTiles(kpiByKey, kpiData.previousByKey, entityId, focusMode)
+    ? metricKpiTiles(kpiByKey, kpiData.previousByKey, entityId)
     : [];
 
   // What the row actually rendered — the block skips exactly those, no more.

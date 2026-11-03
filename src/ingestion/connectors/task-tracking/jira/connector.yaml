@@ -3195,7 +3195,7 @@ streams:
           unique_key:
             type: string
           # Declared string like every other stream carrying jira_id (the
-          # 2.4.0 consistency rule, held by heal_jira_issue_jira_id_type): bronze
+          # 2.4.0 consistency rule, held by the upgrade floor): bronze
           # jira_issue.jira_id is String and dbt joins the two directly.
           jira_id:
             type: string

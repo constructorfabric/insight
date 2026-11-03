@@ -19,7 +19,7 @@ Services compute every figure and decide what each person sees. The portal shows
 - **Pane**: pages inside the selected rail item, in titled groups. Group labels uppercase. Count beside an item where it tells the reader what they will find. Home's pane titled with the product name; others with the rail item's name.
 - **Toolbar**: above content, stays visible on scroll. Holds the period control. Shown on Home, Explore, People, Reports and an open dashboard; not on other Dashboards pages.
 - **Phone**: no rail; one drawer holds rail items and pane; picking a page closes it. Toolbar controls on one row, scrolls sideways.
-- **Settings**: What's new; show planned pages; focus mode; explanations on/off; theme (light, dark, system); viewer's name and email. Remembered in the browser.
+- **Settings**: What's new; show planned pages; theme (light, dark, system); viewer's name and email. Remembered in the browser.
 - **Feedback**: free text, length limit, counter. Carries which screen, never its figures or names. Confirms success or failure.
 - **Sign-in**: no session → redirect to sign-in. Denied → says so; retry where a retry can work.
 - **Address is the view**: rail item, pane item, period, scope, folder, tags. Browser storage holds only preferences (Settings, Assistant collapsed, last-used portal period).

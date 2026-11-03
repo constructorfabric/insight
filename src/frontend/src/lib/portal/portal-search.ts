@@ -70,6 +70,8 @@ export interface PortalSearch {
    * this one speaks these tokens.
    */
   range?: string;
+  /** The custom dashboard widget drawn over the whole window, by its id. */
+  widget?: string;
   folder?: string;
   tag?: string[];
   /** Narrows the dashboard list to those the reader owns, or those shared with them. */
@@ -150,6 +152,7 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     // The same check the run endpoint makes, so a hand-edited token
     // degrades to the board's default.
     range: isRangeToken(str(raw.range) ?? "") ? str(raw.range) : undefined,
+    widget: str(raw.widget),
     folder: str(raw.folder),
     tag: strs(raw.tag),
     owned: raw.owned === "me" || raw.owned === "shared" ? raw.owned : undefined,

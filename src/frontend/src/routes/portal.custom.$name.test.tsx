@@ -31,6 +31,32 @@ vi.mock("@/queries/identity-me", async (importOriginal) => ({
     retry: () => {},
   }),
 }));
+// WORKAROUND: Recharts draws nothing at jsdom's zero size; a line chart stands
+// in as one button per point.
+vi.mock("recharts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("recharts")>()),
+  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+  LineChart: ({
+    data,
+    onClick,
+  }: {
+    data: Record<string, unknown>[];
+    onClick?: (state: { activeTooltipIndex: number }) => void;
+  }) => (
+    <div>
+      {data.map((_, index) => (
+        <button
+          key={index}
+          type="button"
+          aria-label={`point ${index}`}
+          onClick={() => onClick?.({ activeTooltipIndex: index })}
+        />
+      ))}
+    </div>
+  ),
+}));
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
     getVirtualItems: () =>
@@ -570,5 +596,261 @@ describe("/portal/custom/$name — a widget the service is too busy to run", () 
     expect(await screen.findByRole("cell", { name: "59" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(customClient.runDashboardWidget).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("/portal/custom/$name — a widget expanded over the window", () => {
+  function cachedWrapper({ children }: { children: ReactNode }) {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    return createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      children
+    );
+  }
+
+  it("expands a widget into a dialog named in the URL, on the rows and window the card already ran", async () => {
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
+      body: {
+        title: "Engineering",
+        widgets: ["commits_table"],
+        time_ranges: ["P30D"],
+        default_range: "P30D",
+      },
+    });
+    vi.mocked(customClient.fetchDashboardWidgets).mockResolvedValue([
+      { ...COMMITS_TABLE, clock: CLOCK },
+    ]);
+    vi.mocked(customClient.runDashboardWidget).mockResolvedValue({
+      columns: ["day", "lines"],
+      rows: [["2026-09-01", 59]],
+    });
+    portalRouter.go("/portal/custom/engineering");
+    render(<Component />, { wrapper: cachedWrapper });
+
+    expect(await screen.findByRole("cell", { name: "59" })).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Expand Widget" })
+    );
+
+    expect(portalRouter.search.widget).toBe("commits_table");
+    const dialog = await screen.findByRole("dialog", { name: "Widget" });
+    expect(
+      within(dialog).getByRole("cell", { name: "59" })
+    ).toBeInTheDocument();
+    expect(customClient.runDashboardWidget).toHaveBeenCalledTimes(1);
+    expect(customClient.runDashboardWidget).toHaveBeenCalledWith(
+      "engineering",
+      "commits_table",
+      { range: "P30D", bucket: false }
+    );
+  });
+
+  it("opens on the widget the URL already names", async () => {
+    boardOfCommits();
+    portalRouter.set({ widget: "commits_table" });
+    render(<Component />, { wrapper });
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByRole("cell", { name: "59" })
+    ).toBeInTheDocument();
+  });
+
+  it("closes in place, so Back does not reopen it, and returns focus to Expand", async () => {
+    boardOfCommits();
+    render(<Component />, { wrapper });
+
+    const expand = await screen.findByRole("button", { name: "Expand Widget" });
+    await userEvent.click(expand);
+    await screen.findByRole("dialog");
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(portalRouter.search.widget).toBeUndefined();
+    expect(portalRouter.navigations.at(-1)).toMatchObject({ replace: true });
+    expect(expand).toHaveFocus();
+  });
+
+  it("runs a widget again from the expanded view when the service was too busy", async () => {
+    boardOfCommits();
+    vi.mocked(customClient.runDashboardWidget).mockRejectedValueOnce(
+      new customClient.CustomApiError(429, { detail: "busy" })
+    );
+    portalRouter.set({ widget: "commits_table" });
+    render(<Component />, { wrapper: cachedWrapper });
+
+    const dialog = await screen.findByRole("dialog");
+    const busy = await within(dialog).findByRole("status", {
+      name: "Busy, try again.",
+    });
+    await userEvent.click(within(busy).getByRole("button", { name: "Retry" }));
+
+    expect(
+      await within(dialog).findByRole("cell", { name: "59" })
+    ).toBeInTheDocument();
+    expect(customClient.runDashboardWidget).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens nothing for a widget the board does not draw", async () => {
+    boardOfCommits();
+    portalRouter.set({ widget: "not_on_this_board" });
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByRole("cell", { name: "59" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("offers a member the expanded view too", async () => {
+    role.isAdmin = false;
+    boardOfCommits({ access: "viewer" });
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("button", { name: "Expand Widget" })
+    ).toBeInTheDocument();
+  });
+
+  it("never expands a stat, which is one number, even when the URL names it", async () => {
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
+      body: { title: "Engineering", widgets: ["merged_stat"] },
+    });
+    vi.mocked(customClient.fetchDashboardWidgets).mockResolvedValue([
+      drawn("merged_stat", {
+        type: "stat",
+        metric: "merged",
+        value: "total",
+        label: "Merged",
+      }),
+    ]);
+    vi.mocked(customClient.runDashboardWidget).mockResolvedValue({
+      columns: ["total"],
+      rows: [[7]],
+    });
+    portalRouter.go("/portal/custom/engineering");
+    portalRouter.set({ widget: "merged_stat" });
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByText("7")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Expand/ })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("/portal/custom/$name — a click on a chart", () => {
+  const COMMITS_LINE = drawn(
+    "commits_line",
+    { type: "line", metric: "commits_per_day", x: "bucket", y: "commits" },
+    CLOCK
+  );
+
+  function boardOfLine() {
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      ...READ,
+      body: {
+        title: "Engineering",
+        widgets: ["commits_line"],
+        time_ranges: ["P30D"],
+        default_range: "P30D",
+      },
+    });
+    vi.mocked(customClient.fetchDashboardWidgets).mockResolvedValue([
+      COMMITS_LINE,
+    ]);
+    vi.mocked(customClient.runDashboardWidget).mockResolvedValue({
+      columns: ["bucket", "commits"],
+      rows: [
+        ["2026-10-01 00:00:00.000", 4],
+        ["2026-10-02 00:00:00.000", 7],
+      ],
+    });
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      name: "Commits per day",
+      definition: { dataset: "commits", fields: [] },
+      clock: CLOCK,
+    });
+    vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue({
+      selection: {
+        metric: "commits_per_day",
+        sort: { key: "day", direction: "asc" },
+      },
+      columns: [],
+      rows: [],
+      next_cursor: null,
+    });
+    portalRouter.go("/portal/custom/engineering");
+  }
+
+  function drilledRange() {
+    return vi
+      .mocked(customClient.fetchDashboardDrilldownPage)
+      .mock.calls.at(-1)?.[2].range;
+  }
+
+  it("opens an administrator every row the widget reads, over the board's window", async () => {
+    boardOfLine();
+    render(<Component />, { wrapper });
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "point 0" })
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "Widget" })
+    ).toBeInTheDocument();
+    await waitFor(() => expect(drilledRange()).toBe("P30D"));
+  });
+
+  it("opens the rows over the expanded view, and Escape closes only them", async () => {
+    boardOfLine();
+    portalRouter.set({ widget: "commits_line" });
+    render(<Component />, { wrapper });
+
+    const expanded = await screen.findByRole("dialog", { name: "Widget" });
+    await userEvent.click(
+      await within(expanded).findByRole("button", { name: "point 1" })
+    );
+    await waitFor(() => expect(drilledRange()).toBe("P30D"));
+
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("dialog", { hidden: true })).toHaveLength(1)
+    );
+    expect(portalRouter.search.widget).toBe("commits_line");
+  });
+
+  it("offers Show data in the expanded view, where no menu reaches it", async () => {
+    boardOfLine();
+    portalRouter.set({ widget: "commits_line" });
+    render(<Component />, { wrapper });
+
+    const expanded = await screen.findByRole("dialog", { name: "Widget" });
+    await userEvent.click(
+      within(expanded).getByRole("button", { name: "Show data" })
+    );
+
+    await waitFor(() => expect(drilledRange()).toBe("P30D"));
+  });
+
+  it("opens nothing for a member, who cannot read the rows", async () => {
+    role.isAdmin = false;
+    boardOfLine();
+    portalRouter.set({ widget: "commits_line" });
+    render(<Component />, { wrapper });
+
+    const expanded = await screen.findByRole("dialog", { name: "Widget" });
+    await userEvent.click(
+      await within(expanded).findByRole("button", { name: "point 0" })
+    );
+
+    expect(
+      within(expanded).queryByRole("button", { name: "Show data" })
+    ).toBeNull();
+    expect(customClient.fetchDashboardDrilldownPage).not.toHaveBeenCalled();
   });
 });
