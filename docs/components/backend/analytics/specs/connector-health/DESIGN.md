@@ -208,6 +208,11 @@ column the reader and the writer will disagree about.
 | `schedule_origin` | empty | live CronWorkflow annotation `insight.cyberfabric.com/schedule-origin` (`annotation`, `descriptor`, `default`); empty if absent, unreadable or missing | empty |
 | `schedule_suspended` | false | live CronWorkflow `spec.suspend`; false if absent, unreadable or missing | false |
 
+Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
+cron expressions read in UTC. The sweep still reads the live value: a CronWorkflow
+applied before this change may lack a timezone and records an empty string, which the
+API and page continue to treat as controller time.
+
 Empty strings and arrays, or false for suspension, rather than NULL where these columns are
 inapplicable to a row class. Every read filters by `event` before touching them, so an
 absent-value type would buy nothing and cost a nullable read on the hot path.

@@ -45,7 +45,8 @@ spec:
   # `unknown field "spec.schedule"` error (same fix as the chart's
   # reconcile-cron.yaml, PR #549).
   schedules: ${SCHEDULES}
-${TIMEZONE}  concurrencyPolicy: Forbid
+  timezone: UTC
+  concurrencyPolicy: Forbid
   startingDeadlineSeconds: 300
   workflowSpec:
     serviceAccountName: ${ARGO_SERVICE_ACCOUNT}

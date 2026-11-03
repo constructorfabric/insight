@@ -36,7 +36,6 @@ import os
 import string
 import sys
 from pathlib import Path
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def main() -> int:
@@ -51,21 +50,6 @@ def main() -> int:
     p.add_argument("--dbt-select", default="")
     p.add_argument("--tpl", required=True)
     args = p.parse_args()
-
-    if "RECONCILE_SCHEDULE_TIMEZONE" not in os.environ:
-        print(
-            "render_cronworkflow: RECONCILE_SCHEDULE_TIMEZONE must be set; use an empty value for controller time",
-            file=sys.stderr,
-        )
-        return 2
-
-    timezone = os.environ["RECONCILE_SCHEDULE_TIMEZONE"]
-    if timezone:
-        try:
-            ZoneInfo(timezone)
-        except (ZoneInfoNotFoundError, ValueError):
-            print(f"render_cronworkflow: invalid IANA timezone: {timezone!r}", file=sys.stderr)
-            return 2
 
     # The pipeline dispatches on `data_source == 'jira'` for its two-step dbt
     # path; everything else falls through to the legacy single-dbt path.
@@ -93,7 +77,6 @@ def main() -> int:
         "CONNECTION_NAME": args.connection_name,
         "SCHEDULES": schedules_flow,
         "SCHEDULE_ORIGIN": args.schedule_origin,
-        "TIMEZONE": f"  timezone: {json.dumps(timezone)}\n" if timezone else "",
         "TENANT": args.tenant,
         "CRON_NAME": args.cron_name,
         "INSIGHT_SOURCE_ID": args.insight_source_id,

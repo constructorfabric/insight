@@ -307,6 +307,10 @@ cron expressions, the schedule is unknown. An empty recorded timezone means cont
 time. The API also serves the recorded schedule origin, which the page does not display;
 an empty or unknown origin remains unknown. The page's last-checked stamp dates these facts too.
 
+Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
+cron expressions read in UTC. A CronWorkflow applied before this change may have no
+timezone; its empty recorded value still means controller time.
+
 On demand, the page shows the next scheduled start, computed from the recorded cron
 expressions and timezone against the viewer's clock at the moment the tooltip opens,
 kept current while it stays open. This is a forecast from

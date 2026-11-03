@@ -64,6 +64,10 @@ Missing or unreadable CronWorkflows leave the expressions, timezone and origin e
 absent timezone and origin fields are empty too. Suspension defaults to false when absent,
 unreadable or missing. These values are never recomputed from desired inputs.
 
+Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the
+recorded cron expressions read in UTC. A CronWorkflow applied before this change
+may lack a timezone; the sweep records it as empty, meaning controller time.
+
 It cannot fail a tick: `sweep_run` always returns 0, so a broken recorder costs
 the page its freshness and costs reconciliation nothing. It adds no environment
 of its own, reusing the `RECONCILE_DEST_CLICKHOUSE_*` credentials the Bronze

@@ -64,7 +64,6 @@ def tick(tmp_path: Path, proxy_token: str) -> list[str]:
     export AIRBYTE_URL=http://127.0.0.1:1 GIT_PROXY_URL=https://proxy.example.com GIT_PROXY_TOKEN={proxy_token}
     export SOURCES="{tmp_path / "sources.json"}" CONNECTIONS="{tmp_path / "connections.json"}" CALLS="{calls}"
     export APPLIED_YAML="{tmp_path / "applied.yaml"}" ARGO_SERVICE_ACCOUNT=example-account
-    export RECONCILE_SCHEDULE_TIMEZONE=''
     source "{ROOT}/lib/reconcile.sh"
     {STUBS}
     _reconcile_one_connector bitbucket-cloud "{CONNECTOR_DIR}" 1.0.0 nocode "" "" \\

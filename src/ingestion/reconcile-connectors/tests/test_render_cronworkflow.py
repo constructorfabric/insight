@@ -38,7 +38,6 @@ CHILD_ENV = {
     "INSIGHT_NAMESPACE": "insight",
     "ARGO_SERVICE_ACCOUNT": "insight-reconcile",
     "ARGO_INSTANCE_ID": "",
-    "RECONCILE_SCHEDULE_TIMEZONE": "",
 }
 
 DESCRIPTOR_CASES = (
@@ -78,8 +77,8 @@ def _renderer_args(schedule: str, origin: str) -> list[str]:
     ]
 
 
-def _render(schedule: str, *, timezone: str = "", origin: str = "default") -> subprocess.CompletedProcess[str]:
-    return _run(_renderer_args(schedule, origin), RECONCILE_SCHEDULE_TIMEZONE=timezone)
+def _render(schedule: str, *, origin: str = "default") -> subprocess.CompletedProcess[str]:
+    return _run(_renderer_args(schedule, origin))
 
 
 def _rendered_schedules(document: str) -> list[str]:
@@ -100,20 +99,12 @@ def _rendered_name(document: str) -> str:
 
 
 class TestRenderer:
-    def test_an_explicit_empty_timezone_preserves_the_existing_spec(self) -> None:
+    def test_the_rendered_spec_matches_the_fixture(self) -> None:
         result = _render("0 4 * * *")
         baseline = Path(__file__).parent / "fixtures" / "cronworkflow-default-spec.json"
 
         assert result.returncode == 0, result.stderr
         assert yaml.safe_load(result.stdout)["spec"] == json.loads(baseline.read_text())
-
-    def test_a_missing_timezone_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delitem(CHILD_ENV, "RECONCILE_SCHEDULE_TIMEZONE")
-        result = _run(_renderer_args("0 4 * * *", "descriptor"))
-
-        assert result.returncode == 2, result.stderr
-        assert "RECONCILE_SCHEDULE_TIMEZONE must be set" in result.stderr
-        assert result.stdout == ""
 
     def test_a_missing_origin_is_rejected(self) -> None:
         argv = _renderer_args("0 4 * * *", "descriptor")
@@ -125,19 +116,13 @@ class TestRenderer:
         assert "--schedule-origin" in result.stderr
         assert result.stdout == ""
 
-    def test_a_timezone_is_rendered_in_the_spec(self) -> None:
-        result = _render("0 4 * * *", timezone="Europe/London")
+    @pytest.mark.parametrize("schedule", ["0 4 * * *", "50 23 * * *\n0 9,15,21 28-31 * *"])
+    @pytest.mark.parametrize("origin", ["annotation", "descriptor", "default"])
+    def test_every_schedule_uses_utc(self, schedule: str, origin: str) -> None:
+        result = _render(schedule, origin=origin)
 
         assert result.returncode == 0, result.stderr
-        assert yaml.safe_load(result.stdout)["spec"]["timezone"] == "Europe/London"
-
-    @pytest.mark.parametrize("timezone", ["Example/Invalid", "../UTC", "/UTC"])
-    def test_an_invalid_timezone_is_rejected(self, timezone: str) -> None:
-        result = _render("0 4 * * *", timezone=timezone)
-
-        assert result.returncode != 0
-        assert "invalid IANA timezone" in result.stderr
-        assert result.stdout == ""
+        assert yaml.safe_load(result.stdout)["spec"]["timezone"] == "UTC"
 
     @pytest.mark.parametrize("origin", ["annotation", "descriptor", "default"])
     def test_the_origin_is_stamped_on_metadata(self, origin: str) -> None:
@@ -267,21 +252,20 @@ argo_apply_cronworkflow \"$@\"
         assert result.stdout.strip() == f"{connector}-i-tenantid-sync"
         assert len(result.stdout.strip()) == 52
 
-    def test_an_invalid_timezone_never_reaches_kubectl(self) -> None:
+    def test_an_empty_schedule_never_reaches_kubectl(self) -> None:
         result = self._run_argo(
             'source "$ARGO_SCRIPT"\nargo_apply_cronworkflow "$@"',
             "example-connector",
             "example-connection",
-            "0 4 * * *",
+            "\n   \n",
             "example",
             "main",
             "",
             "descriptor",
-            RECONCILE_SCHEDULE_TIMEZONE="Example/Invalid",
         )
 
         assert result.returncode == 1
-        assert "invalid IANA timezone" in result.stderr
+        assert "--schedule carries no cron expression" in result.stderr
         assert self._kubectl_calls() == []
 
     def test_a_53_character_name_is_rejected_before_kubectl(self) -> None:
@@ -383,8 +367,10 @@ argo_apply_cronworkflow \"$@\"
         assert self._kubectl_calls() == [
             f"-n insight delete cronworkflow.argoproj.io/example-connector-{tenant}-sync --ignore-not-found",
             "-n insight delete cronworkflow.argoproj.io/example-connector-tenant-i-sync --ignore-not-found",
-            "-n insight delete cronworkflow.argoproj.io/"
-            "example-connector-example-source-tenant-i-sync --ignore-not-found",
+            (
+                "-n insight delete cronworkflow.argoproj.io/"
+                "example-connector-example-source-tenant-i-sync --ignore-not-found"
+            ),
         ]
 
 

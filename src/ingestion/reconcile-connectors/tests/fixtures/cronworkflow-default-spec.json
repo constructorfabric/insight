@@ -2,6 +2,7 @@
   "schedules": [
     "0 4 * * *"
   ],
+  "timezone": "UTC",
   "concurrencyPolicy": "Forbid",
   "startingDeadlineSeconds": 300,
   "workflowSpec": {
