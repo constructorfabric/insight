@@ -5,10 +5,13 @@ version: 7.0.4
 
 type: DeclarativeSource
 
+# INVARIANT: the check reads a stream whose endpoint refuses anonymous callers.
+# /project/search answers a refused sign-in with 200 and an empty list (#3746).
 check:
   type: CheckStream
   stream_names:
     - jira_projects
+    - jira_user
 
 definitions:
   linked:
@@ -23,6 +26,16 @@ definitions:
           - type: WaitTimeFromHeader
             header: Retry-After
         response_filters:
+          # WORKAROUND: Jira serves a request whose sign-in it refused as an
+          # anonymous one, often 200 with an empty body, and says so only in
+          # this header. Without the filter a sync collects nothing and succeeds (#3744).
+          - type: HttpResponseFilter
+            action: FAIL
+            failure_type: config_error
+            predicate: >-
+              {{ headers.get('X-Seraph-LoginReason', '') in ['AUTHENTICATED_FAILED', 'AUTHENTICATION_DENIED'] }}
+            error_message: >-
+              Jira refused the sign-in: check jira_email and jira_api_token.
           - type: HttpResponseFilter
             action: RETRY
             http_codes:
