@@ -374,7 +374,26 @@ class TestSweptRowsLandAndResolve:
     def test_a_tick_before_the_schedule_migration_lands_and_defaults_to_unknown(self) -> None:
         try:
             _query(f"DROP TABLE {TABLE}")
-            _apply_migration(MIGRATIONS / "20260827000000_connector-sync-history.sql")
+            _query(f"""
+                CREATE TABLE {TABLE} (
+                    event_id         UUID DEFAULT generateUUIDv4(),
+                    ts               DateTime64(3, 'UTC') DEFAULT now64(3),
+                    tick_id          String,
+                    job_id           String,
+                    connector        LowCardinality(String),
+                    tenant_id        LowCardinality(String),
+                    source_id        LowCardinality(String),
+                    event            LowCardinality(String),
+                    status           LowCardinality(String),
+                    started_at       Nullable(DateTime64(3, 'UTC')),
+                    job_updated_at   Nullable(DateTime64(3, 'UTC')),
+                    duration_ms      Nullable(UInt64),
+                    records_reported Nullable(UInt64)
+                ) ENGINE = {REPLICATED_PREFIX}MergeTree
+                PARTITION BY toYYYYMM(ts)
+                ORDER BY (event, connector, ts, event_id)
+                TTL toDateTime(ts) + INTERVAL 6 MONTH
+            """)
 
             with _StubMover():
                 assert (
@@ -394,7 +413,7 @@ class TestSweptRowsLandAndResolve:
             assert _count(f"SELECT count() AS n FROM {TABLE} WHERE event = 'connector.configured'") == 1
             assert _count(f"SELECT count() AS n FROM {TABLE} WHERE event = 'sweep.completed'") == 1
 
-            _apply_migration(MIGRATIONS / "20261102000000_connector-sync-history-schedule.sql")
+            _apply_migration(MIGRATIONS / "20260827000000_connector-sync-history.sql")
 
             rows = _rows(
                 f"SELECT connector, tenant_id, source_id, schedules, schedule_timezone, schedule_origin, schedule_suspended "

@@ -472,10 +472,6 @@ mod guards {
         "../../../../../../ingestion/scripts/migrations/20260827000000_connector-sync-history.sql"
     );
 
-    const SCHEDULE_MIGRATION: &str = include_str!(
-        "../../../../../../ingestion/scripts/migrations/20261102000000_connector-sync-history-schedule.sql"
-    );
-
     /// Every SQL statement this module issues, so a new one joins the guards
     /// automatically rather than being remembered into them.
     fn statements() -> [(&'static str, &'static str); 6] {
@@ -489,7 +485,7 @@ mod guards {
         ]
     }
 
-    /// The ledger's column names, read out of `CREATE TABLE` and `ADD COLUMN`.
+    /// The ledger's column names, read out of `CREATE TABLE`.
     fn ledger_columns() -> Vec<String> {
         let body = MIGRATION
             .split_once("CREATE TABLE")
@@ -501,12 +497,6 @@ mod guards {
             .take_while(|line| !line.starts_with(')'))
             .filter_map(|line| line.split_whitespace().next())
             .filter(|name| name.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
-            .chain(
-                SCHEDULE_MIGRATION
-                    .lines()
-                    .filter_map(|line| line.trim().strip_prefix("ADD COLUMN IF NOT EXISTS "))
-                    .filter_map(|line| line.split_whitespace().next()),
-            )
             .map(str::to_owned)
             .collect()
     }

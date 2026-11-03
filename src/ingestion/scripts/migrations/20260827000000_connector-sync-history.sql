@@ -26,19 +26,23 @@
 
 
 CREATE TABLE IF NOT EXISTS ingestion_history.sync_events (
-    event_id         UUID DEFAULT generateUUIDv4(),
-    ts               DateTime64(3, 'UTC') DEFAULT now64(3),
-    tick_id          String,
-    job_id           String,
-    connector        LowCardinality(String),
-    tenant_id        LowCardinality(String),
-    source_id        LowCardinality(String),
-    event            LowCardinality(String),
-    status           LowCardinality(String),
-    started_at       Nullable(DateTime64(3, 'UTC')),
-    job_updated_at   Nullable(DateTime64(3, 'UTC')),
-    duration_ms      Nullable(UInt64),
-    records_reported Nullable(UInt64)
+    event_id           UUID DEFAULT generateUUIDv4(),
+    ts                 DateTime64(3, 'UTC') DEFAULT now64(3),
+    tick_id            String,
+    job_id             String,
+    connector          LowCardinality(String),
+    tenant_id          LowCardinality(String),
+    source_id          LowCardinality(String),
+    event              LowCardinality(String),
+    status             LowCardinality(String),
+    started_at         Nullable(DateTime64(3, 'UTC')),
+    job_updated_at     Nullable(DateTime64(3, 'UTC')),
+    duration_ms        Nullable(UInt64),
+    records_reported   Nullable(UInt64),
+    schedules          Array(String) DEFAULT [],
+    schedule_timezone  LowCardinality(String) DEFAULT '',
+    schedule_origin    LowCardinality(String) DEFAULT '',
+    schedule_suspended Bool DEFAULT false
 ) ENGINE = /*@@REPLICATED@@*/MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (event, connector, ts, event_id)
@@ -47,8 +51,8 @@ TTL toDateTime(ts) + INTERVAL 6 MONTH;
 -- Every earlier shape converges here, since this channel has no ledger and the
 -- statement above never alters a table that already stands: the stamp column
 -- was first named `job_created_at`, a field the mover's listing does not
--- report, and the instance identity arrived after the table did. `AFTER` keeps
--- a converged table physically identical to a fresh one.
+-- report, and the instance identity and schedule arrived after the table did.
+-- `AFTER` keeps a converged table physically identical to a fresh one.
 ALTER TABLE ingestion_history.sync_events
     RENAME COLUMN IF EXISTS job_created_at TO job_updated_at;
 
@@ -57,3 +61,15 @@ ALTER TABLE ingestion_history.sync_events
 
 ALTER TABLE ingestion_history.sync_events
     ADD COLUMN IF NOT EXISTS source_id LowCardinality(String) AFTER tenant_id;
+
+ALTER TABLE ingestion_history.sync_events
+    ADD COLUMN IF NOT EXISTS schedules Array(String) DEFAULT [] AFTER records_reported;
+
+ALTER TABLE ingestion_history.sync_events
+    ADD COLUMN IF NOT EXISTS schedule_timezone LowCardinality(String) DEFAULT '' AFTER schedules;
+
+ALTER TABLE ingestion_history.sync_events
+    ADD COLUMN IF NOT EXISTS schedule_origin LowCardinality(String) DEFAULT '' AFTER schedule_timezone;
+
+ALTER TABLE ingestion_history.sync_events
+    ADD COLUMN IF NOT EXISTS schedule_suspended Bool DEFAULT false AFTER schedule_origin;

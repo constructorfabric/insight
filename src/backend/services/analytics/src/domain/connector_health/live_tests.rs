@@ -31,14 +31,9 @@ const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 /// The table this reads comes from the migration itself, not a copy of it: a
 /// column added there and not here would otherwise pass every test and fail on
 /// the first install to deploy both.
-const MIGRATIONS: [&str; 2] = [
-    include_str!(
-        "../../../../../../ingestion/scripts/migrations/20260827000000_connector-sync-history.sql"
-    ),
-    include_str!(
-        "../../../../../../ingestion/scripts/migrations/20261102000000_connector-sync-history-schedule.sql"
-    ),
-];
+const MIGRATION: &str = include_str!(
+    "../../../../../../ingestion/scripts/migrations/20260827000000_connector-sync-history.sql"
+);
 
 const TABLE: &str = "ingestion_history.sync_events";
 
@@ -281,9 +276,7 @@ impl Stamps {
 #[ignore = "needs a live ClickHouse"]
 async fn the_ledger_reads_answer_from_real_rows() {
     let Some(ch) = client_or_skip() else { return };
-    for migration in MIGRATIONS {
-        apply_migration(&ch, migration).await;
-    }
+    apply_migration(&ch, MIGRATION).await;
 
     let at = Stamps::fresh();
 

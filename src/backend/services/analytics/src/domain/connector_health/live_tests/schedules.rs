@@ -1,5 +1,5 @@
 use super::{
-    MIGRATIONS, Row, Stamps, TABLE, TENANT, apply_migration, configured, insert, read_health, seal,
+    MIGRATION, Row, Stamps, TABLE, TENANT, apply_migration, configured, insert, read_health, seal,
     summary_for,
 };
 
@@ -103,13 +103,35 @@ pub(super) async fn a_configured_row_before_the_schedule_migration_reads_as_unkn
         .execute()
         .await
         .expect("drop schedule table");
-    apply_migration(ch, MIGRATIONS[0]).await;
+    ch.query(&format!(
+        "CREATE TABLE {TABLE} (
+            event_id         UUID DEFAULT generateUUIDv4(),
+            ts               DateTime64(3, 'UTC') DEFAULT now64(3),
+            tick_id          String,
+            job_id           String,
+            connector        LowCardinality(String),
+            tenant_id        LowCardinality(String),
+            source_id        LowCardinality(String),
+            event            LowCardinality(String),
+            status           LowCardinality(String),
+            started_at       Nullable(DateTime64(3, 'UTC')),
+            job_updated_at   Nullable(DateTime64(3, 'UTC')),
+            duration_ms      Nullable(UInt64),
+            records_reported Nullable(UInt64)
+        ) ENGINE = MergeTree
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY (event, connector, ts, event_id)
+        TTL toDateTime(ts) + INTERVAL 6 MONTH"
+    ))
+    .execute()
+    .await
+    .expect("create table before schedule columns");
     ch.query(&format!(
         "INSERT INTO {TABLE} (ts, tick_id, connector, tenant_id, source_id, event) \
          VALUES (toDateTime64('{}', 3, 'UTC'), 'tick-before-schedule', 'example-tracker', '{TENANT}', 'main', 'connector.configured')",
         at.tick_1,
     )).execute().await.expect("insert configured row before migration");
-    apply_migration(ch, MIGRATIONS[1]).await;
+    apply_migration(ch, MIGRATION).await;
     insert(ch, &[seal("tick-before-schedule", &at.tick_1)]).await;
 
     let facts = read_health(ch).await.expect("read migrated configured row");
