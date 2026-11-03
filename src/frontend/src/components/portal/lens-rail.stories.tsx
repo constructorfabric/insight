@@ -1,9 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { CSSProperties } from "react";
-import { expect } from "storybook/test";
 
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { handlers } from "@/mocks/handlers";
+import { expectHorizontallyCentred } from "@/test/storybook/layout";
 
 import { LensRail } from "./lens-rail";
 
@@ -23,23 +23,19 @@ export default meta;
 
 type Story = StoryObj<typeof LensRail>;
 
-function horizontalCenter(element: Element): number {
-  const box = element.getBoundingClientRect();
-  return box.left + box.width / 2;
-}
+export const Default: Story = {};
 
 export const TestIconsSitCentredInTheirButtons: Story = {
   tags: ["test"],
   play: async ({ canvas }) => {
     const buttons = await canvas.findAllByRole("button");
 
-    const offCentre = buttons.flatMap((button) => {
-      const offset =
-        horizontalCenter(button.querySelector("svg")!) -
-        horizontalCenter(button);
-      return Math.abs(offset) < 0.5 ? [] : [`${button.title} ${offset}px`];
-    });
-
-    await expect(offCentre).toEqual([]);
+    for (const button of buttons) {
+      expectHorizontallyCentred(
+        button,
+        button.querySelector("svg")!,
+        button.title
+      );
+    }
   },
 };
