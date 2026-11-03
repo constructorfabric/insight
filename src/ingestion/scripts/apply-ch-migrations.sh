@@ -81,7 +81,7 @@ ch_assert_floor
 # SAFETY: renamed, never dropped. The backup outlives this deploy — an operator
 # can rename it back — and a later deploy drops it once the live relation is a
 # View again.
-# INVARIANT: repairs releases without #2678 (main before 0.7.2); delete once every CH_FLOOR_RELEASES release runs it.
+# INVARIANT: repairs releases without #2678 (main before 0.6.8). Every CH_FLOOR_RELEASES release already runs it: due for retirement.
 heal_gold_view_relation() {
   local db="$1" table="$2" backup="${2}__pre_view_backup"
   local engine
@@ -127,6 +127,7 @@ for migration in "$SCRIPT_DIR/migrations"/*.sql; do
 done
 
 echo "=== Dropping retired databases and relations ==="
+# INVARIANT: no release creates these, and each drops only while empty; delete a line once no supported install can hold its relation.
 drop_retired_database_if_empty person
 for database in bronze_claude_admin bronze_figma bronze_github_copilot bronze_openai bronze_salesforce bronze_workday; do
   drop_retired_database_if_empty "${database}"
@@ -142,7 +143,7 @@ echo "=== Healing Jira bronze schema ==="
 # ClickHouse has no table-level IF EXISTS on ALTER, and a bronze table exists
 # only once that connector has synced. Runs before the identity heals below,
 # which join on the column it retypes.
-# INVARIANT: repairs releases without #1866 (main before 0.7.2); delete once every CH_FLOOR_RELEASES release runs it.
+# INVARIANT: repairs releases without #1866 (main before 0.4.14). Every CH_FLOOR_RELEASES release already runs it: due for retirement.
 heal_jira_issue_jira_id_type() {
   ch_table_exists bronze_jira jira_issue || return 0
   echo "  bronze_jira.jira_issue"
@@ -422,7 +423,7 @@ WHERE _airbyte_raw_id IN (
 SQL
 }
 
-# INVARIANT: repairs releases without #3370 (main before 0.7.21); delete once every CH_FLOOR_RELEASES release runs it.
+# INVARIANT: repairs releases without #3370 (main before 0.7.21). Every CH_FLOOR_RELEASES release already runs it: due for retirement.
 heal_jira_issue_key() {
   local table="$1" n orphans expected
   ch_table_exists bronze_jira "${table}" || return 0
@@ -592,7 +593,7 @@ echo "=== Healing git commit committer date column ==="
 # this release upgrades from already carries it in the class. Existing rows
 # heal to NULL and carry a committer
 # date from the first sync that re-collects them. Idempotent.
-# INVARIANT: repairs releases without #3155 (main before 0.7.2); delete once every CH_FLOOR_RELEASES release runs it.
+# INVARIANT: repairs releases without #3155 (main before 0.6.56). Every CH_FLOOR_RELEASES release already runs it: due for retirement.
 heal_git_commit_committer_date() {
   local table="$1"
   ch_table_exists staging "${table}" || return 0

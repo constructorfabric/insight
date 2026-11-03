@@ -15,32 +15,34 @@ deploy first.
 ## Retired in #4062
 
 Every repair below ships in both floor releases. The shape it fixed belongs to
-the releases without the pull request named. Where the shape is a column, its
-outcome is now a floor fact; a data repair leaves none.
+the releases without the pull request named: on main, those before the
+umbrella release given (the later one where a row names two changes); #3370
+and #3420 reached release-2026.09 by backport. Where the shape is a column,
+its outcome is now a floor fact; a data repair leaves none.
 
-| Repair | Shape it fixed | Fixed by | Floor fact |
-|---|---|---|---|
-| `heal_github_project_day_keys` | Projects V2 bronze keyed with the collection day | #2951 | none (data) |
-| `heal_jira_substream_jira_id_column` | Jira history, comment and worklog bronze without `jira_id` | #3370 | `jira_id` present |
-| `heal_jira_history_items_escaping` | Jira history `items` encoded twice | #2816 | none (data) |
-| `heal_ai_dev_staging` | AI dev-usage staging with `tool_label`, without `conversation_count` or `seat_status` | #1784, #2629 | absent / present |
-| `heal_ai_assistant_staging` | AI assistant staging with `tool_label`, `surface_label` | #1784 | absent |
-| `heal_ai_invoice_staging` | AI invoice staging without `tier_ref` | #2881 | present |
-| `heal_task_field_history_arm` | Jira field-history arms with dropped columns and `Enum8` discriminators | #3179, #3420 | absent / String |
-| `heal_crm_staging` | HubSpot CRM staging with `custom_fields` | #2212 | absent |
-| `heal_collab_chat_table` | collab chat without `direct_and_group_messages` | #1784 | present |
-| `heal_task_users_table` | `silver.class_task_users` without `tenant_id` | #1794 | present |
-| `heal_git_file_change_oids` | git file changes without `pre_image_oid`, `post_image_oid` | #2691 | present |
-| `heal_git_commit_patch_id` | git commits without `patch_id` | #2847 | present |
-| `heal_git_pr_author_account` | git pull requests without `author_account_id` | #2823 | present |
-| `heal_git_repository_default_branch` | git repositories without `default_branch` | #2812 | present |
-| `heal_git_size_column` | non-nullable git size columns | #2879 | Nullable |
-| `heal_task_id_column` | Jira `worklog_id`, `comment_id` typed `Decimal` | #1940 | String |
-| `20260817000000_drop-jira-boards-parent-artifact.sql` | `bronze_jira._boards` from an earlier connector shape | #2613 | none (dropped relation) |
+| Repair | Shape it fixed | Fixed by | Main release | Floor fact |
+|---|---|---|---|---|
+| `heal_github_project_day_keys` | Projects V2 bronze keyed with the collection day | #2951 | 0.6.28 | none (data) |
+| `heal_jira_substream_jira_id_column` | Jira history, comment and worklog bronze without `jira_id` | #3370 | 0.7.21 | `jira_id` present |
+| `heal_jira_history_items_escaping` | Jira history `items` encoded twice | #2816 | 0.5.260 | none (data) |
+| `heal_ai_dev_staging` | AI dev-usage staging with `tool_label`, without `conversation_count` or `seat_status` | #1784, #2629 | 0.5.181 | absent / present |
+| `heal_ai_assistant_staging` | AI assistant staging with `tool_label`, `surface_label` | #1784 | 0.3.45 | absent |
+| `heal_ai_invoice_staging` | AI invoice staging without `tier_ref` | #2881 | 0.5.292 | present |
+| `heal_task_field_history_arm` | Jira field-history arms with dropped columns and `Enum8` discriminators | #3179, #3420 | 0.7.39 | absent / String |
+| `heal_crm_staging` | HubSpot CRM staging with `custom_fields` | #2212 | 0.5.76 | absent |
+| `heal_collab_chat_table` | collab chat without `direct_and_group_messages` | #1784 | 0.3.45 | present |
+| `heal_task_users_table` | `silver.class_task_users` without `tenant_id` | #1794 | 0.3.48 | present |
+| `heal_git_file_change_oids` | git file changes without `pre_image_oid`, `post_image_oid` | #2691 | 0.5.207 | present |
+| `heal_git_commit_patch_id` | git commits without `patch_id` | #2847 | 0.5.274 | present |
+| `heal_git_pr_author_account` | git pull requests without `author_account_id` | #2823 | 0.5.262 | present |
+| `heal_git_repository_default_branch` | git repositories without `default_branch` | #2812 | 0.5.287 | present |
+| `heal_git_size_column` | non-nullable git size columns | #2879 | 0.6.3 | Nullable |
+| `heal_task_id_column` | Jira `worklog_id`, `comment_id` typed `Decimal` | #1940 | 0.4.52 | String |
+| `20260817000000_drop-jira-boards-parent-artifact.sql` | `bronze_jira._boards` from an earlier connector shape | #2613 | 0.5.190 | none (dropped relation) |
 
 `20260827010000` and `20260905000000` folded into
 `20260827000000_connector-sync-history.sql`, and `20261005000000` into
-`20261014000000_drop-retired-relations.sql`; neither was retired.
+`20261014000000_drop-retired-relations.sql`; none of the three was retired.
 
 ## Retiring a heal
 
