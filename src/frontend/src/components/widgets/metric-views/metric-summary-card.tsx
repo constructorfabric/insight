@@ -91,6 +91,7 @@ export function MetricSummaryCard({
       <CardContent className="flex h-full flex-col gap-3">
         <MetricName
           metric={metric}
+          focusable
           className="truncate pr-8 text-sm font-semibold"
         />
         <span className="flex items-baseline gap-1 tabular-nums">

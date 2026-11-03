@@ -47,11 +47,14 @@ describe("KpiTile", () => {
     expect(screen.getByText(/Team median 11/)).toBeInTheDocument();
   });
 
-  it("keeps the catalog description in its tooltip, off the tile", () => {
-    render(<KpiTile periodNoun="month" tile={tile()} />);
-    expect(
-      screen.queryByText("Days with any AI tool activity")
-    ).not.toBeInTheDocument();
+  it("gives the catalog description to assistive technology without writing it on the tile", () => {
+    render(<KpiTile periodNoun="month" tile={tile()} onOpenGroup={vi.fn()} />);
+    expect(screen.getByRole("button")).toHaveAccessibleDescription(
+      "Days with any AI tool activity. Counted from tool events, one day per person."
+    );
+    expect(screen.getByText(/^Days with any AI tool activity/)).toHaveClass(
+      "sr-only"
+    );
   });
 
   it("shows the divergence gap next to the median", () => {
