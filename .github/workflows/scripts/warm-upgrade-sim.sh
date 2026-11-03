@@ -282,13 +282,12 @@ assert_git_close_time_recovered() {
   echo "=== Reported close recovered from the source, newest generation and current stream ==="
 }
 
-# A warm installation's jira bronze was written by a connector older than 6.1.0:
-# the substreams name their issue by the key it was fetched under and carry no
-# `jira_id`, and the issue streams themselves are keyed by that key, so an issue
-# moved between projects exists once per key it ever had. The assertion after
-# step 2 is that the upgrade recovered the id — including for a key the issue no
-# longer answers to — and collapsed the issue onto it. Same fixture rules as the
-# git bronze above: the destination's shape, only the columns the heals read.
+# A warm installation's jira substreams may still hold rows a connector older
+# than 6.1.0 wrote: they name their issue by the key it was fetched under and
+# carry no `jira_id`. The issue streams are keyed on the issue id, as at the
+# floor. The assertion after step 2 is that the upgrade recovered the id from
+# the issue streams and left them as they were. Same fixture rules as the git
+# bronze above: the destination's shape, only the columns the heals read.
 seed_jira_issue_identity_warm_state() {
   echo "=== Seeding the pre-6.1.0 jira bronze state ==="
   warm_sql <<'SQL'
@@ -323,24 +322,19 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_worklogs /*@@ON_CLUSTER@@*/
 )
 ENGINE = /*@@REPLICATED@@*/ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
 
--- Issue 101 under both keys it has had: the current one, and the one it was
--- moved away from. Only the old-key row maps WARM-OLD-7 to an id, and it is
--- keyed by that old key — which is what the second heal rebuilds.
 INSERT INTO bronze_jira.jira_issue
     (unique_key, tenant_id, source_id, id_readable, jira_id, _airbyte_raw_id, _airbyte_extracted_at)
 VALUES
-    ('warm-jira-WARM-1', 'warm', 'jira-1', 'WARM-1', '101', 'raw-i1', '2026-01-02 00:00:00'),
-    ('warm-jira-WARM-OLD-7', 'warm', 'jira-1', 'WARM-OLD-7', '101', 'raw-i0', '2026-01-01 00:00:00');
+    ('warm-jira-1-101', 'warm', 'jira-1', 'WARM-1', '101', 'raw-i1', '2026-01-02 00:00:00');
 INSERT INTO bronze_jira.jira_issue_keys
     (unique_key, tenant_id, source_id, id_readable, jira_id, _airbyte_raw_id, _airbyte_extracted_at)
 VALUES
-    ('warm-jira-WARM-2', 'warm', 'jira-1', 'WARM-2', '102', 'raw-k1', '2026-01-02 00:00:00');
+    ('warm-jira-1-102', 'warm', 'jira-1', 'WARM-2', '102', 'raw-k1', '2026-01-02 00:00:00');
 
 INSERT INTO bronze_jira.jira_issue_history
     (unique_key, tenant_id, source_id, id_readable, jira_id, items, _airbyte_raw_id, _airbyte_extracted_at)
 VALUES
     ('warm-jira-h-current', 'warm', 'jira-1', 'WARM-1', NULL, '[]', 'raw-h1', '2026-01-03 00:00:00'),
-    ('warm-jira-h-moved', 'warm', 'jira-1', 'WARM-OLD-7', NULL, '[]', 'raw-h2', '2026-01-03 00:00:00'),
     ('warm-jira-h-unknown', 'warm', 'jira-1', 'WARM-GONE-9', NULL, '[]', 'raw-h3', '2026-01-03 00:00:00'),
     ('warm-jira-h-known', 'warm', 'jira-1', 'WARM-1', '999', '[]', 'raw-h4', '2026-01-03 00:00:00'),
     -- Extracted just now: a sync landed it minutes before the deploy, which is
@@ -360,16 +354,15 @@ SQL
 }
 
 assert_jira_issue_identity_recovered() {
-  echo "=== Asserting the issue id was recovered and the issue collapsed onto it ==="
+  echo "=== Asserting the issue id was recovered from the issue streams ==="
   local got
-  local expected="101|101|NULL|999|101|102|777|101|8|1|warm-jira-1-101"
+  local expected="101|NULL|999|101|102|777|101|7|1|warm-jira-1-101"
   # The row count is part of the answer: the fill rebuilds the whole table, so a
   # dropped or doubled row is as much a failure as a wrong id. FINAL throughout,
   # because a row the rebuild filled and then took back would otherwise answer
   # twice and the filled copy would hide the one every reader takes.
   got="$(printf "SELECT concat(
       ifNull(maxIf(jira_id, unique_key = 'warm-jira-h-current'), 'NULL'), '|',
-      ifNull(maxIf(jira_id, unique_key = 'warm-jira-h-moved'), 'NULL'), '|',
       ifNull(maxIf(jira_id, unique_key = 'warm-jira-h-unknown'), 'NULL'), '|',
       ifNull(maxIf(jira_id, unique_key = 'warm-jira-h-known'), 'NULL'), '|',
       ifNull(maxIf(jira_id, unique_key = 'warm-jira-h-recent'), 'NULL'), '|',
@@ -386,10 +379,10 @@ assert_jira_issue_identity_recovered() {
         UNION ALL SELECT unique_key, jira_id FROM bronze_jira.jira_worklogs FINAL
     )" | _ch_http_query | tr -d '\n')"
   if [[ "${got}" != "${expected}" ]]; then
-    echo "::error title=warm upgrade left jira bronze without its issue id::Expected '${expected}' — the two substream rows naming the issue by a key (current and pre-move) carrying its id, the row naming a key no stream delivered staying NULL, the row that already had an id keeping it, the comment resolving through jira_issue_keys, the worklog preferring Jira's own issueId, every row still present, and jira_issue collapsed onto one row keyed by the issue id — but got '${got}'."
+    echo "::error title=warm upgrade left jira bronze without its issue id::Expected '${expected}' — the substream rows naming the issue by its key carrying its id, the row naming a key no stream delivered staying NULL, the row that already had an id keeping it, the comment resolving through jira_issue_keys, the worklog preferring Jira's own issueId, every row still present, and jira_issue left as it was — but got '${got}'."
     exit 1
   fi
-  echo "=== Jira issue id recovered and the moved issue collapsed onto it ==="
+  echo "=== Jira issue id recovered from the issue streams ==="
 }
 
 # Before the catalogue first-sync record kept its history, it was a plain

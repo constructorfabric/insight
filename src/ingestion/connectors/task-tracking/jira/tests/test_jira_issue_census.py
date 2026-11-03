@@ -152,7 +152,7 @@ def test_census_requests_every_issue_field_it_reads() -> None:
 @pytest.mark.skip(
     reason="same known drift as jira_issue_keys: jira_id is declared "
     "['string','null'] for consistency with every other jira_id column (the "
-    "2.4.0 rule, held by heal_jira_issue_jira_id_type), but the AddFields "
+    "2.4.0 rule, held by the upgrade floor), but the AddFields "
     "literal-eval emits int for numeric ids. The ClickHouse destination "
     "coerces per the declared schema, so bronze stays String."
 )
