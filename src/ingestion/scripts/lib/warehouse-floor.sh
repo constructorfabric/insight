@@ -96,7 +96,8 @@ _floor_facts() {
 
 _floor_violations_sql() {
   local facts
-  facts="$(IFS=,; printf '%s' "${CH_FLOOR_FACTS[*]}")"
+  facts="$(printf '%s,' "${CH_FLOOR_FACTS[@]}")"
+  facts="${facts%,}"
   cat <<SQL
 SELECT concat(f.database, '.', f.table, '.', f.column, ': ', multiIf(
     f.expectation = 'absent', 'left the contract, still stands',
