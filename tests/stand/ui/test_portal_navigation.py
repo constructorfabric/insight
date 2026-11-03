@@ -25,16 +25,6 @@ def test_navigation_shows_every_expected_zone_and_entry(
             "Attention needed": (),
             "Data coverage": (),
             "Contribution breakdown": (),
-            "My dashboards": (),
-        },
-        "Dashboards": {
-            "All dashboards": (),
-            "Shared with me": (),
-            "Unfiled": (),
-            "Metrics": (),
-            "Widgets": (),
-            "Datasets": (),
-            "Alerts": (),
         },
         "Explore": {
             "Development": ("Git output", "Flow", "Repositories"),
@@ -43,7 +33,6 @@ def test_navigation_shows_every_expected_zone_and_entry(
                 "Meetings",
                 "Email",
                 "Time outside meetings",
-                "Files & sharing",
             ),
             "Overview": (),
             "AI adoption": ("By unit / role",),
@@ -61,9 +50,28 @@ def test_navigation_shows_every_expected_zone_and_entry(
             "Report builder": (),
         },
         "Manage": {
+            "What's new": (),
+        },
+    }
+    conditional: dict[str, dict[str, tuple[str, ...]]] = {
+        "Home": {
+            "My dashboards": (),
+        },
+        "Dashboards": {
+            "All dashboards": (),
+            "Shared with me": (),
+            "Unfiled": (),
+            "Metrics": (),
+            "Widgets": (),
+            "Datasets": (),
+            "Alerts": (),
+        },
+        "Explore": {
+            "Collaboration": ("Files & sharing",),
+        },
+        "Manage": {
             "Sources & connectors": (),
             "Identities · roles & taxonomy": (),
-            "What's new": (),
             "Platform usage": (),
         },
     }
@@ -110,7 +118,9 @@ def test_navigation_shows_every_expected_zone_and_entry(
         "page-manage-platform-usage",
     }
     checks = Checks()
-    discoveries = verify_navigation(ceo_portal.shell, ceo_portal.watch, checks, expected)
+    discoveries = verify_navigation(
+        ceo_portal.shell, ceo_portal.watch, checks, expected, conditional
+    )
     with step("Report navigation entries absent from the expected list"):
         extras = new_page_paths(discoveries, covered_page_ids)
         navigation_extras.extend(extras)

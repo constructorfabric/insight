@@ -38,6 +38,7 @@ def verify_entries(
     zone: str,
     checks: Checks,
     expected: dict[str, tuple[str, ...]],
+    known: dict[str, tuple[str, ...]],
 ) -> list[NavigationPage]:
     for label in expected:
         with checks.check(f'Verify "{label}" is visible in the {zone} pane'):
@@ -50,7 +51,7 @@ def verify_entries(
     ]
     extras: list[NavigationPage] = []
     for entry in entries:
-        if entry.label in expected or entry.expanded is not None:
+        if entry.label in expected or entry.label in known or entry.expanded is not None:
             continue
         extras.append(discover_entry(portal, watch, (zone, entry.label)))
 
@@ -61,15 +62,16 @@ def verify_entries(
             portal.open_zone(zone)
             portal.expand_pane_entry(parent)
         parent_page = identify_page(portal, watch, (zone, parent))
-        if parent not in expected:
+        if parent not in expected and parent not in known:
             extras.append(parent_page)
         children = expected.get(parent, ())
+        known_children = (*children, *known.get(parent, ()))
         buttons = portal.sub_buttons(parent)
         for label in children:
             with checks.check(f'Verify "{label}" is visible under "{parent}"'):
                 expect(portal.entry(buttons, label)).to_be_visible(timeout=30_000)
         for entry in navigation_entries(buttons):
-            if entry.label in children or is_dashboard_folder(entry.href):
+            if entry.label in known_children or is_dashboard_folder(entry.href):
                 continue
             child_page = discover_entry(portal, watch, (zone, parent, entry.label))
             if child_page.page_ids and child_page.page_ids == parent_page.page_ids:
@@ -84,22 +86,25 @@ def verify_navigation(
     watch: PageWatch,
     checks: Checks,
     expected: dict[str, dict[str, tuple[str, ...]]],
+    known: dict[str, dict[str, tuple[str, ...]]],
 ) -> list[NavigationPage]:
     with checks.check("Verify the Insight portal opened"):
         expect(portal.rail.zones().first).to_be_visible(timeout=30_000)
     extras = [
         NavigationPage(path=(entry.label,), page_ids=frozenset())
         for entry in navigation_entries(portal.safe_navigation(portal.rail.zones()))
-        if entry.label not in expected
+        if entry.label not in expected and entry.label not in known
     ]
-    for zone, entries in expected.items():
+    for zone in dict.fromkeys((*expected, *known)):
+        entries = expected.get(zone, {})
         entry = portal.entry(portal.rail.zones(), zone)
-        with checks.check(f"Verify the {zone} zone is visible"):
-            expect(entry).to_be_visible(timeout=30_000)
+        if entries:
+            with checks.check(f"Verify the {zone} zone is visible"):
+                expect(entry).to_be_visible(timeout=30_000)
         if not entry.is_visible():
             continue
         with checks.check(f"Visit the {zone} navigation"):
             portal.open_zone(zone)
-            extras.extend(verify_entries(portal, watch, zone, checks, entries))
+            extras.extend(verify_entries(portal, watch, zone, checks, entries, known.get(zone, {})))
 
     return extras
