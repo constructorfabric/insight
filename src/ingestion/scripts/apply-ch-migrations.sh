@@ -72,48 +72,25 @@ bash "$SCRIPT_DIR/create-databases.sh"
 echo "=== Verifying the warehouse is at the floor this release upgrades from ==="
 ch_assert_floor
 
-# The cohort and coverage relations are dbt VIEWs (identity resolves at query
-# time). A cluster that predates that holds them as MergeTree TABLEs, and dbt's
-# view materialization replaces via CREATE OR REPLACE VIEW, which is not
-# guaranteed to replace a table. Getting the table out of the way here leaves
-# the next sync's dbt run to create the view from its model.
-#
-# SAFETY: renamed, never dropped. The backup outlives this deploy — an operator
-# can rename it back — and a later deploy drops it once the live relation is a
-# View again.
-# INVARIANT: repairs releases without #2678 (main before 0.6.8). Every CH_FLOOR_RELEASES release already runs it: due for retirement.
-heal_gold_view_relation() {
-  local db="$1" table="$2" backup="${2}__pre_view_backup"
-  local engine
-  engine="$(
-    printf "SELECT engine FROM system.tables WHERE database='%s' AND name='%s'" "$db" "$table" |
-      _ch_http_query |
-      tr -d '[:space:]'
-  )"
-
-  if [[ "$engine" == "View" ]]; then
-    ch_table_exists "$db" "$backup" || return 0
-    echo "  ${db}.${backup} (superseded by the view, dropping)"
-    run_ch <<SQL
-DROP TABLE IF EXISTS ${db}.${backup};
-SQL
-    return 0
-  fi
-
-  # Absent: nothing has built it yet. A backup that exists stays until a view
-  # supersedes it.
-  [[ -n "$engine" ]] || return 0
-
-  echo "  ${db}.${table} (${engine}, renamed to ${backup}; the next sync builds the view)"
+# The cohort and coverage relations are dbt VIEWs. A release that found one
+# still held as a TABLE renamed it to `<table>__pre_view_backup` so an operator
+# could rename it back; the backup goes once the live relation is a View.
+# INVARIANT: can fire at the floor: a floor deploy whose gold build failed, or a
+# later release's rename before the next sync, leaves the backup behind.
+drop_superseded_gold_backup() {
+  local db="$1" table="$2" backup="${2}__pre_view_backup" engine
+  ch_table_exists "$db" "$backup" || return 0
+  engine="$(ch_table_engine "$db" "$table")"
+  [[ "$engine" == "View" ]] || return 0
+  echo "  ${db}.${backup} (superseded by the view, dropping)"
   run_ch <<SQL
 DROP TABLE IF EXISTS ${db}.${backup};
-RENAME TABLE ${db}.${table} TO ${db}.${backup};
 SQL
 }
 
-echo "=== Healing gold identity relations still held as tables ==="
-heal_gold_view_relation insight metric_entity_cohorts_current
-heal_gold_view_relation insight identity_resolution_coverage
+echo "=== Dropping gold identity backups the views superseded ==="
+drop_superseded_gold_backup insight metric_entity_cohorts_current
+drop_superseded_gold_backup insight identity_resolution_coverage
 
 echo "=== Applying ClickHouse migrations ==="
 # A migration that creates a relation spells its engine family behind the
@@ -137,51 +114,22 @@ drop_retired_table_if_empty identity aliases
 # INVARIANT: can fire at the floor: any dropped materialized view leaves its inner table behind.
 drop_orphaned_inner_tables insight
 
-echo "=== Healing Jira bronze schema ==="
-# A descriptor bump reaches an already-created bronze table only from here: the
-# destination adds missing columns but never retypes one, and the reconciler
-# adds snapshot columns but cannot rewrite a value. Guarded on the table —
-# ClickHouse has no table-level IF EXISTS on ALTER, and a bronze table exists
-# only once that connector has synced. Runs before the identity heals below,
-# which join on the column it retypes.
-# INVARIANT: repairs releases without #1866 (main before 0.4.14). Every CH_FLOOR_RELEASES release already runs it: due for retirement.
-heal_jira_issue_jira_id_type() {
-  ch_table_exists bronze_jira jira_issue || return 0
-  echo "  bronze_jira.jira_issue"
-  run_ch <<SQL
-ALTER TABLE bronze_jira.jira_issue MODIFY COLUMN IF EXISTS jira_id Nullable(String);
-SQL
-}
-
-heal_jira_issue_jira_id_type
-
 echo "=== Healing Jira bronze issue identity ==="
-# Two heals, in this order, both guarded on the rows they would change so a
-# converged warehouse pays one SELECT per table and nothing else.
+# jira_issue_history / jira_comments / jira_worklogs carry `jira_id` since
+# connector 6.1.0; rows written before it name their issue only by
+# `id_readable`, the key at fetch time. The id is recovered from the two issue
+# streams, read WITHOUT FINAL: an issue's superseded rows may still map a key it
+# no longer answers to. The pairs are joined in a SELECT and the table is
+# rebuilt from the result, keyed by (tenant_id, source_id, id_readable) because
+# one bronze holds every connector instance. Worklogs prefer Jira's own
+# `issueId`. Guarded on the rows it would change, so a converged warehouse pays
+# one SELECT per table and nothing else.
 #
-# 1. jira_issue_history / jira_comments / jira_worklogs carry `jira_id` since
-#    connector 6.1.0; rows written before it name their issue only by
-#    `id_readable`, the key at fetch time. The id is recovered from the two
-#    issue streams, read WITHOUT FINAL and before the rebuild below: a moved
-#    issue holds one bronze row per key it ever had, and those old-key rows
-#    are the only thing that maps a pre-move key to its id. The pairs are
-#    joined in a SELECT and the table is rebuilt from the result, keyed by
-#    (tenant_id, source_id, id_readable) because one bronze holds every
-#    connector instance. Worklogs prefer Jira's own `issueId`.
+# Not a mutation: it reads a second relation, and where the warehouse
+# replicates ClickHouse admits only the row's own columns in an `ALTER …
+# UPDATE`, rejecting joinGet, dictGet and every subquery there as
+# non-deterministic. A SELECT is written into a new table and swapped in.
 #
-# 2. jira_issue / jira_issue_keys were keyed by the issue KEY before descriptor
-#    6.0.0, so a moved issue exists once per key and ReplacingMergeTree can
-#    collapse neither. The table is rebuilt with `unique_key` on the immutable
-#    id — one row per issue, the latest extraction — and swapped in atomically.
-#    INVARIANT: nothing may write to the table between the copy and the
-#    EXCHANGE; only the Argo pipeline writes bronze, so a deploy carrying this
-#    heal must not overlap a Jira sync.
-#
-# Neither is a mutation. (2) rewrites the sort key, which a mutation may not
-# touch at all; (1) reads a second relation, and where the warehouse replicates
-# ClickHouse admits only the row's own columns in an `ALTER … UPDATE`, rejecting
-# joinGet, dictGet and every subquery there as non-deterministic. Both are
-# SELECTs instead, and a SELECT is written into a new table — one swap, below.
 # Distinct keys, not rows: the physical row count of a ReplacingMergeTree is
 # not a quantity to hold a copy against — a background merge collapsing a
 # superseded row between two counts would fail a sound rebuild. `count() FINAL`
@@ -222,15 +170,11 @@ _jira_require_replicated_source() {
   return 1
 }
 
-# Rebuild one bronze_jira table from `select_sql` and swap the result in.
-#
-# `expected` is the exact number of keys the copy must hold. Empty means the
-# rebuild keeps every row: the copy is then held between the table's key count
-# before it started and its count once it finished, so a key lost and a key
-# invented are both rejected while a row a sync committed meanwhile is not.
-# `carry_replace` is the projection those committed rows are carried over
-# under; they are copied whole rather than re-selected, so the rebuild's own
-# filter can drop none of them.
+# Rebuild one bronze_jira table from `select_sql` and swap the result in. The
+# copy is held between the table's key count before it started and its count
+# once it finished, so a key lost and a key invented are both rejected while a
+# row a sync committed meanwhile is not; those rows are copied over whole, so
+# the rebuild's own filter can drop none of them.
 #
 # INVARIANT: no statement that can lose rows runs before the rows it depends
 # on are verified. The copy is counted against the table before the swap; the
@@ -239,8 +183,8 @@ _jira_require_replicated_source() {
 # first failed statement, so a failed copy never reaches the EXCHANGE either
 # way.
 _jira_swap_in_rebuilt() {
-  local table="$1" expected="$2" select_sql="$3" carry_replace="${4:-}"
-  local copy="bronze_jira.${table}__rebuild" before after copied live fault copy_start_ms
+  local table="$1" select_sql="$2"
+  local copy="bronze_jira.${table}__rebuild" before after copied live copy_start_ms
 
   _jira_require_replicated_source "${table}"
   before="$(_jira_key_count "${table}")"
@@ -254,16 +198,9 @@ ${select_sql};
 SQL
 
   copied="$(_jira_key_count "${table}__rebuild")"
-  fault=""
-  if [[ -n "${expected}" ]]; then
-    [[ "${copied}" -eq "${expected}" ]] || fault="expected ${expected}"
-  else
-    after="$(_jira_key_count "${table}")"
-    expected="${before}"
-    [[ "${copied}" -ge "${before}" && "${copied}" -le "${after}" ]] || fault="expected between ${before} and ${after}"
-  fi
-  if [[ -n "${fault}" ]]; then
-    echo "  bronze_jira.${table}: copy holds ${copied} key(s), ${fault} — leaving the table as it is" >&2
+  after="$(_jira_key_count "${table}")"
+  if [[ "${copied}" -lt "${before}" || "${copied}" -gt "${after}" ]]; then
+    echo "  bronze_jira.${table}: copy holds ${copied} key(s), expected between ${before} and ${after} — leaving the table as it is" >&2
     run_ch <<SQL
 DROP TABLE IF EXISTS ${copy} $(ch_on_cluster);
 SQL
@@ -284,7 +221,7 @@ SQL
   # version, and the pair would settle on whichever of the two a merge kept.
   if ! run_ch <<SQL
 INSERT INTO bronze_jira.${table}
-SELECT * ${carry_replace}
+SELECT *
 FROM ${copy}
 WHERE _airbyte_extracted_at >= fromUnixTimestamp64Milli(${copy_start_ms}) - INTERVAL 1 HOUR
   AND _airbyte_raw_id NOT IN (
@@ -299,8 +236,8 @@ SQL
     return 1
   fi
 
-  if ! live="$(_jira_key_count "${table}")" || [[ "${live}" -lt "${expected}" ]]; then
-    echo "  bronze_jira.${table}: rebuilt table holds ${live:-?} key(s), expected at least ${expected} — swapping the original back" >&2
+  if ! live="$(_jira_key_count "${table}")" || [[ "${live}" -lt "${before}" ]]; then
+    echo "  bronze_jira.${table}: rebuilt table holds ${live:-?} key(s), expected at least ${before} — swapping the original back" >&2
     _jira_swap_back "${table}"
     return 1
   fi
@@ -382,76 +319,14 @@ heal_jira_substream_issue_id() {
     n="$(_jira_rows_needing_issue_id "${table}")"
     [[ "${n}" -gt 0 ]] || continue
     echo "  bronze_jira.${table}: ${n} row(s) without jira_id — filling from the issue streams"
-    _jira_swap_in_rebuilt "${table}" "" "$(_jira_substream_issue_id_select "${table}")"
+    _jira_swap_in_rebuilt "${table}" "$(_jira_substream_issue_id_select "${table}")"
   done
 }
 
-_jira_rows_keyed_by_issue_key() {
-  local table="$1"
-  ch_scalar "SELECT count() FROM bronze_jira.${table} WHERE coalesce(unique_key, '') != concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(jira_id, ''))"
-}
-
-_jira_rows_without_identity() {
-  ch_scalar "SELECT count() FROM bronze_jira.$1 WHERE tenant_id IS NULL OR source_id IS NULL OR jira_id IS NULL"
-}
-
-_jira_issue_count() {
-  ch_scalar "SELECT uniqExact(tenant_id, source_id, jira_id) FROM bronze_jira.$1"
-}
-
-# The key every row of a rekeyed issue table carries: the immutable issue id,
-# not the key the row was fetched under. The rebuild and the late rows it
-# carries over read it from here so they cannot key the same table differently.
-_jira_issue_rekey_replace() {
-  printf "REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)"
-}
-
-# MEMORY: the winner per issue is chosen in an aggregation that carries only
-# the raw id, and the rows are then copied by that id list. `ORDER BY … LIMIT
-# 1 BY` would sort the whole table, JSON payload included, and on a real-size
-# jira_issue that sort alone exceeds a server's memory budget — inside a Helm
-# hook, which fails the upgrade. Same two-pass shape as the snapshot model.
-_jira_issue_rekey_select() {
-  local table="$1"
-  cat <<SQL
-SELECT * $(_jira_issue_rekey_replace)
-FROM bronze_jira.${table}
-WHERE _airbyte_raw_id IN (
-    SELECT argMax(_airbyte_raw_id, _airbyte_extracted_at)
-    FROM bronze_jira.${table}
-    GROUP BY tenant_id, source_id, jira_id
-)
-SQL
-}
-
-# INVARIANT: repairs releases without #3370 (main before 0.7.21). Every CH_FLOOR_RELEASES release already runs it: due for retirement.
-heal_jira_issue_key() {
-  local table="$1" n orphans expected
-  ch_table_exists bronze_jira "${table}" || return 0
-  n="$(_jira_rows_keyed_by_issue_key "${table}")"
-  [[ "${n}" -gt 0 ]] || return 0
-
-  # A row without tenant, source or issue id has no key under the new formula.
-  # None can exist — the connector stamps all three on every record — so one
-  # is a corrupted table, and the deploy stops here rather than dropping it.
-  orphans="$(_jira_rows_without_identity "${table}")"
-  if [[ "${orphans}" -gt 0 ]]; then
-    echo "  bronze_jira.${table}: ${orphans} row(s) without tenant_id, source_id or jira_id — refusing to rebuild" >&2
-    return 1
-  fi
-
-  expected="$(_jira_issue_count "${table}")"
-  echo "  bronze_jira.${table}: ${n} row(s) keyed by the issue key — rebuilding on the issue id (${expected} issues)"
-  _jira_swap_in_rebuilt "${table}" "${expected}" "$(_jira_issue_rekey_select "${table}")" \
-    "$(_jira_issue_rekey_replace)"
-}
-
-# Plain calls on purpose: `f || exit 1` would switch `set -e` OFF inside the
+# A plain call on purpose: `f || exit 1` would switch `set -e` OFF inside the
 # function, so a failed statement in the middle would not stop it — the
 # following swap and drop would run against an unverified copy.
 heal_jira_substream_issue_id
-heal_jira_issue_key jira_issue
-heal_jira_issue_key jira_issue_keys
 
 echo "=== Healing the Jira catalogue first-sync record ==="
 source "$SCRIPT_DIR/lib/heal-jira-catalogue-first-seen.sh"
@@ -584,30 +459,6 @@ SQL
 heal_collab_meeting_table staging m365__collab_meeting_activity
 heal_collab_meeting_table staging zoom__collab_meeting_activity
 heal_collab_meeting_table silver class_collab_meeting_activity
-
-echo "=== Healing git commit committer date column ==="
-# Same positional invariant: every projection feeding class_git_commits gained
-# committer_date at the tail. `date` now carries the AUTHOR date (#3153), which
-# a rebase preserves — so the committer date is the only field left that tells
-# a rebase copy from its original, and two readers rank on it. Staging heals
-# here because these tables exist only after a connector has run; every install
-# this release upgrades from already carries it in the class. Existing rows
-# heal to NULL and carry a committer
-# date from the first sync that re-collects them. Idempotent.
-# INVARIANT: repairs releases without #3155 (main before 0.6.56). Every CH_FLOOR_RELEASES release already runs it: due for retirement.
-heal_git_commit_committer_date() {
-  local table="$1"
-  ch_table_exists staging "${table}" || return 0
-  echo "  staging.${table}"
-  run_ch <<SQL
-ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS committer_date Nullable(DateTime) AFTER patch_id;
-ALTER TABLE staging.${table} MODIFY COLUMN committer_date Nullable(DateTime) AFTER patch_id;
-SQL
-}
-
-for _git_source in github gitlab bitbucket_cloud; do
-  heal_git_commit_committer_date "${_git_source}__commits"
-done
 
 echo "=== Healing git pull-request reported close-time column ==="
 # Same positional invariant: every projection feeding class_git_pull_requests

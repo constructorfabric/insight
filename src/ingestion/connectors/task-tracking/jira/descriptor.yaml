@@ -41,10 +41,10 @@ name: jira
 # one stayed behind with a stale payload, leaving the issue present twice
 # downstream, once with its real history and once as a ghost.
 #
-# Rows written before this are rebuilt by `heal_jira_issue_key` in
-# apply-ch-migrations.sh: `unique_key` is the sort key and cannot be updated in
-# place, so the table is copied with the new key, one row per issue, and
-# swapped in atomically. Readers dedup by (source_id, jira_id) regardless — the
+# Rows written before this were rebuilt on the new key by the deploy hook of
+# every release the upgrade floor admits (docs/operations/
+# CLICKHOUSE-UPGRADE-FLOOR.md): `unique_key` is the sort key and cannot be
+# updated in place. Readers dedup by (source_id, jira_id) regardless — the
 # issue's stable key within a source, which is what joins use; `unique_key`
 # exists for ReplacingMergeTree alone. `id_readable` keeps the mutable key as
 # an attribute — the rename is a fact about the issue.
