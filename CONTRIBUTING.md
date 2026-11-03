@@ -152,8 +152,9 @@ On first run the wizard generates (and gitignores) the local artifacts:
 - `environments/local/.env.local` (Airbyte setup creds — only when
   `system.airbyte=true`)
 
-Then the chain runs: `bootstrap → fetch-cert → seal → system →
-deploy-app`. Subsequent runs skip the wizard and reconcile the stack.
+Then the chain runs: `bootstrap → resolve-local-ingress → fetch-cert → seal →
+system → keycloak-realm → deploy-app`. Subsequent runs skip the wizard
+and reconcile the stack.
 
 K8s and compose can coexist — disjoint host ports by default. Demo-data
 seeding on k8s is one command
@@ -183,10 +184,10 @@ cp environments/local/values.yaml.template environments/local/values.yaml
 #   authenticator.oidc.issuerUrl: <idp>      #   authenticator.oidc.* at a real IdP
 #   <l2>.host / <l2>.port                    # only when <l2>.deploy=false
 # The `__INGRESS_LB_IP__` placeholders (authenticator.oidc.issuerUrl,
-# keycloak.hostname) must be replaced with the address of the Envoy
-# data-plane Service that Envoy Gateway creates for the shared Gateway:
-# (`kubectl -n envoy-gateway-system get svc \
-#    -l gateway.envoyproxy.io/owning-gateway-name=insight`).
+# keycloak.hostname) are filled after bootstrap by
+# `make resolve-local-ingress ENV=local` (also part of `make deploy ENV=local`).
+# If the Envoy data-plane Service has no LoadBalancer address, replace them
+# by hand in environments/local/values.yaml with a reachable ingress address.
 
 # 3. Cleartext secret store (read by `make seal`, never committed).
 cp secrets-store.yaml.template secrets-store.yaml

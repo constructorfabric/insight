@@ -239,6 +239,7 @@ preflight_k8s() {
   require kubeseal "brew install kubeseal"       "see kubeseal release page"           "https://github.com/bitnami-labs/sealed-secrets/releases" || missing=$((missing+1))
   require yq       "brew install yq"             "sudo snap install yq"                "https://github.com/mikefarah/yq#install" || missing=$((missing+1))
   require jq       "brew install jq"             "sudo apt-get install jq"             "https://jqlang.github.io/jq/download/"   || missing=$((missing+1))
+  require openssl  "brew install openssl"        "sudo apt-get install openssl"        "https://www.openssl.org/"               || missing=$((missing+1))
 
   # Block helm v4.2.1 — known --wait regression that hangs the full
   # --timeout on every fast hook-resource deletion. Trips bootstrap-*
@@ -468,7 +469,8 @@ write_compose() {
 #
 # Does NOT provision the cluster, fetch the kubeseal pub-cert, or run
 # `helm install`. Those happen in subsequent Makefile chain steps
-# (bootstrap → fetch-cert → seal → system → deploy).
+# (bootstrap → resolve-local-ingress → fetch-cert → seal → system →
+# keycloak-realm → deploy-app).
 # ──────────────────────────────────────────────────────────────────────
 
 # Auto-detect cluster type from kube-context name, returns one of
@@ -662,11 +664,6 @@ write_k8s_local() {
   fi
 
   # ── Write secrets-store.yaml ─────────────────────────────────────
-  # The template has 5 top-level keys: insight-local-{mariadb,clickhouse,redis}-creds
-  # under insight-infra and insight-local-insight-{db-creds,oidc} under insight.
-  # The wizard fills the cleartext from collected passwords; the oidc entry
-  # is left commented (sandbox runs with authDisabled=true).
-  #
   # YAML-escape passwords before interpolating — operator-supplied external
   # DB passwords can contain `"` or `\`, which would otherwise produce
   # invalid manifests and break the seal step. Defaults (insight-local /
@@ -676,6 +673,10 @@ write_k8s_local() {
   mdb_root_esc=$(yaml_escape "$MARIADB_ROOT_PASSWORD")
   mdb_pass_esc=$(yaml_escape "$MARIADB_PASSWORD")
   ch_pass_esc=$(yaml_escape  "$CLICKHOUSE_PASSWORD")
+  local core_token signing_key
+  core_token=$(openssl rand -hex 32)
+  signing_key=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve)
+  signing_key=$(printf '%s\n' "$signing_key" | sed 's/^/      /')
   cat > "$secrets_store_out" <<EOF
 ##
 ## secrets-store.yaml — local cleartext store consumed by
@@ -731,10 +732,27 @@ insight-local-insight-db-creds: |
     clickhouse-password:   "$ch_pass_esc"
     redis-password:        "redis-local"
 
-## insight-oidc — required only when authDisabled=false. The shipped
-## local overlay disables auth, so this is left commented. Uncomment +
-## fill in for envs with a real IdP, then add insight-oidc to
-## inventory.secrets.services.
+insight-local-insight-v3-core-token: |
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: insight-v3-core-token
+    namespace: insight
+  type: Opaque
+  stringData:
+    token: "$core_token"
+
+insight-local-insight-authenticator-signing-keys: |
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: insight-authenticator-signing-keys
+    namespace: insight
+  type: Opaque
+  stringData:
+    current.pem: |
+$signing_key
+
 # insight-local-insight-oidc: |
 #   apiVersion: v1
 #   kind: Secret
@@ -751,6 +769,16 @@ insight-local-insight-db-creds: |
 #     APP__gears__auth-info__config__redirect_uri:       "https://<host>/callback"
 #     APP__gears__auth-info__config__scopes:             "openid profile email"
 EOF
+  local enabled_secrets name entry
+  enabled_secrets=$(yq -r '.secrets | (.infra[], .services[]) | select(.enabled == true) | .name' "$inventory_out")
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    entry="insight-local-$name"
+    ENTRY="$entry" yq -e 'has(strenv(ENTRY))' "$secrets_store_out" >/dev/null || {
+      echo "ERROR: missing $entry in $secrets_store_out" >&2
+      exit 1
+    }
+  done <<< "$enabled_secrets"
   echo "Wrote $secrets_store_out." >&2
   echo "" >&2
 
@@ -762,6 +790,7 @@ EOF
   # holds the committed sandbox config.
   cp "$values_tmpl" "$values_out"
   yq -i ".global.tenantDefaultId = \"$TENANT_DEFAULT_ID\"" "$values_out"
+  yq -i ".ingestion.reconcile.tenantId = \"$TENANT_DEFAULT_ID\"" "$values_out"
   # Full auth: the dev login identity is a realm user (must exist in
   # identity's `persons`), not a frontend impersonation escape hatch.
   yq -i ".keycloak.devUserEmail  = \"$DEV_USER_EMAIL\""    "$values_out"
@@ -770,7 +799,7 @@ EOF
   cat >&2 <<EOF
 
 Next: \`make deploy ENV=local\` (already running, if invoked from there)
-will continue with: bootstrap → fetch-cert → seal → system → deploy-app.
+will continue with: bootstrap → resolve-local-ingress → fetch-cert → seal → system → keycloak-realm → deploy-app.
 
 Demo-data seeding (the compose stack auto-seeds; a k8s stand is seeded by
 one command, which reads the stand's own coordinates and runs the seeder as
