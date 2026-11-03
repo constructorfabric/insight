@@ -153,17 +153,17 @@ field_keys AS (
 comment_keys AS (
     SELECT
         insight_source_id,
-        assumeNotNull(issue_id)                                       AS issue_id,
+        CAST(c.issue_id AS String)                                    AS issue_id,
         CAST('comment' AS String)                                     AS found_in,
         comment_id                                                    AS found_ref,
         CAST('comment' AS String)                                     AS found_kind,
         written_key,
         CAST(created_at AS Nullable(DateTime64(3)))                   AS seen_at,
         toUInt8(1)                                                    AS is_current
-    FROM {{ ref('jira__task_comments') }} FINAL
+    FROM {{ ref('jira__task_comments') }} AS c FINAL
     ARRAY JOIN arrayDistinct({{ jira_adf_issue_keys('COALESCE(body, \'\')') }}) AS written_key
     WHERE ifNull(is_deleted, 0) = 0
-      AND nullIf(issue_id, '') IS NOT NULL
+      AND c.issue_id IS NOT NULL
 ),
 
 written_keys AS (
