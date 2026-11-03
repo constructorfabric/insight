@@ -28,7 +28,12 @@ import {
 export type ConcentrationFraming = "bus-factor" | "load-balance";
 
 export type SectionSpec =
-  | { kind: "headline"; metrics: readonly string[] }
+  | {
+      kind: "headline";
+      metrics: readonly string[];
+      /** Heads each card with the catalogue's short label where it has one. */
+      labelSource?: "short";
+    }
   | { kind: "stat-tiles"; title: string; metrics: readonly string[] }
   | {
       kind: "trend";
@@ -572,6 +577,7 @@ const DEV: Record<string, LensEntry> = {
     sections: [
       {
         kind: "headline",
+        labelSource: "short",
         metrics: [
           "git.default_branch_commits",
           "git.default_branch_prs_created",
