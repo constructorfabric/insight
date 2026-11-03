@@ -26,6 +26,7 @@ Open a PR after reading [AGENTS.md](AGENTS.md).
    - [Edit code](#edit-code)
    - [Auto-reload mechanic](#auto-reload-mechanic)
    - [Common operations](#common-operations)
+   - [Live ClickHouse tests](#live-clickhouse-tests)
 7. [Seeding](#seeding)
    - [Compose](#compose)
    - [Kubernetes](#kubernetes)
@@ -421,6 +422,33 @@ docker compose --profile build run --rm build-rust cargo test -p analytics
 interactive — no `--yes` switch. Asks separately whether to also remove
 pulled `ghcr.io/constructorfabric/insight-*` images (defaults to no —
 they're slow to re-pull). After prune, next `up` re-runs the wizard.
+
+### Live ClickHouse tests
+
+Tests that need a real ClickHouse skip unless a server is named. CI names one;
+locally, start a throwaway server and point the suites at it:
+
+```bash
+docker run -d --rm --name ch-live -p 18123:8123 \
+  -e CLICKHOUSE_USER=insight -e CLICKHOUSE_PASSWORD=insight \
+  clickhouse/clickhouse-server:25.8
+
+# Analytics (Rust): the live tests are #[ignore]d and apply their own migrations
+INTEGRATION_TESTS_CLICKHOUSE_URL=http://localhost:18123 \
+INTEGRATION_TESTS_CLICKHOUSE_USER=insight INTEGRATION_TESTS_CLICKHOUSE_PASSWORD=insight \
+  cargo test --manifest-path src/backend/Cargo.toml -p analytics -- --ignored
+
+# Reconcile sweep (Python): expects the sync-history migrations already applied
+( export CLICKHOUSE_URL=http://localhost:18123 CLICKHOUSE_USER=insight CLICKHOUSE_PASSWORD=insight
+  source src/ingestion/scripts/lib/ch-exec.sh
+  echo "CREATE DATABASE IF NOT EXISTS ingestion_history" | run_ch
+  for f in src/ingestion/scripts/migrations/*connector-sync-history*.sql; do run_ch < "$f"; done )
+SWEEP_TEST_CH_URL=http://localhost:18123 SWEEP_TEST_CH_USER=insight SWEEP_TEST_CH_PASSWORD=insight \
+  pytest src/ingestion/reconcile-connectors/tests
+```
+
+The sweep reads an empty password as a missing credential, so its server needs
+a user with a password, as above.
 
 ### Point the authenticator at a real IdP
 
