@@ -88,6 +88,7 @@ def _values(response: ApiResponse, metric_key: str) -> list[tuple[str, float | N
 
 @pytest.mark.reliability
 @pytest.mark.stand_smoke
+@pytest.mark.requires_seed("dev_lead")
 def test_metric_results_200(api: ApiClient, stand_manifest: Manifest) -> None:
     """One person, the seeded window, one metric — and a REAL number back.
 

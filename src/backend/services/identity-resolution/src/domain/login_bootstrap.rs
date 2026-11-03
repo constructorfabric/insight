@@ -4,9 +4,9 @@ use super::resolution::BindingRow;
 use super::seed::SourceAccountKey;
 use crate::infra::identity_evidence::ObservedAccount;
 
-/// Column widths a binding lands in (`001_persons.sql`). 320 is also the limit
-/// `POST /v1/profiles` states for an id value, so one number is one contract
-/// across both entrances.
+/// Width of the `persons.value_id` column a binding lands in
+/// (`000_baseline.sql`). 320 is also the limit `POST /v1/profiles` states for
+/// an id value, so one number is one contract across both entrances.
 pub const MAX_VALUE_ID_CHARS: usize = 320;
 pub const MAX_SOURCE_TYPE_CHARS: usize = 100;
 

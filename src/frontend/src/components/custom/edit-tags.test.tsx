@@ -30,6 +30,8 @@ function carrying(tags: string[]) {
     body: { title: "Delivery", widgets: [] },
     tags,
     ownerPersonId: null,
+    ownerName: null,
+    visibility: null,
     access: "ownerless",
     folders: [],
     carries: true,
@@ -157,11 +159,11 @@ describe("the tags dialog", () => {
     ]);
   });
 
-  it("discards the changes on Cancel", async () => {
+  it("opens on the stored set again after its changes were dismissed", async () => {
     const { user } = await openTagsDialog();
 
     await user.click(await screen.findByRole("checkbox", { name: "Platform" }));
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     await user.click(screen.getByRole("button", { name: "More for delivery" }));
@@ -269,6 +271,8 @@ describe("the tags dialog", () => {
       body: { title: "Delivery", widgets: [] },
       tags: ["Ops"],
       ownerPersonId: null,
+      ownerName: null,
+      visibility: null,
       access: "ownerless",
       folders: [],
       carries: true,
@@ -287,7 +291,7 @@ describe("the tags dialog", () => {
   it("reads the dashboard's tags afresh each time it opens", async () => {
     const { user } = await openTagsDialog(60 * 60 * 1000);
     await waitFor(() => expect(box("Ops")).toBeChecked());
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     carrying(["Ops", "Platform"]);

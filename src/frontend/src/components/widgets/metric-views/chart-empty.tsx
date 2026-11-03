@@ -1,4 +1,3 @@
-import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { cn } from "@/lib/utils";
 
 /**
@@ -15,10 +14,15 @@ export function ChartEmpty({
   className?: string;
 }) {
   return (
-    <Empty className={cn("min-h-48 p-6", className)}>
-      <EmptyHeader>
-        <EmptyDescription>{message}</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
+    <div
+      className={cn(
+        "flex min-h-48 w-full min-w-0 flex-1 flex-col items-center justify-center p-6 text-center text-balance",
+        className
+      )}
+    >
+      <p className="max-w-sm text-sm/relaxed text-muted-foreground">
+        {message}
+      </p>
+    </div>
   );
 }

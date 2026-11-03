@@ -217,7 +217,7 @@ async fn paged(
         needle: format!("{prefix}{needle}"),
         folder,
         tags: Some(any_of(wanted)),
-        owned: None,
+        ..DashboardQuery::default()
     };
     let found = store
         .page_dashboards(admin(anyone()), &query, page)

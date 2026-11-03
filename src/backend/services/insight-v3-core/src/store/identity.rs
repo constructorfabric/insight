@@ -5,6 +5,7 @@
 //! `GET /v1/me` and the answer read off the roles it returns, exactly as the
 //! analytics gear does it.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -34,6 +35,29 @@ struct MeResponse {
 #[derive(Debug, Deserialize)]
 struct MeRole {
     role_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+struct NamedPeople {
+    items: Vec<NamedPerson>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NamedPerson {
+    person_id: Uuid,
+    display_name: Option<String>,
+    email: Option<String>,
+}
+
+impl NamedPerson {
+    fn shown(self) -> Option<(PersonId, String)> {
+        let name = self
+            .display_name
+            .filter(|name| !name.trim().is_empty())
+            .or(self.email)?;
+
+        Some((PersonId::new(self.person_id), name))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,6 +108,8 @@ struct Fixed {
     members: Vec<Uuid>,
     /// People identity does not know; everyone else exists.
     strangers: Vec<Uuid>,
+    names: Vec<(Uuid, String)>,
+    names_unreachable: bool,
     roster: Roster,
 }
 
@@ -165,6 +191,8 @@ impl IdentityClient {
                 role,
                 members: Vec::new(),
                 strangers: Vec::new(),
+                names: Vec::new(),
+                names_unreachable: false,
                 roster: Roster::Whole(vec![caller]),
             }),
         }
@@ -189,6 +217,25 @@ impl IdentityClient {
     pub(crate) fn with_members(self, people: &[Uuid]) -> Self {
         self.with(|fixed| Fixed {
             members: people.to_vec(),
+            ..fixed
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_names_unreachable(self) -> Self {
+        self.with(|fixed| Fixed {
+            names_unreachable: true,
+            ..fixed
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_names(self, names: &[(Uuid, &str)]) -> Self {
+        self.with(|fixed| Fixed {
+            names: names
+                .iter()
+                .map(|(person, name)| (*person, (*name).to_owned()))
+                .collect(),
             ..fixed
         })
     }
@@ -298,6 +345,43 @@ impl IdentityClient {
             .items
             .iter()
             .any(|found| found.person_id == person.uuid()))
+    }
+
+    /// A person identity names nothing for is absent from the answer.
+    pub(crate) async fn names(
+        &self,
+        authorization: Option<&str>,
+        people: &[PersonId],
+    ) -> Result<HashMap<PersonId, String>, IdentityError> {
+        let (http, base_url) = match &self.mode {
+            Mode::Live { http, base_url } => (http, base_url),
+            #[cfg(test)]
+            Mode::Fixed(fixed) => {
+                if fixed.names_unreachable {
+                    return Err(IdentityError::Refused(503));
+                }
+                return Ok(fixed
+                    .names
+                    .iter()
+                    .map(|(person, name)| (PersonId::new(*person), name.clone()))
+                    .filter(|(person, _)| people.contains(person))
+                    .collect());
+            }
+        };
+
+        let ids: Vec<String> = people.iter().map(ToString::to_string).collect();
+        let url = format!(
+            "{base_url}/v1/people?visibility=tenant&limit={}&ids={}",
+            people.len(),
+            ids.join(",")
+        );
+        let named: NamedPeople = read(http, &url, authorization).await?;
+
+        Ok(named
+            .items
+            .into_iter()
+            .filter_map(NamedPerson::shown)
+            .collect())
     }
 
     /// Whether `person` holds the admin role right now.

@@ -64,8 +64,7 @@ const STAGING_GC_AGE_SECONDS: u32 = 3600;
 
 /// Columns of this run's staging table, and so — through the swap — of the
 /// live table's next schema. Mirrors the MariaDB `persons` log
-/// (`001_persons.sql`, nullability per
-/// `009_align_existing_tables_to_conventions.sql`) minus the generated
+/// (`000_baseline.sql`) minus the generated
 /// `value_hash`, plus the `_synced_at` watermark (same convention as
 /// `identity_inputs`). Keep in sync with `create_identity_persons.sql`, the
 /// hook that creates the live table: it is the shape a build meets before the

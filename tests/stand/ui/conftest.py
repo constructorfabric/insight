@@ -27,7 +27,31 @@ https origin. Every one of them matches the stand's registered
 
 from __future__ import annotations
 
-from playwright.sync_api import expect
+import json
+import os
+import time
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack
+
+import pytest
+from _pytest.terminal import TerminalReporter
+from insight_stand import (
+    ADMIN_ROLE,
+    LEAD_ROLE,
+    Manifest,
+    persona_password,
+    verify_realm_roles,
+)
+from insight_stand.session import DEFAULT_MAX_SESSION_AGE_S
+from playwright.sync_api import Browser, BrowserContext, Page, StorageState, expect
+from pytest_playwright.pytest_playwright import CreateContextCallback
+
+from .page_watch import USAGE_PATH, PageWatch
+from .pages.keycloak_login_page import KeycloakLoginPage
+from .pages.login_page import LoginPage
+from .pages.portal_shell import PortalShell
+from .portal import PortalPage
+from .steps import step
 
 # Playwright's own defaults are already generous where it matters — 30s for
 # actions and navigation — so they are left alone. `expect()` is the exception:
@@ -35,3 +59,113 @@ from playwright.sync_api import expect
 # and raising it is what lets the journeys use web-first assertions instead of
 # sleeping or retrying.
 expect.set_options(timeout=15_000)
+_NAVIGATION_EXTRAS = pytest.StashKey[list[str]]()
+
+
+def pytest_terminal_summary(terminalreporter: TerminalReporter) -> None:
+    extras = terminalreporter.config.stash.get(_NAVIGATION_EXTRAS, None)
+    if extras is None:
+        return
+    terminalreporter.write_sep("-", "Navigation entries absent from the expected list")
+    for entry in extras or ["None"]:
+        terminalreporter.write_line(entry)
+
+
+@pytest.fixture
+def navigation_extras(pytestconfig: pytest.Config) -> list[str]:
+    extras: list[str] = []
+    pytestconfig.stash[_NAVIGATION_EXTRAS] = extras
+    return extras
+
+
+def _show_planned_sections(context: BrowserContext, base_url: str) -> None:
+    context.add_init_script(
+        f"""if (window.location.origin === new URL({json.dumps(base_url)}).origin) {{
+            window.localStorage.setItem("insight.portal.showPlanned", "true");
+        }}"""
+    )
+
+
+@pytest.fixture(scope="session")
+def browser_state_for(
+    browser: Browser, stand_manifest: Manifest, base_url: str
+) -> Callable[[str], StorageState]:
+    states: dict[str, tuple[float, StorageState]] = {}
+
+    def state_for(name: str) -> StorageState:
+        person = stand_manifest.fixture(name)
+        verify_realm_roles(person)
+        if name == "ceo" and not {ADMIN_ROLE, LEAD_ROLE}.issubset(person.realm_roles):
+            raise pytest.UsageError("portal smoke requires a persona with admin and lead roles")
+
+        cached = states.get(person.email)
+        if cached and time.monotonic() - cached[0] < DEFAULT_MAX_SESSION_AGE_S:
+            return cached[1]
+
+        with step(f"Sign in to Insight as the {name} persona"):
+            context = browser.new_context(base_url=base_url, service_workers="block")
+            _show_planned_sections(context, base_url)
+            context.route(f"**{USAGE_PATH}", lambda route: route.fulfill(status=204))
+            try:
+                page = context.new_page()
+                login = LoginPage(page)
+                response = login.start()
+                assert 300 <= response.status < 400, "Login must redirect to the IdP"
+                location = response.headers.get("location")
+                assert location, "Login redirect must name the authorize endpoint"
+                login.open_password_form(location, base_url)
+                KeycloakLoginPage(page).fill_and_submit(
+                    person.email, persona_password(person.email)
+                )
+                with step("Verify the Insight portal opened"):
+                    expect(PortalShell(page).rail.zones().first).to_be_visible(timeout=30_000)
+                states[person.email] = (time.monotonic(), context.storage_state())
+            finally:
+                context.close()
+
+        return states[person.email][1]
+
+    return state_for
+
+
+@pytest.fixture
+def browser_page_for(
+    browser_state_for: Callable[[str], StorageState],
+    new_context: CreateContextCallback,
+    base_url: str,
+) -> Callable[[str], Page]:
+    def page_for(name: str) -> Page:
+        state = browser_state_for(name)
+        context = new_context(storage_state=state, service_workers="block")
+        _show_planned_sections(context, base_url)
+        context.route(f"**{USAGE_PATH}", lambda route: route.fulfill(status=204))
+        return context.new_page()
+
+    return page_for
+
+
+@pytest.fixture
+def portal_smoke_for(
+    browser_page_for: Callable[[str], Page], base_url: str
+) -> Iterator[Callable[[str], PortalPage]]:
+    with ExitStack() as observers:
+
+        def portal_for(name: str) -> PortalPage:
+            page = browser_page_for(name)
+            watch = PageWatch(page.context, base_url)
+            observers.enter_context(watch.observing(os.environ.get("INSIGHT_FORCE_500") or None))
+            shell = PortalShell(page)
+            shell.go()
+            return PortalPage(shell, watch)
+
+        yield portal_for
+
+
+@pytest.fixture
+def ceo_portal(portal_smoke_for: Callable[[str], PortalPage]) -> PortalPage:
+    return portal_smoke_for("ceo")
+
+
+@pytest.fixture
+def admin_operator_portal(portal_smoke_for: Callable[[str], PortalPage]) -> PortalPage:
+    return portal_smoke_for("admin_operator")

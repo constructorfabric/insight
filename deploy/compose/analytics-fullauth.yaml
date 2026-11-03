@@ -28,7 +28,7 @@ gears:
         description: "Read-only query service over predefined ClickHouse metrics"
       auth_disabled: false
 
-  gear-orchestrator:
+  service-discovery:
     config: {}
 
   grpc-hub:

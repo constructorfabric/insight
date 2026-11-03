@@ -3,6 +3,8 @@ import { useMemo } from "react";
 
 import { useViewer } from "@/auth";
 import { personIdFromPath } from "@/lib/metrics/entity";
+import { bareLandingZone } from "@/lib/portal/landing-zone";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 
 import { usePortalZone } from "./portal-nav";
 
@@ -17,13 +19,14 @@ export function useActiveZone(): { activeZone: string; activePerson: string } {
   const zone = usePortalZone();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { personId } = useViewer();
+  const showPlanned = usePortalShowPlanned();
 
   return useMemo(() => {
     // The path segment is a person id since the identity cutover, so this is
     // the id every portal surface keys on — not an email.
     const activePerson = personIdFromPath(pathname) ?? personId ?? "";
-    // No zone anywhere yet (a bare /portal before the landing pin) → the
-    // person view is the only thing that renders without an org rollup.
-    return { activeZone: zone ?? "person", activePerson };
-  }, [zone, pathname, personId]);
+    // A bare /portal is Home, everyone's landing; an install that hides Home
+    // lands on the viewer's own page instead.
+    return { activeZone: zone ?? bareLandingZone(showPlanned), activePerson };
+  }, [zone, pathname, personId, showPlanned]);
 }

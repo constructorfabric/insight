@@ -203,8 +203,8 @@ visible row is well-formed per the routing rules in ADR-0007.
 - Lowercase-email lookup against `value_type = 'email'`.
 - Display-name split fallback when explicit `first_name` /
   `last_name` observations are absent.
-- SeaORM-migrator-applied schema (`001_persons.sql`,
-  `003_org_chart.sql`, ...) per ADR-0006.
+- SeaORM-migrator-applied schema (`000_baseline.sql` and later
+  migrations) per ADR-0006.
 
 ### 4.2 Out of Scope
 

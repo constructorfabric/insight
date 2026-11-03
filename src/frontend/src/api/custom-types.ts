@@ -113,15 +113,47 @@ export interface Listed {
   name: string;
 }
 
+/** A metric as its catalogue lists it. */
+export interface MetricListed extends Listed {
+  updated_at: string;
+  body: MetricDefinition;
+}
+
+/** A widget as its catalogue lists it, with the name of the metric it draws. */
+export interface WidgetListed extends Listed {
+  updated_at: string;
+  body: Widget;
+  /** Null when the metric it names no longer exists. */
+  metric_name: string | null;
+}
+
+/** A dataset as its catalogue lists it. */
+export interface DatasetListed extends Listed {
+  title: string | null;
+  fields: number;
+  updated_at: string;
+}
+
 /** What the caller may do with a dashboard, as the service decides it. */
 export type DashboardAccess = "owner" | "editor" | "viewer" | "ownerless";
 
 export type FolderAccess = "owner" | "editor" | "viewer" | "ownerless";
 
+/** Who a dashboard's own grants reach besides its owner. */
+export type DashboardVisibility = "private" | "people" | "everyone";
+
 export interface DashboardListed extends Listed {
   /** Null for a dashboard nobody owns. */
   owner_person_id: string | null;
+  /** What identity calls the owner; null when it names nobody. */
+  owner_name?: string | null;
   access: DashboardAccess;
+  /** RFC 3339. Absent, as are the fields below, from a service that predates them. */
+  updated_at?: string;
+  visibility?: DashboardVisibility;
+  /** The body's title; null when it names none. */
+  title?: string | null;
+  tags?: string[];
 }
 
 export interface ListedPage<T extends Listed = Listed> {
@@ -145,7 +177,9 @@ export interface DefinitionResponse<T> {
 /** A dashboard as the service hands it back, with who owns it and what the caller may do. */
 export interface DashboardResponse extends DefinitionResponse<Dashboard> {
   owner_person_id: string | null;
+  owner_name?: string | null;
   access: DashboardAccess;
+  visibility?: DashboardVisibility;
   /** The folders holding it that the caller can see. */
   folders?: Folder[];
   /** Whether placing it in a folder would carry that folder's people to it. */
@@ -158,7 +192,9 @@ export interface DashboardRead {
   tags: string[];
   updatedAt?: string;
   ownerPersonId: string | null;
+  ownerName: string | null;
   access: DashboardAccess;
+  visibility: DashboardVisibility | null;
   folders: Folder[];
   carries: boolean;
 }

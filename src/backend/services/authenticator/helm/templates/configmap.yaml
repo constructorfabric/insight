@@ -68,7 +68,7 @@ data:
             version: "0.1.0"
             description: "OIDC login, opaque sessions, and the cookie-to-JWT exchange"
 
-      gear-orchestrator:
+      service-discovery:
         config: {}
 
       grpc-hub:

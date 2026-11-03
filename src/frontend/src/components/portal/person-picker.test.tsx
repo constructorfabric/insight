@@ -112,37 +112,13 @@ describe("PersonPicker", () => {
     );
   });
 
-  it("asks for a second character instead of searching on one", async () => {
+  it.each(["b", "bob p"])("searches as soon as %j is typed", async (typed) => {
     list.state.data = { pages: [page([BOB])] };
     render(<PersonPicker onPick={vi.fn()} />);
 
-    await userEvent.type(screen.getByRole("searchbox"), "b");
+    await userEvent.type(screen.getByRole("searchbox"), typed);
 
-    expect(screen.getByText(/at least 2 characters/i)).toBeInTheDocument();
-    expect(screen.queryByText("Bob Park")).not.toBeInTheDocument();
-    expect(screen.queryByText(/nobody matches/i)).not.toBeInTheDocument();
-  });
-
-  it("searches, and drops the notice, on the second character", async () => {
-    list.state.data = { pages: [page([BOB])] };
-    render(<PersonPicker onPick={vi.fn()} />);
-
-    await userEvent.type(screen.getByRole("searchbox"), "bo");
-
-    expect(screen.queryByText(/at least 2 characters/i)).not.toBeInTheDocument();
     expect(screen.getByText("Bob Park")).toBeInTheDocument();
-  });
-
-  // The service matches every term against the journal on its own, so a term
-  // under the floor is a pass over the journal no matter what precedes it.
-  it("holds back while any one word is still a single character", async () => {
-    list.state.data = { pages: [page([BOB])] };
-    render(<PersonPicker onPick={vi.fn()} />);
-
-    await userEvent.type(screen.getByRole("searchbox"), "bob p");
-
-    expect(screen.getByText(/at least 2 characters/i)).toBeInTheDocument();
-    expect(screen.queryByText("Bob Park")).not.toBeInTheDocument();
   });
 
   // The roster is not a search, so the console's own mode still opens with it.
@@ -151,7 +127,6 @@ describe("PersonPicker", () => {
     render(<PersonPicker onPick={vi.fn()} browseWhenEmpty />);
 
     expect(screen.getByText("Bob Park")).toBeInTheDocument();
-    expect(screen.queryByText(/at least 2 characters/i)).not.toBeInTheDocument();
   });
 
   it("offers only the persons the caller allows, whatever the case of their id", () => {

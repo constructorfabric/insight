@@ -19,6 +19,7 @@ fn row(state: DatasetState, held: Option<Held>) -> Dataset {
         state,
         physical_table: None,
         held,
+        updated_at: at(0),
     }
 }
 

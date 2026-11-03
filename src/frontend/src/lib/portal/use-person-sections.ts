@@ -46,6 +46,9 @@ export interface SectionStanding {
    */
   peersHaveData: boolean;
   isPending: boolean;
+  /** A request behind it failed, so neither blank can be told apart. */
+  isError: boolean;
+  refetch: () => void;
 }
 
 const CLOSED_ENTITY = { type: "person" as const, ids: [] as string[] };
@@ -205,6 +208,11 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
       // inference read the same query whose pending state was already tracked,
       // so this gap arrived with the new source.
       isPending: definitions.isPending || (result?.isPending ?? true),
+      isError: definitions.isError || (result?.isError ?? false),
+      refetch: () => {
+        void definitions.refetch();
+        result?.refetch();
+      },
     };
   });
 }

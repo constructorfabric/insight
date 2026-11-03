@@ -3,7 +3,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::domain::access::{Access, Caller, Entry, Grantee, Level, Owner, PersonId, access};
-use crate::domain::dashboards::{DashboardCatalogue as _, DashboardQuery};
+use crate::domain::dashboards::{DashboardCatalogue as _, DashboardQuery, Order, Visibility};
 use crate::domain::definition::{
     Change, DefinitionId, DefinitionKind, DefinitionLabel, Definitions, Page,
 };
@@ -307,6 +307,168 @@ async fn the_listing_predicate_and_one_lookup_agree_for_every_caller() {
             vec![Access::Viewer, Access::Viewer],
             vec![Access::Viewer, Access::Viewer, Access::Viewer],
         ]
+    );
+}
+
+#[tokio::test]
+async fn a_listing_reads_each_dashboards_visibility_from_its_own_grants() {
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let (owner, other) = (a_person(), a_person());
+    let prefix = unique("reach");
+    let named = |rest: &str| dashboard(&format!("{prefix}_{rest}"));
+    let boards = [named("a_private"), named("b_people"), named("c_everyone")];
+    let [private, people, everyone] = &boards;
+    for board in &boards {
+        owned(&store, board, Owner::Person(owner)).await;
+    }
+    let grants = [
+        (people, Grantee::Person(other)),
+        (everyone, Grantee::Person(other)),
+        (everyone, Grantee::Everyone),
+    ];
+    for (board, grantee) in grants {
+        granted(&store, Shared::Dashboard(board), grantee, Level::Viewer).await;
+    }
+
+    let query = DashboardQuery {
+        needle: prefix.clone(),
+        ..DashboardQuery::default()
+    };
+    let page = Page::parse(None, None).unwrap_or_else(|error| panic!("{error}"));
+    let listed = store
+        .page_dashboards(Caller::administrator(owner), &query, page)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    remove(&store, &boards.iter().collect::<Vec<_>>()).await;
+
+    let reach: Vec<(String, Visibility)> = listed
+        .items
+        .into_iter()
+        .map(|item| (item.id, item.visibility))
+        .collect();
+    assert_eq!(
+        reach,
+        [
+            (private.as_str().to_owned(), Visibility::Private),
+            (people.as_str().to_owned(), Visibility::People),
+            (everyone.as_str().to_owned(), Visibility::Everyone),
+        ]
+    );
+}
+
+async fn listed(
+    store: &MariaDefinitions,
+    caller: Caller,
+    prefix: &str,
+    order: Order,
+) -> crate::domain::dashboards::DashboardPage {
+    let query = DashboardQuery {
+        needle: prefix.to_owned(),
+        order,
+        ..DashboardQuery::default()
+    };
+    let page = Page::parse(None, None).unwrap_or_else(|error| panic!("{error}"));
+
+    store
+        .page_dashboards(caller, &query, page)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[tokio::test]
+async fn a_listing_counts_carrying_folders_in_visibility_and_sorts_by_last_change() {
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let (owner, other) = (a_person(), a_person());
+    let prefix = unique("carried");
+    let named = |rest: &str| dashboard(&format!("{prefix}_{rest}"));
+    let boards = [
+        named("a_to_people"),
+        named("b_to_everyone"),
+        named("c_into_theirs"),
+        named("d_filed"),
+    ];
+    let [to_people, to_everyone, into_theirs, filed] = &boards;
+    for board in &boards {
+        owned(&store, board, Owner::Person(owner)).await;
+    }
+    let team = folder_of(&store, owner).await;
+    let org = folder_of(&store, owner).await;
+    let theirs = folder_of(&store, other).await;
+    granted(
+        &store,
+        Shared::Folder(team),
+        Grantee::Person(other),
+        Level::Viewer,
+    )
+    .await;
+    granted(
+        &store,
+        Shared::Folder(org),
+        Grantee::Everyone,
+        Level::Viewer,
+    )
+    .await;
+    granted(
+        &store,
+        Shared::Dashboard(filed),
+        Grantee::Person(other),
+        Level::Viewer,
+    )
+    .await;
+    let as_owner = Caller::administrator(owner);
+    let as_other = Caller::administrator(other);
+    for (folder, board, caller, entry) in [
+        (team, to_people, as_owner, Entry::Carrying),
+        (org, to_everyone, as_owner, Entry::Carrying),
+        (theirs, into_theirs, as_owner, Entry::Carrying),
+        (theirs, filed, as_other, Entry::Filing),
+    ] {
+        store
+            .add_entry(folder, board, caller, entry)
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+    store
+        .withdraw(Shared::Dashboard(filed), Grantee::Person(other), owner)
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+    store
+        .apply(&[Change::Replace(
+            DefinitionKind::Dashboard,
+            to_people.clone(),
+            DefinitionLabel::of_id(to_people),
+            json!({ "title": "Changed", "items": [] }),
+        )])
+        .await
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let by_name = listed(&store, as_owner, &prefix, Order::Name).await;
+    let recent = listed(&store, as_owner, &prefix, Order::Recent).await;
+    remove(&store, &boards.iter().collect::<Vec<_>>()).await;
+    remove_folders(&store, &[team, org, theirs]).await;
+
+    let reach: Vec<(String, Visibility)> = by_name
+        .items
+        .into_iter()
+        .map(|item| (item.id, item.visibility))
+        .collect();
+    assert_eq!(
+        reach,
+        [
+            (to_people.as_str().to_owned(), Visibility::People),
+            (to_everyone.as_str().to_owned(), Visibility::Everyone),
+            (into_theirs.as_str().to_owned(), Visibility::People),
+            (filed.as_str().to_owned(), Visibility::Private),
+        ]
+    );
+    assert_eq!(
+        recent.items.first().map(|item| item.id.as_str()),
+        Some(to_people.as_str()),
+        "the last changed comes first"
     );
 }
 

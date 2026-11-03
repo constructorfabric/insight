@@ -56,18 +56,7 @@ pub(crate) async fn require_admin(
     ctx: &SecurityContext,
 ) -> Result<Uuid, CanonicalError> {
     let caller = require_caller(ctx)?;
-    let is_admin = roles_repo::has_active_role(
-        db,
-        ctx.subject_tenant_id(),
-        caller,
-        roles_repo::ADMIN_ROLE_ID,
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "admin role check failed");
-        CanonicalError::internal("failed to verify caller permissions").create()
-    })?;
-    if !is_admin {
+    if !holds_admin(db, ctx, caller).await? {
         tracing::warn!(
             caller = %caller,
             tenant = %ctx.subject_tenant_id(),
@@ -95,6 +84,25 @@ pub(crate) fn require_service(ctx: &SecurityContext) -> Result<(), CanonicalErro
             .create());
     }
     Ok(())
+}
+
+/// Whether `caller` holds an active `admin` role in the tenant.
+pub(crate) async fn holds_admin(
+    db: &DatabaseConnection,
+    ctx: &SecurityContext,
+    caller: Uuid,
+) -> Result<bool, CanonicalError> {
+    roles_repo::has_active_role(
+        db,
+        ctx.subject_tenant_id(),
+        caller,
+        roles_repo::ADMIN_ROLE_ID,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "admin role check failed");
+        CanonicalError::internal("failed to verify caller permissions").create()
+    })
 }
 
 #[cfg(test)]

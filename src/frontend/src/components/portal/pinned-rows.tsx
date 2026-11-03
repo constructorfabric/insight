@@ -3,10 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Pin } from "lucide-react";
 
 import type { Listed } from "@/api/custom-client";
+import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -24,7 +24,7 @@ export function PinnedGroup() {
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Pinned</SidebarGroupLabel>
+      <PaneGroupLabel>Pinned</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {pins.map((pin) => (

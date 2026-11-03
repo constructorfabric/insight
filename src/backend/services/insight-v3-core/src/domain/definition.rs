@@ -10,6 +10,7 @@
 
 pub(crate) mod arriving;
 
+use std::collections::HashMap;
 use std::fmt;
 
 use async_trait::async_trait;
@@ -198,16 +199,6 @@ impl Page {
     }
 }
 
-/// One page of dataset names, and how many datasets it is a page of.
-///
-/// A dataset's name is its identity, so its catalogue is names alone.
-#[derive(Debug)]
-pub(crate) struct NamePage {
-    pub(crate) names: Vec<String>,
-    /// Every match, not the page — so a reader can say what is behind it.
-    pub(crate) total: u64,
-}
-
 /// One definition in a catalogue: what addresses it and what it is called.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Listed {
@@ -219,6 +210,24 @@ pub(crate) struct Listed {
 #[derive(Debug)]
 pub(crate) struct ListedPage {
     pub(crate) items: Vec<Listed>,
+    /// Every match, not the page — so a reader can say what is behind it.
+    pub(crate) total: u64,
+}
+
+/// One metric or widget as the portal's catalogue shows it: what addresses
+/// it, what it is called, what it holds and when it last changed.
+#[derive(Debug, Clone)]
+pub(crate) struct LibraryEntry {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) body: serde_json::Value,
+    pub(crate) updated_at: DateTime<Utc>,
+}
+
+/// One page of library entries, and how many definitions it is a page of.
+#[derive(Debug)]
+pub(crate) struct LibraryPage {
+    pub(crate) items: Vec<LibraryEntry>,
     /// Every match, not the page — so a reader can say what is behind it.
     pub(crate) total: u64,
 }
@@ -349,6 +358,22 @@ pub(crate) trait Definitions: Lookup {
         needle: &str,
         page: Page,
     ) -> Result<ListedPage, DefinitionStoreError>;
+
+    /// The same page as [`Definitions::page`], each definition with its body
+    /// and when it last changed, for a catalogue that draws a card of each.
+    async fn page_entries(
+        &self,
+        kind: LibraryKind,
+        needle: &str,
+        page: Page,
+    ) -> Result<LibraryPage, DefinitionStoreError>;
+
+    /// The name of each of these ids that exists, by id, in one read.
+    async fn names_of(
+        &self,
+        kind: LibraryKind,
+        ids: &[&str],
+    ) -> Result<HashMap<String, String>, DefinitionStoreError>;
 
     /// Removes the definition, reporting whether there was one.
     async fn delete(

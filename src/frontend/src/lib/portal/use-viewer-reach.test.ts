@@ -81,6 +81,17 @@ describe("useViewerReach", () => {
     expect(result.current.isManager).toBe(false);
   });
 
+  it("keeps them closed for a viewer with no reports who is shown other people", () => {
+    mocks.roster = [person("me"), person("ada"), person("grace", "ada")];
+    mocks.isFlat = false;
+    mocks.rosterPending = false;
+    mocks.policyPending = false;
+
+    const { result } = renderHook(() => useViewerReach());
+
+    expect(result.current.canSeeOthers).toBe(false);
+  });
+
   it("waits rather than deciding while either answer is in flight", () => {
     mocks.roster = [];
     mocks.isFlat = false;

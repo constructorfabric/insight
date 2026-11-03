@@ -1,11 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useId, useState, type RefObject } from "react";
 
 import { DASHBOARD_TAGS_MAX, TAG_NAME_MAX } from "@/api/custom-client";
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import { refusal } from "@/components/custom/refusal";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+} from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { sameTagName } from "@/lib/custom/tag-names";
 import {
@@ -19,13 +25,14 @@ const TOO_LONG = `A tag name is at most ${TAG_NAME_MAX} characters.`;
 
 export function EditTags({
   id,
-  name,
   open,
+  anchor,
   onClose,
 }: {
   id: string;
-  name: string;
   open: boolean;
+  /** What the panel opens beside: the menu it was asked from. */
+  anchor: RefObject<HTMLElement | null>;
   onClose: () => void;
 }) {
   const every = useQuery({ ...tagsQuery(), enabled: open });
@@ -113,53 +120,65 @@ export function EditTags({
   }
 
   return (
-    <ConfirmDialog
+    <Popover
       open={open}
       onOpenChange={(next) => {
         if (!next) close();
       }}
-      title="Edit tags"
-      description={`Tick the tags ${name} carries, up to ${DASHBOARD_TAGS_MAX}.`}
-      confirmLabel="Done"
-      isPending={save.isPending}
-      confirmDisabled={!ready}
-      error={error}
-      onConfirm={done}
     >
-      {carried.isError ? (
-        <p className="text-sm text-muted-foreground">
-          The dashboard's tags could not be read.
-        </p>
-      ) : !ready ? (
-        <Spinner className="mx-auto size-4" />
-      ) : (
-        <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto">
-          {choices.map((tag) => (
-            <TagChoice
-              key={tag}
-              tag={tag}
-              checked={chosen.includes(tag)}
-              onToggle={() => toggle(tag)}
-            />
-          ))}
-        </div>
-      )}
-      <Input
-        aria-label="Add tag"
-        placeholder="Add tag…"
-        readOnly={save.isPending || !ready}
-        value={draft}
-        onChange={(event) => {
-          setDraft(event.target.value);
-          setError(null);
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter") return;
-          event.preventDefault();
-          addDraft();
-        }}
-      />
-    </ConfirmDialog>
+      <PopoverContent anchor={anchor} align="end" className="gap-3">
+        <PopoverHeader>
+          <PopoverTitle>Edit tags</PopoverTitle>
+        </PopoverHeader>
+        {carried.isError ? (
+          <p className="text-sm text-muted-foreground">
+            The dashboard's tags could not be read.
+          </p>
+        ) : !ready ? (
+          <Spinner className="mx-auto size-4" />
+        ) : (
+          <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto">
+            {choices.map((tag) => (
+              <TagChoice
+                key={tag}
+                tag={tag}
+                checked={chosen.includes(tag)}
+                onToggle={() => toggle(tag)}
+              />
+            ))}
+          </div>
+        )}
+        <Input
+          aria-label="Add tag"
+          placeholder="Add tag…"
+          readOnly={save.isPending || !ready}
+          value={draft}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setError(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            addDraft();
+          }}
+        />
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+        <Button
+          type="button"
+          size="sm"
+          className="self-start"
+          disabled={!ready || save.isPending}
+          onClick={done}
+        >
+          Done
+        </Button>
+      </PopoverContent>
+    </Popover>
   );
 }
 

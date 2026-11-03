@@ -4,7 +4,6 @@ import {
   Ellipsis,
   Folder,
   FolderX,
-  Inbox,
   Pencil,
   Plus,
   Share2,
@@ -19,6 +18,7 @@ import {
   OrphanedChip,
   TransferOrphan,
 } from "@/components/custom/orphaned";
+import { CreateFolderDialog } from "@/components/custom/create-folder-dialog";
 import { refusal } from "@/components/custom/refusal";
 import { ShareDialog } from "@/components/custom/share-dialog";
 import { CountBadge } from "@/components/portal/pane-nav";
@@ -29,10 +29,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuAction,
   SidebarMenuButton,
@@ -44,13 +44,14 @@ import { useIsAdmin } from "@/queries/identity-me";
 import {
   foldersQuery,
   orphanedPagesQuery,
-  useCreateFolder,
   useDeleteFolder,
   useRenameFolder,
 } from "@/queries/custom";
 
 const LIST_PATH = /^\/portal\/custom\/?$/;
-const NEW_FOLDER = "new";
+
+/** Folder counts keep clear of the row's `···`, so the count reads before it. */
+const FOLDER_COUNT = "end-8";
 
 export function FoldersGroup() {
   const { data } = useQuery(foldersQuery());
@@ -60,6 +61,7 @@ export function FoldersGroup() {
     select: (s) => LIST_PATH.test(s.location.pathname),
   });
   const [editing, setEditing] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<FolderSummary | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [sharing, setSharing] = useState<FolderSummary | null>(null);
@@ -67,14 +69,13 @@ export function FoldersGroup() {
   // gone, so it keeps the last folder rather than unmounting mid-transition.
   const [shared, setShared] = useState(sharing);
   if (sharing !== null && sharing !== shared) setShared(sharing);
-  const create = useCreateFolder();
   const rename = useRenameFolder();
 
   const isShown = (id: string) => onList && shown === id;
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Folders</SidebarGroupLabel>
+      <PaneGroupLabel>Folders</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {data?.folders.map((folder) =>
@@ -89,7 +90,7 @@ export function FoldersGroup() {
               <SidebarMenuItem key={folder.id}>
                 <SidebarMenuButton
                   isActive={isShown(folder.id)}
-                  className="group-has-data-[sidebar=menu-action]/menu-item:pe-14"
+                  className="pe-16"
                   render={
                     <Link
                       to="/portal/custom"
@@ -100,7 +101,9 @@ export function FoldersGroup() {
                   <Folder />
                   <span>{folder.name}</span>
                 </SidebarMenuButton>
-                <CountBadge>{folder.dashboards}</CountBadge>
+                <CountBadge className={FOLDER_COUNT}>
+                  {folder.dashboards}
+                </CountBadge>
                 <FolderMenu
                   name={folder.name}
                   allows={folderAllows(folder.access, isAdmin)}
@@ -126,30 +129,21 @@ export function FoldersGroup() {
                   />
                 }
               >
-                <Inbox />
+                <Folder />
                 <span>Unfiled</span>
               </SidebarMenuButton>
-              <CountBadge>{data.unfiled}</CountBadge>
+              <CountBadge className={FOLDER_COUNT}>{data.unfiled}</CountBadge>
             </SidebarMenuItem>
           ) : null}
-          {editing === NEW_FOLDER ? (
-            <FolderNameField
-              onSave={(name) => create.mutateAsync(name)}
-              onDone={() => setEditing(null)}
-            />
-          ) : (
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                className="text-muted-foreground"
-                onClick={() => setEditing(NEW_FOLDER)}
-              >
-                <Plus />
-                <span>New folder</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          )}
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={() => setCreating(true)}>
+              <Plus />
+              <span>New folder</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarGroupContent>
+      <CreateFolderDialog open={creating} onClose={() => setCreating(false)} />
       <DeleteFolder
         folder={deleting}
         open={confirming}
@@ -232,11 +226,7 @@ function FolderMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <SidebarMenuAction
-            showOnHover
-            className="end-7"
-            aria-label={`More for ${name}`}
-          />
+          <SidebarMenuAction showOnHover aria-label={`More for ${name}`} />
         }
       >
         <Ellipsis />
@@ -266,11 +256,11 @@ function FolderMenu({
 }
 
 function FolderNameField({
-  initial = "",
+  initial,
   onSave,
   onDone,
 }: {
-  initial?: string;
+  initial: string;
   onSave: (name: string) => Promise<unknown>;
   onDone: () => void;
 }) {
@@ -314,6 +304,10 @@ function FolderNameField({
           }}
           onKeyDown={(event) => {
             if (event.key === "Escape") onDone();
+          }}
+          onBlur={() => {
+            if (saving) return;
+            if (value.trim() === "" || value === initial) onDone();
           }}
         />
         {error ? (

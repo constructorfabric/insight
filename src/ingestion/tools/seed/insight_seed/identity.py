@@ -189,7 +189,7 @@ def seed_login_ids(
     Keycloak having authenticated them correctly.
 
     Idempotent via an explicit existence check per pair, NOT `INSERT IGNORE`:
-    since migration 004 (`004_persons_relax_constraints.sql`), `persons`'
+    since migration 004 (now squashed into `000_baseline.sql`), `persons`'
     unique key is `(tenant, person, source_type, source_id, value_type,
     created_at)` — `created_at` replaced `value_hash` so the append-only
     observation log can record the same value re-observed at a different

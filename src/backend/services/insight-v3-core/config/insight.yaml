@@ -22,7 +22,7 @@ gears:
         description: "Insight v3 Core"
       auth_disabled: false
 
-  gear-orchestrator:
+  service-discovery:
     config: {}
 
   grpc-hub:

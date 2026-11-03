@@ -222,9 +222,11 @@ again, on the catalogue).
 The **exclusion** half — "where a conclusion would rest on it, the metric is
 excluded by name" — is about conclusions, which are S-2, `No surface`.
 
-Note the caveats that live only in migration comments
+Note the caveats that lived only in migration comments
 (`m20260601_000002_seed_claude_team_metrics_catalog.rs`,
-`m20260606_000001_dept_metric_distributions.rs`) reach no surface at all. That
+`m20260606_000001_dept_metric_distributions.rs`; the analytics migration squash
+removed both, so they survive only in git history at `cb8aaf153`) reach no
+surface at all. That
 is a narrower gap than "the rule is unimplemented", and worth stating as such.
 
 ## R12 · A group figure is computed for the group in view

@@ -25,6 +25,20 @@ definitions:
             value:
               grant_type: account_credentials
               account_id: "{{ config['zoom_account_id'] }}"
+          error_handler:
+            type: DefaultErrorHandler
+            response_filters:
+              - type: HttpResponseFilter
+                action: FAIL
+                failure_type: config_error
+                http_codes:
+                  - 400
+                  - 401
+                error_message: >-
+                  Zoom rejected the connector credentials: {{ response.get('reason') or
+                  response.get('error_description') or response.get('error') }}
+                  (error={{ response.get('error') }}). Check the Server-to-Server OAuth app
+                  and its account id, client id and client secret.
         expiration_duration: PT1H
         session_token_path:
           - access_token
@@ -109,6 +123,20 @@ streams:
               value:
                 grant_type: account_credentials
                 account_id: "{{ config['zoom_account_id'] }}"
+            error_handler:
+              type: DefaultErrorHandler
+              response_filters:
+                - type: HttpResponseFilter
+                  action: FAIL
+                  failure_type: config_error
+                  http_codes:
+                    - 400
+                    - 401
+                  error_message: >-
+                    Zoom rejected the connector credentials: {{ response.get('reason') or
+                    response.get('error_description') or response.get('error') }}
+                    (error={{ response.get('error') }}). Check the Server-to-Server OAuth app
+                    and its account id, client id and client secret.
           expiration_duration: PT1H
           session_token_path:
             - access_token
@@ -330,6 +358,20 @@ streams:
               value:
                 grant_type: account_credentials
                 account_id: "{{ config['zoom_account_id'] }}"
+            error_handler:
+              type: DefaultErrorHandler
+              response_filters:
+                - type: HttpResponseFilter
+                  action: FAIL
+                  failure_type: config_error
+                  http_codes:
+                    - 400
+                    - 401
+                  error_message: >-
+                    Zoom rejected the connector credentials: {{ response.get('reason') or
+                    response.get('error_description') or response.get('error') }}
+                    (error={{ response.get('error') }}). Check the Server-to-Server OAuth app
+                    and its account id, client id and client secret.
           expiration_duration: PT1H
           session_token_path:
             - access_token
@@ -620,6 +662,20 @@ streams:
                         value:
                           grant_type: account_credentials
                           account_id: "{{ config['zoom_account_id'] }}"
+                      error_handler:
+                        type: DefaultErrorHandler
+                        response_filters:
+                          - type: HttpResponseFilter
+                            action: FAIL
+                            failure_type: config_error
+                            http_codes:
+                              - 400
+                              - 401
+                            error_message: >-
+                              Zoom rejected the connector credentials: {{ response.get('reason') or
+                              response.get('error_description') or response.get('error') }}
+                              (error={{ response.get('error') }}). Check the Server-to-Server OAuth app
+                              and its account id, client id and client secret.
                     expiration_duration: PT1H
                     session_token_path:
                       - access_token
@@ -741,6 +797,20 @@ streams:
               value:
                 grant_type: account_credentials
                 account_id: "{{ config['zoom_account_id'] }}"
+            error_handler:
+              type: DefaultErrorHandler
+              response_filters:
+                - type: HttpResponseFilter
+                  action: FAIL
+                  failure_type: config_error
+                  http_codes:
+                    - 400
+                    - 401
+                  error_message: >-
+                    Zoom rejected the connector credentials: {{ response.get('reason') or
+                    response.get('error_description') or response.get('error') }}
+                    (error={{ response.get('error') }}). Check the Server-to-Server OAuth app
+                    and its account id, client id and client secret.
           expiration_duration: PT1H
           session_token_path:
             - access_token

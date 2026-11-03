@@ -35,7 +35,7 @@ data:
         enabled: {{ .Values.opentelemetry.metrics.enabled }}
 
     gears:
-      gear-orchestrator:
+      service-discovery:
         config: {}
 
       grpc-hub:

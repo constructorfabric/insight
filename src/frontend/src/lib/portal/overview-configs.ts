@@ -100,6 +100,45 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
   },
 };
 
+/** How an Overview item reads the viewer alone; an item absent here is team-only. */
+export type OwnOverviewItem =
+  | { kind: "home" }
+  | { kind: "lens"; config: LensConfig }
+  | { kind: "attention"; title: string; tagline: string }
+  | { kind: "coverage"; title: string; tagline: string };
+
+export const OWN_OVERVIEW_ITEMS: Record<string, OwnOverviewItem> = {
+  [DEFAULT_OVERVIEW_ITEM]: { kind: "home" },
+  "by-direction": {
+    kind: "lens",
+    config: {
+      title: "By direction",
+      tagline: "your work in each direction",
+      sections: [{ kind: "direction-cards", variant: "full" }],
+    },
+  },
+  trend: {
+    kind: "lens",
+    config: {
+      title: "Trend",
+      tagline: "your totals over time",
+      sections: [
+        { kind: "trend", metrics: ["git.prs_merged", "git.code_lines"] },
+      ],
+    },
+  },
+  attention: {
+    kind: "attention",
+    title: "Attention needed",
+    tagline: "what stands out in your work",
+  },
+  health: {
+    kind: "coverage",
+    title: "Data coverage",
+    tagline: "which sections have data about you",
+  },
+};
+
 /**
  * Union of metric keys across every Overview item — one stable grid query for
  * the whole zone, so switching pane items never re-spins (mirror of

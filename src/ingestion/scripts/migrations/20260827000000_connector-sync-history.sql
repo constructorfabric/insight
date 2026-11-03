@@ -43,3 +43,17 @@ CREATE TABLE IF NOT EXISTS ingestion_history.sync_events (
 PARTITION BY toYYYYMM(ts)
 ORDER BY (event, connector, ts, event_id)
 TTL toDateTime(ts) + INTERVAL 6 MONTH;
+
+-- Every earlier shape converges here, since this channel has no ledger and the
+-- statement above never alters a table that already stands: the stamp column
+-- was first named `job_created_at`, a field the mover's listing does not
+-- report, and the instance identity arrived after the table did. `AFTER` keeps
+-- a converged table physically identical to a fresh one.
+ALTER TABLE ingestion_history.sync_events
+    RENAME COLUMN IF EXISTS job_created_at TO job_updated_at;
+
+ALTER TABLE ingestion_history.sync_events
+    ADD COLUMN IF NOT EXISTS tenant_id LowCardinality(String) AFTER connector;
+
+ALTER TABLE ingestion_history.sync_events
+    ADD COLUMN IF NOT EXISTS source_id LowCardinality(String) AFTER tenant_id;

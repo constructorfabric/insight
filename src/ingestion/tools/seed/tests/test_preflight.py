@@ -399,7 +399,7 @@ class _SqlitePersons:
     """`persons` under an engine, over the columns the guard's predicate reads.
 
     Not a schema replica: the table belongs to the identity service's migrations
-    (`001_persons.sql`), which this package cannot see at test time. What is
+    (`000_baseline.sql`), which this package cannot see at test time. What is
     modelled is what the predicate reads — `value_effective` as the generated
     column it really is, so a row cannot disagree with its own `value_id`, and
     the uuid columns as the bytes `BINARY(16)` compares.

@@ -16,7 +16,7 @@
 //! The raw SQL here is injection-safe: every value is a **bound parameter**
 //! (`Statement::from_sql_and_values`, no string interpolation) and the tenant is
 //! always pinned in the `WHERE`. The `identity` database schema is owned by THIS
-//! service's migrator — see the ownership-transfer docs in `crate::migration`.
+//! service's migrator (`crate::migration`).
 
 pub mod bootstrap;
 pub mod entities;
@@ -310,6 +310,22 @@ mod tests {
     static LEDGER_MUTEX: LazyLock<tokio::sync::Mutex<()>> =
         LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+    const BASELINE: &str = "m20261030_000001_baseline";
+    const PARTIAL: &str = "m20260724_000012_org_chart_nullable_parent";
+
+    /// Delete `versions` from the ledger, as if they had never been applied.
+    async fn forget(db: &DatabaseConnection, versions: &[&str]) -> anyhow::Result<()> {
+        for version in versions {
+            db.execute_raw(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                "DELETE FROM seaql_migrations WHERE version = ?",
+                [(*version).into()],
+            ))
+            .await?;
+        }
+        Ok(())
+    }
+
     async fn count(db: &DatabaseConnection, sql: &str) -> anyhow::Result<i64> {
         count_with(db, sql, []).await
     }
@@ -362,27 +378,43 @@ mod tests {
             "ledger must hold at least the embedded set (applied {applied} < embedded {embedded})"
         );
 
-        // Crash-recovery regression (012): a migrator killed between the DROP
-        // and ADD CONSTRAINT statements leaves the constraint absent — a
-        // re-run must converge, not fail on the unconditional DROP.
-        db.execute_raw(Statement::from_string(
-            DbBackend::MySql,
-            "ALTER TABLE org_chart DROP CONSTRAINT IF EXISTS chk_no_self_loop",
-        ))
-        .await?;
-        db.execute_raw(Statement::from_string(
-            DbBackend::MySql,
-            "DELETE FROM seaql_migrations WHERE version = 'm20260724_000012_org_chart_nullable_parent'",
-        ))
-        .await?;
-
         // With an embedded migration missing from the ledger, the schema is
-        // behind this build and the server must refuse to boot.
+        // behind this build and the server must refuse to boot. Over a ledger
+        // that walked the squashed history the baseline applies nothing, so a
+        // re-run only records it.
+        forget(&db, &[BASELINE]).await?;
         assert!(
             assert_schema_compatible(&db).await.is_err(),
             "a missing embedded migration must fail the boot gate"
         );
+        run_migrations(&url, &cfg).await?;
+        assert_schema_compatible(&db).await?;
 
+        // A ledger holding only part of the squashed history is refused: no
+        // migration left in this build can bring that schema forward.
+        forget(&db, &[BASELINE, PARTIAL]).await?;
+        let refused = run_migrations(&url, &cfg).await;
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "INSERT INTO seaql_migrations (version, applied_at) VALUES (?, 0)",
+            [PARTIAL.into()],
+        ))
+        .await?;
+        let Err(error) = refused else {
+            panic!("a partial squashed history must be refused");
+        };
+        assert!(
+            format!("{error:#}").contains(&format!("`{PARTIAL}`")),
+            "the refusal must name the first missing migration: {error:#}"
+        );
+        run_migrations(&url, &cfg).await?;
+        assert_schema_compatible(&db).await?;
+
+        // A first migrate interrupted inside the baseline leaves its tables
+        // with no ledger row; the re-run must converge over them.
+        let mut whole_history = vec![BASELINE];
+        whole_history.extend_from_slice(crate::migration::SQUASHED);
+        forget(&db, &whole_history).await?;
         run_migrations(&url, &cfg).await?;
         assert_schema_compatible(&db).await?;
         // INVARIANT: keep the schema filter — `information_schema` spans the
@@ -394,10 +426,12 @@ mod tests {
                AND CONSTRAINT_SCHEMA = DATABASE()",
         )
         .await?;
-        assert_eq!(checks, 1, "012 re-run must restore the constraint");
+        assert_eq!(checks, 1, "the baseline re-run must keep the constraint");
+        let roles = count(&db, "SELECT COUNT(*) FROM roles").await?;
+        assert!(roles >= 2, "the baseline re-run must keep the seeded roles");
 
-        // Bootstrap admin ran under the lock on EVERY run_migrations call
-        // above (three so far) — exactly one active assignment must exist
+        // Bootstrap admin ran under the lock on EVERY successful
+        // run_migrations call above — exactly one active assignment must exist
         // for THIS test's (tenant, person, role) triple. Scoped, not a
         // global reason='bootstrap' count: a legitimate bootstrap for a
         // different tenant/person in the same database must not fail this.

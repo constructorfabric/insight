@@ -733,8 +733,8 @@ def _reconcile(period: float | None, walk: _Walk, expectation: Expectation) -> N
         case Tier.COLLAPSE_BOUNDED_SUM:
             total = sum(_numbers(walk.rows, "value", metric_key))
             assert period is not None and (total > period or _close(total, period)), (
-                f"{metric_key}: evidence sums to {total}, below the metric's {period}; a day flag "
-                "collapses across a person's accounts, so evidence can only be the larger side"
+                f"{metric_key}: evidence sums to {total}, below the metric's {period}; the measure "
+                "collapses by max or min across a person's accounts, so evidence sums to at least the metric"
             )
         case Tier.STRUCTURAL_ONLY:
             assert period is not None and 1 <= period <= len(walk.rows), (

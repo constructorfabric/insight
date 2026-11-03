@@ -9,16 +9,17 @@ Usage:
 Every jira heal in apply-ch-migrations.sh is guarded on a bronze_jira table and
 no-ops on an install that never synced jira. The rig's destination write makes
 the tables, empty and in today's shape; `plant` then turns them into what a
-connector older than 6.1.0 left behind, so that each heal has work to do on
-the deploy that follows, and `assert` reads the outcome the warm-upgrade lane
-expects (.github/workflows/scripts/warm-upgrade-sim.sh) on every node:
+connector older than 6.1.0 left behind on an install at the hook's floor
+(lib/warehouse-floor.sh), so that each heal has work to do on the deploy that
+follows, and `assert` reads the outcome the warm-upgrade lane expects
+(.github/workflows/scripts/warm-upgrade-sim.sh) on every node:
 
 - jira_issue: `jira_id` typed as a number (pre-#1866), the one issue keyed by
   both keys it has had -> retyped to a string, collapsed onto its id;
-- jira_comments: no `jira_id` column at all -> added back, then filled;
-- jira_issue_history: `items` double-encoded -> unescaped, and `jira_id`
-  filled from the issue streams, the row naming a key no stream delivered
-  staying NULL, the row that already had an id keeping it;
+- jira_comments: `jira_id` NULL -> filled through jira_issue_keys;
+- jira_issue_history: `jira_id` filled from the issue streams, the row naming
+  a key no stream delivered staying NULL, the row that already had an id
+  keeping it;
 - jira_worklogs: Jira's own `issueId` preferred over the key;
 - staging.jira__catalogue_first_seen: the pre-history shape, a plain
   MergeTree keyed by source -> rebuilt as a ReplacingMergeTree keyed by tenant
@@ -70,8 +71,6 @@ def plant() -> None:
     statements = [
         # pre-#1866: the id came out of a JSON number.
         "ALTER TABLE bronze_jira.jira_issue MODIFY COLUMN jira_id Nullable(Int64)",
-        # pre-6.1.0: the substreams carried no id.
-        "ALTER TABLE bronze_jira.jira_comments DROP COLUMN jira_id",
         f"""INSERT INTO bronze_jira.jira_issue
             (unique_key, tenant_id, source_id, id_readable, jira_id, _airbyte_raw_id, _airbyte_extracted_at)
             VALUES
@@ -83,7 +82,7 @@ def plant() -> None:
         f"""INSERT INTO bronze_jira.jira_issue_history
             (unique_key, tenant_id, source_id, id_readable, jira_id, items, _airbyte_raw_id, _airbyte_extracted_at)
             VALUES
-            ('warm-jira-h-current', '{TENANT}', '{SOURCE}', 'WARM-1', NULL, '"[]"', 'raw-h1', '2026-01-03 00:00:00'),
+            ('warm-jira-h-current', '{TENANT}', '{SOURCE}', 'WARM-1', NULL, '[]', 'raw-h1', '2026-01-03 00:00:00'),
             ('warm-jira-h-moved', '{TENANT}', '{SOURCE}', 'WARM-OLD-7', NULL, '[]', 'raw-h2', '2026-01-03 00:00:00'),
             ('warm-jira-h-unknown', '{TENANT}', '{SOURCE}', 'WARM-GONE-9', NULL, '[]', 'raw-h3', '2026-01-03 00:00:00'),
             ('warm-jira-h-known', '{TENANT}', '{SOURCE}', 'WARM-1', '999', '[]', 'raw-h4', '2026-01-03 00:00:00'),
@@ -147,15 +146,11 @@ def assert_healed() -> None:
             )
         shape = check.query(
             url,
-            """SELECT concat(
-                (SELECT type FROM system.columns WHERE database = 'bronze_jira' AND table = 'jira_issue' AND name = 'jira_id'), '|',
-                toString((SELECT count() FROM system.columns WHERE database = 'bronze_jira' AND table = 'jira_comments' AND name = 'jira_id')), '|',
-                (SELECT ifNull(items, 'NULL') FROM bronze_jira.jira_issue_history FINAL WHERE unique_key = 'warm-jira-h-current'))""",
+            "SELECT type FROM system.columns WHERE database = 'bronze_jira' AND table = 'jira_issue' AND name = 'jira_id'",
         ).strip()
-        if shape != "Nullable(String)|1|[]":
+        if shape != "Nullable(String)":
             raise check.Failure(
-                f"{url}: jira bronze schema after the heals is {shape!r}, expected "
-                "'Nullable(String)|1|[]' (jira_id retyped, jira_comments.jira_id added, items unescaped)"
+                f"{url}: bronze_jira.jira_issue.jira_id after the heals is {shape!r}, expected 'Nullable(String)'"
             )
         catalogue = check.query(
             url,

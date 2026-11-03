@@ -1,4 +1,4 @@
-{{ metric_evidence_table() }}
+{{ metric_evidence_table(query_settings_overrides={'max_memory_usage': 3221225472}) }}
 
 {% set account_keys = ['account_source_type', 'account_source_id', 'account_id'] %}
 

@@ -75,13 +75,13 @@ vi.mock("@/components/portal/employees-view", () => ({
   EmployeesView: () => <div data-testid="employees" />,
 }));
 vi.mock("@/components/portal/metric-groups-view", () => ({
-  MetricGroupsView: ({ personId }: { personId: string }) => (
-    <div data-testid="metric-groups">{personId}</div>
+  MetricGroupsView: ({ personId, "data-testid": testId }: { personId: string; "data-testid"?: string }) => (
+    <div data-testid={testId ?? "metric-groups"}>{personId}</div>
   ),
 }));
 vi.mock("@/components/portal/single-group-view", () => ({
-  SingleGroupView: ({ groupId }: { groupId: string }) => (
-    <div data-testid="single-group">{groupId}</div>
+  SingleGroupView: ({ groupId, "data-testid": testId }: { groupId: string; "data-testid"?: string }) => (
+    <div data-testid={testId ?? "single-group"}>{groupId}</div>
   ),
 }));
 vi.mock("@/components/portal/person-header", () => ({
@@ -106,7 +106,6 @@ import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 import { renderHook } from "@testing-library/react";
 
 import { DirectionView } from "./direction-view";
-import { OverviewView } from "./overview-view";
 import { PeopleView } from "./people-view";
 import { PersonView } from "./person-view";
 import { PortalLayout } from "./portal-layout";
@@ -192,43 +191,26 @@ describe("DirectionView", () => {
   });
 });
 
-describe("OverviewView", () => {
-  it("defaults a null item to At a glance", () => {
-    render(<OverviewView item={null} />);
-    expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument();
-    expect(
-      screen.getByTestId("home-dashboards").compareDocumentPosition(screen.getByTestId("domain-lens")) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(screen.getByTestId("domain-lens")).toHaveTextContent("Overview");
-  });
-
-  it("resolves a named item through the registry", () => {
-    render(<OverviewView item="contribution" />);
-    expect(screen.queryByTestId("home-dashboards")).toBeNull();
-    expect(screen.getByTestId("domain-lens")).toHaveTextContent(
-      "Overview · Contribution breakdown",
-    );
-  });
-
-  it("renders Pending for an unknown item instead of crashing", () => {
-    render(<OverviewView item="nope" />);
-    expect(screen.getByTestId("pending").textContent).toMatch(/isn't an Overview view yet/);
-  });
-});
-
 describe("PersonView", () => {
   it("defaults to the at-a-glance dashboard with the person's header", () => {
     render(<PersonView person={pid("a")} />);
     expect(screen.getByTestId("person-header")).toHaveTextContent(pid("a"));
-    expect(screen.getByTestId("metric-groups")).toHaveTextContent(pid("a"));
+    expect(screen.getByTestId("page-person-at-a-glance")).toHaveTextContent(pid("a"));
+    expect(screen.queryByTestId("page-person")).not.toBeInTheDocument();
   });
 
-  it("expands a selected metric group inline", () => {
-    act(() => portalRouter.set({ item: "git_output" }));
+  it.each([
+    ["task_delivery", "page-person-task-delivery"],
+    ["git_output", "page-person-git-output"],
+    ["collaboration", "page-person-collaboration"],
+    ["ai_adoption", "page-person-ai-adoption"],
+    ["wiki", "page-person-wiki"],
+  ])("identifies the selected %s section", (item, testId) => {
+    act(() => portalRouter.set({ item }));
     render(<PersonView person={pid("a")} />);
-    expect(screen.getByTestId("single-group")).toHaveTextContent("git_output");
-    expect(screen.queryByTestId("metric-groups")).not.toBeInTheDocument();
+    expect(screen.getByTestId(testId)).toHaveTextContent(item);
+    expect(screen.queryByTestId("page-person-at-a-glance")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("page-person")).not.toBeInTheDocument();
   });
 });
 
@@ -263,17 +245,20 @@ describe("PortalLayout landing", () => {
     expect(zone.result.current).toBeNull();
   });
 
-  it("pins a manager's landing zone to Overview once resolved", () => {
-    const zone = renderHook(() => usePortalZone());
-    render(<PortalLayout />);
-    expect(zone.result.current).toBe("overview");
-  });
-
-  it("leaves an IC route-driven (their own Person page)", () => {
-    mocks.isManager = false;
+  it("leaves a bare /portal as it is while the viewer's reach resolves", () => {
+    mocks.isPending = true;
     const zone = renderHook(() => usePortalZone());
     render(<PortalLayout />);
     expect(zone.result.current).toBeNull();
+    expect(screen.queryByRole("status", { name: "Loading" })).toBeNull();
+  });
+
+  it("keeps an IC on Home", () => {
+    mocks.isManager = false;
+    act(() => portalRouter.set({ zone: "overview" }));
+    const zone = renderHook(() => usePortalZone());
+    render(<PortalLayout />);
+    expect(zone.result.current).toBe("overview");
   });
 
   it("never overrides a zone the manager picked while their role resolved", () => {
@@ -283,9 +268,9 @@ describe("PortalLayout landing", () => {
     expect(zone.result.current).toBe("directions");
   });
 
-  it("resets an IC stranded on an org zone (hidden for them) to route-driven", () => {
+  it("resets an IC stranded on an org zone (hidden for them) to Home", () => {
     mocks.isManager = false;
-    act(() => portalRouter.set({ zone: "overview" }));
+    act(() => portalRouter.set({ zone: "directions" }));
     const zone = renderHook(() => usePortalZone());
     render(<PortalLayout />);
     expect(zone.result.current).toBeNull();

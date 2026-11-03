@@ -1,0 +1,222 @@
+vi.mock("@tanstack/react-router", async () => {
+  const { portalRouterMock } = await import("@/test/portal-router");
+  return portalRouterMock();
+});
+const viewer = vi.hoisted(() => ({
+  personId: "me-1" as string | null,
+  canSeeOthers: false,
+  reachPending: false,
+}));
+vi.mock("@/auth", () => ({
+  useViewer: () => ({ personId: viewer.personId }),
+}));
+vi.mock("@/lib/portal/use-viewer-reach", () => ({
+  useViewerReach: () => ({
+    canSeeOthers: viewer.canSeeOthers,
+    isManager: viewer.canSeeOthers,
+    isPending: viewer.reachPending,
+  }),
+}));
+const selectZone = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/portal/use-zone-nav", () => ({
+  useZoneNav: () => ({ selectZone }),
+}));
+vi.mock("@/components/portal/metric-groups-view", () => ({
+  MetricGroupsView: ({
+    personId,
+    content,
+    onSelectGroup,
+  }: {
+    personId: string;
+    content: string;
+    onSelectGroup: (id: string) => void;
+  }) => (
+    <section
+      aria-label={`${content === "attention" ? "Attention" : "Glance"} for ${personId}`}
+    >
+      <button type="button" onClick={() => onSelectGroup("git_output")}>
+        Git output
+      </button>
+    </section>
+  ),
+}));
+vi.mock("@/components/portal/own-coverage", () => ({
+  OwnCoverage: ({ personId }: { personId: string }) => (
+    <section aria-label={`Coverage for ${personId}`} />
+  ),
+}));
+vi.mock("@/components/portal/home-dashboards", () => ({
+  HomeDashboards: () => <section aria-label="Recent dashboards" />,
+}));
+vi.mock("@/components/portal/domain-lens-view", () => ({
+  DomainLensView: ({
+    config,
+    personId,
+    "data-testid": testId,
+  }: {
+    config: { title: string };
+    personId?: string | null;
+    "data-testid"?: string;
+  }) => (
+    <section
+      data-testid={testId}
+      aria-label={`Lens ${config.title}${personId ? ` for ${personId}` : ""}`}
+    />
+  ),
+  Pending: ({ label }: { label: string }) => <p>{label}</p>,
+}));
+
+import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { zoneItems } from "@/lib/portal/nav-model";
+import { homeItemShown } from "@/lib/portal/home-subject";
+import { portalRouter } from "@/test/portal-router";
+
+import { OverviewView } from "./overview-view";
+
+const shownSections = () =>
+  screen
+    .queryAllByRole("region")
+    .map((region) => region.getAttribute("aria-label"));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  viewer.personId = "me-1";
+  viewer.canSeeOthers = false;
+  viewer.reachPending = false;
+  act(() => portalRouter.reset());
+});
+
+describe("<OverviewView>", () => {
+  it.each([
+    [
+      "an IC: their glance and dashboards, no org rollup",
+      { canSeeOthers: false, item: null },
+      ["Recent dashboards", "Glance for me-1"],
+    ],
+    [
+      "a viewer with a cohort: their dashboards, then the team's rollup",
+      { canSeeOthers: true, item: null },
+      ["Recent dashboards", "Lens Overview"],
+    ],
+    [
+      "a viewer with a cohort who opens a theme: the team's",
+      { canSeeOthers: true, item: "trend" },
+      ["Lens Overview · Trend"],
+    ],
+    [
+      "an IC who opens the trend: their own",
+      { canSeeOthers: false, item: "trend" },
+      ["Lens Trend for me-1"],
+    ],
+    [
+      "a viewer with a cohort who opens By direction: the team's",
+      { canSeeOthers: true, item: "by-direction" },
+      ["Lens Overview · By direction"],
+    ],
+    [
+      "an IC who opens Attention needed: their own list",
+      { canSeeOthers: false, item: "attention" },
+      ["Attention for me-1"],
+    ],
+    [
+      "an IC who opens Data coverage: their own sections",
+      { canSeeOthers: false, item: "health" },
+      ["Coverage for me-1"],
+    ],
+    [
+      "an IC who opens the split of work between people: Home instead",
+      { canSeeOthers: false, item: "contribution" },
+      ["Recent dashboards", "Glance for me-1"],
+    ],
+  ] as const)("shows %s", (_case, { canSeeOthers, item }, expected) => {
+    viewer.canSeeOthers = canSeeOthers;
+
+    render(<OverviewView item={item} />);
+
+    expect(shownSections(), `case: ${_case}`).toEqual(expected);
+  });
+
+  it("leaves out the glance for a viewer with no person record", () => {
+    viewer.personId = null;
+
+    render(<OverviewView item={null} />);
+
+    expect(shownSections()).toEqual(["Recent dashboards"]);
+  });
+
+  it("opens a glance tile's section on the viewer's own page", async () => {
+    render(<OverviewView item={null} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Git output" }));
+
+    expect(selectZone).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "person" }),
+      "git_output"
+    );
+  });
+
+  it("holds the viewer's own Home until their reach decides Me or My team", () => {
+    viewer.reachPending = true;
+
+    render(<OverviewView item={null} />);
+
+    expect(shownSections()).toEqual([]);
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("holds a theme while the viewer's reach resolves", () => {
+    viewer.reachPending = true;
+
+    render(<OverviewView item="trend" />);
+
+    expect(shownSections()).toEqual([]);
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.getByTestId("page-overview-trend")).toBeInTheDocument();
+  });
+
+  it.each([false, true])(
+    "identifies Contribution only after the subject resolves (team: %s)",
+    (canSeeOthers) => {
+      viewer.reachPending = true;
+
+      const { rerender } = render(<OverviewView item="contribution" />);
+
+      expect(screen.getByRole("status")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("page-overview-contribution")
+      ).not.toBeInTheDocument();
+
+      viewer.reachPending = false;
+      viewer.canSeeOthers = canSeeOthers;
+      rerender(<OverviewView item="contribution" />);
+
+      const expected = canSeeOthers
+        ? "page-overview-contribution"
+        : "page-overview-at-a-glance";
+
+      expect(screen.getByTestId(expected)).toBeInTheDocument();
+    }
+  );
+
+  it("says so for an item the registry does not have", () => {
+    viewer.canSeeOthers = true;
+
+    render(<OverviewView item="nope" />);
+
+    expect(screen.getByText(/isn't an Overview view yet/)).toBeInTheDocument();
+  });
+
+  it.each(
+    zoneItems("overview")
+      .map((paneItem) => paneItem.id)
+      .filter((id) => homeItemShown("me", id))
+  )("renders the viewer's own %s rather than a placeholder", (item) => {
+    render(<OverviewView item={item} />);
+
+    expect(screen.queryByText(/isn't an Overview view yet/)).toBeNull();
+    expect(shownSections().length).toBeGreaterThan(0);
+  });
+});

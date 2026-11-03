@@ -139,7 +139,7 @@ export function computeAttentionFlags({
       const name = nameOf(id);
       const personId = personIdOf(id);
       const valueText = formatMetricValue(v, r.format, r.unit);
-      const label = r.short_label ?? r.label;
+      const label = r.label;
       const relGap = st
         ? higherIsBetter
           ? (st.p50 - v) / st.denom

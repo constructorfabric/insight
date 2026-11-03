@@ -3,64 +3,69 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, LayoutDashboard } from "lucide-react";
 
 import type { DashboardListed } from "@/api/custom-client";
+import { DashboardByline } from "@/components/custom/dashboard-byline";
 import { DashboardMenu } from "@/components/custom/dashboard-menu";
 import { DashboardTags } from "@/components/custom/dashboard-tags";
-import { OwnerName } from "@/components/custom/person-name";
 import { Card, CardContent } from "@/components/ui/card";
 import { dashboardQuery, dashboardTagsQuery } from "@/queries/custom";
-import { TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
+import { TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 export function DashboardCard({ dashboard }: { dashboard: DashboardListed }) {
-  const { id, name, access, owner_person_id: owner } = dashboard;
-  const { data } = useQuery(dashboardQuery(id));
-  const tags = useQuery(dashboardTagsQuery(id));
-  const title = data?.title || name;
+  const { id, name, access } = dashboard;
+  const listed = dashboard.tags !== undefined;
+  const { data } = useQuery({ ...dashboardQuery(id), enabled: !listed });
+  const read = useQuery({ ...dashboardTagsQuery(id), enabled: !listed });
+  const storedTitle = listed ? dashboard.title : data?.title;
+  const title = storedTitle || name;
+  const tags = dashboard.tags ?? read.data ?? [];
 
   return (
-    <Card size="sm">
-      <CardContent className="flex flex-col gap-2">
-        <div className="flex items-center gap-3">
+    <Card size="sm" className="h-full">
+      <CardContent className="flex flex-1 gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
           <Link
             to="/portal/custom/$name"
             params={{ name: id }}
-            className="flex min-w-0 flex-1 items-center gap-3 transition-opacity hover:opacity-80"
+            className="flex min-w-0 items-start gap-3 transition-opacity hover:opacity-80"
           >
             <LayoutDashboard
-              className="size-4 shrink-0 text-muted-foreground"
+              className="mt-0.5 size-4 shrink-0 text-muted-foreground"
               aria-hidden
             />
-            <span className="flex min-w-0 flex-col">
-              <span className={cn(TEXT_NAME, "truncate")}>{title}</span>
-              {title !== name ? (
-                <span className={cn(TEXT_LABEL, "truncate")}>{name}</span>
-              ) : null}
-              {owner ? (
-                <OwnerName
-                  personId={owner}
-                  className={cn(TEXT_LABEL, "truncate font-normal")}
-                />
-              ) : null}
+            <span className={cn(TEXT_NAME, "min-w-0 truncate")} title={title}>
+              {title}
             </span>
           </Link>
-          <span className="flex shrink-0 items-center gap-1">
-            <Link
-              to="/portal/custom/$name"
-              params={{ name: id }}
-              aria-label={`Open ${name}`}
-              className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <ChevronRight className="size-4" aria-hidden />
-            </Link>
-            <DashboardMenu
-              id={id}
-              name={name}
-              title={data?.title}
-              access={access}
-            />
-          </span>
+          <DashboardByline
+            owner={dashboard.owner_name}
+            updatedAt={dashboard.updated_at}
+            visibility={dashboard.visibility}
+            access={access}
+            className="ps-7"
+          />
+          {tags.length > 0 ? (
+            <div className="h-5 ps-7">
+              <DashboardTags tags={tags} />
+            </div>
+          ) : null}
         </div>
-        <DashboardTags tags={tags.data ?? []} className="ps-7" />
+        <div className="-my-1 flex shrink-0 flex-col items-center justify-between">
+          <DashboardMenu
+            id={id}
+            name={name}
+            title={storedTitle ?? undefined}
+            access={access}
+          />
+          <Link
+            to="/portal/custom/$name"
+            params={{ name: id }}
+            aria-label={`Open ${name}`}
+            className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <ChevronRight className="size-4" aria-hidden />
+          </Link>
+        </div>
       </CardContent>
     </Card>
   );
