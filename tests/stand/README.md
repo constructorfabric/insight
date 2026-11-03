@@ -136,40 +136,25 @@ session cookie.
 
 ## Portal page smoke
 
-`ui/test_portal_pages.py` contains 43 catalogue-driven page visits and one
-navigation test, marked `stand_smoke` and `reliability`. Each visit opens its
-zone, pane entry and optional sub-menu or first list item. Rail navigation
-moves the pointer into main and waits until the pane is uncovered.
-Run them with the rest of the smoke suite using `pytest tests/stand -m stand_smoke`.
+The six zone modules `ui/test_portal_{home,dashboards,explore,people,reports,manage}.py`
+contain 43 explicit page test functions. Adding a page means writing a function
+with its navigation steps and expected page id. Each requests `ceo_portal` or
+`admin_operator_portal`, signed in through the manifest persona's Keycloak
+password form. Capability markers skip pages a stand lacks, with a reason.
+All page tests and `ui/test_portal_navigation.py` carry `stand_smoke` and
+`reliability`; run them with `-m stand_smoke`.
 
-Four soft checks report together: the expected page test id is visible; main
-has no visible loading marker and same-origin fetch/XHR stays idle for one
-continuous second within 30 seconds; no Something went wrong alert or
-destructive status widget is visible; and the page's requests have no 5xx,
-unanswered failure other than `net::ERR_ABORTED`, or Sentry event. Observation
-starts immediately before the final hop, after previous requests settle.
+Page checks cover rendering, loading completion, visible errors and failed
+requests. Navigation keeps its expected zones and entries in the test and
+reports additional entries without failing. Planned display mode is enabled
+before page scripts run; the Planned group, New actions, WorkChart and the org
+tree are excluded from visits and discovery. Dashboard folders are excluded,
+and rendered page ids suppress aliases in the report. Usage events receive a
+local 204. `INSIGHT_FORCE_500` enables local fault injection. Tests save nothing.
 
-The catalogue assigns `ceo` to org-visible pages and `admin_operator` to entries
-requiring the identity-service admin grant: Home's My dashboards, the Dashboards
-Catalogue entries, Sources & connectors, Identities and Platform usage. Navigation
-checks each fixture's supported entries; discoveries are merged across personas
-into one report. Rendered page ids exclude aliases and covered dashboard filters;
-folder links with a `folder` parameter other than `unfiled` are not visited or
-reported. Unresolved page ids remain visible in the report. Me covers the same
-person overview as At a glance; Task delivery, Git output, Collaboration and AI
-adoption each have a separate person-page test. Planned sections are enabled
-before page scripts run and included in navigation discovery. New actions,
-WorkChart groups and the org tree are excluded.
-Usage events are answered locally with 204. `INSIGHT_FORCE_500` accepts a
-Playwright URL glob for local 500 responses; when set, Sentry envelopes are
-inspected and answered locally too. Visits create or save nothing.
-
-Set `INSIGHT_STAND_BASE_URL` and `INSIGHT_STAND_PERSONA_PASSWORD` as above. Login
-adds an empty `kc_idp_hint=` to the authorize redirect before opening the password
-form. Browser state is cached in memory by login name, shared between fixture
-aliases, and renewed after five minutes. Each test gets a fresh context.
-Steps use Allure when installed and are no-ops otherwise; dependencies stay
-unchanged. For an Allure report:
+Set `INSIGHT_STAND_BASE_URL` and `INSIGHT_STAND_PERSONA_PASSWORD` as above.
+Each test gets a fresh context; sign-in state is cached and renewed after five
+minutes. Steps use Allure when installed and are no-ops otherwise:
 
 ```bash
 uv run --project tests --frozen --with "allure-pytest>=2.15" \
@@ -216,22 +201,10 @@ smoke tests skip with a reason naming the missing fixtures.
 }
 ```
 
-Missing requirements skip page visits at collection with a reason and exclude
-their navigation entries. The new capabilities default to false. Any `portal_*`
-definition capability implies `custom_catalogue`; each promises an existing
-definition readable by its catalogued persona. The seed creates none of these
-custom definitions. To collect without a stand, supply a synthetic manifest
-and `--base-url https://example.com`.
-
-| Capability | Catalogue pages and navigation entries requiring it |
-|---|---|
-| `custom_catalogue` | Home: My dashboards. Dashboards: All dashboards, Shared with me, Unfiled, Metrics, Widgets, Datasets, Alerts; all first-item visits. |
-| `portal_dashboards` | First dashboard (in addition to the service). |
-| `portal_metrics` | First metric (in addition to the service). |
-| `portal_widgets` | First widget (in addition to the service). |
-| `portal_datasets` | First dataset (in addition to the service). |
-| `files_sharing` | Explore → Collaboration → Files & sharing; requires its connected data source. |
-| `ingestion` | Manage → Sources & connectors. |
+Any `portal_*` definition capability implies `custom_catalogue` and promises an
+existing definition readable by the test's persona. The seed creates no custom
+definitions. To collect without a stand, supply a synthetic manifest and
+`--base-url https://example.com`.
 
 ## CI required gate
 

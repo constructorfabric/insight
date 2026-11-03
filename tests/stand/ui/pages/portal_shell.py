@@ -24,6 +24,8 @@ SAFE_NAV = (
     ':not([data-testid="org-tree"] *)'
     ':not([data-slot="sidebar-group"]:has('
     '[data-slot="sidebar-group-label"]:text-is("WorkChart")) *)'
+    ':not([data-slot="sidebar-group"]:has('
+    '[data-slot="sidebar-group-label"]:text-is("Planned")) *)'
 )
 
 
@@ -137,6 +139,10 @@ class PortalShell:
     def open_pane_entry(self, label: str) -> None:
         with step(f'Open "{label}" in the pane'):
             self.entry(self.pane_buttons, label).click()
+
+    def expand_pane_entry(self, label: str) -> None:
+        if self.entry(self.pane_buttons, label).get_attribute("aria-expanded") == "false":
+            self.open_pane_entry(label)
 
     def open_sub_entry(self, parent: str, label: str) -> None:
         with step(f'Open "{label}" under "{parent}"'):

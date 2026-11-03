@@ -7,7 +7,6 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import Error, expect
 
-from .catalogue import PageScenario
 from .page_watch import PageWatch
 from .pages.portal_shell import PortalShell
 from .steps import step
@@ -66,12 +65,12 @@ def mark_page_requests(portal: PortalShell, watch: PageWatch) -> None:
         watch.mark()
 
 
-def verify_page(portal: PortalShell, watch: PageWatch, scenario: PageScenario) -> None:
+def verify_page(portal: PortalShell, watch: PageWatch, test_id: str, page_name: str) -> None:
     checks = Checks()
-    with checks.check(f"Verify the {scenario.page_name} page is shown"):
+    with checks.check(f"Verify the {page_name} page is shown"):
         expect(
-            portal.page_view(scenario.test_id),
-            f'Expected page view "{scenario.test_id}" to be visible',
+            portal.page_view(test_id),
+            f'Expected page view "{test_id}" to be visible',
         ).to_be_visible(timeout=30_000)
 
     with checks.check("Verify the page finished loading"):

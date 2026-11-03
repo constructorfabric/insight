@@ -32,7 +32,6 @@ import os
 import time
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
-from pathlib import Path
 
 import pytest
 from _pytest.terminal import TerminalReporter
@@ -40,7 +39,6 @@ from insight_stand import (
     ADMIN_ROLE,
     LEAD_ROLE,
     Manifest,
-    ManifestError,
     persona_password,
     verify_realm_roles,
 )
@@ -48,11 +46,11 @@ from insight_stand.session import DEFAULT_MAX_SESSION_AGE_S
 from playwright.sync_api import Browser, BrowserContext, Page, StorageState, expect
 from pytest_playwright.pytest_playwright import CreateContextCallback
 
-from .catalogue import PageScenario, missing_capabilities
 from .page_watch import USAGE_PATH, PageWatch
 from .pages.keycloak_login_page import KeycloakLoginPage
 from .pages.login_page import LoginPage
 from .pages.portal_shell import PortalShell
+from .portal import PortalPage
 from .steps import step
 
 # Playwright's own defaults are already generous where it matters — 30s for
@@ -64,36 +62,11 @@ expect.set_options(timeout=15_000)
 _NAVIGATION_EXTRAS = pytest.StashKey[list[str]]()
 
 
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    chosen = config.getoption("--stand-manifest")
-    try:
-        manifest = Manifest.load(Path(chosen) if chosen else None)
-    except ManifestError as exc:
-        raise pytest.UsageError(f"stand manifest unusable: {exc}") from exc
-    for item in items:
-        if not item.path.is_relative_to(Path(__file__).parent):
-            continue
-        callspec = getattr(item, "callspec", None)
-        scenario = callspec.params.get("scenario") if callspec else None
-        if not isinstance(scenario, PageScenario):
-            continue
-        missing = missing_capabilities(scenario, manifest.capabilities)
-        if missing:
-            item.add_marker(
-                pytest.mark.skip(
-                    reason=(
-                        f"requires capabilities {', '.join(missing)}: not advertised "
-                        f"by this stand ({manifest.source_path})"
-                    )
-                )
-            )
-
-
 def pytest_terminal_summary(terminalreporter: TerminalReporter) -> None:
     extras = terminalreporter.config.stash.get(_NAVIGATION_EXTRAS, None)
     if extras is None:
         return
-    terminalreporter.write_sep("-", "Navigation entries absent from the catalogue")
+    terminalreporter.write_sep("-", "Navigation entries absent from the expected list")
     for entry in extras or ["None"]:
         terminalreporter.write_line(entry)
 
@@ -174,13 +147,25 @@ def browser_page_for(
 @pytest.fixture
 def portal_smoke_for(
     browser_page_for: Callable[[str], Page], base_url: str
-) -> Iterator[Callable[[str], tuple[PortalShell, PageWatch]]]:
+) -> Iterator[Callable[[str], PortalPage]]:
     with ExitStack() as observers:
 
-        def portal_for(name: str) -> tuple[PortalShell, PageWatch]:
+        def portal_for(name: str) -> PortalPage:
             page = browser_page_for(name)
             watch = PageWatch(page.context, base_url)
             observers.enter_context(watch.observing(os.environ.get("INSIGHT_FORCE_500") or None))
-            return PortalShell(page), watch
+            shell = PortalShell(page)
+            shell.go()
+            return PortalPage(shell, watch)
 
         yield portal_for
+
+
+@pytest.fixture
+def ceo_portal(portal_smoke_for: Callable[[str], PortalPage]) -> PortalPage:
+    return portal_smoke_for("ceo")
+
+
+@pytest.fixture
+def admin_operator_portal(portal_smoke_for: Callable[[str], PortalPage]) -> PortalPage:
+    return portal_smoke_for("admin_operator")

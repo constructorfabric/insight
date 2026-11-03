@@ -68,6 +68,12 @@ from insight_stand import (  # noqa: E402  (import follows the sys.path bootstra
 CAPABILITY_MARKERS: dict[str, str] = {
     "requires_ingestion": "ingestion",
     "requires_service_principal": "service_principals",
+    "requires_custom_catalogue": "custom_catalogue",
+    "requires_files_sharing": "files_sharing",
+    "requires_portal_dashboards": "portal_dashboards",
+    "requires_portal_metrics": "portal_metrics",
+    "requires_portal_widgets": "portal_widgets",
+    "requires_portal_datasets": "portal_datasets",
 }
 
 # `requires_seed` fixtures a stand may legitimately not have, mapped to why.
