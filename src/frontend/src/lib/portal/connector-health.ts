@@ -1,4 +1,5 @@
 import type {
+  AppliedSchedule,
   ConnectorHealth,
   ConnectorHealthSummary,
   ConnectorInstance,
@@ -6,6 +7,53 @@ import type {
   SyncFact,
   SyncStatus,
 } from "@/api/connector-health-client";
+import { nextScheduledRun } from "@/lib/portal/connector-schedule";
+
+export const SCHEDULE_HEADING = "Schedule";
+
+export function describeSchedule(schedule: AppliedSchedule): string {
+  const timezone = schedule.timezone ?? "controller time";
+  return schedule.suspended ? `${timezone} · suspended` : timezone;
+}
+
+export function describeNextRun(schedule: AppliedSchedule, now: Date): string {
+  if (schedule.suspended) return "Suspended: no run is scheduled.";
+  if (schedule.timezone == null) {
+    return "Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.";
+  }
+
+  const unreadable = "Next run unknown: a recorded expression cannot be read.";
+  try {
+    let earliest = Infinity;
+    for (const expression of schedule.crons) {
+      const next = nextScheduledRun(expression, schedule.timezone, now);
+      if (next == null) {
+        return unreadable;
+      }
+      earliest = Math.min(earliest, next.getTime());
+    }
+
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: schedule.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    const parts = Object.fromEntries(
+      formatter
+        .formatToParts(new Date(earliest))
+        .map(({ type, value }) => [type, value])
+    );
+    const date = `${parts.year}-${parts.month}-${parts.day}`;
+    const time = `${parts.hour}:${parts.minute}`;
+    return `Next run ${date} ${time} ${schedule.timezone} (in ${formatDuration(earliest - now.getTime())})`;
+  } catch {
+    return unreadable;
+  }
+}
 
 /**
  * Every word this page says about a connector, and the one function that

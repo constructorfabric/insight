@@ -43,6 +43,7 @@ def main() -> int:
     p.add_argument("--connector", required=True)
     p.add_argument("--connection-name", required=True)
     p.add_argument("--schedule", required=True)
+    p.add_argument("--schedule-origin", choices=("annotation", "descriptor", "default"), required=True)
     p.add_argument("--tenant", required=True)
     p.add_argument("--cron-name", required=True)
     p.add_argument("--insight-source-id", required=True)
@@ -75,6 +76,7 @@ def main() -> int:
         "CONNECTOR": args.connector,
         "CONNECTION_NAME": args.connection_name,
         "SCHEDULES": schedules_flow,
+        "SCHEDULE_ORIGIN": args.schedule_origin,
         "TENANT": args.tenant,
         "CRON_NAME": args.cron_name,
         "INSIGHT_SOURCE_ID": args.insight_source_id,

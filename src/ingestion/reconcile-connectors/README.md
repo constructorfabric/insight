@@ -55,6 +55,19 @@ The tick's last layer copies the mover's account of every sync into
 `lib/sweep.sh` gathers — connector to connection map, token — and
 `python3 -m sweep` plans and writes.
 
+Each `connector.configured` row carries `schedules`, `schedule_timezone`,
+`schedule_origin` and `schedule_suspended` from its live CronWorkflow's
+`spec.schedules`, `spec.timezone`, `insight.cyberfabric.com/schedule-origin`
+annotation and `spec.suspend`. The sweep lists connector
+CronWorkflows once per tick and matches each instance by the name reconcile uses.
+Missing or unreadable CronWorkflows leave the expressions, timezone and origin empty;
+absent timezone and origin fields are empty too. Suspension defaults to false when absent,
+unreadable or missing. These values are never recomputed from desired inputs.
+
+Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the
+recorded cron expressions read in UTC. A CronWorkflow applied before this change
+may lack a timezone; the sweep records it as empty, meaning controller time.
+
 It cannot fail a tick: `sweep_run` always returns 0, so a broken recorder costs
 the page its freshness and costs reconciliation nothing. It adds no environment
 of its own, reusing the `RECONCILE_DEST_CLICKHOUSE_*` credentials the Bronze

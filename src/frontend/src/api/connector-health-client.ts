@@ -56,9 +56,19 @@ export interface ConnectorInstance {
   source_id?: string | null;
 }
 
+export type ScheduleOrigin = "annotation" | "descriptor" | "default";
+
+export interface AppliedSchedule {
+  crons: string[];
+  suspended: boolean;
+  timezone?: string | null;
+  origin?: ScheduleOrigin | null;
+}
+
 export interface ConnectorHealth extends ConnectorInstance {
   connector: string;
   configured: boolean;
+  schedule?: AppliedSchedule | null;
   last_sync?: SyncFact | null;
 }
 

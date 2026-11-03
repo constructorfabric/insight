@@ -21,6 +21,9 @@ _SWEEP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _SWEEP_PY_DIR="$(cd "${_SWEEP_LIB_DIR}/../python" && pwd)"
 _SWEEP_SCRIPTS_DIR="$(cd "${_SWEEP_LIB_DIR}/../../scripts" && pwd)"
 
+# shellcheck source=./argo.sh
+source "${_SWEEP_LIB_DIR}/argo.sh"
+
 # ---------------------------------------------------------------------------
 # sweep_run
 # Records this tick's syncs and configured set. Always returns 0.
@@ -120,9 +123,26 @@ sweep__build_work() {
     return 1
   fi
 
+  local cronworkflows schedules_by_name
+  schedules_by_name='{}'
+  if ! cronworkflows="$(kubectl -n "${INSIGHT_NAMESPACE}" get cronworkflows.argoproj.io \
+      -l 'app.kubernetes.io/component=connector-sync' -o json)"; then
+    log_line WARN "sweep: cannot list connector CronWorkflows; recording empty schedule fields" >&2
+  elif ! schedules_by_name="$(printf '%s' "${cronworkflows}" | jq -ce '
+      .items | map({key: .metadata.name, value: {
+        schedules: (.spec.schedules // []),
+        schedule_timezone: (.spec.timezone // ""),
+        schedule_origin: (.metadata.annotations["insight.cyberfabric.com/schedule-origin"] // ""),
+        schedule_suspended: (.spec.suspend // false)
+      }}) | from_entries')"; then
+    log_line WARN "sweep: cannot read connector CronWorkflows; recording empty schedule fields" >&2
+    schedules_by_name='{}'
+  fi
+
   local entries=() shipped=()
   local name connector_dir version type cdk_image dbt_select ns_format
   local source_id secret_name cfg_hash conn_name conn_id tenant
+  local cron_name applied_schedule
   local seen_descriptor=""
   # Re-delimited on US for the same reason reconcile_run does it: TAB is
   # IFS-whitespace, so the plan's empty fields would collapse and shift.
@@ -156,15 +176,16 @@ sweep__build_work() {
       return 1
     fi
     conn_id="${conn_id%%$'\n'*}"
-    if [[ -n "${conn_id}" ]]; then
-      entries+=("$(jq -cn --arg n "${name}" --arg t "${tenant}" \
-        --arg s "${source_id}" --arg c "${conn_id}" \
-        '{name: $n, tenant_id: $t, source_id: $s, connection_id: $c}')")
-    else
-      entries+=("$(jq -cn --arg n "${name}" --arg t "${tenant}" \
-        --arg s "${source_id}" \
-        '{name: $n, tenant_id: $t, source_id: $s}')")
+    cron_name="$(argo_cron_workflow_name "${name}" "${tenant}" "${source_id}" 2>/dev/null)" || cron_name=""
+    applied_schedule="$(printf '%s' "${schedules_by_name}" | jq -c --arg n "${cron_name}" '.[$n] // empty')"
+    if [[ -z "${applied_schedule}" ]]; then
+      log_line WARN "sweep: no CronWorkflow read for ${name}/${source_id}; recording empty schedule fields" >&2
+      applied_schedule='{"schedules":[],"schedule_timezone":"","schedule_origin":"","schedule_suspended":false}'
     fi
+    entries+=("$(jq -cn --arg n "${name}" --arg t "${tenant}" \
+      --arg s "${source_id}" --arg c "${conn_id}" --argjson schedule "${applied_schedule}" \
+      '{name: $n, tenant_id: $t, source_id: $s} + $schedule +
+       (if $c != "" then {connection_id: $c} else {} end)')")
   done < <(printf '%s\n' "${plan_tsv}" | tr '\t' '\037')
 
   # `jq -s` slurps the stream into an array, so the objects never have to be
