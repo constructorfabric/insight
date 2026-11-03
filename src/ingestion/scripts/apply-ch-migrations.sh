@@ -26,8 +26,8 @@
 # is answered as not-ready rather than as a failure.
 #
 # Bookkeeping: none — every migration is re-run on every invocation and
-# MUST stay idempotent/re-runnable (CREATE OR REPLACE / IF NOT EXISTS); see
-# ingestion DESIGN §migrations.
+# MUST stay idempotent/re-runnable (CREATE OR REPLACE / IF NOT EXISTS). The
+# heals already retired: docs/operations/CLICKHOUSE-UPGRADE-FLOOR.md.
 #
 # Required env (set by the Hook Job from chart values + insight-db-creds):
 #   CLICKHOUSE_URL       e.g. http://ch-host:8123  (selects the HTTP backend)
@@ -81,6 +81,7 @@ ch_assert_floor
 # SAFETY: renamed, never dropped. The backup outlives this deploy — an operator
 # can rename it back — and a later deploy drops it once the live relation is a
 # View again.
+# INVARIANT: repairs releases without #2678 (main before 0.7.2); delete once every CH_FLOOR_RELEASES release runs it.
 heal_gold_view_relation() {
   local db="$1" table="$2" backup="${2}__pre_view_backup"
   local engine
@@ -141,6 +142,7 @@ echo "=== Healing Jira bronze schema ==="
 # ClickHouse has no table-level IF EXISTS on ALTER, and a bronze table exists
 # only once that connector has synced. Runs before the identity heals below,
 # which join on the column it retypes.
+# INVARIANT: repairs releases without #1866 (main before 0.7.2); delete once every CH_FLOOR_RELEASES release runs it.
 heal_jira_issue_jira_id_type() {
   ch_table_exists bronze_jira jira_issue || return 0
   echo "  bronze_jira.jira_issue"
@@ -369,6 +371,8 @@ ON (assumeNotNull(s.tenant_id), assumeNotNull(s.source_id), assumeNotNull(s.id_r
 SQL
 }
 
+# INVARIANT: repairs rows jira connectors before 6.1.0 wrote (#3370, 0.7.21); such a row
+# turns fillable whenever a sync delivers its key. Delete once no pre-6.1.0 row can stand.
 heal_jira_substream_issue_id() {
   local table n
   for table in jira_issue_history jira_comments jira_worklogs; do
@@ -418,6 +422,7 @@ WHERE _airbyte_raw_id IN (
 SQL
 }
 
+# INVARIANT: repairs releases without #3370 (main before 0.7.21); delete once every CH_FLOOR_RELEASES release runs it.
 heal_jira_issue_key() {
   local table="$1" n orphans expected
   ch_table_exists bronze_jira "${table}" || return 0
@@ -451,6 +456,7 @@ source "$SCRIPT_DIR/lib/heal-jira-catalogue-first-seen.sh"
 heal_jira_catalogue_first_seen
 
 echo "=== Healing Allure staging test results ==="
+# INVARIANT: repairs releases without #3707, #3713 (main before 0.7.108); delete once every CH_FLOOR_RELEASES release runs it.
 heal_allure_test_results_staging() {
   ch_table_exists staging allure__test_results || return 0
   echo "  staging.allure__test_results"
@@ -477,6 +483,7 @@ SQL
 heal_allure_test_results_staging
 
 echo "=== Healing task field-history relations ==="
+# INVARIANT: repairs releases without #3498 (main before 0.7.66); delete once every CH_FLOOR_RELEASES release runs it.
 run_ch <<'SQL'
 DROP TABLE IF EXISTS staging.jira__task_field_history;
 SQL
@@ -493,6 +500,7 @@ _EVENT_ORDER_APPROXIMATION="toUnixTimestamp64Milli(event_at) * 1000000
                        + multiIf(event_kind = 'synthetic_initial', 0, event_kind = 'changelog', 1, 2) * 100000
                        + _seq"
 
+# INVARIANT: repairs releases without #3592 (main before 0.7.80); delete once every CH_FLOOR_RELEASES release runs it.
 heal_task_field_history_event_order() {
   local db="$1" table="$2" pending
   ch_table_exists "${db}" "${table}" || return 0
@@ -523,6 +531,7 @@ heal_task_field_history_event_order staging github__task_field_history
 # afterwards a 0 there is the model's own value (a sync rewrites those rows
 # every run), and approximating it on every deploy would mutate the whole class
 # for a value the next sync writes back.
+# INVARIANT: repairs releases without #3592 (main before 0.7.80); delete once every CH_FLOOR_RELEASES release runs it.
 heal_task_field_history_class_event_order() {
   local present
   ch_table_exists silver class_task_field_history || return 0
@@ -553,6 +562,7 @@ echo "=== Healing collab-meeting contract schema ==="
 # after account_id. Every row written before the columns existed is keyed by
 # its email, which the default states, and names no meetings: gold then keeps
 # its count under the address until the descriptor's major bump rebuilds the day.
+# INVARIANT: repairs releases without #3989, #4021 (main before 0.7.172); delete once every CH_FLOOR_RELEASES release runs it.
 heal_collab_meeting_table() {
   local db="$1" table="$2"
   ch_table_exists "$db" "$table" || return 0
@@ -582,6 +592,7 @@ echo "=== Healing git commit committer date column ==="
 # this release upgrades from already carries it in the class. Existing rows
 # heal to NULL and carry a committer
 # date from the first sync that re-collects them. Idempotent.
+# INVARIANT: repairs releases without #3155 (main before 0.7.2); delete once every CH_FLOOR_RELEASES release runs it.
 heal_git_commit_committer_date() {
   local table="$1"
   ch_table_exists staging "${table}" || return 0
@@ -602,6 +613,7 @@ echo "=== Healing git pull-request reported close-time column ==="
 # stated it, which the duration measures read so a recovered one cannot pose as
 # a measurement (#3362). The class carries it in the same place, and must
 # before the backfill below reads it. Idempotent.
+# INVARIANT: repairs releases without #3363 (main before 0.7.35); delete once every CH_FLOOR_RELEASES release runs it.
 heal_git_pr_close_time_reported() {
   local db="$1" table="$2"
   ch_table_exists "${db}" "${table}" || return 0
@@ -712,6 +724,7 @@ WHERE t.closed_on_reported IS NULL
 SQL
 }
 
+# INVARIANT: repairs releases without #3363 (main before 0.7.35); delete once every CH_FLOOR_RELEASES release runs it.
 backfill_git_pr_reported_close() {
   local sources=() source relation rank branches lookup spec db table eligible rows n candidates=0
   # "<relation> <stream_rank>": the current streams outrank the legacy one.
@@ -774,6 +787,7 @@ echo "=== Healing task relationship ID columns ==="
 # Same positional invariant: comments and worklogs gained their issue's
 # immutable id after _version, links their source and target ids, in every
 # projection and in the class that unions them.
+# INVARIANT: repairs releases without #3616 (main before 0.7.84); delete once every CH_FLOOR_RELEASES release runs it.
 heal_task_parent_id() {
   local db="$1" table="$2"
   ch_table_exists "${db}" "${table}" || return 0
@@ -784,6 +798,7 @@ ALTER TABLE ${db}.${table} MODIFY COLUMN issue_id Nullable(String) AFTER _versio
 SQL
 }
 
+# INVARIANT: repairs releases without #3616 (main before 0.7.84); delete once every CH_FLOOR_RELEASES release runs it.
 heal_task_link_ids() {
   local db="$1" table="$2"
   ch_table_exists "${db}" "${table}" || return 0
@@ -813,6 +828,7 @@ echo "=== Healing focus metrics ==="
 # rows stored before the column read 0 and are re-derived once. Rows derived
 # before the 8 h fallback hold a zero working day, which the model no longer
 # writes; the mutation is issued only while such a row remains.
+# INVARIANT: repairs releases without #3665, #3741 (main before 0.7.114); delete once every CH_FLOOR_RELEASES release runs it.
 heal_focus_metrics() {
   local pending
   ch_table_exists silver class_focus_metrics || return 0
@@ -841,6 +857,7 @@ echo "=== Removing Zoom participant device identifiers ==="
 # Connector 3.0.0 stops collecting these; rows already stored still hold them.
 # Dropping a column removes no row. Idempotent: a converged table, or one
 # created after 3.0.0, has none of them.
+# INVARIANT: repairs releases without #3880 (main before 0.7.142); delete once every CH_FLOOR_RELEASES release runs it.
 heal_zoom_participant_device_columns() {
   ch_table_exists bronze_zoom participants || return 0
   echo "  bronze_zoom.participants"

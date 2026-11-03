@@ -13,6 +13,8 @@
 # migration) can break again. A change that brings a column back, or drops one
 # stated `present` here, removes or rewrites the fact in the same change.
 #
+# The heals behind these facts: docs/operations/CLICKHOUSE-UPGRADE-FLOOR.md.
+#
 # Sourced by apply-ch-migrations.sh after lib/ch-exec.sh. Exposes:
 #   ch_assert_floor — refuse a warehouse holding a shape below the floor
 
