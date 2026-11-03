@@ -660,6 +660,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
+    use crate::engine::fake_git::write_fake_git;
 
     #[tokio::test]
     async fn only_the_prefetch_aborts_a_stalled_transfer() {
@@ -672,14 +673,7 @@ mod tests {
         }
         let script = root.join("git");
         let seen = root.join("env");
-        let source = format!("#!/bin/sh\nenv > {}\n", seen.display());
-        if let Err(e) = std::fs::write(&script, source) {
-            panic!("write fake git: {e}");
-        }
-        let executable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
-        if let Err(e) = std::fs::set_permissions(&script, executable) {
-            panic!("chmod fake git: {e}");
-        }
+        write_fake_git(&script, &format!("env > {}", seen.display()));
         let runner = GitRunner::new().with_git_binary(script);
         let creds = GitCredentials {
             username: "u".to_owned(),
@@ -1353,20 +1347,13 @@ mod tests {
             let script = dir.join("git");
             let body = body(&dir);
             let source = format!(
-                "#!/bin/sh\n\
-                 (while :; do echo beat >> {beat}; sleep 0.01; done) &\n\
+                "(while :; do echo beat >> {beat}; sleep 0.01; done) &\n\
                  until [ -s {beat} ]; do sleep 0.01; done\n\
                  {body}\n\
-                 exec sleep 30\n",
+                 exec sleep 30",
                 beat = heartbeat.display()
             );
-            if let Err(e) = std::fs::write(&script, source) {
-                panic!("write fake git: {e}");
-            }
-            let executable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
-            if let Err(e) = std::fs::set_permissions(&script, executable) {
-                panic!("chmod fake git: {e}");
-            }
+            write_fake_git(&script, &source);
             Self {
                 dir,
                 script,

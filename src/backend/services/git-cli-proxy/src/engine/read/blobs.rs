@@ -248,6 +248,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::engine::fake_git::write_fake_git;
     use crate::engine::runner::Timeouts;
 
     const PATIENT: Duration = Duration::from_secs(30);
@@ -271,20 +272,13 @@ mod tests {
                 panic!("scratch entry: {e}");
             }
             let script = root.join("git");
-            let source = format!(
-                "#!/bin/sh\n\
-                 echo call >> {calls}\n\
+            let body = format!(
+                "echo call >> {calls}\n\
                  if [ \"$(wc -l < {calls})\" -eq 1 ]; then {first}; fi\n\
-                 {then}\n",
+                 {then}",
                 calls = root.join("calls").display()
             );
-            if let Err(e) = std::fs::write(&script, source) {
-                panic!("write fake git: {e}");
-            }
-            let executable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
-            if let Err(e) = std::fs::set_permissions(&script, executable) {
-                panic!("chmod fake git: {e}");
-            }
+            write_fake_git(&script, &body);
             let runner = GitRunner::new()
                 .with_git_binary(script)
                 .with_timeouts(Timeouts {
@@ -348,7 +342,11 @@ mod tests {
             "echo 'fatal: early EOF' >&2; exit 128",
             PATIENT,
         );
-        assert!(matches!(origin.fetch().await, Err(GitError::Failed(_))));
+        let fetched = origin.fetch().await;
+        assert!(
+            matches!(fetched, Err(GitError::Failed(_))),
+            "the second failure surfaces: {fetched:?}"
+        );
         assert_eq!(origin.calls(), FETCH_ATTEMPTS as usize);
     }
 
