@@ -300,12 +300,12 @@ A caller without that role is refused, and the refusal names the surface it was 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-fr-applied-schedule`
 
 Each connector instance shows the schedule the reconcile loop actually applied, with its
-timezone, where it came from and whether the CronWorkflow is suspended, as recorded in the
-newest sealed configured set. The page shows the recorded cron expressions without computing
+timezone and whether the CronWorkflow is suspended, as recorded in the newest sealed
+configured set. The page shows the recorded cron expressions without computing
 a cadence or claiming an intended schedule. Outside that set, or where the row records no
 cron expressions, the schedule is unknown. An empty recorded timezone means controller
-time; an empty or unknown origin remains unknown. The page's last-checked stamp dates these
-facts too.
+time. The API also serves the recorded schedule origin, which the page does not display;
+an empty or unknown origin remains unknown. The page's last-checked stamp dates these facts too.
 
 On demand, the page shows the next scheduled start, computed from the recorded cron
 expressions and timezone against the viewer's clock at the moment the tooltip opens,
@@ -469,7 +469,7 @@ it; listing it would mean reading storage the reader deliberately holds no acces
 - [ ] On a ledger-less install the first sweep populates history from the mover's retained
       jobs (FR-3).
 - [ ] The page renders one row per connector with the fields of FR-5, expandable per FR-6.
-- [ ] Each instance shows its recorded applied schedule, timezone, origin and suspension
+- [ ] Each instance shows its recorded applied schedule, timezone and suspension
       from the newest sealed configured set; an unrecorded schedule renders as unknown. On
       demand, the next start is a forecast computed against the answer's time, never a
       measured fact or a late, fresh or stale verdict; it is unknown without a timezone or

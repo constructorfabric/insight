@@ -115,15 +115,15 @@ export function ConnectorHealthPane() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Connector</TableHead>
+                <TableHead className="whitespace-normal">Connector</TableHead>
                 {/* One connector can be configured more than once; this is the
                     only cell that tells those rows apart. */}
-                <TableHead>Instance</TableHead>
-                <TableHead>{SCHEDULE_HEADING}</TableHead>
-                <TableHead>State</TableHead>
-                <TableHead>Last sync started</TableHead>
-                <TableHead className="text-right">Duration</TableHead>
-                <TableHead className="text-right">Records reported</TableHead>
+                <TableHead className="whitespace-normal">Instance</TableHead>
+                <TableHead className="whitespace-normal">{SCHEDULE_HEADING}</TableHead>
+                <TableHead className="whitespace-normal">State</TableHead>
+                <TableHead className="whitespace-normal">Last sync started</TableHead>
+                <TableHead className="text-right whitespace-normal">Duration</TableHead>
+                <TableHead className="text-right whitespace-normal">Records reported</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

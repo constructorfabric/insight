@@ -32,20 +32,32 @@ import {
 const MINUTE = 60_000;
 
 describe("the recorded schedule", () => {
+  it.each(["annotation", "descriptor", "default"] as const)(
+    "keeps the muted schedule line independent of %s origin",
+    (origin) => {
+      const schedule = { crons: ["0 22 * * *"], origin, suspended: false };
+
+      expect(describeSchedule({ ...schedule, timezone: "UTC" })).toBe("UTC");
+      expect(describeSchedule({ ...schedule, timezone: null })).toBe("controller time");
+      expect(describeSchedule({ ...schedule, timezone: "UTC", suspended: true })).toBe("UTC · suspended");
+      expect(describeSchedule({ ...schedule, timezone: null, suspended: true })).toBe("controller time · suspended");
+    },
+  );
+
   it.each([
-    ["Europe/Sofia", "annotation", "Europe/Sofia · Secret annotation · suspended"],
+    ["Europe/Sofia", "annotation", "Europe/Sofia · suspended"],
     [null, null, "controller time · suspended"],
-  ] as const)("shows suspension with timezone %s and origin %s", (timezone, origin, text) => {
+  ] as const)("shows suspension with timezone %s without origin %s", (timezone, origin, text) => {
     expect(describeSchedule({ crons: ["0 22 * * *"], timezone, origin, suspended: true })).toBe(text);
   });
   it.each([
-    ["Europe/Sofia", "annotation", "Europe/Sofia · Secret annotation"],
-    [null, "descriptor", "controller time · connector default"],
-    [null, "default", "controller time · built-in default"],
+    ["Europe/Sofia", "annotation", "Europe/Sofia"],
+    [null, "descriptor", "controller time"],
+    [null, "default", "controller time"],
     ["UTC", null, "UTC"],
     [null, null, "controller time"],
     [undefined, undefined, "controller time"],
-  ] as const)("describes timezone %s and origin %s", (timezone, origin, text) => {
+  ] as const)("describes timezone %s without origin %s", (timezone, origin, text) => {
     expect(describeSchedule({ crons: ["0 22 * * *"], timezone, origin, suspended: false })).toBe(text);
   });
 });

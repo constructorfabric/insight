@@ -6,18 +6,11 @@ import type {
   ConnectorHealthSummary,
   ConnectorInstance,
   ConnectorInstanceRef,
-  ScheduleOrigin,
   SyncFact,
   SyncStatus,
 } from "@/api/connector-health-client";
 
 export const SCHEDULE_HEADING = "Schedule";
-
-const SCHEDULE_ORIGIN: Record<ScheduleOrigin, string> = {
-  annotation: "Secret annotation",
-  descriptor: "connector default",
-  default: "built-in default",
-};
 
 const MAX_SCHEDULE_CANDIDATES = 8;
 
@@ -58,9 +51,7 @@ function nextArgoRun(cron: Cron, now: Date): Date | null {
 
 export function describeSchedule(schedule: AppliedSchedule): string {
   const timezone = schedule.timezone ?? "controller time";
-  const origin = schedule.origin == null ? null : SCHEDULE_ORIGIN[schedule.origin];
-  const description = origin == null ? timezone : `${timezone} · ${origin}`;
-  return schedule.suspended ? `${description} · suspended` : description;
+  return schedule.suspended ? `${timezone} · suspended` : timezone;
 }
 
 export function describeNextRun(schedule: AppliedSchedule, now: Date): string {

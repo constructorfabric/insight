@@ -425,11 +425,10 @@ One row per connector instance with the fields of FR-5; a row expands to the rec
 that instance, not of every instance sharing its connector's name. Two installations of one
 connector are told apart by the identity cell. The Schedule column immediately after it
 shows the recorded cron expressions, one per line in monospace, with a muted line below:
-the timezone or `controller time`, then ` · ` and the origin wording when known. Origins
-read as `Secret annotation`, `connector default`, and `built-in default` for `annotation`,
-`descriptor`, and `default` respectively. A null origin adds nothing after the timezone.
-When `suspended` is true the muted line appends ` · suspended`. A null schedule renders as
-`—` without a tooltip (FR-13).
+the timezone or `controller time`. When `suspended` is true the muted line appends
+` · suspended`. The page does not display the schedule origin; the API still serves it.
+A null schedule renders as `—` without a tooltip (FR-13). Header text may wrap onto two
+lines in this table; body cells retain their existing wrapping.
 
 A non-null schedule has a tooltip on hover or keyboard focus, exposed to assistive
 technology. Its next start is computed against the viewer's clock at the moment the tooltip

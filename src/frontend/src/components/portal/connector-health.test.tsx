@@ -152,7 +152,7 @@ describe("the pane prints what it was served", () => {
     render(<ConnectorHealthPane />);
 
     const row = rowFor("example-tracker");
-    expect(within(row).getByText("UTC · Secret annotation · suspended")).toHaveClass("text-muted-foreground");
+    expect(within(row).getByText("UTC · suspended")).toHaveClass("text-muted-foreground");
     const trigger = within(row).getByRole("button");
     const user = userEvent.setup();
     await user.tab();
@@ -180,7 +180,7 @@ describe("the pane prints what it was served", () => {
 
     const rows = screen.getAllByRole("row", { expanded: false });
     expect(rows).toHaveLength(2);
-    for (const [index, detail] of ["UTC · Secret annotation · suspended", "Europe/Berlin · connector default"].entries()) {
+    for (const [index, detail] of ["UTC · suspended", "Europe/Berlin"].entries()) {
       const cell = within(rows[index]).getAllByRole("cell")[2];
       expect(within(cell).getByText(schedules[index].crons[0])).toHaveClass("font-mono");
       expect(within(cell).getByText(detail)).toHaveClass("text-muted-foreground");
@@ -278,18 +278,18 @@ describe("the pane prints what it was served", () => {
     expect(second).toHaveClass("block");
     expect(first).toHaveClass("font-mono");
     expect(second).toHaveClass("font-mono");
-    expect(within(cell).getByText("Europe/Sofia · Secret annotation")).toHaveClass(
+    expect(within(cell).getByText("Europe/Sofia")).toHaveClass(
       "text-muted-foreground",
     );
   });
 
   it.each([
-    [null, "descriptor", "controller time · connector default"],
-    [null, "default", "controller time · built-in default"],
+    [null, "descriptor", "controller time"],
+    [null, "default", "controller time"],
     ["UTC", null, "UTC"],
     [null, null, "controller time"],
   ] as const)(
-    "prints recorded timezone %s and origin %s",
+    "prints recorded timezone %s without origin %s",
     (timezone, origin, detail) => {
       mocks.summary.data = summary({
         connectors: [
