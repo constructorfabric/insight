@@ -32,10 +32,6 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
   };
 });
 
-vi.mock("@/hooks/use-settings", () => ({
-  useSettings: () => ({ focusMode: "all" }),
-}));
-
 import type { MetricResult } from "@/api/metric-results-client";
 import { MembersGrid } from "@/components/widgets/dashboard/members-grid";
 import { normalizeMetricResults } from "@/lib/metrics/collection";

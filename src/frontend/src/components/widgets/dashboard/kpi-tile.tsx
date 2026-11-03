@@ -14,7 +14,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { useSettings } from "@/hooks/use-settings";
 import type { KpiTileData } from "@/lib/insight/kpi-row";
 import type { GroupId } from "@/lib/insight/groups";
 import { STATUS_TEXT_CLASS } from "@/lib/status";
@@ -46,7 +45,6 @@ export function KpiTile({
   trend,
   onOpenGroup,
 }: KpiTileProps) {
-  const { showExplanations } = useSettings();
   const primaryGroup = onOpenGroup ? tile.groupId : null;
   const interactive = primaryGroup != null;
 
@@ -89,11 +87,6 @@ export function KpiTile({
           >
             {tile.label}
           </CardDescription>
-          {showExplanations ? (
-            <CardDescription className={cn(TEXT_LABEL, "col-span-full line-clamp-2 min-h-[2lh] min-w-0 font-normal")}>
-              {tile.help?.description}
-            </CardDescription>
-          ) : null}
           {/* Plain ink, and the badge is gone: its content moved into the
               line below, where it can say what it is comparing against
               instead of leaving "-13%" to be read as either comparison. */}
@@ -158,16 +151,12 @@ export function KpiTile({
 }
 
 export function KpiTilePlaceholder({ label }: { label?: string }) {
-  const { showExplanations } = useSettings();
   return (
     <Card className={CARD_SURFACE}>
       <CardHeader>
         <CardDescription className="min-w-0 truncate">
           {label ?? " "}
         </CardDescription>
-        {showExplanations ? (
-          <CardDescription className="col-span-full min-h-[2lh]" />
-        ) : null}
         <CardTitle className={TEXT_FIGURE}>—</CardTitle>
       </CardHeader>
       <CardFooter className={cn("gap-1.5", TEXT_LABEL)}>

@@ -83,7 +83,6 @@ vi.mock("@/lib/portal/portal-nav", () => ({
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({ period: mocks.period, dateRange: mocks.range }),
 }));
-vi.mock("@/hooks/use-settings", () => ({ useSettings: () => ({ focusMode: false }) }));
 vi.mock("@/components/widgets/dashboard/kpi-tile", () => ({
   KpiTile: ({
     tile,

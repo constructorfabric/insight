@@ -7,10 +7,6 @@ import { normalizeMetricResults } from "@/lib/metrics/collection";
 import type { MetricCollectionResult } from "@/queries/metric-results";
 import type { MetricResult } from "@/api/metric-results-client";
 
-vi.mock("@/hooks/use-settings", () => ({
-  useSettings: () => ({ focusMode: "all" }),
-}));
-
 const DEF: MetricGroup = {
   id: "ai_adoption",
   title: "AI adoption",

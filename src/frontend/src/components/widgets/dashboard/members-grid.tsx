@@ -19,7 +19,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useSettings } from "@/hooks/use-settings";
 import { formatMetricValue } from "@/lib/format";
 import { absenceLabel } from "@/lib/metrics/absence";
 import {
@@ -45,16 +44,14 @@ import type {
   MetricFormat,
 } from "@/api/metric-results-client";
 import {
-  applyFocus,
   PEER_CELL,
   PEER_FILL,
   PEER_LABEL,
   PEER_TEXT,
-  type FocusMode,
   type PeerCohortLabel,
   type PeerStatusWithNeutral,
 } from "@/lib/peers";
-import { applyFocusStatus, STATUS_TEXT_CLASS } from "@/lib/status";
+import { STATUS_TEXT_CLASS } from "@/lib/status";
 import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import { evidenceSelection } from "@/api/metric-drilldown-client";
@@ -238,7 +235,6 @@ export function MembersGrid({
   cohortLabel = "department",
   className,
 }: MembersGridProps) {
-  const { focusMode } = useSettings();
   const hasIssuesFacet = showIssues ?? countsByMember != null;
   const [sort, setSort] = useState<SortState>({ key: null });
 
@@ -481,7 +477,6 @@ export function MembersGrid({
                 row={row}
                 showIssues={hasIssuesFacet}
                 cohortLabel={cohortLabel}
-                focusMode={focusMode}
               />
             ))}
           </tbody>
@@ -496,14 +491,12 @@ function MemberRow({
   row,
   showIssues,
   cohortLabel,
-  focusMode,
 }: {
   row: RowShape;
   /** True when the cross-group facet backs the chip; the fallback self-count
    *  still sorts but is already visible as the row's own cell colours. */
   showIssues: boolean;
   cohortLabel: PeerCohortLabel;
-  focusMode: FocusMode;
 }) {
   const { member, cells, counts, worstLabel } = row;
   // The section-card vocabulary: behind wins over ahead on mixed profiles,
@@ -545,7 +538,7 @@ function MemberRow({
               <span
                 className={cn(
                   "shrink-0 rounded-sm px-1.5 py-0.5 text-xs font-medium",
-                  PEER_CELL[applyFocus(chipRank, focusMode)]
+                  PEER_CELL[chipRank]
                 )}
               >
                 {chipText}
@@ -567,7 +560,6 @@ function MemberRow({
               entityId={member.entityId}
               memberName={member.displayName}
               cohortLabel={cohortLabel}
-              focusMode={focusMode}
             />
           </td>
         ))}
@@ -581,15 +573,12 @@ function GridCell({
   entityId,
   memberName,
   cohortLabel,
-  focusMode,
 }: {
   cell: CellShape;
   entityId: string;
   memberName: string;
   cohortLabel: PeerCohortLabel;
-  focusMode: FocusMode;
 }) {
-  const focused = applyFocus(cell.status, focusMode);
   const evidenceContext = useMetricEvidenceOptional();
   const scope = useEvidenceScope();
   const { col, value, previous, delta, median, observed } = cell;
@@ -611,9 +600,7 @@ function GridCell({
   const trendUp = delta != null && delta.value > 0;
   const TrendIcon = trendUp ? ArrowUp : ArrowDown;
   const trendTint = delta && !leaveLabel
-    ? STATUS_TEXT_CLASS[
-        applyFocusStatus(deltaStatus(delta, col.direction), focusMode)
-      ]
+    ? STATUS_TEXT_CLASS[deltaStatus(delta, col.direction)]
     : "text-muted-foreground";
   const display = observed ? cellDisplay(value, col) : "—";
   const displayWithUnit = observed ? fullDisplay(value, col) : "—";
@@ -661,12 +648,12 @@ function GridCell({
             }}
             aria-label={
               observed
-                ? `${memberName} — ${col.label}: ${displayWithUnit} — ${PEER_LABEL[focused]}${leaveLabel ? ` — ${leaveLabel}` : ""}`
+                ? `${memberName} — ${col.label}: ${displayWithUnit} — ${PEER_LABEL[cell.status]}${leaveLabel ? ` — ${leaveLabel}` : ""}`
                 : `${memberName} — ${col.label}: not recorded`
             }
             className={cn(
               "flex h-12 w-full items-center justify-center rounded-sm px-3 text-sm font-medium tabular-nums transition hover:brightness-95",
-              PEER_CELL[focused]
+              PEER_CELL[cell.status]
             )}
           >
             {/* Value stays centered in the cell; the trend arrow is anchored
@@ -688,7 +675,7 @@ function GridCell({
         <div className="flex flex-col gap-1">
           <p className="text-sm font-semibold">{col.label}</p>
           <p className="text-xs text-muted-foreground">{memberName}</p>
-          <p className={cn("mt-2", TEXT_FIGURE, "", PEER_TEXT[focused])}>
+          <p className={cn("mt-2", TEXT_FIGURE, "", PEER_TEXT[cell.status])}>
             {displayWithUnit}
           </p>
           <p className="text-xs text-muted-foreground">
@@ -704,7 +691,7 @@ function GridCell({
               "No comparison"
             ) : gapText != null ? (
               <>
-                <span className={cn("font-medium", PEER_TEXT[focused])}>
+                <span className={cn("font-medium", PEER_TEXT[cell.status])}>
                   {gapText}
                 </span>{" "}
                 from {cohortLabel} median{" "}
@@ -722,8 +709,8 @@ function GridCell({
             </p>
           ) : null}
           {showStanding ? (
-            <p className={cn("mt-1 text-xs font-medium", PEER_TEXT[focused])}>
-              {PEER_LABEL[focused]}
+            <p className={cn("mt-1 text-xs font-medium", PEER_TEXT[cell.status])}>
+              {PEER_LABEL[cell.status]}
             </p>
           ) : null}
           {leaveLabel ? (

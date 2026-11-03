@@ -5,10 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 import { IcNeedsAttention } from "@/components/widgets/dashboard/ic-needs-attention";
 import type { AttentionItem } from "@/lib/insight/attention";
 
-vi.mock("@/hooks/use-settings", () => ({
-  useSettings: () => ({ focusMode: "all" }),
-}));
-
 function item(overrides: Partial<AttentionItem> = {}): AttentionItem {
   return {
     key: "ai.active_days",

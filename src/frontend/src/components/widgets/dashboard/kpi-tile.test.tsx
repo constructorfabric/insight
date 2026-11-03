@@ -8,10 +8,6 @@ import {
 } from "@/components/widgets/dashboard/kpi-tile";
 import type { KpiTileData } from "@/lib/insight/kpi-row";
 
-vi.mock("@/hooks/use-settings", () => ({
-  useSettings: () => ({ focusMode: "all", showExplanations: true }),
-}));
-
 function tile(overrides: Partial<KpiTileData> = {}): KpiTileData {
   return {
     key: "ai.active_days",
@@ -49,9 +45,13 @@ describe("KpiTile", () => {
     // value — a bare "+17%" was readable as either comparison.
     expect(screen.getByText(/\+17% since last month/)).toBeInTheDocument();
     expect(screen.getByText(/Team median 11/)).toBeInTheDocument();
+  });
+
+  it("keeps the catalog description in its tooltip, off the tile", () => {
+    render(<KpiTile periodNoun="month" tile={tile()} />);
     expect(
-      screen.getByText("Days with any AI tool activity")
-    ).toBeInTheDocument();
+      screen.queryByText("Days with any AI tool activity")
+    ).not.toBeInTheDocument();
   });
 
   it("shows the divergence gap next to the median", () => {

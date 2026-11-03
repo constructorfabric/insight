@@ -14,11 +14,6 @@ import {
 } from "@/lib/metrics/collection";
 import type { MetricResult } from "@/api/metric-results-client";
 
-const settings = vi.hoisted(() => ({ focusMode: "all" as string }));
-vi.mock("@/hooks/use-settings", () => ({
-  useSettings: () => ({ focusMode: settings.focusMode }),
-}));
-
 // value relative to a fixed cohort (p25 5, median 10, p75 15) decides status:
 // >=15 top, <=5 bottom, else in_pack.
 function metric(key: string, value: number): MetricResult {
@@ -70,13 +65,11 @@ function entriesFrom(spec: Array<[string, number]>): PeerStoryEntry[] {
 
 describe("PeerStory", () => {
   it("renders the empty card when there are no entries", () => {
-    settings.focusMode = "all";
     render(<PeerStory entries={[]} emptyLabel="Nothing here yet." />);
     expect(screen.getByText("Nothing here yet.")).toBeInTheDocument();
   });
 
   it("promotes the bottom outlier to the hero and folds on-par metrics", () => {
-    settings.focusMode = "all";
     render(
       <PeerStory
         entries={entriesFrom([
@@ -91,8 +84,7 @@ describe("PeerStory", () => {
     expect(screen.getByText(/near the median/i)).toBeInTheDocument();
   });
 
-  it("critical focus shows only the issue hero", () => {
-    settings.focusMode = "critical";
+  it("promotes the bottom outlier over the top one", () => {
     render(
       <PeerStory
         entries={entriesFrom([
@@ -103,26 +95,24 @@ describe("PeerStory", () => {
     );
     expect(screen.getByText("Furthest behind")).toBeInTheDocument();
     expect(screen.queryByText("Furthest ahead")).not.toBeInTheDocument();
+    expect(screen.getByText("win")).toBeInTheDocument();
   });
 
-  it("rewards focus shows the win hero", () => {
-    settings.focusMode = "rewards";
+  it("promotes the top outlier when nobody is behind", () => {
     render(
       <PeerStory
         entries={entriesFrom([
-          ["issue", 1],
           ["win", 30],
+          ["par", 10],
         ])}
       />
     );
     expect(screen.getByText("Furthest ahead")).toBeInTheDocument();
-    expect(screen.queryByText("Furthest behind")).not.toBeInTheDocument();
   });
 
-  it("neutral focus renders flat-grid supporting-data actions", async () => {
+  it("lays a profile with no outliers out flat, with supporting-data actions", async () => {
     const user = userEvent.setup();
     const openEvidenceTargets = vi.fn();
-    settings.focusMode = "neutral";
     render(
       <EvidenceDialogContext.Provider
         value={{
@@ -133,8 +123,8 @@ describe("PeerStory", () => {
       >
         <PeerStory
           entries={entriesFrom([
-            ["issue", 1],
-            ["win", 30],
+            ["issue", 8],
+            ["win", 12],
           ])}
         />
       </EvidenceDialogContext.Provider>
@@ -161,7 +151,6 @@ describe("PeerStory", () => {
   });
 
   it("shows a multiple for a gap at/above 2× the median", () => {
-    settings.focusMode = "rewards";
     // 30 vs median 10 = 3× → "3×", not the exploding "+200%".
     render(<PeerStory entries={entriesFrom([["win", 30]])} />);
     expect(screen.getByText("3×")).toBeInTheDocument();
@@ -169,14 +158,12 @@ describe("PeerStory", () => {
   });
 
   it("keeps a signed percent for a gap under 2× the median", () => {
-    settings.focusMode = "rewards";
     // 15 vs median 10 = 1.5× (< 2×) → "+50%".
     render(<PeerStory entries={entriesFrom([["win", 15]])} />);
     expect(screen.getByText("+50%")).toBeInTheDocument();
   });
 
   it("overflow outliers beyond the hero and side cards become chips", () => {
-    settings.focusMode = "critical";
     render(
       <PeerStory
         entries={entriesFrom([

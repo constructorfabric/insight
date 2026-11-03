@@ -8,7 +8,6 @@ import {
   dimensionLabel,
   dimensionSeriesKey,
 } from "@/components/widgets/metric-views/dimension-series";
-import { MetricSublabel } from "@/components/widgets/dashboard/metric-sublabel";
 import { MetricCardActions } from "@/components/widgets/metric-views/metric-card-actions";
 import {
   formatMetricNumber,
@@ -90,20 +89,10 @@ export function MetricSummaryCard({
     <Card className="relative h-full">
       <MetricCardActions evidence={evidence} label={metric.label} />
       <CardContent className="flex h-full flex-col gap-3">
-        {/* KPI-tile line structure — label, sublabel slot, then the
-            value on its own line — so narrow cards never truncate the label
-            against the number, and all cards in a row share geometry (the
-            sublabel reserves two lines whenever explanations are on). */}
-        <div className="flex min-w-0 flex-col gap-1">
-          <MetricName
-            metric={metric}
-            className="truncate pr-8 text-sm font-semibold"
-          />
-          <MetricSublabel
-            description={metric.description}
-            className="min-h-[2lh]"
-          />
-        </div>
+        <MetricName
+          metric={metric}
+          className="truncate pr-8 text-sm font-semibold"
+        />
         <span className="flex items-baseline gap-1 tabular-nums">
           <span className={TEXT_FIGURE}>
             {value == null

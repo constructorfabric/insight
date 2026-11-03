@@ -1,13 +1,4 @@
-import type { FocusMode } from "./peers"
-
 export type Status = "good" | "warn" | "bad" | "neutral"
-
-export function applyFocusStatus(status: Status, mode: FocusMode): Status {
-  if (mode === "all") return status
-  if (mode === "critical") return status === "bad" ? status : "neutral"
-  if (mode === "rewards") return status === "good" ? status : "neutral"
-  return "neutral"
-}
 
 export const STATUS_BG_CLASS: Record<Status, string> = {
   good: "bg-success",

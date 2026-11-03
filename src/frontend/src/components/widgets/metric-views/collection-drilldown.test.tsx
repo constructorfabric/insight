@@ -11,10 +11,6 @@ import {
   SUM_METRIC_FIXTURE,
 } from "@/mocks/metric-results-fixtures";
 
-vi.mock("@/hooks/use-settings", () => ({
-  useSettings: () => ({ focusMode: "all", showExplanations: true }),
-}));
-
 const DEF: MetricGroup = {
   id: "ai_adoption",
   title: "AI adoption",

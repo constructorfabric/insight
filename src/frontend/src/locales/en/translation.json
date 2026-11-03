@@ -98,18 +98,6 @@
     "dark": "Dark",
     "system": "System"
   },
-  "settings": {
-    "focus_mode": {
-      "label": "Focus",
-      "all": "All",
-      "critical": "Critical",
-      "rewards": "Rewards",
-      "neutral": "Calm"
-    },
-    "explanations": {
-      "label": "Explanations"
-    }
-  },
   "whats_new": {
     "nav_label": "What's new",
     "eyebrow": "Insight · What's new",

@@ -21,7 +21,7 @@ import { useIcPerson } from "@/queries/ic-dashboard";
 
 /**
  * Shared footer for the sidebar chrome: What's new, view
- * settings (portal / focus / explanations), theme switch, and the viewer
+ * settings (planned sections), theme switch, and the viewer
  * identity block. The portal's rail and its context pane both mount it, so the
  * settings popover and the pane offer the same controls.
  *

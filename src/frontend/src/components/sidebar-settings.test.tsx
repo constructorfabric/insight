@@ -1,8 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-import "@/i18n";
 
 vi.mock("@/components/ui/sidebar", () => ({
   SidebarMenu: ({ children }: { children?: React.ReactNode }) => (
@@ -39,16 +36,6 @@ beforeEach(() => {
 });
 
 describe("SidebarSettings", () => {
-  it("shows the focus mode and explanations controls", () => {
-    render(<SidebarSettings />);
-
-    expect(screen.getByText("Focus")).toBeInTheDocument();
-    expect(screen.getByText("Explanations")).toBeInTheDocument();
-    for (const label of ["All", "Critical", "Rewards", "Calm"]) {
-      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
-    }
-  });
-
   it("offers no switch into the interface the portal replaced", () => {
     render(<SidebarSettings />);
 
@@ -56,39 +43,5 @@ describe("SidebarSettings", () => {
     // and `portal-store` deletes the key it used to live in.
     expect(screen.queryByText("Portal")).not.toBeInTheDocument();
     expect(screen.getByText("Show planned sections")).toBeInTheDocument();
-  });
-
-  it("changes the focus mode through the toggle group", async () => {
-    const user = userEvent.setup();
-    render(<SidebarSettings />);
-
-    await user.click(screen.getByRole("button", { name: "Critical" }));
-    expect(localStorage.getItem("insight.focus-mode")).toBe("critical");
-
-    // Clicking the already-selected mode deselects in the widget but the
-    // handler ignores the empty value - the mode is retained.
-    await user.click(screen.getByRole("button", { name: "Critical" }));
-    expect(localStorage.getItem("insight.focus-mode")).toBe("critical");
-
-    await user.click(screen.getByRole("button", { name: "Rewards" }));
-    expect(localStorage.getItem("insight.focus-mode")).toBe("rewards");
-  });
-
-  it("toggles explanations from its row", async () => {
-    const user = userEvent.setup();
-    render(<SidebarSettings />);
-
-    const row = screen
-      .getByText("Explanations")
-      .closest('[data-testid="menu-button"]') as HTMLElement;
-    const before = row.getAttribute("aria-pressed");
-
-    await user.click(row);
-
-    const after = before === "true" ? "false" : "true";
-    expect(row).toHaveAttribute("aria-pressed", after);
-    expect(localStorage.getItem("insight.explanations")).toBe(
-      after === "true" ? "true" : "false",
-    );
   });
 });
