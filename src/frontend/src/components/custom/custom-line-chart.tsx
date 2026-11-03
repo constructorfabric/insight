@@ -1,7 +1,11 @@
 import { LineChart } from "recharts";
 
 import type { MetricResult } from "@/api/custom-client";
-import { points, seriesConfig } from "@/components/custom/chart-data";
+import {
+  pointClick,
+  points,
+  seriesConfig,
+} from "@/components/custom/chart-data";
 import { unitFor } from "@/components/custom/chart-format";
 import { ChartFrame, SeriesAxes } from "@/components/custom/chart-frame";
 import { ChartLine } from "@/components/ui/chart";
@@ -11,6 +15,7 @@ export interface CustomLineChartProps {
   x: string;
   y: string;
   fillHeight?: boolean;
+  onPointClick?: () => void;
 }
 
 export function CustomLineChart({
@@ -18,6 +23,7 @@ export function CustomLineChart({
   x,
   y,
   fillHeight,
+  onPointClick,
 }: CustomLineChartProps) {
   const data = points(result, [x, y]);
 
@@ -27,7 +33,12 @@ export function CustomLineChart({
       testId="custom-line-chart"
       fillHeight={fillHeight}
     >
-      <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+      <LineChart
+        data={data}
+        margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
+        onClick={pointClick(onPointClick)}
+        className={onPointClick ? "cursor-pointer" : undefined}
+      >
         <SeriesAxes
           x={x}
           categories={data.map((point) => point[x])}

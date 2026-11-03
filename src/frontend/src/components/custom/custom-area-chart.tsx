@@ -1,7 +1,11 @@
 import { AreaChart } from "recharts";
 
 import type { MetricResult } from "@/api/custom-client";
-import { points, seriesConfig } from "@/components/custom/chart-data";
+import {
+  pointClick,
+  points,
+  seriesConfig,
+} from "@/components/custom/chart-data";
 import { unitFor } from "@/components/custom/chart-format";
 import { ChartFrame, SeriesAxes } from "@/components/custom/chart-frame";
 import { ChartArea } from "@/components/ui/chart";
@@ -11,6 +15,7 @@ export interface CustomAreaChartProps {
   x: string;
   y: string;
   fillHeight?: boolean;
+  onPointClick?: () => void;
 }
 
 export function CustomAreaChart({
@@ -18,6 +23,7 @@ export function CustomAreaChart({
   x,
   y,
   fillHeight,
+  onPointClick,
 }: CustomAreaChartProps) {
   const data = points(result, [x, y]);
   const gradient = `fill-${y}`;
@@ -28,7 +34,12 @@ export function CustomAreaChart({
       testId="custom-area-chart"
       fillHeight={fillHeight}
     >
-      <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+      <AreaChart
+        data={data}
+        margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
+        onClick={pointClick(onPointClick)}
+        className={onPointClick ? "cursor-pointer" : undefined}
+      >
         <defs>
           <linearGradient id={gradient} x1="0" y1="0" x2="0" y2="1">
             <stop

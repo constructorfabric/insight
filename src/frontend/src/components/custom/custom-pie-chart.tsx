@@ -24,6 +24,7 @@ export interface CustomPieChartProps {
   label: string;
   value: string;
   fillHeight?: boolean;
+  onPointClick?: () => void;
 }
 
 /** A share of a total: one slice per row, painted round the kit's palette. */
@@ -32,6 +33,7 @@ export function CustomPieChart({
   label,
   value,
   fillHeight,
+  onPointClick,
 }: CustomPieChartProps) {
   const data = points(result, [label, value]);
   const unit = unitFor(result.percents, value);
@@ -64,7 +66,13 @@ export function CustomPieChart({
           }
         />
         <ChartLegend content={<ChartLegendContent nameKey={label} />} />
-        <Pie data={data} dataKey={value} nameKey={label}>
+        <Pie
+          data={data}
+          dataKey={value}
+          nameKey={label}
+          onClick={onPointClick}
+          className={onPointClick ? "cursor-pointer" : undefined}
+        >
           {data.map((slice, index) => (
             <Cell
               key={String(slice[label])}

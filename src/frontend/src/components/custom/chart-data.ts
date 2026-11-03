@@ -1,4 +1,5 @@
 import type { ChartConfig } from "@gears-frontx/ui-kit";
+import type { MouseHandlerDataParam } from "recharts";
 
 import type { MetricResult } from "@/api/custom-client";
 
@@ -28,6 +29,18 @@ export const CHART_COLORS = 5;
 export function seriesConfig(key: string, index = 0): ChartConfig {
   return {
     [key]: { label: key, color: `var(--chart-${(index % CHART_COLORS) + 1})` },
+  };
+}
+
+/** A series chart's click, when it lands on a point rather than between them. */
+export function pointClick(
+  onPointClick: (() => void) | undefined
+): ((state: MouseHandlerDataParam) => void) | undefined {
+  if (!onPointClick) return undefined;
+
+  // WORKAROUND: Recharts reports a click between points as a null index.
+  return (state) => {
+    if (state.activeTooltipIndex != null) onPointClick();
   };
 }
 

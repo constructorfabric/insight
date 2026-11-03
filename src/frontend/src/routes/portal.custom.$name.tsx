@@ -350,6 +350,7 @@ function DashboardWidgetSlot({
       windowed={Boolean(options)}
       pending={resultState.isPending || resultState.isFetching}
       onRetry={() => void resultState.refetch()}
+      onPointClick={isAdmin ? () => setDrilldown(true) : undefined}
     />
   );
 

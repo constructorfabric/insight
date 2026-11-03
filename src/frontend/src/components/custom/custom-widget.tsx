@@ -24,6 +24,8 @@ export interface CustomWidgetProps {
   onRetry?: () => void;
   /** Whether a chart takes its container's height instead of the card's. */
   fillHeight?: boolean;
+  /** A click on a chart's point or slice. Absent, charts ignore clicks. */
+  onPointClick?: () => void;
 }
 
 export function CustomWidget({
@@ -34,6 +36,7 @@ export function CustomWidget({
   pending,
   onRetry,
   fillHeight = false,
+  onPointClick,
 }: CustomWidgetProps) {
   const { isAdmin, isPending } = useIsAdmin();
   const member = !isPending && !isAdmin;
@@ -103,6 +106,7 @@ export function CustomWidget({
             x={widget.x}
             y={widget.y}
             fillHeight={fillHeight}
+            onPointClick={onPointClick}
           />
         )
       );
@@ -114,6 +118,7 @@ export function CustomWidget({
             x={widget.x}
             y={widget.y}
             fillHeight={fillHeight}
+            onPointClick={onPointClick}
           />
         )
       );
@@ -125,6 +130,7 @@ export function CustomWidget({
             x={widget.x}
             y={widget.y}
             fillHeight={fillHeight}
+            onPointClick={onPointClick}
           />
         )
       );
@@ -146,6 +152,7 @@ export function CustomWidget({
             label={widget.label}
             value={widget.value}
             fillHeight={fillHeight}
+            onPointClick={onPointClick}
           />
         )
       );

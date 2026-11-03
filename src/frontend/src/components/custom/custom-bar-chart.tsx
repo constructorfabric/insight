@@ -1,7 +1,11 @@
 import { BarChart } from "recharts";
 
 import type { MetricResult } from "@/api/custom-client";
-import { points, seriesConfig } from "@/components/custom/chart-data";
+import {
+  pointClick,
+  points,
+  seriesConfig,
+} from "@/components/custom/chart-data";
 import { unitFor } from "@/components/custom/chart-format";
 import { ChartFrame, SeriesAxes } from "@/components/custom/chart-frame";
 import { ChartBar } from "@/components/ui/chart";
@@ -11,6 +15,7 @@ export interface CustomBarChartProps {
   x: string;
   y: string;
   fillHeight?: boolean;
+  onPointClick?: () => void;
 }
 
 /** A count per category — the shape most questions about "per" answer with. */
@@ -19,6 +24,7 @@ export function CustomBarChart({
   x,
   y,
   fillHeight,
+  onPointClick,
 }: CustomBarChartProps) {
   const data = points(result, [x, y]);
 
@@ -28,7 +34,12 @@ export function CustomBarChart({
       testId="custom-bar-chart"
       fillHeight={fillHeight}
     >
-      <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+      <BarChart
+        data={data}
+        margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
+        onClick={pointClick(onPointClick)}
+        className={onPointClick ? "cursor-pointer" : undefined}
+      >
         <SeriesAxes
           x={x}
           categories={data.map((point) => point[x])}
