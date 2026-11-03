@@ -1011,7 +1011,7 @@ const DEV: Record<string, LensEntry> = {
         {
           kind: "heatmap-hours",
           metric: "git.default_branch_commits",
-          title: "When commits land",
+          title: "When commits were made",
           caption:
             "Weekday × two-hour block, in UTC. Click a block for its commits.",
         },
