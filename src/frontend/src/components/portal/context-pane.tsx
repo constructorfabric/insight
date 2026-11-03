@@ -190,6 +190,7 @@ function MobileRailNav() {
             ? items.map((item) => (
                 <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton
+                    data-planned={item.planned || undefined}
                     isActive={activeItem === item.id}
                     onClick={() => {
                       selectItem(item);

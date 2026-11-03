@@ -18,6 +18,7 @@ import {
   orderByReadiness,
   peopleItemsFor,
   resolveZoneItem,
+  zoneIsPlanned,
 } from "@/lib/portal/nav-model";
 import { personSectionPlanned } from "@/lib/portal/nav-policy";
 import { usePortalItem, usePortalNavActions } from "@/lib/portal/portal-nav";
@@ -65,6 +66,7 @@ function PeopleViews({ nav }: { nav: ZoneNav }) {
           {personZone ? (
             <SidebarMenuItem>
               <SidebarMenuButton
+                data-planned={zoneIsPlanned(personZone) || undefined}
                 isActive={activeZone === "person" && activePerson === me}
                 onClick={() => {
                   selectZone(personZone);
@@ -165,6 +167,7 @@ function PersonSectionsNav() {
             return (
               <SidebarMenuItem key={g.id}>
                 <SidebarMenuButton
+                  data-planned={personSectionPlanned(g.id) || undefined}
                   isActive={active === g.id}
                   className={
                     personSectionPlanned(g.id) ? "text-muted-foreground" : undefined

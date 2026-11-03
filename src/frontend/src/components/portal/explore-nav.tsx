@@ -54,12 +54,14 @@ export function ExploreNav({ visibleZones }: { visibleZones: ReadonlySet<string>
 }
 
 function Folder({
+  "data-planned": planned,
   icon: Icon,
   label,
   expanded,
   onToggle,
   rows,
 }: {
+  "data-planned"?: boolean;
   icon: LucideIcon;
   label: string;
   expanded: boolean;
@@ -70,7 +72,12 @@ function Folder({
   return (
     <>
       <SidebarMenuItem>
-        <SidebarMenuButton isActive={expanded} onClick={onToggle} aria-expanded={expanded}>
+        <SidebarMenuButton
+          data-planned={planned || undefined}
+          isActive={expanded}
+          onClick={onToggle}
+          aria-expanded={expanded}
+        >
           <Icon />
           <span>{label}</span>
         </SidebarMenuButton>
@@ -82,6 +89,7 @@ function Folder({
           {rows.map((row) => (
             <SidebarMenuSubItem key={row.key}>
               <SidebarMenuSubButton
+                data-planned={row.muted || undefined}
                 isActive={row.active}
                 className={row.muted ? "text-muted-foreground" : undefined}
                 onClick={() => {
@@ -128,6 +136,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
 
   return (
     <Folder
+      data-planned={visibleLenses(direction, false).length === 0 || undefined}
       icon={direction.icon}
       label={direction.name}
       expanded={expanded}
@@ -191,6 +200,7 @@ function AiCostFolder({ group, active }: { group: PaneGroup; active: string | nu
 
   return (
     <Folder
+      data-planned={orderByReadiness(group.items, false).length === 0 || undefined}
       icon={group.icon ?? Layers}
       label={group.label ?? ""}
       expanded={expanded}

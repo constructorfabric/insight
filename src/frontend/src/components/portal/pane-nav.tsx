@@ -53,6 +53,7 @@ export function UnbuiltRow({ item }: { item: PaneItem }) {
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
+        data-planned
         aria-disabled
         className="text-muted-foreground aria-disabled:opacity-100"
       >
@@ -83,6 +84,7 @@ export function ItemButton({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
+        data-planned={item.readiness != null || undefined}
         isActive={active}
         onClick={() => {
           if (onPick) onPick();
