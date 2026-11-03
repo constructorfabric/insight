@@ -1,5 +1,3 @@
-import { Cron } from "croner";
-
 import type {
   AppliedSchedule,
   ConnectorHealth,
@@ -9,45 +7,9 @@ import type {
   SyncFact,
   SyncStatus,
 } from "@/api/connector-health-client";
+import { nextScheduledRun } from "@/lib/portal/connector-schedule";
 
 export const SCHEDULE_HEADING = "Schedule";
-
-const MAX_SCHEDULE_CANDIDATES = 8;
-
-function repeatedRunAfter(
-  cron: Cron,
-  previous: Date | undefined,
-  now: Date,
-): Date | null {
-  if (previous == null || !cron.match(previous)) return null;
-
-  const repeated = new Date(previous.getTime() + HOUR_MS);
-  return repeated.getTime() > now.getTime() && cron.match(repeated) ? repeated : null;
-}
-
-function nextArgoRun(cron: Cron, now: Date): Date | null {
-  if (cron.getPattern() == null) return null;
-
-  const previous = cron.match(now)
-    ? new Date(Math.floor(now.getTime() / 1000) * 1000)
-    : cron.previousRuns(1, now)[0];
-  const repeated = repeatedRunAfter(cron, previous, now);
-  let cursor = now;
-  for (let attempt = 0; attempt < MAX_SCHEDULE_CANDIDATES; attempt++) {
-    const next = cron.nextRun(cursor);
-    if (next == null) return repeated;
-    if (next.getTime() <= cursor.getTime()) {
-      return repeatedRunAfter(cron, next, now) ?? repeated;
-    }
-
-    // WORKAROUND: Argo skips missing local times and runs both occurrences of a repeated hour.
-    if (cron.match(next)) {
-      return repeated != null && repeated.getTime() < next.getTime() ? repeated : next;
-    }
-    cursor = next;
-  }
-  return repeated;
-}
 
 export function describeSchedule(schedule: AppliedSchedule): string {
   const timezone = schedule.timezone ?? "controller time";
@@ -64,13 +26,7 @@ export function describeNextRun(schedule: AppliedSchedule, now: Date): string {
   try {
     let earliest = Infinity;
     for (const expression of schedule.crons) {
-      const cron = new Cron(expression, {
-        timezone: schedule.timezone,
-        mode: "5-part",
-        domAndDow: false,
-        sloppyRanges: true,
-      });
-      const next = nextArgoRun(cron, now);
+      const next = nextScheduledRun(expression, schedule.timezone, now);
       if (next == null) {
         return unreadable;
       }
@@ -89,7 +45,7 @@ export function describeNextRun(schedule: AppliedSchedule, now: Date): string {
     const parts = Object.fromEntries(
       formatter
         .formatToParts(new Date(earliest))
-        .map(({ type, value }) => [type, value]),
+        .map(({ type, value }) => [type, value])
     );
     const date = `${parts.year}-${parts.month}-${parts.day}`;
     const time = `${parts.hour}:${parts.minute}`;

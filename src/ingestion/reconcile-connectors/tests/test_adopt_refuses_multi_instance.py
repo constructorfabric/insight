@@ -62,6 +62,7 @@ def adopt(secret_rows: list[str], tmp_path: Path) -> tuple[int, list[str], str]:
     export INSIGHT_TENANT_ID=example-tenant
     export CALLS="{calls}"
     export APPLIED_YAML="{tmp_path / "applied.yaml"}" ARGO_SERVICE_ACCOUNT=example-account
+    export RECONCILE_SCHEDULE_TIMEZONE=''
     source "{ROOT}/lib/reconcile.sh"
     {STUBS}
     disc_load_secrets() {{ printf '%b\\n' {json.dumps(secrets)}; }}

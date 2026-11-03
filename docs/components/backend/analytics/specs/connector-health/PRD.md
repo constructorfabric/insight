@@ -471,7 +471,8 @@ it; listing it would mean reading storage the reader deliberately holds no acces
 - [ ] The page renders one row per connector with the fields of FR-5, expandable per FR-6.
 - [ ] Each instance shows its recorded applied schedule, timezone and suspension
       from the newest sealed configured set; an unrecorded schedule renders as unknown. On
-      demand, the next start is a forecast computed against the answer's time, never a
+      demand, the next start is a forecast computed against the viewer's clock when the
+      tooltip opens and refreshed while it stays open, never a
       measured fact or a late, fresh or stale verdict; it is unknown without a timezone or
       readable expressions and absent when suspended. A forecast start may be skipped by
       `concurrencyPolicy: Forbid` while the previous run is still going (FR-13).

@@ -44,7 +44,7 @@ def main() -> int:
     p.add_argument("--connector", required=True)
     p.add_argument("--connection-name", required=True)
     p.add_argument("--schedule", required=True)
-    p.add_argument("--schedule-origin", choices=("annotation", "descriptor", "default"), default="default")
+    p.add_argument("--schedule-origin", choices=("annotation", "descriptor", "default"), required=True)
     p.add_argument("--tenant", required=True)
     p.add_argument("--cron-name", required=True)
     p.add_argument("--insight-source-id", required=True)
@@ -52,7 +52,14 @@ def main() -> int:
     p.add_argument("--tpl", required=True)
     args = p.parse_args()
 
-    timezone = os.environ.get("RECONCILE_SCHEDULE_TIMEZONE", "")
+    if "RECONCILE_SCHEDULE_TIMEZONE" not in os.environ:
+        print(
+            "render_cronworkflow: RECONCILE_SCHEDULE_TIMEZONE must be set; use an empty value for controller time",
+            file=sys.stderr,
+        )
+        return 2
+
+    timezone = os.environ["RECONCILE_SCHEDULE_TIMEZONE"]
     if timezone:
         try:
             ZoneInfo(timezone)

@@ -443,6 +443,50 @@ class TestSweptRowsLandAndResolve:
         syncs = _rows(f"SELECT job_id FROM {TABLE} WHERE event = 'sync.completed' ORDER BY job_id")
         assert len(syncs) == 8, "seven closed jobs plus the running one"
 
+    def test_the_schedule_migration_converges_to_the_fresh_column_order_and_types(self) -> None:
+        migration = MIGRATIONS / "20260827000000_connector-sync-history.sql"
+        columns_query = (
+            "SELECT name, type FROM system.columns "
+            "WHERE database = 'ingestion_history' AND table = 'sync_events' ORDER BY position"
+        )
+        try:
+            _query(f"DROP TABLE {TABLE}")
+            _query(f"""
+                CREATE TABLE {TABLE} (
+                    event_id         UUID DEFAULT generateUUIDv4(),
+                    ts               DateTime64(3, 'UTC') DEFAULT now64(3),
+                    tick_id          String,
+                    job_id           String,
+                    connector        LowCardinality(String),
+                    tenant_id        LowCardinality(String),
+                    source_id        LowCardinality(String),
+                    event            LowCardinality(String),
+                    status           LowCardinality(String),
+                    started_at       Nullable(DateTime64(3, 'UTC')),
+                    job_updated_at   Nullable(DateTime64(3, 'UTC')),
+                    duration_ms      Nullable(UInt64),
+                    records_reported Nullable(UInt64)
+                ) ENGINE = {REPLICATED_PREFIX}MergeTree
+                PARTITION BY toYYYYMM(ts)
+                ORDER BY (event, connector, ts, event_id)
+                TTL toDateTime(ts) + INTERVAL 6 MONTH
+            """)
+
+            _apply_migration(migration)
+            _apply_migration(migration)
+            upgraded = _rows(columns_query)
+
+            _query(f"DROP TABLE {TABLE}")
+            _apply_migration(migration)
+            fresh = _rows(columns_query)
+
+            assert upgraded
+            assert upgraded == fresh, "reapplying the migration must preserve the fresh column order and types"
+        finally:
+            _query(f"DROP TABLE IF EXISTS {TABLE}")
+            for migration in sorted(MIGRATIONS.glob("*connector-sync-history*.sql")):
+                _apply_migration(migration)
+
     @pytest.mark.parametrize("suspended", [True, False])
     def test_a_configured_schedule_preserves_suspension(self, suspended: bool) -> None:
         schedule = {

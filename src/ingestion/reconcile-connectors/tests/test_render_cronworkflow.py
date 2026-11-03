@@ -55,30 +55,31 @@ def _run(argv: list[str], **env: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(argv, env={**CHILD_ENV, **env}, capture_output=True, text=True, encoding="utf-8", check=False)
 
 
+def _renderer_args(schedule: str, origin: str) -> list[str]:
+    return [
+        sys.executable,
+        str(RENDERER),
+        "--connector",
+        "example-connector",
+        "--connection-name",
+        "example-connector-main-example-conn",
+        "--schedule",
+        schedule,
+        "--schedule-origin",
+        origin,
+        "--tenant",
+        "example",
+        "--cron-name",
+        "example-connector-example-sync",
+        "--insight-source-id",
+        "main",
+        "--tpl",
+        str(TEMPLATE),
+    ]
+
+
 def _render(schedule: str, *, timezone: str = "", origin: str = "default") -> subprocess.CompletedProcess[str]:
-    return _run(
-        [
-            sys.executable,
-            str(RENDERER),
-            "--connector",
-            "example-connector",
-            "--connection-name",
-            "example-connector-main-example-conn",
-            "--schedule",
-            schedule,
-            "--schedule-origin",
-            origin,
-            "--tenant",
-            "example",
-            "--cron-name",
-            "example-connector-example-sync",
-            "--insight-source-id",
-            "main",
-            "--tpl",
-            str(TEMPLATE),
-        ],
-        RECONCILE_SCHEDULE_TIMEZONE=timezone,
-    )
+    return _run(_renderer_args(schedule, origin), RECONCILE_SCHEDULE_TIMEZONE=timezone)
 
 
 def _rendered_schedules(document: str) -> list[str]:
@@ -99,12 +100,30 @@ def _rendered_name(document: str) -> str:
 
 
 class TestRenderer:
-    def test_an_unset_timezone_preserves_the_existing_spec(self) -> None:
+    def test_an_explicit_empty_timezone_preserves_the_existing_spec(self) -> None:
         result = _render("0 4 * * *")
         baseline = Path(__file__).parent / "fixtures" / "cronworkflow-default-spec.json"
 
         assert result.returncode == 0, result.stderr
         assert yaml.safe_load(result.stdout)["spec"] == json.loads(baseline.read_text())
+
+    def test_a_missing_timezone_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delitem(CHILD_ENV, "RECONCILE_SCHEDULE_TIMEZONE")
+        result = _run(_renderer_args("0 4 * * *", "descriptor"))
+
+        assert result.returncode == 2, result.stderr
+        assert "RECONCILE_SCHEDULE_TIMEZONE must be set" in result.stderr
+        assert result.stdout == ""
+
+    def test_a_missing_origin_is_rejected(self) -> None:
+        argv = _renderer_args("0 4 * * *", "descriptor")
+        index = argv.index("--schedule-origin")
+        del argv[index : index + 2]
+        result = _run(argv)
+
+        assert result.returncode == 2, result.stderr
+        assert "--schedule-origin" in result.stderr
+        assert result.stdout == ""
 
     def test_a_timezone_is_rendered_in_the_spec(self) -> None:
         result = _render("0 4 * * *", timezone="Europe/London")
@@ -204,6 +223,7 @@ argo_apply_cronworkflow \"$@\"
             tenant,
             source_id,
             "",
+            "descriptor",
             **env,
         )
 
@@ -219,6 +239,25 @@ argo_apply_cronworkflow \"$@\"
         if not self.kubectl_log.exists():
             return []
         return self.kubectl_log.read_text(encoding="utf-8").splitlines()
+
+    @pytest.mark.parametrize("function", ["argo_render_cronworkflow", "argo_apply_cronworkflow"])
+    @pytest.mark.parametrize("origin", [[], [""]])
+    def test_a_missing_or_empty_origin_is_rejected_before_kubectl(self, function: str, origin: list[str]) -> None:
+        result = self._run_argo(
+            f'source "$ARGO_SCRIPT"\n{function} "$@"',
+            "example-connector",
+            "example-connection",
+            "0 4 * * *",
+            "example",
+            "main",
+            "",
+            *origin,
+        )
+
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "schedule origin must be supplied" in result.stderr
+        assert result.stdout == ""
+        assert self._kubectl_calls() == []
 
     def test_a_52_character_name_is_accepted(self) -> None:
         connector = "c" * 36
