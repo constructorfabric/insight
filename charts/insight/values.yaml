@@ -248,7 +248,7 @@ ingestion:
   # cron-scheduled inside the cluster (see templates/ingestion/reconcile-cron.yaml).
   reconcile:
     schedule: "*/15 * * * *"
-    scheduleTimezone: "" # IANA timezone for every connector schedule; empty uses the Argo controller's timezone.
+    scheduleTimezone: "UTC" # IANA timezone for every connector schedule; empty leaves spec.timezone unset so Argo uses the controller's timezone.
     # Airbyte workspace UUID is auto-discovered at runtime via ab_workspace_id (ADR-0009) — no value to set.
     destinationId: "" # Optional override: explicit Airbyte destination UUID. Leave empty for fresh installs — reconcile auto-creates the Bronze ClickHouse destination by name (ADR-0012).
     destinationName: "" # Optional: name of the Bronze destination managed by reconcile. Default `clickhouse-bronze`.

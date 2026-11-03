@@ -9,9 +9,9 @@ import yaml
 CHART = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("timezone", [None, "Europe/London"])
-def test_connector_schedule_timezone_reaches_reconcile(timezone: str | None) -> None:
-    overrides = [] if timezone is None else ["--set", f"ingestion.reconcile.scheduleTimezone={timezone}"]
+@pytest.mark.parametrize(("timezone", "expected"), [(None, "UTC"), ("Europe/London", "Europe/London"), ("", "")])
+def test_connector_schedule_timezone_reaches_reconcile(timezone: str | None, expected: str) -> None:
+    overrides = [] if timezone is None else ["--set-string", f"ingestion.reconcile.scheduleTimezone={timezone}"]
     result = subprocess.run(
         [
             "helm",
@@ -33,4 +33,6 @@ def test_connector_schedule_timezone_reaches_reconcile(timezone: str | None) -> 
     assert result.returncode == 0, result.stderr
     document = yaml.safe_load(result.stdout)
     env = document["spec"]["workflowSpec"]["templates"][0]["container"]["env"]
-    assert next(item["value"] for item in env if item["name"] == "RECONCILE_SCHEDULE_TIMEZONE") == (timezone or "")
+    assert next(item["value"] for item in env if item["name"] == "RECONCILE_SCHEDULE_TIMEZONE") == expected, (
+        f"unexpected timezone for override: {timezone!r}"
+    )
