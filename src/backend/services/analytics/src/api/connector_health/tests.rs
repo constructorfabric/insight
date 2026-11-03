@@ -25,6 +25,37 @@ fn a_refusal_names_the_surface_it_refused() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
+fn the_summary_contract_describes_the_recorded_schedule() -> Result<(), Box<dyn std::error::Error>>
+{
+    let document = serde_json::to_value(super::super::openapi_document()?)?;
+    let schemas = &document["components"]["schemas"];
+
+    assert_eq!(
+        schemas["ConnectorHealth"]["properties"]["schedule"]["oneOf"][1]["$ref"],
+        "#/components/schemas/AppliedSchedule"
+    );
+    assert_eq!(
+        schemas["AppliedSchedule"]["properties"]["crons"]["minItems"],
+        1
+    );
+    assert_eq!(
+        schemas["AppliedSchedule"]["properties"]["suspended"]["type"],
+        "boolean"
+    );
+    assert!(
+        schemas["AppliedSchedule"]["required"]
+            .as_array()
+            .ok_or("required fields must be an array")?
+            .contains(&serde_json::json!("suspended"))
+    );
+    assert_eq!(
+        schemas["ScheduleOrigin"]["enum"],
+        serde_json::json!(["annotation", "descriptor", "default"])
+    );
+    Ok(())
+}
+
+#[test]
 fn a_refusal_says_what_the_caller_is_missing() -> Result<(), Box<dyn std::error::Error>> {
     let p = problem(admin_only())?;
     assert_eq!(p["context"]["reason"], ADMIN_ONLY);

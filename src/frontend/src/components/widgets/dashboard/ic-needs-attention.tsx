@@ -3,10 +3,9 @@ import { useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { MetricHelpTooltip } from "@/components/widgets/metric-help-tooltip";
-import { useSettings } from "@/hooks/use-settings";
 import type { AttentionItem } from "@/lib/insight/attention";
 import type { GroupId } from "@/lib/insight/groups";
-import { PEER_TEXT, applyFocus } from "@/lib/peers";
+import { PEER_TEXT } from "@/lib/peers";
 import { TEXT_EYEBROW, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +29,6 @@ export function IcNeedsAttention({
   onOpenGroup,
   titled = true,
 }: IcNeedsAttentionProps) {
-  const { focusMode } = useSettings();
   const [showAll, setShowAll] = useState(false);
 
   // Furthest outside the cohort's own spread first, percent-of-median only to
@@ -48,7 +46,6 @@ export function IcNeedsAttention({
     !shouldCollapse || showAll
       ? attentionAll
       : attentionAll.slice(0, COLLAPSED_ATTENTION);
-  const badStatus = applyFocus("bottom", focusMode);
 
   return (
     <section>
@@ -115,7 +112,7 @@ export function IcNeedsAttention({
                       <span
                         className={cn(
                           "text-right tabular-nums sm:justify-self-end",
-                          PEER_TEXT[badStatus]
+                          PEER_TEXT.bottom
                         )}
                       >
                         {item.valueNumber}
@@ -123,7 +120,7 @@ export function IcNeedsAttention({
                       <span
                         className={cn(
                           "text-left whitespace-nowrap",
-                          PEER_TEXT[badStatus]
+                          PEER_TEXT.bottom
                         )}
                       >
                         {item.valueUnit}

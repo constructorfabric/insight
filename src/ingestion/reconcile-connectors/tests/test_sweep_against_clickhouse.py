@@ -351,17 +351,89 @@ class TestSweptRowsLandAndResolve:
         """Each case states its own history, so it starts from no rows at all."""
         _query(f"TRUNCATE TABLE {TABLE}")
 
-    def _tick(self, tick_id: str, descriptors: list[dict] | None = None) -> int:
+    def _tick(
+        self, tick_id: str, descriptors: list[dict] | None = None, *, schedule: dict[str, object] | None = None
+    ) -> int:
         work = json.dumps(
             {
                 "tick_id": tick_id,
                 "connectors": [
-                    {"name": CONNECTOR, "tenant_id": TENANT, "source_id": SOURCE, "connection_id": CONNECTION}
+                    {
+                        "name": CONNECTOR,
+                        "tenant_id": TENANT,
+                        "source_id": SOURCE,
+                        "connection_id": CONNECTION,
+                        **(schedule or {}),
+                    }
                 ],
                 "descriptors": descriptors or [],
             }
         )
         return self.entry.run(io.StringIO(work))
+
+    def test_a_tick_before_the_schedule_migration_lands_and_defaults_to_unknown(self) -> None:
+        try:
+            _query(f"DROP TABLE {TABLE}")
+            _query(f"""
+                CREATE TABLE {TABLE} (
+                    event_id         UUID DEFAULT generateUUIDv4(),
+                    ts               DateTime64(3, 'UTC') DEFAULT now64(3),
+                    tick_id          String,
+                    job_id           String,
+                    connector        LowCardinality(String),
+                    tenant_id        LowCardinality(String),
+                    source_id        LowCardinality(String),
+                    event            LowCardinality(String),
+                    status           LowCardinality(String),
+                    started_at       Nullable(DateTime64(3, 'UTC')),
+                    job_updated_at   Nullable(DateTime64(3, 'UTC')),
+                    duration_ms      Nullable(UInt64),
+                    records_reported Nullable(UInt64)
+                ) ENGINE = {REPLICATED_PREFIX}MergeTree
+                PARTITION BY toYYYYMM(ts)
+                ORDER BY (event, connector, ts, event_id)
+                TTL toDateTime(ts) + INTERVAL 6 MONTH
+            """)
+
+            with _StubMover():
+                assert (
+                    self._tick(
+                        "tick-before-schedule",
+                        schedule={
+                            "schedules": ["0 5 * * *", "0 17 * * *"],
+                            "schedule_timezone": "UTC",
+                            "schedule_origin": "annotation",
+                            "schedule_suspended": True,
+                        },
+                    )
+                    == 0
+                )
+
+            assert _count(f"SELECT count() AS n FROM {TABLE} WHERE event = 'sync.completed'") == 8
+            assert _count(f"SELECT count() AS n FROM {TABLE} WHERE event = 'connector.configured'") == 1
+            assert _count(f"SELECT count() AS n FROM {TABLE} WHERE event = 'sweep.completed'") == 1
+
+            _apply_migration(MIGRATIONS / "20260827000000_connector-sync-history.sql")
+
+            rows = _rows(
+                f"SELECT connector, tenant_id, source_id, schedules, schedule_timezone, schedule_origin, schedule_suspended "
+                f"FROM {TABLE} WHERE event = 'connector.configured'"
+            )
+            assert rows == [
+                {
+                    "connector": CONNECTOR,
+                    "tenant_id": TENANT,
+                    "source_id": SOURCE,
+                    "schedules": [],
+                    "schedule_timezone": "",
+                    "schedule_origin": "",
+                    "schedule_suspended": False,
+                }
+            ]
+        finally:
+            _query(f"DROP TABLE IF EXISTS {TABLE}")
+            for migration in sorted(MIGRATIONS.glob("*connector-sync-history*.sql")):
+                _apply_migration(migration)
 
     def test_a_first_sweep_lands_the_whole_retained_history(self) -> None:
         with _StubMover() as mover:
@@ -370,6 +442,73 @@ class TestSweptRowsLandAndResolve:
 
         syncs = _rows(f"SELECT job_id FROM {TABLE} WHERE event = 'sync.completed' ORDER BY job_id")
         assert len(syncs) == 8, "seven closed jobs plus the running one"
+
+    def test_the_schedule_migration_converges_to_the_fresh_column_order_and_types(self) -> None:
+        migration = MIGRATIONS / "20260827000000_connector-sync-history.sql"
+        columns_query = (
+            "SELECT name, type FROM system.columns "
+            "WHERE database = 'ingestion_history' AND table = 'sync_events' ORDER BY position"
+        )
+        try:
+            _query(f"DROP TABLE {TABLE}")
+            _query(f"""
+                CREATE TABLE {TABLE} (
+                    event_id         UUID DEFAULT generateUUIDv4(),
+                    ts               DateTime64(3, 'UTC') DEFAULT now64(3),
+                    tick_id          String,
+                    job_id           String,
+                    connector        LowCardinality(String),
+                    tenant_id        LowCardinality(String),
+                    source_id        LowCardinality(String),
+                    event            LowCardinality(String),
+                    status           LowCardinality(String),
+                    started_at       Nullable(DateTime64(3, 'UTC')),
+                    job_updated_at   Nullable(DateTime64(3, 'UTC')),
+                    duration_ms      Nullable(UInt64),
+                    records_reported Nullable(UInt64)
+                ) ENGINE = {REPLICATED_PREFIX}MergeTree
+                PARTITION BY toYYYYMM(ts)
+                ORDER BY (event, connector, ts, event_id)
+                TTL toDateTime(ts) + INTERVAL 6 MONTH
+            """)
+
+            _apply_migration(migration)
+            _apply_migration(migration)
+            upgraded = _rows(columns_query)
+
+            _query(f"DROP TABLE {TABLE}")
+            _apply_migration(migration)
+            fresh = _rows(columns_query)
+
+            assert upgraded
+            assert upgraded == fresh, "reapplying the migration must preserve the fresh column order and types"
+        finally:
+            _query(f"DROP TABLE IF EXISTS {TABLE}")
+            for migration in sorted(MIGRATIONS.glob("*connector-sync-history*.sql")):
+                _apply_migration(migration)
+
+    @pytest.mark.parametrize("suspended", [True, False])
+    def test_a_configured_schedule_preserves_suspension(self, suspended: bool) -> None:
+        schedule = {
+            "schedules": ["0 5 * * *"],
+            "schedule_timezone": "UTC",
+            "schedule_origin": "annotation",
+            "schedule_suspended": suspended,
+        }
+        work = {
+            "tick_id": "tick-schedule",
+            "connectors": [
+                {"name": CONNECTOR, "tenant_id": TENANT, "source_id": SOURCE, "connection_id": CONNECTION, **schedule}
+            ],
+        }
+        with _StubMover():
+            assert self.entry.run(io.StringIO(json.dumps(work))) == 0
+
+        rows = _rows(
+            f"SELECT schedules, schedule_timezone, schedule_origin, schedule_suspended "
+            f"FROM {TABLE} WHERE event = 'connector.configured'"
+        )
+        assert rows == [schedule]
 
     def test_a_later_tick_reads_from_the_watermark_not_from_the_start(self) -> None:
         with _StubMover() as mover:

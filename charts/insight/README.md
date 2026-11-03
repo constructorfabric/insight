@@ -336,6 +336,10 @@ helm -n insight uninstall insight
 kubectl -n insight delete pvc -l app.kubernetes.io/part-of=insight
 ```
 
+An upgrade from a release older than the ClickHouse upgrade floor stops in the
+`clickhouse-migrate` Hook before any migration runs and names the release to
+deploy first ([upgrade floor](../../docs/operations/CLICKHOUSE-UPGRADE-FLOOR.md)).
+
 ## Publishing
 
 Publishing is automated: the `publish-chart` job in

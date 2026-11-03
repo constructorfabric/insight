@@ -14,8 +14,8 @@ connector older than 6.1.0 left behind on an install at the hook's floor
 follows, and `assert` reads the outcome the warm-upgrade lane expects
 (.github/workflows/scripts/warm-upgrade-sim.sh) on every node:
 
-- jira_issue: `jira_id` typed as a number (pre-#1866), the one issue keyed by
-  both keys it has had -> retyped to a string, collapsed onto its id;
+- jira_issue / jira_issue_keys: keyed on the issue id, as at the floor, and
+  left as they were;
 - jira_comments: `jira_id` NULL -> filled through jira_issue_keys;
 - jira_issue_history: `jira_id` filled from the issue streams, the row naming
   a key no stream delivered staying NULL, the row that already had an id
@@ -43,8 +43,8 @@ TENANT = "warm"
 SOURCE = "jira-1"
 # A substream filled from the issue streams, the comment resolving through
 # jira_issue_keys, the worklog preferring Jira's own issueId, and the row count
-# the whole rebuild must keep; then jira_issue collapsed onto its id.
-EXPECTED_IDENTITY = "101|101|NULL|999|101|102|777|101|8|1|warm-jira-1-101"
+# the whole rebuild must keep; then jira_issue as it was planted.
+EXPECTED_IDENTITY = "101|NULL|999|101|102|777|101|7|1|warm-jira-1-101"
 EXPECTED_CATALOGUE = "-jira-gone,,jira-gone,2026-01-02 00:00:00.000;warm-jira-1,warm,jira-1,2026-01-01 00:00:00.000"
 
 
@@ -69,21 +69,16 @@ def command(sql: str) -> None:
 def plant() -> None:
     prefix = "Replicated" if check.replicated() else ""
     statements = [
-        # pre-#1866: the id came out of a JSON number.
-        "ALTER TABLE bronze_jira.jira_issue MODIFY COLUMN jira_id Nullable(Int64)",
         f"""INSERT INTO bronze_jira.jira_issue
             (unique_key, tenant_id, source_id, id_readable, jira_id, _airbyte_raw_id, _airbyte_extracted_at)
-            VALUES
-            ('warm-jira-WARM-1', '{TENANT}', '{SOURCE}', 'WARM-1', 101, 'raw-i1', '2026-01-02 00:00:00'),
-            ('warm-jira-WARM-OLD-7', '{TENANT}', '{SOURCE}', 'WARM-OLD-7', 101, 'raw-i0', '2026-01-01 00:00:00')""",
+            VALUES ('{TENANT}-{SOURCE}-101', '{TENANT}', '{SOURCE}', 'WARM-1', '101', 'raw-i1', '2026-01-02 00:00:00')""",
         f"""INSERT INTO bronze_jira.jira_issue_keys
             (unique_key, tenant_id, source_id, id_readable, jira_id, _airbyte_raw_id, _airbyte_extracted_at)
-            VALUES ('warm-jira-WARM-2', '{TENANT}', '{SOURCE}', 'WARM-2', '102', 'raw-k1', '2026-01-02 00:00:00')""",
+            VALUES ('{TENANT}-{SOURCE}-102', '{TENANT}', '{SOURCE}', 'WARM-2', '102', 'raw-k1', '2026-01-02 00:00:00')""",
         f"""INSERT INTO bronze_jira.jira_issue_history
             (unique_key, tenant_id, source_id, id_readable, jira_id, items, _airbyte_raw_id, _airbyte_extracted_at)
             VALUES
             ('warm-jira-h-current', '{TENANT}', '{SOURCE}', 'WARM-1', NULL, '[]', 'raw-h1', '2026-01-03 00:00:00'),
-            ('warm-jira-h-moved', '{TENANT}', '{SOURCE}', 'WARM-OLD-7', NULL, '[]', 'raw-h2', '2026-01-03 00:00:00'),
             ('warm-jira-h-unknown', '{TENANT}', '{SOURCE}', 'WARM-GONE-9', NULL, '[]', 'raw-h3', '2026-01-03 00:00:00'),
             ('warm-jira-h-known', '{TENANT}', '{SOURCE}', 'WARM-1', '999', '[]', 'raw-h4', '2026-01-03 00:00:00'),
             ('warm-jira-h-recent', '{TENANT}', '{SOURCE}', 'WARM-1', NULL, '[]', 'raw-h5', now())""",
@@ -124,7 +119,6 @@ def assert_healed() -> None:
             url,
             """SELECT concat(
                 ifNull(maxIf(jira_id, unique_key = 'warm-jira-h-current'), 'NULL'), '|',
-                ifNull(maxIf(jira_id, unique_key = 'warm-jira-h-moved'), 'NULL'), '|',
                 ifNull(maxIf(jira_id, unique_key = 'warm-jira-h-unknown'), 'NULL'), '|',
                 ifNull(maxIf(jira_id, unique_key = 'warm-jira-h-known'), 'NULL'), '|',
                 ifNull(maxIf(jira_id, unique_key = 'warm-jira-h-recent'), 'NULL'), '|',
@@ -144,14 +138,6 @@ def assert_healed() -> None:
             raise check.Failure(
                 f"{url}: jira issue identity after the heals is {identity!r}, expected {EXPECTED_IDENTITY!r}"
             )
-        shape = check.query(
-            url,
-            "SELECT type FROM system.columns WHERE database = 'bronze_jira' AND table = 'jira_issue' AND name = 'jira_id'",
-        ).strip()
-        if shape != "Nullable(String)":
-            raise check.Failure(
-                f"{url}: bronze_jira.jira_issue.jira_id after the heals is {shape!r}, expected 'Nullable(String)'"
-            )
         catalogue = check.query(
             url,
             """SELECT concat(
@@ -166,9 +152,7 @@ def assert_healed() -> None:
         expected = f"{prefix}ReplacingMergeTree|{EXPECTED_CATALOGUE}"
         if catalogue != expected:
             raise check.Failure(f"{url}: jira catalogue record after the heal is {catalogue!r}, expected {expected!r}")
-    check.emit(
-        f"ok  jira heals: issue id recovered, bronze schema healed and the catalogue record rebuilt on {len(check.nodes())} node(s)"
-    )
+    check.emit(f"ok  jira heals: issue id recovered and the catalogue record rebuilt on {len(check.nodes())} node(s)")
 
 
 def drop() -> None:

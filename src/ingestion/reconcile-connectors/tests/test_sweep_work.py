@@ -14,9 +14,21 @@ Run: pytest src/ingestion/reconcile-connectors/tests
 
 from __future__ import annotations
 
+import io
 import json
+import shlex
 import subprocess
+import sys
+import urllib.request
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+from sweep.__main__ import run
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,23 +57,215 @@ def plan_row(name: str, source_id: str = "main", secret: str = "insight-secret")
 DEFAULT_PLAN = "\\n".join([plan_row("alpha"), plan_row("bravo"), plan_row("charlie", source_id="", secret="")])
 
 
-def build_work(plan: str = DEFAULT_PLAN, *, unreadable: bool = False) -> subprocess.CompletedProcess:
+def build_work(
+    plan: str = DEFAULT_PLAN,
+    *,
+    unreadable: bool = False,
+    cronworkflows: str = '{"items":[]}',
+    list_failed: bool = False,
+) -> subprocess.CompletedProcess[str]:
     """Call `sweep__build_work` with its collaborators replaced.
 
     The plan is the one thing each case varies. Everything else is stubbed to a
     fixed answer so a failure can only be the function under test.
     """
     loader = "return 1" if unreadable else f"printf '%b\\n' {json.dumps(plan)}"
+    list_crons = "return 1" if list_failed else f"printf '%s' {shlex.quote(cronworkflows)}"
     script = f"""
     set -uo pipefail
+    export INSIGHT_NAMESPACE=example-namespace
     source "{ROOT}/lib/sweep.sh"
-    log_line() {{ printf '%s\\n' "$*" >&2; }}
+    kubectl() {{ printf 'kubectl-arg:%s\\n' "$@" >&2; {list_crons}; }}
+    source "{ROOT}/lib/log.sh"
     disc_load_instances() {{ {loader}; }}
     reconcile_compute_tenant() {{ printf 'default'; }}
     reconcile_compute_connection_name() {{ printf '%s-%s-default-conn' "$1" "$2"; }}
     sweep__build_work "tick-1" {json.dumps(CONNECTIONS)}
     """
     return subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+
+
+@pytest.fixture
+def ledger_rows(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+
+    def urlopen(request: urllib.request.Request, timeout: int) -> io.BytesIO:
+        query = parse_qs(urlsplit(request.full_url).query).get("query", [""])[0]
+        if query.startswith("INSERT INTO ingestion_history.sync_events "):
+            assert request.data is not None
+            rows.extend(json.loads(line) for line in request.data.decode().splitlines())
+        return io.BytesIO(b'{"data":[]}' if request.get_method() == "GET" else b"")
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    for key, value in {
+        "AIRBYTE_URL": "http://example.test",
+        "AIRBYTE_TOKEN": "example-token",
+        "RECONCILE_DEST_CLICKHOUSE_HOST": "example.test",
+        "RECONCILE_DEST_CLICKHOUSE_PORT": "8123",
+        "RECONCILE_DEST_CLICKHOUSE_USERNAME": "example-user",
+        "RECONCILE_DEST_CLICKHOUSE_PASSWORD": "example-password",
+        "RECONCILE_DEST_CLICKHOUSE_PROTOCOL": "http",
+        "RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE": "false",
+    }.items():
+        monkeypatch.setenv(key, value)
+    return rows
+
+
+@pytest.mark.parametrize("scenario", ["applied", "missing", "list-failed", "list-unreadable"])
+def test_applied_schedules_are_recorded_and_lookup_failures_still_seal_the_tick(
+    scenario: str, ledger_rows: list[dict[str, object]]
+) -> None:
+    schedules = ["0 5 * * *", "0 17 * * *"]
+    crons = {
+        "items": [
+            {
+                "metadata": {
+                    "name": "example-main-default-sync",
+                    "annotations": {"insight.cyberfabric.com/schedule-origin": "annotation"},
+                },
+                "spec": {"schedules": schedules, "timezone": "Europe/London", "suspend": True},
+            },
+            {
+                "metadata": {"name": "example-second-default-sync"},
+                "spec": {"schedules": ["0 8 * * *"], "suspend": False},
+            },
+        ]
+    }
+    listed = json.dumps(crons) if scenario == "applied" else '{"items":[]}'
+    if scenario == "list-unreadable":
+        listed = "not JSON"
+    result = build_work(
+        "\\n".join([plan_row("example", "example-main"), plan_row("example", "example-second")]),
+        cronworkflows=listed,
+        list_failed=scenario == "list-failed",
+    )
+
+    assert result.returncode == 0, result.stderr
+    work = json.loads(result.stdout)
+    assert [(c["name"], c["source_id"]) for c in work["connectors"]] == [
+        ("example", "example-main"),
+        ("example", "example-second"),
+    ]
+    assert result.stderr.count("kubectl-arg:cronworkflows.argoproj.io\n") == 1
+    if scenario != "applied":
+        assert '"level":"warn"' in result.stderr
+        for connector in work["connectors"]:
+            assert connector["schedules"] == []
+            assert connector["schedule_timezone"] == ""
+            assert connector["schedule_origin"] == ""
+            assert connector["schedule_suspended"] is False
+
+    rows = ledger_rows
+    assert run(io.StringIO(result.stdout)) == 0
+    assert [row["event"] for row in rows] == ["connector.configured", "connector.configured", "sweep.completed"]
+    assert rows[0]["schedules"] == (schedules if scenario == "applied" else [])
+    assert rows[0]["schedule_timezone"] == ("Europe/London" if scenario == "applied" else "")
+    assert rows[0]["schedule_origin"] == ("annotation" if scenario == "applied" else "")
+    assert rows[0]["schedule_suspended"] is (scenario == "applied")
+    assert rows[1]["schedules"] == (["0 8 * * *"] if scenario == "applied" else [])
+    assert rows[1]["schedule_timezone"] == ""
+    assert rows[1]["schedule_origin"] == ""
+    assert rows[1]["schedule_suspended"] is False
+    assert "schedules" not in rows[2]
+
+
+def test_the_sweep_lists_only_connector_cronworkflows_in_its_namespace() -> None:
+    result = build_work()
+
+    assert result.returncode == 0, result.stderr
+    arguments = [
+        line.removeprefix("kubectl-arg:") for line in result.stderr.splitlines() if line.startswith("kubectl-arg:")
+    ]
+    assert arguments == [
+        "-n",
+        "example-namespace",
+        "get",
+        "cronworkflows.argoproj.io",
+        "-l",
+        "app.kubernetes.io/component=connector-sync",
+        "-o",
+        "json",
+    ]
+
+
+@pytest.mark.parametrize("malformed", [{"schedules": "0 5 * * *"}, {"suspend": "false"}])
+def test_a_malformed_cronworkflow_loses_only_its_own_schedule(
+    malformed: dict[str, object], ledger_rows: list[dict[str, object]]
+) -> None:
+    crons = {
+        "items": [
+            {
+                "metadata": {
+                    "name": f"example-{source}-default-sync",
+                    "annotations": {"insight.cyberfabric.com/schedule-origin": "annotation"},
+                },
+                "spec": {
+                    "schedules": ["0 5 * * *"],
+                    "timezone": "UTC",
+                    "suspend": True,
+                    **(malformed if source == "main" else {}),
+                },
+            }
+            for source in ["main", "second"]
+        ]
+    }
+    result = build_work(
+        "\\n".join([plan_row("example", "main"), plan_row("example", "second")]), cronworkflows=json.dumps(crons)
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert run(io.StringIO(result.stdout)) == 0
+    assert [row["event"] for row in ledger_rows] == ["connector.configured", "connector.configured", "sweep.completed"]
+    assert [row["source_id"] for row in ledger_rows[:2]] == ["main", "second"]
+    expected = [
+        {"schedules": [], "schedule_timezone": "", "schedule_origin": "", "schedule_suspended": False},
+        {
+            "schedules": ["0 5 * * *"],
+            "schedule_timezone": "UTC",
+            "schedule_origin": "annotation",
+            "schedule_suspended": True,
+        },
+    ]
+    for row, fields in zip(ledger_rows, expected, strict=False):
+        assert {key: row[key] for key in fields} == fields, f"should isolate: {malformed!r}"
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [{"schedules": "0 5 * * *"}, {"schedules": ["0 5 * * *", 7]}, {"schedule_timezone": 7}, {"schedule_origin": 7}],
+)
+def test_each_bad_schedule_shape_keeps_the_instance_configured_and_seals(
+    malformed: dict[str, object], ledger_rows: list[dict[str, object]]
+) -> None:
+    work = {
+        "tick_id": "example-tick",
+        "connectors": [
+            {
+                "name": "example",
+                "tenant_id": "example-tenant",
+                "source_id": "main",
+                "schedules": ["0 5 * * *"],
+                "schedule_timezone": "UTC",
+                "schedule_origin": "annotation",
+                "schedule_suspended": True,
+                **malformed,
+            }
+        ],
+    }
+
+    assert run(io.StringIO(json.dumps(work))) == 0
+    assert [row["event"] for row in ledger_rows] == ["connector.configured", "sweep.completed"]
+    configured = ledger_rows[0]
+    assert (configured["connector"], configured["tenant_id"], configured["source_id"]) == (
+        "example",
+        "example-tenant",
+        "main",
+    )
+    assert configured["schedules"] == [], f"should reject: {malformed!r}"
+    assert configured["schedule_timezone"] == ""
+    assert configured["schedule_origin"] == ""
+    assert configured["schedule_suspended"] is False
+    assert ledger_rows[1]["tick_id"] == "example-tick"
 
 
 def names(result: subprocess.CompletedProcess) -> list[str]:
@@ -97,7 +301,9 @@ class TestConfiguredMeansTheInstallHasIt:
         result = build_work(unreadable=True)
 
         assert result.returncode == 1
-        assert result.stdout.strip() == ""
+        logged = json.loads(result.stdout)
+        assert logged["level"] == "warn"
+        assert "tick_id" not in logged
 
     def test_no_descriptor_carries_a_secret_and_the_set_is_empty(self) -> None:
         """An empty set is not an error here. The caller refuses to seal it —

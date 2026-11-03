@@ -6,9 +6,9 @@
  * number renders as absence rather than a zero, and that a stopped recorder
  * reaches a screen reader as an alert rather than as ordinary prose.
  */
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   ConnectorHealthSummary,
@@ -61,6 +61,8 @@ function summary(over: Partial<ConnectorHealthSummary> = {}): ConnectorHealthSum
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
   mocks.summary.refetch.mockClear();
   mocks.syncs.refetch.mockClear();
   mocks.summary.isPending = false;
@@ -71,7 +73,265 @@ beforeEach(() => {
   mocks.syncs.data = { connector: "alpha", syncs: [], window: 50 };
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("the schedule forecast follows the viewer's clock", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    vi.setSystemTime(NOW);
+    mocks.summary.data = summary({
+      connectors: [{
+        connector: "example-tracker",
+        configured: true,
+        schedule: { crons: ["0 * * * *"], timezone: "UTC", suspended: false },
+        last_sync: null,
+      }],
+    });
+  });
+
+  function forecast() {
+    render(<ConnectorHealthPane />);
+    return within(rowFor("example-tracker")).getByRole("button");
+  }
+
+  it("uses the clock at opening rather than the response time or render time", async () => {
+    const trigger = forecast();
+    vi.setSystemTime(new Date("2026-01-15T14:00:00.000Z"));
+
+    await act(async () => { trigger.focus(); });
+
+    expect(trigger).toHaveFocus();
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 15:00 UTC (in 1h 0m)");
+  });
+
+  it("moves to the following start on the next 30-second tick without a refetch", async () => {
+    const openingTime = "2026-01-15T12:59:45.000Z";
+    vi.setSystemTime(new Date(openingTime));
+    mocks.summary.data!.as_of = openingTime;
+    const trigger = forecast();
+
+    await act(async () => { trigger.focus(); });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 13:00 UTC (in 15.0 s)");
+
+    await act(async () => { vi.advanceTimersByTime(29_999); });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 13:00 UTC (in 15.0 s)");
+
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 14:00 UTC (in 59m 45s)");
+    expect(mocks.summary.refetch).not.toHaveBeenCalled();
+  });
+
+  it("captures the new clock when reopened after time passes while closed", async () => {
+    const trigger = forecast();
+
+    await act(async () => { trigger.focus(); });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 13:00 UTC (in 1h 0m)");
+
+    await act(async () => { trigger.blur(); });
+    await act(async () => { vi.advanceTimersByTime(2 * 60 * 60 * 1_000); });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    await act(async () => { trigger.focus(); });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 15:00 UTC (in 1h 0m)");
+  });
+});
+
 describe("the pane prints what it was served", () => {
+  it("shows suspension and exposes its forecast on keyboard focus", async () => {
+    mocks.summary.data = summary({
+      connectors: [{
+        connector: "example-tracker",
+        configured: true,
+        schedule: { crons: ["0 22 * * *"], timezone: "UTC", origin: "annotation", suspended: true },
+        last_sync: null,
+      }],
+    });
+    render(<ConnectorHealthPane />);
+
+    const row = rowFor("example-tracker");
+    expect(within(row).getByText("UTC · suspended")).toHaveClass("text-muted-foreground");
+    const trigger = within(row).getByRole("button");
+    const user = userEvent.setup();
+    await user.tab();
+    await user.tab();
+    expect(trigger).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Suspended: no run is scheduled.");
+  });
+
+  it("keeps each sibling's cron and muted schedule line on its own row", () => {
+    const schedules = [
+      { crons: ["0 5 * * *"], timezone: "UTC", origin: "annotation", suspended: true },
+      { crons: ["0 17 * * *"], timezone: "Europe/Berlin", origin: "descriptor", suspended: false },
+    ] as const;
+    mocks.summary.data = summary({
+      connectors: schedules.map((schedule, index) => ({
+        connector: "example-tracker",
+        tenant_id: "example-tenant",
+        source_id: `source-${index}`,
+        configured: true,
+        schedule: { ...schedule, crons: [...schedule.crons] },
+        last_sync: null,
+      })),
+    });
+    render(<ConnectorHealthPane />);
+
+    const rows = screen.getAllByRole("row", { expanded: false });
+    expect(rows).toHaveLength(2);
+    for (const [index, detail] of ["UTC · suspended", "Europe/Berlin"].entries()) {
+      const cell = within(rows[index]).getAllByRole("cell")[2];
+      expect(within(cell).getByText(schedules[index].crons[0])).toHaveClass("font-mono");
+      expect(within(cell).getByText(detail)).toHaveClass("text-muted-foreground");
+      expect(within(cell).queryByText(schedules[1 - index].crons[0])).not.toBeInTheDocument();
+    }
+  });
+
+  it.each(["click", "Enter", "Space"])("the schedule button leaves expansion unchanged on %s", async (gesture) => {
+    mocks.summary.data = summary({
+      connectors: [{
+        connector: "example-tracker",
+        configured: true,
+        schedule: { crons: ["0 22 * * *"], timezone: "UTC", suspended: false },
+        last_sync: null,
+      }],
+    });
+    render(<ConnectorHealthPane />);
+
+    const row = rowFor("example-tracker");
+    const trigger = within(row).getByRole("button");
+    const user = userEvent.setup();
+    for (const expanded of [false, true]) {
+      if (expanded) await user.click(within(row).getByRole("cell", { name: "example-tracker" }));
+      trigger.focus();
+      if (gesture === "click") {
+        await user.click(trigger);
+      } else {
+        await user.keyboard(gesture === "Enter" ? "{Enter}" : " ");
+      }
+      expect(row).toHaveAttribute("aria-expanded", String(expanded));
+    }
+  });
+
+  it.each(["hover", "focus"] as const)("exposes the schedule forecast on %s", async (gesture) => {
+    mocks.summary.data = summary({
+      connectors: [{
+        connector: "example-tracker",
+        configured: true,
+        schedule: { crons: ["0 22 * * *"], timezone: "Europe/Sofia", suspended: false },
+        last_sync: null,
+      }],
+    });
+    render(<ConnectorHealthPane />);
+
+    const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
+    const trigger = within(cell).getByRole("button");
+    const user = userEvent.setup();
+    if (gesture === "hover") {
+      await user.hover(trigger);
+    } else {
+      await user.tab();
+      await user.tab();
+      expect(trigger).toHaveFocus();
+    }
+
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Next run 2026-01-15 22:00 Europe/Sofia (in 8h 0m)");
+    expect(trigger).toHaveAttribute("aria-describedby", tooltip.id);
+    expect(rowFor("example-tracker")).toHaveAttribute("aria-expanded", "false");
+  });
+  it("shows the recorded schedule after the instance, with each cron on its own line", () => {
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "example-tracker",
+          configured: true,
+          schedule: {
+            suspended: false,
+            crons: ["0 22 * * *", "0 10 * * *"],
+            timezone: "Europe/Sofia",
+            origin: "annotation",
+          },
+          last_sync: null,
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const headings = screen
+      .getAllByRole("columnheader")
+      .map((cell) => cell.textContent);
+    expect(headings).toEqual([
+      "Connector",
+      "Instance",
+      "Schedule",
+      "State",
+      "Last sync started",
+      "Duration",
+      "Records reported",
+    ]);
+    const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
+    const first = within(cell).getByText("0 22 * * *");
+    const second = within(cell).getByText("0 10 * * *");
+    expect(first).toHaveClass("block");
+    expect(second).toHaveClass("block");
+    expect(first).toHaveClass("font-mono");
+    expect(second).toHaveClass("font-mono");
+    expect(within(cell).getByText("Europe/Sofia")).toHaveClass(
+      "text-muted-foreground",
+    );
+  });
+
+  it.each([
+    [null, "descriptor", "controller time"],
+    [null, "default", "controller time"],
+    ["UTC", null, "UTC"],
+    [null, null, "controller time"],
+  ] as const)(
+    "prints recorded timezone %s without origin %s",
+    (timezone, origin, detail) => {
+      mocks.summary.data = summary({
+        connectors: [
+          {
+            connector: "example-tracker",
+            configured: true,
+            schedule: { crons: ["0 22 * * *"], timezone, origin, suspended: false },
+            last_sync: null,
+          },
+        ],
+      });
+      render(<ConnectorHealthPane />);
+
+      const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
+      expect(within(cell).getByText(detail)).toBeInTheDocument();
+      expect(cell.textContent).not.toMatch(/ · $/);
+    },
+  );
+
+  it("prints an unrecorded schedule as unknown and spans all seven columns when expanded", async () => {
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "example-tracker",
+          configured: true,
+          schedule: null,
+          last_sync: null,
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
+    expect(cell).toHaveTextContent(/^—$/);
+    expect(cell.querySelector('[data-slot="tooltip-trigger"]')).toBeNull();
+    expect(within(cell).queryByRole("button")).not.toBeInTheDocument();
+    await userEvent.click(rowFor("example-tracker"));
+    expect(
+      screen.getByText(/no sync has been recorded/i).closest("td"),
+    ).toHaveAttribute("colspan", "7");
+  });
+
   it("keeps the served order rather than sorting again", () => {
     // Deliberately an order no local rule reproduces: not alphabetical, not
     // severity-first, not by job id. A two-row fixture whose served order also
@@ -129,6 +389,64 @@ describe("the pane prints what it was served", () => {
     expect(rowFor("bravo")).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("truncates a UUID-length tenant below its source while retaining the full identity", () => {
+    const tenant = "00000000-0000-4000-8000-000000000001";
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "example-tracker",
+          tenant_id: tenant,
+          source_id: "example-tracker-main",
+          configured: true,
+          last_sync: null,
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const cell = within(rowFor("example-tracker")).getAllByRole("cell")[1];
+    const tenantLine = within(cell).getByText(tenant);
+    const sourceLine = within(cell).getByText("example-tracker-main");
+    expect(tenantLine).toHaveClass("max-w-40", "truncate", "text-xs", "text-muted-foreground");
+    expect(tenantLine).toHaveAttribute("title", tenant);
+    expect(sourceLine).toHaveClass("block");
+    expect(sourceLine.nextElementSibling).toBe(tenantLine);
+    expect(cell).toHaveAccessibleName(`${tenant} / example-tracker-main`);
+  });
+
+  it.each([
+    [undefined, undefined, "—", ["—"]],
+    [null, null, "—", ["—"]],
+    ["", "", "—", ["—"]],
+    ["acme", undefined, "acme / —", ["—", "acme"]],
+    ["acme", "", "acme / —", ["—", "acme"]],
+    [undefined, "main", "— / main", ["main", "—"]],
+    ["", "main", "— / main", ["main", "—"]],
+  ] as const)(
+    "keeps missing identity values explicit for tenant %s and source %s",
+    (tenant, source, label, lines) => {
+      mocks.summary.data = summary({
+        connectors: [
+          {
+            connector: "example-tracker",
+            tenant_id: tenant,
+            source_id: source,
+            configured: true,
+            last_sync: null,
+          },
+        ],
+      });
+      render(<ConnectorHealthPane />);
+
+      const cell = within(rowFor("example-tracker")).getAllByRole("cell")[1];
+      const visibleLines = cell.children.length === 0
+        ? [cell.textContent]
+        : Array.from(cell.children, (child) => child.textContent);
+      expect(cell).toHaveAccessibleName(label);
+      expect(visibleLines).toEqual(lines);
+    },
+  );
+
   it("gives two installations of one connector a row each", () => {
     // They share a name, so the identity cell is the only thing that tells the
     // rows apart — and a page that collapsed them would report one
@@ -144,7 +462,7 @@ describe("the pane prints what it was served", () => {
         },
         {
           connector: "claude-team",
-          tenant_id: "acme",
+          tenant_id: "example-tenant",
           source_id: "claude-team-second",
           configured: true,
           last_sync: null,
@@ -154,12 +472,16 @@ describe("the pane prints what it was served", () => {
     render(<ConnectorHealthPane />);
 
     expect(screen.getAllByRole("cell", { name: "claude-team" })).toHaveLength(2);
-    expect(
-      screen.getByRole("cell", { name: "acme / claude-team-main" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("cell", { name: "acme / claude-team-second" }),
-    ).toBeInTheDocument();
+    for (const [source, tenant] of [
+      ["claude-team-main", "acme"],
+      ["claude-team-second", "example-tenant"],
+    ]) {
+      const sourceLine = screen.getByText(source);
+      expect(sourceLine).toBeInTheDocument();
+      const cell = sourceLine.closest("td")!;
+      expect(within(cell).getByText(tenant)).toBeInTheDocument();
+      expect(cell).toHaveAccessibleName(`${tenant} / ${source}`);
+    }
   });
 
   it("opens one installation without opening its sibling", async () => {
@@ -188,9 +510,11 @@ describe("the pane prints what it was served", () => {
 
     const expanded = screen.getAllByRole("row", { expanded: true });
     expect(expanded).toHaveLength(1);
-    expect(
-      within(expanded[0]).getByRole("cell", { name: "acme / claude-team-second" }),
-    ).toBeInTheDocument();
+    const sourceLine = within(expanded[0]).getByText("claude-team-second");
+    expect(sourceLine).toBeInTheDocument();
+    const cell = sourceLine.closest("td")!;
+    expect(within(cell).getByText("acme")).toBeInTheDocument();
+    expect(cell).toHaveAccessibleName("acme / claude-team-second");
   });
 
   it("points two rows at two disclosures when an identity carries a separator", () => {
@@ -226,15 +550,21 @@ describe("the pane prints what it was served", () => {
   });
 
   it("prints an unmeasured number as absence, not as a zero", () => {
+    // Named and scheduled, so the three absences below are the three numbers this
+    // test is about rather than the identity or schedule cell joining them.
     mocks.summary.data = summary({
       connectors: [
         {
           connector: "alpha",
-          // Named, so the three absences below are the three numbers this test
-          // is about rather than the identity cell joining them.
           tenant_id: "acme",
           source_id: "main",
           configured: true,
+          schedule: {
+            suspended: false,
+            crons: ["0 * * * *"],
+            timezone: "UTC",
+            origin: "default",
+          },
           last_sync: {
             job_id: "1",
             status: "running",

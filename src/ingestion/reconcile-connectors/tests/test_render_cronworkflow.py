@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 RECONCILE_DIR = Path(__file__).resolve().parents[1]
 RENDERER = RECONCILE_DIR / "python" / "render_cronworkflow.py"
@@ -49,31 +50,35 @@ DESCRIPTOR_CASES = (
 )
 
 
-def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, env=CHILD_ENV, capture_output=True, text=True, encoding="utf-8", check=False)
+def _run(argv: list[str], **env: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(argv, env={**CHILD_ENV, **env}, capture_output=True, text=True, encoding="utf-8", check=False)
 
 
-def _render(schedule: str) -> subprocess.CompletedProcess[str]:
-    return _run(
-        [
-            sys.executable,
-            str(RENDERER),
-            "--connector",
-            "example-connector",
-            "--connection-name",
-            "example-connector-main-example-conn",
-            "--schedule",
-            schedule,
-            "--tenant",
-            "example",
-            "--cron-name",
-            "example-connector-example-sync",
-            "--insight-source-id",
-            "main",
-            "--tpl",
-            str(TEMPLATE),
-        ]
-    )
+def _renderer_args(schedule: str, origin: str) -> list[str]:
+    return [
+        sys.executable,
+        str(RENDERER),
+        "--connector",
+        "example-connector",
+        "--connection-name",
+        "example-connector-main-example-conn",
+        "--schedule",
+        schedule,
+        "--schedule-origin",
+        origin,
+        "--tenant",
+        "example",
+        "--cron-name",
+        "example-connector-example-sync",
+        "--insight-source-id",
+        "main",
+        "--tpl",
+        str(TEMPLATE),
+    ]
+
+
+def _render(schedule: str, *, origin: str = "default") -> subprocess.CompletedProcess[str]:
+    return _run(_renderer_args(schedule, origin))
 
 
 def _rendered_schedules(document: str) -> list[str]:
@@ -94,6 +99,39 @@ def _rendered_name(document: str) -> str:
 
 
 class TestRenderer:
+    def test_the_rendered_spec_matches_the_fixture(self) -> None:
+        result = _render("0 4 * * *")
+        baseline = Path(__file__).parent / "fixtures" / "cronworkflow-default-spec.json"
+
+        assert result.returncode == 0, result.stderr
+        assert yaml.safe_load(result.stdout)["spec"] == json.loads(baseline.read_text())
+
+    def test_a_missing_origin_is_rejected(self) -> None:
+        argv = _renderer_args("0 4 * * *", "descriptor")
+        index = argv.index("--schedule-origin")
+        del argv[index : index + 2]
+        result = _run(argv)
+
+        assert result.returncode == 2, result.stderr
+        assert "--schedule-origin" in result.stderr
+        assert result.stdout == ""
+
+    @pytest.mark.parametrize("schedule", ["0 4 * * *", "50 23 * * *\n0 9,15,21 28-31 * *"])
+    @pytest.mark.parametrize("origin", ["annotation", "descriptor", "default"])
+    def test_every_schedule_uses_utc(self, schedule: str, origin: str) -> None:
+        result = _render(schedule, origin=origin)
+
+        assert result.returncode == 0, result.stderr
+        assert yaml.safe_load(result.stdout)["spec"]["timezone"] == "UTC"
+
+    @pytest.mark.parametrize("origin", ["annotation", "descriptor", "default"])
+    def test_the_origin_is_stamped_on_metadata(self, origin: str) -> None:
+        result = _render("0 4 * * *", origin=origin)
+
+        assert result.returncode == 0, result.stderr
+        annotations = yaml.safe_load(result.stdout)["metadata"]["annotations"]
+        assert annotations["insight.cyberfabric.com/schedule-origin"] == origin
+
     def test_a_single_cron_renders_exactly_one_entry(self) -> None:
         result = _render("0 4 * * *")
 
@@ -170,6 +208,7 @@ argo_apply_cronworkflow \"$@\"
             tenant,
             source_id,
             "",
+            "descriptor",
             **env,
         )
 
@@ -186,6 +225,25 @@ argo_apply_cronworkflow \"$@\"
             return []
         return self.kubectl_log.read_text(encoding="utf-8").splitlines()
 
+    @pytest.mark.parametrize("function", ["argo_render_cronworkflow", "argo_apply_cronworkflow"])
+    @pytest.mark.parametrize("origin", [[], [""]])
+    def test_a_missing_or_empty_origin_is_rejected_before_kubectl(self, function: str, origin: list[str]) -> None:
+        result = self._run_argo(
+            f'source "$ARGO_SCRIPT"\n{function} "$@"',
+            "example-connector",
+            "example-connection",
+            "0 4 * * *",
+            "example",
+            "main",
+            "",
+            *origin,
+        )
+
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "schedule origin must be supplied" in result.stderr
+        assert result.stdout == ""
+        assert self._kubectl_calls() == []
+
     def test_a_52_character_name_is_accepted(self) -> None:
         connector = "c" * 36
         result = self._name(connector, "tenantid", f"{connector}-i")
@@ -193,6 +251,22 @@ argo_apply_cronworkflow \"$@\"
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == f"{connector}-i-tenantid-sync"
         assert len(result.stdout.strip()) == 52
+
+    def test_an_empty_schedule_never_reaches_kubectl(self) -> None:
+        result = self._run_argo(
+            'source "$ARGO_SCRIPT"\nargo_apply_cronworkflow "$@"',
+            "example-connector",
+            "example-connection",
+            "\n   \n",
+            "example",
+            "main",
+            "",
+            "descriptor",
+        )
+
+        assert result.returncode == 1
+        assert "--schedule carries no cron expression" in result.stderr
+        assert self._kubectl_calls() == []
 
     def test_a_53_character_name_is_rejected_before_kubectl(self) -> None:
         connector = "c" * 37
@@ -293,8 +367,10 @@ argo_apply_cronworkflow \"$@\"
         assert self._kubectl_calls() == [
             f"-n insight delete cronworkflow.argoproj.io/example-connector-{tenant}-sync --ignore-not-found",
             "-n insight delete cronworkflow.argoproj.io/example-connector-tenant-i-sync --ignore-not-found",
-            "-n insight delete cronworkflow.argoproj.io/"
-            "example-connector-example-source-tenant-i-sync --ignore-not-found",
+            (
+                "-n insight delete cronworkflow.argoproj.io/"
+                "example-connector-example-source-tenant-i-sync --ignore-not-found"
+            ),
         ]
 
 

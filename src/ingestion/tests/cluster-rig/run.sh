@@ -33,7 +33,7 @@ teardown() {
 }
 
 # What the jira heals print when they find work, and only then.
-JIRA_HEAL_LINES=('rebuilding on the issue id' 'filling from the issue streams' 'source(s) as a')
+JIRA_HEAL_LINES=('filling from the issue streams' 'source(s) as a')
 
 healed_once() {
   local log="$1" line

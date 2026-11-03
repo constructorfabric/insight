@@ -19,6 +19,7 @@ DROP VIEW IF EXISTS identity.${view};
 SQL
 }
 
+# INVARIANT: repairs releases without #3885 (main before its first release); delete once every CH_FLOOR_RELEASES release runs it.
 # INVARIANT: person_map reads account_assignment, so it goes first.
 heal_identity_map_tenants() {
   heal_identity_map_view person_map

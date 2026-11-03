@@ -45,6 +45,7 @@ _catalogue_tenants_select() {
           FROM bronze_jira.jira_fields"
 }
 
+# INVARIANT: repairs releases without #3795 (main before 0.7.140); delete once every CH_FLOOR_RELEASES release runs it.
 heal_jira_catalogue_first_seen() {
   local table="staging.jira__catalogue_first_seen" copy="staging.jira__catalogue_first_seen__rebuild"
   local engine converged before tenants copied live

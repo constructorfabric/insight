@@ -18,6 +18,7 @@ _youtrack_table_present() {
   printf '%s' "${count}"
 }
 
+# INVARIANT: repairs releases without #3885 (main before its first release); delete once every CH_FLOOR_RELEASES release runs it.
 heal_youtrack_field_observation_tenant() {
   local present tenants
   present="$(_youtrack_table_present staging youtrack__field_observations)" || return 1

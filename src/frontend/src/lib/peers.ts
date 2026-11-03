@@ -19,18 +19,6 @@ export type PeerStatusWithNeutral = PeerStatus | "neutral"
  */
 export type PeerCohortLabel = "team" | "org" | "department" | (string & {})
 
-export type FocusMode = "all" | "critical" | "rewards" | "neutral"
-
-export function applyFocus(
-  status: PeerStatusWithNeutral,
-  mode: FocusMode,
-): PeerStatusWithNeutral {
-  if (mode === "all") return status
-  if (mode === "critical") return status === "bottom" ? status : "neutral"
-  if (mode === "rewards") return status === "top" ? status : "neutral"
-  return "neutral"
-}
-
 // Heatmap cell fills. Soft tints of the semantic accents (not the solid
 // button/alert fills) so a dense grid reads as a calm data view rather than a
 // wall of alarms; the hue still signals top/bottom, the number stays crisp in

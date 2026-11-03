@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import type {
   ConnectorHealth,
@@ -17,11 +17,20 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   UNMEASURED,
+  SCHEDULE_HEADING,
   describeConnector,
   describeDuration,
   describeInstance,
+  describeNextRun,
   describeRecording,
+  describeSchedule,
   describeSync,
   formatRecords,
   formatStarted,
@@ -42,7 +51,7 @@ const TONE_STYLE: Record<ConnectorTone, string> = {
   idle: "bg-muted text-muted-foreground",
 };
 
-const COLUMNS = 6;
+const COLUMNS = 7;
 
 /**
  * A DOM id for one row's disclosure panel.
@@ -106,14 +115,15 @@ export function ConnectorHealthPane() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Connector</TableHead>
+                <TableHead className="whitespace-normal">Connector</TableHead>
                 {/* One connector can be configured more than once; this is the
                     only cell that tells those rows apart. */}
-                <TableHead>Instance</TableHead>
-                <TableHead>State</TableHead>
-                <TableHead>Last sync started</TableHead>
-                <TableHead className="text-right">Duration</TableHead>
-                <TableHead className="text-right">Records reported</TableHead>
+                <TableHead className="whitespace-normal">Instance</TableHead>
+                <TableHead className="whitespace-normal">{SCHEDULE_HEADING}</TableHead>
+                <TableHead className="whitespace-normal">State</TableHead>
+                <TableHead className="whitespace-normal">Last sync started</TableHead>
+                <TableHead className="text-right whitespace-normal">Duration</TableHead>
+                <TableHead className="text-right whitespace-normal">Records reported</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -157,9 +167,8 @@ export function ConnectorHealthPane() {
                     className="cursor-pointer select-text"
                   >
                     <TableCell className="font-medium">{row.connector}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {describeInstance(row)}
-                    </TableCell>
+                    <InstanceCell instance={row} />
+                    <ScheduleCell schedule={row.schedule} />
                     <TableCell>
                       <Badge
                         variant="secondary"
@@ -190,6 +199,77 @@ export function ConnectorHealthPane() {
         </div>
       )}
     </div>
+  );
+}
+
+function InstanceCell({ instance }: { instance: ConnectorInstanceRef }) {
+  const label = describeInstance(instance);
+
+  return (
+    <TableCell aria-label={label}>
+      {label === UNMEASURED ? UNMEASURED : (
+        <>
+          <span className="block">{instance.source_id || UNMEASURED}</span>
+          <span
+            className="block max-w-40 truncate text-xs text-muted-foreground"
+            title={instance.tenant_id || UNMEASURED}
+          >
+            {instance.tenant_id || UNMEASURED}
+          </span>
+        </>
+      )}
+    </TableCell>
+  );
+}
+
+function ScheduleCell({
+  schedule,
+}: {
+  schedule: ConnectorHealth["schedule"];
+}) {
+  const tooltipId = useId();
+  const [open, setOpen] = useState(false);
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    if (!open) return;
+
+    const timer = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(timer);
+  }, [open]);
+
+  return (
+    <TableCell>
+      {schedule == null ? (
+        UNMEASURED
+      ) : (
+        <TooltipProvider>
+          <Tooltip onOpenChange={(nextOpen) => {
+            if (nextOpen) setNow(new Date());
+            setOpen(nextOpen);
+          }}>
+            <TooltipTrigger
+              aria-describedby={tooltipId}
+              render={
+                <button type="button" className="cursor-help text-left" />
+              }
+            >
+              {schedule.crons.map((cron, index) => (
+                <span key={index} className="block font-mono">
+                  {cron}
+                </span>
+              ))}
+              <span className="block text-muted-foreground">
+                {describeSchedule(schedule)}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent id={tooltipId} role="tooltip">
+              {describeNextRun(schedule, now)}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+    </TableCell>
   );
 }
 

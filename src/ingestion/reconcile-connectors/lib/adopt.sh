@@ -279,23 +279,27 @@ for x in json.load(sys.stdin): print(x)')
     printf 'CHANGE  %s: would create/update Argo CronWorkflow\n' "${name}"
   else
     local conn_name; conn_name="$(reconcile_compute_connection_name "${name}" "${source_id_label}")"
-    local schedule;  schedule="$(reconcile_compute_schedule "${name}" "${secret_name}")"
+    local schedule_details schedule_origin schedule
+    schedule_details="$(reconcile_resolve_schedule "${name}" "${secret_name}")"
+    schedule_origin="${schedule_details%%$'\n'*}"
+    schedule="${schedule_details#*$'\n'}"
     local tenant;    tenant="$(reconcile_compute_tenant "${name}")"
     # `source_id_label` — read above off the connector's one instance — is what
     # the rendered CronWorkflow carries as `insight_source_id` for
     # ingestion-pipeline, and what the schedule is named after.
     # ADOPT_DRY_RUN guarded above (would_call branch).
-    local apply_rc=0
-    argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                            "${source_id_label}" "${dbt_select}" >/dev/null 2>&1 \
+    local apply_rc=0 apply_error
+    apply_error="$(argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
+                            "${source_id_label}" "${dbt_select}" "${schedule_origin}" 2>&1 >/dev/null)" \
       || apply_rc=$?
+    apply_error="$(argo_error_reason "${apply_error}")"
     if [[ "${apply_rc}" -eq 0 ]]; then
       log_line INFO "${name}: created Argo CronWorkflow $(argo_cron_workflow_name "${name}" "${tenant}" "${source_id_label}")"
     elif [[ "${apply_rc}" -eq 2 ]]; then
-      log_line ERROR "${name}: created Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")"
+      log_line ERROR "${name}: created Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")${apply_error:+: ${apply_error}}"
       return 1
     else
-      log_line ERROR "${name}: failed to create/update Argo CronWorkflow"
+      log_line ERROR "${name}: failed to create/update Argo CronWorkflow${apply_error:+: ${apply_error}}"
       return 1
     fi
   fi
