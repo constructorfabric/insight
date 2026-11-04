@@ -62,12 +62,14 @@ class Upstream(BaseHTTPRequestHandler):
             body = self.rfile.read(int(self.headers["Content-Length"]))
         self.server.received.append((self.command, self.path, list(self.headers.items()), body))
         payload = json.dumps({"job": {"id": 42, "status": "succeeded", "streamStats": [1]}}).encode()
+        time.sleep(self.server.header_delay)
         self.send_response(201)
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("X-Synthetic", "kept")
         self.end_headers()
         if self.path.endswith("/slow"):
             self.server.finish.wait(3)
+        time.sleep(self.server.body_delay)
         try:
             self.wfile.write(payload)
         except OSError:
@@ -126,6 +128,8 @@ def running() -> Iterator[tuple[Server, ThreadingHTTPServer]]:
     proxy.server_port = 10002
     upstream.daemon_threads = True
     upstream.received = []
+    upstream.header_delay = 0.0
+    upstream.body_delay = 0.0
     upstream.first_sent = threading.Event()
     upstream.finish = threading.Event()
     peers = []

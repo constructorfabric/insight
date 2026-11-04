@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import uuid
 from collections import deque
@@ -10,6 +11,18 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 from proxy_rules import Barrier, Rule, integer, object_map
+
+
+def endpoint_segment(segment: str) -> str:
+    if not segment:
+        return segment
+    if not re.fullmatch(r"[a-z][a-z0-9_-]*", segment):
+        return "{redacted}"
+    try:
+        uuid.UUID(segment)
+    except ValueError:
+        return segment
+    return "{redacted}"
 
 
 class Refusal(Exception):
@@ -86,36 +99,7 @@ class State:
                 if selected is None and (rule.call is None or rule.call == count):
                     selected = rule
             parts = urlsplit(path).path.split("/")
-            endpoint = "/".join(
-                part
-                if part
-                in {
-                    "",
-                    "api",
-                    "public",
-                    "v1",
-                    "jobs",
-                    "connections",
-                    "sync",
-                    "get",
-                    "list",
-                    "cancel",
-                    "applications",
-                    "token",
-                    "sources",
-                    "destinations",
-                    "workspaces",
-                    "source_definitions",
-                    "create",
-                    "update",
-                    "delete",
-                    "check_connection",
-                    "discover_schema",
-                    "declarative_source_definitions",
-                }
-                else "{redacted}"
-                for part in parts
-            )
+            endpoint = "/".join(endpoint_segment(part) for part in parts)
             fields = {
                 "method": method if method in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"} else "OTHER",
                 "endpoint": endpoint[:512],

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 from http.server import ThreadingHTTPServer
@@ -12,13 +13,21 @@ from proxy_transport import Handler
 
 MAX_CONNECTIONS = 64
 MAX_DATA_REQUESTS = 16
+DEFAULT_UPSTREAM_TIMEOUT_SECONDS = 300
 
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = MAX_CONNECTIONS
 
-    def __init__(self, address: tuple[str, int], upstream: str, control_token: str, retention: int) -> None:
+    def __init__(
+        self,
+        address: tuple[str, int],
+        upstream: str,
+        control_token: str,
+        retention: int,
+        upstream_timeout: float = DEFAULT_UPSTREAM_TIMEOUT_SECONDS,
+    ) -> None:
         parsed = urlsplit(upstream)
         if (
             parsed.scheme not in {"http", "https"}
@@ -31,7 +40,10 @@ class Server(ThreadingHTTPServer):
             or not control_token
         ):
             raise ValueError("upstream origin and control token required")
+        if not math.isfinite(upstream_timeout) or upstream_timeout <= 0:
+            raise ValueError("upstream timeout must be finite and positive")
         self.upstream = parsed
+        self.upstream_timeout = upstream_timeout
         self.control_token = control_token
         self.state = State(retention)
         self.slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
@@ -65,6 +77,7 @@ def main() -> None:
         os.environ["MOCK_AIRBYTE_UPSTREAM"],
         os.environ["MOCK_CONTROL_TOKEN"],
         integer(int(os.environ["MOCK_JOURNAL_RETENTION"]), 1, 10000),
+        float(os.environ.get("MOCK_UPSTREAM_TIMEOUT", DEFAULT_UPSTREAM_TIMEOUT_SECONDS)),
     ) as server:
         server.serve_forever()
 
