@@ -55,8 +55,6 @@ Add `--version <x.y.z>` to pin a release. Values, credentials and OIDC setup: [c
 | [`docs`](docs) | Specs, ADRs, API guideline, glossary, runbooks |
 | [`tests`](tests/stand/README.md) | Stand and data-path tests against a running stack |
 
-Some backend specs in `docs/` disagree with the code. [docs/components/backend/README.md](docs/components/backend/README.md) lists where.
-
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for the dev loop and [AGENTS.md](AGENTS.md) for code rules, then open a PR. Specs and ADRs follow the Constructor Studio kit in [`.cf-studio/`](.cf-studio/).
