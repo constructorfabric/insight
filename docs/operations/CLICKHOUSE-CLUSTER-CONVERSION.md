@@ -225,17 +225,30 @@ For each database, the script:
 3. creates `<name>` `ON CLUSTER` with `ENGINE = Replicated(...)`, the engine
    and Keeper path `create-databases.sh` emits, without its `IF NOT EXISTS`;
 4. for every table, issues the table's own `CREATE` with the engine prefixed
-   `Replicated`, copies the rows with `INSERT ... SELECT`, and compares the
-   two counts; a mismatch stops it there;
+   `Replicated` under a staging name, `<table>__converting`, copies the rows
+   with `INSERT ... SELECT`, compares the two counts, and only then renames
+   the copy to the table's own name; a mismatch stops it there, with the copy
+   left under the staging name;
 5. creates every view the same way, once the relations it reads stand.
+
+The counts are the rows a reader sees. A plain `MergeTree` table is counted
+with `count()`. Every other engine of the family (`ReplacingMergeTree` and
+the rest) is counted with `FINAL`, on both sides. These engines collapse rows
+that share a sorting key in background merges and within each inserted block,
+so the copy's raw count lands anywhere between the source's raw count and its
+`FINAL` count. A table whose parts still hold such rows therefore converts as
+it stands, with no `OPTIMIZE` first. A copy missing a sorting key the source
+holds, or a row of a plain table, still stops the conversion. The `FINAL`
+count reads the sorting-key columns of both tables once more, on top of the
+copy itself.
 
 It prints one line per relation with its row count. It is safe to re-run.
 While `standalone_<name>` still stands, a re-run resumes: a table already
-copied whole is reported as already converted and skipped, a table copied in
-part is refused by name with the statement that clears it, and a database
-with nothing left ends in "nothing to do". Once the copy is dropped (step 7),
-a database already `Replicated` is reported as such and left alone. Each
-table's copy is one HTTP request; the ceiling per request is
+copied whole is reported as already converted and skipped, a copy left under
+its staging name is refused by that name with the statement that clears it,
+and a database with nothing left ends in "nothing to do". Once the copy is
+dropped (step 7), a database already `Replicated` is reported as such and
+left alone. Each table's copy is one HTTP request; the ceiling per request is
 `CH_HTTP_MAX_TIME_S`, six hours unless set.
 
 The `standalone_<name>` databases stay on the node. They are the rollback
