@@ -1,0 +1,4 @@
+image: ""
+upstream: ""
+controlToken: synthetic-control-token
+journalRetention: 1000
