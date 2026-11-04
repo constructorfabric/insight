@@ -51,7 +51,9 @@ nav:
   # Navigation entries this install marks as still in development — same
   # path forms as `hide`. They behave like readiness-marked entries in the
   # code: demoted to the "Planned" menu group and toggled by the viewer's
-  # "Show planned sections" switch. A path in both lists is hidden.
+  # "Show planned sections" switch. A planned Dashboards catalogue
+  # ("zone:custom/item:...") stays in its own group, muted, instead of moving.
+  # A path in both lists is hidden.
   planned: []
 
 resources:
