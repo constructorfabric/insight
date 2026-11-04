@@ -42,14 +42,15 @@ before any step executes.
 
 ## Exceptions
 
-- **arm64 legs** in `build-images.yml` split by how the image builds:
-  - backend services, gateway and frontend follow the rule like their amd64
-    legs (`insight-large`, or `ubuntu-latest` when routed to GitHub-hosted).
-    Their Dockerfiles compile on the x64 build platform and cross-compile for
-    arm64; QEMU runs only the runtime stages.
-  - toolbox, seed, ui-tests and the connector images stay on
-    `ubuntu-24.04-arm` under every event and with the kill switch on, because
-    their whole build would run under QEMU on an x64 runner.
+- **arm64 legs** in `build-images.yml` follow the rule like their amd64 legs
+  (`insight-large`, or `ubuntu-latest` when routed to GitHub-hosted). Both are
+  x64, and QEMU is installed on each arm64 leg:
+  - backend services and gateway cross-compile on the build platform; frontend
+    bundles there.
+  - toolbox, seed and the connector images install target-arch wheels on the
+    build platform.
+  - QEMU runs the target-arch runtime stages (OS package upgrades and installs)
+    and the whole ui-tests build.
 - **`deploy-test-stand.yml`** uses `insight-large` for candidate validation
   on `push` and `workflow_dispatch`, with the GitHub-hosted kill switch.
   Published-release deployments and **`run-stand-suite.yml`** stay on
