@@ -442,16 +442,19 @@ Retention is `MOCK_JOURNAL_RETENTION`, 1–10,000 events. `truncated` reports a
 baseline older than retained evidence, including rows removed by reset. Inspect
 `generation` on every poll. Logs contain only the same structured fields; no
 request/response headers, queries, bodies, credentials or exception strings.
-Only recognized static endpoint segments are logged; unknown segments are
-redacted and the result capped at 512 characters. UUID/decimal ids are retained
-at most 16 per kind per event/active entry; matching still examines the full body.
+Literal route words starting with a lowercase letter and containing lowercase
+letters, digits, `_` or `-` are logged. UUIDs, numeric segments and other path
+values are redacted; the result is capped at 512 characters. UUID/decimal ids are
+retained at most 16 per kind per event/active entry; matching still examines the full body.
 This is correlation evidence for synthetic tests, not a packet capture.
 
 Other bounds: 64 simultaneous connections, 16 active API requests, 64 rules per
 revision, 1 MiB decoded request/control body, 2 MiB chunk wire framing, 8 KiB
-request headers/trailers, and ten-second socket inactivity timeouts. Data
-saturation returns 503 while reserved controls retain connection capacity. Header
-parsing additionally uses the standard library's request-line/header-count limits.
+request headers/trailers, and ten-second client socket inactivity and upstream
+connect timeouts. Upstream response inactivity uses `MOCK_UPSTREAM_TIMEOUT`
+(seconds), exposed as the proxy chart's `upstreamTimeout` value, defaulting to
+300 seconds. Data saturation returns 503 while reserved controls retain connection
+capacity. Header parsing additionally uses the standard library's request-line/header-count limits.
 Large ordinary responses are streamed without a total byte cap. A peer sending
 continuously can keep a connection active; the scenario controller must use its
 own overall watchdog and cancel surviving jobs.
@@ -537,18 +540,26 @@ kubectl --context "$KUBE_CTX" -n "$NS_APP" get cronworkflows
 ```
 
 Set `RECONCILE_CRON` to the reconcile CronWorkflow name returned by the listing;
-the Helm release may prefix it. Submit that pass, then list its generated mock
-CronWorkflows:
+the Helm release may prefix it. Read the controller instance id from that
+CronWorkflow's `workflows.argoproj.io/controller-instanceid` label and pass it to
+`argo submit` so the controller selects the submitted Workflow. Submit that pass,
+then list its generated mock CronWorkflows:
 
 ```bash
-argo submit --context "$KUBE_CTX" -n "$NS_APP" --from "cronwf/$RECONCILE_CRON" --watch
+ARGO_INSTANCE_ID=$(kubectl --context "$KUBE_CTX" -n "$NS_APP" get cronworkflow "$RECONCILE_CRON" \
+  -o jsonpath='{.metadata.labels.workflows\.argoproj\.io/controller-instanceid}')
+argo submit --context "$KUBE_CTX" -n "$NS_APP" --instanceid "$ARGO_INSTANCE_ID" \
+  --from "cronwf/$RECONCILE_CRON" --watch
 kubectl --context "$KUBE_CTX" -n "$NS_APP" get cronworkflows
 ```
 
 Set `MOCK_CRON` to one of the generated mock CronWorkflow names and submit it:
 
 ```bash
-argo submit --context "$KUBE_CTX" -n "$NS_APP" --from "cronwf/$MOCK_CRON" --watch
+ARGO_INSTANCE_ID=$(kubectl --context "$KUBE_CTX" -n "$NS_APP" get cronworkflow "$MOCK_CRON" \
+  -o jsonpath='{.metadata.labels.workflows\.argoproj\.io/controller-instanceid}')
+argo submit --context "$KUBE_CTX" -n "$NS_APP" --instanceid "$ARGO_INSTANCE_ID" \
+  --from "cronwf/$MOCK_CRON" --watch
 curl --fail-with-body -H 'Authorization: Bearer synthetic-control-token' \
   'http://127.0.0.1:8081/observations?after=0'
 ```
@@ -564,8 +575,9 @@ response. Record outcomes; this slice supplies fault controls, not the slice 3
 observer or a claim that all scheduling cases pass.
 
 Before removal, restore the direct route by upgrading the same application chart
-with `--reuse-values --set-string airbyte.apiUrl="$MOCK_AIRBYTE_UPSTREAM"`, then
-allow reconcile to refresh schedules and finish/cancel captured proxy workflows.
+with `--reuse-values --set-string airbyte.apiUrl=`, restoring the chart's empty
+default so it derives the in-cluster Airbyte URL. Then allow reconcile to refresh
+schedules and finish/cancel captured proxy workflows.
 Release barriers and clean up real synthetic jobs through the independent route.
 Then uninstall only the harness releases:
 

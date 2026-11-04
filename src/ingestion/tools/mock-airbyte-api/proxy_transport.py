@@ -248,6 +248,8 @@ class Handler(BaseHTTPRequestHandler):
         connection_type = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
         connection = connection_type(url.hostname, url.port, timeout=IO_TIMEOUT_SECONDS)
         try:
+            connection.connect()
+            connection.sock.settimeout(self.server.upstream_timeout)
             self.send_upstream(connection, body)
             response = connection.getresponse()
             self.server.state.event("upstream_response", request=request, status=response.status)

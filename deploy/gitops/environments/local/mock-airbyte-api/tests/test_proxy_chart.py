@@ -18,6 +18,21 @@ def render(*arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.mark.parametrize("arguments,expected", [([], "300"), (["--set", "upstreamTimeout=450"], "450")])
+def test_proxy_chart_configures_the_upstream_timeout(arguments: list[str], expected: str) -> None:
+    result = render(
+        "--set-string",
+        "image=synthetic-toolbox:test",
+        "--set-string",
+        "upstream=http://synthetic.invalid:8001",
+        *arguments,
+    )
+    assert result.returncode == 0, result.stderr
+    deployment = next(item for item in yaml.safe_load_all(result.stdout) if item["kind"] == "Deployment")
+    env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+    assert next(entry["value"] for entry in env if entry["name"] == "MOCK_UPSTREAM_TIMEOUT") == expected, arguments
+
+
 def test_proxy_chart_uses_toolbox_direct_upstream_and_separate_auth() -> None:
     result = render(
         "--set-string", "image=synthetic-toolbox:test", "--set-string", "upstream=http://synthetic.invalid:8001"

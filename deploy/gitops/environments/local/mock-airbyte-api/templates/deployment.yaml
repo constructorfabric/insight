@@ -39,6 +39,8 @@ spec:
               value: {{ required "journalRetention is required" .Values.journalRetention | quote }}
             - name: MOCK_AIRBYTE_UPSTREAM
               value: {{ required "upstream is required (direct Airbyte origin)" .Values.upstream | quote }}
+            - name: MOCK_UPSTREAM_TIMEOUT
+              value: {{ required "upstreamTimeout is required" .Values.upstreamTimeout | quote }}
             - name: MOCK_CONTROL_TOKEN
               valueFrom:
                 secretKeyRef:

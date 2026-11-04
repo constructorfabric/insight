@@ -228,7 +228,7 @@ def test_journal_and_logs_exclude_headers_query_paths_and_bodies(caplog: pytest.
             request(
                 proxy,
                 "POST",
-                "/api/v1/synthetic-secret-path?token=synthetic-secret-query",
+                "/api/v1/synthetic-secret-Path?token=synthetic-secret-query",
                 b'{"password":"synthetic-secret-body"}',
                 "synthetic-secret-auth",
             )[0]
@@ -396,6 +396,7 @@ def test_header_limit_rejects_an_unfinished_oversize_header_without_waiting_for_
 def test_accepted_but_lost_still_drops_when_upstream_body_evidence_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("proxy_transport.IO_TIMEOUT_SECONDS", 0.02)
     with running() as (proxy, upstream):
+        proxy.upstream_timeout = 0.02
         proxy.state.configure({"rules": [rule({"type": "drop_response"})]})
         with pytest.raises(http.client.RemoteDisconnected):
             request(proxy, "POST", "/api/v1/jobs/slow")
