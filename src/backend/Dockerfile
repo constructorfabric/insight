@@ -52,7 +52,7 @@ COPY . .
 RUN cargo build --release --locked --bin previews
 
 # ─── watchexec, the compose auto-reload wrapper ─────────────────────────────
-FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS watchexec
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS watchexec
 
 ARG TARGETARCH
 ARG WATCHEXEC_VERSION=2.3.2
@@ -73,7 +73,7 @@ RUN set -eux; \
     install -m 0755 "/tmp/watchexec-${WATCHEXEC_VERSION}-${WX_ARCH}/watchexec" /usr/local/bin/watchexec
 
 # ─── runtime bases ──────────────────────────────────────────────────────────
-FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS runtime
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS runtime
 
 # The base digest is pinned, so the security pocket is only picked up if this
 # stage upgrades explicitly; without it the image ships whatever the pin froze.
