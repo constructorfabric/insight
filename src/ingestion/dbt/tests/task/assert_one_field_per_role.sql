@@ -33,8 +33,9 @@ WITH bound AS (
         field_id,
         argMax(role, (valid_from, recorded_at)) AS role
     FROM config.task_field_roles FINAL
-    WHERE is_deleted = 0 AND valid_from <= now64(3)
+    WHERE valid_from <= now64(3)
     GROUP BY insight_source_id, data_source, field_id
+    HAVING argMax(is_deleted, (valid_from, recorded_at)) = 0
 )
 
 SELECT
