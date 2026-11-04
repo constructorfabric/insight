@@ -256,7 +256,10 @@ describe("Explore pane", () => {
     pane();
     const lens = renderHook(() => usePortalLens());
 
-    screen.getByRole("button", { name: "Git output" }).focus();
+    screen.getByRole("button", { name: "Development" }).focus();
+    await userEvent.tab();
+    await userEvent.tab();
+    expect(screen.getByRole("button", { name: "Git output" })).toHaveFocus();
     await userEvent.keyboard("{Enter}");
 
     expect(lens.result.current).toBe("Git output");
