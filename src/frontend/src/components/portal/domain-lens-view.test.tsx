@@ -32,6 +32,10 @@ import type { IdentityPerson } from "@/types/insight";
 
 const mocks = vi.hoisted(() => ({
   personId: null as string | null,
+  isAdmin: false,
+  unattributed: new Map<string, number | null>(),
+  /** The anchor each unattributed read was asked with; null is "not asked". */
+  unattributedAnchors: [] as Array<string | null>,
   tree: undefined as IdentityPerson | undefined,
   roster: [] as import("@/api/identity-client").PeopleListItem[],
   grid: {
@@ -76,6 +80,12 @@ vi.mock("@/queries/ic-dashboard", () => ({
 // `useOrgScope` reads the deployment's visibility policy, and its flat branch
 // reads the roster. This suite is about the view, so both answer statically.
 vi.mock("@/queries/identity-me", () => ({
+  useIsAdmin: () => ({
+    isAdmin: mocks.isAdmin,
+    isPending: false,
+    isError: false,
+    retry: () => {},
+  }),
   useVisibilityPolicy: () => ({
     policy: "org_chart",
     isFlat: false,
@@ -111,6 +121,10 @@ vi.mock("@/queries/metric-results", () => ({
   // Only the coverage section reads the set form; it fetches its own
   // period-only collection rather than riding the zone grid.
   useMetricCollectionSet: () => mocks.collectionSet,
+  useUnattributedShares: (_keys: readonly string[], anchor: string | null) => {
+    mocks.unattributedAnchors.push(anchor);
+    return anchor ? mocks.unattributed : new Map();
+  },
 }));
 vi.mock("@/queries/metric-definitions", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -222,6 +236,9 @@ const HEADLINE_CONFIG: LensConfig = {
 beforeEach(() => {
   mocks.call = 0;
   mocks.requested = [];
+  mocks.isAdmin = false;
+  mocks.unattributed = new Map();
+  mocks.unattributedAnchors = [];
   seedHappyOrg();
   mocks.grid.isPending = false;
   mocks.grid.isError = false;
@@ -276,6 +293,43 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
     render(<DomainLensView config={HEADLINE_CONFIG} />);
     // 100 total / 2 active = 50 per person, not 25
     expect(screen.getByText(/50 commits per active person/)).toBeInTheDocument();
+  });
+});
+
+describe("headline: the organisation's unattributed share", () => {
+  const UNATTRIBUTED_CONFIG: LensConfig = {
+    ...HEADLINE_CONFIG,
+    sections: [{ kind: "headline", metrics: ["t.commits"], unattributed: true }],
+  };
+
+  it("sets the work no person reaches beside the team total, not inside it", () => {
+    mocks.isAdmin = true;
+    mocks.unattributed = new Map([["t.commits", 7]]);
+    render(<DomainLensView config={UNATTRIBUTED_CONFIG} />);
+
+    expect(screen.getByText("100 commits")).toBeInTheDocument();
+    expect(screen.getByText(/25 commits per active person/)).toBeInTheDocument();
+    expect(
+      screen.getByText("+ 7 commits unattributed · 107 commits in all")
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["a viewer the org-chart policy refuses it to", () => {}],
+    [
+      "a subtree smaller than the organisation",
+      () => {
+        mocks.isAdmin = true;
+        act(() => portalRouter.set({ scope: pid("a"), direct: false }));
+      },
+    ],
+  ])("asks for no share for %s", (_name, arrange) => {
+    arrange();
+    mocks.unattributed = new Map([["t.commits", 7]]);
+    render(<DomainLensView config={UNATTRIBUTED_CONFIG} />);
+
+    expect(mocks.unattributedAnchors.every((anchor) => anchor === null)).toBe(true);
+    expect(screen.queryByText(/unattributed/)).toBeNull();
   });
 });
 

@@ -299,6 +299,8 @@ sources:
         evidence_granularity: derived_population
       - key: in_progress_seconds
         evidence_granularity: derived_population
+      - key: logged_hours
+        evidence_granularity: derived_population
       - key: stale_in_progress
         evidence_granularity: derived_population
       - key: dev_time_hours
@@ -2674,6 +2676,25 @@ metrics:
         measure_key: estimation_error_pct
       - input_role: denominator
         measure_key: estimation_samples
+    dimensions: []
+  - metric_key: tasks.logged_hours
+    source_key: task
+    subject: predictability
+    tags:
+      - duration
+    label: Logged time
+    short_label: Logged hrs
+    description: Hours logged against issues
+    explanation: All work time logged in the tracker during the period, whatever the issue's status on the day it was logged.
+    unit: h
+    format: decimal
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: logged_hours
     dimensions: []
   - metric_key: tasks.worklog_accuracy
     source_key: task

@@ -9,7 +9,8 @@ use super::batch::{RankedDimension, RankedGroup};
 use super::compiler::{
     BreakdownQueryRow, HistogramQueryRow, PRESENT, PRESENT_COMPARE, PeerQueryRow, PeriodQueryRow,
     PooledHistogramQueryRow, RankingQueryRow, RollupQueryRow, TimeseriesQueryRow,
-    UNKNOWN_DIMENSION_LABEL, UNKNOWN_DIMENSION_VALUE, VALUE_COMPARE, dimension_aliases,
+    UNKNOWN_DIMENSION_LABEL, UNKNOWN_DIMENSION_VALUE, UnattributedQueryRow, VALUE_COMPARE,
+    dimension_aliases,
 };
 use super::dto::{
     BreakdownValueDto, BreakdownWindowValueDto, ComputationDto, HistogramBinDto, HistogramValueDto,
@@ -348,6 +349,18 @@ pub fn build_histogram_view(
     }
 }
 
+/// An aggregate with no GROUP BY answers exactly one row; any other count is a
+/// broken query, not an empty reading.
+pub fn build_unattributed_view(
+    rows: Vec<UnattributedQueryRow>,
+) -> Result<MetricResultViewDto, CanonicalError> {
+    let [row] = <[UnattributedQueryRow; 1]>::try_from(rows).map_err(|rows| {
+        tracing::error!(rows = rows.len(), "unattributed query must answer one row");
+        CanonicalError::internal("metric result shape mismatch").create()
+    })?;
+    Ok(MetricResultViewDto::Unattributed { value: row.value })
+}
+
 /// The pooled counterpart: one row per observed dimension tuple, binned over
 /// every selected entity's events together. Unlike the per-entity shape there
 /// is no roster to list against, so a tuple with no events simply has no row —
@@ -494,6 +507,7 @@ fn view_size(view: &MetricResultViewDto) -> usize {
         MetricResultViewDto::Peer { values } => values.len(),
         MetricResultViewDto::Breakdown { values, .. } => values.len(),
         MetricResultViewDto::Rollup { values, .. } => values.len(),
+        MetricResultViewDto::Unattributed { .. } => 1,
         MetricResultViewDto::Histogram { values, .. } => {
             values.iter().map(|value| value.bins.len()).sum()
         }

@@ -126,6 +126,10 @@ const TASK_DELIVERY_COLLECTION: MetricCollectionConfig = {
       views: [{ view: "period" }, { view: "peer" }],
     },
     {
+      key: "tasks.logged_hours",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
       key: "tasks.worklog_accuracy",
       views: [{ view: "period" }, { view: "peer" }],
     },

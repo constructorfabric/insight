@@ -147,6 +147,11 @@ pub struct BreakdownQueryRow {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct UnattributedQueryRow {
+    pub value: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RollupQueryRow {
     pub value: Option<f64>,
     #[serde(default, deserialize_with = "optional_u64")]
@@ -984,6 +989,40 @@ fn grouped_value_expr_within(
 // the builder renders as one [v, v] bin. Validation guarantees the metric is
 // a median or percentile (single-measure predicate), so
 // metric_where/metric_params fit.
+/// One tenant-wide row: the metric's sum over the rows that resolve to no
+/// person. No person grain and no alias collapse — there is no person whose
+/// identities could be folded.
+pub(crate) fn compile_unattributed_query(
+    def: &MetricDefinition,
+    req: &ValidatedMetricResultsRequest,
+    filters: &[ValidatedDimensionFilter],
+) -> CompiledQuery {
+    let mut params = grouped_value_params(def);
+    let read = resolved_observation_from(
+        def.observation_source(),
+        &PersonScope::Unattributed(req),
+        &[],
+        ScanScope::PrimaryOnly,
+        &mut params,
+    );
+    params.extend(metric_where_params(def, req));
+    let filter_where = dimension_filter_where(filters, &mut params);
+    let observation_table = &read.from;
+    let value_expr = grouped_value_expr(def);
+    let inner = format!(
+        r"
+        SELECT
+            {value_expr} AS value
+        FROM {observation_table}
+        WHERE {metric_where}
+          {filter_where}
+        ",
+        metric_where = metric_where(def, req.enforce_tenant_scope),
+    );
+    let sql = transformed_single(def, inner);
+    CompiledQuery { sql, params }
+}
+
 pub(crate) fn compile_histogram_query(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
@@ -1934,12 +1973,19 @@ enum PersonScope<'a> {
     /// resolves to a person joins the pool; only the date range bounds the
     /// scan.
     TenantWide(&'a ValidatedMetricResultsRequest),
+    /// The tenant's rows that resolve to nobody, except those an account
+    /// binding sends to the excluded person on purpose. Binds only the date
+    /// range, like `TenantWide`.
+    Unattributed(&'a ValidatedMetricResultsRequest),
 }
 
 impl PersonScope<'_> {
     fn request(&self) -> &ValidatedMetricResultsRequest {
         match self {
-            Self::Requested(req) | Self::CohortMembers(req) | Self::TenantWide(req) => req,
+            Self::Requested(req)
+            | Self::CohortMembers(req)
+            | Self::TenantWide(req)
+            | Self::Unattributed(req) => req,
         }
     }
 }
@@ -2069,6 +2115,14 @@ fn resolved_observation_from(
                 scan_window_predicate(req, "obs.metric_date", "\n          ", scan, params);
             (date_scope, "resolved_person_id != ''".to_owned())
         }
+        PersonScope::Unattributed(req) => {
+            let date_scope =
+                scan_window_predicate(req, "obs.metric_date", "\n          ", scan, params);
+            (
+                date_scope,
+                "resolved_person_id = '' AND NOT account_bound".to_owned(),
+            )
+        }
     };
 
     // Null-proof under EITHER join_use_nulls setting (queries differ): each
@@ -2092,7 +2146,8 @@ fn resolved_observation_from(
                     coalesce(person_map.email, '') != '',
                     toString(assumeNotNull(person_map.person_id)),
                     ''
-                ) AS resolved_person_id
+                ) AS resolved_person_id,
+                coalesce(account_map.account_id, '') != '' AS account_bound
             FROM {table} AS obs
             LEFT JOIN {ACCOUNT_ASSIGNMENT_RELATION} AS account_map
                 ON account_map.source_type = obs.account_source_type
@@ -3107,6 +3162,37 @@ mod tests {
             assert!(!query.sql.contains("GROUP BY entity_id"));
             assert_eq!(query.sql.matches('?').count(), query.params.len());
         }
+    }
+
+    #[test]
+    fn unattributed_reads_the_rows_no_person_resolves_tenant_wide() {
+        let query = compile_unattributed_query(&sum_metric(), &request(), &[]);
+
+        assert!(
+            query
+                .sql
+                .contains("WHERE resolved_person_id = '' AND NOT account_bound"),
+            "only rows resolving to nobody, an excluded binding not among them"
+        );
+        assert!(!query.sql.contains("GROUP BY"), "one tenant-wide row");
+        assert!(
+            !query
+                .params
+                .iter()
+                .any(|param| param.ends_with("00000000000a")),
+            "the requested people do not scope the reading"
+        );
+        assert_eq!(tenant_binds(&query), 1);
+        assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
+    fn person_reads_keep_the_excluded_binding_resolving_to_nobody() {
+        let query =
+            compile_rollup_query(&sum_metric(), &request(), &["tool".to_owned()], &[], None);
+
+        assert!(query.sql.contains("AS account_bound"));
+        assert!(query.sql.contains("WHERE resolved_person_id IN (?, ?)"));
     }
 
     #[test]

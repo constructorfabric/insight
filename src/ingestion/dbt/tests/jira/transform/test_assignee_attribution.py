@@ -1,9 +1,10 @@
-"""An assigned issue keeps its row in `task_issue_state` whatever its assignee's profile says.
+"""Every issue keeps its row in `task_issue_state`, whatever its assignee's profile says.
 
-The table is the per-person attribution root, and the analytics runtime resolves
-its rows account-first, so an issue needs only its assignee's account to stay:
-an account with no email and one the user directory never listed both keep
-their issues under the account. Only an issue with no assignee has no row.
+The analytics runtime resolves rows account-first, so an issue needs only its
+assignee's account to reach a person: an account with no email and one the user
+directory never listed both keep their issues under the account. An issue with
+no assignee keeps a row with no account and no email, which resolves to nobody
+and counts only in the organisation's unattributed share.
 
 Seeds `silver.class_task_field_history` and `silver.class_task_users` directly:
 the subject is what gold does with them, as in `test_title_role`.
@@ -112,5 +113,8 @@ def test_an_assigned_issue_keeps_its_row_under_the_account(
     )
 
 
-def test_an_unassigned_issue_attributes_to_nobody(attribution: dict[str, dict[str, Any]]) -> None:
-    assert "ATR-4" not in attribution, f"an unassigned issue has no row: {attribution.get('ATR-4')}"
+def test_an_unassigned_issue_keeps_a_row_that_names_nobody(attribution: dict[str, dict[str, Any]]) -> None:
+    row = attribution.get("ATR-4")
+    assert row is not None, "should keep a row: ATR-4"
+    assert (row["tenant_id"], row["entity_id"], row["account_id"]) == (TENANT, "", ""), f"attribution of ATR-4: {row}"
+    assert (row["account_source_type"], row["account_source_id"]) == ("jira", SOURCE), f"source of ATR-4: {row}"

@@ -852,9 +852,11 @@ models:
           in lockstep with identity's `insight_source_id` minting.
       - name: account_id
         description: >
-          Tracker account id of the assignee or worklog author. Rows resolve
+          Tracker account id of the assignee or worklog author; '' with an
+          empty entity_id on an unassigned issue's rows. Rows resolve
           account-first through `identity.account_assignment`; an account
-          bound to the excluded person attributes to nobody.
+          bound to the excluded person attributes to nobody. A row that
+          resolves to no person otherwise counts in the unattributed share.
       - name: metric_date
         description: >
           Observation date: close date for closed-issue measures, transition
@@ -890,6 +892,7 @@ models:
                   - reopened_within_14d
                   - worklog_seconds
                   - in_progress_seconds
+                  - logged_hours
                   - stale_in_progress
                   - dev_time_hours
                   - resolution_days
@@ -945,11 +948,12 @@ models:
   - name: task_issue_state
     description: >
       Per-issue lifecycle state for the task-delivery observation pipeline:
-      one row per assigned issue with the assignee's tracker account and email,
-      the current status category, the close time, and the scalar fields the
-      observation measures read. The per-person attribution root, not a census:
-      unassigned and deleted issues have no row; an assignee missing from the
-      user directory keeps its issues under the account. Materialized so the
+      one row per issue with the assignee's tracker account and email, the
+      current status category, the close time, and the scalar fields the
+      observation measures read. Deleted issues have no row. An unassigned
+      issue keeps its row with an empty account and email, so it counts in the
+      unattributed share; an assignee missing from the user directory keeps
+      its issues under the account. Materialized so the
       field-history pivot runs once per build instead of once per measure
       branch.
     columns:
@@ -970,7 +974,7 @@ models:
       - name: account_source_id
         description: "Raw connector source id of the assignee account"
       - name: account_id
-        description: "Tracker account id of the assignee"
+        description: "Tracker account id of the assignee; '' for an unassigned issue"
         tests:
           - not_null
       - name: issue_id

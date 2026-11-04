@@ -824,6 +824,14 @@ is an order statistic instead, and always answers with one that did.
 - Shape: percent, higher_is_better
 - Notes: 100 minus the average deviation between original estimates and time spent, over days whose estimated work stayed within twice the estimate. 100 means estimates matched reality; over- and under-estimation count equally.
 
+## tasks.logged_hours — Logged time
+
+- Source: task (task_metric_observations)
+- Reads: logged_hours
+- Formula: sum(logged_hours)
+- Shape: decimal, higher_is_better, unit h
+- Notes: All work time logged in the tracker during the period, whatever the issue's status on the day it was logged.
+
 ## tasks.worklog_accuracy — Worklog accuracy
 
 - Source: task (task_metric_observations)

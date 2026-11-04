@@ -11,7 +11,7 @@ use super::compiler::{
     CompiledQuery, PeerQueryRow, PeriodQueryRow, compile_breakdown_query,
     compile_group_ranking_query, compile_histogram_query, compile_peer_batch_query,
     compile_period_batch_query, compile_pooled_histogram_query, compile_rollup_query,
-    compile_timeseries_query,
+    compile_timeseries_query, compile_unattributed_query,
 };
 use super::failure::ViewAbsence;
 use super::validation::{
@@ -53,6 +53,7 @@ pub enum UnbatchedView {
     PooledHistogram {
         dimensions: Vec<String>,
     },
+    Unattributed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,6 +273,15 @@ pub fn plan_queries(
                         (metric_index, view_index),
                         dimensions,
                     ));
+                }
+                ValidatedMetricView::Unattributed => {
+                    singles.push(PlannedQuery::Single {
+                        metric_index,
+                        view_index,
+                        def: Box::new(metric.def.clone()),
+                        view: UnbatchedView::Unattributed,
+                        query: compile_unattributed_query(&metric.def, req, &metric.filters),
+                    });
                 }
             }
         }

@@ -38,8 +38,8 @@
 -- assignee's account, carried with its email when the tracker states one: the
 -- analytics runtime resolves account-first through identity, so an assignee
 -- with no email still reaches a person once identity binds the account.
--- This is the per-person attribution root, not a census of issues: an
--- unassigned issue attributes to nobody and has no row.
+-- An unassigned issue keeps its row with an empty account and email: it
+-- resolves to no person and counts only in the unattributed share.
 -- Class reads keep FINAL: RMT parts are not duplicate-immune and argMax over
 -- a stale version would skew the pivot.
 
@@ -341,4 +341,3 @@ LEFT JOIN resolution_default AS rd
 -- unobserved issues stay in — the entity still exists, its data is merely
 -- stale. Issues with no availability events default to present ('').
 WHERE p.availability NOT IN ('deleted', 'trashed')
-  AND p.assignee_account_id != ''

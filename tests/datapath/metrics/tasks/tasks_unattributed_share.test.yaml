@@ -1,0 +1,62 @@
+spec_version: 1
+description: >
+  Metric: tasks.closed and tasks.logged_hours — work that reaches no person is
+  an explicit unattributed share of the organisation's total, #4104.
+  How it's computed (bronze → silver → gold → analytics):
+    • bronze: Jira issues closed in April and worklogs logged against them,
+      split between dave's account (no email, bound to dave by an operator),
+      a former user's account nothing binds, and no assignee at all.
+    • gold:   every issue keeps a row, an unassigned one with an empty account
+      and email; worklogs stay keyed by their author's account.
+    • analytics: dave's account resolves to dave; the unbound account and the
+      unassigned issues resolve to nobody, and the unattributed view sums
+      exactly those rows across the tenant.
+
+  Cases: dave closes DAVE-1 and DAVE-2; the former user closes GONE-1; NONE-1
+  and NONE-2 close unassigned → dave 2, unattributed 3, organisation 5.
+  Dave logs 6 h on DAVE-1 and 2 h on the unassigned NONE-1; the former user
+  logs 4 h on GONE-1 → dave 8 h, unattributed 4 h, organisation 12 h.
+
+identity_accounts:
+  - {source_type: jira, source_id: jira-test, account_id: dave-acct, person: dave@example.com}
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/dave
+
+  bronze_jira.jira_user:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-dave-acct, account_id: dave-acct, email: null, display_name: Dave Delta}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-former-acct, account_id: former-acct, email: null, display_name: Former user, active: false}
+
+  bronze_jira.jira_statuses:
+    - $ref: ../templates/jira_task.yaml#/templates/status_open
+    - $ref: ../templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: ../templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: ../templates/jira_task.yaml#/templates/field_status
+    - $ref: ../templates/jira_task.yaml#/templates/field_assignee
+    - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
+
+  config.field_value_defaults:
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default_unknown
+    - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default_unknown
+
+  bronze_jira.jira_issue:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: "41041", jira_id: "41041", unique_key: jira-test-DAVE-1, id_readable: DAVE-1, created: "2026-04-06T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-acct","displayName":"Dave Delta"}}'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: "41042", jira_id: "41042", unique_key: jira-test-DAVE-2, id_readable: DAVE-2, created: "2026-04-06T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-acct","displayName":"Dave Delta"}}'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: "41043", jira_id: "41043", unique_key: jira-test-GONE-1, id_readable: GONE-1, created: "2026-04-06T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"former-acct","displayName":"Former user"}}'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: "41044", jira_id: "41044", unique_key: jira-test-NONE-1, id_readable: NONE-1, created: "2026-04-06T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":null}'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: "41045", jira_id: "41045", unique_key: jira-test-NONE-2, id_readable: NONE-2, created: "2026-04-06T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":null}'}
+
+  bronze_jira.jira_issue_history:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: DAVE-1, jira_id: "41041", changelog_id: "410411", unique_key: jira-test-DAVE1-410411, created_at: "2026-04-08T14:00:00.000+0000", author_account_id: dave-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"Closed","to":"6"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: DAVE-2, jira_id: "41042", changelog_id: "410421", unique_key: jira-test-DAVE2-410421, created_at: "2026-04-10T14:00:00.000+0000", author_account_id: dave-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"Closed","to":"6"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: GONE-1, jira_id: "41043", changelog_id: "410431", unique_key: jira-test-GONE1-410431, created_at: "2026-04-10T14:00:00.000+0000", author_account_id: former-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"Closed","to":"6"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: NONE-1, jira_id: "41044", changelog_id: "410441", unique_key: jira-test-NONE1-410441, created_at: "2026-04-10T14:00:00.000+0000", author_account_id: dave-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"Closed","to":"6"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: NONE-2, jira_id: "41045", changelog_id: "410451", unique_key: jira-test-NONE2-410451, created_at: "2026-04-11T14:00:00.000+0000", author_account_id: former-acct, items: '[{"field":"Status","fieldId":"status","fromString":"Open","from":"1","toString":"Closed","to":"6"}]'}
+
+  bronze_jira.jira_worklogs:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_worklog, tenant_id: "{{ tenant }}", worklog_id: 410411, id_readable: DAVE-1, jira_id: "41041", unique_key: jira-test-worklog-DAVE-1, author_account_id: dave-acct, started: "2026-04-07T10:00:00.000+0000", time_spent_seconds: 21600, _airbyte_raw_id: "00000000-0000-0000-0000-000000410411"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_worklog, tenant_id: "{{ tenant }}", worklog_id: 410441, id_readable: NONE-1, jira_id: "41044", unique_key: jira-test-worklog-NONE-1, author_account_id: dave-acct, started: "2026-04-09T10:00:00.000+0000", time_spent_seconds: 7200, _airbyte_raw_id: "00000000-0000-0000-0000-000000410441"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_worklog, tenant_id: "{{ tenant }}", worklog_id: 410431, id_readable: GONE-1, jira_id: "41043", unique_key: jira-test-worklog-GONE-1, author_account_id: former-acct, started: "2026-04-09T10:00:00.000+0000", time_spent_seconds: 14400, _airbyte_raw_id: "00000000-0000-0000-0000-000000410431"}

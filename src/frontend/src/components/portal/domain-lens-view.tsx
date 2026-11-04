@@ -47,7 +47,9 @@ import {
 import { GROUPS, visibleGroups } from "@/lib/insight/groups";
 import type { PersonCoverage } from "@/lib/insight/coverage";
 import { useScopeCoverage } from "@/lib/portal/use-scope-coverage";
-import { useVisibilityPolicy } from "@/queries/identity-me";
+import { useIsAdmin, useVisibilityPolicy } from "@/queries/identity-me";
+import { useVisibleRoster } from "@/queries/visible-roster";
+import { showsUnattributedShare } from "@/lib/portal/unattributed-share";
 import {
   availableSlices,
   cohortKey,
@@ -131,12 +133,16 @@ import { usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import type { TeamMember } from "@/types/insight";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
-import { useMetricCollection } from "@/queries/metric-results";
+import {
+  useMetricCollection,
+  useUnattributedShares,
+} from "@/queries/metric-results";
 import { useMemberGridData } from "@/queries/member-grid";
 import { TEXT_EYEBROW, TEXT_FIGURE, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
+const NO_METRICS: readonly string[] = [];
 const OWN_NAME = "You";
 
 /**
@@ -238,6 +244,24 @@ export function DomainLensView({
   const memberIds = useMemo(
     () => members.map((m) => normalizePersonId(m.person_id)),
     [members]
+  );
+  const { isAdmin } = useIsAdmin();
+  const visibleRoster = useVisibleRoster(personId === null);
+  const unattributedSpec = config.sections.find(
+    (section): section is Extract<SectionSpec, { kind: "headline" }> =>
+      section.kind === "headline" && section.unattributed === true
+  );
+  const readsOrganisation = showsUnattributedShare({
+    personal: personId !== null,
+    scoped: scoped !== null,
+    mayReadOrganisation: isFlat || isAdmin,
+    scopeMemberCount: memberIds.length,
+    visibleCount: visibleRoster.isPending ? 0 : visibleRoster.roster.length,
+  });
+  const unattributedByKey = useUnattributedShares(
+    unattributedSpec?.metrics ?? NO_METRICS,
+    unattributedSpec && readsOrganisation ? (memberIds[0] ?? null) : null,
+    dateRange
   );
   // Metric rows are keyed by the normalized id; the display name rides along
   // so a drilldown row can say whose work it was.
@@ -675,6 +699,7 @@ export function DomainLensView({
           tableIsError={tableData.isError}
           tableRefetch={tableData.refetch}
           memberIds={memberIds}
+          unattributedByKey={unattributedByKey}
           personal={personId !== null}
           personalReach={personalReach}
           cohortOf={cohortOf}
@@ -757,6 +782,7 @@ function Section({
   tableIsError,
   tableRefetch,
   memberIds,
+  unattributedByKey,
   personal,
   personalReach,
   cohortOf,
@@ -782,6 +808,8 @@ function Section({
   tableIsError: boolean;
   tableRefetch: () => void;
   memberIds: readonly string[];
+  /** Organisation-wide work no person reaches, per metric; empty below org level. */
+  unattributedByKey: Map<string, number | null>;
   /** One person is read: nothing routes into an org view. */
   personal: boolean;
   personalReach: ReadonlySet<string> | null;
@@ -802,6 +830,7 @@ function Section({
           metrics={spec.metrics}
           grid={grid}
           memberIds={memberIds}
+          unattributedByKey={unattributedByKey}
         />
       );
     case "stat-tiles":
@@ -1301,10 +1330,12 @@ function HeadlineSection({
   metrics,
   grid,
   memberIds,
+  unattributedByKey,
 }: {
   metrics: readonly string[];
   grid: GridData;
   memberIds: readonly string[];
+  unattributedByKey: Map<string, number | null>;
 }) {
   const cards = metrics
     .map((key) => {
@@ -1317,7 +1348,8 @@ function HeadlineSection({
       // The records that carry the figure: its own, unless the family says
       // another metric holds them (a line count is carried by commits).
       const carrier = grid.byKey.get(evidenceMetricFor(key));
-      return { key, r, now, prev, isSum, carrier };
+      const unattributed = isSum ? (unattributedByKey.get(key) ?? null) : null;
+      return { key, r, now, prev, isSum, carrier, unattributed };
     })
     .filter((x): x is NonNullable<typeof x> => x != null);
   if (!cards.length) return null;
@@ -1376,6 +1408,8 @@ function HeadlineCard({
     prev: number | null;
     isSum: boolean;
     carrier: NormalizedMetricResult | undefined;
+    /** Organisation-wide work that reaches no person; null below org level. */
+    unattributed: number | null;
   };
   targets: readonly { selection: MetricEvidenceSelection; label: string }[];
   memberIds: readonly string[];
@@ -1410,6 +1444,16 @@ function HeadlineCard({
           ? `team total · ${formatMetricValue(perCapita(c.r, memberIds), c.r.format, c.r.unit)} per active person`
           : "median / person"}
       </div>
+      {/* INVARIANT: the share stays outside the team total, or the
+        per-person figure would absorb work nobody did. */}
+      {c.unattributed != null && c.unattributed > 0 ? (
+        <div
+          data-slot="headline-unattributed"
+          className="text-xs text-muted-foreground"
+        >
+          {`+ ${formatMetricValue(c.unattributed, c.r.format, c.r.unit)} unattributed · ${formatMetricValue(c.now + c.unattributed, c.r.format, c.r.unit)} in all`}
+        </div>
+      ) : null}
     </CardContent>
   );
 
