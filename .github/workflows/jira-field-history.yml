@@ -24,6 +24,8 @@ on:
       - src/ingestion/dbt/macros/silver_incremental_watermark.sql
       - src/ingestion/silver/task-tracking/class_task_field_history.sql
       - src/ingestion/dbt/tests/jira/**
+      # The post-sync checks test_post_sync_checks.py plants defects for.
+      - src/ingestion/dbt/tests/task/**
       - src/ingestion/dbt/tests/bronze.py
       - src/ingestion/dbt/dbt_project.yml
       # The suite's bronze is this connector's catalogue, run through the
@@ -41,6 +43,8 @@ on:
       - src/ingestion/dbt/macros/silver_incremental_watermark.sql
       - src/ingestion/silver/task-tracking/class_task_field_history.sql
       - src/ingestion/dbt/tests/jira/**
+      # The post-sync checks test_post_sync_checks.py plants defects for.
+      - src/ingestion/dbt/tests/task/**
       - src/ingestion/dbt/tests/bronze.py
       - src/ingestion/dbt/dbt_project.yml
       # The suite's bronze is this connector's catalogue, run through the
