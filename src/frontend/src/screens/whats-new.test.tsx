@@ -27,39 +27,40 @@ describe("WhatsNewBody", () => {
   it("renders the release header and stamp", () => {
     renderScreen();
     expect(
-      screen.getByRole("heading", { name: "What's new · 31 August 2026" })
+      screen.getByRole("heading", { name: "What's new · November 2026" })
     ).toBeInTheDocument();
-    expect(screen.getByText("26.08")).toBeInTheDocument();
-    expect(screen.getByText("13 improvements")).toBeInTheDocument();
+    expect(screen.getByText("26.11")).toBeInTheDocument();
+    expect(screen.getByText("22 improvements")).toBeInTheDocument();
     expect(
-      screen.getByText("more data coming in, and the new UI over it")
+      screen.getByText("dashboards you build and share, and alerts on them")
     ).toBeInTheDocument();
   });
 
   it("groups the release into sections, as the written notes do", () => {
     renderScreen();
-    // "Platform" names a section in both the release and Coming next, so scope
-    // the assertions to the release card.
     const release = within(sectionFor("Improvements you'll notice"));
     for (const title of [
       "New UI",
-      "Sign-in",
-      "Git",
+      "Dashboards",
+      "Alerts",
       "Connectors",
-      "Identity",
-      "Data health",
-      "Reports",
+      "AI & Cost",
+      "Collaboration",
+      "Manage",
+      "Fixes",
     ]) {
       expect(release.getByRole("heading", { name: title })).toBeInTheDocument();
     }
     for (const title of [
-      "The pages the portal has now",
-      "Git data comes through our own proxy",
-      "Git output split by what reached the default branch",
-      "Jira: the whole data set, not just open issues",
-      "Data health — when each source last synced",
-      "See the records behind a number",
-      "Claude Team: seats and spend collected",
+      "Six places in the sidebar",
+      "Build your own dashboards",
+      "Share a dashboard, or a folder of them",
+      "Get told when a metric crosses a line",
+      "Allure TestOps: test results come in",
+      "GitLab: rebuilt on the git proxy",
+      "One meeting, counted once",
+      "Grant admin from the person window",
+      "“No data yet” on a new installation",
     ]) {
       expect(release.getByRole("heading", { name: title })).toBeInTheDocument();
     }
@@ -68,10 +69,10 @@ describe("WhatsNewBody", () => {
     expect(screen.queryByText("Git output")).not.toBeInTheDocument();
   });
 
-  it("renders the data-health entry", () => {
+  it("names every alert destination", () => {
     renderScreen();
     expect(
-      screen.getByText(/lists each source with the state of its last sync/)
+      screen.getByText(/posts to Slack, Discord, Telegram or Zulip/)
     ).toBeInTheDocument();
   });
 
@@ -86,6 +87,11 @@ describe("WhatsNewBody", () => {
     renderScreen();
 
     expect(screen.getByText("Earlier releases")).toBeInTheDocument();
+    const august = screen.getByRole("button", {
+      name: /What's new — 31 August 2026/,
+    });
+    expect(august).toHaveTextContent("26.08");
+    expect(august).toHaveTextContent("13 improvements");
     expect(
       screen.getByRole("button", { name: /What's new — 31 July 2026/ })
     ).toHaveTextContent("0.4.69");
@@ -126,6 +132,45 @@ describe("WhatsNewBody", () => {
       "Task delivery",
       "Collaboration",
       "AI adoption",
+    ]) {
+      expect(
+        archived.getByRole("heading", { name: title })
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("carries the August 31 release's own sections and entries", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+
+    const entry = screen.getByRole("button", {
+      name: /What's new — 31 August 2026/,
+    });
+    expect(
+      screen.queryByRole("heading", { name: "The pages the portal has now" })
+    ).not.toBeInTheDocument();
+
+    await user.click(entry);
+
+    const archived = within(entry.parentElement as HTMLElement);
+    for (const title of [
+      "New UI",
+      "Git",
+      "Connectors",
+      "Identity",
+      "Data health",
+      "Reports",
+      "Sign-in",
+    ]) {
+      expect(
+        archived.getByRole("heading", { name: title })
+      ).toBeInTheDocument();
+    }
+    for (const title of [
+      "The pages the portal has now",
+      "Git data comes through our own proxy",
+      "Jira: the whole data set, not just open issues",
+      "Claude Team: seats and spend collected",
     ]) {
       expect(
         archived.getByRole("heading", { name: title })

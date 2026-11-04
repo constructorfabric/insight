@@ -11,21 +11,54 @@ import {
 // Each section is one row of the release card, styled like the archived
 // releases below: its name sits in the left column, its entries on the right.
 const RELEASE_SECTIONS = [
-  { id: "new_ui", itemKeys: ["new_pages", "drilldown"] },
-  { id: "git", itemKeys: ["git_proxy", "default_branch"] },
+  { id: "new_ui", itemKeys: ["rail", "home", "one_view"] },
+  {
+    id: "dashboards",
+    itemKeys: ["build_dashboards", "share_dashboards", "expand_widget"],
+  },
+  { id: "alerts", itemKeys: ["metric_alerts"] },
   {
     id: "connectors",
-    itemKeys: ["bamboohr", "jira", "github", "bitbucket", "claude_team"],
+    itemKeys: ["allure", "youtrack", "gitlab", "jira_twice_daily"],
   },
-  { id: "identity", itemKeys: ["identity_resolution"] },
-  { id: "data_health", itemKeys: ["data_health"] },
-  { id: "reports", itemKeys: ["reports"] },
-  { id: "sign_in", itemKeys: ["github_login"] },
+  { id: "ai_cost", itemKeys: ["codex_credits"] },
+  {
+    id: "collaboration",
+    itemKeys: ["meetings_once", "metric_names", "guests_out"],
+  },
+  {
+    id: "manage",
+    itemKeys: ["admin_role", "connector_schedule", "usage_search"],
+  },
+  {
+    id: "fixes",
+    itemKeys: [
+      "no_data_yet",
+      "numbers_add_up",
+      "default_branch_landing",
+      "stay_signed_in",
+    ],
+  },
 ] as const;
 
 // Past releases stay on the page so a reader can see the whole history, newest
 // first, and are grouped into sections the same way the current one is.
 const PAST_RELEASES = [
+  {
+    id: "release_2026_08_31",
+    sections: [
+      { id: "new_ui", itemKeys: ["new_pages", "drilldown"] },
+      { id: "git", itemKeys: ["git_proxy", "default_branch"] },
+      {
+        id: "connectors",
+        itemKeys: ["bamboohr", "jira", "github", "bitbucket", "claude_team"],
+      },
+      { id: "identity", itemKeys: ["identity_resolution"] },
+      { id: "data_health", itemKeys: ["data_health"] },
+      { id: "reports", itemKeys: ["reports"] },
+      { id: "sign_in", itemKeys: ["github_login"] },
+    ],
+  },
   {
     id: "release_2026_07_31",
     sections: [
