@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-auth
+type: Opaque
+stringData:
+  control_token: {{ required "controlToken is required" .Values.controlToken | quote }}

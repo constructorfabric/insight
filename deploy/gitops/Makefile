@@ -41,15 +41,35 @@ SHELL            := /bin/bash
 local-mock-source-guard:
 	@test "$(ENV)" = local || { echo "mock-source is local-only; set ENV=local"; exit 1; }
 	@test -n "$(NS_APP)" || { echo "NS_APP is required"; exit 1; }
+	@test -n "$(KUBE_CTX)" || { echo "KUBE_CTX is required"; exit 1; }
 
-local-mock-source-install: local-mock-source-guard vpn-up kube-ctx
+local-mock-source-install: local-mock-source-guard
 	@test -n "$(MOCK_TOOLBOX_IMAGE)" || { echo "MOCK_TOOLBOX_IMAGE is required"; exit 1; }
 	helm upgrade --install mock-source environments/local/mock-source \
 		--kube-context "$(KUBE_CTX)" --namespace "$(NS_APP)" \
 		--set-string image="$(MOCK_TOOLBOX_IMAGE)" --wait --timeout 2m
 
-local-mock-source-remove: local-mock-source-guard vpn-up kube-ctx
+local-mock-source-remove: local-mock-source-guard
 	helm uninstall mock-source --kube-context "$(KUBE_CTX)" --namespace "$(NS_APP)" --wait --timeout 2m
+
+.PHONY: local-mock-airbyte-api-install local-mock-airbyte-api-remove local-mock-airbyte-api-profile local-airbyte-manifest-seed
+local-mock-airbyte-api-install: local-mock-source-guard
+	@test -n "$(MOCK_TOOLBOX_IMAGE)" || { echo "MOCK_TOOLBOX_IMAGE is required"; exit 1; }
+	@test -n "$(MOCK_AIRBYTE_UPSTREAM)" || { echo "MOCK_AIRBYTE_UPSTREAM is required"; exit 1; }
+	helm upgrade --install mock-airbyte-api environments/local/mock-airbyte-api \
+		--kube-context "$(KUBE_CTX)" --namespace "$(NS_APP)" \
+		--set-string image="$(MOCK_TOOLBOX_IMAGE)" --set-string upstream="$(MOCK_AIRBYTE_UPSTREAM)" \
+		--wait --timeout 2m
+
+local-mock-airbyte-api-remove: local-mock-source-guard
+	helm uninstall mock-airbyte-api --kube-context "$(KUBE_CTX)" --namespace "$(NS_APP)" --wait --timeout 2m
+
+local-mock-airbyte-api-profile: local-mock-source-guard
+	@mkdir -p .deploy
+	@ENV="$(ENV)" NS_APP="$(NS_APP)" bash scripts/local-airbyte-proxy-profile.sh > .deploy/local-airbyte-proxy.yaml
+
+local-airbyte-manifest-seed:
+	@ENV="$(ENV)" KUBE_CTX="$(KUBE_CTX)" NS_INFRA="$(NS_INFRA)" bash scripts/local-airbyte-manifest-seed.sh
 
 ENV              ?= local
 # Single source of truth for per-env cluster topology. Drives bootstrap,
@@ -967,6 +987,7 @@ system-airbyte: vpn-up kube-ctx
 		AIRBYTE_SETUP_EMAIL="$$AIRBYTE_SETUP_EMAIL" \
 		AIRBYTE_SETUP_ORG="$$AIRBYTE_SETUP_ORG" \
 		bash scripts/airbyte-setup.sh
+	@if [ "$(ENV)" = local ]; then $(MAKE) local-airbyte-manifest-seed; fi
 
 # Argo Workflows: install the chart with workflowNamespaces+instanceID
 # scoped to NS_INFRA *and* NS_APP, then apply the supplemental RBAC
