@@ -11,34 +11,14 @@ import {
 // Each section is one row of the release card, styled like the archived
 // releases below: its name sits in the left column, its entries on the right.
 const RELEASE_SECTIONS = [
-  { id: "new_ui", itemKeys: ["rail", "home", "one_view"] },
   {
     id: "dashboards",
     itemKeys: ["build_dashboards", "share_dashboards", "expand_widget"],
   },
-  { id: "alerts", itemKeys: ["metric_alerts"] },
-  {
-    id: "connectors",
-    itemKeys: ["allure", "youtrack", "gitlab", "jira_twice_daily"],
-  },
+  { id: "connectors", itemKeys: ["allure", "youtrack", "gitlab"] },
   { id: "ai_cost", itemKeys: ["codex_credits"] },
-  {
-    id: "collaboration",
-    itemKeys: ["meetings_once", "metric_names", "guests_out"],
-  },
-  {
-    id: "manage",
-    itemKeys: ["admin_role", "connector_schedule", "usage_search"],
-  },
-  {
-    id: "fixes",
-    itemKeys: [
-      "no_data_yet",
-      "numbers_add_up",
-      "default_branch_landing",
-      "stay_signed_in",
-    ],
-  },
+  { id: "collaboration", itemKeys: ["meetings_once"] },
+  { id: "new_ui", itemKeys: ["rail", "home"] },
 ] as const;
 
 // Past releases stay on the page so a reader can see the whole history, newest

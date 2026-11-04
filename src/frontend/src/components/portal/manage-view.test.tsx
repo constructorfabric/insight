@@ -51,7 +51,7 @@ describe("Manage · What's new", () => {
 
     expect(screen.getByText("Insight · What's new")).toBeInTheDocument();
     expect(
-      screen.getByText("Build your own dashboards")
+      screen.getByText("Custom dashboards")
     ).toBeInTheDocument();
     expect(screen.queryByRole("banner")).not.toBeInTheDocument();
   });

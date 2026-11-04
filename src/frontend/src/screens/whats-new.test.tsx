@@ -30,9 +30,9 @@ describe("WhatsNewBody", () => {
       screen.getByRole("heading", { name: "What's new · November 2026" })
     ).toBeInTheDocument();
     expect(screen.getByText("26.11")).toBeInTheDocument();
-    expect(screen.getByText("22 improvements")).toBeInTheDocument();
+    expect(screen.getByText("10 improvements")).toBeInTheDocument();
     expect(
-      screen.getByText("dashboards you build and share, and alerts on them")
+      screen.getByText("custom dashboards and new connectors")
     ).toBeInTheDocument();
   });
 
@@ -40,27 +40,25 @@ describe("WhatsNewBody", () => {
     renderScreen();
     const release = within(sectionFor("Improvements you'll notice"));
     for (const title of [
-      "New UI",
       "Dashboards",
-      "Alerts",
       "Connectors",
       "AI & Cost",
       "Collaboration",
-      "Manage",
-      "Fixes",
+      "New UI",
     ]) {
       expect(release.getByRole("heading", { name: title })).toBeInTheDocument();
     }
     for (const title of [
-      "Six places in the sidebar",
-      "Build your own dashboards",
-      "Share a dashboard, or a folder of them",
-      "Get told when a metric crosses a line",
-      "Allure TestOps: test results come in",
-      "GitLab: rebuilt on the git proxy",
-      "One meeting, counted once",
-      "Grant admin from the person window",
-      "“No data yet” on a new installation",
+      "Custom dashboards",
+      "Sharing",
+      "Full-size widgets",
+      "Allure TestOps",
+      "YouTrack",
+      "GitLab",
+      "Codex spend",
+      "Meeting counts",
+      "New sidebar",
+      "Home",
     ]) {
       expect(release.getByRole("heading", { name: title })).toBeInTheDocument();
     }
@@ -69,11 +67,17 @@ describe("WhatsNewBody", () => {
     expect(screen.queryByText("Git output")).not.toBeInTheDocument();
   });
 
-  it("names every alert destination", () => {
+  it("puts the new UI last", () => {
     renderScreen();
-    expect(
-      screen.getByText(/posts to Slack, Discord, Telegram or Zulip/)
-    ).toBeInTheDocument();
+    const headings = within(sectionFor("Improvements you'll notice"))
+      .getAllByRole("heading", { level: 4 })
+      .map((heading) => heading.textContent);
+    expect(headings.at(-3)).toBe("New UI");
+  });
+
+  it("leaves out alerts, which not every installation ships", () => {
+    renderScreen();
+    expect(screen.queryByText(/alert/i)).not.toBeInTheDocument();
   });
 
   it("carries no forward-looking section", () => {

@@ -106,20 +106,14 @@
       "release_label": "Release",
       "release": "26.11",
       "highlights_label": "Highlights",
-      "highlights": "22 improvements",
+      "highlights": "10 improvements",
       "focus_label": "Focus",
-      "focus": "dashboards you build and share, and alerts on them"
+      "focus": "custom dashboards and new connectors"
     },
     "improvements_label": "Improvements you'll notice",
     "sections": {
-      "new_ui": {
-        "title": "New UI"
-      },
       "dashboards": {
         "title": "Dashboards"
-      },
-      "alerts": {
-        "title": "Alerts"
       },
       "connectors": {
         "title": "Connectors"
@@ -130,101 +124,50 @@
       "collaboration": {
         "title": "Collaboration"
       },
-      "manage": {
-        "title": "Manage"
-      },
-      "fixes": {
-        "title": "Fixes"
+      "new_ui": {
+        "title": "New UI"
       }
     },
     "items": {
-      "rail": {
-        "title": "Six places in the sidebar",
-        "description_html": "The sidebar now has six places: Home, Dashboards, Explore, People, Reports and Manage. Directions and AI & Cost sit under Explore, Person and People under People, and saved links still open."
-      },
-      "home": {
-        "title": "Home starts with your own numbers",
-        "description_html": "Home was an organisation rollup most people never opened. It now opens for everyone on their own numbers, what needs their attention and their recent dashboards. Managers switch between <strong>Me</strong> and <strong>My team</strong>."
-      },
-      "one_view": {
-        "title": "Every page reads the same for everyone",
-        "description_html": "The Focus and Explanations settings changed what each page showed, per browser, so two people could read one page differently. Both are gone: behind is red and ahead is green everywhere."
-      },
       "build_dashboards": {
-        "title": "Build your own dashboards",
-        "description_html": "Administrators define metrics, widgets and dashboards as JSON under Dashboards. A metric reads a declared dataset or any warehouse table, and a reader picks the time range the dashboard offers. An AI agent can write the same definitions over MCP."
+        "title": "Custom dashboards",
+        "description_html": "Administrators build their own metrics, widgets and dashboards from any table in the warehouse. Each dashboard has its own time range picker. AI agents can build them too, through MCP."
       },
       "share_dashboards": {
-        "title": "Share a dashboard, or a folder of them",
-        "description_html": "A dashboard or folder has an owner, who shares it with people or with everyone, to view or to edit. Dashboards lists <strong>All</strong>, <strong>My dashboards</strong> and <strong>Shared with me</strong>, with folders, tags and pins."
+        "title": "Sharing",
+        "description_html": "Share a dashboard or a folder with specific people or with everyone, to view or to edit. Dashboards lists All, My dashboards and Shared with me."
       },
       "expand_widget": {
-        "title": "Open a widget full size",
-        "description_html": "Every widget but a stat opens in a dialog that nearly fills the window, and its rows open from the chart. A table sorts by any column across all its rows, not only the first page."
-      },
-      "metric_alerts": {
-        "title": "Get told when a metric crosses a line",
-        "description_html": "An alert checks a metric on a schedule and posts to Slack, Discord, Telegram or Zulip when its condition holds, naming the rows that matched. Alerts live under Dashboards; an installation turns them on."
+        "title": "Full-size widgets",
+        "description_html": "Expand a widget to nearly full screen and open the rows behind it. Tables sort by any column."
       },
       "allure": {
-        "title": "Allure TestOps: test results come in",
-        "description_html": "Insight had no source for test results. The new Allure TestOps connector brings launches, test results, test cases, failure categories and defects, each linked back to its page in Allure."
+        "title": "Allure TestOps",
+        "description_html": "New connector: test launches, results, test cases, failure categories and defects, each linked back to Allure."
       },
       "youtrack": {
-        "title": "YouTrack: issues as task data",
-        "description_html": "YouTrack issues, sprints, comments, worklogs and field history now arrive as task data, alongside Jira and GitHub."
+        "title": "YouTrack",
+        "description_html": "Issues, sprints, comments, worklogs and field history now count in task metrics, like Jira and GitHub."
       },
       "gitlab": {
-        "title": "GitLab: rebuilt on the git proxy",
-        "description_html": "The GitLab connector read one commit per API call and brought no line counts, CI or deployments. It now reads through the git proxy like GitHub and Bitbucket, with line counts, pipelines and their jobs, and deployments."
-      },
-      "jira_twice_daily": {
-        "title": "Jira: synced twice a day",
-        "description_html": "A Jira edit reached dashboards only after the next morning's sync. Jira now syncs at 10:10 and 22:10 UTC."
+        "title": "GitLab",
+        "description_html": "Rebuilt on the git proxy, like GitHub and Bitbucket. Adds line counts, CI pipelines and jobs, and deployments."
       },
       "codex_credits": {
-        "title": "Codex credits priced as spend",
-        "description_html": "Credits spent in Codex had no price, so Codex was missing from extra usage cost. With a credit price configured, Codex on-demand spend now counts there, as an estimate."
+        "title": "Codex spend",
+        "description_html": "Codex credits count in extra usage cost once a credit price is configured. The amount is an estimate."
       },
       "meetings_once": {
-        "title": "One meeting, counted once",
-        "description_html": "Teams and Zoom disagreed on what a meeting is, and a Zoom meeting joined from two addresses counted twice. Both now count a meeting the same way, once per person. A Zoom joiner who did not sign in is matched by display name, or bound to a person under Manage → Identities."
+        "title": "Meeting counts",
+        "description_html": "Teams and Zoom count meetings the same way, and a Zoom meeting joined from two addresses counts once. Focus time is now called Time outside meetings."
       },
-      "metric_names": {
-        "title": "Names that say what they count",
-        "description_html": "<i>Focus time</i> is now <i>Time outside meetings</i> and <i>Emails read</i> is now <i>Email read events</i>, because that is what the sources count."
+      "rail": {
+        "title": "New sidebar",
+        "description_html": "Six sections: Home, Dashboards, Explore, People, Reports and Manage. Directions and AI & Cost are under Explore, Person and People under People. Old links still work."
       },
-      "guests_out": {
-        "title": "Guests and copied days left out",
-        "description_html": "Slack and Zulip guest accounts no longer count in chat metrics. Days Microsoft 365 copied forward from its last report no longer count as activity."
-      },
-      "admin_role": {
-        "title": "Grant admin from the person window",
-        "description_html": "Making someone an administrator took a database insert by hand. The person window under Manage → Identities now grants and revokes the admin role."
-      },
-      "connector_schedule": {
-        "title": "See when each connector runs next",
-        "description_html": "Sources & connectors now shows the schedule each connector runs on and when it runs next."
-      },
-      "usage_search": {
-        "title": "Find one person in Platform usage",
-        "description_html": "Platform usage listed only the most-opened rows, capped at 200. Every column now sorts, and a search finds a person by name or handle."
-      },
-      "no_data_yet": {
-        "title": "“No data yet” on a new installation",
-        "description_html": "A new installation answered with error cards, and a card with nothing built behind it read as a measured 0. Cards, drill-down and reports now say “No data yet” until data arrives."
-      },
-      "numbers_add_up": {
-        "title": "Numbers that add up",
-        "description_html": "A tile's per-tool breakdown now adds up to the total it shows. Drill-down tables show numbers as the record holds them, so an issue number reads 4385, not 4,385."
-      },
-      "default_branch_landing": {
-        "title": "What reached the default branch, counted right",
-        "description_html": "Restoring a file to what the default branch already held, or copying one from it, marked a commit as landed. It no longer does, and a commit in both a fork and its upstream lands if either copy did."
-      },
-      "stay_signed_in": {
-        "title": "No sign-out in the middle of work",
-        "description_html": "One request to an unknown address signed a working session out and reloaded the page. It no longer does."
+      "home": {
+        "title": "Home",
+        "description_html": "Opens for everyone with your own metrics, attention list and recent dashboards. Managers switch between Me and My team."
       }
     },
     "history_label": "Earlier releases",
