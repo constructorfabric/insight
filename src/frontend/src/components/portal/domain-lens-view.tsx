@@ -553,12 +553,14 @@ export function DomainLensView({
   // ingested" on the screen built to tell them which sources are not ingested
   // would withhold the answer at the moment it is worth most.
   const readsGrid = config.sections.some((s) => s.kind !== "coverage-levels");
-  const connected = sourceConnected(
-    lensKeys,
-    grid.byKey,
-    memberIds,
-    personId ? personalReach : undefined
-  );
+  const connected =
+    sourceConnected(
+      lensKeys,
+      grid.byKey,
+      memberIds,
+      personId ? personalReach : undefined
+    ) ||
+    [...unattributedByKey.values()].some((value) => (value ?? 0) > 0);
   if (readsGrid && !connected) {
     return (
       <Pending
@@ -1342,13 +1344,13 @@ function HeadlineSection({
       const r = grid.byKey.get(key);
       if (!r) return null;
       const now = representative(r, memberIds);
-      if (now == null) return null;
-      const prev = representative(grid.previousByKey.get(key), memberIds);
       const isSum = r.computation === "sum";
+      const unattributed = isSum ? (unattributedByKey.get(key) ?? null) : null;
+      if (now == null && !(unattributed != null && unattributed > 0)) return null;
+      const prev = representative(grid.previousByKey.get(key), memberIds);
       // The records that carry the figure: its own, unless the family says
       // another metric holds them (a line count is carried by commits).
       const carrier = grid.byKey.get(evidenceMetricFor(key));
-      const unattributed = isSum ? (unattributedByKey.get(key) ?? null) : null;
       return { key, r, now, prev, isSum, carrier, unattributed };
     })
     .filter((x): x is NonNullable<typeof x> => x != null);
@@ -1404,7 +1406,8 @@ function HeadlineCard({
 }: {
   card: {
     r: NormalizedMetricResult;
-    now: number;
+    /** The roster's figure; null when no member has a value, leaving only the share. */
+    now: number | null;
     prev: number | null;
     isSum: boolean;
     carrier: NormalizedMetricResult | undefined;
@@ -1430,8 +1433,53 @@ function HeadlineCard({
           metric={c.r}
           className={TEXT_NAME}
         />
-        <Delta now={c.now} prev={c.prev} direction={c.r.direction} showUnavailable />
+        {c.now != null ? (
+          <Delta now={c.now} prev={c.prev} direction={c.r.direction} showUnavailable />
+        ) : null}
       </div>
+      {c.now != null ? (
+        <MemberFigure card={{ ...c, now: c.now }} memberIds={memberIds} />
+      ) : (
+        <UnattributedOnlyFigure card={c} />
+      )}
+    </CardContent>
+  );
+
+  if (!selection || !evidence) return <Card className="py-0">{body}</Card>;
+
+  return (
+    <Card className="py-0 transition-colors hover:bg-card-hover focus-within:ring-2 focus-within:ring-ring">
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        className="w-full cursor-pointer text-left focus-visible:outline-none"
+        onClick={() =>
+          evidence.openEvidenceTargets(targets, {
+            activeMetricKey: selection.metric_key,
+          })
+        }
+      >
+        {body}
+      </button>
+    </Card>
+  );
+}
+
+/** The roster's figure, with the organisation's unattributed share beside it. */
+function MemberFigure({
+  card: c,
+  memberIds,
+}: {
+  card: {
+    r: NormalizedMetricResult;
+    now: number;
+    isSum: boolean;
+    unattributed: number | null;
+  };
+  memberIds: readonly string[];
+}) {
+  return (
+    <>
       <div className={TEXT_FIGURE}>
         {formatMetricValue(c.now, c.r.format, c.r.unit)}
       </div>
@@ -1454,26 +1502,28 @@ function HeadlineCard({
           {`+ ${formatMetricValue(c.unattributed, c.r.format, c.r.unit)} unattributed · ${formatMetricValue(c.now + c.unattributed, c.r.format, c.r.unit)} in all`}
         </div>
       ) : null}
-    </CardContent>
+    </>
   );
+}
 
-  if (!selection || !evidence) return <Card className="py-0">{body}</Card>;
-
+/** No member has a value, so the card carries only the work nobody reached. */
+function UnattributedOnlyFigure({
+  card: c,
+}: {
+  card: { r: NormalizedMetricResult; unattributed: number | null };
+}) {
   return (
-    <Card className="py-0 transition-colors hover:bg-card-hover focus-within:ring-2 focus-within:ring-ring">
-      <button
-        type="button"
-        aria-haspopup="dialog"
-        className="w-full cursor-pointer text-left focus-visible:outline-none"
-        onClick={() =>
-          evidence.openEvidenceTargets(targets, {
-            activeMetricKey: selection.metric_key,
-          })
-        }
+    <>
+      <div className={TEXT_FIGURE}>
+        {formatMetricValue(c.unattributed ?? 0, c.r.format, c.r.unit)}
+      </div>
+      <div
+        data-slot="headline-unattributed"
+        className="text-xs font-medium text-muted-foreground"
       >
-        {body}
-      </button>
-    </Card>
+        all unattributed · no person reached
+      </div>
+    </>
   );
 }
 

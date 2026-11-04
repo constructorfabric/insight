@@ -314,6 +314,20 @@ describe("headline: the organisation's unattributed share", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the lens and the card when only work nobody reached exists", () => {
+    mocks.isAdmin = true;
+    mocks.grid.byKey = new Map([
+      ["t.commits", metric("t.commits", [], { short_label: "Commits", unit: "commits" })],
+    ]);
+    mocks.grid.previousByKey = new Map();
+    mocks.unattributed = new Map([["t.commits", 7]]);
+    render(<DomainLensView config={UNATTRIBUTED_CONFIG} />);
+
+    expect(screen.getByText("7 commits")).toBeInTheDocument();
+    expect(screen.getByText("all unattributed · no person reached")).toBeInTheDocument();
+    expect(screen.queryByText(/team total/)).toBeNull();
+  });
+
   it.each([
     ["a viewer the org-chart policy refuses it to", () => {}],
     [
