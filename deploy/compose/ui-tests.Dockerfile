@@ -21,16 +21,24 @@ RUN mkdir -p /tests/.artifacts /tests/test-results \
  && chmod -R a+rX /tests /opt/uv-python
 USER pwuser
 
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+# WORKAROUND: Chromium does not start reliably under QEMU, so the launch check
+# runs only on a native build; CI launches the amd64 image after loading it.
 RUN uv run --frozen --no-dev python -c "\
 import sys, insight_stand; \
 assert sys.version_info >= (3, 13), f'interpreter {sys.version.split()[0]} is below the >=3.13 floor'; \
 print('insight_stand imports on', sys.version.split()[0])" \
- && uv run --frozen --no-dev python -c "\
+ && if [ "${TARGETPLATFORM}" != "${BUILDPLATFORM}" ]; then \
+      echo "chromium launch check skipped: ${TARGETPLATFORM} built on ${BUILDPLATFORM}"; \
+    else \
+      uv run --frozen --no-dev python -c "\
 from playwright.sync_api import sync_playwright; \
 p = sync_playwright().start(); \
 b = p.chromium.launch(); \
 print('chromium starts:', b.version); \
-b.close(); p.stop()"
+b.close(); p.stop()"; \
+    fi
 
 ENTRYPOINT ["uv", "run", "--frozen", "--no-dev", "pytest"]
 CMD ["/tests/stand", "--browser", "chromium"]
