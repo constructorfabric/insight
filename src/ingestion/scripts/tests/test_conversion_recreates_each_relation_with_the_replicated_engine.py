@@ -72,6 +72,7 @@ _ch_http_query() {
       if [[ "${sql}" == *" FINAL" ]]; then side+=_FINAL; else side+=_ROWS; fi
       printf '%s\\n' "${!side}" ;;
     "SELECT sum(cityHash64(tuple(*))) FROM "*)
+      if [[ -n "${CONTENT_FAILS:-}" ]]; then return 7; fi
       if [[ "${sql}" == *"FROM \\`standalone_"* ]]; then printf '%s\\n' "${SOURCE_CONTENT}"; else printf '%s\\n' "${COPY_CONTENT}"; fi ;;
     *) printf '\\n' ;;
   esac
@@ -85,8 +86,8 @@ class Counts:
     source_final: int = 3
     copy_rows: int = 3
     copy_final: int = 3
-    source_content: int = 11
-    copy_content: int = 11
+    source_content: int | str = 11
+    copy_content: int | str = 11
 
 
 #: A replacing table whose parts still hold rows sharing a key: the copy has
@@ -108,6 +109,7 @@ def run(
     replicas_unreachable: bool = False,
     existing: str = "",
     counts: Counts | None = None,
+    content_fails: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     counts = counts or Counts()
     script = f"""
@@ -140,6 +142,7 @@ echo '{REACHED_THE_END}'
             "COPY_FINAL": str(counts.copy_final),
             "SOURCE_CONTENT": str(counts.source_content),
             "COPY_CONTENT": str(counts.copy_content),
+            "CONTENT_FAILS": "1" if content_fails else "",
         },
         check=False,
     )
@@ -335,3 +338,21 @@ def test_a_copy_left_under_its_staging_name_is_refused_by_that_name(tmp_path: Pa
     assert "bronze_github.t__converting is a copy of standalone_bronze_github.t that never" in result.stderr
     assert f"Drop it ON CLUSTER {CLUSTER} and re-run" in result.stderr, result.stderr
     assert "INSERT" not in log.read_text()
+
+
+@pytest.mark.parametrize(
+    ("counts", "content_fails"),
+    [(Counts(), True), (Counts(source_content="\\N", copy_content="\\N"), False)],
+    ids=["the query fails", "the answer is not a number"],
+)
+def test_a_table_under_its_name_whose_rows_cannot_be_hashed_stops_the_run(
+    tmp_path: Path, counts: Counts, content_fails: bool
+) -> None:
+    """Two hashes that did not answer must not read as two that agree."""
+    log = tmp_path / "sql.log"
+    result = run("bronze_github", log=log, existing="t", counts=counts, content_fails=content_fails)
+
+    assert result.returncode != 0
+    assert REACHED_THE_END not in result.stdout
+    assert "already copied" not in result.stdout
+    assert "could not hash the rows of standalone_bronze_github.t" in result.stderr, result.stderr

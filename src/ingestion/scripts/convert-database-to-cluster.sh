@@ -178,10 +178,16 @@ visible_content() {
   ch_scalar "SELECT sum(cityHash64(tuple(*))) FROM $(quoted "${database}" "${table}")$(final_of "${engine}")"
 }
 
+# SAFETY: a hash that did not answer stops the script: the caller tests this
+# function under `||`, where errexit is off and two empty answers would agree.
 same_content() {
-  local old="$1" database="$2" table="$3" engine="$4"
+  local old="$1" database="$2" table="$3" engine="$4" source copy
   [[ "${engine}" == MergeTree ]] && return 0
-  [[ "$(visible_content "${old}" "${table}" "${engine}")" == "$(visible_content "${database}" "${table}" "${engine}")" ]]
+  source="$(visible_content "${old}" "${table}" "${engine}")" \
+    || die "could not hash the rows of ${old}.${table}"
+  copy="$(visible_content "${database}" "${table}" "${engine}")" \
+    || die "could not hash the rows of ${database}.${table}"
+  [[ "${source}" == "${copy}" ]]
 }
 
 # The copy is the source as a reader sees it: a raw copy would let other rows
