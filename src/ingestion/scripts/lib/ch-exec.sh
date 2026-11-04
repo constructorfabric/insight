@@ -15,6 +15,9 @@
 #                      absent; a probe that did not answer stops the script.
 #   ch_table_engine  — `ch_table_engine <db> <table>`; the engine, empty if
 #                      absent, failure if the probe did not run.
+#   ch_column_type   — `ch_column_type <db> <table> <column>`; the type as
+#                      system.columns states it, empty if absent, failure if
+#                      the probe did not run.
 #   ch_scalar        — one numeric answer of a SELECT, or failure.
 #   ch_cluster_mode  — succeeds where the install declared itself clustered.
 #
@@ -166,4 +169,15 @@ ch_table_engine() {
   engine="$(printf "SELECT engine FROM system.tables WHERE database='%s' AND name='%s'" \
     "$db" "$tbl" | _ch_http_query)" || return 1
   printf '%s' "${engine}" | tr -d '[:space:]'
+}
+
+# The type of one column as system.columns states it, empty when the table or
+# the column is absent. Fails when the lookup did not run: a caller that acts
+# on the type (a retype narrows or widens the column) must not read a failed
+# probe as an absent column.
+ch_column_type() {
+  local db="$1" tbl="$2" column="$3" type
+  type="$(printf "SELECT type FROM system.columns WHERE database='%s' AND table='%s' AND name='%s'" \
+    "$db" "$tbl" "$column" | _ch_http_query)" || return 1
+  printf '%s' "${type}" | tr -d '\n'
 }
