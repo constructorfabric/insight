@@ -6,7 +6,9 @@
 # git-cli-proxy, previews.
 
 # ─── toolchain ──────────────────────────────────────────────────────────────
-FROM lukemathwalker/cargo-chef:0.1.78-rust-1.99.1-bookworm@sha256:b75e76d787d5e11dabafa95eecc9fa1b50c38d5e03a38efb99cacb4e02125a76 AS chef
+ARG TARGETARCH
+
+FROM --platform=$BUILDPLATFORM lukemathwalker/cargo-chef:0.1.78-rust-1.99.1-bookworm@sha256:b75e76d787d5e11dabafa95eecc9fa1b50c38d5e03a38efb99cacb4e02125a76 AS chef-base
 
 # protobuf-compiler: grpc-hub -> prost-build. cmake + libcurl headers: the
 # authenticator vendors librdkafka, whose OAUTHBEARER path needs curl/curl.h.
@@ -16,40 +18,83 @@ RUN apt-get update && \
 
 WORKDIR /build
 
+ENV PKG_CONFIG_ALLOW_CROSS=1
+
+FROM chef-base AS chef-amd64
+ENV CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu \
+    CROSS_PACKAGES="gcc-x86-64-linux-gnu g++-x86-64-linux-gnu libc6-dev-amd64-cross" \
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
+    CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc \
+    CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ \
+    AR_x86_64_unknown_linux_gnu=x86_64-linux-gnu-ar \
+    PKG_CONFIG_LIBDIR_x86_64_unknown_linux_gnu=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+
+FROM chef-base AS chef-arm64
+ENV CARGO_BUILD_TARGET=aarch64-unknown-linux-gnu \
+    CROSS_PACKAGES="gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross" \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+    CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+    CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
+    AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \
+    PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+
+# INVARIANT: the cross toolchain and target libraries come from the same Debian
+# release as the runtime base, so the binary links against a glibc it finds.
+FROM chef-${TARGETARCH} AS chef
+ARG TARGETARCH
+ARG BUILDARCH
+RUN set -eux; \
+    cross=""; \
+    if [ "${TARGETARCH}" != "${BUILDARCH}" ]; then \
+      dpkg --add-architecture "${TARGETARCH}"; \
+      cross="${CROSS_PACKAGES}"; \
+    fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ${cross} \
+      "libssl-dev:${TARGETARCH}" "libcurl4-openssl-dev:${TARGETARCH}" "zlib1g-dev:${TARGETARCH}"; \
+    rm -rf /var/lib/apt/lists/*; \
+    rustup target add "${CARGO_BUILD_TARGET}"
+
 # ─── dependency recipe ──────────────────────────────────────────────────────
-FROM chef AS planner
+FROM chef-base AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-# ─── workspace dependencies, cached by recipe hash ──────────────────────────
+# ─── workspace dependencies, cached by recipe hash and target ───────────────
 FROM chef AS cooker
 COPY --from=planner /build/recipe.json recipe.json
-RUN cargo chef cook --release --locked --recipe-path recipe.json
+RUN cargo chef cook --release --locked --target "${CARGO_BUILD_TARGET}" --recipe-path recipe.json
 
 # ─── service binaries ───────────────────────────────────────────────────────
 FROM cooker AS build-analytics
 COPY . .
-RUN cargo build --release --locked --bin analytics
+RUN cargo build --release --locked --bin analytics && \
+    install -D "target/${CARGO_BUILD_TARGET}/release/analytics" /build/out/analytics
 
 FROM cooker AS build-authenticator
 COPY . .
-RUN cargo build --release --locked --bin authenticator
+RUN cargo build --release --locked --bin authenticator && \
+    install -D "target/${CARGO_BUILD_TARGET}/release/authenticator" /build/out/authenticator
 
 FROM cooker AS build-identity-resolution
 COPY . .
-RUN cargo build --release --locked --bin identity-resolution
+RUN cargo build --release --locked --bin identity-resolution && \
+    install -D "target/${CARGO_BUILD_TARGET}/release/identity-resolution" /build/out/identity-resolution
 
 FROM cooker AS build-insight-v3-core
 COPY . .
-RUN cargo build --release --locked --bin insight-v3-core
+RUN cargo build --release --locked --bin insight-v3-core && \
+    install -D "target/${CARGO_BUILD_TARGET}/release/insight-v3-core" /build/out/insight-v3-core
 
 FROM cooker AS build-git-cli-proxy
 COPY . .
-RUN cargo build --release --locked --bin git-cli-proxy
+RUN cargo build --release --locked --bin git-cli-proxy && \
+    install -D "target/${CARGO_BUILD_TARGET}/release/git-cli-proxy" /build/out/git-cli-proxy
 
 FROM cooker AS build-previews
 COPY . .
-RUN cargo build --release --locked --bin previews
+RUN cargo build --release --locked --bin previews && \
+    install -D "target/${CARGO_BUILD_TARGET}/release/previews" /build/out/previews
 
 # ─── watchexec, the compose auto-reload wrapper ─────────────────────────────
 FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS watchexec
@@ -115,37 +160,37 @@ ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 # mounts a ConfigMap at the same path, APP__* env overrides leaf values.
 
 FROM runtime AS analytics
-COPY --from=build-analytics --chown=1000:1000 /build/target/release/analytics /app/analytics
+COPY --from=build-analytics --chown=1000:1000 /build/out/analytics /app/analytics
 COPY --from=build-analytics --chown=1000:1000 /build/services/analytics/config/ /app/config/
 EXPOSE 8081
 CMD ["/app/analytics", "--", "/app/analytics", "-c", "/app/config/insight.yaml", "run"]
 
 FROM runtime AS authenticator
-COPY --from=build-authenticator --chown=1000:1000 /build/target/release/authenticator /app/authenticator
+COPY --from=build-authenticator --chown=1000:1000 /build/out/authenticator /app/authenticator
 COPY --from=build-authenticator --chown=1000:1000 /build/services/authenticator/config/ /app/config/
 EXPOSE 8083
 CMD ["/app/authenticator", "--", "/app/authenticator", "-c", "/app/config/insight.yaml", "run"]
 
 FROM runtime AS identity-resolution
-COPY --from=build-identity-resolution --chown=1000:1000 /build/target/release/identity-resolution /app/identity-resolution
+COPY --from=build-identity-resolution --chown=1000:1000 /build/out/identity-resolution /app/identity-resolution
 COPY --from=build-identity-resolution --chown=1000:1000 /build/services/identity-resolution/config/ /app/config/
 EXPOSE 8082
 CMD ["/app/identity-resolution", "--", "/app/identity-resolution", "-c", "/app/config/insight.yaml"]
 
 FROM runtime AS insight-v3-core
-COPY --from=build-insight-v3-core --chown=1000:1000 /build/target/release/insight-v3-core /app/insight-v3-core
+COPY --from=build-insight-v3-core --chown=1000:1000 /build/out/insight-v3-core /app/insight-v3-core
 COPY --from=build-insight-v3-core --chown=1000:1000 /build/services/insight-v3-core/config/ /app/config/
 EXPOSE 8086
 CMD ["/app/insight-v3-core", "--", "/app/insight-v3-core", "-c", "/app/config/insight.yaml", "run"]
 
 FROM runtime-git AS git-cli-proxy
-COPY --from=build-git-cli-proxy --chown=1000:1000 /build/target/release/git-cli-proxy /app/git-cli-proxy
+COPY --from=build-git-cli-proxy --chown=1000:1000 /build/out/git-cli-proxy /app/git-cli-proxy
 COPY --from=build-git-cli-proxy --chown=1000:1000 /build/services/git-cli-proxy/config/ /app/config/
 EXPOSE 8084
 CMD ["/app/git-cli-proxy", "--", "/app/git-cli-proxy", "-c", "/app/config/insight.yaml"]
 
 FROM runtime AS previews
-COPY --from=build-previews --chown=1000:1000 /build/target/release/previews /app/previews
+COPY --from=build-previews --chown=1000:1000 /build/out/previews /app/previews
 COPY --from=build-previews --chown=1000:1000 /build/services/previews/config/ /app/config/
 EXPOSE 8085
 CMD ["/app/previews", "--", "/app/previews", "-c", "/app/config/insight.yaml"]
