@@ -715,6 +715,9 @@ insightV3Core:
   # here with credentials.autoGenerate off and no `existingSecret` refuses
   # to render rather than start the service with nowhere to notify.
   alerts:
+    # The SPA does not read this flag: with it off, list
+    # "zone:custom/item:alerts" under frontend.nav.planned (or
+    # frontend.nav.hide).
     enabled: false
     redis:
       host: ""
@@ -940,6 +943,7 @@ frontend:
     #   - "zone:directions/dir:sales"               (a whole direction)
     #   - "zone:directions/dir:dev/lens:git-output" (one lens, by URL slug)
     #   - "zone:person/section:git_output"          (a Person-zone section)
+    #   - "zone:custom/item:alerts"                 (a Dashboards catalogue)
     #   - "metric:tasks.resolution_time"            (one metric, everywhere)
     #   - "metric:ai.*"                             (a whole metric family)
     # A metric path is not a menu entry: it gates the key itself, so the metric
