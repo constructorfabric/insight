@@ -1,4 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowDown,
@@ -31,10 +39,12 @@ import {
   summaryLine,
 } from "@/lib/metrics/evidence-rows";
 import {
-  fairWidths,
-  typicalWidth,
-  type ColumnNeed,
-} from "@/lib/metrics/evidence-widths";
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { fitWidths, type ColumnNeed } from "@/lib/metrics/evidence-widths";
 import { evidenceRefText } from "@/lib/metrics/provider-links";
 import { cn } from "@/lib/utils";
 
@@ -58,8 +68,12 @@ const CELL_PADDING_PX = 24;
 /** offsetWidth rounds down, so a measured text can come up a pixel short. */
 const ROUNDING_PX = 2;
 const SORT_ICON_PX = 18;
-const COPY_BUTTON_PX = 28;
-const READABLE_CHARACTERS = 12;
+/** The copy button beside a ref, and the gap before it. */
+const COPY_BUTTON_PX = 42;
+/** The widest a column grows to show its values; past it, a value is cut. */
+const CAP_CHARACTERS = 40;
+/** Long enough that sweeping the pointer across a row stays quiet. */
+const TOOLTIP_DELAY_MS = 400;
 /** The first page: widths settle on it and do not shift as more rows load. */
 const MEASURED_ROWS = 100;
 
@@ -120,7 +134,7 @@ function measureTexts(
   return widths;
 }
 
-/** What each column needs to show its header and nine values in ten whole. */
+/** What each column needs to show its header and its longest value, up to the cap. */
 function columnNeeds(
   element: HTMLElement,
   columns: readonly MetricEvidenceColumn[],
@@ -129,7 +143,7 @@ function columnNeeds(
 ): ColumnNeed[] | null {
   const sample = rows.slice(0, MEASURED_ROWS);
   const texts = [
-    { text: "0".repeat(READABLE_CHARACTERS), header: false },
+    { text: "0".repeat(CAP_CHARACTERS), header: false },
     ...columns.flatMap((column) => [
       { text: column.label, header: true },
       ...sample.map((row) => ({
@@ -140,29 +154,66 @@ function columnNeeds(
   ];
   const widths = measureTexts(element, texts);
   if (widths.every((width) => width === 0)) return null;
-  const readable = widths[0]!;
+  const cap = widths[0]!;
   const perColumn = sample.length + 1;
 
   return columns.map((column, index) => {
     const start = 1 + index * perColumn;
     const header =
-      widths[start]! +
+      Math.min(widths[start]!, cap) +
       CELL_PADDING_PX +
       ROUNDING_PX +
       (column.sortable ? SORT_ICON_PX : 0);
-    const extra =
+    const longest = Math.max(0, ...widths.slice(start + 1, start + perColumn));
+    const value =
+      Math.min(longest, cap) +
       CELL_PADDING_PX +
       ROUNDING_PX +
       (column.key === "ref" ? COPY_BUTTON_PX : 0);
-    const values = widths
-      .slice(start + 1, start + perColumn)
-      .map((width) => width + extra);
-    const natural = Math.max(header, typicalWidth(values));
     return {
-      natural,
-      minimum: Math.max(header, Math.min(natural, readable + extra)),
+      natural: Math.max(header, value),
+      stretches: column.type === "string",
     };
   });
+}
+
+/**
+ * A value on one line, cut with an ellipsis when its column is narrower; the
+ * whole value then shows in a tooltip, as it does when the line abbreviates it.
+ */
+function CutText({
+  full,
+  className,
+  children,
+}: {
+  full: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Tooltip
+      open={open}
+      onOpenChange={(next) => {
+        const text = textRef.current;
+        const cut = text !== null && text.scrollWidth > text.clientWidth;
+        setOpen(next && (cut || text?.textContent !== full));
+      }}
+    >
+      <TooltipTrigger
+        render={<span className={cn("block min-w-0", className)} />}
+      >
+        <span ref={textRef} className="block truncate">
+          {children}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-md break-words whitespace-pre-wrap">
+        {full}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 function SortIcon({ state }: { state: "asc" | "desc" | null }) {
@@ -244,7 +295,7 @@ export function MetricEvidenceTable({
     if (!needs) return null;
     const remPx =
       parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-    return fairWidths(needs, viewportWidth - leadingTotalRem * remPx);
+    return fitWidths(needs, viewportWidth - leadingTotalRem * remPx);
   }, [viewport, viewportWidth, columns, rows, metricKey, leadingTotalRem]);
 
   const minimumWidth = measured
@@ -297,259 +348,259 @@ export function MetricEvidenceTable({
   ]);
 
   return (
-    <div className="relative min-h-0 flex-1">
-      <Table
-        role="table"
-        aria-busy={reordering ? true : undefined}
-        // Counting the header row, which is row 1: `aria-rowindex` below starts
-        // the data at 2, so a total of `rows.length` would make the last row
-        // "n+1 of n".
-        aria-rowcount={rows.length + 1}
-        containerRef={setViewport}
-        containerClassName="h-full overflow-auto"
-        className="grid min-w-full"
-        style={{
-          minWidth: minimumWidth,
-          height: virtualBodyHeight + 40,
-          gridTemplateRows: "2.5rem 1fr",
-        }}
-      >
-        <TableHeader
-          role="rowgroup"
-          className="sticky top-0 z-20 grid bg-card shadow-[inset_0_-1px_0_0_var(--border)] [&_tr]:border-b-0"
+    <TooltipProvider delay={TOOLTIP_DELAY_MS}>
+      <div className="relative min-h-0 flex-1">
+        <Table
+          role="table"
+          aria-busy={reordering ? true : undefined}
+          // Counting the header row, which is row 1: `aria-rowindex` below starts
+          // the data at 2, so a total of `rows.length` would make the last row
+          // "n+1 of n".
+          aria-rowcount={rows.length + 1}
+          containerRef={setViewport}
+          containerClassName="h-full overflow-auto"
+          className="grid min-w-full"
+          style={{
+            minWidth: minimumWidth,
+            height: virtualBodyHeight + 40,
+            gridTemplateRows: "2.5rem 1fr",
+          }}
         >
-          <TableRow
-            role="row"
-            className="grid w-full border-b-0 hover:bg-transparent"
-            style={{ gridTemplateColumns: gridTemplate }}
+          <TableHeader
+            role="rowgroup"
+            className="sticky top-0 z-20 grid bg-card shadow-[inset_0_-1px_0_0_var(--border)] [&_tr]:border-b-0"
           >
-            {numbered ? (
-              <TableHead
-                role="columnheader"
-                className="flex h-10 items-center justify-end px-2 py-0 text-muted-foreground"
-              >
-                #
-              </TableHead>
-            ) : null}
-            <TableHead
-              role="columnheader"
-              className="flex h-10 items-center p-0"
+            <TableRow
+              role="row"
+              className="grid w-full border-b-0 hover:bg-transparent"
+              style={{ gridTemplateColumns: gridTemplate }}
             >
-              <span className="sr-only">Expand record</span>
-            </TableHead>
-            {columns.map((column) => {
-              const state = sort?.key === column.key ? sort.direction : null;
-              const numeric = column.type === "number";
-              const label = (
-                <span
-                  className={cn(
-                    "min-w-0",
-                    numeric
-                      ? "text-right leading-tight whitespace-normal"
-                      : "truncate"
-                  )}
-                >
-                  {column.label}
-                </span>
-              );
-              return (
+              {numbered ? (
                 <TableHead
                   role="columnheader"
-                  key={column.key}
-                  aria-sort={
-                    state === "asc"
-                      ? "ascending"
-                      : state === "desc"
-                        ? "descending"
-                        : "none"
-                  }
-                  className={cn(
-                    "flex h-10 min-w-0 items-center px-3 py-0",
-                    numeric
-                      ? "justify-end text-right"
-                      : "justify-start text-left"
-                  )}
+                  className="flex h-10 items-center justify-end px-2 py-0 text-muted-foreground"
                 >
-                  {/* A header the server cannot order by is a label, not a
-                      control that does nothing when clicked. */}
-                  {column.sortable ? (
-                    <button
-                      type="button"
-                      onClick={() => onSortChange(column.key)}
-                      className={cn(
-                        "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                        numeric && "flex-row-reverse",
-                        state && "text-foreground"
-                      )}
-                    >
-                      {label}
-                      <SortIcon state={state} />
-                    </button>
-                  ) : (
-                    label
-                  )}
+                  #
                 </TableHead>
-              );
-            })}
-          </TableRow>
-        </TableHeader>
-        <TableBody
-          role="rowgroup"
-          className="relative grid"
-          style={{ height: virtualBodyHeight }}
-        >
-          {virtualRows.map((virtualRow) => {
-            const row = rows[virtualRow.index];
-            if (!row) return null;
-            const key = rowKeys[virtualRow.index]!;
-            const isOpen = expanded.has(key);
-            const links = row.links ?? {};
-            return (
-              <TableRow
-                role="row"
-                key={key}
-                data-index={virtualRow.index}
-                ref={virtualizer.measureElement}
-                aria-rowindex={virtualRow.index + 2}
-                aria-expanded={isOpen}
-                onClick={() => toggleRow(key)}
-                className="absolute top-0 left-0 grid w-full cursor-pointer hover:bg-muted/20"
-                style={{
-                  gridTemplateColumns: gridTemplate,
-                  transform: `translateY(${virtualRow.start}px)`,
-                }}
+              ) : null}
+              <TableHead
+                role="columnheader"
+                className="flex h-10 items-center p-0"
               >
-                {numbered ? (
-                  <TableCell
-                    role="cell"
-                    className="flex h-11 items-center justify-end px-2 py-0 text-muted-foreground tabular-nums"
-                  >
-                    {virtualRow.index + 1}
-                  </TableCell>
-                ) : null}
-                <TableCell
-                  role="cell"
-                  className="flex h-11 items-center justify-center p-0"
-                >
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-expanded={isOpen}
-                    aria-label={
-                      isOpen ? "Hide full record" : "Show full record"
+                <span className="sr-only">Expand record</span>
+              </TableHead>
+              {columns.map((column) => {
+                const state = sort?.key === column.key ? sort.direction : null;
+                const numeric = column.type === "number";
+                const label = numeric ? (
+                  <span className="min-w-0 text-right leading-tight whitespace-normal">
+                    {column.label}
+                  </span>
+                ) : (
+                  <CutText full={column.label}>{column.label}</CutText>
+                );
+                return (
+                  <TableHead
+                    role="columnheader"
+                    key={column.key}
+                    aria-sort={
+                      state === "asc"
+                        ? "ascending"
+                        : state === "desc"
+                          ? "descending"
+                          : "none"
                     }
-                    className="text-muted-foreground"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      toggleRow(key);
-                    }}
+                    className={cn(
+                      "flex h-10 min-w-0 items-center px-3 py-0",
+                      numeric
+                        ? "justify-end text-right"
+                        : "justify-start text-left"
+                    )}
                   >
-                    {isOpen ? <ChevronDown /> : <ChevronRight />}
-                  </Button>
-                </TableCell>
-                {columns.map((column) => {
-                  const value = row.values[column.key];
-                  const { full, line } = cellLine(row, column, metricKey);
-                  return (
+                    {/* A header the server cannot order by is a label, not a
+                      control that does nothing when clicked. */}
+                    {column.sortable ? (
+                      <button
+                        type="button"
+                        onClick={() => onSortChange(column.key)}
+                        className={cn(
+                          "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                          numeric && "flex-row-reverse",
+                          state && "text-foreground"
+                        )}
+                      >
+                        {label}
+                        <SortIcon state={state} />
+                      </button>
+                    ) : (
+                      label
+                    )}
+                  </TableHead>
+                );
+              })}
+            </TableRow>
+          </TableHeader>
+          <TableBody
+            role="rowgroup"
+            className="relative grid"
+            style={{ height: virtualBodyHeight }}
+          >
+            {virtualRows.map((virtualRow) => {
+              const row = rows[virtualRow.index];
+              if (!row) return null;
+              const key = rowKeys[virtualRow.index]!;
+              const isOpen = expanded.has(key);
+              const links = row.links ?? {};
+              return (
+                <TableRow
+                  role="row"
+                  key={key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  aria-rowindex={virtualRow.index + 2}
+                  aria-expanded={isOpen}
+                  onClick={() => toggleRow(key)}
+                  className="absolute top-0 left-0 grid w-full cursor-pointer hover:bg-muted/20"
+                  style={{
+                    gridTemplateColumns: gridTemplate,
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  {numbered ? (
                     <TableCell
                       role="cell"
-                      key={column.key}
-                      className={cn(
-                        "h-11 min-w-0 truncate px-3 py-3 tabular-nums",
-                        column.type === "number" && "text-right"
-                      )}
-                      title={full}
+                      className="flex h-11 items-center justify-end px-2 py-0 text-muted-foreground tabular-nums"
                     >
-                      {column.key === "ref" && value != null ? (
-                        <div className="flex min-w-0 items-center gap-1">
-                          <span className="min-w-0 truncate">
+                      {virtualRow.index + 1}
+                    </TableCell>
+                  ) : null}
+                  <TableCell
+                    role="cell"
+                    className="flex h-11 items-center justify-center p-0"
+                  >
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-expanded={isOpen}
+                      aria-label={
+                        isOpen ? "Hide full record" : "Show full record"
+                      }
+                      className="text-muted-foreground"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleRow(key);
+                      }}
+                    >
+                      {isOpen ? <ChevronDown /> : <ChevronRight />}
+                    </Button>
+                  </TableCell>
+                  {columns.map((column) => {
+                    const value = row.values[column.key];
+                    const { full, line } = cellLine(row, column, metricKey);
+                    return (
+                      <TableCell
+                        role="cell"
+                        key={column.key}
+                        className={cn(
+                          "h-11 min-w-0 px-3 py-3 tabular-nums",
+                          column.type === "number" && "text-right"
+                        )}
+                      >
+                        {column.key === "ref" && value != null ? (
+                          <div className="flex min-w-0 items-center gap-1">
+                            <CutText full={full}>
+                              <RecordLink href={links[column.key]}>
+                                {line}
+                              </RecordLink>
+                            </CutText>
+                            <CopyValueButton
+                              value={String(value)}
+                              title="Copy ref"
+                              errorMessage="Unable to copy ref"
+                            />
+                          </div>
+                        ) : (
+                          <CutText full={full}>
                             <RecordLink href={links[column.key]}>
                               {line}
                             </RecordLink>
-                          </span>
-                          <CopyValueButton
-                            value={String(value)}
-                            title="Copy ref"
-                            errorMessage="Unable to copy ref"
-                          />
-                        </div>
-                      ) : (
-                        <RecordLink href={links[column.key]}>{line}</RecordLink>
-                      )}
-                    </TableCell>
-                  );
-                })}
-                {isOpen ? (
-                  <TableCell
-                    role="cell"
-                    aria-colspan={leadingRem.length + columns.length}
-                    // INVARIANT: selecting text here must not reach the row's
-                    // expand toggle.
-                    onClick={(event) => event.stopPropagation()}
-                    className="cursor-auto border-t bg-muted/40 px-3 py-3"
-                    // The record entire, under the row it belongs to: a track
-                    // of its own across every column.
-                    style={{ gridColumn: "1 / -1" }}
-                  >
-                    {/* INVARIANT: a fixed cap, not a vh — the window can
+                          </CutText>
+                        )}
+                      </TableCell>
+                    );
+                  })}
+                  {isOpen ? (
+                    <TableCell
+                      role="cell"
+                      aria-colspan={leadingRem.length + columns.length}
+                      // INVARIANT: selecting text here must not reach the row's
+                      // expand toggle.
+                      onClick={(event) => event.stopPropagation()}
+                      className="cursor-auto border-t bg-muted/40 px-3 py-3"
+                      // The record entire, under the row it belongs to: a track
+                      // of its own across every column.
+                      style={{ gridColumn: "1 / -1" }}
+                    >
+                      {/* INVARIANT: a fixed cap, not a vh — the window can
                         exceed the table's own height. */}
-                    <dl className="grid max-h-96 gap-x-6 gap-y-2 overflow-y-auto overscroll-contain sm:grid-cols-[10rem_1fr]">
-                      {columns.map((column) => {
-                        const text = cellText(row.values[column.key]);
-                        return (
-                          <Fragment key={column.key}>
-                            <dt className="text-sm text-muted-foreground">
-                              {column.label}
-                            </dt>
-                            <dd className="text-sm break-words whitespace-pre-wrap">
-                              <RecordLink
-                                href={
-                                  SUMMARY_ONLY_LINKS.has(column.key)
-                                    ? undefined
-                                    : links[column.key]
-                                }
-                              >
-                                {text}
-                              </RecordLink>
-                            </dd>
-                          </Fragment>
-                        );
-                      })}
-                    </dl>
-                  </TableCell>
-                ) : null}
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-      {isFetchingNextPage || reordering ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-card/80 p-3">
-          <Spinner />
-        </div>
-      ) : null}
-      {nextPageError ? (
-        <div
-          role="alert"
-          className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-3 border-t bg-card p-3"
-        >
-          <span>Unable to load more rows</span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => void fetchNextPage()}
+                      <dl className="grid max-h-96 gap-x-6 gap-y-2 overflow-y-auto overscroll-contain sm:grid-cols-[10rem_1fr]">
+                        {columns.map((column) => {
+                          const text = cellText(row.values[column.key]);
+                          return (
+                            <Fragment key={column.key}>
+                              <dt className="text-sm text-muted-foreground">
+                                {column.label}
+                              </dt>
+                              <dd className="text-sm break-words whitespace-pre-wrap">
+                                <RecordLink
+                                  href={
+                                    SUMMARY_ONLY_LINKS.has(column.key)
+                                      ? undefined
+                                      : links[column.key]
+                                  }
+                                >
+                                  {text}
+                                </RecordLink>
+                              </dd>
+                            </Fragment>
+                          );
+                        })}
+                      </dl>
+                    </TableCell>
+                  ) : null}
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+        {isFetchingNextPage || reordering ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-card/80 p-3">
+            <Spinner />
+          </div>
+        ) : null}
+        {nextPageError ? (
+          <div
+            role="alert"
+            className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-3 border-t bg-card p-3"
           >
-            Retry
-          </Button>
-        </div>
-      ) : pageLimitReached ? (
-        <div className="absolute inset-x-0 bottom-0 border-t bg-card p-3 text-center text-sm text-muted-foreground">
-          Showing the first 5,000 rows. Refine the selection or export the full
-          result.
-        </div>
-      ) : null}
-    </div>
+            <span>Unable to load more rows</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void fetchNextPage()}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : pageLimitReached ? (
+          <div className="absolute inset-x-0 bottom-0 border-t bg-card p-3 text-center text-sm text-muted-foreground">
+            Showing the first 5,000 rows. Refine the selection or export the
+            full result.
+          </div>
+        ) : null}
+      </div>
+    </TooltipProvider>
   );
 }

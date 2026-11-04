@@ -4,11 +4,12 @@ use super::resolution::BindingRow;
 use super::seed::SourceAccountKey;
 use crate::infra::identity_evidence::ObservedAccount;
 
-/// Width of the `persons.value_id` column a binding lands in
-/// (`000_baseline.sql`). 320 is also the limit `POST /v1/profiles` states for
-/// an id value, so one number is one contract across both entrances.
+/// Widths of the `persons.value_id` and `persons.insight_source_type` columns
+/// a binding lands in (`000_baseline.sql`). 320 is also the limit
+/// `POST /v1/profiles` states for an id value, so one number is one contract
+/// across both entrances.
 pub const MAX_VALUE_ID_CHARS: usize = 320;
-pub const MAX_SOURCE_TYPE_CHARS: usize = 100;
+pub const MAX_SOURCE_TYPE_CHARS: usize = 30;
 
 /// The journal reason marking a row the login bootstrap wrote.
 pub const LOGIN_BOOTSTRAP_REASON: &str = "login-bootstrap";
@@ -321,6 +322,15 @@ mod tests {
                 other => panic!("should refuse {case}, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn a_principal_at_the_column_width_is_accepted() -> R {
+        let source_type = "s".repeat(MAX_SOURCE_TYPE_CHARS);
+        let external_id = "x".repeat(MAX_VALUE_ID_CHARS);
+        parse_principal(&source_type, &external_id, TENANT)
+            .map_err(|r| format!("a principal that fits its columns was refused: {r:?}"))?;
+        Ok(())
     }
 
     #[test]
