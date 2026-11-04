@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-source
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mock-source
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mock-source
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: mock-source
+          image: {{ required "image is required (rebuilt toolbox image)" .Values.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [python3, /ingestion/tools/mock-source/server.py]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: MOCK_HOST
+              value: "0.0.0.0"
+            - name: MOCK_PORT
+              value: "8080"
+            - name: MOCK_JOURNAL_RETENTION
+              value: {{ required "journalRetention is required" .Values.journalRetention | quote }}
+            - name: MOCK_SCENARIOS_FILE
+              value: /config/scenarios.json
+            - name: MOCK_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mock-source-auth
+                  key: api_token
+            - name: MOCK_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mock-source-auth
+                  key: control_token
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: mock-source-scenarios

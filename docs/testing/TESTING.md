@@ -6,6 +6,9 @@ two axes — **levels** (what a test proves) and **environments** (where it runs
 Entry points: `./dev-compose.sh test-stand` (raises a compose stand and runs the suites under `tests/`),
 `scripts/ci/*` (coverage + spec gates), and the standard per-language tools (`cargo`, `pytest`).
 
+The [scheduling test harness](SCHEDULING-HARNESS.md) supplies a controllable
+synthetic source for connector scheduling and capacity tests through Airbyte.
+
 ---
 
 ## 1. Test pyramid

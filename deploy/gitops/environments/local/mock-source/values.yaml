@@ -1,0 +1,3 @@
+apiToken: synthetic-mock-token
+controlToken: synthetic-control-token
+journalRetention: 10000
