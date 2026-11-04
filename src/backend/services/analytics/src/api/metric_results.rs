@@ -202,15 +202,18 @@ async fn authorize_unattributed_request(
     headers: &HeaderMap,
     req: &ValidatedMetricResultsRequest,
 ) -> Result<(), CanonicalError> {
-    if !req.asks_unattributed() {
+    if !req.asks_unattributed() || !unattributed_needs_admin(state.config.visibility_policy) {
         return Ok(());
     }
 
-    match state.config.visibility_policy {
-        VisibilityPolicy::Flat => Ok(()),
-        VisibilityPolicy::OrgChart => {
-            super::require_admin(state, headers, unattributed_denied).await
-        }
+    super::require_admin(state, headers, unattributed_denied).await
+}
+
+/// Under a flat policy every viewer already sees the whole organisation.
+fn unattributed_needs_admin(visibility_policy: VisibilityPolicy) -> bool {
+    match visibility_policy {
+        VisibilityPolicy::Flat => false,
+        VisibilityPolicy::OrgChart => true,
     }
 }
 
@@ -473,7 +476,22 @@ mod tests {
     use crate::config::VisibilityPolicy;
     use crate::domain::metric_results::PeerPopulation;
 
-    use super::peer_population;
+    use super::{peer_population, unattributed_denied, unattributed_needs_admin};
+
+    #[test]
+    fn the_unattributed_share_needs_an_admin_only_under_an_org_chart() {
+        assert!(unattributed_needs_admin(VisibilityPolicy::OrgChart));
+        assert!(!unattributed_needs_admin(VisibilityPolicy::Flat));
+    }
+
+    #[test]
+    fn a_refused_unattributed_read_is_forbidden() {
+        use axum::response::IntoResponse;
+
+        let status = unattributed_denied().into_response().status();
+
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+    }
 
     #[test]
     fn visibility_policy_selects_peer_population() {

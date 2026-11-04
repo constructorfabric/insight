@@ -602,6 +602,28 @@ mod tests {
     };
     use crate::domain::metric_results::view::Bucket;
 
+    #[test]
+    fn unattributed_view_reads_its_one_aggregate_row() {
+        let view = build_unattributed_view(vec![UnattributedQueryRow { value: Some(3.0) }]);
+
+        assert!(matches!(
+            view,
+            Ok(MetricResultViewDto::Unattributed { value: Some(v) }) if (v - 3.0).abs() < f64::EPSILON
+        ));
+        assert!(
+            build_unattributed_view(Vec::new()).is_err(),
+            "should reject: no row"
+        );
+        assert!(
+            enforce_view_row_limit(&MetricResultViewDto::Unattributed { value: None }, "view")
+                .is_ok()
+        );
+        assert_eq!(
+            super::super::dto::MetricViewRequest::Unattributed.kind(),
+            super::super::view::MetricResultViewKind::Unattributed
+        );
+    }
+
     fn base() -> MetricBase {
         MetricBase {
             key: "ai.accepted_lines".to_owned(),

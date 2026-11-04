@@ -618,6 +618,26 @@ mod tests {
     }
 
     #[test]
+    fn plan_reads_the_unattributed_view_on_its_own() -> Result<(), CanonicalError> {
+        let req = request(vec![views(vec![ValidatedMetricView::Unattributed], "m_a")]);
+
+        let planned = plan_queries(
+            &req,
+            &RankingResults::default(),
+            PeerPopulation::DeclaredCohort,
+        )?;
+
+        assert!(matches!(
+            planned.as_slice(),
+            [PlannedQuery::Single {
+                view: UnbatchedView::Unattributed,
+                ..
+            }]
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn plan_groups_period_and_peer_views_into_batches() -> Result<(), CanonicalError> {
         let req = request(
             ["m_a", "m_b", "m_c"]
