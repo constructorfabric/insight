@@ -148,7 +148,7 @@ describe("MetricEvidenceTable", () => {
     expect(screen.getAllByRole("columnheader")).toHaveLength(4);
     expect(screen.getAllByRole("row")[1]).toHaveAttribute("aria-rowindex", "2");
     expect(screen.getAllByRole("cell")).toHaveLength(8);
-    expect(screen.getByText("1.2")).toBeInTheDocument();
+    expect(screen.getByText("1.234")).toBeInTheDocument();
     expect(screen.getByText("Yes")).toBeInTheDocument();
     expect(screen.getByText("No")).toBeInTheDocument();
     expect(screen.getAllByText("—")).toHaveLength(2);

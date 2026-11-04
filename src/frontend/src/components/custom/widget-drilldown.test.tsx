@@ -171,7 +171,7 @@ describe("<WidgetDrilldown>", () => {
 
   // The card and the rows behind it are the same numbers, so they are
   // written the same way: grouped, and with the unit the metric declares.
-  it("writes numbers the way the card writes them, percentages included", async () => {
+  it("shows numbers as the record holds them, a percent marked as one", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
     vi.mocked(customClient.fetchDashboardDrilldownPage).mockResolvedValue(
       page([{ service: "example-api", commits: 1234567, share: 83.91167 }], {
@@ -184,8 +184,8 @@ describe("<WidgetDrilldown>", () => {
 
     renderDrilldown();
 
-    expect(await screen.findByText("1,234,567")).toBeInTheDocument();
-    expect(screen.getByText("83.9%")).toBeInTheDocument();
+    expect(await screen.findByText("1234567")).toBeInTheDocument();
+    expect(screen.getByText("83.91167%")).toBeInTheDocument();
   });
 
   // A header click is a question to the service; the answer is the next

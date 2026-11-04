@@ -81,7 +81,7 @@ function cellLine(
   column: MetricEvidenceColumn,
   metricKey: string | null
 ): { full: string; line: string } {
-  const full = summaryLine(cellText(row.values[column.key], column.type));
+  const full = summaryLine(cellText(row.values[column.key]));
   // The ref column shows the issue number alone; the tooltip keeps the
   // repository, which is the only place a row states it when the metric
   // declares no `source` to link from.
@@ -496,10 +496,7 @@ export function MetricEvidenceTable({
                         exceed the table's own height. */}
                     <dl className="grid max-h-96 gap-x-6 gap-y-2 overflow-y-auto overscroll-contain sm:grid-cols-[10rem_1fr]">
                       {columns.map((column) => {
-                        const text = cellText(
-                          row.values[column.key],
-                          column.type
-                        );
+                        const text = cellText(row.values[column.key]);
                         return (
                           <Fragment key={column.key}>
                             <dt className="text-sm text-muted-foreground">
