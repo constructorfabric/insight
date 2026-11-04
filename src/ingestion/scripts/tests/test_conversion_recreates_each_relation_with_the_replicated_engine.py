@@ -4,7 +4,7 @@ The script renames the database aside, recreates it `ON CLUSTER` with the
 engine `create-databases.sh` renders (none for a bronze database, which stays
 Atomic), and re-issues every relation's own CREATE with its engine prefixed
 `Replicated` — the cluster clause on each only in the bronze database — under
-a staging name, copies the rows, compares the counts a reader sees and renames
+a staging name, copies the rows a reader sees, compares the counts and renames
 the copy into place. A relation it cannot carry over is refused before
 anything is renamed; a database already converted is left alone. The
 transport is stubbed: every statement is recorded, and the answers come from
@@ -31,8 +31,9 @@ REACHED_THE_END = "CONVERSION RETURNED"
 #: database exists yet, every listing of relations is RELATIONS
 #: (name<TAB>engine lines), the converted database holds the relations named
 #: in EXISTING, a table counts SOURCE_ROWS / COPY_ROWS (raw) and SOURCE_FINAL /
-#: COPY_FINAL (with FINAL) by the side it stands on, and SHOW CREATE answers
-#: with the relation it was asked for.
+#: COPY_FINAL (with FINAL) and hashes its rows to SOURCE_CONTENT / COPY_CONTENT by
+#: the side it stands on, and SHOW CREATE answers with the relation it was
+#: asked for.
 SCRIPTED = """
 _ch_http_query() {
   local sql
@@ -70,6 +71,8 @@ _ch_http_query() {
       [[ "${sql}" == *"FROM \\`standalone_"* ]] && side=SOURCE
       if [[ "${sql}" == *" FINAL" ]]; then side+=_FINAL; else side+=_ROWS; fi
       printf '%s\\n' "${!side}" ;;
+    "SELECT sum(cityHash64(tuple(*))) FROM "*)
+      if [[ "${sql}" == *"FROM \\`standalone_"* ]]; then printf '%s\\n' "${SOURCE_CONTENT}"; else printf '%s\\n' "${COPY_CONTENT}"; fi ;;
     *) printf '\\n' ;;
   esac
 }
@@ -82,6 +85,8 @@ class Counts:
     source_final: int = 3
     copy_rows: int = 3
     copy_final: int = 3
+    source_content: int = 11
+    copy_content: int = 11
 
 
 #: A replacing table whose parts still hold rows sharing a key: the copy has
@@ -133,6 +138,8 @@ echo '{REACHED_THE_END}'
             "SOURCE_FINAL": str(counts.source_final),
             "COPY_ROWS": str(counts.copy_rows),
             "COPY_FINAL": str(counts.copy_final),
+            "SOURCE_CONTENT": str(counts.source_content),
+            "COPY_CONTENT": str(counts.copy_content),
         },
         check=False,
     )
@@ -154,7 +161,7 @@ def test_an_owned_database_becomes_replicated_and_its_relations_carry_no_clause(
         "CREATE TABLE silver.`t__converting`\n(\n    `a` UInt8\n)\n"
         "ENGINE = ReplicatedReplacingMergeTree(_version)\nORDER BY a"
     ) in sql
-    assert "INSERT INTO `silver`.`t__converting` SELECT * FROM `standalone_silver`.`t`" in sql
+    assert "INSERT INTO `silver`.`t__converting` SELECT * FROM `standalone_silver`.`t` FINAL\n" in sql
     assert "RENAME TABLE `silver`.`t__converting` TO `silver`.`t`\n" in sql
     assert "CREATE VIEW silver.v\n(\n    `a` UInt8\n)\nAS SELECT a FROM silver.t" in sql
     assert "silver.t ON CLUSTER" not in sql and "silver.v ON CLUSTER" not in sql
@@ -260,6 +267,8 @@ def test_the_counts_compared_are_the_rows_a_reader_of_the_engine_sees(
     sql = log.read_text()
     for side in ("`standalone_bronze_github`.`t`", "`bronze_github`.`t__converting`"):
         assert f"SELECT count() FROM {side}{counted}\n" in sql, f"{engine} should count {side}{counted}: {sql}"
+    copied = "INSERT INTO `bronze_github`.`t__converting` SELECT * FROM `standalone_bronze_github`.`t`"
+    assert f"{copied}{counted}\n" in sql, f"{engine} should copy what a reader sees: {sql}"
 
 
 def test_a_replacing_table_with_unmerged_duplicates_converts(tmp_path: Path) -> None:
@@ -294,13 +303,28 @@ def test_a_copy_that_lost_rows_stops_before_it_takes_the_name_and_leaves_the_sou
     assert writes == [], f"{engine}: the source is read, never written: {writes}"
 
 
-def test_a_table_already_under_its_name_is_judged_by_the_rows_a_reader_sees(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("engine", "counts", "kept"),
+    [
+        ("ReplacingMergeTree", UNMERGED, True),
+        ("ReplacingMergeTree", Counts(copy_content=12), False),
+        ("ReplacingMergeTree", Counts(copy_final=2), False),
+        ("MergeTree", Counts(copy_content=12), True),
+        ("MergeTree", Counts(copy_rows=2), False),
+    ],
+)
+def test_a_table_already_under_its_name_is_kept_only_when_it_shows_the_rows_the_source_shows(
+    tmp_path: Path, engine: str, counts: Counts, kept: bool
+) -> None:
+    """A raw copy by an earlier version of the script can match FINAL's count but not its rows."""
     log = tmp_path / "sql.log"
-    result = run("bronze_github", log=log, existing="t", counts=UNMERGED)
+    result = run("bronze_github", relations=f"t\\t{engine}", log=log, existing="t", counts=counts)
 
-    assert result.returncode == 0, result.stderr
-    assert "bronze_github.t: already copied, 3 row(s)" in result.stdout
-    assert "INSERT" not in log.read_text()
+    assert (result.returncode == 0) is kept, f"{engine} {counts}: {result.stderr}"
+    assert ("already copied" in result.stdout) is kept
+    sql = log.read_text()
+    assert "INSERT" not in sql
+    assert ("cityHash64(tuple(*))" in sql) is (engine != "MergeTree" and counts.copy_final == counts.source_final)
 
 
 def test_a_copy_left_under_its_staging_name_is_refused_by_that_name(tmp_path: Path) -> None:
