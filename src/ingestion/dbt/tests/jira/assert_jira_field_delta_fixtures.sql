@@ -1,3 +1,5 @@
+{{ config(tags=['ci_only']) }}
+
 -- Unit test for `jira_delta_sides`: the before/after state a single changelog
 -- item describes, per field_kind.
 --

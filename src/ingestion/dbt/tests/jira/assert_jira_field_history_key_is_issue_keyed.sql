@@ -1,4 +1,4 @@
-{{ config(tags=['jira', 'staging']) }}
+{{ config(tags=['ci_only', 'jira', 'staging']) }}
 
 -- Every journal row's `unique_key` is the one formula `jira_history_key` states,
 -- with the issue named by its immutable id. A row keyed any other way — by the

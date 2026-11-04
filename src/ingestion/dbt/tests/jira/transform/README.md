@@ -158,7 +158,7 @@ The `.sql` files one level up are dbt singular tests, run by
 - `assert_jira_field_kind_covers_catalogue` — fails on any unclassified field.
 
 Most of them also carry `connector_quality` + `jira`, so they run after every
-Jira sync on an installation. Seven are CI-only and carry no catalog tag: the five
+Jira sync on an installation. Seven are CI-only and carry `ci_only` instead: the five
 `*_fixtures` tests, which read no table, and
 `assert_jira_field_history_key_is_issue_keyed` and
 `assert_jira_catalogue_first_seen_key_is_one_pair`, which only a code change can
