@@ -532,6 +532,16 @@ const GIT_CATEGORY_NOTES = [
   "Code — whatever the other categories did not claim.",
 ] as const;
 
+export const IN_FLIGHT_LENS = "Work in flight";
+
+export const IN_FLIGHT_METRICS = {
+  commits: "git.non_default_branch_commits",
+  codeLines: "git.non_default_branch_code_lines",
+  linesAdded: "git.non_default_branch_lines_added",
+  prsCreated: "git.non_default_branch_prs_created",
+  prsMerged: "git.non_default_branch_prs_merged",
+} as const;
+
 const DEV: Record<string, LensEntry> = {
   Overview: {
     title: "Development",
@@ -608,6 +618,37 @@ const DEV: Record<string, LensEntry> = {
         dimension: "repository",
         splitBy: "category",
         title: "Lines by repository",
+      },
+    ],
+  },
+  [IN_FLIGHT_LENS]: {
+    title: "Development · Work in flight",
+    tagline: "not on the default branch yet",
+    sections: [
+      {
+        kind: "headline",
+        labelSource: "short",
+        metrics: [
+          IN_FLIGHT_METRICS.commits,
+          IN_FLIGHT_METRICS.codeLines,
+          IN_FLIGHT_METRICS.prsCreated,
+          IN_FLIGHT_METRICS.prsMerged,
+        ],
+      },
+      { kind: "trend", metrics: [IN_FLIGHT_METRICS.commits] },
+      {
+        kind: "distribution",
+        metric: IN_FLIGHT_METRICS.commits,
+        title: "Who has commits in flight",
+        caption: "How many people fall in each band of commits not yet on the default branch.",
+        unitLabel: "commits in flight per person",
+      },
+      {
+        kind: "composition",
+        metric: IN_FLIGHT_METRICS.linesAdded,
+        dimension: "repository",
+        splitBy: "category",
+        title: "Lines in flight by repository",
       },
     ],
   },

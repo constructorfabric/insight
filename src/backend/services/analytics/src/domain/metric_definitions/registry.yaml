@@ -1038,7 +1038,7 @@ metrics:
     source_key: git
     subject: commits
     label: Commits that have not reached the default branch
-    short_label: Commits (other)
+    short_label: Commits in flight
     description: Authored commits that have not reached the default branch
     explanation: >-
       Authored commits not reachable from the repository's default branch —
@@ -1118,7 +1118,7 @@ metrics:
     source_key: git
     subject: code_changes
     label: Code lines that have not reached the default branch
-    short_label: Code lines (other)
+    short_label: Code lines in flight
     description: Lines added to code files that have not reached the default branch
     explanation: >-
       Code lines whose commit has not reached the repository's default branch —
@@ -1200,7 +1200,7 @@ metrics:
     source_key: git
     subject: code_changes
     label: Lines added that have not reached the default branch
-    short_label: Lines + (other)
+    short_label: Lines added in flight
     description: All lines added that have not reached the default branch
     explanation: >-
       Lines added whose commit has not reached the repository's default branch —
@@ -1308,7 +1308,7 @@ metrics:
     source_key: git
     subject: code_changes
     label: Lines removed that have not reached the default branch
-    short_label: Lines − (other)
+    short_label: Lines removed in flight
     description: All lines removed that have not reached the default branch
     explanation: >-
       Lines removed whose commit has not reached the repository's default
@@ -1380,7 +1380,7 @@ metrics:
     source_key: git
     subject: pull_requests
     label: Pull requests created into another branch
-    short_label: PRs opened (other)
+    short_label: PRs into other branches
     description: Authored pull requests targeting a branch other than the default
     explanation: >-
       Pull requests opened against something other than the repository's
@@ -1456,7 +1456,7 @@ metrics:
     source_key: git
     subject: pull_requests
     label: Pull requests merged into another branch
-    short_label: PRs merged (other)
+    short_label: PRs merged into other branches
     description: Authored pull requests merged into a branch other than the default
     explanation: >-
       Pull requests that merged into something other than the repository's

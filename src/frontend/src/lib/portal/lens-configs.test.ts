@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { GROUPS, HEATMAP_METRIC_KEYS, KPI_ROW } from "@/lib/insight/groups";
+import { evidenceCarriers } from "@/lib/metrics/evidence-via";
 import { OVERVIEW_ITEMS } from "@/lib/portal/overview-configs";
 import { DIRECTIONS } from "@/lib/portal/nav-model";
 import { parseNavPaths } from "@/lib/portal/nav-policy";
 import {
   DIRECTION_LENSES,
+  IN_FLIGHT_LENS,
+  IN_FLIGHT_METRICS,
   directionMetricKeys,
   lensEntry,
   sectionMetricKeys,
@@ -15,9 +18,10 @@ import {
   type SectionSpec,
 } from "./lens-configs";
 
-const KNOWN_KEYS = new Set(
-  GROUPS.flatMap((g) => g.collection.metrics.map((m) => m.key)),
-);
+const KNOWN_KEYS = new Set([
+  ...GROUPS.flatMap((g) => g.collection.metrics.map((m) => m.key)),
+  ...Object.values(IN_FLIGHT_METRICS),
+]);
 
 describe("DIRECTION_LENSES registry", () => {
   it("covers every direction and lens declared in nav-model", () => {
@@ -73,8 +77,17 @@ describe("DIRECTION_LENSES registry", () => {
       "git.non_default_branch_lines_removed",
       "git.non_default_branch_code_lines",
     ]);
+    const lensSurfaces = Object.entries(DIRECTION_LENSES).flatMap(([dir, lenses]) =>
+      Object.entries(lenses).flatMap(([lens, entry]): Array<[string, string[]]> => {
+        if ("comingSoon" in entry) return [];
+        if (dir === "dev" && lens === IN_FLIGHT_LENS) return [];
+        if ("entity" in entry) return [[`${dir} ${lens}`, tenantSectionMetricKeys(entry)]];
+        const keys = sectionMetricKeys(entry);
+        return [[`${dir} ${lens}`, [...keys, ...evidenceCarriers(keys)]]];
+      }),
+    );
     const surfaces: Array<[string, readonly string[]]> = [
-      ["dev lenses", directionMetricKeys("dev")],
+      ...lensSurfaces,
       ...Object.entries(OVERVIEW_ITEMS).map(
         ([item, config]) => [`overview ${item}`, sectionMetricKeys(config)] as [string, string[]],
       ),
@@ -93,6 +106,13 @@ describe("DIRECTION_LENSES registry", () => {
     for (const [surface, keys] of surfaces) {
       expect(keys.filter((key) => anyBranch.has(key)), surface).toEqual([]);
     }
+  });
+
+  it("shows work outside the default branch on the in-flight lens alone", () => {
+    const inFlight = sectionMetricKeys(lensEntry("dev", IN_FLIGHT_LENS) as LensConfig);
+    const allowed = new Set<string>(Object.values(IN_FLIGHT_METRICS));
+    expect(inFlight.filter((key) => !allowed.has(key))).toEqual([]);
+    expect(inFlight).toContain(IN_FLIGHT_METRICS.commits);
   });
 
   it("explains a derived dimension where a label cannot", () => {
