@@ -458,6 +458,7 @@ def _truncate_bronze(warehouse: Warehouse) -> None:
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_statuses")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_comments")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_keys")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_worklogs")
     clear_stateful_link_inputs(warehouse)
     warehouse.generation += 1
 
