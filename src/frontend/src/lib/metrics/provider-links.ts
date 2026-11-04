@@ -2,12 +2,18 @@ import type { MetricEvidenceSelection } from "@/api/metric-drilldown-client";
 
 const TASK_METRIC_PREFIX = "tasks.";
 const GITHUB_STYLE_ISSUE_REF = /^([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)#([0-9]+)$/;
+const COMMIT_SHA = /^[0-9a-f]{32,64}$/i;
+/** As git and every forge abbreviate a commit. */
+const SHORT_SHA_LENGTH = 7;
 
 export function isTaskMetric(metricKey: string): boolean {
   return metricKey.startsWith(TASK_METRIC_PREFIX);
 }
 
 export function evidenceRefText(metricKey: string, value: string): string {
+  if (COMMIT_SHA.test(value.trim())) {
+    return value.trim().slice(0, SHORT_SHA_LENGTH);
+  }
   if (!isTaskMetric(metricKey)) return value;
   const matched = GITHUB_STYLE_ISSUE_REF.exec(value.trim());
   return matched ? `#${matched[2]}` : value;
