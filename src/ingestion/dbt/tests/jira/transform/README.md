@@ -162,6 +162,8 @@ Jira sync on an installation. Seven are CI-only and carry `ci_only` instead: the
 `*_fixtures` tests, which read no table, and
 `assert_jira_field_history_key_is_issue_keyed` and
 `assert_jira_catalogue_first_seen_key_is_one_pair`, which only a code change can
-break — staging and the catalogue key are rebuilt from bronze on every run.
+break: the journal is rebuilt from bronze, and the catalogue key is computed from
+the tenant-and-source pair it names. The catalogue itself is retained across runs
+and cannot be recomputed, but its rows cannot change the key formula.
 
 The macros themselves are documented in [`../../../macros/jira/README.md`](../../../macros/jira/README.md).

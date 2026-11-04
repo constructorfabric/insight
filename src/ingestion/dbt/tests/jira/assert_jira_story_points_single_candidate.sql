@@ -7,7 +7,7 @@
         'domain': 'task-tracking',
         'category': 'consistency',
         'tier': 'warn',
-        'remediation': 'An issue holds a value in two story point candidate fields at once, so the estimate is ambiguous. Decide which field is authoritative for the source and bind it.'
+        'remediation': 'An issue holds a value in two story point candidate fields at once, so the estimate is ambiguous. Clear the value from all but one candidate field in Jira; if both are meant to hold it, the story point resolution and this check have to change together.'
     }
 ) }}
 

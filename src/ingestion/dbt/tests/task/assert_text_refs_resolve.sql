@@ -30,6 +30,9 @@ WITH history_refs AS (
         value_ids AS text_id,
         value_displays AS display
     WHERE value_id_type = {{ task_text_ref_type() }}
+      -- INVARIANT: ARRAY JOIN errors on arrays of unequal length; those rows are
+      -- assert_value_arrays_same_length's finding, not this one's.
+      AND length(value_ids) = length(value_displays)
 ),
 
 current_refs AS (

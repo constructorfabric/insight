@@ -23,12 +23,16 @@ SELECT
     fh.event_id,
     fh.field_id
 FROM silver.class_task_field_history fh FINAL
--- staging.jira_changelog_items is plain MergeTree (append-only dbt incremental), no FINAL needed
-LEFT JOIN staging.jira_changelog_items ci
+-- INVARIANT: `matched` marks a joined row under either join_use_nulls setting;
+-- an unmatched String key reads as '' when the setting is 0, never as NULL.
+LEFT JOIN (
+    SELECT insight_source_id, jira_id, changelog_id, field_id, 1 AS matched
+    FROM staging.jira_changelog_items
+) ci
     ON fh.insight_source_id = ci.insight_source_id
    AND fh.issue_id          = ci.jira_id
    AND fh.event_id          = ci.changelog_id
    AND fh.field_id          = ci.field_id
 WHERE fh.data_source = 'jira'
   AND fh.event_kind  = 'changelog'
-  AND ci.changelog_id IS NULL
+  AND ifNull(ci.matched, 0) = 0

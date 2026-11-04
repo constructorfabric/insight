@@ -18,6 +18,31 @@
 -- declares its domain here; a field this test does not know is itself a
 -- finding, because its values would constrain nothing.
 
+WITH latest_value_maps AS (
+    SELECT
+        tenant_id,
+        insight_source_id,
+        field,
+        source_key,
+        target_value,
+        is_deleted
+    FROM config.field_value_map FINAL
+    ORDER BY recorded_at DESC
+    LIMIT 1 BY tenant_id, insight_source_id, data_source, field, source_key, valid_from
+),
+
+latest_defaults AS (
+    SELECT
+        tenant_id,
+        insight_source_id,
+        field,
+        default_value,
+        is_deleted
+    FROM config.field_value_defaults FINAL
+    ORDER BY recorded_at DESC
+    LIMIT 1 BY tenant_id, insight_source_id, field, valid_from
+)
+
 SELECT
     'out_of_domain' AS problem,
     tenant_id,
@@ -25,7 +50,7 @@ SELECT
     field,
     source_key AS detail,
     target_value AS value
-FROM config.field_value_map FINAL
+FROM latest_value_maps
 WHERE is_deleted = 0
   AND NOT (field = 'issue_type' AND target_value IN ('bug', 'task', 'unknown'))
   AND NOT (field = 'resolution' AND target_value IN ('fixed', 'duplicate', 'wontfix', 'unknown'))
@@ -39,7 +64,7 @@ SELECT
     field,
     '' AS detail,
     default_value
-FROM config.field_value_defaults FINAL
+FROM latest_defaults
 WHERE is_deleted = 0
   AND NOT (field = 'issue_type' AND default_value IN ('bug', 'task', 'unknown'))
   AND NOT (field = 'resolution' AND default_value IN ('fixed', 'duplicate', 'wontfix', 'unknown'))

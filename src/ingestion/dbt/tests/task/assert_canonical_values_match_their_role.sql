@@ -29,6 +29,19 @@ WITH bound AS (
     FROM config.task_field_roles FINAL
     WHERE is_deleted = 0 AND valid_from <= now64(3)
     GROUP BY insight_source_id, data_source, field_id
+),
+
+latest_mappings AS (
+    SELECT
+        insight_source_id,
+        data_source,
+        field_id,
+        value_id,
+        canonical_value,
+        is_deleted
+    FROM config.task_value_map FINAL
+    ORDER BY recorded_at DESC
+    LIMIT 1 BY tenant_id, insight_source_id, data_source, field_id, value_id, valid_from
 )
 
 SELECT
@@ -38,7 +51,7 @@ SELECT
     m.value_id,
     b.role,
     m.canonical_value
-FROM config.task_value_map AS m FINAL
+FROM latest_mappings AS m
 INNER JOIN bound AS b
     ON b.insight_source_id = m.insight_source_id
     AND b.data_source = m.data_source
