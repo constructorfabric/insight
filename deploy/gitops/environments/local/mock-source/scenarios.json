@@ -1,0 +1,62 @@
+{
+  "mock-a": {
+    "seed": 7,
+    "epoch": "2026-01-01T00:00:00Z",
+    "streams": {
+      "mock_events": {
+        "record_count": 20,
+        "page_size": 5,
+        "latency_seconds": 0,
+        "duration_minutes": 0,
+        "fail_after_pages": null,
+        "fail_requests": 0,
+        "failure_status": 503,
+        "retry_after_seconds": 1,
+        "auth_reject": false,
+        "gate_page": null
+      },
+      "mock_updates": {
+        "record_count": 20,
+        "page_size": 5,
+        "latency_seconds": 0,
+        "duration_minutes": 0,
+        "fail_after_pages": null,
+        "fail_requests": 0,
+        "failure_status": 503,
+        "retry_after_seconds": 1,
+        "auth_reject": false,
+        "gate_page": null
+      }
+    }
+  },
+  "mock-b": {
+    "seed": 7,
+    "epoch": "2026-01-01T00:00:00Z",
+    "streams": {
+      "mock_events": {
+        "record_count": 20,
+        "page_size": 5,
+        "latency_seconds": 0,
+        "duration_minutes": 0,
+        "fail_after_pages": null,
+        "fail_requests": 0,
+        "failure_status": 503,
+        "retry_after_seconds": 1,
+        "auth_reject": false,
+        "gate_page": null
+      },
+      "mock_updates": {
+        "record_count": 20,
+        "page_size": 5,
+        "latency_seconds": 0,
+        "duration_minutes": 0,
+        "fail_after_pages": null,
+        "fail_requests": 0,
+        "failure_status": 503,
+        "retry_after_seconds": 1,
+        "auth_reject": false,
+        "gate_page": null
+      }
+    }
+  }
+}

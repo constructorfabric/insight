@@ -37,6 +37,20 @@
 # exit status through `tee`; dash lacks it and a failed upgrade reports SUCCESS.
 SHELL            := /bin/bash
 
+.PHONY: local-mock-source-guard local-mock-source-install local-mock-source-remove
+local-mock-source-guard:
+	@test "$(ENV)" = local || { echo "mock-source is local-only; set ENV=local"; exit 1; }
+	@test -n "$(NS_APP)" || { echo "NS_APP is required"; exit 1; }
+
+local-mock-source-install: local-mock-source-guard vpn-up kube-ctx
+	@test -n "$(MOCK_TOOLBOX_IMAGE)" || { echo "MOCK_TOOLBOX_IMAGE is required"; exit 1; }
+	helm upgrade --install mock-source environments/local/mock-source \
+		--kube-context "$(KUBE_CTX)" --namespace "$(NS_APP)" \
+		--set-string image="$(MOCK_TOOLBOX_IMAGE)" --wait --timeout 2m
+
+local-mock-source-remove: local-mock-source-guard vpn-up kube-ctx
+	helm uninstall mock-source --kube-context "$(KUBE_CTX)" --namespace "$(NS_APP)" --wait --timeout 2m
+
 ENV              ?= local
 # Single source of truth for per-env cluster topology. Drives bootstrap,
 # system, seal, and deploy targets. Schema: see

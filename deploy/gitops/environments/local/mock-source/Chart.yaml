@@ -1,0 +1,5 @@
+apiVersion: v2
+name: mock-source
+description: Synthetic source for local scheduling tests
+version: 0.1.0
+type: application

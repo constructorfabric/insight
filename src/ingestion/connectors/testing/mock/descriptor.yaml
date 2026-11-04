@@ -1,0 +1,12 @@
+name: mock
+type: nocode
+version: "1.0.0"
+schedule: "0 4 * * *"
+workflow: sync
+dbt_select: "tag:mock+"
+connection:
+  namespace: bronze_mock
+secret:
+  required_fields:
+    - base_url
+    - api_token
