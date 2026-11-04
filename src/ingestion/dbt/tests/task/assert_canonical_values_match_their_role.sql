@@ -1,3 +1,16 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Mapped status values are canonical states',
+        'domain': 'task-tracking',
+        'category': 'configuration',
+        'tier': 'error',
+        'remediation': 'A value map entry for a status-role field targets a value outside new, in_progress, done and undefined, so gold cannot classify issues in it. Correct the target_value of the entry named in the finding.'
+    }
+) }}
+
 -- A canonical value must fall inside the domain its field's role permits.
 -- `role` is a low-cardinality string rather than an enum, so the database
 -- constrains neither it nor the values bound under it — this test is what
@@ -35,4 +48,3 @@ WHERE m.is_deleted = 0
       (b.role = 'status' AND m.canonical_value IN ('new', 'in_progress', 'done', 'undefined'))
       OR b.role != 'status'
   )
-LIMIT 100

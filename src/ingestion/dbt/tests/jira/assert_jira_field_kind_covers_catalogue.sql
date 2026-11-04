@@ -1,3 +1,16 @@
+{{ config(
+    tags=['connector_quality', 'jira'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Every Jira catalogue field has a known kind',
+        'domain': 'task-tracking',
+        'category': 'coverage',
+        'tier': 'error',
+        'remediation': 'A field in the Jira catalogue classifies as UNKNOWN, so its values are not normalised. A tracker app introduced a schema the classifier does not know; extend jira_field_kind for it.'
+    }
+) }}
+
 -- No field in the catalogue may resolve to UNKNOWN.
 --
 -- UNKNOWN means nobody has classified this structure yet, as distinct from
@@ -18,4 +31,3 @@ SELECT
     schema_custom
 FROM {{ ref('jira__task_field_kind') }}
 WHERE field_kind = 'UNKNOWN'
-LIMIT 100

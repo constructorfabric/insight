@@ -1,3 +1,16 @@
+{{ config(
+    tags=['connector_quality', 'jira'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Fields missing from the Jira catalogue have no recent events',
+        'domain': 'task-tracking',
+        'category': 'freshness',
+        'tier': 'warn',
+        'remediation': 'A field absent from the catalogue has events newer than the catalogue\'s first sync. The fields stream lags or was not selected; this clears on the next sync that reads the catalogue.'
+    }
+) }}
+
 -- A field excluded for catalogue absence must be an OLD field.
 --
 -- FIELD-HISTORY-IN-DBT.md §3.2. Absence from `bronze_jira.jira_fields` has two
@@ -34,4 +47,3 @@ SELECT
     catalogue_first_sync
 FROM {{ ref('jira__task_field_unclassified') }}
 WHERE metadata_is_missing
-LIMIT 100

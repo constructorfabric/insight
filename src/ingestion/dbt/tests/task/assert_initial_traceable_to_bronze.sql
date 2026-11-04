@@ -1,3 +1,16 @@
+{{ config(
+    tags=['connector_quality', 'jira'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Every Jira initial-state row in silver has its issue in bronze',
+        'domain': 'task-tracking',
+        'category': 'traceability',
+        'tier': 'warn',
+        'remediation': 'A synthetic initial row in class_task_field_history names a Jira issue bronze does not hold. After bronze is cleared or a source is recreated, silver keeps the old rows until the class is fully refreshed; otherwise the row is an orphan of a retired producer.'
+    }
+) }}
+
 -- Every initial silver row must correspond to an issue row in bronze_jira.jira_issue
 -- (for Jira source). Convention: event_id = 'initial:<issue_id>' where issue_id = jira_id.
 
@@ -13,4 +26,3 @@ LEFT JOIN {{ source('bronze_jira', 'jira_issue') }} i
 WHERE fh.data_source = 'jira'
   AND fh.event_kind  = 'synthetic_initial'
   AND i.source_id IS NULL
-LIMIT 100

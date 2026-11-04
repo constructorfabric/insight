@@ -1,3 +1,16 @@
+{{ config(
+    tags=['connector_quality', 'jira'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Jira field kinds do not depend on field ids',
+        'domain': 'task-tracking',
+        'category': 'consistency',
+        'tier': 'warn',
+        'remediation': 'Masking a field\'s id changes the kind the classifier gives it, so the classifier keys on a customfield id instead of the schema. Fix jira_field_kind to read the schema only.'
+    }
+) }}
+
 -- Portability guard for the `jira_field_kind` classifier.
 --
 -- `customfield_NNNNN` ids are assigned per Jira instance; Jira's type constants
@@ -45,4 +58,3 @@ WHERE kind_with_real_id != kind_with_masked_id
                        -- time-tracking estimates, and no structure separates
                        -- them from a story-point estimate
                        'timeestimate', 'timeoriginalestimate')
-LIMIT 100

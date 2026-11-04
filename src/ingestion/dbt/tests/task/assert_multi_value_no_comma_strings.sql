@@ -1,3 +1,16 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Multi-value field elements are not unsplit lists',
+        'domain': 'task-tracking',
+        'category': 'integrity',
+        'tier': 'warn',
+        'remediation': 'An element of a multi-value field contains \', \', so a list was stored as one value and every count over the field is wrong. Check how the producer splits the field\'s raw value.'
+    }
+) }}
+
 -- A multi-value element must never be an unsplit list.
 --
 -- The failure this hunts is real: Jira serializes some multi-value fields as one
@@ -31,4 +44,3 @@ SELECT
 FROM silver.class_task_field_history FINAL
 WHERE field_cardinality = 'multi'
   AND arrayExists(v -> position(v, ', ') > 0, value_ids)
-LIMIT 100

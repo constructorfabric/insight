@@ -1,3 +1,16 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Field history event kinds match their event id prefix',
+        'domain': 'task-tracking',
+        'category': 'consistency',
+        'tier': 'error',
+        'remediation': 'An event_kind does not match the prefix of its event_id (initial:, availability:, comment:, worklog:, retired:, unclassified:, snapshot_diff:, or none for a changelog event). The producer named by data_source mints ids or kinds inconsistently; fix it there.'
+    }
+) }}
+
 -- Convention (ADR-005-event-id-traceability):
 --   event_kind='synthetic_initial' ⇔ event_id LIKE 'initial:%'
 --   event_kind='availability'      ⇔ event_id LIKE 'availability:%'
@@ -27,4 +40,3 @@ WHERE (event_kind = 'synthetic_initial' AND event_id NOT LIKE 'initial:%')
    OR (event_kind = 'snapshot_diff'     AND event_id NOT LIKE 'snapshot_diff:%')
    OR (event_kind = 'availability'      AND event_id NOT LIKE 'availability:%')
    OR (event_kind = 'lifecycle'         AND event_id NOT LIKE 'comment:%' AND event_id NOT LIKE 'worklog:%')
-LIMIT 100

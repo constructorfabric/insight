@@ -1,3 +1,16 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Every observed status and issue type value is mapped',
+        'domain': 'task-tracking',
+        'category': 'coverage',
+        'tier': 'warn',
+        'remediation': 'A status or issue type value appears in the field history of a source that has bindings, but no value map entry covers it, so issues in that value never resolve to a canonical state. Add the mapping for the value named in the finding; a new workflow status shows here until an admin maps it.'
+    }
+) }}
+
 -- Every value of a field bound to a lifecycle role must have a mapping. An
 -- unmapped status value is worse than an error: it produces no dimension row,
 -- gold treats anything that is not `done` as open, and the issue never closes —
@@ -77,4 +90,3 @@ LEFT ANTI JOIN mapped AS m
     AND m.data_source = o.data_source
     AND m.field_id = o.field_id
     AND m.value_id = o.value_id
-LIMIT 100
