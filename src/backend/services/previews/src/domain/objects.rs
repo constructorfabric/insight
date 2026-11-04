@@ -159,7 +159,7 @@ pub fn deployment(name: &ExperimentName, tag: &ImageTag, stamp: &ExperimentStamp
 
     Deployment {
         metadata: object_meta(name, tag, stamp),
-        spec: Some(DeploymentSpec {
+        spec: DeploymentSpec {
             replicas: Some(1),
             selector: LabelSelector {
                 match_labels: Some(selector_labels(name)),
@@ -180,7 +180,7 @@ pub fn deployment(name: &ExperimentName, tag: &ImageTag, stamp: &ExperimentStamp
                 }),
             },
             ..DeploymentSpec::default()
-        }),
+        },
         ..Deployment::default()
     }
 }
