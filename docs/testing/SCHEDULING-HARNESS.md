@@ -650,37 +650,23 @@ The source has no runtime dependencies; pytest runs its tests.
 
 ```bash
 python3.12 -m pytest src/ingestion/tools/mock-source/tests src/ingestion/tools/mock-airbyte-api/tests -q
-python3.12 -m pytest deploy/gitops/scripts/tests/test_local_airbyte_harness.py \
-  deploy/gitops/environments/local/mock-airbyte-api/tests -q
-python3.12 -m pytest src/ingestion/reconcile-connectors/tests -q
-python3.12 -m pytest deploy/gitops/environments/local/mock-source/tests -q
 cd src/ingestion/tests/connectors
 .venv/bin/pytest ../../connectors/testing/mock/tests
-.venv/bin/pytest
 cd ../../../..
 helm lint deploy/gitops/environments/local/mock-source --set-string image=synthetic-toolbox:test
+helm lint deploy/gitops/environments/local/mock-airbyte-api --set-string image=synthetic-toolbox:test \
+  --set-string upstream=http://synthetic.invalid:8001
 CLICKHOUSE_PASSWORD=synthetic dbt parse --no-partial-parse \
   --project-dir src/ingestion/dbt --profiles-dir src/ingestion/dbt
-ruff check src/ingestion/tools/mock-source src/ingestion/connectors/testing/mock/tests \
-  deploy/gitops/environments/local/mock-source/tests \
-  src/ingestion/reconcile-connectors/python/schedule_trigger.py \
-  src/ingestion/reconcile-connectors/tests/test_schedule_trigger.py
-ruff format --check src/ingestion/tools/mock-source src/ingestion/connectors/testing/mock/tests \
-  deploy/gitops/environments/local/mock-source/tests \
-  src/ingestion/reconcile-connectors/python/schedule_trigger.py \
-  src/ingestion/reconcile-connectors/tests/test_schedule_trigger.py
+ruff check src/ingestion/tools/mock-source src/ingestion/tools/mock-airbyte-api \
+  src/ingestion/connectors/testing/mock/tests
+ruff format --check src/ingestion/tools/mock-source src/ingestion/tools/mock-airbyte-api \
+  src/ingestion/connectors/testing/mock/tests
 ```
 
-Also lint/format `src/ingestion/tools/mock-airbyte-api`,
-`deploy/gitops/scripts/tests/test_local_airbyte_harness.py` and
-`deploy/gitops/environments/local/mock-airbyte-api/tests`, and run
-`helm lint deploy/gitops/environments/local/mock-airbyte-api --set-string image=synthetic-toolbox:test --set-string upstream=http://synthetic.invalid:8001`.
 Proxy transport tests use connected socket pairs to exercise real HTTP parsers,
-streaming and concurrency without opening a TCP listener. The seed test executes
-the idempotent INSERT with SQLite's equivalent conflict handling and separately
-checks the kubectl/psql invocation; the PostgreSQL and nocode publication acceptance
-checks require the local stand. Mutation evidence names the deliberately broken
-implementation each new test rejected in the slice result report.
+streaming and concurrency without opening a TCP listener. Manifest image version
+seeding, the local charts and nocode publication are checked on the local stand.
 
 Use Ruff 0.15.21 for the hook's lint/format checks. Source unit tests and manifest
 transport tests complement the final real Airbyte sync; neither proves capacity
