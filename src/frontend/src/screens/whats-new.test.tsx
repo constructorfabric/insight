@@ -18,7 +18,7 @@ function sectionFor(label: string): HTMLElement {
 function renderScreen() {
   return render(
     <TooltipProvider>
-        <WhatsNewBody />
+      <WhatsNewBody />
     </TooltipProvider>
   );
 }
@@ -30,10 +30,8 @@ describe("WhatsNewBody", () => {
       screen.getByRole("heading", { name: "What's new · November 2026" })
     ).toBeInTheDocument();
     expect(screen.getByText("26.11")).toBeInTheDocument();
-    expect(screen.getByText("10 improvements")).toBeInTheDocument();
-    expect(
-      screen.getByText("custom dashboards and new connectors")
-    ).toBeInTheDocument();
+    expect(screen.queryByText("Highlights")).not.toBeInTheDocument();
+    expect(screen.queryByText("Focus")).not.toBeInTheDocument();
   });
 
   it("groups the release into sections, as the written notes do", () => {
@@ -50,8 +48,6 @@ describe("WhatsNewBody", () => {
     }
     for (const title of [
       "Custom dashboards",
-      "Sharing",
-      "Full-size widgets",
       "Allure TestOps",
       "YouTrack",
       "GitLab",
@@ -65,6 +61,62 @@ describe("WhatsNewBody", () => {
     // The section names the area, so entries no longer repeat it as a category
     // label of their own.
     expect(screen.queryByText("Git output")).not.toBeInTheDocument();
+  });
+
+  it("tells who builds dashboards, how they share them and file them", () => {
+    renderScreen();
+    const entry = screen
+      .getByRole("heading", { name: "Custom dashboards" })
+      .closest("article");
+    expect(entry).toHaveTextContent(/^Custom dashboardsBuild custom metrics/);
+    expect(entry).toHaveTextContent("through MCP");
+    expect(entry).toHaveTextContent("Share them to view or edit");
+    expect(entry).toHaveTextContent("folders and tags");
+    expect(entry).toHaveTextContent("Building requires administrator access.");
+  });
+
+  it("keeps smaller changes in a closed Other changes and fixes block", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+
+    const release = within(sectionFor("Improvements you'll notice"));
+    const toggle = release.getByRole("button", {
+      name: /Other changes and fixes/,
+    });
+    expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
+
+    await user.click(toggle);
+
+    expect(
+      release.getAllByRole("listitem").map((bullet) => bullet.textContent)
+    ).toEqual([
+      "Added an expanded view for widgets.",
+      "Added a time range picker to each custom dashboard.",
+      "Gave Collaboration metrics clearer names: Focus Time is now Time Outside Meetings, and Email Read Actions is now Email Read Events.",
+      "Split Meetings by kind and removed the Scheduled and Ad-hoc Meetings cards.",
+    ]);
+  });
+
+  it("puts collaboration right after dashboards", () => {
+    renderScreen();
+    const groups = [
+      "Dashboards",
+      "Connectors",
+      "AI & Cost",
+      "Collaboration",
+      "New UI",
+    ];
+    const order = within(sectionFor("Improvements you'll notice"))
+      .getAllByRole("heading", { level: 4 })
+      .map((heading) => heading.textContent)
+      .filter((title) => groups.includes(title ?? ""));
+    expect(order).toEqual([
+      "Dashboards",
+      "Collaboration",
+      "Connectors",
+      "AI & Cost",
+      "New UI",
+    ]);
   });
 
   it("puts the new UI last", () => {
