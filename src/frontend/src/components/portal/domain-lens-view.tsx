@@ -2917,6 +2917,7 @@ function DirectionCardsSection({
                         text={r.label}
                         className="text-muted-foreground"
                         truncate
+                        focusable={personal}
                       />
                       <span className="flex items-center gap-2">
                         <span className="font-medium tabular-nums">

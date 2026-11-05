@@ -126,6 +126,15 @@ describe("KpiTile", () => {
     );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
+
+  it("names the metric in full on keyboard focus when it opens nothing", async () => {
+    render(<KpiTile periodNoun="month" tile={tile({ groupId: null })} />);
+
+    await userEvent.tab();
+
+    const tip = await screen.findByTestId("metric-help");
+    expect(tip.firstElementChild).toHaveTextContent("Active AI days");
+  });
 });
 
 describe("KpiTilePlaceholder", () => {

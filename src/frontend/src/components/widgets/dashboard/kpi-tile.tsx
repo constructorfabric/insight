@@ -61,6 +61,7 @@ export function KpiTile({
           "relative",
           interactive && "text-left transition-colors hover:bg-card-hover"
         )}
+        tabIndex={interactive ? undefined : 0}
         render={
           primaryGroup ? (
             <button
