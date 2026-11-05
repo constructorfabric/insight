@@ -156,30 +156,28 @@ deliberate_activity AS (
         entity_id,
         metric_date,
         tool_value,
-        modality,
         CAST(
             [tuple('tool', tool_value, {{ collab_tool_label('tool_value') }})]
             AS Array(Tuple(key String, value String, label Nullable(String)))
-        ) AS tool_dimensions,
-        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
+        ) AS tool_dimensions
     FROM (
-        SELECT DISTINCT tenant_id, entity_id, metric_date, tool_value, modality
+        SELECT DISTINCT tenant_id, entity_id, metric_date, tool_value
         FROM (
-            SELECT tenant_id, entity_id, metric_date, tool_value, 'chat' AS modality
+            SELECT tenant_id, entity_id, metric_date, tool_value
             FROM chat_source
             WHERE total_chat_messages > 0
             UNION ALL
-            SELECT tenant_id, entity_id, metric_date, tool_value, 'email' AS modality
+            SELECT tenant_id, entity_id, metric_date, tool_value
             FROM email_source
             WHERE sent_count > 0
             UNION ALL
-            SELECT tenant_id, entity_id, metric_date, tool_value, 'documents' AS modality
+            SELECT tenant_id, entity_id, metric_date, tool_value
             FROM document_source
             WHERE viewed_or_edited_count > 0
                OR shared_internally_count > 0
                OR shared_externally_count > 0
             UNION ALL
-            SELECT tenant_id, entity_id, metric_date, tool_value, 'meetings' AS modality
+            SELECT tenant_id, entity_id, metric_date, tool_value
             FROM meeting_source
             WHERE meetings_and_calls_attended > 0
         )
@@ -351,15 +349,6 @@ chat_active_day_grain AS (
     FROM chat_source
     WHERE total_chat_messages > 0
 ),
-active_modality_grain AS (
-    SELECT DISTINCT
-        tenant_id,
-        entity_id,
-        metric_date,
-        modality,
-        no_dimensions
-    FROM deliberate_activity
-),
 meeting_summary_measures AS (
     {{ sum_measure('meetings_attended', 'meeting_source', 'meetings_and_calls_attended', 'tool_dimensions', where='empty(attended_meeting_keys)') }}
 ),
@@ -402,10 +391,6 @@ attendance_measures AS (
 ),
 subject_measures AS (
     {{ distinct_measure('active_day', 'active_day_grain', 'metric_date', 'tool_dimensions') }}
-
-    UNION ALL
-
-    {{ distinct_measure('active_modality', 'active_modality_grain', 'modality', 'no_dimensions') }}
 
     UNION ALL
 

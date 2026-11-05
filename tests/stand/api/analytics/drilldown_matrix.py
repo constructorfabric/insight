@@ -168,7 +168,6 @@ MATRIX: Sequence[Expectation] = (
     Expectation("ci.runs_matched_commit", "ci", Tier.EXACT_COUNT, entity=_TENANT),
     Expectation("collab.active_days", "collab", Tier.EXACT_DISTINCT_DATES),
     Expectation("collab.adhoc_meetings", "collab", Tier.EXACT_SUM),
-    Expectation("collab.breadth", "collab", Tier.STRUCTURAL_ONLY),
     Expectation("collab.channel_posts", "collab", Tier.EXACT_SUM),
     Expectation("collab.dm_ratio", "collab", Tier.EXACT_RATIO, scale=100.0),
     Expectation("collab.emails_read", "collab", Tier.EXACT_SUM),
