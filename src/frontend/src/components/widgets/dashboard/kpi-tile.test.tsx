@@ -145,7 +145,7 @@ describe("KpiTilePlaceholder", () => {
     expect(tip).toHaveTextContent("Counted from tool events");
   });
 
-  it("opens nothing for a metric the catalog says nothing about", async () => {
+  it("names the metric in full on hover, since the tile may cut its name", async () => {
     render(
       <KpiTile
         periodNoun="month"
@@ -154,7 +154,8 @@ describe("KpiTilePlaceholder", () => {
       />
     );
     await userEvent.hover(screen.getByRole("button"));
-    expect(screen.queryByTestId("metric-help")).not.toBeInTheDocument();
+    const tip = await screen.findByTestId("metric-help");
+    expect(tip).toHaveTextContent(/^Active AI days$/);
   });
 
   it("says where the value sits when it is exactly at the median", () => {
