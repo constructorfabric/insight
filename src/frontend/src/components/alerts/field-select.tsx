@@ -4,7 +4,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@gears-frontx/ui-kit";
 import type { Describing } from "@/lib/custom/editor/aria";
 import { cn } from "@/lib/utils";
 

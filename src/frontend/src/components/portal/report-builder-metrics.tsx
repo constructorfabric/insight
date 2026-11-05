@@ -7,11 +7,13 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  Checkbox,
+  Input,
+  Separator,
+  Tabs,
+  TabsList,
+  TabsTrigger,
 } from "@gears-frontx/ui-kit";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { MetricFamily } from "@/lib/reports/families";
 import { cn } from "@/lib/utils";
 import { TEXT_EYEBROW } from "@/lib/type-scale";

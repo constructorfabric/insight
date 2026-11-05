@@ -35,7 +35,13 @@ import { ConfirmGroupButton } from "@/components/portal/confirm-group-button";
 import { MergeCaseDialog } from "@/components/portal/merge-case-dialog";
 import { PersonAccountsView } from "@/components/portal/person-accounts-view";
 import { PersonCell } from "@/components/portal/person-cell";
-import { Badge, Button } from "@gears-frontx/ui-kit";
+import {
+  Badge,
+  Button,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from "@gears-frontx/ui-kit";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import {
   Collapsible,
@@ -49,7 +55,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
 import {

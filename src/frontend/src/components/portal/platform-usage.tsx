@@ -16,7 +16,7 @@ import type {
   UsagePeopleSort,
   UsageRange,
 } from "@/api/usage-client";
-import { Input } from "@/components/ui/input";
+import { Input } from "@gears-frontx/ui-kit";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import {

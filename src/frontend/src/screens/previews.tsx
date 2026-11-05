@@ -9,9 +9,7 @@ import { useState } from "react";
 import type { Experiment } from "@/api/previews-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@gears-frontx/ui-kit";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Button, Input, Label } from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Table,

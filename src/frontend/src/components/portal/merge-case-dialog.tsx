@@ -27,12 +27,11 @@
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast, Button } from "@gears-frontx/ui-kit";
+import { toast, Button, Checkbox } from "@gears-frontx/ui-kit";
 
 import type { CorrectionResponse, PersonSummary } from "@/api/identity-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
-import { Checkbox } from "@/components/ui/checkbox";
 import { personDisplayName } from "@/lib/identities/person-display";
 import {
   combineOutcomes,

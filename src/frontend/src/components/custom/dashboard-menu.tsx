@@ -24,14 +24,15 @@ import { FolderSubmenu } from "@/components/custom/dashboard-folders";
 import { refusal } from "@/components/custom/refusal";
 import { EditTags } from "@/components/custom/edit-tags";
 import { ShareDialog } from "@/components/custom/share-dialog";
-import { Button, toast } from "@gears-frontx/ui-kit";
 import {
+  Button,
+  toast,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@gears-frontx/ui-kit";
 import { usePinToggle } from "@/hooks/use-pin-toggle";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
 import { useAddToFolder } from "@/queries/custom";

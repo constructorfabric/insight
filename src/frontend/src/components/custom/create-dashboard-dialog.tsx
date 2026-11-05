@@ -20,9 +20,9 @@ import {
   DialogHeader,
   DialogTitle,
   toast,
+  Input,
+  Label,
 } from "@gears-frontx/ui-kit";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { askAssistant } from "@/lib/custom/assistant-draft";
 import { audienceChosen, granteesFor } from "@/lib/custom/initial-grants";
 import { useAssistantAvailable } from "@/lib/portal/use-assistant-available";

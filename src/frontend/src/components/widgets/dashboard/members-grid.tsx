@@ -8,17 +8,15 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@gears-frontx/ui-kit";
 import {
   PreviewCard,
   PreviewCardContent,
   PreviewCardTrigger,
 } from "@/components/ui/preview-card";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@gears-frontx/ui-kit";
 import { formatMetricValue, isDurationUnit } from "@/lib/format";
 import { absenceLabel } from "@/lib/metrics/absence";
 import {
