@@ -6,7 +6,7 @@ date: 2026-07-06
 > [!WARNING]
 > **Under review — audited against the implementation and found inaccurate in places.**
 > Read it against the code, not as authority. The specific claims the code contradicts
-> are listed in the repository [README](../../../../README.md#backend-specs--under-review). Where this
+> are listed in [docs/components/backend/README.md](../README.md#backend-specs--under-review). Where this
 > document and the committed `openapi.json` disagree, the contract is right.
 
 # DESIGN -- Authenticator Service
