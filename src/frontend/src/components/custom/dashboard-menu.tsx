@@ -32,7 +32,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@gears-frontx/ui-kit";
 import { usePinToggle } from "@/hooks/use-pin-toggle";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
 import { useAddToFolder } from "@/queries/custom";
@@ -87,7 +87,10 @@ export function DashboardMenu({
       { folder: folder.id, dashboard: id },
       {
         onError: (error) =>
-          toast.error(refusal(error, "Couldn't add it to the folder.")),
+          toast.add({
+            type: "error",
+            title: refusal(error, "Couldn't add it to the folder."),
+          }),
       }
     );
   }

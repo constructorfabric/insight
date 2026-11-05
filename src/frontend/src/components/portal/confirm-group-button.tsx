@@ -14,7 +14,7 @@
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@gears-frontx/ui-kit";
 
 import {
   MAX_BINDINGS_PER_CALL,
@@ -91,7 +91,7 @@ export function ConfirmGroupButton({
         // this dialog can be unmounted before a later failure is read.
         const reason = apiErrorReason(error, t("identities.dialogs.failed"));
         setFailure(reason);
-        toast.error(reason);
+        toast.add({ type: "error", title: reason });
         return;
       }
     }
@@ -105,13 +105,14 @@ export function ConfirmGroupButton({
           ? t("identities.outcomes.toast_refused", { count: refused })
           : t("identities.dialogs.failed");
       setFailure(reason);
-      toast.error(reason);
+      toast.add({ type: "error", title: reason });
       return;
     }
 
-    toast.success(
-      t("identities.outcomes.toast_applied", { count: result.applied }),
-    );
+    toast.add({
+      type: "success",
+      title: t("identities.outcomes.toast_applied", { count: result.applied }),
+    });
     close();
   };
 

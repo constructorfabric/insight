@@ -37,7 +37,10 @@ const attention = vi.hoisted(() => ({
   merge: { mutateAsync: vi.fn() },
   bulkBind: { mutateAsync: vi.fn(), reset: vi.fn() },
 }));
-vi.mock("@/components/ui/sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
+  toast: { add: vi.fn() },
+}));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useAttention: (limit: number) => {

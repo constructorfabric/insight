@@ -53,6 +53,8 @@ vi.mock("@/queries/connector-health", () => ({
   useConnectorSyncs: () => mocks.syncs,
 }));
 
+import { openTooltip } from "@/test/tooltip";
+
 import { ConnectorHealthPane } from "./connector-health";
 
 const NOW = "2026-01-15T12:00:00.000Z";
@@ -409,7 +411,8 @@ describe("the pane prints what it was served", () => {
 
     const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
     expect(cell).toHaveTextContent(/^—$/);
-    expect(cell.querySelector('[data-slot="tooltip-trigger"]')).toBeNull();
+    await userEvent.hover(within(cell).getByText("—"));
+    expect(openTooltip()).toBeNull();
     expect(within(cell).queryByRole("button")).not.toBeInTheDocument();
     await userEvent.click(rowFor("example-tracker"));
     expect(

@@ -10,7 +10,7 @@ import { useTranslation } from "react-i18next";
 
 import type { CorrectionResponse } from "@/api/identity-client";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@gears-frontx/ui-kit";
 import { refusedCount } from "@/lib/identities/outcomes";
 
 export function OutcomeAlert({ outcome }: { outcome: CorrectionResponse }) {

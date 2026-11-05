@@ -12,9 +12,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { ReportBuilderActions } from "@/components/portal/report-builder-actions";
 import {
@@ -215,44 +214,42 @@ export function ReportBuilderView() {
 
             <div className="flex flex-wrap items-center gap-3">
               <span className={TEXT_LABEL}>Granularity</span>
-              <TooltipProvider delay={300}>
-                <ToggleGroup
-                  value={[granularity]}
-                  onValueChange={(value) => {
-                    const next = Array.isArray(value) ? value[0] : value;
-                    if (isReportGranularity(next)) setPickedGranularity(next);
-                  }}
-                  variant="outline"
-                  size="sm"
-                >
-                  {GRANULARITIES.map((option) => {
-                    const reason = periodTooShortReason(option.value, dateRange);
-                    return (
-                      <Tooltip key={option.value}>
-                        <TooltipTrigger
-                          render={
-                            <ToggleGroupItem
-                              value={option.value}
-                              disabled={reason != null}
-                              title={reason ?? undefined}
-                            >
-                              {option.label}
-                            </ToggleGroupItem>
-                          }
-                        />
-                        {reason ? (
-                          <TooltipContent
-                            side="top"
-                            className="max-w-xs text-xs leading-relaxed"
+              <ToggleGroup
+                value={[granularity]}
+                onValueChange={(value) => {
+                  const next = Array.isArray(value) ? value[0] : value;
+                  if (isReportGranularity(next)) setPickedGranularity(next);
+                }}
+                variant="outline"
+                size="sm"
+              >
+                {GRANULARITIES.map((option) => {
+                  const reason = periodTooShortReason(option.value, dateRange);
+                  return (
+                    <Tooltip key={option.value}>
+                      <TooltipTrigger
+                        render={
+                          <ToggleGroupItem
+                            value={option.value}
+                            disabled={reason != null}
+                            title={reason ?? undefined}
                           >
-                            {reason}
-                          </TooltipContent>
-                        ) : null}
-                      </Tooltip>
-                    );
-                  })}
-                </ToggleGroup>
-              </TooltipProvider>
+                            {option.label}
+                          </ToggleGroupItem>
+                        }
+                      />
+                      {reason ? (
+                        <TooltipContent
+                          side="top"
+                          className="max-w-xs text-xs leading-relaxed"
+                        >
+                          {reason}
+                        </TooltipContent>
+                      ) : null}
+                    </Tooltip>
+                  );
+                })}
+              </ToggleGroup>
             </div>
           </div>
 

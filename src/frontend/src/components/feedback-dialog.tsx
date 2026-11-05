@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 
 import { FEEDBACK_MESSAGE_MAX } from "@/api/feedback-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@gears-frontx/ui-kit";
 import { Textarea } from "@/components/ui/textarea";
 import { apiErrorReason } from "@/lib/query-console/api-error";
 import { useSubmitFeedback } from "@/queries/feedback";
@@ -41,7 +41,7 @@ export function FeedbackDialog({
       },
       {
         onSuccess: () => {
-          toast.success(t("feedback.sent"));
+          toast.add({ type: "success", title: t("feedback.sent") });
           close();
         },
       },

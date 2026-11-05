@@ -7,7 +7,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@gears-frontx/ui-kit";
 import {
   Table,
   TableBody,

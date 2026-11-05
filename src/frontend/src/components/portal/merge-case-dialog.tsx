@@ -27,7 +27,7 @@
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@gears-frontx/ui-kit";
 
 import type { CorrectionResponse, PersonSummary } from "@/api/identity-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -120,7 +120,10 @@ export function MergeCaseDialog({
       return;
     }
 
-    toast.success(t("identities.outcomes.toast_applied", { count: result.applied }));
+    toast.add({
+      type: "success",
+      title: t("identities.outcomes.toast_applied", { count: result.applied }),
+    });
     onClose();
   };
 
@@ -250,11 +253,12 @@ function report(
 ) {
   const applied = combineOutcomes(landed).applied;
   setFailure(reason);
-  toast.error(reason, {
-    description:
-      applied > 0
-        ? t("identities.outcomes.toast_partial", { count: applied })
-        : undefined,
+  toast.add({
+    type: "error",
+    title: reason,
+    description: applied > 0
+      ? t("identities.outcomes.toast_partial", { count: applied })
+      : undefined,
   });
 }
 

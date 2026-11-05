@@ -16,7 +16,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
@@ -56,7 +56,7 @@ export function TrendDrilldownDialog({
   return (
     <Dialog open={state != null} onOpenChange={(open) => !open && onClose()}>
       {state ? (
-        <DialogContent className="flex h-[calc(100dvh-4rem)] max-h-[52rem] w-[calc(100vw-2rem)] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-[76rem] [&_[data-slot=dialog-close]]:top-5">
+        <DialogContent className="flex h-[calc(100dvh-4rem)] max-h-[52rem] w-[calc(100vw-2rem)] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-[76rem]">
           <DialogHeader className="shrink-0 border-b p-5 pr-14">
             <DialogTitle>{state.label}</DialogTitle>
             <p className="text-muted-foreground text-sm">

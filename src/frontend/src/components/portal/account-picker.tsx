@@ -17,7 +17,7 @@ import { useTranslation } from "react-i18next";
 
 import type { AccountMatch } from "@/api/identity-client";
 import { PersonCell } from "@/components/portal/person-cell";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@gears-frontx/ui-kit";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";

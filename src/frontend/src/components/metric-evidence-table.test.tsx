@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MetricEvidenceTable } from "@/components/metric-evidence-table";
+import { openTooltip } from "@/test/tooltip";
 
 const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
@@ -21,8 +22,9 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 
-vi.mock("@/components/ui/sonner", () => ({
-  toast: { error: mocks.toastError },
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
+  toast: { add: mocks.toastError },
 }));
 
 const columns = [
@@ -345,14 +347,14 @@ describe("MetricEvidenceTable", () => {
       await user.hover(screen.getByText("Short"));
       await new Promise((resolve) => setTimeout(resolve, 500));
       expect(
-        document.querySelector('[data-slot="tooltip-content"]')
+        openTooltip()
       ).toBeNull();
 
       await user.unhover(screen.getByText("Short"));
       await user.hover(screen.getByText("Add the parser"));
       await waitFor(() =>
         expect(
-          document.querySelector('[data-slot="tooltip-content"]')
+          openTooltip()
         ).toHaveTextContent("Add the parser")
       );
       vi.restoreAllMocks();
@@ -407,7 +409,9 @@ describe("MetricEvidenceTable", () => {
     rerender(<MetricEvidenceTable {...props} />);
     await user.click(screen.getByRole("button", { name: "Copied" }));
     await waitFor(() =>
-      expect(mocks.toastError).toHaveBeenCalledWith("Unable to copy ref")
+      expect(mocks.toastError).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "error", title: "Unable to copy ref" })
+      )
     );
   });
 

@@ -7,7 +7,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@gears-frontx/ui-kit";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -52,7 +52,7 @@ export function CopyValueButton({
       );
     } catch {
       setCopied(false);
-      toast.error(errorMessage);
+      toast.add({ type: "error", title: errorMessage });
     }
   }
 

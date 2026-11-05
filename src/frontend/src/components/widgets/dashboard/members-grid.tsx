@@ -18,7 +18,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import { formatMetricValue, isDurationUnit } from "@/lib/format";
 import { absenceLabel } from "@/lib/metrics/absence";
 import {

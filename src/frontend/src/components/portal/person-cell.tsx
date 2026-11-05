@@ -23,13 +23,13 @@ import { useTranslation } from "react-i18next";
 import type { PersonSummary } from "@/api/identity-client";
 import { CopyValueButton } from "@/components/copy-value-button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@gears-frontx/ui-kit";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { getInitials } from "@/lib/insight/get-initials";
 import { cn } from "@/lib/utils";

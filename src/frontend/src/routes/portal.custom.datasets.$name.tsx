@@ -11,7 +11,7 @@ import {
   type Ordering,
 } from "@/components/custom/record-table";
 import { refusal } from "@/components/custom/refusal";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@gears-frontx/ui-kit";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useLocalStorageState } from "@/hooks/use-local-storage-state";

@@ -19,10 +19,10 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@gears-frontx/ui-kit";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import { askAssistant } from "@/lib/custom/assistant-draft";
 import { audienceChosen, granteesFor } from "@/lib/custom/initial-grants";
@@ -170,9 +170,10 @@ export function CreateDashboardDialog({
       });
       close();
       if (made.shareFailure !== null) {
-        toast.error(
-          refusal(made.shareFailure.refused, "Created, but couldn't share it.")
-        );
+        toast.add({
+          type: "error",
+          title: refusal(made.shareFailure.refused, "Created, but couldn't share it."),
+        });
       }
       void navigate({ to: "/portal/custom/$name", params: { name: made.id } });
     } catch (failure) {

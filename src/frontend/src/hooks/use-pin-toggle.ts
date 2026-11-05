@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { refusal } from "@/components/custom/refusal";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@gears-frontx/ui-kit";
 import { pinsQuery, useSetPinned } from "@/queries/custom";
 
 export function usePinToggle(id: string, enabled: boolean) {
@@ -17,7 +17,7 @@ export function usePinToggle(id: string, enabled: boolean) {
 
     setPinned.mutate(
       { id, pinned: !pinned },
-      { onError: (error) => toast.error(refusal(error, failed)) }
+      { onError: (error) => toast.add({ type: "error", title: refusal(error, failed) }) }
     );
   }
 

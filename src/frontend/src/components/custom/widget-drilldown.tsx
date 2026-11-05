@@ -17,7 +17,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@gears-frontx/ui-kit";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { drawable, startsOver } from "@/lib/custom/drilldown";
 import { nextSort } from "@/lib/metrics/evidence-rows";

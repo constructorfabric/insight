@@ -8,7 +8,7 @@ import { AlertSwitch } from "@/components/alerts/alert-switch";
 import { NotificationsTable } from "@/components/alerts/notifications-table";
 import { ConfirmRemove } from "@/components/custom/confirm-remove";
 import { refusal } from "@/components/custom/refusal";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@gears-frontx/ui-kit";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";

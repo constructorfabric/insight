@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import type { PeopleListItem } from "@/api/identity-client";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@gears-frontx/ui-kit";
 import { Input } from "@/components/ui/input";
 import {
   Table,

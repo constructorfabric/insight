@@ -41,8 +41,9 @@ vi.mock("@/queries/identity-me", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-me")>()),
   useIsAdmin: () => ({ isAdmin: admin.isAdmin, isPending: false }),
 }));
-vi.mock("@/components/ui/sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
+  toast: { add: vi.fn() },
 }));
 vi.mock("@/hooks/use-debounced-value", () => ({
   useDebouncedValue: <T,>(value: T) => value,
@@ -56,10 +57,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@/i18n";
 import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@gears-frontx/ui-kit";
 import { foldersQuery } from "@/queries/custom";
 
 import { CreateFolderDialog } from "./create-folder-dialog";
+import { toastsOf } from "@/test/toast";
 
 const { BOB, CAROL } = people.ids;
 const NEW_TARGET = { kind: "folders", id: "f-new" };
@@ -218,9 +220,7 @@ describe("<CreateFolderDialog>", () => {
     await user.click(createButton());
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(toast.error).toHaveBeenCalledWith(
-      "Only an administrator can do this."
-    );
+    expect(toastsOf(vi.mocked(toast.add), "error")).toContainEqual(expect.objectContaining({ title: "Only an administrator can do this." }));
   });
 
   it("offers a non-administrator no sharing and creates the folder private", async () => {

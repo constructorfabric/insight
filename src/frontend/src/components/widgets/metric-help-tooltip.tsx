@@ -5,7 +5,8 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
+import { SWEEP_TOOLTIP_DELAY_MS } from "@/lib/tooltip-delay";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
 import { cn } from "@/lib/utils";
 
@@ -17,9 +18,6 @@ export interface MetricHelpTooltipProps {
   /** The surface itself becomes the trigger — see the note below. */
   children: ReactElement;
 }
-
-/** Long enough that sweeping the mouse across a row of tiles stays quiet. */
-const HOVER_DELAY_MS = 400;
 
 /**
  * What a metric means, on the surface that shows it.
@@ -38,7 +36,7 @@ export function MetricHelpTooltip({
   // Nothing to say ⇒ the surface renders unchanged, with no dead affordance.
   if (!help && !name) return children;
   return (
-    <TooltipProvider delay={HOVER_DELAY_MS}>
+    <TooltipProvider delay={SWEEP_TOOLTIP_DELAY_MS}>
       <Tooltip>
         <TooltipTrigger render={children} />
         <TooltipContent

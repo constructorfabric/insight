@@ -32,7 +32,7 @@ import { AccountPicker } from "@/components/portal/account-picker";
 import { OutcomeAlert } from "@/components/portal/outcome-alert";
 import { PersonCell, PersonMarks } from "@/components/portal/person-cell";
 import { PersonId } from "@/components/portal/person-id";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@gears-frontx/ui-kit";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -40,7 +40,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@gears-frontx/ui-kit";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { useCorrectionReport } from "@/hooks/use-correction-report";

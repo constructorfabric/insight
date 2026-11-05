@@ -19,8 +19,8 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { toast } from "@/components/ui/sonner";
+} from "@gears-frontx/ui-kit";
+import { toast } from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -107,7 +107,7 @@ export function ShareDialog({
 
   function dismiss(notice: string | null) {
     queryClient.removeQueries({ queryKey: grantsQuery(target).queryKey });
-    if (notice) toast.error(notice);
+    if (notice) toast.add({ type: "error", title: notice });
     close();
   }
 

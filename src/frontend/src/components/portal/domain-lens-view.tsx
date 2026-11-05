@@ -1,4 +1,5 @@
 import { ExplainWithAi } from "@/components/widgets/dashboard/explain-with-ai";
+import { SWEEP_TOOLTIP_DELAY_MS } from "@/lib/tooltip-delay";
 import { trendSnapshot } from "@/lib/insight/explain-snapshot";
 import { Link } from "@tanstack/react-router";
 import { Fragment, useMemo, useState, type CSSProperties } from "react";
@@ -27,7 +28,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import {
   BarChart,
   CartesianGrid,
@@ -2655,7 +2656,7 @@ function OwnershipSection({
       </p>
       <Card>
         <CardContent className="flex flex-col gap-2 p-4">
-         <TooltipProvider delay={HOVER_DELAY_MS}>
+         <TooltipProvider delay={SWEEP_TOOLTIP_DELAY_MS}>
           <ul
             className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
             aria-label="What each colour in a bar means"
@@ -3041,9 +3042,6 @@ function shareLabel(pct: number): string {
   return `${Math.round(pct)}%`;
 }
 
-/** Same dwell as every other hover explanation in the product. */
-const HOVER_DELAY_MS = 400;
-
 /** Rows shown before the reader opts into the full list. */
 const BAR_LIST_COLLAPSED = 12;
 
@@ -3138,7 +3136,7 @@ export function BarList({
       </p>
       <Card>
         <CardContent className="flex flex-col gap-2 p-4">
-          <TooltipProvider delay={HOVER_DELAY_MS}>
+          <TooltipProvider delay={SWEEP_TOOLTIP_DELAY_MS}>
             {legend.length ? (
               <ul
                 className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"

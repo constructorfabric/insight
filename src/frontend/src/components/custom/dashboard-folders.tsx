@@ -12,7 +12,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@gears-frontx/ui-kit";
 import { folderChoices, type FolderChoice } from "@/lib/custom/folder-choices";
 import { useIsAdmin } from "@/queries/identity-me";
 import {
@@ -106,14 +106,15 @@ export function FolderSubmenu({
           : now
       );
     } catch (error) {
-      toast.error(
-        refusal(
+      toast.add({
+        type: "error",
+        title: refusal(
           error,
           holds
-            ? "Couldn't remove it from the folder."
-            : "Couldn't add it to the folder."
-        )
-      );
+          ? "Couldn't remove it from the folder."
+          : "Couldn't add it to the folder."
+          ),
+      });
     } finally {
       settle(folder.id, null);
     }

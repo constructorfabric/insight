@@ -14,7 +14,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@gears-frontx/ui-kit";
 import { Button } from "@/components/ui/button";
 import type { DateRange } from "@/api/period-to-date-range";
 import type { MetricGroup } from "@/lib/insight/groups";

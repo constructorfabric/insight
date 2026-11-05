@@ -33,6 +33,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { SWEEP_TOOLTIP_DELAY_MS } from "@/lib/tooltip-delay";
 import {
   cellText,
   evidenceRowKeys,
@@ -43,7 +44,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import { fitWidths, type ColumnNeed } from "@/lib/metrics/evidence-widths";
 import { evidenceRefText } from "@/lib/metrics/provider-links";
 import { cn } from "@/lib/utils";
@@ -72,8 +73,6 @@ const SORT_ICON_PX = 18;
 const COPY_BUTTON_PX = 42;
 /** The widest a column grows to show its values; past it, a value is cut. */
 const CAP_CHARACTERS = 40;
-/** Long enough that sweeping the pointer across a row stays quiet. */
-const TOOLTIP_DELAY_MS = 400;
 /** The first page: widths settle on it and do not shift as more rows load. */
 const MEASURED_ROWS = 100;
 
@@ -348,7 +347,7 @@ export function MetricEvidenceTable({
   ]);
 
   return (
-    <TooltipProvider delay={TOOLTIP_DELAY_MS}>
+    <TooltipProvider delay={SWEEP_TOOLTIP_DELAY_MS}>
       <div className="relative min-h-0 flex-1">
         <Table
           role="table"
