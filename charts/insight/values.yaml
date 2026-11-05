@@ -95,6 +95,8 @@ credentials:
 # their images to use it. Do NOT set `imageRegistry` here — each of our
 # services sets `image.repository` explicitly.
 global:
+  connectorSchedules:
+    enabled: false
   imagePullSecrets: [] # pull-secrets for a private registry
   storageClass: "" # empty = default StorageClass of the cluster
   sqlApi:

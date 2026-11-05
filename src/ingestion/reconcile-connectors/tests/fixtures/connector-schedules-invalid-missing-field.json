@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "schedules": [
+    {
+      "connector": "example-connector",
+      "source_id": "main-east",
+      "crons": [
+        "0 3 * * *",
+        "0 15 * * *"
+      ],
+      "revision": 3
+    },
+    {
+      "connector": "example-connector",
+      "source_id": "second-west",
+      "revision": 7
+    },
+    {
+      "connector": "example-other",
+      "source_id": "main-east",
+      "crons": [
+        "0 9 * * *"
+      ],
+      "revision": 2
+    }
+  ]
+}

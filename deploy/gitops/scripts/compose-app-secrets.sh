@@ -70,6 +70,17 @@ VALUES="$ROOT/environments/$ENV/values.yaml"
 command -v yq      >/dev/null || { echo "ERROR: yq is required" >&2; exit 1; }
 command -v kubectl >/dev/null || { echo "ERROR: kubectl is required" >&2; exit 1; }
 
+CONNECTOR_RECONCILE_SCHEDULES=""
+if [ "$(yq -r '.global.connectorSchedules.enabled' "$VALUES")" = "true" ]; then
+  CONNECTOR_RECONCILE_SCHEDULES=$(yq eval-all -o=json -I=0 \
+    '(select(fileIndex == 0) * select(fileIndex == 1)) | [.ingestion.reconcile.schedule]' \
+    "$ROOT/../../charts/insight/values.yaml" "$VALUES")
+  [ "$CONNECTOR_RECONCILE_SCHEDULES" != '[null]' ] && [ "$CONNECTOR_RECONCILE_SCHEDULES" != '[""]' ] || {
+    echo "ERROR: set ingestion.reconcile.schedule for global.connectorSchedules.enabled=true" >&2
+    exit 1
+  }
+fi
+
 # ── L2 connection coordinates (per-env, from values.yaml) ──
 MDB_HOST=$(yq -r '.mariadb.host'             "$VALUES")
 MDB_PORT=$(yq -r '.mariadb.port    // 3306'  "$VALUES")
@@ -340,6 +351,11 @@ stringData:
   APP__gears__analytics__config__identity_url: "${IDENTITY_URL}"
   APP__gears__analytics__config__redis_url: "${REDIS_URL}"
 EOF
+  if [ -n "$CONNECTOR_RECONCILE_SCHEDULES" ]; then
+    CONNECTOR_RECONCILE_SCHEDULES="$CONNECTOR_RECONCILE_SCHEDULES" yq -n \
+      '{"APP__gears__analytics__config__connector_schedules__reconcile_schedules": strenv(CONNECTOR_RECONCILE_SCHEDULES)}' \
+      | sed 's/^/  /'
+  fi
 } | kubectl -n "$NS_APP" apply -f - >/dev/null
 echo "composed → $NS_APP/insight-analytics-config"
 

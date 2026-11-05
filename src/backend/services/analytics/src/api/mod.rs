@@ -2,6 +2,7 @@
 
 pub(crate) mod ai;
 mod connector_health;
+mod connector_schedules;
 pub(crate) mod error;
 mod feedback;
 mod ingestion;
@@ -180,6 +181,7 @@ fn openapi_info() -> OpenApiInfo {
 #[allow(clippy::too_many_lines)]
 pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let mut router: Router = router;
+    router = connector_schedules::register(router, openapi);
 
     // Usage monitoring (#2573). Ingest is open to any signed-in caller — it is
     // the SPA's beacon; the read model is admin-gated inside the handler.

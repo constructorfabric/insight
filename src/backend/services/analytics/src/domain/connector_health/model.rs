@@ -204,6 +204,7 @@ pub struct SyncFact {
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScheduleOrigin {
+    Api,
     Annotation,
     Descriptor,
     Default,
@@ -234,6 +235,7 @@ impl AppliedSchedule {
         }
 
         let origin = match origin {
+            "api" => Some(ScheduleOrigin::Api),
             "annotation" => Some(ScheduleOrigin::Annotation),
             "descriptor" => Some(ScheduleOrigin::Descriptor),
             "default" => Some(ScheduleOrigin::Default),
@@ -263,6 +265,8 @@ pub struct ConnectorHealth {
     /// Applied schedule recorded on the newest sealed tick. Absent outside its
     /// configured set or when that row records no cron expressions.
     pub schedule: Option<AppliedSchedule>,
+    pub(crate) schedule_request:
+        Option<crate::domain::connector_schedules::dto::ScheduleRequestState>,
     /// Absent for a configured connector that has never synced.
     pub last_sync: Option<SyncFact>,
 }
@@ -371,6 +375,7 @@ impl From<ConnectorSummary> for ConnectorHealth {
             source_id: label(summary.instance.source_id),
             configured: summary.configured,
             schedule: summary.schedule,
+            schedule_request: None,
             last_sync: summary.last_sync.map(Into::into),
         }
     }

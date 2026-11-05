@@ -301,7 +301,7 @@ fn empty_timezone_and_unrecorded_or_unknown_origin_cross_the_wire_as_null() {
 
 #[test]
 fn every_known_schedule_origin_crosses_the_wire_unchanged() {
-    for origin in ["annotation", "descriptor", "default"] {
+    for origin in ["api", "annotation", "descriptor", "default"] {
         let schedule = AppliedSchedule::from_record(
             vec!["0 22 * * *".to_owned()],
             "UTC".to_owned(),
