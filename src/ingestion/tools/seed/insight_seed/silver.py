@@ -259,10 +259,9 @@ GIT_CHAIN_SELECT = (
     "github__file_changes+",
     "github__pull_requests+",
     "github__pull_requests_commits+",
-    # No row is emitted for these, but gold reads the classes they feed —
-    # default-branch commits and pull-request reviewers — and an unbuilt
-    # relation fails the model.
     "github__repository_branches+",
+    # No row is emitted for reviewers, but gold reads the class it feeds, and
+    # an unbuilt relation fails the model.
     "github__pull_requests_reviewers+",
 )
 

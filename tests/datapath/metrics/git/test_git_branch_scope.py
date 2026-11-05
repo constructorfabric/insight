@@ -22,6 +22,7 @@ SPEC = "git_branch_scope"
 ALICE = "alice@example.com"
 CAROL = "carol@example.com"
 DAVE = "dave@example.com"
+FRANK = "frank@example.com"
 
 
 def test_branch_scope_splits_partition_their_totals(spec: SpecRun) -> None:
@@ -430,3 +431,91 @@ def test_a_request_lands_only_when_its_destination_is_its_own_repositorys_defaul
     r.row("git.non_default_branch_commits", "period", entity_id=DAVE).equals(value=1)
     r.row("git.default_branch_code_lines", "period", entity_id=DAVE).equals(value=10)
     r.row("git.non_default_branch_code_lines", "period", entity_id=DAVE).equals(value=20)
+
+
+def test_default_branch_rates_and_days_read_only_landed_work(spec: SpecRun) -> None:
+    """Each person has one landed commit and one in flight on the same day, and one
+    request into the default branch and one into a release branch, both merged.
+
+    The default-branch cadence is one commit per active day where the any-branch one
+    is two; the default-branch merge rate divides merged default requests by default
+    requests, so reading the any-branch numerator would serve 200. Carol's active day
+    exists only through the merged-request heal."""
+    views = [
+        {"view": "period"},
+        {"view": "peer"},
+        {"view": "timeseries", "bucket": "day"},
+        {"view": "breakdown", "dimensions": ["source"]},
+    ]
+    r = spec.call(
+        {
+            "url": "/v1/metric-results",
+            "method": "POST",
+            "body": {
+                "entity": {"type": "person", "ids": [ALICE, CAROL]},
+                "period": {"from": "2026-10-01", "to": "2026-10-02"},
+                "metrics": [
+                    {"metric_key": "git.default_branch_active_days", "views": views},
+                    {"metric_key": "git.default_branch_commits_per_active_day", "views": views},
+                    {"metric_key": "git.default_branch_merge_rate", "views": views},
+                    {"metric_key": "git.commits_per_active_day", "views": [{"view": "period"}]},
+                ],
+            },
+        }
+    )
+    assert r.status == 200
+
+    for key, value in (
+        ("git.default_branch_active_days", 1),
+        ("git.default_branch_commits_per_active_day", 1),
+        ("git.default_branch_merge_rate", 100),
+    ):
+        r.row(key, "period", entity_id=ALICE).equals(value=value)
+        r.row(key, "peer", entity_id=ALICE).equals(
+            target_value=value, p25=None, median=None, p75=None, min=None, max=None, n=3
+        )
+        r.row(key, "timeseries", entity_id=ALICE).contains(
+            points={"bucket_start": "2026-10-01", "value": value}
+        )
+        r.row(
+            key,
+            "breakdown",
+            entity_id=ALICE,
+            dimensions={"key": "source", "value": "github"},
+        ).equals(value=value)
+
+    r.row("git.commits_per_active_day", "period", entity_id=ALICE).equals(value=2)
+    r.row("git.default_branch_active_days", "period", entity_id=CAROL).equals(value=1)
+
+
+def test_default_branch_rates_leave_out_work_in_flight(spec: SpecRun) -> None:
+    """Frank's in-flight commit is the only one on 2 Oct, and one of his two default
+    requests never merged: the default-branch day count, cadence and merge rate each
+    read a different number from their any-branch totals."""
+    r = spec.call(
+        {
+            "url": "/v1/metric-results",
+            "method": "POST",
+            "body": {
+                "entity": {"type": "person", "ids": [FRANK]},
+                "period": {"from": "2026-10-01", "to": "2026-10-02"},
+                "metrics": [
+                    {"metric_key": "git.default_branch_active_days", "views": [{"view": "period"}]},
+                    {"metric_key": "git.active_days", "views": [{"view": "period"}]},
+                    {
+                        "metric_key": "git.default_branch_commits_per_active_day",
+                        "views": [{"view": "period"}],
+                    },
+                    {"metric_key": "git.commits_per_active_day", "views": [{"view": "period"}]},
+                    {"metric_key": "git.default_branch_merge_rate", "views": [{"view": "period"}]},
+                ],
+            },
+        }
+    )
+    assert r.status == 200
+
+    r.row("git.default_branch_active_days", "period", entity_id=FRANK).equals(value=1)
+    r.row("git.active_days", "period", entity_id=FRANK).equals(value=2)
+    r.row("git.default_branch_commits_per_active_day", "period", entity_id=FRANK).equals(value=2)
+    r.row("git.commits_per_active_day", "period", entity_id=FRANK).equals(value=1.5)
+    r.row("git.default_branch_merge_rate", "period", entity_id=FRANK).equals(value=50)

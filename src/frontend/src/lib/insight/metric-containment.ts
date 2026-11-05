@@ -17,6 +17,7 @@ import type { PeerStatusWithNeutral } from "@/lib/peers";
 export const METRIC_CONTAINS: Readonly<Record<string, readonly string[]>> = {
   // "All lines added, by file category" ⊃ "lines added to code files".
   "git.lines_added": ["git.code_lines"],
+  "git.default_branch_lines_added": ["git.default_branch_code_lines"],
   // Branch scope partitions each total, so the default-branch reading is a
   // part of it by construction — not a correlated second measurement.
   "git.commits": ["git.default_branch_commits"],

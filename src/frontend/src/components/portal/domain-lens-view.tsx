@@ -800,6 +800,7 @@ function Section({
       return (
         <HeadlineSection
           metrics={spec.metrics}
+          labelSource={spec.labelSource}
           grid={grid}
           memberIds={memberIds}
         />
@@ -1299,10 +1300,12 @@ function ParticipationSection({
 
 function HeadlineSection({
   metrics,
+  labelSource,
   grid,
   memberIds,
 }: {
   metrics: readonly string[];
+  labelSource?: "short";
   grid: GridData;
   memberIds: readonly string[];
 }) {
@@ -1345,6 +1348,7 @@ function HeadlineSection({
           <HeadlineCard
             key={c.key}
             card={c}
+            labelSource={labelSource}
             targets={targets}
             memberIds={memberIds}
           />
@@ -1367,6 +1371,7 @@ function HeadlineSection({
  */
 function HeadlineCard({
   card,
+  labelSource,
   targets,
   memberIds,
 }: {
@@ -1377,6 +1382,7 @@ function HeadlineCard({
     isSum: boolean;
     carrier: NormalizedMetricResult | undefined;
   };
+  labelSource?: "short";
   targets: readonly { selection: MetricEvidenceSelection; label: string }[];
   memberIds: readonly string[];
 }) {
@@ -1388,12 +1394,12 @@ function HeadlineCard({
   const body = (
     <CardContent className="flex flex-col gap-1 p-4">
       <div className="flex items-center justify-between gap-2">
-        {/* The full label, not the short one: `short_label` exists for a grid
-            column head or a heatmap axis, and it drops the very word that says
-            what was counted — "Issues" for issues CLOSED. A card twelve rem
-            wide has room to say it. */}
+        {/* The full label unless the section asks otherwise: a short label
+            can drop the very word that says what was counted — "Issues" for
+            issues CLOSED — so it is opted into where it still reads whole. */}
         <MetricName
           metric={c.r}
+          text={labelSource === "short" ? (c.r.short_label ?? c.r.label) : undefined}
           className={TEXT_NAME}
         />
         <Delta now={c.now} prev={c.prev} direction={c.r.direction} showUnavailable />
