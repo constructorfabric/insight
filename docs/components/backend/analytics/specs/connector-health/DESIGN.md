@@ -640,11 +640,12 @@ retains the star bit with no step or step 1, a larger step clears it, and list i
 bits. When either day field retains the star bit, both day fields must match; otherwise they
 are ORed. Under AND semantics, at least one listed day of month must exist in a listed
 month (February permits 29). An explicit full weekday range is restricted for this purpose.
-The shortest gap between consecutive UTC starts across the whole requested cron list
-must be at least the stand's minimum interval, including gaps across midnight, month ends
-and year ends under robfig/cron v3 calendar semantics. The default is 30 minutes;
+The frequency check merges the minute/hour starts from every expression into one UTC day
+and requires every adjacent gap, including the midnight wrap, to meet the stand's minimum
+interval. It ignores day-of-month, month and day-of-week fields, conservatively refusing
+some schedules whose times never fall on the same day. The default is 30 minutes;
 `connector_schedules.min_interval_minutes` (environment variable
-`APP__gears__analytics__config__connector_schedules__min_interval_minutes`) accepts 1–1440
+`APP__gears__analytics__config__connector_schedules__min_interval_minutes`) accepts 30–1440
 and analytics refuses to start outside that range. The analytics chart sets it through
 `connectorSchedules.minIntervalMinutes`, overridden in umbrella values as
 `analytics.connectorSchedules.minIntervalMinutes`. GET, PUT and DELETE responses include

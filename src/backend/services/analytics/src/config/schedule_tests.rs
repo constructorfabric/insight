@@ -11,8 +11,8 @@ fn schedule_minimum_defaults_to_thirty_minutes() -> R {
 }
 
 #[test]
-fn schedule_minimum_rejects_values_outside_one_day() {
-    for value in [0, 1441] {
+fn schedule_minimum_rejects_values_outside_thirty_minutes_to_one_day() {
+    for value in [0, 1, 29, 1441] {
         let Err(problem) = serde_json::from_value::<GearConfig>(serde_json::json!({
             "connector_schedules": { "min_interval_minutes": value }
         })) else {
@@ -23,9 +23,12 @@ fn schedule_minimum_rejects_values_outside_one_day() {
             message.contains("connector_schedules__min_interval_minutes"),
             "{value}: {message}"
         );
-        assert!(message.contains("between 1 and 1440"), "{value}: {message}");
+        assert!(
+            message.contains("between 30 and 1440"),
+            "{value}: {message}"
+        );
     }
-    for value in [1, 1440] {
+    for value in [30, 1440] {
         assert!(
             serde_json::from_value::<GearConfig>(serde_json::json!({
                 "connector_schedules": { "min_interval_minutes": value }

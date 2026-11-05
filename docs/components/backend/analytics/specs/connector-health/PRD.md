@@ -322,6 +322,9 @@ revision. Invalid requests identify the expression and field to fix. Duplicate e
 expressions that can never run under Argo's calendar rules are rejected. Schedules requested
 through this API are always UTC; the recorded applied response includes its observed timezone.
 A requested schedule may not start more often than the stand's minimum interval, 30 minutes by default.
+The conservative frequency check merges all minute/hour starts into one UTC day and checks
+adjacent gaps including midnight, ignoring day-of-month, month and day-of-week fields;
+this refuses some schedules whose times never fall on the same day.
 The schedule API reports `status`: `applied` when the recorded API schedule matches the
 request, `pending` while the requested or cleared state differs from the recorded state,
 `not_applied` once a pass known to have started after the save completed without applying it,

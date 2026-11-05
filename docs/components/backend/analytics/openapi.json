@@ -3108,7 +3108,7 @@
           "min_interval_minutes": {
             "format": "int32",
             "maximum": 1440,
-            "minimum": 1,
+            "minimum": 30,
             "type": "integer"
           },
           "not_applied_since": {

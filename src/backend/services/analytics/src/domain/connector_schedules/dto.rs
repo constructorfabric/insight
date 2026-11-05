@@ -45,7 +45,7 @@ pub(crate) struct ScheduleResponse {
     pub status: ScheduleStatus,
     pub not_applied_since: Option<DateTime<Utc>>,
     pub reconcile_schedules: Vec<String>,
-    #[schema(minimum = 1, maximum = 1440)]
+    #[schema(minimum = 30, maximum = 1440)]
     pub min_interval_minutes: u16,
 }
 

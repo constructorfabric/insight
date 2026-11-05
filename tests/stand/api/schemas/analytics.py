@@ -1497,7 +1497,7 @@ class ScheduleResponse(BaseModel):
     applied: RecordedSchedule | None = None
     connector: str
     editable: bool
-    min_interval_minutes: int = Field(..., ge=1, le=1440)
+    min_interval_minutes: int = Field(..., ge=30, le=1440)
     not_applied_since: UnzonedDatetime | None = None
     reconcile_schedules: list[str]
     requested: RequestedSchedule | None = None

@@ -99,9 +99,9 @@ fn schedule_min_interval<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<u16, D::Error> {
     let value = u16::deserialize(deserializer)?;
-    if !(1..=1440).contains(&value) {
+    if !(30..=1440).contains(&value) {
         return Err(serde::de::Error::custom(
-            "APP__gears__analytics__config__connector_schedules__min_interval_minutes must be between 1 and 1440",
+            "APP__gears__analytics__config__connector_schedules__min_interval_minutes must be between 30 and 1440",
         ));
     }
     Ok(value)
