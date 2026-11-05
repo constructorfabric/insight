@@ -66,6 +66,23 @@ export function expectHorizontallyContained(
   }
 }
 
+export function expectHorizontallyCentred(
+  container: Element,
+  child: Element,
+  describe: string
+): void {
+  const SLACK_PX = 0.5;
+  const box = container.getBoundingClientRect();
+  const inner = child.getBoundingClientRect();
+  const offset = inner.left + inner.width / 2 - (box.left + box.width / 2);
+  if (Math.abs(offset) < SLACK_PX) return;
+  throw new Error(
+    `${describe} is ${offset}px off its container's centre: ` +
+      `container x ${box.left}–${box.right}, ` +
+      `child x ${inner.left}–${inner.right}`
+  );
+}
+
 /**
  * Card widths the narrow/wide stories measure at.
  *

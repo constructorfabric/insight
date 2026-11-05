@@ -76,7 +76,7 @@ updates:
       - dependency-name: utoipa
         versions: [">=6"]
 
-  - package-ecosystem: pip
+  - package-ecosystem: uv
     directory: /src/ingestion/tools/seed
     schedule:
       interval: daily
@@ -116,7 +116,7 @@ updates:
         update-types: [minor, patch]
 
   - package-ecosystem: pip
-    directories: ["/src/ingestion/tests/connectors", "/tests"]
+    directory: /src/ingestion/tests/connectors
     schedule:
       interval: daily
       time: "23:00"
@@ -133,6 +133,19 @@ updates:
       # and 1 error on 7.23.8 (#2061). Moving belongs with the zoom manifest.
       - dependency-name: airbyte-cdk
         versions: [">=7"]
+
+  - package-ecosystem: uv
+    directory: /tests
+    schedule:
+      interval: daily
+      time: "23:00"
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 7
+    groups:
+      stand-tests-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
 
   # Frontend package tree. Grouped so a week's worth of bumps arrives as one
   # reviewable change rather than one pull request per package.

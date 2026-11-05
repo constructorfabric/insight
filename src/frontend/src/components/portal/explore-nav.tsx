@@ -34,6 +34,7 @@ import {
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useDismissDrawer } from "@/lib/portal/use-dismiss-drawer";
+import { cn } from "@/lib/utils";
 
 interface FolderRow {
   key: string;
@@ -89,9 +90,13 @@ function Folder({
           {rows.map((row) => (
             <SidebarMenuSubItem key={row.key}>
               <SidebarMenuSubButton
+                render={<button type="button" />}
                 data-planned={row.muted || undefined}
                 isActive={row.active}
-                className={row.muted ? "text-muted-foreground" : undefined}
+                className={cn(
+                  "w-full text-start",
+                  row.muted && "text-muted-foreground"
+                )}
                 onClick={() => {
                   row.onPick();
                   dismiss();

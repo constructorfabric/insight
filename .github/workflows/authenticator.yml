@@ -81,7 +81,7 @@ jobs:
       # run-e2e.sh generates the realm through `uv run --project`: the
       # generator is a console script of the seed package, and uv resolves and
       # installs it on first use. The runner has python3 but not uv.
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           cache-suffix: authenticator-e2e
           save-cache: ${{ github.event_name == 'push' }}

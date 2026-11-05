@@ -232,7 +232,7 @@ export function LensRail() {
           style={{ width: OPEN_WIDTH }}
           onClick={close}
         />
-        <SidebarHeader className="relative z-10 items-start ps-3">
+        <SidebarHeader className="relative z-10 items-start ps-[11px]">
           <div className="flex items-center gap-2">
             <img
               src={brandSymbol}
@@ -381,7 +381,7 @@ function RailItemButton({
         // icon does not move between the two: the button starts its content at
         // the same offset either way.
         className={cn(
-          "h-10 justify-start gap-2 overflow-hidden p-0 ps-[10px] transition-[width] duration-150",
+          "h-10 justify-start gap-2 overflow-hidden p-0 ps-3 transition-[width] duration-150",
           open || "w-10",
           item.planned && "text-muted-foreground"
         )}

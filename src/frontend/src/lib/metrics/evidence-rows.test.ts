@@ -9,18 +9,26 @@ import {
 
 describe("cellText", () => {
   it("renders a missing value as a dash rather than an empty cell", () => {
-    expect(cellText(null, "string")).toBe("—");
-    expect(cellText(undefined, "number")).toBe("—");
+    expect(cellText(null)).toBe("—");
+    expect(cellText(undefined)).toBe("—");
   });
 
-  it("formats numbers and leaves strings alone", () => {
-    expect(cellText(1500, "number")).toBe("1,500");
-    expect(cellText("a1", "string")).toBe("a1");
+  it.each([
+    ["an identifier", 4385, "4385"],
+    ["a large count", 1234567, "1234567"],
+    ["a fraction", 0.3333, "0.3333"],
+    ["a negative", -12, "-12"],
+  ])("shows %s exactly as the record holds it", (_case, value, shown) => {
+    expect(cellText(value), _case).toBe(shown);
+  });
+
+  it("leaves strings alone", () => {
+    expect(cellText("a1")).toBe("a1");
   });
 
   it("spells out booleans and serialises objects", () => {
-    expect(cellText(true, "string")).toBe("Yes");
-    expect(cellText({ a: 1 }, "string")).toBe('{"a":1}');
+    expect(cellText(true)).toBe("Yes");
+    expect(cellText({ a: 1 })).toBe('{"a":1}');
   });
 });
 
