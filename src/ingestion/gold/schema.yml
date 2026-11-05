@@ -772,8 +772,6 @@ models:
                   - meeting_hours
                   - meetings_attended
                   - meetings_organized
-                  - adhoc_meetings_attended
-                  - scheduled_meetings_attended
                   - workday_meeting_hours
                   - working_hours
                   - chat_active_day
@@ -799,8 +797,11 @@ models:
           Array(Tuple(key, value, label)). `tool` carries the collaboration
           tool discriminator (data_source with the insight_ prefix stripped)
           with static product labels; `scope` (files_shared only) carries the
-          recipient scope (internal/external). Empty for whole-person
-          measures (workday_meeting_hours, working_hours, meeting_free_day).
+          recipient scope (internal/external); `kind` (meetings_attended only)
+          carries the meeting kind: teams_scheduled, teams_adhoc, teams_other,
+          teams_call, or the tool itself where the source reports no split
+          (zoom). Empty for whole-person measures (workday_meeting_hours,
+          working_hours, meeting_free_day).
 
   - name: task_metric_observations
     description: >
