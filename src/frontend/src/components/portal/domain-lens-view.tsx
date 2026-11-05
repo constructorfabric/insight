@@ -66,14 +66,10 @@ import type {
 } from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import {
-  personsEvidenceSelection,
-  type MetricEvidenceSelection,
-} from "@/api/metric-drilldown-client";
-import {
   useMetricEvidenceOptional,
   type EvidencePeopleView,
 } from "@/components/metric-evidence-context";
-import { peopleEvidenceView } from "@/lib/portal/evidence-people";
+import { peopleEvidenceView, type RosterLookups } from "@/lib/portal/evidence-people";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
 import {
@@ -103,8 +99,9 @@ import {
   fmtCompact,
   medianAcross,
   perCapita,
-  representative,
+  perPersonReading,
   topDecile,
+  type PerPersonReading,
 } from "@/lib/portal/metric-stats";
 import {
   lensEntry,
@@ -802,6 +799,7 @@ function Section({
           metrics={spec.metrics}
           grid={grid}
           memberIds={memberIds}
+          roster={{ nameByEntity, personIdByEntity }}
         />
       );
     case "stat-tiles":
@@ -1301,39 +1299,32 @@ function HeadlineSection({
   metrics,
   grid,
   memberIds,
+  roster,
 }: {
   metrics: readonly string[];
   grid: GridData;
   memberIds: readonly string[];
+  roster: RosterLookups;
 }) {
   const cards = metrics
     .map((key) => {
       const r = grid.byKey.get(key);
-      if (!r) return null;
-      const now = representative(r, memberIds);
-      if (now == null) return null;
-      const prev = representative(grid.previousByKey.get(key), memberIds);
-      const isSum = r.computation === "sum";
-      // The records that carry the figure: its own, unless the family says
-      // another metric holds them (a line count is carried by commits).
-      const carrier = grid.byKey.get(evidenceMetricFor(key));
-      return { key, r, now, prev, isSum, carrier };
+      const reading = perPersonReading(r, memberIds);
+      if (!r || !reading) return null;
+      const prev = perPersonReading(grid.previousByKey.get(key), memberIds);
+      const figure = formatMetricValue(reading.value, r.format, r.unit);
+      const title =
+        reading.kind === "median"
+          ? `${r.label} · median ${figure} per person`
+          : reading.active === 0
+            ? `${r.label} · no activity`
+            : `${r.label} · ${figure} per active person`;
+      const carrier = grid.byKey.get(evidenceMetricFor(key)) ?? null;
+      const people = peopleEvidenceView(r, memberIds, title, roster, carrier);
+      return { key, r, reading, prev: prev?.value ?? null, people };
     })
     .filter((x): x is NonNullable<typeof x> => x != null);
   if (!cards.length) return null;
-
-  // Every drillable card of the row, so the dialog a reader opens on one of
-  // them lists its neighbours — the same set the members grid offers from a
-  // row of cells. Deduplicated by metric: two tiles carried by one metric
-  // would otherwise name the same key twice, which the request refuses.
-  const seen = new Set<string>();
-  const targets = cards.flatMap((c) => {
-    if (!c.carrier?.drilldown || seen.has(c.carrier.metric_key)) return [];
-    const selection = personsEvidenceSelection(c.carrier.selection, memberIds);
-    if (!selection) return [];
-    seen.add(c.carrier.metric_key);
-    return [{ selection, label: c.carrier.label }];
-  });
 
   return (
     <section className="flex flex-col gap-3">
@@ -1342,49 +1333,35 @@ function HeadlineSection({
       </p>
       <div data-slot="headline-grid" className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-4">
         {cards.map((c) => (
-          <HeadlineCard
-            key={c.key}
-            card={c}
-            targets={targets}
-            memberIds={memberIds}
-          />
+          <HeadlineCard key={c.key} card={c} />
         ))}
       </div>
     </section>
   );
 }
 
-/**
- * One headline figure, and the records it was taken over.
- *
- * The card opens the evidence dialog for the WHOLE roster rather than for a
- * person: the number on it is the roster's, and a reader asking what it is
- * made of is asking about all of them. Nothing here names an individual —
- * the dialog lists records, and who did what stays inside it.
- *
- * A metric whose evidence cannot be read renders as a plain card: an
- * affordance that opens an empty dialog is worse than none.
- */
+function readingCaption(reading: PerPersonReading, r: NormalizedMetricResult): string[] {
+  if (reading.kind === "median") {
+    return [`median of ${reading.people} ${reading.people === 1 ? "person" : "people"}`];
+  }
+  if (reading.active === 0) return ["no activity"];
+  const people = reading.active === 1 ? "person" : "people";
+  const total = formatMetricValue(reading.total, r.format, null);
+  return [`average of ${reading.active} active ${people}`, `${total} total`];
+}
+
 function HeadlineCard({
   card,
-  targets,
-  memberIds,
 }: {
   card: {
     r: NormalizedMetricResult;
-    now: number;
+    reading: PerPersonReading;
     prev: number | null;
-    isSum: boolean;
-    carrier: NormalizedMetricResult | undefined;
+    people: EvidencePeopleView;
   };
-  targets: readonly { selection: MetricEvidenceSelection; label: string }[];
-  memberIds: readonly string[];
 }) {
   const evidence = useMetricEvidenceOptional();
   const c = card;
-  const selection = c.carrier?.drilldown
-    ? personsEvidenceSelection(c.carrier.selection, memberIds)
-    : null;
   const body = (
     <CardContent className="flex flex-col gap-1 p-4">
       <div className="flex items-center justify-between gap-2">
@@ -1396,24 +1373,24 @@ function HeadlineCard({
           metric={c.r}
           className={TEXT_NAME}
         />
-        <Delta now={c.now} prev={c.prev} direction={c.r.direction} showUnavailable />
+        <Delta now={c.reading.value} prev={c.prev} direction={c.r.direction} showUnavailable />
       </div>
       <div className={TEXT_FIGURE}>
-        {formatMetricValue(c.now, c.r.format, c.r.unit)}
+        {formatMetricValue(c.reading.value, c.r.format, c.r.unit)}
       </div>
-      {/* The team total leads, because the dialog this card opens lists the
-        roster's records — a per-person figure on the face and a roster-sized
-        table behind it read as a contradiction. The per-person figure keeps
-        its place underneath, where the comparison it serves still works. */}
+      {/* Each part wraps as a unit, so a narrow card breaks between them. */}
       <div className="text-xs font-medium text-muted-foreground">
-        {c.isSum
-          ? `team total · ${formatMetricValue(perCapita(c.r, memberIds), c.r.format, c.r.unit)} per active person`
-          : "median / person"}
+        {readingCaption(c.reading, c.r).map((part, i) => (
+          <Fragment key={part}>
+            {i > 0 ? " · " : null}
+            <span className="inline-block">{part}</span>
+          </Fragment>
+        ))}
       </div>
     </CardContent>
   );
 
-  if (!selection || !evidence) return <Card className="py-0">{body}</Card>;
+  if (!evidence) return <Card className="py-0">{body}</Card>;
 
   return (
     <Card className="py-0 transition-colors hover:bg-card-hover focus-within:ring-2 focus-within:ring-ring">
@@ -1421,11 +1398,7 @@ function HeadlineCard({
         type="button"
         aria-haspopup="dialog"
         className="w-full cursor-pointer text-left focus-visible:outline-none"
-        onClick={() =>
-          evidence.openEvidenceTargets(targets, {
-            activeMetricKey: selection.metric_key,
-          })
-        }
+        onClick={() => evidence.openEvidencePeople(c.people)}
       >
         {body}
       </button>
@@ -2841,13 +2814,12 @@ function DirectionCardsSection({
                 c.keys.map((key) => {
                   const r = grid.byKey.get(key);
                   if (!r) return null;
-                  const now = representative(r, memberIds);
-                  if (now == null) return null;
-                  const prev = representative(
+                  const reading = perPersonReading(r, memberIds);
+                  if (!reading) return null;
+                  const prev = perPersonReading(
                     grid.previousByKey.get(key),
                     memberIds
                   );
-                  const isSum = r.computation === "sum";
                   return (
                     <div
                       key={key}
@@ -2861,12 +2833,16 @@ function DirectionCardsSection({
                       <span className="flex items-center gap-2">
                         <span className="font-medium tabular-nums">
                           {formatMetricValue(
-                            isSum ? perCapita(r, memberIds) : now,
+                            reading.value,
                             r.format,
                             r.unit
                           )}
                         </span>
-                        <Delta now={now} prev={prev} direction={r.direction} />
+                        <Delta
+                          now={reading.value}
+                          prev={prev?.value ?? null}
+                          direction={r.direction}
+                        />
                       </span>
                     </div>
                   );
