@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  comparisonRange,
   periodToDateRange,
   previousPeriodRange,
   resolveDateRange,
@@ -123,3 +124,32 @@ describe("previousPeriodRange", () => {
   });
 });
 
+
+describe("comparisonRange", () => {
+  const OCTOBER = { from: "2026-10-01", to: "2026-10-31" };
+
+  it.each(["week", "month", "quarter", "year"] as const)(
+    "compares a custom range with the same number of days before it, whatever the last preset (%s)",
+    (period) => {
+      expect(comparisonRange(OCTOBER, period, OCTOBER)).toEqual({
+        from: "2026-08-31",
+        to: "2026-09-30",
+      });
+    },
+  );
+
+  it("compares a one-day custom range with the day before it", () => {
+    const day = { from: "2026-03-01", to: "2026-03-01" };
+    expect(comparisonRange(day, "year", day)).toEqual({
+      from: "2026-02-28",
+      to: "2026-02-28",
+    });
+  });
+
+  it("steps a preset back one period of its own kind", () => {
+    const range = { from: "2026-03-31", to: "2026-04-30" };
+    expect(comparisonRange(range, "month", null)).toEqual(
+      previousPeriodRange(range, "month"),
+    );
+  });
+});

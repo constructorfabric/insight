@@ -49,7 +49,7 @@ export function SingleGroupView({
   personId: string;
   groupId: GroupId;
 }) {
-  const { period, dateRange } = usePortalPeriod();
+  const { period, dateRange, compareTo } = usePortalPeriod();
   const entityId = normalizePersonId(personId);
   const def = GROUPS.find((d) => d.id === groupId) ?? null;
 
@@ -60,7 +60,7 @@ export function SingleGroupView({
     // The reader's own previous period. It is the comparison they can act on,
     // and a section that dropped it left them only the cohort's middle —
     // which they neither chose nor can see inside.
-    { previousPeriod: period },
+    { compareTo },
   );
   // The tenant-wide listing of what is wired up, which is what tells the two
   // empty sections apart below. Already in cache: the section navigation asks

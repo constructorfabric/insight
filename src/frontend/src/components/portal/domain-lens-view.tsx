@@ -172,7 +172,7 @@ export function DomainLensView({
    */
   gridKeys?: readonly string[];
 }) {
-  const { period, dateRange } = usePortalPeriod();
+  const { dateRange, compareTo } = usePortalPeriod();
 
   const [drilldown, setDrilldown] = useState<TrendDrilldownState | null>(null);
   // What this install shows, not what the registry declares: a gated metric
@@ -284,7 +284,7 @@ export function DomainLensView({
     gridCollection.metrics.length ? gridCollection : EMPTY_COLLECTION,
     { type: "person", ids: memberIds },
     dateRange,
-    period
+    compareTo
   );
 
   // Trend: bucket coarsened to the roster so org scope never trips the row limit.

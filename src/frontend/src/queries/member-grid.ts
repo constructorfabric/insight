@@ -1,9 +1,6 @@
 import { useMemo } from "react";
 
-import {
-  previousPeriodRange,
-  type DateRange,
-} from "@/api/period-to-date-range";
+import type { DateRange } from "@/api/period-to-date-range";
 import {
   projectViews,
   type MetricCollectionConfig,
@@ -14,7 +11,6 @@ import {
   useMetricCollectionSet,
   type KeyedCollection,
 } from "@/queries/metric-results";
-import type { PeriodValue } from "@/types/insight";
 
 const GRID_KEY = "member-grid";
 
@@ -42,7 +38,7 @@ export function useMemberGridData(
   collection: MetricCollectionConfig,
   entity: MetricCollectionEntity,
   range: DateRange,
-  period: PeriodValue,
+  compareTo: DateRange,
 ): MemberGridData {
   const collections = useMemo<readonly KeyedCollection[]>(
     () => [
@@ -53,11 +49,6 @@ export function useMemberGridData(
     ],
     [collection],
   );
-  const compareTo = useMemo(
-    () => previousPeriodRange(range, period),
-    [range, period],
-  );
-
   const set = useMetricCollectionSet(collections, entity, range, compareTo);
   const grid = set.get(GRID_KEY);
 

@@ -118,7 +118,7 @@ export function MetricGroupsView({
   const showKpis = content === "glance";
   const showAttention = content !== "none";
   const cohortLabel = useCohortLabel();
-  const { period, dateRange } = usePortalPeriod();
+  const { period, dateRange, compareTo } = usePortalPeriod();
   const entityId = normalizePersonId(personId);
   // Whose page this is. A person reading their own page and a manager
   // reading it want different things first — see `orderAttentionItems`.
@@ -132,7 +132,7 @@ export function MetricGroupsView({
     showKpis ? KPI_ROW_COLLECTION : EMPTY_COLLECTION,
     showKpis ? entity : CLOSED_ENTITY,
     dateRange,
-    { previousPeriod: period }
+    { compareTo }
   );
   // Shared with the nav mark, comparison window included — see the invariant on
   // `usePersonSectionCollection`. It covers every visible section; this view
@@ -413,7 +413,7 @@ export function MetricGroupsView({
                   def.id === openGroup ? drilldownData : CLOSED_DRILLDOWN_DATA,
               }}
               range={dateRange}
-              period={period}
+              compareTo={compareTo}
               cohortLabel={cohortLabel}
             />
           ))}

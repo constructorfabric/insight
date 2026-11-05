@@ -3,7 +3,7 @@
  * YYYY-MM-DD without a timezone suffix — the backend filters by date string.
  */
 
-import { differenceInCalendarDays, isValid, parseISO } from "date-fns";
+import { differenceInCalendarDays, isValid, parseISO, subDays } from "date-fns";
 
 import type { CustomRange, PeriodValue } from "@/types/insight";
 
@@ -179,3 +179,19 @@ export function previousPeriodRange(
   return { from: shift(range.from), to: shift(range.to) };
 }
 
+function precedingRange(range: DateRange): DateRange {
+  const from = parseISO(range.from);
+  const days = differenceInCalendarDays(parseISO(range.to), from) + 1;
+  return {
+    from: toISODate(subDays(from, days)),
+    to: toISODate(subDays(from, 1)),
+  };
+}
+
+export function comparisonRange(
+  range: DateRange,
+  period: PeriodValue,
+  customRange: CustomRange | null
+): DateRange {
+  return customRange ? precedingRange(range) : previousPeriodRange(range, period);
+}
