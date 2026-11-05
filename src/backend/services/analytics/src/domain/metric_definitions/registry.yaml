@@ -778,7 +778,7 @@ metrics:
   - metric_key: ai.extra_usage_cost
     source_key: ai_cost
     subject: cost
-    label: AI cost
+    label: AI extra cost
     short_label: Actual cost
     description: Monthly cost billed on top of the seat fee, as last read
     explanation: What the vendor billed on top of the seat fee, once included usage ran out. Exact as of that month's last reading, dated at its first day, so a window missing that day returns nothing — read the per-day distribution. The month comes from the read, not the vendor. Never added to potential usage cost.
@@ -796,7 +796,7 @@ metrics:
   - metric_key: ai.daily_approximate_extra_usage_cost
     source_key: ai_cost
     subject: cost
-    label: AI cost per day, est.
+    label: AI extra cost, spread by day
     short_label: Actual cost / day
     description: The monthly billed cost spread across its days
     explanation: The billed extra-usage cost placed on the days spent. Only a month-to-date total is reported, so a day is the step between readings — exact in sum against it, approximate in placement. The month comes from the read, so the 1st can cover several days. No reading means no point, and none is negative.

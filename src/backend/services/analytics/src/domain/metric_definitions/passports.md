@@ -136,7 +136,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: currency, lower_is_better
 - Notes: The invoiced price of one seat for a billing month, from the invoice's per-seat amount. Dated at that month's first day, so a window must hold it to return the fee. The month comes from the read, not from the vendor. A seat whose tier the invoice does not price returns no value.
 
-## ai.extra_usage_cost — AI cost
+## ai.extra_usage_cost — AI extra cost
 
 - Source: ai_cost (ai_cost_metric_observations)
 - Reads: extra_usage_usd
@@ -144,7 +144,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: currency, lower_is_better
 - Notes: What the vendor billed on top of the seat fee, once included usage ran out. Exact as of that month's last reading, dated at its first day, so a window missing that day returns nothing — read the per-day distribution. The month comes from the read, not the vendor. Never added to potential usage cost.
 
-## ai.daily_approximate_extra_usage_cost — AI cost per day, est.
+## ai.daily_approximate_extra_usage_cost — AI extra cost, spread by day
 
 - Source: ai_cost (ai_cost_metric_observations)
 - Reads: daily_extra_usage_usd
