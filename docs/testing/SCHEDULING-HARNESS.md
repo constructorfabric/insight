@@ -9,16 +9,47 @@ All values and instances in this document are synthetic.
 
 | Slice | Deliverable | Status |
 |---|---|---|
-| 1 | Controllable source, declarative connector, staging, local deployment, safe trigger errors | Implemented |
+| 1 | Controllable mock source, `mock` connector, staging and local deployment | Implemented |
 | 2 | Airbyte API fault proxy, local routing and declarative image seeding | Implemented |
-| 3 | Scenario controller and durable observer | Planned |
+| 3 | Plain pytest scenarios using the source/proxy controls and independent API/Workflow checks | Planned |
 | 4 | Local capacity/fault profiles and state/transform fixtures | Planned |
-| 5 | Required scheduling, contention, recovery and evidence scenarios | Planned |
+| 5 | Scheduling, contention, recovery and redeploy regression coverage in pytest | Planned |
 
-Slice 1 has no API proxy, Kubernetes scenario runner, durable observer, business
+The implemented harness consists of the mock source, the `mock` connector and
+the Airbyte API fault proxy. Their controls and in-memory journals support manual
+checks now and plain pytest scenarios later. The connector supplies no business
 silver tables, identity contributor or gold metrics. A successful HTTP read
 cannot establish Airbyte admission, pod lifetime, destination commit or pipeline
 completion.
+
+## Scheduling under test
+
+Schedule requests are always available. An admin reads, saves or clears an
+instance's request through `GET`, `PUT` or `DELETE`
+`/v1/connectors/{connector}/{source_id}/schedule`; writes use the current revision
+as a quoted value in `If-Match`. Ingestion reads one complete request snapshot
+from MariaDB's `connector_schedule_requests_v1` view per pass. A nonempty request
+wins over the Secret schedule annotation, the connector descriptor and the daily
+default, in that order. Clearing an active request stores an empty cron list
+with a new revision and selects the deployment fallback.
+
+The `schedule-apply` CronWorkflow runs every minute and shares an Argo mutex with
+full reconcile. It patches only schedules, timezone and schedule origin on
+existing connector CronWorkflows, with UID/resourceVersion checks. It does not
+create connections or CronWorkflows, submit syncs, call Airbyte or run the sync
+history sweep. Full reconcile creates missing CronWorkflows and also applies
+requests. A failed request snapshot read prevents schedule changes and fails
+the pass; it does not silently select a deployment fallback.
+
+After applying, ingestion reads the CronWorkflow back and writes an
+acknowledgement record in MariaDB's `connector_schedule_acknowledgements` table.
+The record holds the applied revision, schedule, timezone, origin, suspension,
+deployment fallback and its origin, observation time and last attempt/error.
+Failed apply/readback attempts preserve the last successful observation. The
+schedule API and Connector health derive request status (`pending`, `applied`,
+`inherited` or `error`) from this record and the requested revision. Deployment
+fallback belongs in the acknowledgement record; sync history records sync
+evidence separately.
 
 ## Components and callers
 
@@ -27,13 +58,22 @@ flowchart LR
     Operator -->|install synthetic Secrets| Kubernetes
     Kubernetes -->|discover Secrets| Reconcile
     Reconcile -->|manifest and instance config| Proxy[Optional local Airbyte API proxy]
+    MariaDB[MariaDB request view] -->|snapshot| Reconcile
+    MariaDB -->|snapshot| Apply[One-minute schedule-apply]
+    Reconcile -->|apply and read back| Cron[Connector CronWorkflows]
+    Apply -->|patch and read back| Cron
+    Reconcile -->|write| Ack[MariaDB acknowledgement record]
+    Apply -->|write| Ack
     Proxy --> Airbyte
-    Schedule[Argo schedule or manual Workflow] -->|submit job| Proxy
+    Cron -->|scheduled Workflow| Schedule[Scheduled or manual Workflow]
+    Schedule -->|submit job| Proxy
     Airbyte -->|probe and paginated GET| Source[Mock source]
     Airbyte -->|append dedup| Bronze[bronze_mock]
     Bronze -->|dbt FINAL reads| Staging[staging.mock__events and mock__updates]
-    Controller[Operator; future scenario controller] -->|control API| Source
-    Source -->|journal API| Observer[Operator; future durable observer]
+    Operator -->|control API| Source
+    Operator -->|control API| Proxy
+    Source -->|journal API| Operator
+    Proxy -->|journal API| Operator
 ```
 
 The source is Python standard library code in `src/ingestion/tools/mock-source/`.
@@ -207,7 +247,7 @@ paginated reads cause 409. Abandoned sessions expire after 300 seconds without
 a request; active requests never expire. Recreate the instance with PUT after
 reset. Resetting one instance preserves another's evidence. Sequences never
 rewind. Server restart loses all runtime state and restores the initial file;
-the future observer must key baselines by the explicit process `generation` id.
+key journal baselines by the explicit process `generation` id.
 
 ## Journal API and counting
 
@@ -250,7 +290,7 @@ Discovery has no HTTP event. Malformed HTTP framing is rejected before data
 dispatch and is not a source-read event.
 
 Retention is bounded by `MOCK_JOURNAL_RETENTION` (1–10,000 rows). A baseline
-older than retained evidence sets `truncated: true`; observers must surface the
+older than retained evidence sets `truncated: true`; checks must surface the
 gap. Instance reset intentionally removes its old rows and emits a reset event.
 The source also bounds connections (64), simultaneous data requests (16),
 instances (32), read sessions (256), request bodies (64 KiB), headers (8 KiB),
@@ -261,12 +301,25 @@ sessions remain available for replay until expiry; session exhaustion returns
 
 **Count syncs by distinct Airbyte job id, never by HTTP requests or read ids.**
 Checks, pagination, retries, attempts and checkpoint resumes can all multiply
-requests. The durable observer must correlate request intent, Workflow UID and
+requests. Scenario assertions must correlate request intent, Workflow UID and
 node/retry, connection id, Airbyte job/attempt id, workload/pod lifetime,
 source revision/read id and sweep tick. The source cannot supply Airbyte ids
 that the declarative runtime does not send. Preserve independent Airbyte and
 Workflow observations; do not infer one replication slot from non-overlapping
 HTTP reads. Cancel surviving jobs and release gates during scenario cleanup.
+
+### Coverage enabled by the mock source and connector
+
+| Capability | Cases it enables | Additional evidence required |
+|---|---|---|
+| Deterministic full-refresh data, pagination and checksums | Destination counts, deduplication and staging fidelity | Airbyte job completion and independent bronze/staging queries |
+| Incremental timestamps and cursor filtering | Resume after a checkpoint, replay and state preservation across reconcile | Emitted connector state and records committed by real jobs |
+| Latency, duration, page gates and two independent instances | Overlap, queueing, cancellation and capacity contention | Airbyte job/attempt ids, Workflow retries and workload/pod lifetimes |
+| Transient failures, terminal status codes and auth rejection | Source retries, recovery and credential failure | Job outcome, retry counts and eventual committed data |
+| Revisions, generations and bounded journals | Configuration changes during reads and evidence-gap detection | Baselines captured by each scenario and independent API/Workflow evidence |
+
+These controls exist now; end-to-end scheduling and capacity assertions remain
+planned pytest work.
 
 ## Local deployment
 
@@ -395,7 +448,7 @@ journal sequences never rewind. The next PUT gets a new revision. At most 64
 revisions (including the initial empty revision) are retained until reset; further
 PUTs return 503. Clean up jobs through the independent upstream route, release
 barriers, wait for idle and reset between scenarios. Restart loses runtime state
-and changes `generation`; an observer must report the evidence gap.
+and changes `generation`; scenario checks must report the evidence gap.
 
 ### Proxy evidence and bounds
 
@@ -456,7 +509,7 @@ connect timeouts. Upstream response inactivity uses `MOCK_UPSTREAM_TIMEOUT`
 300 seconds. Data saturation returns 503 while reserved controls retain connection
 capacity. Header parsing additionally uses the standard library's request-line/header-count limits.
 Large ordinary responses are streamed without a total byte cap. A peer sending
-continuously can keep a connection active; the scenario controller must use its
+continuously can keep a connection active; each scenario must use its
 own overall watchdog and cancel surviving jobs.
 
 ## Local proxy routing and acceptance
@@ -500,23 +553,19 @@ The generated overlay changes only `airbyte.apiUrl`:
 | Sweep public `/api/public/v1/jobs` reader and its token minting | Inherits reconcile's `AIRBYTE_URL` |
 | Platform ConfigMap consumers | Same helper → `AIRBYTE_API_URL` |
 
-Reconcile's generated connector CronWorkflows and schedule-trigger Workflows
-refer to `ingestion-pipeline`; they inherit its chart-rendered URL. Existing
-running Workflows retain their captured parameters; resubmit them after enabling
-the profile. Explicit `airbyte_url` overrides, host-side CLI `AIRBYTE_URL` values
+Reconcile's generated connector CronWorkflows refer to `ingestion-pipeline`;
+they inherit its chart-rendered URL. Existing running Workflows retain their
+captured parameters; resubmit them after enabling the profile. Explicit
+`airbyte_url` overrides, host-side CLI `AIRBYTE_URL` values
 and arbitrary external callers must be aimed separately. The Airbyte profile
-cannot route ClickHouse/Kubernetes faults. Schedule reads
-(`CONNECTOR_SCHEDULES_URL`) and service-token minting (`SERVICE_TOKEN_URL`) are
-hardcoded separately by `insight.connectorSchedulesEnv`, with no URL values
-knob. They do not traverse Airbyte; case 44 is therefore not enabled by this
-profile. The same chart can run additional releases with analytics/authenticator
-as their direct `upstream` origins (resource names follow the release name).
-For that case the local scenario driver must override those two environment
-variables in its reconcile Workflow; schedule-trigger has the same two separate
-URLs. This slice does not mutate those CronWorkflow environments or add an
-analytics routing profile.
+cannot route ClickHouse, Kubernetes or MariaDB faults. Schedule request reads and
+acknowledgement writes use the `CONNECTOR_SCHEDULES_DB_*` settings supplied by
+`insight.connectorSchedulesEnv`; they do not traverse this HTTP proxy. The
+`schedule-apply` CronWorkflow has those database settings and no Airbyte caller.
+Schedule-read, acknowledgement-write and admin API failures therefore need
+separate database/API fault setup in future pytest scenarios.
 
-Keep `MOCK_AIRBYTE_UPSTREAM` as the independent observer URL inside the cluster.
+Keep `MOCK_AIRBYTE_UPSTREAM` as the independent Airbyte URL inside the cluster.
 For host-side direct observation, use a second terminal:
 
 ```bash
@@ -564,15 +613,21 @@ curl --fail-with-body -H 'Authorization: Bearer synthetic-control-token' \
   'http://127.0.0.1:8081/observations?after=0'
 ```
 
-Require trigger, poll, reconcile and public-listing events in the proxy journal;
-observe the corresponding job via port 8001, then verify the workflow's transform
-and identity steps and the synthetic staging checks from slice 1. For a controlled
-fault, PUT the example rule with the actual synthetic connection id, capture its
+Check proxy request events for sync submission, polling, reconcile API calls and
+public job listings. Observe the corresponding job via port 8001, then verify the
+Workflow's transform and identity steps and the synthetic staging checks from
+slice 1. For a controlled fault, PUT the example rule with the actual synthetic
+connection id, capture its
 revision, and submit two runs. Check the selected call and injected status in the
 journal. For accepted-but-lost, change the action to `drop_response`, use `call:1`,
 and confirm one upstream job independently even though the submitter loses its
-response. Record outcomes; this slice supplies fault controls, not the slice 3
-observer or a claim that all scheduling cases pass.
+response. Record outcomes; the proxy supplies fault controls, while automated
+scheduling assertions remain planned plain pytest scenarios.
+
+For schedule application, inspect the connector CronWorkflow and its
+acknowledgement record, then compare the admin schedule API's revision, status
+and applied schedule. A `schedule-apply` tick produces no Airbyte proxy traffic;
+its success must be checked through Workflow status and database/readback evidence.
 
 Before removal, restore the direct route by upgrading the same application chart
 with `--reuse-values --set-string airbyte.apiUrl=`, restoring the chart's empty
@@ -609,47 +664,68 @@ and [7.27.0 index digest](https://hub.docker.com/layers/airbyte/source-declarati
 To refresh, choose a released tag for each supported major and inspect the public
 registry with `docker buildx imagetools inspect airbyte/source-declarative-manifest:<tag>`.
 Use the top-level multi-platform digest, confirm both required architectures,
-update only the SQL pins and provenance here, run the seed tests, and publish a
+update only the SQL pins and provenance here, run the seed target, and publish a
 synthetic nocode connector on a fresh local database. Never derive pins from a
 deployed database. Rerunning the seed intentionally does not upgrade existing rows.
 
-### Coverage enabled by this slice
+### Coverage enabled by the Airbyte API fault proxy
 
-These are fault-injection capabilities for the coverage review's numbered cases;
-completion still requires a scenario driver, independent observation and outcome
-assertions. An injected symptom does not establish its original cause.
+These are fault-injection capabilities; completion still requires plain pytest
+scenarios, independent observation and outcome assertions. An injected symptom
+does not establish its original cause.
 
 | Cases | Proxy contribution | Additional evidence required |
 |---|---|---|
-| 2–5 | Concurrent submits, deterministic 409, cancellation/status rewriting, missed-poll barriers | Real jobs, cancellation propagation, workflow intent accounting |
-| 16–22 | Token/trigger/poll failures, malformed/truncated JSON, transient status sequences, accepted-but-lost and delays | Caller retries, exact job counts and independent private job details |
-| 24 | API unavailability during admission/polling | Actual server restart/OOM still needs Kubernetes faults |
-| 29, 33 | Distinguish public job listings from internal listings; fail source updates after hash mutation | Endpoint assertions and hash/credential convergence |
-| 36–37, 39 | Discovery/catalog, state export/import/recreate and destination API failpoints/barriers | Incremental state and reconcile convergence assertions |
-| 44 | Same proxy code can inject schedule/token faults against separate upstreams; the Airbyte profile alone does not route them | Separate proxies and explicit schedule/auth URL overrides described in the routing section |
-| 51 | Hold connection lookup response before returning a stale UUID | Rename/recreate driver and independent job/intent accounting |
-| 63–69 | Barriers around listings; listing/status/time/stat fixtures by call; public API failures and pagination movement | Sweep ticks, sync history and watermark assertions, persistent Workflow evidence; Kubernetes/ClickHouse faults remain separate |
+| Contention and cancellation | Concurrent submits, deterministic 409, cancellation/status rewriting, missed-poll barriers | Real jobs, cancellation propagation and Workflow intent accounting |
+| Admission, retries and uncertain responses | Airbyte token/submit/poll failures, malformed/truncated JSON, transient status sequences, accepted-but-lost and delays | Caller retries, exact job counts and independent private job details |
+| Airbyte availability | API unavailability during admission/polling | Actual server restart/OOM still needs Kubernetes faults |
+| Public listing and credential convergence | Distinguish public job listings from internal listings; fail source updates after hash mutation | Endpoint assertions and hash/credential convergence |
+| State and destination recovery | Discovery/catalog, state export/import/recreate and destination API failpoints/barriers | Incremental state and reconcile convergence assertions |
+| Schedule application failures | No coverage from the Airbyte profile: schedule reads and acknowledgement writes use MariaDB | Separate database/API fault setup and acknowledgement record assertions |
+| Rename/recreate races | Hold connection lookup response before returning a stale UUID | Rename/recreate steps and independent job/intent accounting |
+| Sync history sweep and recovery | Barriers around listings; listing/status/time/stat fixtures by call; public API failures and pagination movement | Sweep ticks, sync history and watermark assertions, persistent Workflow evidence; Kubernetes/ClickHouse faults remain separate |
 
 ## Planned redeploy scenario
 
-For slice 5, save a request for a synthetic connector instance and capture its
-revision and CronWorkflow schedule. A release upgrade that restarts analytics,
-the trigger and reconcile must leave the request, revision and schedule
-unchanged. Run one pass with an older reconcile image without the API read:
-it must write the annotation schedule, and the next current pass must restore
-the request without changing its revision. Change the Secret schedule annotation
-under the active request: the pass must warn once with the instance and both
-deployment schedules, keep the requested CronWorkflow schedule, and record the
-new inherited schedule. The following unchanged pass must produce no warning.
+This is planned slice 5 coverage, implemented later as plain pytest:
+
+1. Reconcile a synthetic mock instance so its connector CronWorkflow exists.
+   Save a request through the admin instance schedule API using `If-Match` and
+   capture its revision. Wait for a `schedule-apply` tick, allowing for the shared
+   mutex, and assert the CronWorkflow's schedules, UTC timezone and `api` origin.
+   Check the acknowledgement record's applied revision and schedule, and require
+   the API status to be `applied`.
+2. Upgrade/redeploy the application with the current scheduling stack. The
+   stored request and revision must survive. After the next apply tick or full
+   reconcile pass, require the same effective schedule and acknowledged revision.
+   Acknowledgement observation/attempt times may advance.
+3. Change the Secret schedule annotation while the request is active. After an
+   apply tick, require the requested schedule and revision to remain effective,
+   with the new deployment fallback and its origin in the acknowledgement record.
+   An unchanged tick must leave the effective schedule and revision unchanged.
+4. Clear the request with the current revision. After application, require the
+   new clear revision to be acknowledged, the annotation fallback to be applied
+   and API status to be `inherited`.
+
+Related pytest cases should cover a save during an older in-flight snapshot
+(only that snapshot's revision can be acknowledged), a missing CronWorkflow
+(the apply loop records an error until full reconcile creates it), failed
+snapshot reads (no schedule changes), and failed apply/readback attempts (last
+successful acknowledgement preserved). The Airbyte proxy cannot inject these
+database or Kubernetes failures. Sync history checks remain separate from
+request status and deployment-fallback assertions.
 
 ## Verification
 
 Use the existing connector harness environment described in
 [`src/ingestion/tests/connectors/README.md`](../../src/ingestion/tests/connectors/README.md).
-The source has no runtime dependencies; pytest runs its tests.
+The source and proxy use only the Python standard library at runtime; pytest
+runs their tests. The connector's manifest tests use the CDK environment from
+that README. Run these commands from the repository root after creating it:
 
 ```bash
-python3.12 -m pytest src/ingestion/tools/mock-source/tests src/ingestion/tools/mock-airbyte-api/tests -q
+src/ingestion/tests/connectors/.venv/bin/pytest \
+  src/ingestion/tools/mock-source/tests src/ingestion/tools/mock-airbyte-api/tests -q
 cd src/ingestion/tests/connectors
 .venv/bin/pytest ../../connectors/testing/mock/tests
 cd ../../../..
@@ -665,9 +741,13 @@ ruff format --check src/ingestion/tools/mock-source src/ingestion/tools/mock-air
 ```
 
 Proxy transport tests use connected socket pairs to exercise real HTTP parsers,
-streaming and concurrency without opening a TCP listener. Manifest image version
-seeding, the local charts and nocode publication are checked on the local stand.
+streaming and concurrency without opening a TCP listener. Chart lint checks the
+local manifests. Verify image version seeding, install/remove routing and nocode
+publication during a disposable local installation using the acceptance steps
+above; there are no separate automated tests of that local deployment wiring.
 
-Use Ruff 0.15.21 for the hook's lint/format checks. Source unit tests and manifest
-transport tests complement the final real Airbyte sync; neither proves capacity
-or scheduling behavior by itself. Later slices add those scenarios here.
+Use Ruff 0.15.21 for the hook's lint/format checks. Source/proxy unit tests and
+connector manifest tests complement the final real Airbyte sync; neither proves
+capacity or scheduling behavior by itself. The scheduling implementation's tests
+live in `src/ingestion/reconcile-connectors/tests/`; the plain pytest end-to-end
+scenarios described here remain planned.
