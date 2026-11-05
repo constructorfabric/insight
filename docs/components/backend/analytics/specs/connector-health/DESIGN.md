@@ -428,27 +428,33 @@ answered a different question.
 
 One row per connector instance with the fields of FR-5; a row expands to the recent syncs of
 that instance, not of every instance sharing its connector's name. Two installations of one
-connector are told apart by the identity cell. The Schedule column immediately after it
-shows the recorded cron expressions, one per line in monospace, with a muted line below:
-the timezone or `controller time`. When `suspended` is true the muted line appends
-` · suspended`. The page does not display the schedule origin; the API still serves it.
+connector are told apart by the identity cell. The Next sync column immediately after it
+shows roughly how long until the earliest start strictly after the viewer's clock across
+all recorded expressions. It is computed when the row renders, without a live timer or
+updates when the tooltip opens. Below one minute the interval reads `in < 1 min`.
+Otherwise, round the delay to the nearest whole minute, with half units rounded up,
+and use minutes while that rounded value is under 60. Beyond that, round the delay
+to whole hours and use hours while that rounded value is under 24; otherwise use
+rounded whole days. Rounding precedes unit selection: 59 minutes 45 seconds reads
+`in ~1 h`, and 23 hours 50 minutes reads `in ~1 d`.
+The page does not display the schedule origin; the API still serves it.
 A null schedule renders as `—` without a tooltip (FR-13). Header text may wrap onto two
 lines in this table; body cells retain their existing wrapping.
 
-A non-null schedule has a tooltip on hover or keyboard focus, exposed to assistive
-technology. Its next start is computed against the viewer's clock at the moment the tooltip
-opens, kept current while it stays open, from the recorded expressions and timezone. Precedence is:
+A non-null schedule has a focusable button with `aria-describedby` linking to a tooltip
+on hover or keyboard focus. The tooltip shows the recorded cron expressions, one per line
+in monospace, with a muted line below: the timezone or `controller time`. When `suspended`
+is true the muted line appends ` · suspended`. Column text and tooltip explanations follow
+this precedence:
 
-1. Suspended: `Suspended: no run is scheduled.`
-2. Null timezone: `Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.`
-3. Any unreadable expression: `Next run unknown: a recorded expression cannot be read.`
-4. Otherwise: `Next run <date> <time> <timezone> (in <relative>)`, taking the earliest start
-   strictly after that clock across all expressions. The date and time use the recorded
-   timezone and `yyyy-MM-dd HH:mm`; relative time uses the page's duration formatting.
+1. Suspended: `Suspended`, with `Suspended: no run is scheduled.` in the tooltip.
+2. Null timezone: `Unknown`, with `Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.` in the tooltip.
+3. Any unreadable expression: `Unknown`, with `Next run unknown: a recorded expression cannot be read.` in the tooltip.
+4. Otherwise: the approximate relative interval, with the recorded schedule in the tooltip.
 
 Croner uses five fields and day-of-month/day-of-week OR semantics to match Argo's
 robfig/cron v3, including `@hourly`, `@daily`, `@weekly`, `@monthly` and `@yearly`.
-Unreadable expressions such as `@every 5m` never throw through rendering. The tooltip is
+Unreadable expressions such as `@every 5m` never throw through rendering. The next sync is
 a forecast from recorded facts, never a measured fact or a late, fresh or stale verdict.
 Argo's `concurrencyPolicy: Forbid` skips a start while the previous run of that CronWorkflow
 is still going, so a forecast start may not happen.

@@ -9,20 +9,33 @@ import type {
 } from "@/api/connector-health-client";
 import { nextScheduledRun } from "@/lib/portal/connector-schedule";
 
-export const SCHEDULE_HEADING = "Schedule";
+export const SCHEDULE_HEADING = "Next sync";
 
 export function describeSchedule(schedule: AppliedSchedule): string {
   const timezone = schedule.timezone ?? "controller time";
   return schedule.suspended ? `${timezone} · suspended` : timezone;
 }
 
-export function describeNextRun(schedule: AppliedSchedule, now: Date): string {
-  if (schedule.suspended) return "Suspended: no run is scheduled.";
+export interface NextRunView {
+  text: string;
+  detail: string | null;
+}
+
+export function describeNextRun(schedule: AppliedSchedule, now: Date): NextRunView {
+  if (schedule.suspended) {
+    return { text: "Suspended", detail: "Suspended: no run is scheduled." };
+  }
   if (schedule.timezone == null) {
-    return "Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.";
+    return {
+      text: "Unknown",
+      detail: "Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.",
+    };
   }
 
-  const unreadable = "Next run unknown: a recorded expression cannot be read.";
+  const unreadable = {
+    text: "Unknown",
+    detail: "Next run unknown: a recorded expression cannot be read.",
+  };
   try {
     let earliest = Infinity;
     for (const expression of schedule.crons) {
@@ -33,26 +46,25 @@ export function describeNextRun(schedule: AppliedSchedule, now: Date): string {
       earliest = Math.min(earliest, next.getTime());
     }
 
-    const formatter = new Intl.DateTimeFormat("en-GB", {
-      timeZone: schedule.timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    });
-    const parts = Object.fromEntries(
-      formatter
-        .formatToParts(new Date(earliest))
-        .map(({ type, value }) => [type, value])
-    );
-    const date = `${parts.year}-${parts.month}-${parts.day}`;
-    const time = `${parts.hour}:${parts.minute}`;
-    return `Next run ${date} ${time} ${schedule.timezone} (in ${formatDuration(earliest - now.getTime())})`;
+    const delay = earliest - now.getTime();
+    if (!Number.isFinite(delay)) return unreadable;
+
+    return { text: describeNextRunDelay(delay), detail: null };
   } catch {
     return unreadable;
   }
+}
+
+function describeNextRunDelay(delay: number): string {
+  if (delay < MINUTE_MS) return "in < 1 min";
+
+  const minutes = Math.round(delay / MINUTE_MS);
+  if (minutes < 60) return `in ~${minutes} min`;
+
+  const hours = Math.round(delay / HOUR_MS);
+  if (hours < 24) return `in ~${hours} h`;
+
+  return `in ~${Math.round(delay / DAY_MS)} d`;
 }
 
 /**
