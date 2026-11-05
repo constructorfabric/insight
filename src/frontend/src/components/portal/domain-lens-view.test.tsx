@@ -58,6 +58,7 @@ const mocks = vi.hoisted(() => ({
   }>,
   collectionSet: new Map<string, unknown>(),
   definitions: [] as unknown[],
+  dateRange: { from: "2026-07-20", to: "2026-07-26" },
   collections: [] as Array<{
     byKey: Map<string, NormalizedMetricResult>;
     isPending: boolean;
@@ -142,14 +143,27 @@ vi.mock("@/queries/metric-definitions", async (orig) => ({
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({
     period: "week",
-    dateRange: { from: "2026-07-20", to: "2026-07-26" },
+    dateRange: mocks.dateRange,
   }),
 }));
 // Charts are exercised by the browser/storybook project; here they'd render
 // into a 0×0 jsdom box. Stub them with introspectable placeholders.
 vi.mock("@/components/portal/section-trend", () => ({
-  SectionTrend: ({ series }: { series: unknown[] }) => (
-    <div data-testid="section-trend" data-series={JSON.stringify(series ?? []).length} />
+  SectionTrend: ({
+    title,
+    series,
+    data,
+  }: {
+    title: string;
+    series: unknown[];
+    data: Array<{ date: string }>;
+  }) => (
+    <div
+      data-testid="section-trend"
+      data-title={title}
+      data-series={JSON.stringify(series ?? []).length}
+      data-dates={JSON.stringify(data.map((p) => p.date))}
+    />
   ),
 }));
 // The sparkle reads the AI config through react-query; this suite renders the
@@ -246,6 +260,7 @@ beforeEach(() => {
   mocks.unattributed = new Map();
   mocks.unattributedPending = false;
   mocks.unattributedAnchors = [];
+  mocks.dateRange = { from: "2026-07-20", to: "2026-07-26" };
   seedHappyOrg();
   mocks.grid.isPending = false;
   mocks.grid.isError = false;
@@ -1545,6 +1560,109 @@ describe("trend section", () => {
       ["a", "b"],
     ]);
   });
+});
+
+describe("trend lines hold only buckets the range covers whole", () => {
+  // A hundred people coarsen a quarter to weeks and a year to months, so the
+  // range's first and last buckets can run past its ends.
+  function seedLargeOrg() {
+    const labels = ["a", "b", ...Array.from({ length: 97 }, (_, i) => `p${i}`)];
+    mocks.tree = person("boss", {}, labels.map((l) => person(l)));
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
+  }
+
+  function trendOver(buckets: readonly string[]) {
+    const trend = emptyCollection();
+    trend.byKey = new Map([
+      [
+        "t.commits",
+        timeseries("t.commits", {
+          [pid("a")]: buckets.map((b) => [b, 3]),
+          [pid("b")]: buckets.map((b) => [b, 2]),
+        }),
+      ],
+    ]);
+    mocks.collections = [trend, emptyCollection(), emptyCollection()];
+  }
+
+  function plottedDates(): Record<string, string[]> {
+    return Object.fromEntries(
+      screen
+        .getAllByTestId("section-trend")
+        .map((node) => [
+          node.getAttribute("data-title"),
+          JSON.parse(node.getAttribute("data-dates") ?? "[]"),
+        ]),
+    );
+  }
+
+  const CONFIG: LensConfig = {
+    title: "T",
+    sections: [
+      { kind: "trend", metrics: ["t.commits"], activeContributorsFor: "t.commits" },
+      { kind: "participation", metrics: ["t.commits"], title: "Adoption", noun: "People committing" },
+    ],
+  };
+
+  it.each([
+    {
+      period: "a quarter starting and ending mid-week",
+      range: { from: "2026-08-04", to: "2026-11-03" },
+      bucket: "week",
+      buckets: ["2026-08-03", "2026-08-10", "2026-10-26", "2026-11-02"],
+      plotted: ["2026-08-10", "2026-10-26"],
+    },
+    {
+      period: "a quarter running Monday to Sunday",
+      range: { from: "2026-08-03", to: "2026-11-01" },
+      bucket: "week",
+      buckets: ["2026-08-03", "2026-08-10", "2026-10-26"],
+      plotted: ["2026-08-03", "2026-08-10", "2026-10-26"],
+    },
+    {
+      period: "a year starting and ending mid-month",
+      range: { from: "2025-11-04", to: "2026-11-03" },
+      bucket: "month",
+      buckets: ["2025-11-01", "2025-12-01", "2026-10-01", "2026-11-01"],
+      plotted: ["2025-12-01", "2026-10-01"],
+    },
+    {
+      period: "a year from the first of a month to the last of one",
+      range: { from: "2025-11-01", to: "2026-10-31" },
+      bucket: "month",
+      buckets: ["2025-11-01", "2025-12-01", "2026-09-01", "2026-10-01"],
+      plotted: ["2025-11-01", "2025-12-01", "2026-09-01", "2026-10-01"],
+    },
+    {
+      period: "a week ending yesterday",
+      range: { from: "2026-07-20", to: "2026-07-26" },
+      bucket: "day",
+      buckets: ["2026-07-20", "2026-07-25", "2026-07-26"],
+      plotted: ["2026-07-20", "2026-07-25", "2026-07-26"],
+    },
+  ])(
+    "$period plots only the $bucket buckets it holds whole",
+    async ({ range, bucket, buckets, plotted }) => {
+      mocks.dateRange = range;
+      seedLargeOrg();
+      trendOver(buckets);
+      render(<DomainLensView config={CONFIG} />);
+
+      expect(mocks.requested[0]?.metrics[0]?.views).toEqual([
+        { view: "timeseries", bucket },
+      ]);
+      expect(plottedDates(), `plotted buckets for ${range.from}..${range.to}`).toEqual({
+        Commits: plotted,
+        "Active contributors · Commits": plotted,
+        "Active people over time": plotted,
+      });
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Open Commits details" }),
+      );
+      expect(openedDrilldown().breakdown.map((b) => b.date)).toEqual(plotted);
+    },
+  );
 });
 
 describe("dimension-table (rollup: one row per dimension value)", () => {

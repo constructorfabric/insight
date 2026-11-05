@@ -75,6 +75,7 @@ vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({
     period: "month",
     dateRange: { from: "2026-07-01", to: "2026-07-31" },
+    compareTo: { from: "2026-06-01", to: "2026-06-30" },
   }),
 }));
 

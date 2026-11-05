@@ -26,7 +26,6 @@ import {
   serializeLocalStorageBoolean,
   useLocalStorageState,
 } from "@/hooks/use-local-storage-state";
-import type { PeriodValue } from "@/types/insight";
 
 /** Data target for a metrics-backed group's drilldown body. */
 export type MetricDrilldownTarget =
@@ -44,7 +43,7 @@ export interface GroupDrilldownSheetProps {
   def: MetricGroup;
   metricTarget?: MetricDrilldownTarget;
   range?: DateRange;
-  period?: PeriodValue;
+  compareTo?: DateRange;
   cohortLabel?: PeerCohortLabel;
 }
 
@@ -55,7 +54,7 @@ export function GroupDrilldownSheet({
   def,
   metricTarget,
   range,
-  period,
+  compareTo,
   cohortLabel = "department",
 }: GroupDrilldownSheetProps) {
   return (
@@ -72,7 +71,7 @@ export function GroupDrilldownSheet({
           def={def}
           metricTarget={metricTarget}
           range={range}
-          period={period}
+          compareTo={compareTo}
           cohortLabel={cohortLabel}
         />
       </DialogContent>
@@ -84,13 +83,13 @@ function DrilldownPanel({
   def,
   metricTarget,
   range,
-  period,
+  compareTo,
   cohortLabel,
 }: {
   def: MetricGroup;
   metricTarget?: MetricDrilldownTarget;
   range?: DateRange;
-  period?: PeriodValue;
+  compareTo?: DateRange;
   cohortLabel: PeerCohortLabel;
 }) {
   const [expanded, setExpanded] = useLocalStorageState<boolean>({
@@ -148,12 +147,12 @@ function DrilldownPanel({
               cohortLabel={cohortLabel}
             />
           </CollectionDrilldown>
-        ) : metricTarget?.kind === "team" && range && period ? (
+        ) : metricTarget?.kind === "team" && range && compareTo ? (
           <TeamCollectionDrilldown
             def={def}
             members={metricTarget.members}
             range={range}
-            period={period}
+            compareTo={compareTo}
             cohortLabel={cohortLabel}
           />
         ) : (

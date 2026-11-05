@@ -16,7 +16,6 @@ import type { Status } from "@/lib/status";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { usePortalItem } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import { previousPeriodRange } from "@/api/period-to-date-range";
 import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
 import {
   useMetricCollectionSet,
@@ -89,7 +88,7 @@ export function useSelectedPersonSection(): GroupId | null {
 export function usePersonSectionCollection(
   personId: string
 ): Map<string, MetricCollectionResult> {
-  const { period, dateRange } = usePortalPeriod();
+  const { dateRange, compareTo } = usePortalPeriod();
   const entityId = normalizePersonId(personId);
   const showPlanned = usePortalShowPlanned();
   const selectedSection = useSelectedPersonSection();
@@ -101,7 +100,7 @@ export function usePersonSectionCollection(
     })),
     { type: "person" as const, ids: [entityId] },
     dateRange,
-    selectedSection == null ? previousPeriodRange(dateRange, period) : undefined
+    selectedSection == null ? compareTo : undefined
   );
 }
 

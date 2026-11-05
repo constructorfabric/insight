@@ -75,7 +75,7 @@ function renderDrilldown(
       def={DEF}
       members={members}
       range={RANGE}
-      period="week"
+      compareTo={RANGE}
     />
   );
 }

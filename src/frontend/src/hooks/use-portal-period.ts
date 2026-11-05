@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import { recordUsageEvent } from "@/telemetry";
 
 import {
+  comparisonRange,
   resolveDateRange,
   validateDateRange,
   type DateRange,
@@ -24,6 +25,8 @@ export function usePortalPeriod(): {
   period: PeriodValue;
   customRange: CustomRange | null;
   dateRange: DateRange;
+  compareTo: DateRange;
+  comparisonNoun: PeriodValue | "period";
   setPeriod: (period: PeriodValue) => void;
   setCustomRange: (range: CustomRange | null) => void;
 } {
@@ -42,6 +45,11 @@ export function usePortalPeriod(): {
     () => resolveDateRange(period, customRange),
     [period, customRange],
   );
+  const compareTo = useMemo(
+    () => comparisonRange(dateRange, period, customRange),
+    [dateRange, period, customRange],
+  );
+  const comparisonNoun = customRange ? "period" : period;
 
   const setPeriod = useCallback(
     (next: PeriodValue) => {
@@ -67,7 +75,15 @@ export function usePortalPeriod(): {
   );
 
   return useMemo(
-    () => ({ period, customRange, dateRange, setPeriod, setCustomRange }),
-    [period, customRange, dateRange, setPeriod, setCustomRange],
+    () => ({
+      period,
+      customRange,
+      dateRange,
+      compareTo,
+      comparisonNoun,
+      setPeriod,
+      setCustomRange,
+    }),
+    [period, customRange, dateRange, compareTo, comparisonNoun, setPeriod, setCustomRange],
   );
 }
