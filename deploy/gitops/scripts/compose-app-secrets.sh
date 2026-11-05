@@ -447,5 +447,20 @@ EOF
 } | kubectl -n "$NS_APP" apply -f - >/dev/null
 echo "composed → $NS_APP/insight-identity-resolution-config"
 
+SCHEDULE_PW=$(kubectl -n "$NS_APP" get secret insight-db-creds -o jsonpath='{.data.schedule-db-password}' | base64 -d)
+if [ -n "$SCHEDULE_PW" ]; then
+  SCHEDULE_CONFIG=$(yq eval-all -o=json -I=0 \
+    '(select(fileIndex == 0) * select(fileIndex == 1)) | .global.connectorSchedules.database' \
+    "$ROOT/../../charts/insight/values.yaml" "$VALUES")
+  export SCHEDULE_PW NS_APP SCHEDULE_CONFIG
+  yq -n '
+    {"apiVersion":"v1", "kind":"Secret", "type":"Opaque",
+     "metadata":{"name":env(SCHEDULE_CONFIG).secretName, "namespace":strenv(NS_APP)},
+     "stringData":{(env(SCHEDULE_CONFIG).userKey):env(SCHEDULE_CONFIG).username, (env(SCHEDULE_CONFIG).passwordKey):strenv(SCHEDULE_PW)}}' \
+    | kubectl -n "$NS_APP" apply -f - >/dev/null
+  unset SCHEDULE_CONFIG
+fi
+unset SCHEDULE_PW
+
 # Don't echo any of the passwords; clear the shell env explicitly.
 unset MDB_PW CH_PW RD_PW REDIS_URL CH_ANALYTICS_PW CORE_TOKEN CORE_CH_READER_PW

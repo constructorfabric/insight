@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REASON = "example renderer refused the schedule"
 
 STUBS = """
+connector_schedules_acknowledge() { return 0; }
 disc_instances_of() { printf 'main\texample-secret\thash\n'; }
 valsec_check_secret() { return 0; }
 reconcile_definitions() { printf 'noop\tnone\texample-definition\n'; }

@@ -16,6 +16,39 @@ when you go past sandbox, and you have a working gitops setup.
 > Below is the operator-facing summary; the linked docs go deeper into
 > rationale (DESIGN, PRD, ADR).
 
+## Connector schedule requests
+
+Reconcile reads schedule requests from MariaDB with its own account. Keep
+`ingestion.templates.enabled: true`.
+
+The provisioning hook creates the schedule-account Secret at runtime in both Helm
+and GitOps modes, using a cryptographically random password. Upgrades reuse the
+existing credentials and reapply the account's grants. A supplied Secret takes
+precedence and the hook never updates it. If creation races with another writer,
+the hook rereads the Secret and provisions with the winning credentials.
+Chart values under `global.connectorSchedules.database` select the Secret name,
+initial username and username/password keys. The local wizard persists a
+separate `schedule-db-password` in `insight-db-creds`; when supplied,
+`compose-app-secrets.sh` composes the runtime Secret from that password.
+No schedule password needs to be supplied for GitOps upgrades.
+
+The hook reads MariaDB admin credentials from `insight-db-creds`. Its dedicated
+ServiceAccount can get only the named schedule Secret and create Secrets in the
+release namespace. Kubernetes RBAC cannot restrict `create` by resource name;
+the Role grants no update, patch, delete or list access. Created Secrets carry
+release labels and persist independently of the hook Job. Reconcile's required
+`secretKeyRef` entries keep its container waiting in `CreateContainerConfigError`
+if its first pass precedes Secret creation. Kubelet retries container startup
+once the Secret exists, within the workflow's 1800-second deadline; later cron
+passes retry if that deadline expires. Only the dedicated credentials reach reconcile.
+
+The idempotent account hook runs at weight 15, after analytics migration at 10.
+Its default role permits SELECT on `connector_schedule_requests_v1` and SELECT/INSERT/UPDATE
+on `connector_schedule_acknowledgements` only. An external database administrator
+must allow the provisioning account to create this account and role, or provision
+the equivalent grants before deployment. Acknowledgement SELECT supports MariaDB's
+upsert privilege checks. The runtime account needs no base-table, DELETE or DDL privileges.
+
 ## What's in this directory
 
 ```text

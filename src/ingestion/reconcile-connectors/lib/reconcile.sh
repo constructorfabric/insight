@@ -1546,27 +1546,37 @@ _reconcile_one_connector() {
   # CronWorkflow apply (idempotent — kubectl apply no-op when YAML unchanged).
   local conn_name schedule tenant schedule_details schedule_origin
   conn_name="$(reconcile_compute_connection_name "${name}" "${source_id_label}")"
-  schedule_details="$(reconcile_resolve_schedule "${name}" "${secret_name}")"
-  schedule_origin="${schedule_details%%$'\n'*}"
-  schedule="${schedule_details#*$'\n'}"
   tenant="$(reconcile_compute_tenant "${name}")"
-  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
-    log_line INFO "${name}: would create/update Argo CronWorkflow"
-  else
-    local apply_rc=0 apply_error
-    apply_error="$(argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                            "${source_id_label}" "${dbt_select}" "${schedule_origin}" 2>&1 >/dev/null)" \
-      || apply_rc=$?
-    apply_error="$(argo_error_reason "${apply_error}")"
-    if [[ "${apply_rc}" -eq 2 ]]; then
-      log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")${apply_error:+: ${apply_error}}"
-      rc=1
-    elif [[ "${apply_rc}" -ne 0 ]]; then
-      log_line ERROR "${name}: failed to create/update Argo CronWorkflow${apply_error:+: ${apply_error}}"
-      rc=1
-    elif ! argo_delete_former_tenant_cronworkflows "${name}" "${tenant}" "${source_id_label}" >/dev/null; then
-      log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove the ones named for a former tenant"
-      rc=1
+  if connector_schedules_writable; then
+    local deployment=""
+    if [[ "${_CONNECTOR_SCHEDULES_STATUS-}" == "ok" ]]; then
+      deployment="$(reconcile_resolve_deployment_schedule "${name}" "${secret_name}")" || return 1
+    fi
+    schedule_details="$(reconcile_resolve_schedule "${name}" "${secret_name}" "${source_id_label}" "${deployment}")" || return 1
+    schedule_origin="${schedule_details%%$'\n'*}"
+    schedule="${schedule_details#*$'\n'}"
+    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+      log_line INFO "${name}: would create/update Argo CronWorkflow (origin=${schedule_origin})"
+    else
+      local apply_rc=0 apply_error
+      apply_error="$(argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
+                              "${source_id_label}" "${dbt_select}" "${schedule_origin}" 2>&1 >/dev/null)" \
+        || apply_rc=$?
+      local ack_rc=0
+      connector_schedules_acknowledge "${name}" "${source_id_label}" "${tenant}" "${schedule}" \
+        "${schedule_origin}" "${deployment}" "${apply_rc}" || ack_rc=1
+      apply_error="$(argo_error_reason "${apply_error}")"
+      if [[ "${apply_rc}" -eq 2 ]]; then
+        log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")${apply_error:+: ${apply_error}}"
+        rc=1
+      elif [[ "${apply_rc}" -ne 0 ]]; then
+        log_line ERROR "${name}: failed to create/update Argo CronWorkflow${apply_error:+: ${apply_error}}"
+        rc=1
+      elif ! argo_delete_former_tenant_cronworkflows "${name}" "${tenant}" "${source_id_label}" >/dev/null; then
+        log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove the ones named for a former tenant"
+        rc=1
+      fi
+      [[ "${ack_rc}" -eq 0 ]] || rc=1
     fi
   fi
 
@@ -1718,6 +1728,8 @@ reconcile_run() {
   _RECONCILE_SKIPPED=0
 
   log_init
+  connector_schedules_read
+  connector_schedules_writable || _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
 
   # INVARIANT: the desired state is read once, and a read that failed stops the
   # tick. Every destructive path below is driven by "this instance is not in the

@@ -16,7 +16,7 @@ CLI:
 Stdout: rendered YAML.
 Exit:   0 success, 2 missing template variables or empty --schedule.
 
-Schedule precedence is resolved by the caller (Secret annotation >
+Schedule precedence is resolved by the caller (API > Secret annotation >
 descriptor.schedule > default), which may hold one cron or several — a list
 prints newline-separated and travels verbatim.
 
@@ -43,7 +43,7 @@ def main() -> int:
     p.add_argument("--connector", required=True)
     p.add_argument("--connection-name", required=True)
     p.add_argument("--schedule", required=True)
-    p.add_argument("--schedule-origin", choices=("annotation", "descriptor", "default"), required=True)
+    p.add_argument("--schedule-origin", choices=("api", "annotation", "descriptor", "default"), required=True)
     p.add_argument("--tenant", required=True)
     p.add_argument("--cron-name", required=True)
     p.add_argument("--insight-source-id", required=True)

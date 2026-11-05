@@ -15,6 +15,7 @@ Connectors pull data from your tools — Jira issues, Slack messages, GitHub pul
 - [Prerequisites](#prerequisites)
 - [Contents](#contents)
 - [Anatomy of a connector Secret](#anatomy-of-a-connector-secret)
+- [When a connector syncs](#when-a-connector-syncs)
 - [The available connectors](#the-available-connectors)
 - [Example Secret for every connector](#example-secret-for-every-connector)
   - [AI & coding assistants](#ai--coding-assistants)
@@ -51,6 +52,25 @@ stringData:
   jira_instance_url: "https://your-org.atlassian.net"
   jira_email:        "svc@your-org.com"
   jira_api_token:    "ATATT-CHANGE_ME"
+```
+
+## When a connector syncs
+
+Each connector instance syncs on its own CronWorkflow, in UTC. Its schedule comes from the first of these that sets one:
+
+1. a schedule an admin saved for the instance on the Connector health page;
+2. the Secret annotation `insight.cyberfabric.com/schedule`: one cron expression, or several on separate lines;
+3. the `schedule` in the connector's `descriptor.yaml`;
+4. `0 0 * * *`, midnight UTC.
+
+The instance is the pair of the Secret's `connector` and `source-id` annotations; the Secret's own name plays no part. An admin's saved schedule belongs to that pair, so changing `source-id` makes a new instance with no saved schedule. Resetting the schedule on the page returns the instance to the annotation, the descriptor or the default, in that order. A saved schedule reaches the CronWorkflow at the next reconcile pass.
+
+```yaml
+metadata:
+  annotations:
+    insight.cyberfabric.com/connector: jira
+    insight.cyberfabric.com/source-id: jira-main
+    insight.cyberfabric.com/schedule: "0 */4 * * *"
 ```
 
 ## The available connectors

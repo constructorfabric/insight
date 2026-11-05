@@ -6,7 +6,7 @@
 #                              {connector}-{source_id}-{tenant}-conn
 #   ${SCHEDULES}            — YAML flow array of cron strings, one per
 #                              schedule; precedence resolved by caller
-#                              (Secret annotation > descriptor.schedule > default)
+#                              (API > Secret annotation > descriptor.schedule > default)
 #   ${TENANT}               — tenant slug
 #   ${CRON_NAME}            — object name, from lib/argo.sh:argo_cron_workflow_name
 #                              (Argo caps a CronWorkflow name at 52 characters)
