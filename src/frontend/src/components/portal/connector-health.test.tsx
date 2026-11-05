@@ -25,6 +25,14 @@ function rowFor(connector: string): HTMLElement {
   return row;
 }
 
+function expectTooltipLines(tooltip: HTMLElement, expected: string[]): void {
+  const lines = Array.from(tooltip.querySelectorAll("span"));
+  expect(lines.map((line) => line.textContent)).toEqual(expected);
+  for (const line of lines) {
+    expect(line).toHaveClass("block");
+  }
+}
+
 const mocks = vi.hoisted(() => ({
   summary: {
     data: undefined as ConnectorHealthSummary | undefined,
@@ -167,7 +175,7 @@ describe("the pane prints what it was served", () => {
       connectors: [{
         connector: "example-tracker",
         configured: true,
-        schedule: { crons: ["0 22 * * *"], timezone: "UTC", origin: "annotation", suspended: true },
+        schedule: { crons: ["0 22 * * *", "0 10 * * *"], timezone: "UTC", origin: "annotation", suspended: true },
         last_sync: null,
       }],
     });
@@ -181,7 +189,12 @@ describe("the pane prints what it was served", () => {
     await user.tab();
     expect(trigger).toHaveFocus();
     const tooltip = await screen.findByRole("tooltip");
-    expect(tooltip).toHaveTextContent("Suspended: no run is scheduled.");
+    expectTooltipLines(tooltip, [
+      "0 22 * * *",
+      "0 10 * * *",
+      "UTC · suspended",
+      "Suspended: no run is scheduled.",
+    ]);
     expect(within(tooltip).getByText("UTC · suspended")).toHaveClass("text-muted-foreground");
     expect(within(tooltip).getByText("0 22 * * *")).toHaveClass("font-mono");
   });
@@ -312,8 +325,7 @@ describe("the pane prints what it was served", () => {
     const tooltip = await screen.findByRole("tooltip");
     const first = within(tooltip).getByText("0 22 * * *");
     const second = within(tooltip).getByText("0 10 * * *");
-    expect(first).toHaveClass("block");
-    expect(second).toHaveClass("block");
+    expectTooltipLines(tooltip, ["0 22 * * *", "0 10 * * *", "Europe/Sofia"]);
     expect(first).toHaveClass("font-mono");
     expect(second).toHaveClass("font-mono");
     expect(within(tooltip).getByText("Europe/Sofia")).toHaveClass(
@@ -370,7 +382,12 @@ describe("the pane prints what it was served", () => {
     expect(trigger).toHaveTextContent(/^Unknown$/);
     await act(async () => { trigger.focus(); });
     const tooltip = await screen.findByRole("tooltip");
-    expect(tooltip).toHaveTextContent("Next run unknown: a recorded expression cannot be read.");
+    expectTooltipLines(tooltip, [
+      "0 22 * * *",
+      "@every 5m",
+      "UTC",
+      "Next run unknown: a recorded expression cannot be read.",
+    ]);
     expect(within(tooltip).getByText("0 22 * * *")).toHaveClass("font-mono");
     expect(within(tooltip).getByText("@every 5m")).toHaveClass("font-mono");
     expect(within(tooltip).getByText("UTC")).toBeInTheDocument();
