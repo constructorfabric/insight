@@ -17,7 +17,7 @@ export type DateRangeValidation =
   | { valid: true; days: number }
   | {
       valid: false;
-      reason: "invalid_date" | "inverted" | "too_long";
+      reason: "invalid_date" | "inverted" | "too_long" | "future";
       days?: number;
     };
 
@@ -49,6 +49,7 @@ export function validateDateRange(range: DateRange): DateRangeValidation {
 
   if (!from || !to) return { valid: false, reason: "invalid_date" };
   if (from > to) return { valid: false, reason: "inverted" };
+  if (to > localToday()) return { valid: false, reason: "future" };
 
   const days = differenceInCalendarDays(to, from) + 1;
 
@@ -66,7 +67,7 @@ export function toISODate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function localToday(): Date {
+export function localToday(): Date {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return today;

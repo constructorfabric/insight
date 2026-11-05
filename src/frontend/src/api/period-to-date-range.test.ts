@@ -6,6 +6,7 @@ import {
   previousPeriodRange,
   resolveDateRange,
   toISODate,
+  validateDateRange,
 } from "./period-to-date-range";
 
 describe("toISODate", () => {
@@ -62,6 +63,29 @@ describe("periodToDateRange", () => {
       from: "2026-03-01",
       to: "2026-03-30",
     });
+  });
+});
+
+describe("validateDateRange refuses days that have not happened yet", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 15, 23, 30)); // local 2026-06-15
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    { span: "wholly after today", range: { from: "2026-06-16", to: "2026-06-21" }, valid: false },
+    { span: "ending tomorrow", range: { from: "2026-06-10", to: "2026-06-16" }, valid: false },
+    { span: "ending today", range: { from: "2026-06-10", to: "2026-06-15" }, valid: true },
+    { span: "of today alone", range: { from: "2026-06-15", to: "2026-06-15" }, valid: true },
+  ])("a range $span is valid: $valid", ({ range, valid }) => {
+    const validation = validateDateRange(range);
+
+    expect(validation.valid, `range ${JSON.stringify(range)}`).toBe(valid);
+    if (!validation.valid) expect(validation.reason).toBe("future");
   });
 });
 
