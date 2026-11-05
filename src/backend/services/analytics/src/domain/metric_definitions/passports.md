@@ -120,7 +120,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit days
 - Notes: Distinct days with person-attributed AI activity across dev and assistant tools.
 
-## ai.cost — AI potential usage cost
+## ai.cost — AI potential cost
 
 - Source: ai_usage (ai_metric_observations)
 - Reads: cost_usd
@@ -136,7 +136,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: currency, lower_is_better
 - Notes: The invoiced price of one seat for a billing month, from the invoice's per-seat amount. Dated at that month's first day, so a window must hold it to return the fee. The month comes from the read, not from the vendor. A seat whose tier the invoice does not price returns no value.
 
-## ai.extra_usage_cost — AI actual usage cost
+## ai.extra_usage_cost — AI extra cost
 
 - Source: ai_cost (ai_cost_metric_observations)
 - Reads: extra_usage_usd
@@ -144,7 +144,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: currency, lower_is_better
 - Notes: What the vendor billed on top of the seat fee, once included usage ran out. Exact as of that month's last reading, dated at its first day, so a window missing that day returns nothing — read the per-day distribution. The month comes from the read, not the vendor. Never added to potential usage cost.
 
-## ai.daily_approximate_extra_usage_cost — AI actual usage cost — approximate distribution
+## ai.daily_approximate_extra_usage_cost — AI extra cost, spread by day
 
 - Source: ai_cost (ai_cost_metric_observations)
 - Reads: daily_extra_usage_usd
@@ -224,7 +224,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit PRs
 - Notes: Pull requests the AI vendor observed for the person, served as the context for PRs with AI assistance rather than as a goal of its own. It is the vendor's count over the vendor's own window, which need not be the day it is reported against and need not agree with the git sources — read it next to that measure, not next to git pull-request metrics.
 
-## git.commits — Commits on any branch
+## git.commits — Commits, any branch
 
 - Source: git (git_metric_observations)
 - Reads: commit_count
@@ -240,7 +240,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit commits
 - Notes: Authored commits reachable from the repository's default branch, or carried onto it by a merged pull request. A commit joins this metric when its branch lands, so a past period's figure rises as work merges. Dated by the commit, so the request that merged it can fall in a later period. Merge commits excluded.
 
-## git.non_default_branch_commits — Commits that have not reached the default branch
+## git.non_default_branch_commits — Commits, other branches
 
 - Source: git (git_metric_observations)
 - Reads: non_default_commit_count
@@ -248,7 +248,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit commits
 - Notes: Authored commits not reachable from the repository's default branch — work in flight, or abandoned. A commit leaves this metric when its branch lands, so a past period's figure falls as work merges. Dated by the commit, not by the merge. A source reporting no branch membership counts here. Merge commits excluded.
 
-## git.code_lines — Code lines added on any branch
+## git.code_lines — Code lines, any branch
 
 - Source: git (git_metric_observations)
 - Reads: code_lines_added
@@ -256,7 +256,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit lines
 - Notes: Lines added to files classified as code — tests, configuration, and documentation excluded. A commit whose diff was never collected has no classification, so its commit-level size stays out. Each change counts once: when the same change content appears in more than one commit, the lines belong to the first such commit.
 
-## git.default_branch_code_lines — Code lines added
+## git.default_branch_code_lines — Code lines
 
 - Source: git (git_metric_observations)
 - Reads: default_code_lines_added
@@ -264,7 +264,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit lines
 - Notes: Code lines whose commit is reachable from the repository's default branch, or was carried onto it by a merged pull request. Lines follow their commit, so this rises as work merges. Dated by the commit, not by the merge. Tests, configuration and documentation excluded.
 
-## git.non_default_branch_code_lines — Code lines that have not reached the default branch
+## git.non_default_branch_code_lines — Code lines, other branches
 
 - Source: git (git_metric_observations)
 - Reads: non_default_code_lines_added
@@ -272,7 +272,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit lines
 - Notes: Code lines whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges. Dated by the commit, not by the merge. Tests, configuration and documentation excluded.
 
-## git.lines_added — Lines added on any branch
+## git.lines_added — Lines added, any branch
 
 - Source: git (git_metric_observations)
 - Reads: lines_added
@@ -288,7 +288,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit lines
 - Notes: Lines added whose commit is reachable from the repository's default branch, or was carried onto it by a merged pull request. Lines follow their commit, so this rises as work merges. Dated by the commit, not by the merge.
 
-## git.non_default_branch_lines_added — Lines added that have not reached the default branch
+## git.non_default_branch_lines_added — Lines added, other branches
 
 - Source: git (git_metric_observations)
 - Reads: non_default_lines_added
@@ -304,7 +304,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: percent, neutral
 - Notes: Lines added to test files divided by lines added to code and test files. Documentation, configuration, and generated files do not affect the percentage. A result near zero can identify changes where tests are not evolving with implementation, but expected levels vary by repository and change type.
 
-## git.lines_removed — Lines removed on any branch
+## git.lines_removed — Lines removed, any branch
 
 - Source: git (git_metric_observations)
 - Reads: lines_removed
@@ -320,7 +320,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit lines
 - Notes: Lines removed whose commit is reachable from the repository's default branch, or was carried onto it by a merged pull request. Lines follow their commit, so this rises as work merges. Dated by the commit, not by the merge.
 
-## git.non_default_branch_lines_removed — Lines removed that have not reached the default branch
+## git.non_default_branch_lines_removed — Lines removed, other branches
 
 - Source: git (git_metric_observations)
 - Reads: non_default_lines_removed
@@ -328,7 +328,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit lines
 - Notes: Lines removed whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges. Dated by the commit, not by the merge.
 
-## git.prs_created — Pull requests created into any branch
+## git.prs_created — PRs opened, any branch
 
 - Source: git (git_metric_observations)
 - Reads: pr_created
@@ -336,7 +336,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit PRs
 - Notes: Pull requests opened into any branch, dated by creation.
 
-## git.default_branch_prs_created — Pull requests created
+## git.default_branch_prs_created — PRs opened
 
 - Source: git (git_metric_observations)
 - Reads: default_pr_created
@@ -344,7 +344,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit PRs
 - Notes: Pull requests opened against the repository's default branch, dated by creation. Unlike the commit and line splits this one is settled when the request is opened and does not move afterwards.
 
-## git.non_default_branch_prs_created — Pull requests created into another branch
+## git.non_default_branch_prs_created — PRs opened, other branches
 
 - Source: git (git_metric_observations)
 - Reads: non_default_pr_created
@@ -352,7 +352,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit PRs
 - Notes: Pull requests opened against something other than the repository's default branch — a release branch, a stacked request, an integration branch. Dated by creation. A request whose destination the source does not report counts here rather than inventing an answer.
 
-## git.prs_merged — Pull requests merged into any branch
+## git.prs_merged — PRs merged, any branch
 
 - Source: git (git_metric_observations)
 - Reads: pr_merged
@@ -360,7 +360,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit PRs
 - Notes: Authored pull requests that merged, dated by the merge in UTC — so a request counts in the period it landed and can carry commits written in earlier ones. Under a branch-scope breakdown the split says where the request was aimed, not where its commits sit.
 
-## git.default_branch_prs_merged — Pull requests merged
+## git.default_branch_prs_merged — PRs merged
 
 - Source: git (git_metric_observations)
 - Reads: default_pr_merged
@@ -368,7 +368,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit PRs
 - Notes: Pull requests that merged into the repository's default branch, dated by the merge. This is the surface that also promotes a branch's commits and lines into their default-branch metrics. A request counts in the period it merged, so it can carry commits written in earlier ones.
 
-## git.non_default_branch_prs_merged — Pull requests merged into another branch
+## git.non_default_branch_prs_merged — PRs merged, other branches
 
 - Source: git (git_metric_observations)
 - Reads: non_default_pr_merged
@@ -376,7 +376,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit PRs
 - Notes: Pull requests that merged into something other than the repository's default branch, dated by the merge. Their commits do not count as having reached the default branch on this evidence alone. A request counts in the period it merged, so it can carry commits written in earlier ones.
 
-## git.merge_rate — PR merge rate into any branch
+## git.merge_rate — PR merge rate, any branch
 
 - Source: git (git_metric_observations)
 - Reads: pr_created_merged, pr_created
@@ -432,7 +432,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: percent, lower_is_better
 - Notes: Of pull requests merged in the period, the share with no approval reported by the connected source. This can reveal missing approval gates, but source configuration and incomplete review history can also affect it.
 
-## git.active_days — Active commit days on any branch
+## git.active_days — Active commit days, any branch
 
 - Source: git (git_metric_observations)
 - Reads: commit_day
@@ -448,7 +448,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit days
 - Notes: Distinct calendar days with authored, non-merge commits that reached the default branch. A commit joins when its branch lands, so a past period's figure rises as work merges. Repository breakdowns count active days independently; the total still counts each calendar day once across repositories.
 
-## git.commits_per_active_day — Commits per active day on any branch
+## git.commits_per_active_day — Commits per active day, any branch
 
 - Source: git (git_metric_observations)
 - Reads: commit_count, commit_day
@@ -560,7 +560,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit comments
 - Notes: Comments the person wrote on pull requests — conversation and inline review comments alike — dated by posting. The comment target dimension splits comments on the person's own requests from comments on other people's; a comment whose request author cannot be determined counts under others, so the two halves always add up to the total.
 
-## collab.messages_sent — Chat Messages Sent
+## collab.messages_sent — Chat messages sent
 
 - Source: collab (collab_metric_observations)
 - Reads: total_chat_messages
@@ -568,7 +568,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit messages
 - Notes: Chat messages a person sent across messaging tools. Counts are not directly comparable between tools: Slack includes thread replies, and Microsoft Teams combines private-chat and channel messages.
 
-## collab.channel_posts — Channel Messages
+## collab.channel_posts — Channel messages
 
 - Source: collab (collab_metric_observations)
 - Reads: channel_posts
@@ -576,7 +576,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit messages
 - Notes: Messages a person posted to shared channels, posts and thread replies together, across messaging tools. Tools that report posts and replies separately are folded so counts stay comparable.
 
-## collab.dm_ratio — Private Chat Share
+## collab.dm_ratio — Private chat share
 
 - Source: collab (collab_metric_observations)
 - Reads: direct_and_group_messages, split_chat_messages
@@ -584,7 +584,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: percent, neutral
 - Notes: Private-chat messages divided by all chat messages. Private chat is one-to-one and group chats in Microsoft Teams, and everything outside channels in Slack, so it is not limited to one-to-one conversations. Counted only in tools that tell private chat and channels apart; messages from tools without that split, such as Zulip, are left out, and a person with only those tools has no value. A lower share means more communication happens in open channels.
 
-## collab.msgs_per_active_day — Chat Messages per Active Day
+## collab.msgs_per_active_day — Chat messages per active day
 
 - Source: collab (collab_metric_observations)
 - Reads: total_chat_messages, chat_active_day
@@ -592,7 +592,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: decimal, neutral, unit messages/day
 - Notes: Chat messages sent divided by the distinct days with chat messages in any tool, so a day spent in two tools counts once.
 
-## collab.active_days — Active Days
+## collab.active_days — Active days
 
 - Source: collab (collab_metric_observations)
 - Reads: active_day
@@ -600,7 +600,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit days
 - Notes: Distinct days on which a person took a deliberate collaboration action — sending a message, sending email, engaging or sharing a file, or attending a meeting or call. Passive activity such as receiving or reading email is excluded.
 
-## collab.emails_sent — Emails Sent
+## collab.emails_sent — Emails sent
 
 - Source: collab (collab_metric_observations)
 - Reads: emails_sent
@@ -608,7 +608,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit emails
 - Notes: Emails a person sent. Replies and forwards count; a message to several recipients counts once.
 
-## collab.emails_received — Emails Received
+## collab.emails_received — Emails received
 
 - Source: collab (collab_metric_observations)
 - Reads: emails_received
@@ -616,7 +616,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit emails
 - Notes: Messages delivered to the mailbox, including mailing lists and automated notifications. Measures inbox volume, not work, and is not comparable with read events.
 
-## collab.emails_read — Email Read Events
+## collab.emails_read — Email read events
 
 - Source: collab (collab_metric_observations)
 - Reads: emails_read
@@ -624,7 +624,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit events
 - Notes: Counts every time a message is marked read, as Exchange reports it: reopening a message or marking a whole folder read counts each message again. Not the number of distinct emails read, so it can exceed emails received.
 
-## collab.files_engaged — Files Viewed or Edited
+## collab.files_engaged — Files viewed or edited
 
 - Source: collab (collab_metric_observations)
 - Reads: files_engaged
@@ -632,7 +632,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit files
 - Notes: Files a person viewed, edited, uploaded or downloaded in OneDrive and SharePoint, counted once per file per day and summed over the period. A bulk upload or download counts every file, so one such day can outweigh weeks of ordinary work. Files the OneDrive sync client syncs are reported separately and do not count.
 
-## collab.files_shared_internal — Files Shared (Internal)
+## collab.files_shared_internal — Files shared, internal
 
 - Source: collab (collab_metric_observations)
 - Reads: files_shared_internal
@@ -640,7 +640,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit files
 - Notes: Files a person shared with people inside the organization, counted once per file per day.
 
-## collab.files_shared_external — Files Shared (External)
+## collab.files_shared_external — Files shared, external
 
 - Source: collab (collab_metric_observations)
 - Reads: files_shared_external
@@ -648,7 +648,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit files
 - Notes: Files a person shared with people outside the organization, counted once per file per day.
 
-## collab.files_shared — Files Shared
+## collab.files_shared — Files shared
 
 - Source: collab (collab_metric_observations)
 - Reads: files_shared
@@ -656,7 +656,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit files
 - Notes: Files a person shared with recipients inside or outside the organization, counted once per file per day in each scope. A file shared both inside and outside on the same day counts twice, once in each scope, and a share with a group counts as inside even when the group has outside members.
 
-## collab.meeting_hours — Meeting Hours
+## collab.meeting_hours — Meeting hours
 
 - Source: collab (collab_metric_observations)
 - Reads: meeting_hours
@@ -664,15 +664,15 @@ is an order statistic instead, and always answers with one that did.
 - Shape: decimal, lower_is_better, unit h
 - Notes: Hours spent in meetings and calls; Microsoft Teams includes one-to-one calls. Microsoft Teams reports audio, video and screen-share time only as daily totals, so a Teams day counts the longest of the three, an estimate rather than exact meeting time. Zoom time counts only while someone else was in the meeting, so a room left open or a pause with nobody else adds nothing.
 
-## collab.meetings_count — Meetings and Calls Attended
+## collab.meetings_count — Meetings
 
 - Source: collab (collab_metric_observations)
 - Reads: meetings_attended
 - Formula: sum(meetings_attended)
 - Shape: integer, lower_is_better, unit meetings
-- Notes: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do.
+- Notes: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do. The kind breakdown tells Teams scheduled meetings, Teams ad hoc meetings (Meet Now from a chat) and Teams calls apart; Zoom reports no such split, so Zoom meetings are one kind.
 
-## collab.meeting_free_days — Meeting-Free Days
+## collab.meeting_free_days — Meeting-free days
 
 - Source: collab (collab_metric_observations)
 - Reads: meeting_free_day
@@ -680,7 +680,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit days
 - Notes: Days on which a person was actively collaborating but spent no time in meetings or calls — a proxy for uninterrupted working days. Only addresses some meeting source reports on count, so a person no meeting tool knows has no value.
 
-## collab.focus_time_pct — Time Outside Meetings
+## collab.focus_time_pct — Time outside meetings
 
 - Source: collab (collab_metric_observations)
 - Reads: workday_meeting_hours, working_hours
@@ -688,29 +688,13 @@ is an order statistic instead, and always answers with one that did.
 - Shape: percent, higher_is_better
 - Notes: Share of the workday not spent in meetings or calls, over the days a person was active: 100 minus meeting hours as a share of scheduled working hours. Meeting time counts up to the working hours of the day and address it was recorded under. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them. Only addresses some meeting source reports on count, so a person no meeting tool knows has no value.
 
-## collab.meetings_organized — Meetings Organized
+## collab.meetings_organized — Meetings organized
 
 - Source: collab (collab_metric_observations)
 - Reads: meetings_organized
 - Formula: sum(meetings_organized)
 - Shape: integer, neutral, unit meetings
 - Notes: Meetings a person organized in Microsoft Teams or Zoom. A Zoom meeting counts for its host on the day it started, and only if someone besides the host attended.
-
-## collab.adhoc_meetings — Ad-hoc Meetings
-
-- Source: collab (collab_metric_observations)
-- Reads: adhoc_meetings_attended
-- Formula: sum(adhoc_meetings_attended)
-- Shape: integer, neutral, unit meetings
-- Notes: Unscheduled Microsoft Teams meetings a person attended. Meet Now started from a chat counts as ad hoc; started from the calendar it counts as scheduled. Zoom does not report this split, so Zoom meetings are not included.
-
-## collab.scheduled_meetings — Scheduled Meetings
-
-- Source: collab (collab_metric_observations)
-- Reads: scheduled_meetings_attended
-- Formula: sum(scheduled_meetings_attended)
-- Shape: integer, neutral, unit meetings
-- Notes: Scheduled Microsoft Teams meetings a person attended. Zoom does not report this split, so Zoom meetings are not included.
 
 ## tasks.closed — Issues closed
 
@@ -856,7 +840,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: percent, higher_is_better
 - Notes: Logged work time as a share of time issues spent in in-progress statuses.
 
-## tasks.bugs_ratio — Bugs share of closed issues
+## tasks.bugs_ratio — Bug share
 
 - Source: task (task_metric_observations)
 - Reads: bugs_fixed, tasks_closed

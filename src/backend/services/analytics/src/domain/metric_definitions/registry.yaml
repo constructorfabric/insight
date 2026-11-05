@@ -209,10 +209,6 @@ sources:
         alias_collapse: max
       - key: meetings_organized
         evidence_granularity: source_summary
-      - key: adhoc_meetings_attended
-        evidence_granularity: source_summary
-      - key: scheduled_meetings_attended
-        evidence_granularity: source_summary
       - key: emails_sent
         evidence_granularity: source_summary
       - key: emails_received
@@ -242,6 +238,7 @@ sources:
     dimensions:
       - tool
       - scope
+      - kind
   - source:
       key: task
       kind: managed_observation
@@ -745,7 +742,7 @@ metrics:
   - metric_key: ai.cost
     source_key: ai_usage
     subject: cost
-    label: AI potential usage cost
+    label: AI potential cost
     short_label: Potential cost
     description: Potential cost of all AI usage at vendor rates, never the actual invoice
     explanation: Person-attributed AI usage priced at the vendor's token rates — what the consumption would cost if billed purely by usage. It includes usage a seat already covered and excludes seat fees, so it is not the invoiced amount, and only tools that price usage per person contribute. Never add it to actual usage cost, which is the billed part of this same consumption.
@@ -780,7 +777,7 @@ metrics:
   - metric_key: ai.extra_usage_cost
     source_key: ai_cost
     subject: cost
-    label: AI actual usage cost
+    label: AI extra cost
     short_label: Actual cost
     description: Monthly cost billed on top of the seat fee, as last read
     explanation: What the vendor billed on top of the seat fee, once included usage ran out. Exact as of that month's last reading, dated at its first day, so a window missing that day returns nothing — read the per-day distribution. The month comes from the read, not the vendor. Never added to potential usage cost.
@@ -798,7 +795,7 @@ metrics:
   - metric_key: ai.daily_approximate_extra_usage_cost
     source_key: ai_cost
     subject: cost
-    label: AI actual usage cost — approximate distribution
+    label: AI extra cost, spread by day
     short_label: Actual cost / day
     description: The monthly billed cost spread across its days
     explanation: The billed extra-usage cost placed on the days spent. Only a month-to-date total is reported, so a day is the step between readings — exact in sum against it, approximate in placement. The month comes from the read, so the 1st can cover several days. No reading means no point, and none is negative.
@@ -990,7 +987,7 @@ metrics:
   - metric_key: git.commits
     source_key: git
     subject: commits
-    label: Commits on any branch
+    label: Commits, any branch
     short_label: Commits (all)
     description: Authored commits on any branch
     explanation: Distinct authored commits on any branch across connected git sources, excluding merge commits.
@@ -1037,7 +1034,7 @@ metrics:
   - metric_key: git.non_default_branch_commits
     source_key: git
     subject: commits
-    label: Commits that have not reached the default branch
+    label: Commits, other branches
     short_label: Commits in flight
     description: Authored commits that have not reached the default branch
     explanation: >-
@@ -1063,7 +1060,7 @@ metrics:
   - metric_key: git.code_lines
     source_key: git
     subject: code_changes
-    label: Code lines added on any branch
+    label: Code lines, any branch
     short_label: Code lines (all)
     description: Lines added to code files on any branch
     explanation: >-
@@ -1091,7 +1088,7 @@ metrics:
   - metric_key: git.default_branch_code_lines
     source_key: git
     subject: code_changes
-    label: Code lines added
+    label: Code lines
     short_label: Code lines
     description: Lines added to code files that reached the default branch
     explanation: >-
@@ -1117,7 +1114,7 @@ metrics:
   - metric_key: git.non_default_branch_code_lines
     source_key: git
     subject: code_changes
-    label: Code lines that have not reached the default branch
+    label: Code lines, other branches
     short_label: Code lines in flight
     description: Lines added to code files that have not reached the default branch
     explanation: >-
@@ -1143,7 +1140,7 @@ metrics:
   - metric_key: git.lines_added
     source_key: git
     subject: code_changes
-    label: Lines added on any branch
+    label: Lines added, any branch
     short_label: Lines + (all)
     description: All lines added on any branch, by file category
     explanation: >-
@@ -1199,7 +1196,7 @@ metrics:
   - metric_key: git.non_default_branch_lines_added
     source_key: git
     subject: code_changes
-    label: Lines added that have not reached the default branch
+    label: Lines added, other branches
     short_label: Lines added in flight
     description: All lines added that have not reached the default branch
     explanation: >-
@@ -1251,7 +1248,7 @@ metrics:
   - metric_key: git.lines_removed
     source_key: git
     subject: code_changes
-    label: Lines removed on any branch
+    label: Lines removed, any branch
     short_label: Lines − (all)
     description: All lines removed on any branch, by file category
     explanation: >-
@@ -1307,7 +1304,7 @@ metrics:
   - metric_key: git.non_default_branch_lines_removed
     source_key: git
     subject: code_changes
-    label: Lines removed that have not reached the default branch
+    label: Lines removed, other branches
     short_label: Lines removed in flight
     description: All lines removed that have not reached the default branch
     explanation: >-
@@ -1333,7 +1330,7 @@ metrics:
   - metric_key: git.prs_created
     source_key: git
     subject: pull_requests
-    label: Pull requests created into any branch
+    label: PRs opened, any branch
     short_label: PRs opened (all)
     description: Authored pull requests into any branch
     explanation: Pull requests opened into any branch, dated by creation.
@@ -1355,7 +1352,7 @@ metrics:
   - metric_key: git.default_branch_prs_created
     source_key: git
     subject: pull_requests
-    label: Pull requests created
+    label: PRs opened
     short_label: PRs opened
     description: Authored pull requests targeting the default branch
     explanation: >-
@@ -1379,7 +1376,7 @@ metrics:
   - metric_key: git.non_default_branch_prs_created
     source_key: git
     subject: pull_requests
-    label: Pull requests created into another branch
+    label: PRs opened, other branches
     short_label: PRs into other branches
     description: Authored pull requests targeting a branch other than the default
     explanation: >-
@@ -1404,7 +1401,7 @@ metrics:
   - metric_key: git.prs_merged
     source_key: git
     subject: pull_requests
-    label: Pull requests merged into any branch
+    label: PRs merged, any branch
     short_label: PRs merged (all)
     description: Authored pull requests merged into any branch
     explanation: >-
@@ -1430,7 +1427,7 @@ metrics:
   - metric_key: git.default_branch_prs_merged
     source_key: git
     subject: pull_requests
-    label: Pull requests merged
+    label: PRs merged
     short_label: PRs merged
     description: Authored pull requests merged into the default branch
     explanation: >-
@@ -1455,7 +1452,7 @@ metrics:
   - metric_key: git.non_default_branch_prs_merged
     source_key: git
     subject: pull_requests
-    label: Pull requests merged into another branch
+    label: PRs merged, other branches
     short_label: PRs merged into other branches
     description: Authored pull requests merged into a branch other than the default
     explanation: >-
@@ -1482,7 +1479,7 @@ metrics:
     subject: pull_requests
     tags:
       - rate
-    label: PR merge rate into any branch
+    label: PR merge rate, any branch
     short_label: Merge % (all)
     description: Share of pull requests created into any branch that merged
     explanation: Of the pull requests created into any branch in the period, the share that have merged. Requests opened near the end of the period may not have merged yet, which lowers the rate at period edges.
@@ -1662,7 +1659,7 @@ metrics:
   - metric_key: git.active_days
     source_key: git
     subject: commits
-    label: Active commit days on any branch
+    label: Active commit days, any branch
     short_label: Active days (all)
     description: Distinct days with at least one authored commit on any branch
     explanation: Distinct calendar days with authored, non-merge commits. Repository breakdowns count active days independently; the total still counts each calendar day once across repositories.
@@ -1704,7 +1701,7 @@ metrics:
     subject: commits
     tags:
       - rate
-    label: Commits per active day on any branch
+    label: Commits per active day, any branch
     short_label: Commits/day (all)
     description: Cadence of commits on any branch, on days with commits
     explanation: Commits on any branch divided by the number of days with at least one commit.
@@ -2046,7 +2043,7 @@ metrics:
   - metric_key: collab.messages_sent
     source_key: collab
     subject: messaging
-    label: Chat Messages Sent
+    label: Chat messages sent
     short_label: Chat msgs
     description: Chat messages sent
     explanation: 'Chat messages a person sent across messaging tools. Counts are not directly comparable between tools: Slack includes thread replies, and Microsoft Teams combines private-chat and channel messages.'
@@ -2064,7 +2061,7 @@ metrics:
   - metric_key: collab.channel_posts
     source_key: collab
     subject: messaging
-    label: Channel Messages
+    label: Channel messages
     short_label: Channel msgs
     description: Messages posted to shared channels, including replies
     explanation: Messages a person posted to shared channels, posts and thread replies together, across messaging tools. Tools that report posts and replies separately are folded so counts stay comparable.
@@ -2084,7 +2081,7 @@ metrics:
     subject: messaging
     tags:
       - rate
-    label: Private Chat Share
+    label: Private chat share
     short_label: Private %
     description: Share of chat messages sent outside shared channels
     explanation: Private-chat messages divided by all chat messages. Private chat is one-to-one and group chats in Microsoft Teams, and everything outside channels in Slack, so it is not limited to one-to-one conversations. Counted only in tools that tell private chat and channels apart; messages from tools without that split, such as Zulip, are left out, and a person with only those tools has no value. A lower share means more communication happens in open channels.
@@ -2106,7 +2103,7 @@ metrics:
     subject: messaging
     tags:
       - rate
-    label: Chat Messages per Active Day
+    label: Chat messages per active day
     short_label: Msgs/day
     description: Chat messages divided by chat-active days
     explanation: Chat messages sent divided by the distinct days with chat messages in any tool, so a day spent in two tools counts once.
@@ -2128,7 +2125,7 @@ metrics:
   - metric_key: collab.active_days
     source_key: collab
     subject: activity
-    label: Active Days
+    label: Active days
     description: Days with collaboration activity
     explanation: Distinct days on which a person took a deliberate collaboration action — sending a message, sending email, engaging or sharing a file, or attending a meeting or call. Passive activity such as receiving or reading email is excluded.
     unit: days
@@ -2145,7 +2142,7 @@ metrics:
   - metric_key: collab.emails_sent
     source_key: collab
     subject: email
-    label: Emails Sent
+    label: Emails sent
     short_label: Emails sent
     description: Emails sent
     explanation: Emails a person sent. Replies and forwards count; a message to several recipients counts once.
@@ -2163,7 +2160,7 @@ metrics:
   - metric_key: collab.emails_received
     source_key: collab
     subject: email
-    label: Emails Received
+    label: Emails received
     short_label: Emails rcvd
     description: Emails received
     explanation: Messages delivered to the mailbox, including mailing lists and automated notifications. Measures inbox volume, not work, and is not comparable with read events.
@@ -2181,7 +2178,7 @@ metrics:
   - metric_key: collab.emails_read
     source_key: collab
     subject: email
-    label: Email Read Events
+    label: Email read events
     short_label: Mail read events
     description: Email read events
     explanation: 'Counts every time a message is marked read, as Exchange reports it: reopening a message or marking a whole folder read counts each message again. Not the number of distinct emails read, so it can exceed emails received.'
@@ -2199,7 +2196,7 @@ metrics:
   - metric_key: collab.files_engaged
     source_key: collab
     subject: documents
-    label: Files Viewed or Edited
+    label: Files viewed or edited
     short_label: Files used
     description: Files viewed or edited
     explanation: Files a person viewed, edited, uploaded or downloaded in OneDrive and SharePoint, counted once per file per day and summed over the period. A bulk upload or download counts every file, so one such day can outweigh weeks of ordinary work. Files the OneDrive sync client syncs are reported separately and do not count.
@@ -2217,7 +2214,7 @@ metrics:
   - metric_key: collab.files_shared_internal
     source_key: collab
     subject: documents
-    label: Files Shared (Internal)
+    label: Files shared, internal
     short_label: Files (int)
     description: Files shared inside the organization
     explanation: Files a person shared with people inside the organization, counted once per file per day.
@@ -2235,7 +2232,7 @@ metrics:
   - metric_key: collab.files_shared_external
     source_key: collab
     subject: documents
-    label: Files Shared (External)
+    label: Files shared, external
     short_label: Files (ext)
     description: Files shared outside the organization
     explanation: Files a person shared with people outside the organization, counted once per file per day.
@@ -2253,7 +2250,7 @@ metrics:
   - metric_key: collab.files_shared
     source_key: collab
     subject: documents
-    label: Files Shared
+    label: Files shared
     short_label: Files shared
     description: Files shared with any recipient
     explanation: Files a person shared with recipients inside or outside the organization, counted once per file per day in each scope. A file shared both inside and outside on the same day counts twice, once in each scope, and a share with a group counts as inside even when the group has outside members.
@@ -2273,7 +2270,7 @@ metrics:
     subject: meetings
     tags:
       - duration
-    label: Meeting Hours
+    label: Meeting hours
     short_label: Mtg hrs
     description: Hours in meetings and calls, estimated from daily totals
     explanation: Hours spent in meetings and calls; Microsoft Teams includes one-to-one calls. Microsoft Teams reports audio, video and screen-share time only as daily totals, so a Teams day counts the longest of the three, an estimate rather than exact meeting time. Zoom time counts only while someone else was in the meeting, so a room left open or a pause with nobody else adds nothing.
@@ -2291,10 +2288,10 @@ metrics:
   - metric_key: collab.meetings_count
     source_key: collab
     subject: meetings
-    label: Meetings and Calls Attended
+    label: Meetings
     short_label: Mtgs
     description: Distinct meetings and one-to-one calls attended
-    explanation: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do.
+    explanation: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do. The kind breakdown tells Teams scheduled meetings, Teams ad hoc meetings (Meet Now from a chat) and Teams calls apart; Zoom reports no such split, so Zoom meetings are one kind.
     unit: meetings
     format: integer
     direction: lower_is_better
@@ -2306,10 +2303,11 @@ metrics:
         measure_key: meetings_attended
     dimensions:
       - tool
+      - kind
   - metric_key: collab.meeting_free_days
     source_key: collab
     subject: meetings
-    label: Meeting-Free Days
+    label: Meeting-free days
     short_label: Mtg-free days
     description: Active days with no meeting or call time
     explanation: Days on which a person was actively collaborating but spent no time in meetings or calls — a proxy for uninterrupted working days. Only addresses some meeting source reports on count, so a person no meeting tool knows has no value.
@@ -2328,7 +2326,7 @@ metrics:
     subject: focus
     tags:
       - rate
-    label: Time Outside Meetings
+    label: Time outside meetings
     short_label: Non-mtg %
     description: Share of the workday outside meetings and calls
     explanation: 'Share of the workday not spent in meetings or calls, over the days a person was active: 100 minus meeting hours as a share of scheduled working hours. Meeting time counts up to the working hours of the day and address it was recorded under. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them. Only addresses some meeting source reports on count, so a person no meeting tool knows has no value.'
@@ -2352,7 +2350,7 @@ metrics:
   - metric_key: collab.meetings_organized
     source_key: collab
     subject: meetings
-    label: Meetings Organized
+    label: Meetings organized
     short_label: Mtgs organized
     description: Meetings organized
     explanation: Meetings a person organized in Microsoft Teams or Zoom. A Zoom meeting counts for its host on the day it started, and only if someone besides the host attended.
@@ -2365,42 +2363,6 @@ metrics:
     inputs:
       - input_role: value
         measure_key: meetings_organized
-    dimensions:
-      - tool
-  - metric_key: collab.adhoc_meetings
-    source_key: collab
-    subject: meetings
-    label: Ad-hoc Meetings
-    short_label: Ad-hoc mtgs
-    description: Unscheduled meetings attended
-    explanation: Unscheduled Microsoft Teams meetings a person attended. Meet Now started from a chat counts as ad hoc; started from the calendar it counts as scheduled. Zoom does not report this split, so Zoom meetings are not included.
-    unit: meetings
-    format: integer
-    direction: neutral
-    entity_type: person
-    computation: sum
-    peer_cohort_key: org_unit
-    inputs:
-      - input_role: value
-        measure_key: adhoc_meetings_attended
-    dimensions:
-      - tool
-  - metric_key: collab.scheduled_meetings
-    source_key: collab
-    subject: meetings
-    label: Scheduled Meetings
-    short_label: Sched. mtgs
-    description: Scheduled meetings attended
-    explanation: Scheduled Microsoft Teams meetings a person attended. Zoom does not report this split, so Zoom meetings are not included.
-    unit: meetings
-    format: integer
-    direction: neutral
-    entity_type: person
-    computation: sum
-    peer_cohort_key: org_unit
-    inputs:
-      - input_role: value
-        measure_key: scheduled_meetings_attended
     dimensions:
       - tool
   - metric_key: tasks.closed
@@ -2781,7 +2743,7 @@ metrics:
     subject: quality
     tags:
       - rate
-    label: Bugs share of closed issues
+    label: Bug share
     short_label: Bug share
     description: Bugs as a share of all closed issues
     explanation: >-

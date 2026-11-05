@@ -19,6 +19,7 @@
 #![allow(dead_code)]
 
 pub mod kc;
+pub mod store;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;

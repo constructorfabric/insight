@@ -8,27 +8,37 @@ description: >
     • staging: sessions of one Zoom meeting that restart within five minutes stitch into one meeting; a
       Zoom meeting counts on the UTC day the person joined it.
     • gold:   per-person sum of meetings attended across both tools, with a tool
-      dimension. A Teams one-to-one call counts as a meeting, as a two-person Zoom
-      meeting does; every Zoom meeting here has a guest without an email, who counts
-      as company.
+      dimension and a kind dimension (Teams scheduled, Teams ad hoc, Teams calls;
+      Zoom reports no split, so Zoom is one kind). A Teams one-to-one call counts
+      as a meeting, as a two-person Zoom meeting does; every Zoom meeting here has
+      a guest without an email, who counts as company.
 
   Cast (Engineering):
-    alice — Teams Dec 10: 2 meetings and 1 call → 3. Zoom Dec 10: meeting 111 restarted after two minutes
+    alice — Teams Dec 10: 1 scheduled meeting, 1 ad hoc meeting and 1 call → 3. Zoom Dec 10: meeting 111 restarted after two minutes
             (one meeting), plus
             meeting 222 → Zoom 2, total 5.
     bob   — Zoom meeting 333 restarted after ten minutes → two meetings.
     carol — joins Zoom meeting 444 at 23:30 UTC on Dec 31 → counts on Dec 31.
-  Cases: a Teams call counts as a meeting · tools add up and split by tool · a restart within five minutes is one
-  meeting, after it two · the UTC join day decides the date.
+    dave  — Teams Dec 12: 3 meetings, of which 1 scheduled and 1 ad hoc → the third keeps
+            its own kind (Teams other), total 3.
+    erin  — Teams Dec 12: 1 meeting, but the report's splits say 2 scheduled and 1 ad hoc →
+            the splits are capped by the total: 1 scheduled, nothing else, total 1.
+  Cases: a Teams call counts as a meeting · tools add up and split by tool and by kind · the kinds always add
+  up to the report's total · a restart within five minutes is one meeting, after it two · the UTC join day
+  decides the date.
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: ../templates/people.yaml#/templates/alice
     - $ref: ../templates/people.yaml#/templates/bob
     - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/erin
 
   bronze_m365.teams_activity:
-    - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-10", lastActivityDate: "2026-12-10", unique_key: mtg-teams-alice-20261210, meetingsAttendedCount: 2, callCount: 1 }
+    - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-10", lastActivityDate: "2026-12-10", unique_key: mtg-teams-alice-20261210, meetingsAttendedCount: 2, scheduledRecurringMeetingsAttendedCount: 1, adHocMeetingsAttendedCount: 1, callCount: 1 }
+    - { $ref: ../templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com, reportRefreshDate: "2026-12-12", lastActivityDate: "2026-12-12", unique_key: mtg-teams-dave-20261212, meetingsAttendedCount: 3, scheduledOneTimeMeetingsAttendedCount: 1, adHocMeetingsAttendedCount: 1 }
+    - { $ref: ../templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com, reportRefreshDate: "2026-12-12", lastActivityDate: "2026-12-12", unique_key: mtg-teams-erin-20261212, meetingsAttendedCount: 1, scheduledOneTimeMeetingsAttendedCount: 2, adHocMeetingsAttendedCount: 1 }
 
   bronze_zoom.meetings:
     - { $ref: ../templates/zoom.yaml#/templates/zoom_meeting, unique_key: zm-111-a, id: 111, uuid: m111-a, start_time: "2026-12-10T10:00:00Z", end_time: "2026-12-10T10:30:00Z" }

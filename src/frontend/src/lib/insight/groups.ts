@@ -348,7 +348,11 @@ const COLLABORATION_COLLECTION: MetricCollectionConfig = {
     },
     {
       key: "collab.meetings_count",
-      views: [{ view: "period" }, { view: "peer" }],
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["kind"] },
+      ],
     },
     {
       key: "collab.meeting_free_days",
@@ -356,14 +360,6 @@ const COLLABORATION_COLLECTION: MetricCollectionConfig = {
     },
     {
       key: "collab.meetings_organized",
-      views: [{ view: "period" }, { view: "peer" }],
-    },
-    {
-      key: "collab.adhoc_meetings",
-      views: [{ view: "period" }, { view: "peer" }],
-    },
-    {
-      key: "collab.scheduled_meetings",
       views: [{ view: "period" }, { view: "peer" }],
     },
     {
@@ -551,6 +547,7 @@ export const GROUPS: readonly MetricGroup[] = [
         view: "breakdown",
         metrics: [
           "collab.meeting_hours",
+          "collab.meetings_count",
           "collab.messages_sent",
           "collab.emails_sent",
           "collab.files_shared",

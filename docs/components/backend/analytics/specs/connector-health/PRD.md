@@ -301,7 +301,7 @@ A caller without that role is refused, and the refusal names the surface it was 
 
 Each connector instance shows the schedule the reconcile loop actually applied, with its
 timezone and whether the CronWorkflow is suspended, as recorded in the newest sealed
-configured set. The page shows the recorded cron expressions without computing
+configured set. The tooltip shows the recorded cron expressions without computing
 a cadence or claiming an intended schedule. Outside that set, or where the row records no
 cron expressions, the schedule is unknown. An empty recorded timezone means controller
 time. The API also serves the recorded schedule origin, which the page does not display;
@@ -311,12 +311,19 @@ Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the re
 cron expressions read in UTC. A CronWorkflow applied before this change may have no
 timezone; its empty recorded value still means controller time.
 
-On demand, the page shows the next scheduled start, computed from the recorded cron
-expressions and timezone against the viewer's clock at the moment the tooltip opens,
-kept current while it stays open. This is a forecast from
+The Next sync column shows approximately how long until the earliest next scheduled start,
+computed from the recorded cron expressions and timezone against the viewer's clock when
+the row renders. It has no live timer and does not refresh when its tooltip opens. It rounds
+to the nearest whole minute below an hour, hour below a day, or day otherwise, marking the
+interval approximate (`in ~2 h`); below one minute it reads `in < 1 min`.
+The tooltip shows each recorded cron expression in monospace, the timezone and suspension,
+and explains an unknown next start. Its button is keyboard focusable and exposes the
+tooltip through `aria-describedby`. This is a forecast from
 recorded facts, never a measured fact or a late, fresh or stale verdict. The next start is
 unknown when the timezone is not recorded or an expression cannot be read; there is none
-when the CronWorkflow is suspended. Argo skips a start while the previous run of that
+when the CronWorkflow is suspended. The column reads `Unknown` for an unknown next start,
+`Suspended` for suspension, or `—` without a tooltip when no schedule was recorded.
+Argo skips a start while the previous run of that
 CronWorkflow is still going (`concurrencyPolicy: Forbid`), so a forecast start may not
 happen.
 
@@ -438,7 +445,7 @@ A connector's CronWorkflow is suspended or deleted. No new syncs are recorded. T
 shows how long ago the connector's last sync started, and the expansion lists the start
 times of the recent ones. A suspended CronWorkflow retains its cron expressions: the page
 shows them with suspension and offers no next start. A deleted workflow leaves the schedule
-unknown once the next sealed tick records its absence (FR-13). Otherwise, an on-demand next
+unknown once the next sealed tick records its absence (FR-13). Otherwise, the approximate next
 start is a forecast from recorded expressions and timezone, not evidence of a run. The
 operator reads the gap from timestamps; the product computes no cadence and claims no
 intended schedule.
@@ -474,9 +481,10 @@ it; listing it would mean reading storage the reader deliberately holds no acces
       jobs (FR-3).
 - [ ] The page renders one row per connector with the fields of FR-5, expandable per FR-6.
 - [ ] Each instance shows its recorded applied schedule, timezone and suspension
-      from the newest sealed configured set; an unrecorded schedule renders as unknown. On
-      demand, the next start is a forecast computed against the viewer's clock when the
-      tooltip opens and refreshed while it stays open, never a
+      from the newest sealed configured set in a tooltip; an unrecorded schedule renders as
+      `—` without a tooltip. The Next sync column shows an approximate interval until the
+      earliest next start, computed against the viewer's clock when the row renders with no
+      live updates or refresh on tooltip opening, never a
       measured fact or a late, fresh or stale verdict; it is unknown without a timezone or
       readable expressions and absent when suspended. A forecast start may be skipped by
       `concurrencyPolicy: Forbid` while the previous run is still going (FR-13).

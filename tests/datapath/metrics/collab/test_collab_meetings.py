@@ -1,10 +1,12 @@
 """Teams meeting metrics served per person over a window, with the department as peers.
 
 Bronze: the daily Teams activity report per person (meetings attended, organized,
-ad hoc, scheduled, audio hours). Silver: one deduplicated row per person/day. Gold
-serves each metric as the person's sum over the window, Teams-only, and the peer view
-as the distribution of those sums across the department; the same request serves the
-focus-time share. A re-synced duplicate row changes nothing.
+scheduled, audio hours). Silver: one deduplicated row per person/day. Gold serves
+each metric as the person's sum over the window, Teams-only, and the peer view as
+the distribution of those sums across the department; the same request serves the
+focus-time share. Meetings attended also break down by kind, and a report whose
+meetings are all scheduled puts its whole count under the scheduled kind. A
+re-synced duplicate row changes nothing.
 """
 
 from __future__ import annotations
@@ -20,8 +22,9 @@ ERIN = "erin@example.com"
 
 
 def test_unified_collaboration_meeting_metrics(spec: SpecRun) -> None:
-    """December over the department: erin's five Teams meeting metrics each serve 5 with
-    the department spread {1,2,3,4,5}; her focus-time share is 37.5."""
+    """December over the department: erin's three Teams meeting metrics each serve 5 with
+    the department spread {1,2,3,4,5}, all her meetings are scheduled, and her focus-time
+    share is 37.5."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -50,24 +53,6 @@ def test_unified_collaboration_meeting_metrics(spec: SpecRun) -> None:
                     },
                     {
                         "metric_key": "collab.meetings_organized",
-                        "views": [
-                            {"view": "period"},
-                            {"view": "peer"},
-                            {"view": "timeseries", "bucket": "day"},
-                            {"view": "breakdown", "dimensions": ["tool"]},
-                        ],
-                    },
-                    {
-                        "metric_key": "collab.adhoc_meetings",
-                        "views": [
-                            {"view": "period"},
-                            {"view": "peer"},
-                            {"view": "timeseries", "bucket": "day"},
-                            {"view": "breakdown", "dimensions": ["tool"]},
-                        ],
-                    },
-                    {
-                        "metric_key": "collab.scheduled_meetings",
                         "views": [
                             {"view": "period"},
                             {"view": "peer"},
@@ -131,40 +116,42 @@ def test_unified_collaboration_meeting_metrics(spec: SpecRun) -> None:
         dimensions={"key": "tool", "value": "m365"},
     ).equals(value=5)
 
-    r.row("collab.adhoc_meetings", "period", entity_id=ERIN).equals(value=5)
-    r.row("collab.adhoc_meetings", "peer", entity_id=ERIN).equals(
-        target_value=5, p25=2, median=3, p75=4, min=1, max=5, n=5
-    )
-    r.row("collab.adhoc_meetings", "timeseries", entity_id=ERIN).contains(
-        points={"bucket_start": "2026-12-25", "value": 5}
-    )
-    r.row(
-        "collab.adhoc_meetings",
-        "breakdown",
-        entity_id=ERIN,
-        dimensions={"key": "tool", "value": "m365"},
-    ).equals(value=5)
-
-    r.row("collab.scheduled_meetings", "period", entity_id=ERIN).equals(value=5)
-    r.row("collab.scheduled_meetings", "peer", entity_id=ERIN).equals(
-        target_value=5, p25=2, median=3, p75=4, min=1, max=5, n=5
-    )
-    r.row("collab.scheduled_meetings", "timeseries", entity_id=ERIN).contains(
-        points={"bucket_start": "2026-12-25", "value": 5}
-    )
-    r.row(
-        "collab.scheduled_meetings",
-        "breakdown",
-        entity_id=ERIN,
-        dimensions={"key": "tool", "value": "m365"},
-    ).equals(value=5)
-
     r.row("collab.focus_time_pct", "period", entity_id=ERIN).equals(value=37.5)
     r.row("collab.focus_time_pct", "peer", entity_id=ERIN).equals(
         target_value=37.5, p25=50, median=62.5, p75=75, min=37.5, max=87.5, n=5
     )
     r.row("collab.focus_time_pct", "timeseries", entity_id=ERIN).contains(
         points={"bucket_start": "2026-12-25", "value": 37.5}
+    )
+
+
+def test_meetings_count_splits_by_kind(spec: SpecRun) -> None:
+    """A report that marks every meeting as scheduled puts erin's 5 under the scheduled kind."""
+    r = spec.call(
+        {
+            "url": "/v1/metric-results",
+            "method": "POST",
+            "body": {
+                "entity": {"type": "person", "ids": [ERIN]},
+                "period": {"from": "2026-12-01", "to": "2026-12-31"},
+                "metrics": [
+                    {
+                        "metric_key": "collab.meetings_count",
+                        "views": [{"view": "breakdown", "dimensions": ["kind"]}],
+                    },
+                ],
+            },
+        }
+    )
+    assert r.status == 200
+    r.row(
+        "collab.meetings_count",
+        "breakdown",
+        entity_id=ERIN,
+        dimensions={"key": "kind", "value": "teams_scheduled"},
+    ).equals(value=5)
+    assert len(r.breakdown("collab.meetings_count")) == 1, (
+        "should serve only the kinds that were counted"
     )
 
 
@@ -181,8 +168,6 @@ def test_unified_collaboration_meeting_metrics_empty_window(spec: SpecRun) -> No
                     {"metric_key": "collab.meeting_hours", "views": [{"view": "period"}]},
                     {"metric_key": "collab.meetings_count", "views": [{"view": "period"}]},
                     {"metric_key": "collab.meetings_organized", "views": [{"view": "period"}]},
-                    {"metric_key": "collab.adhoc_meetings", "views": [{"view": "period"}]},
-                    {"metric_key": "collab.scheduled_meetings", "views": [{"view": "period"}]},
                     {"metric_key": "collab.focus_time_pct", "views": [{"view": "period"}]},
                 ],
             },
@@ -192,6 +177,4 @@ def test_unified_collaboration_meeting_metrics_empty_window(spec: SpecRun) -> No
     r.row("collab.meeting_hours", "period", entity_id=ERIN).equals(value=None)
     r.row("collab.meetings_count", "period", entity_id=ERIN).equals(value=None)
     r.row("collab.meetings_organized", "period", entity_id=ERIN).equals(value=None)
-    r.row("collab.adhoc_meetings", "period", entity_id=ERIN).equals(value=None)
-    r.row("collab.scheduled_meetings", "period", entity_id=ERIN).equals(value=None)
     r.row("collab.focus_time_pct", "period", entity_id=ERIN).equals(value=None)

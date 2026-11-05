@@ -6,7 +6,7 @@
  * number renders as absence rather than a zero, and that a stopped recorder
  * reaches a screen reader as an alert rather than as ordinary prose.
  */
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -23,6 +23,14 @@ function rowFor(connector: string): HTMLElement {
   const row = screen.getByRole("cell", { name: connector }).closest("tr");
   if (row === null) throw new Error(`no row for ${connector}`);
   return row;
+}
+
+function expectTooltipLines(tooltip: HTMLElement, expected: string[]): void {
+  const lines = Array.from(tooltip.querySelectorAll("span"));
+  expect(lines.map((line) => line.textContent)).toEqual(expected);
+  for (const line of lines) {
+    expect(line).toHaveClass("block");
+  }
 }
 
 const mocks = vi.hoisted(() => ({
@@ -77,7 +85,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("the schedule forecast follows the viewer's clock", () => {
+describe("the next sync is captured when the row renders", () => {
   beforeEach(() => {
     vi.useRealTimers();
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
@@ -97,71 +105,101 @@ describe("the schedule forecast follows the viewer's clock", () => {
     return within(rowFor("example-tracker")).getByRole("button");
   }
 
-  it("uses the clock at opening rather than the response time or render time", async () => {
+  it("uses the render clock rather than the response time or tooltip opening time", async () => {
+    mocks.summary.data!.as_of = "2026-01-15T10:00:00.000Z";
+    vi.setSystemTime(new Date("2026-01-15T12:20:00.000Z"));
     const trigger = forecast();
-    vi.setSystemTime(new Date("2026-01-15T14:00:00.000Z"));
+    expect(trigger).toHaveTextContent(/^in ~40 min$/);
 
+    vi.setSystemTime(new Date("2026-01-15T14:00:00.000Z"));
     await act(async () => { trigger.focus(); });
 
     expect(trigger).toHaveFocus();
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 15:00 UTC (in 1h 0m)");
+    expect(trigger).toHaveTextContent(/^in ~40 min$/);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("0 * * * *UTC");
   });
 
-  it("moves to the following start on the next 30-second tick without a refetch", async () => {
+  it("does not update after 30 seconds or after the scheduled start while open", async () => {
     const openingTime = "2026-01-15T12:59:45.000Z";
     vi.setSystemTime(new Date(openingTime));
     mocks.summary.data!.as_of = openingTime;
     const trigger = forecast();
 
     await act(async () => { trigger.focus(); });
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 13:00 UTC (in 15.0 s)");
+    expect(trigger).toHaveTextContent(/^in < 1 min$/);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("0 * * * *UTC");
 
     await act(async () => { vi.advanceTimersByTime(29_999); });
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 13:00 UTC (in 15.0 s)");
+    expect(trigger).toHaveTextContent(/^in < 1 min$/);
 
     await act(async () => { vi.advanceTimersByTime(1); });
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 14:00 UTC (in 59m 45s)");
+    expect(trigger).toHaveTextContent(/^in < 1 min$/);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("0 * * * *UTC");
     expect(mocks.summary.refetch).not.toHaveBeenCalled();
   });
 
-  it("captures the new clock when reopened after time passes while closed", async () => {
+  it("keeps the render clock when reopened after time passes while closed", async () => {
+    vi.setSystemTime(new Date("2026-01-15T12:20:00.000Z"));
     const trigger = forecast();
 
     await act(async () => { trigger.focus(); });
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 13:00 UTC (in 1h 0m)");
+    expect(trigger).toHaveTextContent(/^in ~40 min$/);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("0 * * * *UTC");
 
     await act(async () => { trigger.blur(); });
-    await act(async () => { vi.advanceTimersByTime(2 * 60 * 60 * 1_000); });
+    await act(async () => { vi.advanceTimersByTime((2 * 60 + 10) * 60_000); });
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
     await act(async () => { trigger.focus(); });
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Next run 2026-01-15 15:00 UTC (in 1h 0m)");
+    expect(trigger).toHaveTextContent(/^in ~40 min$/);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("0 * * * *UTC");
+  });
+
+  it("recomputes against the viewer's clock when the row renders again", () => {
+    vi.setSystemTime(new Date("2026-01-15T12:20:00.000Z"));
+    const view = render(<ConnectorHealthPane />);
+    const trigger = within(rowFor("example-tracker")).getByRole("button");
+    expect(trigger).toHaveTextContent(/^in ~40 min$/);
+
+    vi.setSystemTime(new Date("2026-01-15T12:50:00.000Z"));
+    mocks.summary.data = { ...mocks.summary.data! };
+    view.rerender(<ConnectorHealthPane />);
+
+    expect(trigger).toHaveTextContent(/^in ~10 min$/);
   });
 });
 
 describe("the pane prints what it was served", () => {
-  it("shows suspension and exposes its forecast on keyboard focus", async () => {
+  it("shows suspension and exposes its schedule on keyboard focus", async () => {
     mocks.summary.data = summary({
       connectors: [{
         connector: "example-tracker",
         configured: true,
-        schedule: { crons: ["0 22 * * *"], timezone: "UTC", origin: "annotation", suspended: true },
+        schedule: { crons: ["0 22 * * *", "0 10 * * *"], timezone: "UTC", origin: "annotation", suspended: true },
         last_sync: null,
       }],
     });
     render(<ConnectorHealthPane />);
 
     const row = rowFor("example-tracker");
-    expect(within(row).getByText("UTC · suspended")).toHaveClass("text-muted-foreground");
     const trigger = within(row).getByRole("button");
+    expect(trigger).toHaveTextContent(/^Suspended$/);
     const user = userEvent.setup();
     await user.tab();
     await user.tab();
     expect(trigger).toHaveFocus();
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Suspended: no run is scheduled.");
+    const tooltip = await screen.findByRole("tooltip");
+    expectTooltipLines(tooltip, [
+      "0 22 * * *",
+      "0 10 * * *",
+      "UTC · suspended",
+      "Suspended: no run is scheduled.",
+    ]);
+    expect(within(tooltip).getByText("UTC · suspended")).toHaveClass("text-muted-foreground");
+    expect(within(tooltip).getByText("0 22 * * *")).toHaveClass("font-mono");
   });
 
-  it("keeps each sibling's cron and muted schedule line on its own row", () => {
+  it("keeps each sibling's next sync and schedule on its own row", async () => {
     const schedules = [
       { crons: ["0 5 * * *"], timezone: "UTC", origin: "annotation", suspended: true },
       { crons: ["0 17 * * *"], timezone: "Europe/Berlin", origin: "descriptor", suspended: false },
@@ -182,9 +220,16 @@ describe("the pane prints what it was served", () => {
     expect(rows).toHaveLength(2);
     for (const [index, detail] of ["UTC · suspended", "Europe/Berlin"].entries()) {
       const cell = within(rows[index]).getAllByRole("cell")[2];
-      expect(within(cell).getByText(schedules[index].crons[0])).toHaveClass("font-mono");
-      expect(within(cell).getByText(detail)).toHaveClass("text-muted-foreground");
-      expect(within(cell).queryByText(schedules[1 - index].crons[0])).not.toBeInTheDocument();
+      const trigger = within(cell).getByRole("button");
+      expect(trigger).toHaveTextContent(index === 0 ? /^Suspended$/ : /^in ~4 h$/);
+      await act(async () => { trigger.focus(); });
+      const tooltip = await screen.findByRole("tooltip");
+      expect(within(tooltip).getByText(schedules[index].crons[0])).toHaveClass("font-mono");
+      expect(within(tooltip).getByText(detail)).toHaveClass("text-muted-foreground");
+      expect(within(tooltip).queryByText(schedules[1 - index].crons[0])).not.toBeInTheDocument();
+      expect(trigger).toHaveAttribute("aria-describedby", tooltip.id);
+      await act(async () => { trigger.blur(); });
+      await waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
     }
   });
 
@@ -214,7 +259,7 @@ describe("the pane prints what it was served", () => {
     }
   });
 
-  it.each(["hover", "focus"] as const)("exposes the schedule forecast on %s", async (gesture) => {
+  it.each(["hover", "focus"] as const)("exposes the recorded schedule on %s", async (gesture) => {
     mocks.summary.data = summary({
       connectors: [{
         connector: "example-tracker",
@@ -237,11 +282,13 @@ describe("the pane prints what it was served", () => {
     }
 
     const tooltip = await screen.findByRole("tooltip");
-    expect(tooltip).toHaveTextContent("Next run 2026-01-15 22:00 Europe/Sofia (in 8h 0m)");
+    expect(trigger).toHaveTextContent(/^in ~8 h$/);
+    expect(within(tooltip).getByText("0 22 * * *")).toHaveClass("font-mono");
+    expect(within(tooltip).getByText("Europe/Sofia")).toHaveClass("text-muted-foreground");
     expect(trigger).toHaveAttribute("aria-describedby", tooltip.id);
     expect(rowFor("example-tracker")).toHaveAttribute("aria-expanded", "false");
   });
-  it("shows the recorded schedule after the instance, with each cron on its own line", () => {
+  it("shows the next sync after the instance, with each tooltip cron on its own line", async () => {
     mocks.summary.data = summary({
       connectors: [
         {
@@ -265,20 +312,23 @@ describe("the pane prints what it was served", () => {
     expect(headings).toEqual([
       "Connector",
       "Instance",
-      "Schedule",
+      "Next sync",
       "State",
       "Last sync started",
       "Duration",
       "Records reported",
     ]);
     const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
-    const first = within(cell).getByText("0 22 * * *");
-    const second = within(cell).getByText("0 10 * * *");
-    expect(first).toHaveClass("block");
-    expect(second).toHaveClass("block");
+    const trigger = within(cell).getByRole("button");
+    expect(trigger).toHaveTextContent(/^in ~8 h$/);
+    await act(async () => { trigger.focus(); });
+    const tooltip = await screen.findByRole("tooltip");
+    const first = within(tooltip).getByText("0 22 * * *");
+    const second = within(tooltip).getByText("0 10 * * *");
+    expectTooltipLines(tooltip, ["0 22 * * *", "0 10 * * *", "Europe/Sofia"]);
     expect(first).toHaveClass("font-mono");
     expect(second).toHaveClass("font-mono");
-    expect(within(cell).getByText("Europe/Sofia")).toHaveClass(
+    expect(within(tooltip).getByText("Europe/Sofia")).toHaveClass(
       "text-muted-foreground",
     );
   });
@@ -290,7 +340,7 @@ describe("the pane prints what it was served", () => {
     [null, null, "controller time"],
   ] as const)(
     "prints recorded timezone %s without origin %s",
-    (timezone, origin, detail) => {
+    async (timezone, origin, detail) => {
       mocks.summary.data = summary({
         connectors: [
           {
@@ -304,10 +354,45 @@ describe("the pane prints what it was served", () => {
       render(<ConnectorHealthPane />);
 
       const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
-      expect(within(cell).getByText(detail)).toBeInTheDocument();
-      expect(cell.textContent).not.toMatch(/ · $/);
+      const trigger = within(cell).getByRole("button");
+      expect(trigger).toHaveTextContent(timezone == null ? /^Unknown$/ : /^in ~10 h$/);
+      await act(async () => { trigger.focus(); });
+      const tooltip = await screen.findByRole("tooltip");
+      expect(within(tooltip).getByText(detail)).toBeInTheDocument();
+      expect(tooltip.textContent).not.toMatch(/ · $/);
+      expect(tooltip).not.toHaveTextContent(/descriptor|default/);
+      if (timezone == null) {
+        expect(tooltip).toHaveTextContent("Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.");
+      }
     },
   );
+
+  it("explains an unreadable expression while preserving the recorded schedule", async () => {
+    mocks.summary.data = summary({
+      connectors: [{
+        connector: "example-tracker",
+        configured: true,
+        schedule: { crons: ["0 22 * * *", "@every 5m"], timezone: "UTC", suspended: false },
+        last_sync: null,
+      }],
+    });
+    render(<ConnectorHealthPane />);
+
+    const trigger = within(rowFor("example-tracker")).getByRole("button");
+    expect(trigger).toHaveTextContent(/^Unknown$/);
+    await act(async () => { trigger.focus(); });
+    const tooltip = await screen.findByRole("tooltip");
+    expectTooltipLines(tooltip, [
+      "0 22 * * *",
+      "@every 5m",
+      "UTC",
+      "Next run unknown: a recorded expression cannot be read.",
+    ]);
+    expect(within(tooltip).getByText("0 22 * * *")).toHaveClass("font-mono");
+    expect(within(tooltip).getByText("@every 5m")).toHaveClass("font-mono");
+    expect(within(tooltip).getByText("UTC")).toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-describedby", tooltip.id);
+  });
 
   it("prints an unrecorded schedule as unknown and spans all seven columns when expanded", async () => {
     mocks.summary.data = summary({

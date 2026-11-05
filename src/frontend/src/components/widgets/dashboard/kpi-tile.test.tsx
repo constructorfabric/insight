@@ -126,6 +126,15 @@ describe("KpiTile", () => {
     );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
+
+  it("names the metric in full on keyboard focus when it opens nothing", async () => {
+    render(<KpiTile periodNoun="month" tile={tile({ groupId: null })} />);
+
+    await userEvent.tab();
+
+    const tip = await screen.findByTestId("metric-help");
+    expect(tip.firstElementChild).toHaveTextContent("Active AI days");
+  });
 });
 
 describe("KpiTilePlaceholder", () => {
@@ -145,7 +154,7 @@ describe("KpiTilePlaceholder", () => {
     expect(tip).toHaveTextContent("Counted from tool events");
   });
 
-  it("opens nothing for a metric the catalog says nothing about", async () => {
+  it("names the metric in full on hover, since the tile may cut its name", async () => {
     render(
       <KpiTile
         periodNoun="month"
@@ -154,7 +163,8 @@ describe("KpiTilePlaceholder", () => {
       />
     );
     await userEvent.hover(screen.getByRole("button"));
-    expect(screen.queryByTestId("metric-help")).not.toBeInTheDocument();
+    const tip = await screen.findByTestId("metric-help");
+    expect(tip).toHaveTextContent(/^Active AI days$/);
   });
 
   it("says where the value sits when it is exactly at the median", () => {

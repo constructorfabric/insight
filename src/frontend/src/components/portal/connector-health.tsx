@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 
 import type {
   ConnectorHealth,
@@ -228,15 +228,7 @@ function ScheduleCell({
   schedule: ConnectorHealth["schedule"];
 }) {
   const tooltipId = useId();
-  const [open, setOpen] = useState(false);
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    if (!open) return;
-
-    const timer = setInterval(() => setNow(new Date()), 30_000);
-    return () => clearInterval(timer);
-  }, [open]);
+  const nextRun = schedule == null ? null : describeNextRun(schedule, new Date());
 
   return (
     <TableCell>
@@ -244,27 +236,27 @@ function ScheduleCell({
         UNMEASURED
       ) : (
         <TooltipProvider>
-          <Tooltip onOpenChange={(nextOpen) => {
-            if (nextOpen) setNow(new Date());
-            setOpen(nextOpen);
-          }}>
+          <Tooltip>
             <TooltipTrigger
               aria-describedby={tooltipId}
               render={
                 <button type="button" className="cursor-help text-left" />
               }
             >
-              {schedule.crons.map((cron, index) => (
-                <span key={index} className="block font-mono">
-                  {cron}
-                </span>
-              ))}
-              <span className="block text-muted-foreground">
-                {describeSchedule(schedule)}
-              </span>
+              {nextRun?.text}
             </TooltipTrigger>
             <TooltipContent id={tooltipId} role="tooltip">
-              {describeNextRun(schedule, now)}
+              <div className="flex flex-col">
+                {schedule.crons.map((cron, index) => (
+                  <span key={index} className="block font-mono">
+                    {cron}
+                  </span>
+                ))}
+                <span className="block text-muted-foreground">
+                  {describeSchedule(schedule)}
+                </span>
+                {nextRun?.detail != null && <span className="block">{nextRun.detail}</span>}
+              </div>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>

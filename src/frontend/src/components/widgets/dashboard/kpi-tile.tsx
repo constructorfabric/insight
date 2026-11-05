@@ -54,13 +54,14 @@ export function KpiTile({
     .join(". ");
 
   return (
-    <MetricHelpTooltip help={tile.help}>
+    <MetricHelpTooltip help={tile.help} name={tile.label}>
       <Card
         className={cn(
           CARD_SURFACE,
           "relative",
           interactive && "text-left transition-colors hover:bg-card-hover"
         )}
+        tabIndex={interactive ? undefined : 0}
         render={
           primaryGroup ? (
             <button
@@ -84,13 +85,7 @@ export function KpiTile({
           />
         ) : null}
         <CardHeader>
-          {/* Wraps to two lines rather than truncating: a name cut to "Pull
-              requests mer…" is not a shorter name, it is a missing one. The
-              fixed two-line height keeps tiles in a row aligned whether their
-              names take one line or two. */}
-          <CardDescription
-            className={cn(TEXT_NAME, "line-clamp-2 min-h-[2lh] min-w-0")}
-          >
+          <CardDescription className={cn(TEXT_NAME, "min-w-0 truncate")}>
             {tile.label}
           </CardDescription>
           {/* The kit's tooltip does not describe its trigger, and the button's
