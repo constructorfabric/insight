@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   personId: null as string | null,
   isAdmin: false,
   unattributed: new Map<string, number | null>(),
+  unattributedPending: false,
   /** The anchor each unattributed read was asked with; null is "not asked". */
   unattributedAnchors: [] as Array<string | null>,
   tree: undefined as IdentityPerson | undefined,
@@ -123,7 +124,12 @@ vi.mock("@/queries/metric-results", () => ({
   useMetricCollectionSet: () => mocks.collectionSet,
   useUnattributedShares: (_keys: readonly string[], anchor: string | null) => {
     mocks.unattributedAnchors.push(anchor);
-    return anchor ? mocks.unattributed : new Map();
+    return {
+      byKey: anchor ? mocks.unattributed : new Map(),
+      isPending: anchor !== null && mocks.unattributedPending,
+      isError: false,
+      refetch: () => {},
+    };
   },
 }));
 vi.mock("@/queries/metric-definitions", async (orig) => ({
@@ -238,6 +244,7 @@ beforeEach(() => {
   mocks.requested = [];
   mocks.isAdmin = false;
   mocks.unattributed = new Map();
+  mocks.unattributedPending = false;
   mocks.unattributedAnchors = [];
   seedHappyOrg();
   mocks.grid.isPending = false;
@@ -350,6 +357,50 @@ describe("headline: the organisation's unattributed share", () => {
     expect(screen.getByText("7 commits")).toBeInTheDocument();
     expect(screen.getByText("all unattributed · no person reached")).toBeInTheDocument();
     expect(screen.queryByText(/team total/)).toBeNull();
+  });
+
+  it("opens no roster records from a card that shows only the share", () => {
+    mocks.isAdmin = true;
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric("t.commits", [], {
+          short_label: "Commits",
+          unit: "commits",
+          drilldown: { granularity: ["event"] },
+          selection: {
+            metric_key: "t.commits",
+            entity: { type: "person", ids: IDS },
+            period: { from: "2026-01-01", to: "2026-01-31" },
+            filters: [],
+          },
+        }),
+      ],
+    ]);
+    mocks.grid.previousByKey = new Map();
+    mocks.unattributed = new Map([["t.commits", 7]]);
+    render(
+      <EvidenceDialogContext.Provider
+        value={{ openEvidence: vi.fn(), openEvidenceTargets: vi.fn(), openEvidencePeople: vi.fn() }}
+      >
+        <DomainLensView config={UNATTRIBUTED_CONFIG} />
+      </EvidenceDialogContext.Provider>
+    );
+
+    expect(screen.getByText("7 commits")).toBeInTheDocument();
+    expect(document.querySelector('[aria-haspopup="dialog"]')).toBeNull();
+  });
+
+  it("waits for the share before calling a source unconnected", () => {
+    mocks.isAdmin = true;
+    mocks.grid.byKey = new Map([
+      ["t.commits", metric("t.commits", [], { short_label: "Commits", unit: "commits" })],
+    ]);
+    mocks.grid.previousByKey = new Map();
+    mocks.unattributedPending = true;
+    render(<DomainLensView config={{ ...UNATTRIBUTED_CONFIG, notIngested: "not wired" }} />);
+
+    expect(screen.queryByText("not wired")).toBeNull();
   });
 
   it.each([

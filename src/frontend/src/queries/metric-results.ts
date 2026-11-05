@@ -347,11 +347,18 @@ export function useMetricCollectionSet(
  * entity, so a chunk would repeat it. `anchorId` is any one person the viewer
  * may see — the request needs an entity, the view ignores it; null disables.
  */
+export interface UnattributedShares {
+  byKey: Map<string, number | null>;
+  isPending: boolean;
+  isError: boolean;
+  refetch: () => void;
+}
+
 export function useUnattributedShares(
   metricKeys: readonly string[],
   anchorId: string | null,
   range: DateRange
-): Map<string, number | null> {
+): UnattributedShares {
   const collection = useMemo<MetricCollectionConfig>(
     () => ({
       metrics: metricKeys.map((key) => ({
@@ -367,7 +374,7 @@ export function useUnattributedShares(
     range
   );
 
-  return useMemo(
+  const byKey = useMemo(
     () =>
       new Map(
         [...result.byKey].map(([key, metric]) => [
@@ -377,4 +384,11 @@ export function useUnattributedShares(
       ),
     [result.byKey]
   );
+
+  return {
+    byKey,
+    isPending: result.isPending,
+    isError: result.isError,
+    refetch: result.refetch,
+  };
 }

@@ -228,7 +228,7 @@ describe("useUnattributedShares", () => {
       { wrapper: wrapper() },
     );
 
-    await waitFor(() => expect(result.current.get("m")).toBe(4));
+    await waitFor(() => expect(result.current.byKey.get("m")).toBe(4));
     expect(mock.mock.calls[0]![0].entity).toEqual({ type: "person", ids: ["me@x.com"] });
   });
 
@@ -238,7 +238,8 @@ describe("useUnattributedShares", () => {
       { wrapper: wrapper() },
     );
 
-    await waitFor(() => expect(result.current.size).toBe(0));
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(result.current.byKey.size).toBe(0);
     expect(mock).not.toHaveBeenCalled();
   });
 });

@@ -258,11 +258,12 @@ export function DomainLensView({
     scopeMemberCount: memberIds.length,
     visibleCount: visibleRoster.isPending ? 0 : visibleRoster.roster.length,
   });
-  const unattributedByKey = useUnattributedShares(
+  const unattributedShares = useUnattributedShares(
     unattributedSpec?.metrics ?? NO_METRICS,
     unattributedSpec && readsOrganisation ? (memberIds[0] ?? null) : null,
     dateRange
   );
+  const unattributedByKey = unattributedShares.byKey;
   // Metric rows are keyed by the normalized id; the display name rides along
   // so a drilldown row can say whose work it was.
   const scopedMembers = useMemo(
@@ -527,6 +528,15 @@ export function DomainLensView({
     isFlat
   );
 
+  const membersObserved = sourceConnected(
+    lensKeys,
+    grid.byKey,
+    memberIds,
+    personId ? personalReach : undefined
+  );
+  // INVARIANT: with no member observed, only the share can tell an unconnected
+  // source from work nobody reached, so the lens waits on it.
+  const sharesDecide = !membersObserved;
   const gate = orgScopeGate({
     "data-testid": testId,
     viewerLoading: !personId && orgScope.isLoading,
@@ -534,13 +544,14 @@ export function DomainLensView({
     membersLoading: false,
     membersError: false,
     memberCount: members.length,
-    gridPending: grid.isPending,
-    gridError: grid.isError,
+    gridPending: grid.isPending || (sharesDecide && unattributedShares.isPending),
+    gridError: grid.isError || (sharesDecide && unattributedShares.isError),
     emptyLabel:
       "No people in the current scope. Pick a different scope at the top of the page.",
     onRetry: () => {
       orgScope.refetch();
       grid.refetch();
+      unattributedShares.refetch();
     },
   });
   if (gate) return gate;
@@ -554,12 +565,7 @@ export function DomainLensView({
   // would withhold the answer at the moment it is worth most.
   const readsGrid = config.sections.some((s) => s.kind !== "coverage-levels");
   const connected =
-    sourceConnected(
-      lensKeys,
-      grid.byKey,
-      memberIds,
-      personId ? personalReach : undefined
-    ) ||
+    membersObserved ||
     [...unattributedByKey.values()].some((value) => (value ?? 0) > 0);
   if (readsGrid && !connected) {
     return (
@@ -1425,9 +1431,10 @@ function HeadlineCard({
 }) {
   const evidence = useMetricEvidenceOptional();
   const c = card;
-  const selection = c.carrier?.drilldown
-    ? personsEvidenceSelection(c.carrier.selection, memberIds)
-    : null;
+  const selection =
+    c.now != null && c.carrier?.drilldown
+      ? personsEvidenceSelection(c.carrier.selection, memberIds)
+      : null;
   const body = (
     <CardContent className="flex flex-col gap-1 p-4">
       <div className="flex items-center justify-between gap-2">
