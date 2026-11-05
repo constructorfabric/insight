@@ -148,7 +148,7 @@ describe("MetricEvidenceTable", () => {
     expect(screen.getAllByRole("columnheader")).toHaveLength(4);
     expect(screen.getAllByRole("row")[1]).toHaveAttribute("aria-rowindex", "2");
     expect(screen.getAllByRole("cell")).toHaveLength(8);
-    expect(screen.getByText("1.2")).toBeInTheDocument();
+    expect(screen.getByText("1.234")).toBeInTheDocument();
     expect(screen.getByText("Yes")).toBeInTheDocument();
     expect(screen.getByText("No")).toBeInTheDocument();
     expect(screen.getAllByText("—")).toHaveLength(2);
@@ -329,12 +329,33 @@ describe("MetricEvidenceTable", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("shows only the visible line in the hover text, not the whole field", () => {
-      renderTable({ rows: longRows });
-      expect(screen.getByText("Add the parser").closest("td")).toHaveAttribute(
-        "title",
-        "Add the parser"
+    it("shows a cut value whole in a tooltip, and leaves a whole one alone", async () => {
+      const user = userEvent.setup();
+      // A text past twelve characters overflows its cell.
+      vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+        function (this: HTMLElement) {
+          return (this.textContent?.length ?? 0) * 10;
+        }
       );
+      vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(
+        120
+      );
+      renderTable({ rows: longRows });
+
+      await user.hover(screen.getByText("Short"));
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(
+        document.querySelector('[data-slot="tooltip-content"]')
+      ).toBeNull();
+
+      await user.unhover(screen.getByText("Short"));
+      await user.hover(screen.getByText("Add the parser"));
+      await waitFor(() =>
+        expect(
+          document.querySelector('[data-slot="tooltip-content"]')
+        ).toHaveTextContent("Add the parser")
+      );
+      vi.restoreAllMocks();
     });
 
     it("closes again on a second press", async () => {
@@ -449,9 +470,10 @@ describe("MetricEvidenceTable", () => {
     const sizedColumns = [
       { key: "person", label: "Who", type: "string" as const },
       { key: "title", label: "Title", type: "string" as const },
+      { key: "lines", label: "Lines", type: "number" as const },
     ];
     const sizedRows = [
-      { values: { person: "Ann Lee", title: "x".repeat(80) } },
+      { values: { person: "Ann Lee", title: "x".repeat(80), lines: 42 } },
     ];
 
     function tracksAt(viewportPx: number) {
@@ -491,19 +513,18 @@ describe("MetricEvidenceTable", () => {
       vi.restoreAllMocks();
     });
 
-    // Who needs 82px and Title 666px; neither may go below 82px and 122px. The
-    // expander takes 36px of the viewport.
+    // Who needs 82px, Title 346px (its 80 characters cut at the 40-character
+    // cap) and Lines 66px for its header. The expander takes 36px.
     it.each([
       [
-        "a row with room spreads the spare by natural width",
+        "a row with room gives the spare to its text columns",
         1036,
-        ["109.6px", "890.4px"],
+        ["178.9px", "755.1px", "66.0px"],
       ],
-      ["a crowded row cuts only the long column", 400, ["82.0px", "282.0px"]],
       [
-        "a row narrower than the minimums keeps them and scrolls",
-        100,
-        ["82.0px", "122.0px"],
+        "a crowded row keeps every column at its width and scrolls",
+        400,
+        ["82.0px", "346.0px", "66.0px"],
       ],
     ])("%s", (_case, viewportPx, expected) => {
       const { tracks, minWidth } = tracksAt(viewportPx);

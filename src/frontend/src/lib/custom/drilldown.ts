@@ -4,14 +4,13 @@ import {
   type DrilldownRow,
 } from "@/api/custom-client";
 import type { MetricEvidenceRow } from "@/api/metric-drilldown-client";
-import { groupedNumber } from "@/components/custom/chart-format";
 
 const URL_CELL = /^https?:\/\/\S+$/;
 
 /**
- * A row as the table draws it: each number written the way the card writes
- * it, and a cell that is an absolute URL linked, so a row can be followed to
- * the pull request, the issue or the page it counted.
+ * A row as the table draws it: each value as the record holds it, a percent
+ * marked as one, and a cell that is an absolute URL linked, so a row can be
+ * followed to the pull request, the issue or the page it counted.
  */
 export function drawable(
   row: DrilldownRow,
@@ -21,8 +20,8 @@ export function drawable(
   const links: Record<string, string> = {};
   for (const column of columns) {
     const value = values[column.key];
-    if (column.type === "number" && value != null) {
-      values[column.key] = groupedNumber(value, column.percent ? "%" : "");
+    if (column.type === "number" && column.percent && value != null) {
+      values[column.key] = `${String(value)}%`;
     }
     if (typeof value === "string" && URL_CELL.test(value)) {
       links[column.key] = value;

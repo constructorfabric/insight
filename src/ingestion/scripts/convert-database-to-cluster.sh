@@ -16,14 +16,17 @@
 #      release owns (the engine create-databases.sh renders), Atomic for a
 #      `bronze_*` database (what the destination creates);
 #   4. for every table, its own CREATE with the Replicated* engine — and, in
-#      the Atomic bronze database, the ON CLUSTER clause — then INSERT SELECT,
-#      then the two row counts compared;
+#      the Atomic bronze database, the ON CLUSTER clause — under a staging
+#      name, then INSERT SELECT of the rows a reader sees (FINAL for every
+#      engine but plain MergeTree), then the two row counts compared, then a
+#      RENAME to the table's own name;
 #   5. for every view, its own CREATE VIEW, once the relations it reads stand.
 #
 # The standalone copy stays: it is the rollback until the operator drops it
 # (DROP DATABASE standalone_<db>, on this node). Re-runnable: a database
 # already converted is reported and left alone, a table already copied whole
-# is skipped, one copied in part is refused by name.
+# is skipped, one copied in part stands under its staging name and is refused
+# by that name.
 #
 # Usage: convert-database-to-cluster.sh <database> [<database> ...]
 #
@@ -67,6 +70,8 @@ source "${SCRIPT_DIR}/lib/ch-topology.sh"
 # bronze sweep reads every `bronze_*` database, and a copy left as
 # `bronze_<x>_old` would be refused by name until dropped.
 STANDALONE_PREFIX="standalone_"
+# Where a table's copy is filled and checked before it takes the table's name.
+STAGING_SUFFIX="__converting"
 MERGE_TREE_FAMILY='^(Replacing|Summing|Aggregating|Collapsing|VersionedCollapsing|Graphite)?MergeTree$'
 
 die() {
@@ -141,35 +146,79 @@ bronze_converted() {
 }
 
 # The CREATE a relation of the standalone database was made with, re-aimed at
-# the converted one: the database name, a Replicated* engine, and in an Atomic
-# database the cluster clause. SHOW CREATE puts the relation's name on its
-# first line and the engine at the start of its own.
+# the converted one: the database name, a Replicated* engine, in an Atomic
+# database the cluster clause, and the name given, if any. SHOW CREATE puts
+# the relation's name on its first line and the engine at the start of its own.
 converted_create() {
-  local create="$1" old="$2" database="$3" on_cluster="$4"
+  local create="$1" old="$2" database="$3" on_cluster="$4" name="${5:+\`$5\`}"
   printf '%s\n' "${create}" | sed -E \
-    -e "1s/^(CREATE (TABLE|VIEW) )\`?${old}\`?\.(\`[^\`]+\`|[^ (]+)/\1${database}.\3${on_cluster:+ ${on_cluster}}/" \
+    -e "1s/^(CREATE (TABLE|VIEW) )\`?${old}\`?\.(\`[^\`]+\`|[^ (]+)/\1${database}.${name:-\\3}${on_cluster:+ ${on_cluster}}/" \
     -e 's/^ENGINE = (Replacing|Summing|Aggregating|Collapsing|VersionedCollapsing|Graphite)?MergeTree/ENGINE = Replicated\1MergeTree/'
 }
 
+# Every engine of the family but plain MergeTree collapses rows sharing a
+# sorting key, and which row survives depends on the order the parts arrived in.
+# INVARIANT: a table is read with the source's engine, on either side.
+final_of() {
+  [[ "$1" == MergeTree ]] || printf ' FINAL'
+}
+
+visible_rows() {
+  local database="$1" table="$2" engine="$3"
+  ch_scalar "SELECT count() FROM $(quoted "${database}" "${table}")$(final_of "${engine}")"
+}
+
+# The rows a reader sees, by content. Read only for a table found under its
+# own name, which a run of an earlier version of this script may have copied
+# raw: the parts then arrive in another order and other rows survive FINAL.
+# INVARIANT: tuple(*), not *: cityHash64 over a NULL argument is NULL, which
+# sum() skips, so a row with any NULL column would weigh nothing.
+visible_content() {
+  local database="$1" table="$2" engine="$3"
+  ch_scalar "SELECT sum(cityHash64(tuple(*))) FROM $(quoted "${database}" "${table}")$(final_of "${engine}")"
+}
+
+# SAFETY: a hash that did not answer stops the script: the caller tests this
+# function under `||`, where errexit is off and two empty answers would agree.
+same_content() {
+  local old="$1" database="$2" table="$3" engine="$4" source copy
+  [[ "${engine}" == MergeTree ]] && return 0
+  source="$(visible_content "${old}" "${table}" "${engine}")" \
+    || die "could not hash the rows of ${old}.${table}"
+  copy="$(visible_content "${database}" "${table}" "${engine}")" \
+    || die "could not hash the rows of ${database}.${table}"
+  [[ "${source}" == "${copy}" ]]
+}
+
+# The copy is the source as a reader sees it: a raw copy would let other rows
+# survive FINAL than in the source (no version, or one shared by two rows).
+# SAFETY: the copy takes the table's name only once its count matched, so a
+# table under its own name is never one an interrupted copy left behind.
 copy_table() {
-  local old="$1" database="$2" table="$3" on_cluster="$4" create before after
-  before="$(ch_scalar "SELECT count() FROM $(quoted "${old}" "${table}")")"
+  local old="$1" database="$2" table="$3" engine="$4" on_cluster="$5"
+  local staged="${table}${STAGING_SUFFIX}" create before after
+  before="$(visible_rows "${old}" "${table}" "${engine}")"
   if relation_exists "${database}" "${table}"; then
-    after="$(ch_scalar "SELECT count() FROM $(quoted "${database}" "${table}")")"
-    if [[ "${after}" == "${before}" ]]; then
-      echo "  ${database}.${table}: already copied, ${after} row(s)"
-      ALREADY_THERE=$(( ALREADY_THERE + 1 ))
-      return 0
-    fi
-    die "${database}.${table} holds ${after} row(s) where ${old}.${table} holds ${before}: a copy stopped part-way. Drop ${database}.${table}${on_cluster:+ ${on_cluster}} and re-run."
+    after="$(visible_rows "${database}" "${table}" "${engine}")"
+    [[ "${after}" == "${before}" ]] \
+      || die "${database}.${table} holds ${after} row(s) where ${old}.${table} holds ${before}: one of them changed after the copy. Drop ${database}.${table}${on_cluster:+ ${on_cluster}} and re-run."
+    same_content "${old}" "${database}" "${table}" "${engine}" \
+      || die "${database}.${table} holds as many rows as ${old}.${table}, but not the same ones: a raw copy by an earlier version of this script. Drop ${database}.${table}${on_cluster:+ ${on_cluster}} and re-run."
+    echo "  ${database}.${table}: already copied, ${after} row(s)"
+    ALREADY_THERE=$(( ALREADY_THERE + 1 ))
+    return 0
+  fi
+  if relation_exists "${database}" "${staged}"; then
+    die "${database}.${staged} is a copy of ${old}.${table} that never took its name: an earlier run stopped on it. Drop it${on_cluster:+ ${on_cluster}} and re-run."
   fi
 
   create="$(ch "SHOW CREATE TABLE $(quoted "${old}" "${table}") FORMAT TSVRaw")"
-  converted_create "${create}" "${old}" "${database}" "${on_cluster}" | _ch_http_query > /dev/null
-  ddl "INSERT INTO $(quoted "${database}" "${table}") SELECT * FROM $(quoted "${old}" "${table}")"
-  after="$(ch_scalar "SELECT count() FROM $(quoted "${database}" "${table}")")"
+  converted_create "${create}" "${old}" "${database}" "${on_cluster}" "${staged}" | _ch_http_query > /dev/null
+  ddl "INSERT INTO $(quoted "${database}" "${staged}") SELECT * FROM $(quoted "${old}" "${table}")$(final_of "${engine}")"
+  after="$(visible_rows "${database}" "${staged}" "${engine}")"
   [[ "${after}" == "${before}" ]] \
-    || die "${database}.${table} holds ${after} row(s) after the copy, ${old}.${table} ${before}"
+    || die "${database}.${staged} holds ${after} row(s) after the copy, ${old}.${table} ${before}; the copy is left under that name for inspection. Drop it${on_cluster:+ ${on_cluster}} and re-run."
+  ddl "RENAME TABLE $(quoted "${database}" "${staged}") TO $(quoted "${database}" "${table}")${on_cluster:+ ${on_cluster}}"
   echo "  ${database}.${table}: ${after} row(s)"
 }
 
@@ -208,7 +257,7 @@ create_views() {
 convert_database() {
   local database="$1"
   local old="${STANDALONE_PREFIX}${database}" engine old_engine on_cluster target listing
-  local tables=() views=() name kind
+  local tables=() engines=() views=() name kind i
   ALREADY_THERE=0
   engine="$(_ch_database_engine_of "${database}")"
   old_engine="$(_ch_database_engine_of "${old}")"
@@ -260,11 +309,12 @@ convert_database() {
       views+=("${name}")
     else
       tables+=("${name}")
+      engines+=("${kind}")
     fi
   done <<< "${listing}"
 
-  for name in ${tables[@]+"${tables[@]}"}; do
-    copy_table "${old}" "${database}" "${name}" "${on_cluster}"
+  for i in ${tables[@]+"${!tables[@]}"}; do
+    copy_table "${old}" "${database}" "${tables[i]}" "${engines[i]}" "${on_cluster}"
   done
   create_views "${old}" "${database}" "${on_cluster}" ${views[@]+"${views[@]}"}
   if [[ "${ALREADY_THERE}" -eq $(( ${#tables[@]} + ${#views[@]} )) ]]; then

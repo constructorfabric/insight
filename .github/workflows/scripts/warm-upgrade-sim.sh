@@ -554,6 +554,37 @@ assert_task_class_tenant() {
   echo "=== Task class carries its tenant ==="
 }
 
+# A warm installation's worklog snapshot keeps the column types its first
+# build took, and a snapshot is never rebuilt: one built while a LEFT JOIN
+# still typed `is_deleted` Nullable holds that type, though no row ever held a
+# NULL the way one here does. The assertion after step 2 is that the upgrade
+# narrowed the column to the UInt8 the model creates and gave the NULL row the
+# value the model writes.
+seed_worklog_snapshot_warm_type() {
+  echo "=== Seeding the pre-#3704 worklog snapshot column type ==="
+  warm_sql <<'SQL'
+ALTER TABLE staging.jira__worklog_snapshot MODIFY COLUMN is_deleted Nullable(UInt8);
+INSERT INTO staging.jira__worklog_snapshot (unique_key, is_deleted) VALUES ('warm-worklog-null', NULL);
+SQL
+}
+
+assert_worklog_snapshot_type_narrowed() {
+  echo "=== Asserting the worklog snapshot took the type the model creates ==="
+  local got
+  local expected="UInt8|1|0"
+  got="$(printf "SELECT concat(
+      (SELECT type FROM system.columns
+       WHERE database = 'staging' AND table = 'jira__worklog_snapshot' AND name = 'is_deleted'), '|',
+      toString(count()), '|', toString(sum(is_deleted)))
+    FROM staging.jira__worklog_snapshot
+    WHERE unique_key = 'warm-worklog-null'" | _ch_http_query | tr -d '\n')"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "::error title=warm upgrade left the worklog snapshot at its old column type::Expected '${expected}' — is_deleted narrowed to the UInt8 the model creates, the seeded row kept, and its NULL replaced by 0 — but got '${got}'. A retype heal must give the NULL rows the model's fallback before narrowing — see #4057."
+    exit 1
+  fi
+  echo "=== Worklog snapshot narrowed to the type the model creates ==="
+}
+
 seed_warm_bronze
 seed_git_close_time_warm_state
 seed_jira_issue_identity_warm_state
@@ -561,6 +592,7 @@ seed_jira_catalogue_first_seen_warm_state
 seed_youtrack_field_observation_warm_state
 seed_task_producer_tenant_warm_state
 seed_task_class_tenant_warm_state
+seed_worklog_snapshot_warm_type
 
 echo "=== Step 2: deploy the working tree onto the warm state ==="
 dbt_venv_for "$REPO_ROOT/src/ingestion/scripts/bootstrap-db/pins.env" "$WORKDIR/branch-venv"
@@ -576,6 +608,7 @@ assert_jira_catalogue_first_seen_kept
 assert_youtrack_field_observation_tenants
 assert_task_producer_tenants
 assert_task_class_tenant
+assert_worklog_snapshot_type_narrowed
 
 echo "=== Step 3: the first sync after the upgrade — this tree's buildable graph over the warm warehouse ==="
 if ! build_graph "$REPO_ROOT" "$WORKDIR/branch-venv" branch; then
