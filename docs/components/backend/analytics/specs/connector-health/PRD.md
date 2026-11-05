@@ -163,7 +163,7 @@ reachable.
 - **Bronze schemas exist for every connector the build knows**, configured or not; storage
   presence alone cannot distinguish *never configured* from *configured and broken*. The
   recorded configured set provides that distinction.
-- **Sync schedules live in the cluster's workflow layer**, not in the mover; the mover cannot
+- **Applied sync schedules live in the cluster's workflow layer**, not in the mover; the mover cannot
   say when the next sync is due, only what its past jobs did.
 - **Freshness thresholds are declared per connector in transform-layer source definitions
   and have no runtime-readable form.** Until they do, the surface reports facts without
@@ -183,9 +183,12 @@ reachable.
 - The read surface: two admin endpoints and one portal page — per-connector summary and
   per-connector sync history.
 - Replacing the current Data health pane with this page.
+- Admin API management of each connector instance's requested sync schedule.
 
 ### 4.2 Out of Scope
 
+- **Tenant scoping** — schedule storage and reads use the instance identity without tenant
+  isolation; every install has one tenant.
 - **Whether a sync's data reached storage.** The page reports what the mover states it moved
   and does not verify it against storage. Pairing a self-report with an independent count
   requires measuring at sync time inside the ingestion pipeline, which this iteration does
@@ -307,6 +310,29 @@ cron expressions, the schedule is unknown. An empty recorded timezone means cont
 time. The API also serves the recorded schedule origin, which the page does not display;
 an empty or unknown origin remains unknown. The page's last-checked stamp dates these facts too.
 
+Analytics stores a requested schedule per `(connector, source_id)`. Admins set and clear it
+through the schedule API using `If-Match` to prevent overwriting a concurrent edit. Clearing
+requests inheritance. Requests survive instance removal; while
+absent, a stored row remains readable with `applied: null` and clearable with the usual
+`If-Match` and revision rules, but PUT returns 404. A pair with neither configuration nor a
+stored row returns 404 on every verb. The service endpoint lists all non-empty requests and
+requires a service principal with the `connector-schedules-reader` role.
+An unchanged request preserves its revision and audit metadata; stale edits report the current
+revision. Invalid requests identify the expression and field to fix. Duplicate expressions and
+expressions that can never run under Argo's calendar rules are rejected. Schedules requested
+through this API are always UTC; the recorded applied response includes its observed timezone.
+A requested schedule may not start more often than the stand's minimum interval, 30 minutes by default.
+The schedule API reports `status`: `applied` when the recorded API schedule matches the
+request, `pending` while the requested or cleared state differs from the recorded state,
+`not_applied` once a pass known to have started after the save completed without applying it,
+and `inherited` when no request or recorded API override remains. The sync history has no pass-start
+timestamp: require the second distinct tick completion strictly after the save, and return that
+completion record's time as `not_applied_since`. A first completion record may belong to a
+pass already running at save time and never suffices. The health response carries nullable `schedule_request` metadata
+on every row, including empty crons for a clear; editing off and inherited state yield null.
+One MariaDB query reads all requests; failure leaves every request null without failing health.
+This state does not replace the page's recorded schedule.
+
 Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
 cron expressions read in UTC. A CronWorkflow applied before this change may have no
 timezone; its empty recorded value still means controller time.
@@ -354,6 +380,13 @@ connector's recorded applied schedule (FR-13). Where too few reads establish an 
 the page shows the age and says the cadence is unmeasured — it does not conclude that
 recording stopped, because with no cadence recorded there is nothing for the age to be late
 against.
+
+The schedule API separately returns the configured reconcile cron expressions, so a client
+can forecast the next pass while a request is pending. This intended cadence does not replace
+the measured recording interval or establish that reconciliation ran. A per-stand switch,
+`global.connectorSchedules.enabled`, defaults off and controls admin writes; reads remain
+available when it is off. Applying requests through reconcile, its schedule precedence,
+read-failure policy and reader enablement are a separate change.
 
 ## 6. Non-Functional Requirements
 
@@ -442,6 +475,10 @@ unknown once the next sealed tick records its absence (FR-13). Otherwise, an on-
 start is a forecast from recorded expressions and timezone, not evidence of a run. The
 operator reads the gap from timestamps; the product computes no cadence and claims no
 intended schedule.
+
+An admin can request a different cadence or clear an override through the API (FR-13).
+The applied facts can differ from that request until sync history records a matching schedule;
+FR-12 keeps the intended pass time separate from evidence of progress.
 
 ### UC-3 — A fresh install is read correctly
 

@@ -30,6 +30,8 @@ gitCliProxy:
   deploy: false
 
 global:
+  connectorSchedules:
+    enabled: true
   storageClass: local-path
   # Single-tenant fallback for the analytics metric-catalog resolver
   # (compose-app-secrets.sh reads .global.tenantDefaultId → emits

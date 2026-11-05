@@ -27,8 +27,8 @@
 Realises [PRD.md](PRD.md). Scoped addition to the
 [Analytics service design](../../DESIGN.md) on the read side and to the reconcile loop on the
 write side. Everything the parent design already specifies — the admin gate, error taxonomy,
-OpenAPI registration — applies unchanged; this document adds one table, one writer, two
-endpoints, and one portal pane.
+OpenAPI registration — applies unchanged; this document adds the sync history, requested
+schedule storage, API routes, and one portal pane.
 
 ## 1. Architecture Overview
 
@@ -47,7 +47,7 @@ metadata-only grant is not a reachable permission state. Widening the read-only 
 role to see bronze is not acceptable for a page that reports on it.
 
 What remains is a ledger: the reconcile loop reads the mover's job history on its own cadence
-and records what it found. The request path then touches one relation and nothing else, and
+and records what it found. The health request path then touches one relation and nothing else, and
 the page stays up when everything above it is down.
 
 The ledger buys a second thing the mover cannot: **history that outlives its source.** Delete
@@ -64,7 +64,7 @@ a connection in the mover and its job history goes with it; the ledger keeps six
 - First sweep backfills retained history (FR-3) — drives the watermark, whose empty state is
   what makes the first sweep read the mover's whole retained window.
 - The configured set is recorded (FR-4) — drives the sealed per-tick snapshot.
-- Facts, not verdicts (FR-7) — drives a wire shape that ships observations and no state enum.
+- Facts, not verdicts (FR-7) — drives a health wire shape that ships observations and no state enum.
 - The read path depends on nothing external (FR-11) — drives the single-relation read.
 - A stopped recorder is visible (FR-12) — drives serving the age of the last read beside the
   facts it produced.
@@ -205,7 +205,7 @@ column the reader and the writer will disagree about.
 | `records_reported` | the last attempt's count; NULL if it reported none | NULL | NULL |
 | `schedules` | empty array | live CronWorkflow `spec.schedules`; empty array if unreadable or missing | empty array |
 | `schedule_timezone` | empty | live CronWorkflow `spec.timezone`; empty if absent, unreadable or missing | empty |
-| `schedule_origin` | empty | live CronWorkflow annotation `insight.cyberfabric.com/schedule-origin` (`annotation`, `descriptor`, `default`); empty if absent, unreadable or missing | empty |
+| `schedule_origin` | empty | live CronWorkflow annotation `insight.cyberfabric.com/schedule-origin` (`api`, `annotation`, `descriptor`, `default`); empty if absent, unreadable or missing | empty |
 | `schedule_suspended` | false | live CronWorkflow `spec.suspend`; false if absent, unreadable or missing | false |
 
 Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
@@ -496,6 +496,13 @@ design.
         "origin": "annotation",
         "suspended": false
       },
+      "schedule_request": {
+        "crons": ["0 3 * * *"],
+        "status": "pending",
+        "updated_at": "2026-01-15T09:10:00Z",
+        "updated_by": "00000000-0000-4000-8000-000000000001",
+        "not_applied_since": null
+      },
       "last_sync": {
         "job_id": "8412",
         "status": "succeeded",
@@ -539,16 +546,29 @@ disagree, the generated one is right.
 
 Shape rules that the generated contract enforces:
 
+| Field | Type | Description |
+|---|---|---|
+| `schedule` | object or null | Applied schedule from the configured-instance records of the last completed pass. |
+| `schedule_request` | object or null | Stored request for `(connector, source_id)`; null when editing is off, inherited, absent or unavailable. |
+| `schedule_request.crons` | array of strings | Requested UTC expressions; empty for a clear. |
+| `schedule_request.status` | string | `pending`, `not_applied` or `applied`, using the same comparison as the schedule API. |
+| `schedule_request.updated_at` | timestamp | Last real request change. |
+| `schedule_request.updated_by` | UUID string | Admin who made that change. |
+| `schedule_request.not_applied_since` | timestamp or null | Qualifying pass's completion time, only for `not_applied`. |
+
 - **Nullable fields are always emitted.** No field is skipped when absent, so a client sees
   `null` rather than a missing key. The generated contract still marks them optional, which is
   what every other DTO on this service does — a lone shape with its own nullability convention
   would cost more than the looser contract does, since handling `null` handles both.
 - `last_sync` is null for a configured connector that has never synced.
+- Schedule requests are read in one MariaDB query for the whole health response. A failed
+  MariaDB read leaves every `schedule_request` null and does not fail health. Pass-completion evidence
+  is bounded by `checked_at`, so a newer pass cannot be compared with an older applied snapshot.
 - `schedule` is the applied schedule recorded in the newest sealed configured set, dated by
   `checked_at`, never an intended schedule. It is null outside that set or when its row has
   an empty `schedules` array, including rows predating those columns. Otherwise `crons` is
   the non-empty list as recorded; `timezone` is null for an empty recorded value, meaning
-  the Argo controller's timezone. `origin` is `annotation`, `descriptor`, or `default`, and
+  the Argo controller's timezone. `origin` is `api`, `annotation`, `descriptor`, or `default`, and
   null for an empty or unknown recorded value. `suspended` is an always-present boolean
   read from `schedule_suspended`, defaulting to false. No value is inferred (FR-13).
 - **`as_of` and `checked_at` are different clocks and both are needed.** `as_of` is when the
@@ -577,6 +597,85 @@ Shape rules that the generated contract enforces:
   is reachable, the read logs when it truncates rather than dropping rows silently. The cap
   applies to the merged answer, not only to the statement that reads the syncs: the summary is
   the union of two relations, and bounding one of them bounds nothing.
+
+The schedule request contract (FR-13, UC-2) adds admin-only
+`GET /v1/connectors/{connector}/{source_id}/schedule`, `PUT` and `DELETE`
+on the same path. A read returns `requested`, the recorded `applied` schedule, `revision`,
+`status` and `reconcile_schedules`. Writes require a strong quoted revision in `If-Match`:
+missing is 428, malformed is 400, and a stale revision is 412. The comparison and write are
+atomic for every real change. A 412 includes the current revision in `context.revision` and
+as a strong quoted `ETag`. With a matching `If-Match`, a `PUT` equal to the stored ordered
+list after horizontal whitespace normalization, or a `DELETE` of an absent or already
+cleared request, returns 200 with the current state and revision without writing or updating
+audit metadata. Every real change advances the revision; concurrent real changes against
+the same revision have exactly one winner. Clearing retains the revision so an older edit
+cannot recreate an override unnoticed. With editing disabled, writes return 409.
+Stored requests remain keyed by `(connector, source_id)` across removal and reconfiguration:
+GET and DELETE accept an unconfigured pair with a stored row (`applied: null`, existing status,
+`If-Match` and revision rules), PUT still requires configuration, every verb returns the existing
+404 when both are absent, and the service endpoint lists non-empty requests regardless of configuration.
+
+`PUT` accepts only a JSON object containing `crons`, a list of one to ten distinct five-field
+UTC expressions (each at most 100 characters). Duplicates are compared after horizontal
+whitespace normalization. Invalid JSON, missing or mistyped fields, unknown fields and cron
+violations return canonical invalid-argument 400 responses with field violations. Unknown
+`timezone` explains that schedules are always UTC. Missing or wrong `Content-Type` returns
+a canonical 415 with detail that `application/json` is required. Cron violations name
+`crons[index]` (zero-based), the expression index and text, and the cron field by name;
+path violations name `connector` or `source_id`. A 404 identifies the requested
+`connector/source_id`, says it is not configured on this install, and directs the admin to
+Connector health for configured instances by connector and source id.
+
+Expressions that can never fire are rejected with a reason naming the impossible calendar
+condition. Calendar validation follows robfig/cron v3.0.1
+[`dayMatches`](https://github.com/robfig/cron/blob/v3.0.1/spec.go) and the
+[parser's star bit](https://github.com/robfig/cron/blob/v3.0.1/parser.go): a wildcard day field
+retains the star bit with no step or step 1, a larger step clears it, and list items combine
+bits. When either day field retains the star bit, both day fields must match; otherwise they
+are ORed. Under AND semantics, at least one listed day of month must exist in a listed
+month (February permits 29). An explicit full weekday range is restricted for this purpose.
+The shortest gap between consecutive UTC starts across the whole requested cron list
+must be at least the stand's minimum interval, including gaps across midnight, month ends
+and year ends under robfig/cron v3 calendar semantics. The default is 30 minutes;
+`connector_schedules.min_interval_minutes` (environment variable
+`APP__gears__analytics__config__connector_schedules__min_interval_minutes`) accepts 1–1440
+and analytics refuses to start outside that range. The analytics chart sets it through
+`connectorSchedules.minIntervalMinutes`, overridden in umbrella values as
+`analytics.connectorSchedules.minIntervalMinutes`. GET, PUT and DELETE responses include
+`min_interval_minutes` so clients can read the limit before submission. Frequency
+validation runs after all per-expression checks and returns a canonical field violation
+on the expression ending the shortest gap, naming both starts and the minimum.
+The limit applies only to writes through this API: reconcile, Secret annotations and
+descriptors are not checked. Stored schedules predating a raised minimum remain served;
+a new PUT must satisfy the current minimum.
+
+`applied.timezone` is read from `schedule_timezone` alongside the recorded crons, origin,
+suspension and pass-completion time in one sync-history query. An empty recorded timezone
+is returned as null, matching the health API's controller-time semantics; UTC is never inferred.
+
+`requested` preserves the stored request's audit metadata even when its `crons` is empty
+after DELETE. It is null only when no request has been stored. `status` is `applied` when a
+request matches the recorded API-origin schedule, `pending` when those differ or a cleared
+request still has recorded API origin, and `inherited` otherwise. Matching compares cron
+lists in order after whitespace normalization. Suspension does not affect this comparison.
+`pending` becomes `not_applied` only when a pass known to have started after the save finishes
+without applying the request. The sync history records `sweep.completed` with `tick_id` and `ts`;
+it has no `sweep.started` event or pass-start timestamp. The tick is a workflow pod correlation
+ID (or an ID minted by the sweep), not evidence of pass start. Therefore both APIs require
+two distinct completed ticks strictly after `updated_at`; the newer record identifies the
+qualifying pass and its timestamp is `not_applied_since`. Duplicate completion records of
+one tick count once. Completed-pass queries stop at the applied schedule's pass completion,
+preventing a concurrent newer pass from being used against older recorded crons. A pass possibly running before the save never
+suffices. Applied and inherited states always return null `not_applied_since`.
+Request state never substitutes for an observed schedule.
+
+`reconcile_schedules` comes from `ingestion.reconcile.schedule`, the same value that renders
+the reconcile CronWorkflow. The umbrella supplies its one-element JSON array through
+`APP__gears__analytics__config__connector_schedules__reconcile_schedules`; Figment parses
+the environment value as a list. The GitOps secret composer resolves that value from the
+chart defaults and stand overlay too. A client can forecast a pending request's next pass
+from this field; the health page's recording-stopped decision still uses measured pass-completion gaps
+(FR-12).
 
 ### 3.4 Internal Dependencies
 
@@ -722,6 +821,13 @@ facts.
 
 ### 3.7 Database schemas & tables
 
+Analytics owns `connector_schedules` in its MariaDB database, keyed by
+`(connector, source_id)`, with requested cron expressions, revision, caller and update time.
+An empty retained row means inheritance and still participates in revision checks. The
+service endpoint, `GET /v1/connector-schedules`, requires a service principal with the exact
+`connector-schedules-reader` role and serves every non-empty request in a versioned response.
+A storage or decode failure fails the entire read rather than returning an empty set.
+
 #### `ingestion_history.sync_events`
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-dbtable-sync-events`
@@ -815,17 +921,26 @@ user and checks that `SELECT` is allowed while `INSERT`, `CREATE`, `DROP`, `TRUN
 | ledger table | ClickHouse migration, applied by the post-upgrade hook |
 | ledger grant | the query-path role's definition, applied by the same hook before the migrations |
 | sweep | the reconcile loop's existing image and CronWorkflow |
-| configuration | none — the sweep reuses the credentials the reconcile loop already holds |
-| two routes | analytics service |
+| configuration | per-stand API writes switch, minimum interval and reported reconcile cadence |
+| health and schedule routes | analytics service |
+| requested schedules | analytics MariaDB migration |
 | pane | portal bundle |
 
 Nothing here adds a deployable unit. The sweep runs inside a controller that already exists,
-and the read surface is two more routes on a service that already serves the portal.
+and the API routes run on a service that already serves the portal.
+
+`global.connectorSchedules.enabled` defaults false and controls analytics editing. Turning
+it off retains stored requests and leaves reads available. The local values template enables
+the switch. Applying stored requests through reconcile, its precedence and read-failure
+policy, and the reader's service-token provisioning and switch wiring belong to the separate
+reconcile integration change.
 
 ## 4. Additional context
 
 ### 4.1 What was deliberately not built
 
+- **Tenant scoping.** The schedule key and reads have no tenant predicate; every install has one
+  tenant.
 - **Verifying that a sync's data reached storage.** It needs a measurement taken at sync
   time, inside the ingestion pipeline, against a window that has passed by the time a sweep
   runs. That puts recording code on the critical ingestion path, where a recorder appended

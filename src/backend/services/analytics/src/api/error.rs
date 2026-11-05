@@ -31,6 +31,9 @@ pub struct UsageError;
 #[resource_error("gts.cf.insight.analytics_api.connector_health.v1~")]
 pub struct ConnectorHealthError;
 
+#[resource_error("gts.cf.insight.analytics_api.connector_schedule.v1~")]
+pub struct ConnectorScheduleError;
+
 /// Resource namespace for `/v1/feedback*` (in-product feedback + the admin
 /// read model).
 #[resource_error("gts.cf.insight.analytics_api.feedback.v1~")]

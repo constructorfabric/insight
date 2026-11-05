@@ -76,6 +76,37 @@ pub struct SqlApiConfig {
     pub token: SecretString,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ConnectorSchedulesConfig {
+    pub enabled: bool,
+    pub reconcile_schedules: Vec<String>,
+    #[serde(deserialize_with = "schedule_min_interval")]
+    pub min_interval_minutes: u16,
+}
+
+impl Default for ConnectorSchedulesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            reconcile_schedules: Vec::new(),
+            min_interval_minutes: 30,
+        }
+    }
+}
+
+fn schedule_min_interval<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<u16, D::Error> {
+    let value = u16::deserialize(deserializer)?;
+    if !(1..=1440).contains(&value) {
+        return Err(serde::de::Error::custom(
+            "APP__gears__analytics__config__connector_schedules__min_interval_minutes must be between 1 and 1440",
+        ));
+    }
+    Ok(value)
+}
+
 impl Default for McpConfig {
     fn default() -> Self {
         Self {
@@ -143,6 +174,7 @@ pub struct GearConfig {
 
     pub mcp: McpConfig,
     pub sql_api: SqlApiConfig,
+    pub connector_schedules: ConnectorSchedulesConfig,
 
     pub external_sources: Vec<ExternalSourceConfig>,
 }
@@ -165,6 +197,7 @@ impl Default for GearConfig {
             reports: ReportsConfig::default(),
             mcp: McpConfig::default(),
             sql_api: SqlApiConfig::default(),
+            connector_schedules: ConnectorSchedulesConfig::default(),
             external_sources: Vec::new(),
         }
     }
@@ -535,3 +568,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod schedule_tests;

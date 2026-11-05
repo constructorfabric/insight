@@ -758,6 +758,27 @@ class PutSettingsRequest(BaseModel):
     system_prompt: str
 
 
+class ReconcileSchedule(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    connector: str
+    crons: list[str]
+    revision: int = Field(..., ge=0)
+    source_id: str
+
+
+class RecordedSchedule(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str]
+    origin: str
+    recorded_at: UnzonedDatetime
+    suspended: bool
+    timezone: str | None = None
+
+
 class ReportCell(RootModel[str | float]):
     root: str | float
 
@@ -831,6 +852,15 @@ class ReportSubject(RootModel[ReportSubject1 | ReportSubject2]):
     root: ReportSubject1 | ReportSubject2
 
 
+class RequestedSchedule(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str]
+    updated_at: UnzonedDatetime
+    updated_by: UUID
+
+
 class RollupValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -901,9 +931,24 @@ class SavedQuerySummary(BaseModel):
 
 
 class ScheduleOrigin(StrEnum):
+    api = 'api'
     annotation = 'annotation'
     descriptor = 'descriptor'
     default = 'default'
+
+
+class ScheduleRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str] = Field(..., max_length=10, min_length=1)
+
+
+class ScheduleStatus(StrEnum):
+    applied = 'applied'
+    pending = 'pending'
+    not_applied = 'not_applied'
+    inherited = 'inherited'
 
 
 class SchemaStatus(StrEnum):
@@ -1130,29 +1175,6 @@ class BreakdownValueDto(BaseModel):
     entity_id: str
     present: bool | None = Field(None, description='Whether this group has any observation inside the primary period.\nPresent only on a windowed response, where the group set spans every\nwindow and a reader has to know which of them each group belongs to.')
     value: float | None = None
-
-
-class ConnectorHealth(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    configured: bool = Field(..., description='Present in the newest sealed snapshot of the set the controller manages.')
-    connector: str
-    last_sync: SyncFact | None = None
-    schedule: AppliedSchedule | None = None
-    source_id: str | None = Field(None, description="The installation's own id within that tenant. Absent with `tenant_id`.")
-    tenant_id: str | None = Field(None, description='Tenant of the installation this row is. Absent together with\n`source_id` on history recorded before the ledger carried the identity\nthat no single instance could be shown to own — unattributed, which is a\ndifferent answer from attributed to something named "".')
-
-
-class ConnectorHealthResponse(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    as_of: str = Field(..., description='When this answer was computed. Dates the answer; `checked_at` dates the\nfacts in it.')
-    checked_at: str | None = Field(None, description='When the mover was last read. Absent before the first sweep sealed.')
-    connectors: list[ConnectorHealth]
-    history_available: bool = Field(..., description='False when nothing has been recorded at all, so the page can say so\ninstead of implying health.')
-    typical_read_interval_ms: int | None = Field(None, description='The median gap between the recent sealed ticks. Measured, not\nconfigured — nothing on this path knows what cadence was intended.\nAbsent where too few ticks are recorded to establish one.', ge=0)
 
 
 class ContextEntryResponse(BaseModel):
@@ -1408,6 +1430,14 @@ class MetricSnapshot(BaseModel):
     value: str = Field(..., description='The formatted value the tile shows.')
 
 
+class ReconcileResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    schedules: list[ReconcileSchedule]
+    version: int = Field(..., ge=0)
+
+
 class ReportExportRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1449,6 +1479,33 @@ class SavedQueryListResponse(BaseModel):
     items: list[SavedQuerySummary]
 
 
+class ScheduleRequestState(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str]
+    not_applied_since: UnzonedDatetime | None = None
+    status: ScheduleStatus
+    updated_at: UnzonedDatetime
+    updated_by: UUID
+
+
+class ScheduleResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    applied: RecordedSchedule | None = None
+    connector: str
+    editable: bool
+    min_interval_minutes: int = Field(..., ge=1, le=1440)
+    not_applied_since: UnzonedDatetime | None = None
+    reconcile_schedules: list[str]
+    requested: RequestedSchedule | None = None
+    revision: int = Field(..., ge=0)
+    source_id: str
+    status: ScheduleStatus
+
+
 class TimeseriesDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1488,6 +1545,30 @@ class UsageSummaryResponse(BaseModel):
     since: str
     totals: UsageTotals
     until: str
+
+
+class ConnectorHealth(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    configured: bool = Field(..., description='Present in the newest sealed snapshot of the set the controller manages.')
+    connector: str
+    last_sync: SyncFact | None = None
+    schedule: AppliedSchedule | None = None
+    schedule_request: ScheduleRequestState | None = None
+    source_id: str | None = Field(None, description="The installation's own id within that tenant. Absent with `tenant_id`.")
+    tenant_id: str | None = Field(None, description='Tenant of the installation this row is. Absent together with\n`source_id` on history recorded before the ledger carried the identity\nthat no single instance could be shown to own — unattributed, which is a\ndifferent answer from attributed to something named "".')
+
+
+class ConnectorHealthResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    as_of: str = Field(..., description='When this answer was computed. Dates the answer; `checked_at` dates the\nfacts in it.')
+    checked_at: str | None = Field(None, description='When the mover was last read. Absent before the first sweep sealed.')
+    connectors: list[ConnectorHealth]
+    history_available: bool = Field(..., description='False when nothing has been recorded at all, so the page can say so\ninstead of implying health.')
+    typical_read_interval_ms: int | None = Field(None, description='The median gap between the recent sealed ticks. Measured, not\nconfigured — nothing on this path knows what cadence was intended.\nAbsent where too few ticks are recorded to establish one.', ge=0)
 
 
 class CustomMetric(BaseModel):
