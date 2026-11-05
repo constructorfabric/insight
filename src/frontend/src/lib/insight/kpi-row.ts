@@ -105,12 +105,10 @@ export function metricKpiTiles(
     const previousValue = previousMetric
       ? forEntity(previousMetric, entityId).value
       : null;
-    const rawDelta = computeDelta(
-      value,
-      previousValue,
-      metric.computation,
-      metric.format
-    );
+    const rawDelta: MetricDelta | null =
+      value === 0 && previousValue === 0
+        ? { kind: "percent_change", value: 0 }
+        : computeDelta(value, previousValue, metric.computation, metric.format);
     const delta = rawDelta
       ? tileDelta(rawDelta, leaveLabel ? "neutral" : metric.direction)
       : null;

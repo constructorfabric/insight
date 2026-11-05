@@ -163,6 +163,7 @@ describe("metricKpiTiles", () => {
     { previous: 10, current: 10, delta: { text: "±0%", status: "neutral", down: false } },
     { previous: 1000, current: 1004, delta: { text: "±0%", status: "neutral", down: false } },
     { previous: 1000, current: 996, delta: { text: "±0%", status: "neutral", down: false } },
+    { previous: 0, current: 0, delta: { text: "±0%", status: "neutral", down: false } },
     { previous: null, current: 10, delta: null },
     { previous: 10, current: 20, delta: { text: "2×", status: "good", down: false } },
   ])(
