@@ -399,6 +399,7 @@ describe("headline: the organisation's unattributed share", () => {
     expect(screen.getByText("7 commits")).toBeInTheDocument();
     expect(screen.getByText("all unattributed · no person reached")).toBeInTheDocument();
     expect(screen.queryByText(/active people|total$/)).toBeNull();
+    expect(screen.queryByText("Per person")).toBeNull();
   });
 
   it("opens no roster records from a card that shows only the share", () => {

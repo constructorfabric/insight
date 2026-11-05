@@ -1384,9 +1384,11 @@ function HeadlineSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className={TEXT_EYEBROW}>
-        Per person
-      </p>
+      {cards.some((c) => c.kind === "members") && (
+        <p className={TEXT_EYEBROW}>
+          Per person
+        </p>
+      )}
       <div data-slot="headline-grid" className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-4">
         {cards.map((c) =>
           c.kind === "members" ? (
