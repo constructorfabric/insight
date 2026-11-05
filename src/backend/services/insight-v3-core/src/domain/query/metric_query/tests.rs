@@ -82,7 +82,7 @@ fn json_and_column_clocks_compile_as_datetime_sources() {
         "{json_sql}"
     );
     assert!(
-        column_sql.contains("toStartOfDay(`occurred_at`, 'UTC') AS `bucket`"),
+        column_sql.contains("toStartOfDay(toDateTime(`occurred_at`, 'UTC'), 'UTC') AS `bucket`"),
         "{column_sql}"
     );
 }
@@ -155,7 +155,7 @@ fn a_bucket_is_injected_into_select_grouping_and_default_order() {
 
     assert!(
         compiled.sql.starts_with(
-            "SELECT toStartOfWeek(`occurred_at`, 1, 'UTC') AS `bucket`, count() AS `total`"
+            "SELECT toStartOfWeek(toDateTime(`occurred_at`, 'UTC'), 1, 'UTC') AS `bucket`, count() AS `total`"
         ),
         "{}",
         compiled.sql

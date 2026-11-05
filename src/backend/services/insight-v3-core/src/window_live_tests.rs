@@ -707,3 +707,68 @@ async fn a_table_the_warehouse_does_not_list_is_read_as_it_is() {
 
     stand.drop_table().await;
 }
+
+#[tokio::test]
+async fn a_date_column_buckets_at_every_grain() {
+    let cases = [
+        GrainCase {
+            range: "2026-08-03/2026-08-04",
+            grain: "hour",
+            buckets: &[("2026-08-03 00:00:00", "2")],
+        },
+        GrainCase {
+            range: "2026-08-01/2026-09-01",
+            grain: "day",
+            buckets: &[("2026-08-03 00:00:00", "2"), ("2026-08-04 00:00:00", "1")],
+        },
+        GrainCase {
+            range: "2026-06-01/2026-09-01",
+            grain: "week",
+            buckets: &[("2026-08-03", "3")],
+        },
+        GrainCase {
+            range: "2026-01-01/2026-09-01",
+            grain: "month",
+            buckets: &[("2026-08-01", "3")],
+        },
+    ];
+
+    for column_type in ["Date", "Nullable(Date)", "DateTime64(3, 'UTC')"] {
+        let Some(stand) = stand_or_skip(&format!(
+            "(day {column_type}) ENGINE = MergeTree ORDER BY tuple()"
+        ))
+        .await
+        else {
+            return;
+        };
+        stand
+            .insert(
+                "day",
+                &["('2026-08-03')", "('2026-08-03')", "('2026-08-04')"],
+            )
+            .await;
+        let metric = stand.metric(&counted(&json!({ "time": { "column": "day" } })));
+
+        for case in &cases {
+            let (result, _) = stand
+                .answer(&metric, &request(case.range, None), TableEngine::MergeTree)
+                .await;
+            let expected: Vec<(String, String)> = case
+                .buckets
+                .iter()
+                .map(|(bucket, total)| ((*bucket).to_owned(), (*total).to_owned()))
+                .collect();
+
+            assert_eq!(pairs(&result), expected, "{column_type} at {}", case.grain);
+        }
+
+        stand.drop_table().await;
+    }
+}
+
+#[derive(Debug)]
+struct GrainCase {
+    range: &'static str,
+    grain: &'static str,
+    buckets: &'static [(&'static str, &'static str)],
+}
