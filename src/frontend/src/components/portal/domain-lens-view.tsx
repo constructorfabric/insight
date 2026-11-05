@@ -119,6 +119,7 @@ import {
   pickTrendBucket,
 } from "@/lib/portal/trend-data";
 import { bucketBreakdown, bucketRange } from "@/lib/portal/trend-drilldown";
+import { runningBucketStart } from "@/lib/portal/person-trend";
 import {
   TrendDrilldownDialog,
   type TrendDrilldownState,
@@ -134,6 +135,7 @@ import { TEXT_EYEBROW, TEXT_FIGURE, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
+const DAY_MS = 86_400_000;
 const OWN_NAME = "You";
 
 /**
@@ -169,7 +171,7 @@ export function DomainLensView({
    */
   gridKeys?: readonly string[];
 }) {
-  const { period, dateRange } = usePortalPeriod();
+  const { dateRange, compareTo } = usePortalPeriod();
 
   const [drilldown, setDrilldown] = useState<TrendDrilldownState | null>(null);
   // What this install shows, not what the registry declares: a gated metric
@@ -281,7 +283,7 @@ export function DomainLensView({
     gridCollection.metrics.length ? gridCollection : EMPTY_COLLECTION,
     { type: "person", ids: memberIds },
     dateRange,
-    period
+    compareTo
   );
 
   // Trend: bucket coarsened to the roster so org scope never trips the row limit.
@@ -298,6 +300,17 @@ export function DomainLensView({
   const trendBucket = useMemo(
     () => pickTrendBucket(memberIds.length, dateRange),
     [memberIds.length, dateRange]
+  );
+  const trendWindow = useMemo<TrendWindow | null>(
+    () =>
+      trendBucket
+        ? {
+            bucket: trendBucket,
+            startsFrom: dateRange.from,
+            finishedBefore: firstUnfinishedBucket(dateRange.to, trendBucket),
+          }
+        : null,
+    [trendBucket, dateRange.from, dateRange.to]
   );
   const trendCollection = useMemo<MetricCollectionConfig>(
     () => ({
@@ -562,8 +575,15 @@ export function DomainLensView({
       section.kind === "trend"
   );
   const charts =
-    trendSpec && trendBucket
-      ? trendCharts(trendSpec, grid, trend, memberIds, personId !== null)
+    trendSpec && trendWindow
+      ? trendCharts(
+          trendSpec,
+          grid,
+          trend,
+          memberIds,
+          personId !== null,
+          trendWindow
+        )
       : [];
   const drawable = charts.filter((c) => c.data.length > 1);
   // The roster the chart sums IS the drilldown's scope, so the two can never
@@ -601,13 +621,18 @@ export function DomainLensView({
     const range = bucketStart
       ? bucketRange(bucketStart, trendBucket ?? "day")
       : { from: dateRange.from, to: dateRange.to };
+    const breakdown = bucketBreakdown(
+      chart.drilldownKey,
+      trend.byKey,
+      scopedMembers
+    );
     setDrilldown({
       metricKey: chart.derived ? null : chart.drilldownKey,
       label: bucketStart ? `${chart.title} · ${bucketStart}` : chart.title,
       bucketLabel: trendBucket ?? "period",
       period: range,
       members: scopedMembers,
-      breakdown: bucketBreakdown(chart.drilldownKey, trend.byKey, scopedMembers),
+      breakdown: trendWindow ? wholeBuckets(breakdown, trendWindow) : breakdown,
     });
   };
 
@@ -660,7 +685,7 @@ export function DomainLensView({
           spec={s}
           grid={grid}
           trend={trend}
-          trendBucket={trendBucket}
+          trendWindow={trendWindow}
           compData={compData.byKey}
           compIsError={compData.isError}
           compRefetch={compData.refetch}
@@ -742,7 +767,7 @@ function Section({
   spec,
   grid,
   trend,
-  trendBucket,
+  trendWindow,
   compData,
   compIsError,
   compRefetch,
@@ -767,7 +792,7 @@ function Section({
   spec: SectionSpec;
   grid: GridData;
   trend: TrendData;
-  trendBucket: MetricBucket | null;
+  trendWindow: TrendWindow | null;
   compData: Map<string, NormalizedMetricResult>;
   compIsError: boolean;
   compRefetch: () => void;
@@ -813,12 +838,12 @@ function Section({
         />
       );
     case "trend":
-      return trendBucket ? (
+      return trendWindow ? (
         <TrendSection
           spec={spec}
           grid={grid}
           trend={trend}
-          bucket={trendBucket}
+          trendWindow={trendWindow}
           memberIds={memberIds}
           personal={personal}
           onOpenChart={onOpenChart}
@@ -865,6 +890,7 @@ function Section({
           spec={spec}
           grid={grid}
           trend={trend}
+          trendWindow={trendWindow}
           memberIds={memberIds}
         />
       );
@@ -1209,11 +1235,13 @@ function ParticipationSection({
   spec,
   grid,
   trend,
+  trendWindow,
   memberIds,
 }: {
   spec: Extract<SectionSpec, { kind: "participation" }>;
   grid: GridData;
   trend: TrendData;
+  trendWindow: TrendWindow | null;
   memberIds: readonly string[];
 }) {
   const isActive = (byKey: Map<string, NormalizedMetricResult>, id: string) =>
@@ -1242,10 +1270,11 @@ function ParticipationSection({
         }
       }
     }
-    return [...byDate.entries()]
+    const rows = [...byDate.entries()]
       .map(([date, ids]) => ({ date, active: ids.size }))
       .sort((a, b) => a.date.localeCompare(b.date));
-  }, [spec.metrics, trend.byKey, memberIds]);
+    return trendWindow ? wholeBuckets(rows, trendWindow) : rows;
+  }, [spec.metrics, trend.byKey, memberIds, trendWindow]);
 
   const active = memberIds.filter((id) => isActive(grid.byKey, id)).length;
   const prevActive = memberIds.filter((id) =>
@@ -1485,6 +1514,40 @@ export interface TrendChart {
   data: SectionTrendPoint[];
 }
 
+interface TrendWindow {
+  bucket: MetricBucket;
+  /** A bucket starting before this day began before the range did. */
+  startsFrom: string;
+  /** First bucket the range holds only part of at its end. */
+  finishedBefore: string;
+}
+
+function firstUnfinishedBucket(rangeTo: string, bucket: MetricBucket): string {
+  // INVARIANT: `rangeTo` is the range's last whole day, so the bucket running
+  // the day after it is the first one the range does not hold whole.
+  return runningBucketStart(dayAfter(rangeTo), bucket);
+}
+
+function dayAfter(isoDate: string): string {
+  return new Date(Date.parse(`${isoDate}T00:00:00Z`) + DAY_MS)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function wholeBuckets<T extends { date: string }>(
+  rows: readonly T[],
+  trendWindow: TrendWindow
+): T[] {
+  // INVARIANT: the backend aligns `bucket_start` to the bucket's own start
+  // (Monday, the 1st), never clipped to the range, so a partial first bucket
+  // starts before the range does.
+  return rows.filter(
+    (row) =>
+      row.date >= trendWindow.startsFrom &&
+      row.date < trendWindow.finishedBefore
+  );
+}
+
 /**
  * One chart per measure, plus the derived contributor count when the spec
  * asks for it. Shared with the zone header, whose explain affordance describes
@@ -1495,7 +1558,8 @@ function trendCharts(
   grid: GridData,
   trend: TrendData,
   memberIds: readonly string[],
-  personal: boolean
+  personal: boolean,
+  trendWindow: TrendWindow
 ): TrendChart[] {
   const charts = spec.metrics
     .map((key): TrendChart | null => {
@@ -1514,7 +1578,10 @@ function trendCharts(
           drilldownKey: key,
           derived: true,
           series: [{ key, label, type: "line" as const }],
-          data: buildMedianTrendData(key, trend.byKey, memberIds),
+          data: wholeBuckets(
+            buildMedianTrendData(key, trend.byKey, memberIds),
+            trendWindow
+          ),
         };
       }
       return {
@@ -1523,7 +1590,10 @@ function trendCharts(
         description: personal ? "Your total" : "Team total",
         drilldownKey: key,
         series: [{ key, label, type: "line" as const }],
-        data: buildTrendData([key], trend.byKey, memberIds),
+        data: wholeBuckets(
+          buildTrendData([key], trend.byKey, memberIds),
+          trendWindow
+        ),
       };
     })
     .filter((c): c is TrendChart => c != null);
@@ -1538,7 +1608,10 @@ function trendCharts(
       drilldownKey: activeKey,
       derived: true,
       series: [{ key: "active", label: "People", type: "line" as const }],
-      data: buildActiveContributorData(activeKey, trend.byKey, memberIds),
+      data: wholeBuckets(
+        buildActiveContributorData(activeKey, trend.byKey, memberIds),
+        trendWindow
+      ),
     });
   }
 
@@ -1549,7 +1622,7 @@ function TrendSection({
   spec,
   grid,
   trend,
-  bucket,
+  trendWindow,
   memberIds,
   personal,
   onOpenChart,
@@ -1557,12 +1630,19 @@ function TrendSection({
   spec: Extract<SectionSpec, { kind: "trend" }>;
   grid: GridData;
   trend: TrendData;
-  bucket: MetricBucket;
+  trendWindow: TrendWindow;
   memberIds: readonly string[];
   personal: boolean;
   onOpenChart: (chart: TrendChart, bucketStart?: string) => void;
 }) {
-  const charts = trendCharts(spec, grid, trend, memberIds, personal);
+  const charts = trendCharts(
+    spec,
+    grid,
+    trend,
+    memberIds,
+    personal,
+    trendWindow
+  );
 
   if (charts.length === 0) return null;
   if (trend.isError)
@@ -1594,7 +1674,7 @@ function TrendSection({
         >
           <SectionTrend
             title={chart.title}
-            description={`${chart.description} · per ${bucket}`}
+            description={`${chart.description} · per ${trendWindow.bucket}`}
             series={chart.series}
             data={chart.data}
             isPending={trend.isPending}

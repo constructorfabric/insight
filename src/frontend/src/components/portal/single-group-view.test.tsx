@@ -47,6 +47,7 @@ vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({
     period: "month",
     dateRange: { from: "2026-03-01", to: "2026-03-31" },
+    comparisonNoun: "month",
   }),
 }));
 // The composition blocks are someone else's tests; stubbing them keeps this

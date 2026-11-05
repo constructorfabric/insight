@@ -137,14 +137,21 @@ vi.mock("@/queries/feedback", () => ({
 vi.mock("@/components/widgets/period-selector-bar", () => ({
   PeriodSelectorBar: ({
     period,
+    activeRange,
     onPeriodChange,
     onRangeChange,
   }: {
     period: string;
+    activeRange?: { from: string; to: string };
     onPeriodChange: (next: string) => void;
     onRangeChange: (range: { from: string; to: string } | null) => void;
   }) => (
-    <div data-testid="period-bar" data-period={period}>
+    <div
+      data-testid="period-bar"
+      data-period={period}
+      data-from={activeRange?.from}
+      data-to={activeRange?.to}
+    >
       <button
         data-testid="pick-custom"
         onClick={() => onRangeChange({ from: "2026-01-01", to: "2026-01-07" })}
@@ -235,6 +242,20 @@ describe("PlatformUsage", () => {
     const days = (range: { since: string; until: string }) =>
       (Date.parse(range.until) - Date.parse(range.since)) / 86_400_000;
     expect(days(asked)).toBe(days({ since: shared.from, until: shared.to }));
+  });
+
+  it.each([
+    { period: "month", pick: null },
+    { period: "week", pick: "pick-week" },
+    { period: "custom", pick: "pick-custom" },
+  ])("names the very window it plots for $period", ({ pick }) => {
+    render(<PlatformUsage />);
+    if (pick) fireEvent.click(screen.getByTestId(pick));
+
+    const asked = mocks.asked.at(-1)!;
+    const bar = screen.getByTestId("period-bar");
+    expect(bar).toHaveAttribute("data-from", asked.since);
+    expect(bar).toHaveAttribute("data-to", asked.until);
   });
 
   it("returns to a preset after a custom range", () => {

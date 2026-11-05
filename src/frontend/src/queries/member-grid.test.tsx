@@ -86,7 +86,7 @@ describe("useMemberGridData", () => {
           COLLECTION,
           { type: "person", ids: ["a@x.com"] },
           RANGE,
-          "month"
+          { from: "2026-03-01", to: "2026-03-30" }
         ),
       { wrapper: wrapper() }
     );
@@ -117,7 +117,7 @@ describe("useMemberGridData", () => {
     mock.mockClear();
     const { result } = renderHook(
       () =>
-        useMemberGridData(COLLECTION, { type: "person", ids: [] }, RANGE, "month"),
+        useMemberGridData(COLLECTION, { type: "person", ids: [] }, RANGE, RANGE),
       { wrapper: wrapper() }
     );
     expect(result.current.byKey.size).toBe(0);

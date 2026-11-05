@@ -103,7 +103,7 @@ function TeamMembersSection({ members, ...gridProps }: MembersGridProps) {
  * narrows it to direct reports.
  */
 export function TeamStateView() {
-  const { period, dateRange } = usePortalPeriod();
+  const { dateRange, compareTo } = usePortalPeriod();
 
   const orgScope = useOrgScope();
   const portalScope = usePortalScope();
@@ -177,7 +177,7 @@ export function TeamStateView() {
     gridCollection.metrics.length ? gridCollection : EMPTY_COLLECTION,
     { type: "person", ids: memberIds },
     dateRange,
-    period,
+    compareTo,
   );
 
   const teamName = orgScope.label;

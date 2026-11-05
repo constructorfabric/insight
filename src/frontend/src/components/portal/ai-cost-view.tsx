@@ -132,7 +132,7 @@ const PLANNED_KEYS = new Set(PLANNED_SLICES.map((d) => d.key));
  */
 export function AiCostView({ item }: { item: string | null }) {
   const cohortLabel = useCohortLabel();
-  const { period, dateRange } = usePortalPeriod();
+  const { dateRange, compareTo } = usePortalPeriod();
 
   const orgScope = useOrgScope();
   const { pivot, roster } = orgScope;
@@ -184,7 +184,7 @@ export function AiCostView({ item }: { item: string | null }) {
     memberIds.length ? gridCollection : EMPTY_COLLECTION,
     { type: "person", ids: memberIds },
     dateRange,
-    period,
+    compareTo,
   );
   const toolData = useMetricCollection(
     memberIds.length ? toolCollection : EMPTY_COLLECTION,

@@ -93,6 +93,7 @@ export function PlatformUsage() {
     const shift = daysBetween(resolved.to, utcToday());
     return { since: addDays(resolved.from, shift), until: addDays(resolved.to, shift) };
   }, [period, customRange]);
+  const plottedRange = useMemo(() => ({ from: range.since, to: range.until }), [range]);
   // A custom range outranks the period in `resolveDateRange`, so leaving it set
   // makes every preset inert.
   const choosePeriod = (next: PeriodValue) => {
@@ -107,6 +108,7 @@ export function PlatformUsage() {
       <PeriodSelectorBar
         period={period}
         customRange={customRange}
+        activeRange={plottedRange}
         onPeriodChange={choosePeriod}
         onRangeChange={setCustomRange}
       />

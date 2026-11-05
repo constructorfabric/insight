@@ -12,6 +12,17 @@ import { cn } from "@/lib/utils";
 const COLLAPSED_ATTENTION = 6;
 const COLLAPSE_THRESHOLD = 7;
 
+function findingBadge(item: AttentionItem): string {
+  if (item.kind === "fell") {
+    return item.direction === "lower_is_better"
+      ? "rose this period"
+      : "dropped this period";
+  }
+  return item.noPrevious
+    ? "no earlier period to compare"
+    : "not new this period";
+}
+
 export interface IcNeedsAttentionProps {
   items: AttentionItem[];
   onOpenGroup: (id: GroupId) => void;
@@ -97,11 +108,7 @@ export function IcNeedsAttention({
                           row: it says what KIND of finding this name is, and
                           half a row away it was read as a fifth number. */}
                       <span className={cn("shrink-0 justify-self-start rounded border px-1.5 whitespace-nowrap", TEXT_LABEL)}>
-                        {item.kind === "fell"
-                          ? "dropped this period"
-                          : item.noPrevious
-                            ? "no earlier period to compare"
-                            : "not new this period"}
+                        {findingBadge(item)}
                       </span>
                     </span>
                     <span className="flex items-baseline gap-2 sm:contents">
