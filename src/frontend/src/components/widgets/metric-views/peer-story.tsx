@@ -15,7 +15,7 @@ import {
 import { PeerComparison } from "@/components/widgets/metric-views/peer-comparison";
 import { MetricCardActions } from "@/components/widgets/metric-views/metric-card-actions";
 import {
-  formatMetricNumber,
+  formatMetricFigure,
   formatMetricValue,
   metricDisplayUnit,
 } from "@/lib/format";
@@ -100,9 +100,7 @@ function HeroCard({
                 PEER_TEXT[color]
               )}
             >
-              {entry.format === "percent"
-                ? formatMetricValue(entry.value, entry.format, entry.unit)
-                : formatMetricNumber(entry.value, entry.format)}
+              {formatMetricFigure(entry.value, entry.format, entry.unit)}
             </span>
             {unit ? (
               <span className={TEXT_LABEL}>{unit}</span>
@@ -223,9 +221,7 @@ function SideCard({
                 tooltip-gated tier. */}
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
               <span className={TEXT_FIGURE}>
-                {entry.format === "percent"
-                  ? formatMetricValue(entry.value, entry.format, entry.unit)
-                  : formatMetricNumber(entry.value, entry.format)}
+                {formatMetricFigure(entry.value, entry.format, entry.unit)}
                 {unit ? (
                   <span className="ml-1 text-xs font-normal text-muted-foreground">
                     {unit}
@@ -360,9 +356,7 @@ function FlatGridCard({ entry }: { entry: PeerStoryEntry }) {
         ) : null}
       </div>
       <div className={cn("mt-5", TEXT_FIGURE)}>
-        {entry.format === "percent"
-          ? formatMetricValue(entry.value, entry.format, entry.unit)
-          : formatMetricNumber(entry.value, entry.format)}
+        {formatMetricFigure(entry.value, entry.format, entry.unit)}
         {unit ? (
           <span className="ml-1 text-xs font-normal text-muted-foreground">
             {unit}
@@ -471,9 +465,7 @@ function SupportingRow({
     <div className="contents">
       <div className="font-medium">{entry.label}</div>
       <div className="font-mono font-semibold tabular-nums">
-        {entry.format === "percent"
-          ? formatMetricValue(entry.value, entry.format, entry.unit)
-          : formatMetricNumber(entry.value, entry.format)}
+        {formatMetricFigure(entry.value, entry.format, entry.unit)}
         {unit ? (
           <span className="ml-1 font-sans text-xs font-normal text-muted-foreground">
             {unit}
