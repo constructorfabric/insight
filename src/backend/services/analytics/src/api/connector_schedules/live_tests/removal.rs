@@ -38,7 +38,7 @@ pub(super) async fn clear_after_removal(
             assert_eq!(json["revision"], 5);
             assert_eq!(json["requested"]["crons"], json!([]));
             assert!(json["applied"].is_null());
-            assert_eq!(json["status"], "pending");
+            assert_eq!(json["status"], "inherited");
         }
     }
     let row = Entity::find_by_id((connector.to_owned(), "main".to_owned()))

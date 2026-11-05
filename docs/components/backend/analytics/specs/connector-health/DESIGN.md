@@ -558,7 +558,7 @@ Shape rules that the generated contract enforces:
 | Field | Type | Description |
 |---|---|---|
 | `schedule` | object or null | Applied schedule from the configured-instance records of the last completed pass. |
-| `schedule_request` | object or null | Request and acknowledgement record for `(connector, source_id)`; null when editing is off, both are absent or the read is unavailable. |
+| `schedule_request` | object or null | Request and acknowledgement record for `(connector, source_id)`; null when editing is off, the instance has no source id or the read is unavailable. |
 | `schedule_request.crons` | array of strings | Requested UTC expressions; empty for a clear. |
 | `schedule_request.status` | string | `error`, `pending`, `inherited` or `applied`, using the same revision rules as the schedule API. |
 | `schedule_request.updated_at` | timestamp or null | Last real request change; null without a request row. |
@@ -667,14 +667,20 @@ a new PUT must satisfy the current minimum.
 The schedule API and health rows' `schedule_request` derive status from the acknowledgement
 record in this order:
 
-1. `error` when `last_error` is present and `attempted_revision` equals the current requested revision.
-2. `pending` without an acknowledgement record, without an applied revision, or when the requested revision exceeds it.
-3. `inherited` when no override remains, including an acknowledged clear.
-4. `applied` when the current override revision has been verified.
+| Order | Condition | Status |
+|---|---|---|
+| 1 | No request row or a cleared request, and no acknowledgement record | `inherited` |
+| 2 | `last_error` is present and `attempted_revision` equals the current requested revision | `error` |
+| 3 | No acknowledgement record, no applied revision, or the requested revision exceeds it | `pending` |
+| 4 | No override remains, including an acknowledged clear | `inherited` |
+| 5 | The current override revision has been verified | `applied` |
 
 A newer save remains pending even if its crons equal an older applied revision. An older failed
 attempt does not mask that pending save. A missing acknowledgement record leaves `applied`,
-`inherited` and `error` null; it never supplies an assumed default.
+`inherited` and `error` null; it never supplies an assumed default. With no request or a
+cleared request and no acknowledgement, status is `inherited` because the deployment
+schedule is not recorded yet. An override request with revision greater than zero and no
+acknowledgement remains `pending`.
 
 `applied` contains acknowledged `crons`, nullable `timezone`, `origin`, `suspended`, `revision`
 and `observed_at`. `inherited: {crons, origin}` is the deployment fallback from the same record.

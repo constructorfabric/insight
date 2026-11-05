@@ -92,9 +92,9 @@ fn attach(response: &mut ConnectorHealthResponse, rows: &[Snapshot]) {
         let Some(source) = connector.source_id.as_ref() else {
             continue;
         };
-        let Some(row) = rows.get(&(connector.connector.as_str(), source.as_str())) else {
-            continue;
-        };
+        let row = rows
+            .get(&(connector.connector.as_str(), source.as_str()))
+            .copied();
         match request_state(row) {
             Ok(state) => connector.schedule_request = Some(state),
             Err(error) => tracing::warn!(%error, "stored connector schedule request unreadable"),
@@ -102,14 +102,15 @@ fn attach(response: &mut ConnectorHealthResponse, rows: &[Snapshot]) {
     }
 }
 
-fn request_state(row: &Snapshot) -> Result<ScheduleRequestState, Error> {
-    let request = row.request.as_ref();
+fn request_state(row: Option<&Snapshot>) -> Result<ScheduleRequestState, Error> {
+    let request = row.and_then(|row| row.request.as_ref());
+    let acknowledgement = row.and_then(|row| row.acknowledgement.as_ref());
     let crons: Option<Vec<String>> = request
         .map(|r| serde_json::from_value(r.crons.clone()).map_err(Error::StoredCrons))
         .transpose()?;
     let revision = request.map_or(0, |r| r.revision);
-    let status = dto::status(revision, crons.as_deref(), row.acknowledgement.as_ref());
-    let (applied, inherited, error) = acknowledgements::fields(row.acknowledgement.as_ref())?;
+    let status = dto::status(revision, crons.as_deref(), acknowledgement);
+    let (applied, inherited, error) = acknowledgements::fields(acknowledgement)?;
     Ok(ScheduleRequestState {
         crons: crons.unwrap_or_default(),
         revision,

@@ -34,11 +34,16 @@ def schedule_path(admin_operator_session: PersonaSession) -> Iterator[str]:
     before = client.get(path)
     assert before.status_code == 200, before.text
     initial = before.parse(ScheduleResponse)
-    assert initial.status.value == "pending"
+    assert initial.status.value == "inherited"
     assert initial.applied is None
     assert initial.inherited is None
     assert initial.error is None
     assert initial.requested is None or initial.requested.crons == []
+    assert row.schedule_request is not None
+    assert row.schedule_request.status.value == "inherited"
+    assert row.schedule_request.revision == initial.revision
+    assert row.schedule_request.applied is None
+    assert row.schedule_request.inherited is None
     try:
         yield path
     finally:
@@ -48,7 +53,7 @@ def schedule_path(admin_operator_session: PersonaSession) -> Iterator[str]:
         cleared = client.delete(path, headers={"If-Match": current.headers["etag"]})
         assert cleared.status_code == 200, cleared.text
         restored = cleared.parse(ScheduleResponse)
-        assert restored.status.value == "pending"
+        assert restored.status.value == "inherited"
         assert restored.requested is None or restored.requested.crons == []
 
 
@@ -108,10 +113,25 @@ def test_schedule_lifecycle_preserves_revisions_and_requests_inheritance(
         deleted = client.delete(schedule_path, headers={"If-Match": current.headers["etag"]})
         assert deleted.status_code == 200, deleted.text
         inherited = deleted.parse(ScheduleResponse)
-        assert inherited.status.value == "pending"
+        assert inherited.status.value == "inherited"
         assert inherited.revision == revision + 2
         assert inherited.requested is not None
         assert inherited.requested.crons == []
+        assert inherited.applied is None
+        assert inherited.inherited is None
+        health_response = client.get(analytics_path("/v1/connector-health"))
+        assert health_response.status_code == 200, health_response.text
+        health = health_response.parse(ConnectorHealthResponse)
+        row = next(
+            row
+            for row in health.connectors
+            if row.connector == inherited.connector and row.source_id == inherited.source_id
+        )
+        assert row.schedule_request is not None
+        assert row.schedule_request.status.value == "inherited"
+        assert row.schedule_request.revision == inherited.revision
+        assert row.schedule_request.applied is None
+        assert row.schedule_request.inherited is None
         repeated = client.delete(schedule_path, headers={"If-Match": deleted.headers["etag"]})
         assert repeated.status_code == 200, repeated.text
         assert repeated.parse(ScheduleResponse).revision == inherited.revision

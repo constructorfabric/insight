@@ -72,7 +72,11 @@ pub(super) fn status(
     acknowledgement: Option<&super::Acknowledgement>,
 ) -> ScheduleStatus {
     let Some(ack) = acknowledgement else {
-        return ScheduleStatus::Pending;
+        return if requested.is_none_or(<[String]>::is_empty) {
+            ScheduleStatus::Inherited
+        } else {
+            ScheduleStatus::Pending
+        };
     };
     if ack.attempted_revision == revision && ack.last_error.is_some() {
         return ScheduleStatus::Error;

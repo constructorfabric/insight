@@ -100,10 +100,24 @@ fn status_precedence_uses_the_current_revision_and_successful_observation() {
 }
 
 #[test]
-fn missing_acknowledgements_are_pending_even_without_an_override() {
+fn missing_acknowledgements_without_an_override_are_inherited() {
     for revision in [0, 1, u64::MAX] {
+        for requested in [None, Some([].as_slice())] {
+            assert_eq!(
+                status(revision, requested, None),
+                ScheduleStatus::Inherited,
+                "{revision}, {requested:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn requests_without_acknowledgements_are_pending() {
+    let crons = ["0 3 * * *".to_owned()];
+    for revision in [1, u64::MAX] {
         assert_eq!(
-            status(revision, None, None),
+            status(revision, Some(&crons), None),
             ScheduleStatus::Pending,
             "{revision}"
         );

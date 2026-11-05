@@ -27,8 +27,7 @@ fn removed() -> Mock {
 
 #[tokio::test]
 async fn removed_requests_remain_readable_with_the_existing_status_rules() -> R {
-    for crons in [vec!["0 3 * * *"], vec![]] {
-        let expected = "pending";
+    for (crons, expected) in [(vec!["0 3 * * *"], "pending"), (vec![], "inherited")] {
         let sync_history = removed();
         let db = MockDatabase::new(DatabaseBackend::MySql)
             .append_query_results([vec![stored(&crons)]])
@@ -85,7 +84,7 @@ async fn clearing_a_removed_request_advances_the_revision_and_clears_reconcile()
     assert_eq!(json["requested"]["crons"], json!([]));
     assert_eq!(json["requested"]["updated_by"], CALLER.to_string());
     assert!(json["applied"].is_null());
-    assert_eq!(json["status"], "pending");
+    assert_eq!(json["status"], "inherited");
     let log = format!("{:?}", db.into_transaction_log());
     assert!(log.contains("UPDATE `connector_schedules` SET"), "{log}");
     Ok(())
@@ -142,7 +141,7 @@ async fn clearing_an_already_cleared_removed_request_preserves_revision_and_audi
     assert_eq!(json["requested"]["crons"], json!([]));
     assert_eq!(json["requested"]["updated_at"], "1970-01-01T00:00:00Z");
     assert_eq!(json["requested"]["updated_by"], CALLER.to_string());
-    assert_eq!(json["status"], "pending");
+    assert_eq!(json["status"], "inherited");
     assert!(json["applied"].is_null());
     assert!(!format!("{:?}", db.into_transaction_log()).contains("UPDATE"));
     Ok(())

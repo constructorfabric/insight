@@ -61,7 +61,14 @@ async fn health_batches_requests_and_acknowledgements_including_clears_and_inher
         let inherited_state = serde_json::to_value(&response.connectors[1].schedule_request)?;
         assert_eq!(inherited_state["status"], "inherited");
         assert!(inherited_state["updated_at"].is_null());
-        assert!(response.connectors[2].schedule_request.is_none());
+        assert_eq!(
+            response.connectors[2]
+                .schedule_request
+                .as_ref()
+                .ok_or("missing inherited state")?
+                .status,
+            dto::ScheduleStatus::Inherited
+        );
         let log = db.into_transaction_log();
         assert_eq!(log.len(), 1);
         let sql = format!("{log:?}");
@@ -96,20 +103,31 @@ fn health_uses_acknowledgement_errors_instead_of_the_configured_schedule() -> R 
 }
 
 #[test]
-fn missing_acknowledgements_leave_observations_unknown_and_requests_pending() -> R {
-    let mut response = health()?;
-    attach(
-        &mut response,
-        &[Snapshot {
-            request: Some(row(json!([]))),
-            acknowledgement: None,
-        }],
-    );
-    let state = serde_json::to_value(&response.connectors[0].schedule_request)?;
-    assert_eq!(state["status"], "pending");
-    assert!(state["applied"].is_null());
-    assert!(state["inherited"].is_null());
-    assert!(state["error"].is_null());
+fn missing_acknowledgements_leave_observations_unknown_and_only_overrides_pending() -> R {
+    for (request, expected) in [
+        (None, "inherited"),
+        (Some(row(json!([]))), "inherited"),
+        (Some(row(json!(["0 3 * * *"]))), "pending"),
+    ] {
+        let revision = request.as_ref().map_or(0, |row| row.revision);
+        let rows: Vec<_> = request
+            .map(|request| Snapshot {
+                request: Some(request),
+                acknowledgement: None,
+            })
+            .into_iter()
+            .collect();
+        let mut response = health()?;
+        attach(&mut response, &rows);
+        let state = serde_json::to_value(&response.connectors[0].schedule_request)?;
+        assert_eq!(state["status"], expected, "{revision}, {expected}");
+        assert_eq!(state["revision"], revision, "{expected}");
+        assert!(state["applied"].is_null(), "{expected}");
+        assert!(state["inherited"].is_null(), "{expected}");
+        assert!(state["error"].is_null(), "{expected}");
+        assert_eq!(state["updated_at"].is_null(), revision == 0, "{expected}");
+        assert_eq!(state["updated_by"].is_null(), revision == 0, "{expected}");
+    }
     Ok(())
 }
 

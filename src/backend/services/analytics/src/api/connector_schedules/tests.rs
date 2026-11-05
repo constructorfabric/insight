@@ -101,7 +101,7 @@ async fn schedule_routes_require_the_admin_role() -> R {
 }
 
 #[tokio::test]
-async fn get_without_a_stored_row_returns_revision_zero_and_recorded_snapshot() -> R {
+async fn get_without_a_request_or_acknowledgement_returns_revision_zero_and_inheritance() -> R {
     let sync_history = Mock::new();
     sync_history.add(handlers::provide([configured_instance_record()]));
     let db = MockDatabase::new(DatabaseBackend::MySql)
@@ -123,7 +123,7 @@ async fn get_without_a_stored_row_returns_revision_zero_and_recorded_snapshot() 
     assert!(json["requested"].is_null());
     assert!(json["applied"].is_null());
     assert!(json["inherited"].is_null());
-    assert_eq!(json["status"], "pending");
+    assert_eq!(json["status"], "inherited");
     assert_eq!(json["reconcile_schedules"], json!(["*/15 * * * *"]));
     assert_eq!(json["min_interval_minutes"], 30);
     Ok(())
