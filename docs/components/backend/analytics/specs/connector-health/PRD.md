@@ -350,8 +350,8 @@ timezone and origin. Acknowledgements name the snapshot revision actually applie
 newer revision has since been saved. A clear becomes inherited after applying its fallback.
 
 Health enrichment joins requests and acknowledgements in one batched MariaDB read, including
-empty-cron clears and inherited instances without a request. Editing off, absent records or a
-failed read leave `schedule_request` null, while sync facts stay readable. This state does not
+empty-cron clears and inherited instances without a request. Absent records or a failed read
+leave `schedule_request` null, while sync facts stay readable. This state does not
 replace the health page's schedule from sync history.
 
 Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
@@ -411,10 +411,8 @@ against.
 
 The schedule API separately returns the configured reconcile cron expressions, so a client
 can forecast the next pass while a request is pending. This intended cadence does not replace
-the measured recording interval or establish that reconciliation ran. A per-stand switch,
-`global.connectorSchedules.enabled`, defaults off and controls admin writes; reads remain
-available when it is off. Applying requests through reconcile, its schedule precedence,
-read-failure policy and reader enablement are a separate change.
+the measured recording interval or establish that reconciliation ran. Applying requests
+through reconcile, its schedule precedence and read-failure policy are a separate change.
 
 ## 6. Non-Functional Requirements
 

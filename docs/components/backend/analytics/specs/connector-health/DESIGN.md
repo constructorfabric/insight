@@ -558,7 +558,7 @@ Shape rules that the generated contract enforces:
 | Field | Type | Description |
 |---|---|---|
 | `schedule` | object or null | Applied schedule from the configured-instance records of the last completed pass. |
-| `schedule_request` | object or null | Request and acknowledgement record for `(connector, source_id)`; null when editing is off, the instance has no source id or the read is unavailable. |
+| `schedule_request` | object or null | Request and acknowledgement record for `(connector, source_id)`; null when the instance has no source id or the read is unavailable. |
 | `schedule_request.crons` | array of strings | Requested UTC expressions; empty for a clear. |
 | `schedule_request.status` | string | `error`, `pending`, `inherited` or `applied`, using the same revision rules as the schedule API. |
 | `schedule_request.updated_at` | timestamp or null | Last real request change; null without a request row. |
@@ -621,7 +621,7 @@ list after horizontal whitespace normalization, or a `DELETE` of an absent or al
 cleared request, returns 200 with the current state and revision without writing or updating
 audit metadata. Every real change advances the revision; concurrent real changes against
 the same revision have exactly one winner. Clearing retains the revision so an older edit
-cannot recreate an override unnoticed. With editing disabled, writes return 409.
+cannot recreate an override unnoticed.
 Stored requests remain keyed by `(connector, source_id)` across removal and reconfiguration:
 GET and DELETE accept an unconfigured pair with a stored row (acknowledged observations,
 `If-Match` and revision rules), PUT still requires configuration, every verb returns the existing
@@ -973,11 +973,8 @@ user and checks that `SELECT` is allowed while `INSERT`, `CREATE`, `DROP`, `TRUN
 Nothing here adds a deployable unit. The sweep runs inside a controller that already exists,
 and the API routes run on a service that already serves the portal.
 
-`global.connectorSchedules.enabled` defaults false and controls analytics editing. Turning
-it off retains stored requests and leaves reads available. The local values template enables
-the switch. Applying stored requests through reconcile, its precedence and read-failure
-policy, and the reader's service-token provisioning and switch wiring belong to the separate
-reconcile integration change.
+Applying stored requests through reconcile, its precedence and read-failure policy belong
+to the separate reconcile integration change.
 
 ## 4. Additional context
 
