@@ -587,7 +587,6 @@ const DEV: Record<string, LensEntry> = {
     sections: [
       {
         kind: "headline",
-        labelSource: "short",
         metrics: [
           "git.default_branch_commits",
           "git.default_branch_prs_created",
