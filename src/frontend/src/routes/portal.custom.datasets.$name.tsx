@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import type { DeclaredField } from "@/api/custom-client";
 import { Held } from "@/components/custom/held-by";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   ARRIVED,
   RecordTable,

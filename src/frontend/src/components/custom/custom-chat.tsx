@@ -9,7 +9,7 @@ import { ChatProse } from "@/components/custom/chat-prose";
 import { refusal } from "@/components/custom/refusal";
 import { CustomTable } from "@/components/custom/custom-table";
 import { Badge } from "@gears-frontx/ui-kit";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -209,16 +209,14 @@ export function CustomChat({ onCreated }: CustomChatProps) {
           data-testid="chat-send"
           type="button"
           variant="ghost"
-          size="icon"
           aria-label="Send"
           // `size="icon"` is 50x36 here: a wide box around a plane, 8px
           // shorter than the input beside it. Square it and the two line up.
           className="size-10 shrink-0 text-primary disabled:opacity-40"
           onClick={() => void handleSend()}
           disabled={sendChat.isPending || message.trim() === ""}
-        >
-          <SendHorizontal className="size-5 fill-current stroke-1" />
-        </Button>
+          icon={<SendHorizontal className="size-5 fill-current stroke-1" />}
+        />
       </div>
     </aside>
   );

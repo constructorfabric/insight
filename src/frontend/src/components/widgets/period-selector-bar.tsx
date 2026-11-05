@@ -10,7 +10,7 @@ import {
   validateDateRange,
   type DateRange,
 } from "@/api/period-to-date-range";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Calendar } from "@/components/ui/calendar";
 import {
   Popover,

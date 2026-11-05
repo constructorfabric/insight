@@ -10,7 +10,7 @@ import {
 import type { PersonSummary } from "@/api/identity-client";
 import { refusal } from "@/components/custom/refusal";
 import { VisibilityField } from "@/components/custom/visibility-field";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   Dialog,
   DialogContent,
@@ -21,7 +21,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
 import { audienceChosen, granteesFor } from "@/lib/custom/initial-grants";
 import { TEXT_BODY } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -190,8 +189,8 @@ export function CreateFolderDialog({
               type="button"
               disabled={!ready || pending}
               onClick={() => void submit()}
+              loading={pending}
             >
-              {pending ? <Spinner className="size-3" /> : null}
               Create
             </Button>
           </DialogFooter>

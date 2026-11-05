@@ -242,10 +242,10 @@ describe("<CreateFolderDialog>", () => {
 
     await user.click(createButton());
 
-    expect(
-      await screen.findByRole("status", { name: "Loading" })
-    ).toBeVisible();
-    expect(createButton()).toBeDisabled();
+    await waitFor(() =>
+      expect(createButton()).toHaveAttribute("aria-busy", "true")
+    );
+    expect(createButton()).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     await user.keyboard("{Escape}");
     expect(onClose).not.toHaveBeenCalled();

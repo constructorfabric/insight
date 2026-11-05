@@ -10,7 +10,7 @@ import {
 import { CustomWidget } from "@/components/custom/custom-widget";
 import { WidgetDrilldown } from "@/components/custom/widget-drilldown";
 import { Badge } from "@gears-frontx/ui-kit";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   Dialog,
   DialogContent,

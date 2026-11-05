@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 
 import { clearAuthErrorAttempts, signIn } from "@/auth";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Card, CardContent } from "@/components/ui/card";
 
 type LoginErrorProps = {

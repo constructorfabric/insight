@@ -24,7 +24,7 @@ import { FolderSubmenu } from "@/components/custom/dashboard-folders";
 import { refusal } from "@/components/custom/refusal";
 import { EditTags } from "@/components/custom/edit-tags";
 import { ShareDialog } from "@/components/custom/share-dialog";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -104,7 +104,7 @@ export function DashboardMenu({
               ref={trigger}
               type="button"
               variant="ghost"
-              size="icon-sm"
+              size="sm"
               className="text-muted-foreground"
               aria-label={`More for ${name}`}
               icon={<Ellipsis />}

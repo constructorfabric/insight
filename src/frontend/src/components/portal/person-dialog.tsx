@@ -33,7 +33,7 @@ import { OutcomeAlert } from "@/components/portal/outcome-alert";
 import { PersonCell, PersonMarks } from "@/components/portal/person-cell";
 import { PersonId } from "@/components/portal/person-id";
 import { Badge } from "@gears-frontx/ui-kit";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   Dialog,
   DialogContent,
@@ -547,7 +547,7 @@ function AccountRow({
         {detachable ? (
           <Button
             type="button"
-            size="xs"
+            size="sm"
             variant="outline"
             disabled={busy}
             aria-label={t("identities.person_window.detach_account", names)}
@@ -558,7 +558,7 @@ function AccountRow({
         ) : null}
         <Button
           type="button"
-          size="xs"
+          size="sm"
           variant="destructive"
           disabled={busy}
           aria-label={t("identities.person_window.exclude_account", names)}

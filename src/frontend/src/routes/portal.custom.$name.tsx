@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Ellipsis, Maximize2, Table2 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -368,7 +368,7 @@ function DashboardWidgetSlot({
         {expands(widget) ? (
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="sm"
             aria-label={`Expand ${heading}`}
             className="-my-1 text-muted-foreground"
             icon={<Maximize2 />}
@@ -381,7 +381,7 @@ function DashboardWidgetSlot({
               render={
                 <Button
                   variant="ghost"
-                  size="icon-sm"
+                  size="sm"
                   aria-label={`More for ${heading}`}
                   className="-my-1 text-muted-foreground"
                   icon={<Ellipsis />}

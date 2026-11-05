@@ -32,7 +32,7 @@ import { toast } from "@gears-frontx/ui-kit";
 import type { CorrectionResponse, PersonSummary } from "@/api/identity-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Checkbox } from "@/components/ui/checkbox";
 import { personDisplayName } from "@/lib/identities/person-display";
 import {
@@ -193,7 +193,7 @@ export function MergeCaseDialog({
             <span>{t("identities.dialogs.merge_preview_failed")}</span>
             <Button
               type="button"
-              size="xs"
+              size="sm"
               variant="outline"
               onClick={() => moving.refetch()}
             >

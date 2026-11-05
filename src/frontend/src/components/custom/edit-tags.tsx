@@ -3,7 +3,7 @@ import { useId, useState, type RefObject } from "react";
 
 import { DASHBOARD_TAGS_MAX, TAG_NAME_MAX } from "@/api/custom-client";
 import { refusal } from "@/components/custom/refusal";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {

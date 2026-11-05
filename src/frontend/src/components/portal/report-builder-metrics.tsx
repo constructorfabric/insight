@@ -2,7 +2,7 @@ import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { Search } from "lucide-react";
 
 import type { MetricDefinition } from "@/api/metric-definitions-client";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -194,7 +194,7 @@ function MetricFamilyGroup({
           <Button
             type="button"
             variant="link"
-            size="xs"
+            size="sm"
             onClick={() =>
               setSelected((current) =>
                 allPicked

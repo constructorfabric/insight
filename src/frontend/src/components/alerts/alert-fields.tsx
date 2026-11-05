@@ -6,7 +6,7 @@ import { FieldSelect } from "@/components/alerts/field-select";
 import { DefinitionPicker } from "@/components/custom/definition-picker";
 import { Row } from "@/components/custom/editor/controls";
 import { refusal } from "@/components/custom/refusal";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,

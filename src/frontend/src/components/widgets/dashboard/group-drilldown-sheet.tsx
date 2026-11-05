@@ -15,7 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@gears-frontx/ui-kit";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import type { DateRange } from "@/api/period-to-date-range";
 import type { MetricGroup } from "@/lib/insight/groups";
 import type { PeerCohortLabel } from "@/lib/peers";
@@ -111,15 +111,14 @@ function DrilldownPanel({
         <div className="flex items-center gap-0.5">
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="sm"
             onClick={() => setExpanded((v) => !v)}
             aria-label={expanded ? "Shrink" : "Expand"}
-          >
-            {expanded ? <Minimize2 /> : <Maximize2 />}
-          </Button>
+            icon={expanded ? <Minimize2 /> : <Maximize2 />}
+          />
           <DialogClose
             render={
-              <Button variant="ghost" size="icon-sm" aria-label="Close" />
+              <Button variant="ghost" size="sm" aria-label="Close" />
             }
           >
             <XIcon />

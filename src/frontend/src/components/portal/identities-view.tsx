@@ -36,7 +36,7 @@ import { MergeCaseDialog } from "@/components/portal/merge-case-dialog";
 import { PersonAccountsView } from "@/components/portal/person-accounts-view";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@gears-frontx/ui-kit";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import {
   Collapsible,
@@ -557,7 +557,7 @@ function CaseBlock({
                 <div className="flex shrink-0 flex-col items-end gap-0.5">
                   <Button
                     type="button"
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     onClick={() => setSurvivor(candidate)}
                   >

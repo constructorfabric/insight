@@ -23,7 +23,7 @@ import {
   type WireBinding,
 } from "@/api/identity-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Textarea } from "@/components/ui/textarea";
 import { combineOutcomes, fullyDecided, refusedCount } from "@/lib/identities/outcomes";
 import { apiErrorReason } from "@/lib/query-console/api-error";

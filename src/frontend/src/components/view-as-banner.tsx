@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { signIn, useAuth } from "@/auth";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 
 /**
  * The "viewing as" indicator for a `__override` view-as session

@@ -23,7 +23,7 @@ import type {
 } from "@/api/metric-drilldown-client";
 import { CopyValueButton } from "@/components/copy-value-button";
 import { RecordLink } from "@/components/record-link";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
@@ -477,7 +477,7 @@ export function MetricEvidenceTable({
                   <Button
                     type="button"
                     variant="ghost"
-                    size="icon-xs"
+                    size="sm"
                     aria-expanded={isOpen}
                     aria-label={
                       isOpen ? "Hide full record" : "Show full record"
@@ -487,9 +487,8 @@ export function MetricEvidenceTable({
                       event.stopPropagation();
                       toggleRow(key);
                     }}
-                  >
-                    {isOpen ? <ChevronDown /> : <ChevronRight />}
-                  </Button>
+                    icon={isOpen ? <ChevronDown /> : <ChevronRight />}
+                  />
                 </TableCell>
                 {columns.map((column) => {
                   const value = row.values[column.key];

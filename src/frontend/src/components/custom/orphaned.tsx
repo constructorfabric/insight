@@ -11,7 +11,7 @@ import { OwnerName } from "@/components/custom/person-name";
 import { refusal } from "@/components/custom/refusal";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@gears-frontx/ui-kit";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Card, CardContent } from "@/components/ui/card";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { formatUtcInstant } from "@/lib/format";

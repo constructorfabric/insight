@@ -1,8 +1,7 @@
 import { useState, type ReactNode } from "react";
 
 import { refusal } from "@/components/custom/refusal";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { Button } from "@gears-frontx/ui-kit";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -42,8 +41,8 @@ export function ConfirmRemove({
           className="text-destructive"
           disabled={pending}
           onClick={onRemove}
+          loading={pending}
         >
-          {pending ? <Spinner className="size-3" /> : null}
           {confirm}
         </Button>
         <Button

@@ -1,7 +1,7 @@
 import { FileSpreadsheet, FileText } from "lucide-react";
 
 import type { ReportColumn, ReportPreviewResponse } from "@/api/reports-client";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   Dialog,
   DialogContent,
@@ -97,16 +97,18 @@ export function ReportPreviewDialog({
                 size="sm"
                 disabled={running}
                 onClick={() => onExport("csv")}
+                icon={<FileText className="size-4" />}
               >
-                <FileText className="size-4" /> CSV
+                CSV
               </Button>
               <Button
                 type="button"
                 size="sm"
                 disabled={running}
                 onClick={() => onExport("xlsx")}
+                icon={<FileSpreadsheet className="size-4" />}
               >
-                <FileSpreadsheet className="size-4" /> Excel
+                Excel
               </Button>
             </div>
           </>

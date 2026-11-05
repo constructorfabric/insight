@@ -3,7 +3,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import type { Alert, AlertNotification } from "@/api/alerts-client";
 import { refusal } from "@/components/custom/refusal";
 import { Badge } from "@gears-frontx/ui-kit";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   Table,
   TableBody,

@@ -13,7 +13,7 @@ import {
 import { FieldSelect } from "@/components/alerts/field-select";
 import { refusal } from "@/components/custom/refusal";
 import { PersonPicker } from "@/components/portal/person-picker";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   Dialog,
   DialogContent,
@@ -245,7 +245,7 @@ function GrantRow({
       <Button
         type="button"
         variant="ghost"
-        size="icon-sm"
+        size="sm"
         aria-label={`Stop sharing with ${shown}`}
         disabled={pending}
         icon={<X />}

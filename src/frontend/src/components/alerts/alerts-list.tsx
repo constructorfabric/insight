@@ -10,7 +10,7 @@ import { CardFrame } from "@/components/custom/catalogue-card";
 import { DefinitionList } from "@/components/custom/definition-list";
 import { MetricName } from "@/components/custom/metric-name";
 import { refusal } from "@/components/custom/refusal";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -101,7 +101,7 @@ function AlertMenu({ alert }: { alert: AlertSummary }) {
             <Button
               type="button"
               variant="ghost"
-              size="icon-sm"
+              size="sm"
               className="text-muted-foreground"
               aria-label={`More for ${alert.name}`}
               icon={<Ellipsis />}

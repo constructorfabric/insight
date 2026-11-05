@@ -4,7 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { DashboardVisibility } from "@/api/custom-client";
 import type { PersonSummary } from "@/api/identity-client";
 import { PersonPicker } from "@/components/portal/person-picker";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -107,7 +107,7 @@ function NamedPeople({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon-sm"
+                  size="sm"
                   aria-label={`Remove ${shown}`}
                   icon={<X />}
                   onClick={() => onRemove(person.person_id)}

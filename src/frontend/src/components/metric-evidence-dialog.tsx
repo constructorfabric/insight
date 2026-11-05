@@ -27,7 +27,7 @@ import { MetricEvidencePeople } from "@/components/metric-evidence-people";
 import { MetricEvidenceTable } from "@/components/metric-evidence-table";
 import { withTypeDimension } from "@/lib/metrics/provider-links";
 import { useDeclaredMetricDimensions } from "@/queries/metric-definitions";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   Dialog,
   DialogContent,
@@ -385,8 +385,7 @@ export function MetricEvidenceDialog({
                         (query.isError && !query.data)
                       }
                       render={
-                        <Button variant="outline" size="sm">
-                          {exporting ? <Spinner /> : <Download />}
+                        <Button variant="outline" size="sm" icon={<Download />} loading={exporting}>
                           Export
                         </Button>
                       }
