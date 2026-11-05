@@ -7,9 +7,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
-import { toast } from "@gears-frontx/ui-kit";
+import { toast, Button } from "@gears-frontx/ui-kit";
 
-import { Button } from "@gears-frontx/ui-kit";
 import { cn } from "@/lib/utils";
 
 const COPIED_RESET_MS = 1500;

@@ -13,14 +13,14 @@ import {
 import { FieldSelect } from "@/components/alerts/field-select";
 import { refusal } from "@/components/custom/refusal";
 import { PersonPicker } from "@/components/portal/person-picker";
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
+  toast,
 } from "@gears-frontx/ui-kit";
-import { toast } from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";

@@ -1,7 +1,7 @@
 /**
  * A confirmation step for actions that change shared state — the first one in
  * this codebase (existing delete flows fire immediately; identity corrections
- * must not). Composed from `ui/dialog` in the console `StatusDialog` idiom
+ * must not). Composed from the kit's Dialog in the console `StatusDialog` idiom
  * rather than vendoring a new primitive.
  *
  * The body is the caller's: a merge renders its preview there, a bind names
@@ -12,8 +12,8 @@ import { TriangleAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,

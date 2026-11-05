@@ -1,8 +1,8 @@
 import { FileSpreadsheet, FileText } from "lucide-react";
 
 import type { ReportColumn, ReportPreviewResponse } from "@/api/reports-client";
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogHeader,

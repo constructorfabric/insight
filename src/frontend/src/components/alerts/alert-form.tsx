@@ -425,7 +425,7 @@ function AlertEditor({
       ) : null}
 
       <div className="flex items-center gap-3">
-        <Button type="submit" size="sm" disabled={saving || !sendable(held)} loading={saving}>
+        <Button type="submit" size="sm" disabled={!sendable(held)} loading={saving}>
           {base ? "Save changes" : "Create alert"}
         </Button>
         {held.unparsed ? (

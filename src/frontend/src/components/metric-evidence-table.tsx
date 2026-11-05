@@ -23,7 +23,12 @@ import type {
 } from "@/api/metric-drilldown-client";
 import { CopyValueButton } from "@/components/copy-value-button";
 import { RecordLink } from "@/components/record-link";
-import { Button } from "@gears-frontx/ui-kit";
+import {
+  Button,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
@@ -38,11 +43,6 @@ import {
   evidenceRowKeys,
   summaryLine,
 } from "@/lib/metrics/evidence-rows";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@gears-frontx/ui-kit";
 import { fitWidths, type ColumnNeed } from "@/lib/metrics/evidence-widths";
 import { evidenceRefText } from "@/lib/metrics/provider-links";
 import { cn } from "@/lib/utils";

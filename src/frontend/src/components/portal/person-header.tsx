@@ -168,18 +168,18 @@ export function PersonHeader({ person }: { person: string }) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 gap-1 text-muted-foreground"
+            className="gap-1 text-muted-foreground"
             onClick={() => goPerson(supervisorPersonId)}
             icon={<ChevronUp className="size-3.5" />}
           >
-            <span className="max-w-40 truncate">{supervisorName}</span>
+            <span className="block max-w-40 truncate">{supervisorName}</span>
           </Button>
         ) : null}
         {teamTarget && canScopeToTeam ? (
           <Button
             variant="outline"
             size="sm"
-            className="h-8 gap-1.5"
+            className="gap-1.5"
             onClick={() => goTeam(teamTarget)}
             icon={<Users className="size-3.5" />}
           >

@@ -144,7 +144,7 @@ export function DefinitionEditor({
       <div className="flex items-center gap-2">
         <Button
           type="submit"
-          disabled={given === "" || taken || !sendable(held) || store.isPending}
+          disabled={given === "" || taken || !sendable(held)}
           loading={store.isPending}
         >
           Save

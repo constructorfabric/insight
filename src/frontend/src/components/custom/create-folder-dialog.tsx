@@ -10,17 +10,17 @@ import {
 import type { PersonSummary } from "@/api/identity-client";
 import { refusal } from "@/components/custom/refusal";
 import { VisibilityField } from "@/components/custom/visibility-field";
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  toast,
 } from "@gears-frontx/ui-kit";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { toast } from "@gears-frontx/ui-kit";
 import { audienceChosen, granteesFor } from "@/lib/custom/initial-grants";
 import { TEXT_BODY } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -187,7 +187,7 @@ export function CreateFolderDialog({
             </Button>
             <Button
               type="button"
-              disabled={!ready || pending}
+              disabled={!ready}
               onClick={() => void submit()}
               loading={pending}
             >

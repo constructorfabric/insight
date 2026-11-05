@@ -53,7 +53,7 @@ vi.mock("@/queries/connector-health", () => ({
   useConnectorSyncs: () => mocks.syncs,
 }));
 
-import { openTooltip } from "@/test/tooltip";
+import { AppTooltips, openTooltip } from "@/test/tooltip";
 
 import { ConnectorHealthPane } from "./connector-health";
 
@@ -407,11 +407,12 @@ describe("the pane prints what it was served", () => {
         },
       ],
     });
-    render(<ConnectorHealthPane />);
+    render(<ConnectorHealthPane />, { wrapper: AppTooltips });
 
     const cell = within(rowFor("example-tracker")).getAllByRole("cell")[2];
     expect(cell).toHaveTextContent(/^—$/);
     await userEvent.hover(within(cell).getByText("—"));
+    await new Promise((resolve) => setTimeout(resolve, 200));
     expect(openTooltip()).toBeNull();
     expect(within(cell).queryByRole("button")).not.toBeInTheDocument();
     await userEvent.click(rowFor("example-tracker"));

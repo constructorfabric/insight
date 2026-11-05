@@ -10,8 +10,8 @@ import {
   MetricSummary,
   WidgetSummary,
 } from "@/components/custom/definition-summary";
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,

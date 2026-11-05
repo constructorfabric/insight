@@ -2,16 +2,16 @@ import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { Search } from "lucide-react";
 
 import type { MetricDefinition } from "@/api/metric-definitions-client";
-import { Button } from "@gears-frontx/ui-kit";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Button,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@gears-frontx/ui-kit";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { MetricFamily } from "@/lib/reports/families";
 import { cn } from "@/lib/utils";
 import { TEXT_EYEBROW } from "@/lib/type-scale";

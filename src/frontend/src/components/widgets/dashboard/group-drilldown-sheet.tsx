@@ -14,8 +14,8 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  Button,
 } from "@gears-frontx/ui-kit";
-import { Button } from "@gears-frontx/ui-kit";
 import type { DateRange } from "@/api/period-to-date-range";
 import type { MetricGroup } from "@/lib/insight/groups";
 import type { PeerCohortLabel } from "@/lib/peers";
@@ -118,11 +118,14 @@ function DrilldownPanel({
           />
           <DialogClose
             render={
-              <Button variant="ghost" size="sm" aria-label="Close" />
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Close"
+                icon={<XIcon />}
+              />
             }
-          >
-            <XIcon />
-          </DialogClose>
+          />
         </div>
       </DialogHeader>
       <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto">

@@ -67,13 +67,11 @@ function SheetContent({
                 variant="ghost"
                 className="absolute top-4 end-4"
                 size="sm"
+                aria-label={t("common.actions.close")}
+                icon={<XIcon />}
               />
             }
-          >
-            <XIcon
-            />
-            <span className="sr-only">{t("common.actions.close")}</span>
-          </SheetPrimitive.Close>
+          />
         )}
       </SheetPrimitive.Popup>
     </SheetPortal>

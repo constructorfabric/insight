@@ -7,6 +7,7 @@ import {
   KpiTilePlaceholder,
 } from "@/components/widgets/dashboard/kpi-tile";
 import type { KpiTileData } from "@/lib/insight/kpi-row";
+import { AppTooltips } from "@/test/tooltip";
 
 function tile(overrides: Partial<KpiTileData> = {}): KpiTileData {
   return {
@@ -128,10 +129,12 @@ describe("KpiTile", () => {
   });
 
   it("opens no explanation over the rest of the tile", async () => {
-    render(<KpiTile periodNoun="month" tile={tile()} onOpenGroup={vi.fn()} />);
+    render(<KpiTile periodNoun="month" tile={tile()} onOpenGroup={vi.fn()} />, {
+      wrapper: AppTooltips,
+    });
 
     await userEvent.hover(screen.getByRole("button"));
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     expect(screen.queryByTestId("metric-help")).not.toBeInTheDocument();
   });

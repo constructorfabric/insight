@@ -32,9 +32,9 @@ import { AccountPicker } from "@/components/portal/account-picker";
 import { OutcomeAlert } from "@/components/portal/outcome-alert";
 import { PersonCell, PersonMarks } from "@/components/portal/person-cell";
 import { PersonId } from "@/components/portal/person-id";
-import { Badge } from "@gears-frontx/ui-kit";
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Badge,
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,

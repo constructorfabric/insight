@@ -7,7 +7,12 @@ import type {
 } from "@/api/connector-health-client";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { Badge } from "@gears-frontx/ui-kit";
+import {
+  Badge,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@gears-frontx/ui-kit";
 import {
   Table,
   TableBody,
@@ -16,11 +21,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@gears-frontx/ui-kit";
 import {
   UNMEASURED,
   SCHEDULE_HEADING,

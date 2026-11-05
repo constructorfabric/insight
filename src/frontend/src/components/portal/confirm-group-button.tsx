@@ -14,7 +14,7 @@
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "@gears-frontx/ui-kit";
+import { toast, Button } from "@gears-frontx/ui-kit";
 
 import {
   MAX_BINDINGS_PER_CALL,
@@ -23,7 +23,6 @@ import {
   type WireBinding,
 } from "@/api/identity-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { Button } from "@gears-frontx/ui-kit";
 import { Textarea } from "@/components/ui/textarea";
 import { combineOutcomes, fullyDecided, refusedCount } from "@/lib/identities/outcomes";
 import { apiErrorReason } from "@/lib/query-console/api-error";

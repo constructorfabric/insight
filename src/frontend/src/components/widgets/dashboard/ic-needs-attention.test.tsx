@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { IcNeedsAttention } from "@/components/widgets/dashboard/ic-needs-attention";
 import type { AttentionItem } from "@/lib/insight/attention";
+import { AppTooltips } from "@/test/tooltip";
 
 function item(overrides: Partial<AttentionItem> = {}): AttentionItem {
   return {
@@ -125,10 +126,11 @@ describe("IcNeedsAttention", () => {
           }),
         ]}
         onOpenGroup={vi.fn()}
-      />
+      />,
+      { wrapper: AppTooltips },
     );
     await userEvent.hover(screen.getByRole("button"));
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await new Promise((resolve) => setTimeout(resolve, 200));
     expect(screen.queryByTestId("metric-help")).not.toBeInTheDocument();
     await userEvent.unhover(screen.getByRole("button"));
 

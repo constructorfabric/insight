@@ -158,7 +158,7 @@ function CreateExperimentForm() {
         </div>
         <Button
           type="submit"
-          disabled={!name.trim() || !tag.trim() || create.isPending}
+          disabled={!name.trim() || !tag.trim()}
           icon={<Plus />}
           loading={create.isPending}
         >

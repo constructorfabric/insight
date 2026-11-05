@@ -39,7 +39,6 @@ export function ConfirmRemove({
           variant="ghost"
           size="sm"
           className="text-destructive"
-          disabled={pending}
           onClick={onRemove}
           loading={pending}
         >

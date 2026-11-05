@@ -35,8 +35,7 @@ import { ConfirmGroupButton } from "@/components/portal/confirm-group-button";
 import { MergeCaseDialog } from "@/components/portal/merge-case-dialog";
 import { PersonAccountsView } from "@/components/portal/person-accounts-view";
 import { PersonCell } from "@/components/portal/person-cell";
-import { Badge } from "@gears-frontx/ui-kit";
-import { Button } from "@gears-frontx/ui-kit";
+import { Badge, Button } from "@gears-frontx/ui-kit";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import {
   Collapsible,

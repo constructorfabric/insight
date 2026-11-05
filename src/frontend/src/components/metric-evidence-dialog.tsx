@@ -27,8 +27,8 @@ import { MetricEvidencePeople } from "@/components/metric-evidence-people";
 import { MetricEvidenceTable } from "@/components/metric-evidence-table";
 import { withTypeDimension } from "@/lib/metrics/provider-links";
 import { useDeclaredMetricDimensions } from "@/queries/metric-definitions";
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogHeader,

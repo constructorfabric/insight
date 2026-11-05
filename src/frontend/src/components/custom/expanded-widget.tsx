@@ -9,9 +9,9 @@ import {
 } from "@/api/custom-client";
 import { CustomWidget } from "@/components/custom/custom-widget";
 import { WidgetDrilldown } from "@/components/custom/widget-drilldown";
-import { Badge } from "@gears-frontx/ui-kit";
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Badge,
+  Button,
   Dialog,
   DialogContent,
   DialogHeader,

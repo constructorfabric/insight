@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MetricEvidenceTable } from "@/components/metric-evidence-table";
-import { openTooltip } from "@/test/tooltip";
+import { AppTooltips, openTooltip } from "@/test/tooltip";
 
 const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
@@ -54,7 +54,10 @@ function renderTable(
     pageLimitReached: false,
     ...overrides,
   };
-  return { ...render(<MetricEvidenceTable {...props} />), props };
+  return {
+    ...render(<MetricEvidenceTable {...props} />, { wrapper: AppTooltips }),
+    props,
+  };
 }
 
 describe("MetricEvidenceTable", () => {
@@ -345,7 +348,7 @@ describe("MetricEvidenceTable", () => {
       renderTable({ rows: longRows });
 
       await user.hover(screen.getByText("Short"));
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 200));
       expect(
         openTooltip()
       ).toBeNull();
