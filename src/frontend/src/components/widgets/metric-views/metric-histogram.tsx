@@ -133,8 +133,8 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
           </span>
         </div>
         {ownMedian != null ? (
-          // 24px matches the ⋯ box beside it, so both sit on one centre line.
-          <span className="shrink-0 text-xs leading-6 text-muted-foreground">
+          // 32px matches the ⋯ box beside it, so both sit on one centre line.
+          <span className="shrink-0 text-xs leading-8 text-muted-foreground">
             Median{" "}
             <span className="font-semibold text-foreground tabular-nums">
               {formatMetricValue(ownMedian, metric.format, metric.unit)}
