@@ -1,4 +1,4 @@
-import { formatMetricNumber, formatMetricValue } from "@/lib/format";
+import { formatMetricFigure } from "@/lib/format";
 import { absenceLabel } from "@/lib/metrics/absence";
 import { computeDelta, formatTileDelta } from "@/lib/metrics/delta";
 import {
@@ -45,11 +45,7 @@ export function metricComparisons(
     change: delta ? formatTileDelta(delta) : null,
     median:
       median != null
-        ? `median ${
-            metric.format === "percent"
-              ? formatMetricValue(median, metric.format, metric.unit)
-              : formatMetricNumber(median, metric.format)
-          }`
+        ? `median ${formatMetricFigure(median, metric.format, metric.unit)}`
         : null,
   };
 }

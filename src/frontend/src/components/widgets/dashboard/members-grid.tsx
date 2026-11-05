@@ -19,7 +19,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { formatMetricValue } from "@/lib/format";
+import { formatMetricValue, isDurationUnit } from "@/lib/format";
 import { absenceLabel } from "@/lib/metrics/absence";
 import {
   forEntity,
@@ -199,10 +199,12 @@ type SortState =
   | { key: SortKey; direction: SortDirection };
 
 /** Cell text: bare number — the unit lives in the header tooltip and the
- *  cell popover, so ten columns of "141 commits / 707 lines" don't shout. */
+ *  cell popover, so ten columns of "141 commits / 707 lines" don't shout.
+ *  A duration keeps its shape: "1.3" under an "h" header is a conversion. */
 function cellDisplay(value: number | null, col: Column): string {
   if (value == null || !Number.isFinite(value)) return "—";
-  return formatMetricValue(value, col.format, null);
+  const unit = isDurationUnit(col.unit) ? col.unit : null;
+  return formatMetricValue(value, col.format, unit);
 }
 
 function fullDisplay(value: number | null, col: Column): string {
