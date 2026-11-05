@@ -1406,6 +1406,8 @@ function HeadlineCard({
           metric={c.r}
           text={labelSource === "short" ? (c.r.short_label ?? c.r.label) : undefined}
           className={TEXT_NAME}
+          truncate
+          focusable={!evidence}
         />
         <Delta now={c.reading.value} prev={c.prev} direction={c.r.direction} showUnavailable />
       </div>
@@ -2913,7 +2915,9 @@ function DirectionCardsSection({
                       <MetricName
                         metric={r}
                         text={r.label}
-                        className="min-w-0 text-muted-foreground"
+                        className="text-muted-foreground"
+                        truncate
+                        focusable={personal}
                       />
                       <span className="flex items-center gap-2">
                         <span className="font-medium tabular-nums">
@@ -3287,7 +3291,7 @@ export function Delta({
 }) {
   if (prev == null || prev === 0) {
     return showUnavailable ? (
-      <span className="text-xs text-muted-foreground" title="Previous period data is unavailable or zero">
+      <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground" title="Previous period data is unavailable or zero">
         No comparison
       </span>
     ) : null;

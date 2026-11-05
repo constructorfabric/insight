@@ -286,7 +286,7 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
       />,
     );
     expect(screen.getByText(shown, { exact: true }), _case).toBeInTheDocument();
-    expect(screen.queryByText(absent, { exact: true }), _case).toBeNull();
+    expect(screen.queryByText(absent, { exact: true, ignore: "script, style, .sr-only" }), _case).toBeNull();
   });
 
   it("does not silently omit unavailable headline comparisons", () => {
