@@ -108,7 +108,7 @@ export function IcNeedsAttention({
                     className="-mx-2 flex w-[calc(100%+1rem)] flex-col gap-x-2 rounded px-2 py-1 text-left text-sm transition-colors hover:bg-muted sm:col-span-full sm:grid sm:w-auto sm:grid-cols-subgrid sm:items-baseline"
                   >
                     <span className="flex min-w-0 items-baseline gap-2 sm:contents">
-                      <MetricHelpTooltip help={item.help} delayed={false}>
+                      <MetricHelpTooltip help={item.help}>
                         <span className={cn("min-w-0 cursor-help truncate", TEXT_NAME)}>
                           {item.label}
                         </span>

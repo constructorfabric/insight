@@ -83,7 +83,7 @@ export function KpiTile({
         />
       ) : null}
       <CardHeader>
-        <MetricHelpTooltip help={tile.help} name={tile.label} delayed={false}>
+        <MetricHelpTooltip help={tile.help} name={tile.label}>
           <CardDescription
             className={cn(TEXT_NAME, "min-w-0 cursor-help truncate")}
             tabIndex={interactive ? undefined : 0}

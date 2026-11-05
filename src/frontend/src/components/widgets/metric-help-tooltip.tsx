@@ -3,10 +3,8 @@ import type { ReactElement } from "react";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@gears-frontx/ui-kit";
-import { SWEEP_TOOLTIP_DELAY_MS } from "@/lib/tooltip-delay";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
 import { cn } from "@/lib/utils";
 
@@ -17,8 +15,6 @@ export interface MetricHelpTooltipProps {
   name?: string;
   /** The metric's name as the surface writes it: the trigger. */
   children: ReactElement;
-  /** Waits before opening, for names stacked close enough to sweep across. */
-  delayed?: boolean;
 }
 
 /** What a metric means, on the name that shows it. */
@@ -26,12 +22,11 @@ export function MetricHelpTooltip({
   help,
   name,
   children,
-  delayed = true,
 }: MetricHelpTooltipProps) {
   // Nothing to say ⇒ the surface renders unchanged, with no dead affordance.
   if (!help && !name) return children;
 
-  const tooltip = (
+  return (
     <Tooltip>
       <TooltipTrigger render={children} />
       <TooltipContent
@@ -46,11 +41,6 @@ export function MetricHelpTooltip({
         ) : null}
       </TooltipContent>
     </Tooltip>
-  );
-
-  if (!delayed) return tooltip;
-  return (
-    <TooltipProvider delay={SWEEP_TOOLTIP_DELAY_MS}>{tooltip}</TooltipProvider>
   );
 }
 

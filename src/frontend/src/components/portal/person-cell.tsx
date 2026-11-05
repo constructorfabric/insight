@@ -27,7 +27,6 @@ import { Badge } from "@gears-frontx/ui-kit";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@gears-frontx/ui-kit";
 import { personDisplayName } from "@/lib/identities/person-display";
@@ -110,24 +109,22 @@ export function PersonMarks({ person }: { person: PersonSummary }) {
           own on purpose — this mark is what says a person is the wrong side of a
           merge, and a hover-only carrier tells a keyboard reader nothing. */}
       {person.provisional ? (
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Badge
-                  variant="outline"
-                  className="cursor-help font-normal"
-                  tabIndex={0}
-                />
-              }
-            >
-              {t("identities.person.provisional")}
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              {t("identities.person.provisional_hint")}
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Badge
+                variant="outline"
+                className="cursor-help font-normal"
+                tabIndex={0}
+              />
+            }
+          >
+            {t("identities.person.provisional")}
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            {t("identities.person.provisional_hint")}
+          </TooltipContent>
+        </Tooltip>
       ) : null}
       {person.status?.trim().toLowerCase() === TERMINATED ? (
         <Badge variant="secondary" className="bg-destructive/15 text-destructive">

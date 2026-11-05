@@ -47,9 +47,12 @@ function RootPending() {
   return <CenteredSpinner className="min-h-screen w-full" />;
 }
 
+// Long enough that a pointer passing over a row of triggers opens none of them.
+const TOOLTIP_DELAY_MS = 400;
+
 function RootLayout() {
   return (
-    <TooltipProvider>
+    <TooltipProvider delay={TOOLTIP_DELAY_MS}>
       <MetricEvidenceDialogProvider>
         <FeedbackDialogProvider>
           <AuthGate>
