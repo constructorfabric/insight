@@ -139,7 +139,7 @@ function metric(key: string): MetricResult {
 }
 
 const GROUP_METRIC: Record<string, string> = {
-  git_output: "git.commits",
+  git_output: "git.default_branch_commits",
   collaboration: "collab.messages_sent",
 };
 
@@ -257,7 +257,7 @@ describe("MetricGroupsView", () => {
     // peer row — an unmeasured metric gets no tile and nothing to click.
     mocks.collection.byKey = normalizeMetricResults([
       {
-        ...metric("git.commits"),
+        ...metric("git.default_branch_commits"),
         views: [
           { view: "period", values: [{ entity_id: "p@x", value: 3 }] },
           {

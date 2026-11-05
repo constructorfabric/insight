@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn registry_declares_the_expected_counts() {
         assert_eq!(builtin_sources().len(), 7, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 109, "builtin metric count");
+        assert_eq!(builtin_metrics().len(), 111, "builtin metric count");
     }
 
     #[test]
@@ -410,6 +410,7 @@ mod tests {
             ("commit_count", "non_default_commit_count"),
             ("pr_created", "default_pr_created"),
             ("pr_created", "non_default_pr_created"),
+            ("pr_created_merged", "default_pr_created_merged"),
             ("pr_merged", "default_pr_merged"),
             ("pr_merged", "non_default_pr_merged"),
         ] {

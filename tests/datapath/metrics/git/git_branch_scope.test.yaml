@@ -20,12 +20,19 @@ description: >-
   He sits in a department of his own, so the peer pool of three above is
   untouched.
 
+  Frank, in a department of his own too, is where the default-branch rates part
+  from the any-branch ones: two landed commits on 1 Oct, one in flight on 2 Oct,
+  and two requests into the default branch of which only one merged. Default
+  active days 1 against 2, cadence 2 against 1.5, and a merge rate of 50 that a
+  rule ignoring the merged state would read as 100.
+
 bronze:
   bronze_bamboohr.employees:
     - $ref: ../templates/people.yaml#/templates/alice
     - $ref: ../templates/people.yaml#/templates/bob
     - $ref: ../templates/people.yaml#/templates/carol
     - {$ref: ../templates/people.yaml#/templates/dave, department: "Legacy Platform"}
+    - {$ref: ../templates/people.yaml#/templates/bamboohr_employee, id: e006, unique_key: bamboohr-test-e006, firstName: Frank, lastName: Zeta, displayName: Frank Zeta, workEmail: frank@example.com, department: Solo Tooling}
   bronze_github.branches:
     - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: br-main, repository: "https://github.com/constructor/insight.git", name: main, head_sha: head-main, is_default: true}
     - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: br-release, repository: "https://github.com/constructor/insight.git", name: release/1.x, head_sha: head-release, is_default: false}
@@ -43,6 +50,9 @@ bronze:
     - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-carol-n, sha: sha-carol-n, author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 20, deletions: 2, is_in_default_branch: false}
     # Dave, both flagged outside the default branch; the requests below decide.
     - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-dave-master, repository: "https://github.com/constructor/legacy.git", sha: sha-dave-master, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 10, deletions: 1, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-frank-d1, sha: sha-frank-d1, author_name: frank, author_email: frank@example.com, committer_name: frank, committer_email: frank@example.com, additions: 5, deletions: 1, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-frank-d2, sha: sha-frank-d2, authored_date: "2026-10-01T10:00:00Z", committed_date: "2026-10-01T10:00:00Z", author_name: frank, author_email: frank@example.com, committer_name: frank, committer_email: frank@example.com, additions: 5, deletions: 1, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-frank-n, sha: sha-frank-n, authored_date: "2026-10-02T09:00:00Z", committed_date: "2026-10-02T09:00:00Z", author_name: frank, author_email: frank@example.com, committer_name: frank, committer_email: frank@example.com, additions: 5, deletions: 1, is_in_default_branch: false}
     - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-dave-main, repository: "https://github.com/constructor/legacy.git", sha: sha-dave-main, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 20, deletions: 2, is_in_default_branch: false}
   bronze_github.file_changes:
     # `.rs` under src/ classifies as code, so the category and code-lines
@@ -67,6 +77,8 @@ bronze:
     # Dave: one request into his repository's default, `master`, and one into
     # its `main`, which is not.
     - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: pr-dave-master, repo_full_name: constructor/legacy, id: 41, number: 41, author_login: dave, base_ref: master, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-dave-master}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: pr-frank-merged, id: 51, number: 51, author_login: frank, base_ref: main, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-frank-merged}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: pr-frank-open, id: 52, number: 52, author_login: frank, base_ref: main, state: open, closed_at: "", merged_at: "", merge_commit_sha: ""}
     - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: pr-dave-main, repo_full_name: constructor/legacy, id: 42, number: 42, author_login: dave, base_ref: main, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-dave-main}
   bronze_github.pull_request_diff_stats:
     # GitHub staging reads a request's author_email from here and nowhere else
@@ -80,6 +92,8 @@ bronze:
     - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-carol-main, pull_number: 31, additions: 10, deletions: 1, author_email: carol@example.com}
     - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-carol-rel, pull_number: 32, additions: 20, deletions: 2, author_email: carol@example.com}
     - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-dave-master, repo_full_name: constructor/legacy, pull_number: 41, additions: 10, deletions: 1, author_email: dave@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-frank-merged, pull_number: 51, additions: 5, deletions: 1, author_email: frank@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-frank-open, pull_number: 52, additions: 5, deletions: 1, author_email: frank@example.com}
     - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-dave-main, repo_full_name: constructor/legacy, pull_number: 42, additions: 20, deletions: 2, author_email: dave@example.com}
   bronze_github.pull_request_commits:
     # Carol only. Her default-branch request carries the commit whose flag says

@@ -266,6 +266,30 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
     expect(screen.getByTitle("Compared with previous period")).toHaveTextContent("-50%");
   });
 
+  it.each([
+    ["the full label by default", undefined, "Commits that landed", "Commits"],
+    ["the short label when the section asks for it", "short" as const, "Commits", "Commits that landed"],
+  ])("heads a card with %s", (_case, labelSource, shown, absent) => {
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric("t.commits", [[pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], {
+          label: "Commits that landed",
+          short_label: "Commits",
+          unit: "commits",
+        }),
+      ],
+    ]);
+    render(
+      <DomainLensView
+        config={{ ...HEADLINE_CONFIG, sections: [{ kind: "headline", metrics: ["t.commits"], labelSource }] }}
+        embedded
+      />,
+    );
+    expect(screen.getByText(shown, { exact: true }), _case).toBeInTheDocument();
+    expect(screen.queryByText(absent, { exact: true }), _case).toBeNull();
+  });
+
   it("does not silently omit unavailable headline comparisons", () => {
     mocks.grid.previousByKey = new Map();
     render(<DomainLensView config={HEADLINE_CONFIG} embedded />);

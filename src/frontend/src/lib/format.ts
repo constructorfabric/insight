@@ -23,6 +23,36 @@ export function roundMetricValue(v: number, fmt: MetricFormat): number {
   return fmt === "decimal" ? Math.round(v * 10) / 10 : Math.round(v);
 }
 
+/** The registry unit of a metric measured in hours (`unit: h`). */
+export const HOURS_UNIT = "h";
+
+/** Past this many hours the minutes fall below the precision a decimal showed. */
+const WHOLE_HOURS_FROM = 100;
+
+/**
+ * A metric in hours is a duration, and "1.25 h" makes the reader convert
+ * it into clock time; "1 h 15 min" is that time. The whole value carries the
+ * unit, so a surface that shows number and unit apart gets no side unit.
+ */
+export function isDurationUnit(unit?: string | null): boolean {
+  return unit === HOURS_UNIT;
+}
+
+/** "45 min", "1 h 15 min", "3 h", "1,234 h". */
+export function formatHoursDuration(hours: number): string {
+  const sign = hours < 0 ? "-" : "";
+  const abs = Math.abs(hours);
+  if (abs >= WHOLE_HOURS_FROM) {
+    return `${sign}${NF_THOUSANDS.format(Math.round(abs))} ${HOURS_UNIT}`;
+  }
+  const totalMinutes = Math.round(abs * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h === 0) return `${sign}${m} min`;
+  if (m === 0) return `${sign}${h} ${HOURS_UNIT}`;
+  return `${sign}${h} ${HOURS_UNIT} ${m} min`;
+}
+
 /**
  * Formatting for `/v1/metric-results` values: the wire `format` decides
  * rounding and presentation; `unit` is a display suffix only. Bare number —
@@ -51,7 +81,23 @@ export function formatMetricValue(
   const s = formatMetricNumber(v, fmt);
   if (fmt === "currency") return s;
   if (fmt === "percent") return `${s}%`;
+  if (isDurationUnit(unit)) return formatHoursDuration(v);
   return unit ? `${s} ${unit}` : s;
+}
+
+/**
+ * The figure a tile shows large, for a surface that sets the unit beside it
+ * in smaller type: the number alone when `metricDisplayUnit` has something to
+ * place there, the suffixed value when the number carries its own unit.
+ */
+export function formatMetricFigure(
+  v: number | null | undefined,
+  fmt: MetricFormat,
+  unit?: string | null,
+): string {
+  return metricDisplayUnit(fmt, unit)
+    ? formatMetricNumber(v, fmt)
+    : formatMetricValue(v, fmt, unit);
 }
 
 /**
@@ -71,6 +117,7 @@ export function splitMetricValue(
   if (fmt === "percent") return { number, unit: "%" };
   // Currency carries its symbol inside the number.
   if (fmt === "currency") return { number, unit: "" };
+  if (isDurationUnit(unit)) return { number: formatHoursDuration(v), unit: "" };
   return { number, unit: unit ?? "" };
 }
 
@@ -80,6 +127,7 @@ export function metricDisplayUnit(
   unit?: string | null,
 ): string | undefined {
   if (fmt === "currency" || fmt === "percent") return undefined;
+  if (isDurationUnit(unit)) return undefined;
   return unit ?? undefined;
 }
 

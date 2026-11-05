@@ -10,7 +10,7 @@ import {
 } from "@/components/widgets/metric-views/dimension-series";
 import { MetricCardActions } from "@/components/widgets/metric-views/metric-card-actions";
 import {
-  formatMetricNumber,
+  formatMetricFigure,
   formatMetricValue,
   metricDisplayUnit,
 } from "@/lib/format";
@@ -96,11 +96,7 @@ export function MetricSummaryCard({
         />
         <span className="flex items-baseline gap-1 tabular-nums">
           <span className={TEXT_FIGURE}>
-            {value == null
-              ? "—"
-              : metric.format === "percent"
-                ? formatMetricValue(value, metric.format, metric.unit)
-                : formatMetricNumber(value, metric.format)}
+            {formatMetricFigure(value, metric.format, metric.unit)}
           </span>
           {value != null && displayUnit ? (
             <span className="text-sm text-muted-foreground">{displayUnit}</span>

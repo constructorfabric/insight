@@ -21,7 +21,7 @@ import {
   type MetricTimeseriesChartModel,
 } from "@/components/widgets/metric-views/metric-timeseries-chart-model";
 import type { MetricTimeseriesModel } from "@/components/widgets/metric-views/metric-timeseries-model";
-import { formatMetricNumber } from "@/lib/format";
+import { formatMetricNumber, formatMetricValue } from "@/lib/format";
 import { percentShareLabels } from "@/lib/metrics/shares";
 import type { MetricTimeseriesChartConfig } from "@/lib/metrics/timeseries-chart";
 import { seriesColors } from "@/lib/series-colors";
@@ -269,7 +269,7 @@ export function MetricTimeseriesChart({
                 <span className="text-muted-foreground tabular-nums">
                   {totals[index] == null
                     ? "—"
-                    : `${formatMetricNumber(totals[index], chartModel.valueMetric.format)}${chartModel.valueMetric.unit ? ` ${chartModel.valueMetric.unit}` : ""}${shares[index] ? ` · ${shares[index]}%` : ""}`}
+                    : `${formatMetricValue(totals[index], chartModel.valueMetric.format, chartModel.valueMetric.unit)}${shares[index] ? ` · ${shares[index]}%` : ""}`}
                 </span>
               ) : null}
             </li>

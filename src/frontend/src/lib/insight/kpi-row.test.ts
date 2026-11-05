@@ -44,10 +44,10 @@ describe("metricKpiTiles", () => {
     [false, true, "Time off in previous period"],
     [true, true, "Time off in both periods"],
   ])("keeps numbers but neutralizes leave-affected trends (%s, %s)", (period, previous, label) => {
-    const current = normalizeMetricResults([metricResult("git.commits", 3)], [
+    const current = normalizeMetricResults([metricResult("git.default_branch_commits", 3)], [
       { person_id: "me@x.com", period_overlap: period, compare_to_overlap: previous },
     ]);
-    const before = normalizeMetricResults([metricResult("git.commits", 100)]);
+    const before = normalizeMetricResults([metricResult("git.default_branch_commits", 100)]);
     const [tile] = metricKpiTiles(current, before, "me@x.com");
     expect(tile?.value).toBe("3");
     expect(tile?.delta).toMatchObject({ text: "-97%", status: "neutral" });
@@ -170,8 +170,8 @@ describe("metricKpiTiles", () => {
     "says unchanged only when an earlier value exists: $previous -> $current",
     ({ previous, current, delta }) => {
       const tiles = metricKpiTiles(
-        normalizeMetricResults([metricResult("git.commits", current)]),
-        normalizeMetricResults([metricResult("git.commits", previous)]),
+        normalizeMetricResults([metricResult("git.default_branch_commits", current)]),
+        normalizeMetricResults([metricResult("git.default_branch_commits", previous)]),
         "me@x.com"
       );
       expect(tiles[0]?.delta, `previous ${previous}, current ${current}`).toEqual(delta);

@@ -1,8 +1,8 @@
 > [!WARNING]
 > **Under review — audited against the implementation and found inaccurate in places.**
 > Several capabilities it calls planned are already shipped. Read it against the code,
-> not as authority; the specific claims are listed in the repository
-> [README](../../../../README.md#backend-specs--under-review).
+> not as authority; the specific claims are listed in
+> [docs/components/backend/README.md](../../../components/backend/README.md#backend-specs--under-review).
 
 # Technical Design — Identity Resolution
 

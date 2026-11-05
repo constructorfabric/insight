@@ -1,5 +1,5 @@
 import type { MetricDirection } from "@/api/metric-results-client";
-import { formatMetricNumber, formatMetricValue, formatPp } from "@/lib/format";
+import { formatMetricFigure, formatPp } from "@/lib/format";
 import {
   KPI_ROW,
   KPI_ROW_MAX,
@@ -135,20 +135,11 @@ export function metricKpiTiles(
         // width by making the reader decode them. The tile wraps to two lines
         // instead, which costs a row of pixels once and nothing after that.
         label: metric.label,
-        value:
-          value == null
-            ? "—"
-            : metric.format === "percent"
-              ? formatMetricValue(value, metric.format, metric.unit)
-              : formatMetricNumber(value, metric.format),
+        value: formatMetricFigure(value, metric.format, metric.unit),
         delta,
         medianLabel:
           median != null
-            ? `median ${
-                metric.format === "percent"
-                  ? formatMetricValue(median, metric.format, metric.unit)
-                  : formatMetricNumber(median, metric.format)
-              }`
+            ? `median ${formatMetricFigure(median, metric.format, metric.unit)}`
             : null,
         gapText,
         gapStatus,

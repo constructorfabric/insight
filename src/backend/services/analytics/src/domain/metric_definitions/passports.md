@@ -224,15 +224,15 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit PRs
 - Notes: Pull requests the AI vendor observed for the person, served as the context for PRs with AI assistance rather than as a goal of its own. It is the vendor's count over the vendor's own window, which need not be the day it is reported against and need not agree with the git sources — read it next to that measure, not next to git pull-request metrics.
 
-## git.commits — Commits
+## git.commits — Commits on any branch
 
 - Source: git (git_metric_observations)
 - Reads: commit_count
 - Formula: sum(commit_count)
 - Shape: integer, higher_is_better, unit commits
-- Notes: Distinct authored commits across connected git sources, excluding merge commits.
+- Notes: Distinct authored commits on any branch across connected git sources, excluding merge commits.
 
-## git.default_branch_commits — Commits that reached the default branch
+## git.default_branch_commits — Commits
 
 - Source: git (git_metric_observations)
 - Reads: default_commit_count
@@ -248,7 +248,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit commits
 - Notes: Authored commits not reachable from the repository's default branch — work in flight, or abandoned. A commit leaves this metric when its branch lands, so a past period's figure falls as work merges. Dated by the commit, not by the merge. A source reporting no branch membership counts here. Merge commits excluded.
 
-## git.code_lines — Code lines added
+## git.code_lines — Code lines added on any branch
 
 - Source: git (git_metric_observations)
 - Reads: code_lines_added
@@ -256,7 +256,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit lines
 - Notes: Lines added to files classified as code — tests, configuration, and documentation excluded. A commit whose diff was never collected has no classification, so its commit-level size stays out. Each change counts once: when the same change content appears in more than one commit, the lines belong to the first such commit.
 
-## git.default_branch_code_lines — Code lines that reached the default branch
+## git.default_branch_code_lines — Code lines added
 
 - Source: git (git_metric_observations)
 - Reads: default_code_lines_added
@@ -272,7 +272,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit lines
 - Notes: Code lines whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges. Dated by the commit, not by the merge. Tests, configuration and documentation excluded.
 
-## git.lines_added — Lines added
+## git.lines_added — Lines added on any branch
 
 - Source: git (git_metric_observations)
 - Reads: lines_added
@@ -280,7 +280,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit lines
 - Notes: Lines added, attributed by file category when file changes are available; a commit whose diff was never collected contributes its commit-level size as Unknown. Each change counts once: when the same change content appears in more than one commit, the lines belong to the first such commit.
 
-## git.default_branch_lines_added — Lines added that reached the default branch
+## git.default_branch_lines_added — Lines added
 
 - Source: git (git_metric_observations)
 - Reads: default_lines_added
@@ -304,7 +304,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: percent, neutral
 - Notes: Lines added to test files divided by lines added to code and test files. Documentation, configuration, and generated files do not affect the percentage. A result near zero can identify changes where tests are not evolving with implementation, but expected levels vary by repository and change type.
 
-## git.lines_removed — Lines removed
+## git.lines_removed — Lines removed on any branch
 
 - Source: git (git_metric_observations)
 - Reads: lines_removed
@@ -312,7 +312,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit lines
 - Notes: Lines removed, attributed by file category when file changes are available; a commit whose diff was never collected contributes its commit-level size as Unknown. Each change counts once: when the same change content appears in more than one commit, the lines belong to the first such commit.
 
-## git.default_branch_lines_removed — Lines removed that reached the default branch
+## git.default_branch_lines_removed — Lines removed
 
 - Source: git (git_metric_observations)
 - Reads: default_lines_removed
@@ -328,15 +328,15 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit lines
 - Notes: Lines removed whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges. Dated by the commit, not by the merge.
 
-## git.prs_created — Pull requests created
+## git.prs_created — Pull requests created into any branch
 
 - Source: git (git_metric_observations)
 - Reads: pr_created
 - Formula: sum(pr_created)
 - Shape: integer, higher_is_better, unit PRs
-- Notes: Pull requests opened, dated by creation.
+- Notes: Pull requests opened into any branch, dated by creation.
 
-## git.default_branch_prs_created — Pull requests created into the default branch
+## git.default_branch_prs_created — Pull requests created
 
 - Source: git (git_metric_observations)
 - Reads: default_pr_created
@@ -352,7 +352,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit PRs
 - Notes: Pull requests opened against something other than the repository's default branch — a release branch, a stacked request, an integration branch. Dated by creation. A request whose destination the source does not report counts here rather than inventing an answer.
 
-## git.prs_merged — Pull requests merged
+## git.prs_merged — Pull requests merged into any branch
 
 - Source: git (git_metric_observations)
 - Reads: pr_merged
@@ -360,7 +360,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit PRs
 - Notes: Authored pull requests that merged, dated by the merge in UTC — so a request counts in the period it landed and can carry commits written in earlier ones. Under a branch-scope breakdown the split says where the request was aimed, not where its commits sit.
 
-## git.default_branch_prs_merged — Pull requests merged into the default branch
+## git.default_branch_prs_merged — Pull requests merged
 
 - Source: git (git_metric_observations)
 - Reads: default_pr_merged
@@ -376,13 +376,21 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit PRs
 - Notes: Pull requests that merged into something other than the repository's default branch, dated by the merge. Their commits do not count as having reached the default branch on this evidence alone. A request counts in the period it merged, so it can carry commits written in earlier ones.
 
-## git.merge_rate — PR merge rate
+## git.merge_rate — PR merge rate into any branch
 
 - Source: git (git_metric_observations)
 - Reads: pr_created_merged, pr_created
 - Formula: 100 * (pr_created_merged / pr_created)
 - Shape: percent, higher_is_better
-- Notes: Of the pull requests created in the period, the share that have merged. Requests opened near the end of the period may not have merged yet, which lowers the rate at period edges.
+- Notes: Of the pull requests created into any branch in the period, the share that have merged. Requests opened near the end of the period may not have merged yet, which lowers the rate at period edges.
+
+## git.default_branch_merge_rate — PR merge rate
+
+- Source: git (git_metric_observations)
+- Reads: default_pr_created_merged, default_pr_created
+- Formula: 100 * (default_pr_created_merged / default_pr_created)
+- Shape: percent, higher_is_better
+- Notes: Of the pull requests created into the default branch in the period, the share that have merged. Requests opened near the end of the period may not have merged yet, which lowers the rate at period edges.
 
 ## git.pr_abandonment_rate — PR abandonment rate
 
@@ -424,7 +432,7 @@ is an order statistic instead, and always answers with one that did.
 - Shape: percent, lower_is_better
 - Notes: Of pull requests merged in the period, the share with no approval reported by the connected source. This can reveal missing approval gates, but source configuration and incomplete review history can also affect it.
 
-## git.active_days — Active commit days
+## git.active_days — Active commit days on any branch
 
 - Source: git (git_metric_observations)
 - Reads: commit_day
@@ -432,13 +440,29 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit days
 - Notes: Distinct calendar days with authored, non-merge commits. Repository breakdowns count active days independently; the total still counts each calendar day once across repositories.
 
-## git.commits_per_active_day — Commits per active day
+## git.default_branch_active_days — Active commit days
+
+- Source: git (git_metric_observations)
+- Reads: default_commit_day
+- Formula: distinct_count(default_commit_day)
+- Shape: integer, neutral, unit days
+- Notes: Distinct calendar days with authored, non-merge commits that reached the default branch. A commit joins when its branch lands, so a past period's figure rises as work merges. Repository breakdowns count active days independently; the total still counts each calendar day once across repositories.
+
+## git.commits_per_active_day — Commits per active day on any branch
 
 - Source: git (git_metric_observations)
 - Reads: commit_count, commit_day
 - Formula: commit_count / distinct_count(commit_day)
 - Shape: decimal, higher_is_better
-- Notes: Commits divided by the number of days with at least one commit.
+- Notes: Commits on any branch divided by the number of days with at least one commit.
+
+## git.default_branch_commits_per_active_day — Commits per active day
+
+- Source: git (git_metric_observations)
+- Reads: default_commit_count, default_commit_day
+- Formula: default_commit_count / distinct_count(default_commit_day)
+- Shape: decimal, higher_is_better
+- Notes: Commits that reached the default branch, divided by the number of days with at least one such commit. A commit joins when its branch lands, so a past period's figure rises as work merges.
 
 ## git.commit_size — Commit size
 
@@ -663,14 +687,6 @@ is an order statistic instead, and always answers with one that did.
 - Formula: 100 * (workday_meeting_hours / working_hours) -> -1*x + 100, clamped to [0, 100]
 - Shape: percent, higher_is_better
 - Notes: Share of the workday not spent in meetings or calls, over the days a person was active: 100 minus meeting hours as a share of scheduled working hours. Meeting time counts up to the working hours of the day and address it was recorded under. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them. Only addresses some meeting source reports on count, so a person no meeting tool knows has no value.
-
-## collab.breadth — Collaboration Breadth
-
-- Source: collab (collab_metric_observations)
-- Reads: active_modality
-- Formula: distinct_count(active_modality)
-- Shape: integer, neutral, unit modalities
-- Notes: Distinct collaboration modalities — chat, meetings, email, documents — a person was deliberately active in during the period.
 
 ## collab.meetings_organized — Meetings Organized
 
