@@ -15,43 +15,42 @@ export interface MetricHelpTooltipProps {
   help: MetricHelpText | null;
   /** The metric's full name, for a surface that shortens or may cut it. */
   name?: string;
-  /** The surface itself becomes the trigger — see the note below. */
+  /** The metric's name as the surface writes it: the trigger. */
   children: ReactElement;
+  /** Waits before opening, for names stacked close enough to sweep across. */
+  delayed?: boolean;
 }
 
-/**
- * What a metric means, on the surface that shows it.
- *
- * The TRIGGER is the whole tile or row rather than a help icon beside the
- * name. A row of five tiles would otherwise grow five more icons — and the
- * tile is already a button, so making it the trigger costs no new tab stop
- * and answers a keyboard reader on focus, which a hover-only badge never
- * does.
- */
+/** What a metric means, on the name that shows it. */
 export function MetricHelpTooltip({
   help,
   name,
   children,
+  delayed = true,
 }: MetricHelpTooltipProps) {
   // Nothing to say ⇒ the surface renders unchanged, with no dead affordance.
   if (!help && !name) return children;
+
+  const tooltip = (
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipContent
+        data-testid="metric-help"
+        side="top"
+        className="flex-col items-start gap-1.5 text-left text-sm leading-relaxed"
+      >
+        {name ? <p className="font-medium">{name}</p> : null}
+        {help?.description ? <p>{help.description}</p> : null}
+        {help?.explanation ? (
+          <p className="text-background/70">{help.explanation}</p>
+        ) : null}
+      </TooltipContent>
+    </Tooltip>
+  );
+
+  if (!delayed) return tooltip;
   return (
-    <TooltipProvider delay={SWEEP_TOOLTIP_DELAY_MS}>
-      <Tooltip>
-        <TooltipTrigger render={children} />
-        <TooltipContent
-          data-testid="metric-help"
-          side="top"
-          className="flex-col items-start gap-1.5 text-left text-sm leading-relaxed"
-        >
-          {name ? <p className="font-medium">{name}</p> : null}
-          {help?.description ? <p>{help.description}</p> : null}
-          {help?.explanation ? (
-            <p className="text-background/70">{help.explanation}</p>
-          ) : null}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <TooltipProvider delay={SWEEP_TOOLTIP_DELAY_MS}>{tooltip}</TooltipProvider>
   );
 }
 
