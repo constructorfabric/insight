@@ -3,7 +3,7 @@ import { useState, type KeyboardEvent } from "react";
 import type { DateRange as DayPickerRange } from "react-day-picker";
 
 import {
-  localToday,
+  latestPickableDay,
   MAX_DATE_RANGE_DAYS,
   resolveDateRange,
   toISODate,
@@ -226,7 +226,7 @@ export function PeriodSelectorBar({
               showOutsideDays={false}
               selected={tempRange}
               onSelect={(r) => setTempRange(r)}
-              disabled={{ after: localToday() }}
+              disabled={{ after: latestPickableDay() }}
               defaultMonth={tempRange?.from}
               numberOfMonths={
                 typeof window !== "undefined" && window.innerWidth < 640 ? 1 : 2

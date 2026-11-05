@@ -155,6 +155,53 @@ describe("the calendar offers no day that has not happened yet", () => {
   });
 });
 
+describe("west of UTC in the evening, the calendar offers the UTC day the page reports on", () => {
+  const suiteZone = process.env.TZ;
+
+  beforeEach(() => {
+    process.env.TZ = "America/New_York";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-16T00:00:00Z")); // local 2026-06-15 20:00
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    process.env.TZ = suiteZone;
+  });
+
+  async function openPickerOnRangeEndingOnTheUtcDay() {
+    render(
+      <PeriodSelectorBar
+        period="week"
+        customRange={null}
+        activeRange={{ from: "2026-06-10", to: "2026-06-16" }}
+        onPeriodChange={vi.fn()}
+        onRangeChange={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByLabelText(/Custom date range/));
+  }
+
+  it.each([
+    { when: "the local day", day: /June 15th, 2026/, enabled: true },
+    { when: "the UTC day", day: /June 16th, 2026/, enabled: true },
+    { when: "the day after the UTC day", day: /June 17th, 2026/, enabled: false },
+  ])("$when is pickable: $enabled", { timeout: 30_000 }, async ({ day, enabled }) => {
+    await openPickerOnRangeEndingOnTheUtcDay();
+
+    const button = await screen.findByRole("button", { name: day });
+
+    if (enabled) expect(button, String(day)).toBeEnabled();
+    else expect(button, String(day)).toBeDisabled();
+  });
+
+  it("lets the seeded range ending on the UTC day be applied", { timeout: 30_000 }, async () => {
+    await openPickerOnRangeEndingOnTheUtcDay();
+
+    expect(await screen.findByRole("button", { name: "Apply" })).toBeEnabled();
+  });
+});
+
 describe("the range label names the window the page reports on", () => {
   it.each([
     { under: "a preset", customRange: null, activeRange: { from: "2026-07-02", to: "2026-07-08" } },

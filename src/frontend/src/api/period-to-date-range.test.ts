@@ -89,6 +89,35 @@ describe("validateDateRange refuses days that have not happened yet", () => {
   });
 });
 
+describe("validateDateRange accepts the UTC day the portal already reports on", () => {
+  const suiteZone = process.env.TZ;
+
+  afterEach(() => {
+    vi.useRealTimers();
+    process.env.TZ = suiteZone;
+  });
+
+  it.each([
+    { zone: "America/New_York", now: "2026-06-16T00:00:00Z", to: "2026-06-16", valid: true },
+    { zone: "America/New_York", now: "2026-06-16T00:00:00Z", to: "2026-06-17", valid: false },
+    { zone: "America/New_York", now: "2026-06-15T12:00:00Z", to: "2026-06-16", valid: false },
+    { zone: "UTC", now: "2026-06-15T23:30:00Z", to: "2026-06-15", valid: true },
+    { zone: "UTC", now: "2026-06-15T23:30:00Z", to: "2026-06-16", valid: false },
+    { zone: "Pacific/Kiritimati", now: "2026-06-15T10:00:00Z", to: "2026-06-16", valid: true },
+    { zone: "Pacific/Kiritimati", now: "2026-06-15T10:00:00Z", to: "2026-06-17", valid: false },
+  ])("in $zone at $now a range ending $to is valid: $valid", ({ zone, now, to, valid }) => {
+    process.env.TZ = zone;
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(now));
+
+    const range = { from: "2026-06-10", to };
+    const validation = validateDateRange(range);
+
+    expect(validation.valid, `${zone} at ${now}: ${JSON.stringify(range)}`).toBe(valid);
+    if (!validation.valid) expect(validation.reason).toBe("future");
+  });
+});
+
 describe("resolveDateRange", () => {
   it("prefers a valid custom range over the period", () => {
     expect(
