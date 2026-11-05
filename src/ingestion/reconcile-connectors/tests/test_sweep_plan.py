@@ -251,7 +251,14 @@ class TestRowClassColumns:
         sync = row()
         snapshot = plan.plan_snapshot([INSTANCE], TICK)[0]
         seal = plan.plan_seal(TICK)
-        assert set(snapshot) == set(sync) | {"schedules", "schedule_timezone", "schedule_origin", "schedule_suspended"}
+        assert set(snapshot) == set(sync) | {
+            "schedules",
+            "schedule_timezone",
+            "schedule_origin",
+            "schedule_suspended",
+            "inherited_schedules",
+            "inherited_schedule_origin",
+        }
         assert set(seal) == set(sync)
         assert snapshot["schedules"] == []
         assert snapshot["schedule_timezone"] == ""

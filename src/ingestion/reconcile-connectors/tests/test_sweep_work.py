@@ -80,6 +80,8 @@ def build_work(
     disc_load_instances() {{ {loader}; }}
     reconcile_compute_tenant() {{ printf 'default'; }}
     reconcile_compute_connection_name() {{ printf '%s-%s-default-conn' "$1" "$2"; }}
+    reconcile_resolve_inherited_schedule() {{ printf 'descriptor\\n0 2 * * *'; }}
+    connector_schedules_lookup() {{ return 0; }}
     sweep__build_work "tick-1" {json.dumps(CONNECTIONS)}
     """
     return subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
@@ -91,6 +93,20 @@ def ledger_rows(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
 
     def urlopen(request: urllib.request.Request, timeout: int) -> io.BytesIO:
         query = parse_qs(urlsplit(request.full_url).query).get("query", [""])[0]
+        if request.data and request.data.decode().startswith(
+            "SELECT connector, tenant_id, source_id, inherited_schedules"
+        ):
+            configured = [row for row in rows if row["event"] == "connector.configured"]
+            previous = configured[-1:] or [
+                {
+                    "connector": "alpha",
+                    "tenant_id": "default",
+                    "source_id": "main",
+                    "inherited_schedules": ["0 1 * * *"],
+                    "inherited_schedule_origin": "annotation",
+                }
+            ]
+            return io.BytesIO("\n".join(json.dumps(row) for row in previous).encode())
         if query.startswith("INSERT INTO ingestion_history.sync_events "):
             assert request.data is not None
             rows.extend(json.loads(line) for line in request.data.decode().splitlines())
@@ -337,3 +353,36 @@ class TestEveryInstanceIsItsOwnRow:
         work = json.loads(result.stdout)
         reported = {(c["name"], c["source_id"], c.get("connection_id")) for c in work["connectors"]}
         assert reported == {("alpha", "main", "conn-alpha"), ("alpha", "second", "conn-alpha-second")}
+
+
+def test_a_shadowed_change_is_warned_and_recorded_before_the_next_pass(
+    ledger_rows: list[dict[str, object]], caplog: pytest.LogCaptureFixture
+) -> None:
+    work = {
+        "tick_id": "tick-changed",
+        "connectors": [
+            {
+                "name": "alpha",
+                "tenant_id": "default",
+                "source_id": "main",
+                "schedules": ["0 6 * * *"],
+                "schedule_origin": "api",
+                "schedule_timezone": "UTC",
+                "schedule_requested": True,
+                "inherited_schedules": ["0 2 * * *"],
+                "inherited_schedule_origin": "annotation",
+            }
+        ],
+    }
+    assert run(io.StringIO(json.dumps(work))) == 0
+    work["tick_id"] = "tick-unchanged"
+    assert run(io.StringIO(json.dumps(work))) == 0
+    warnings = [record.message for record in caplog.records if "deployment schedule changed" in record.message]
+    assert len(warnings) == 1
+    assert "alpha/default/main" in warnings[0]
+    assert "0 1 * * *" in warnings[0]
+    assert "0 2 * * *" in warnings[0]
+    assert [row["inherited_schedules"] for row in ledger_rows if row["event"] == "connector.configured"] == [
+        ["0 2 * * *"],
+        ["0 2 * * *"],
+    ]

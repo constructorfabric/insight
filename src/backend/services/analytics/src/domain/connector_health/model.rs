@@ -221,6 +221,28 @@ pub struct AppliedSchedule {
     pub origin: Option<ScheduleOrigin>,
     /// Whether the recorded `CronWorkflow` is suspended.
     pub suspended: bool,
+    pub(crate) inherited: Option<InheritedSchedule>,
+}
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub(crate) struct InheritedSchedule {
+    pub crons: Vec<String>,
+    pub origin: ScheduleOrigin,
+}
+
+impl InheritedSchedule {
+    pub(crate) fn from_record(crons: Vec<String>, origin: &str) -> Option<Self> {
+        if crons.is_empty() {
+            return None;
+        }
+        let origin = match origin {
+            "annotation" => ScheduleOrigin::Annotation,
+            "descriptor" => ScheduleOrigin::Descriptor,
+            "default" => ScheduleOrigin::Default,
+            _ => return None,
+        };
+        Some(Self { crons, origin })
+    }
 }
 
 impl AppliedSchedule {
@@ -246,6 +268,7 @@ impl AppliedSchedule {
             timezone: label(timezone),
             origin,
             suspended,
+            inherited: None,
         })
     }
 }

@@ -136,6 +136,8 @@ pub(super) struct ConfiguredInstanceRecord {
     pub schedule_timezone: String,
     pub schedule_origin: String,
     pub schedule_suspended: bool,
+    pub inherited_schedules: Vec<String>,
+    pub inherited_schedule_origin: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
     pub pass_completed_at: DateTime<Utc>,
 }
@@ -146,6 +148,8 @@ pub(super) fn configured_instance_record() -> ConfiguredInstanceRecord {
         schedule_timezone: "UTC".to_owned(),
         schedule_origin: "api".to_owned(),
         schedule_suspended: true,
+        inherited_schedules: vec!["0 2 * * *".to_owned()],
+        inherited_schedule_origin: "descriptor".to_owned(),
         pass_completed_at: DateTime::UNIX_EPOCH,
     }
 }

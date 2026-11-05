@@ -29,17 +29,20 @@ pub(super) async fn configured_siblings_keep_their_own_schedules(
     )
     .await;
 
+    ch.query("ALTER TABLE ingestion_history.sync_events UPDATE inherited_schedules = ['0 5 * * *'], inherited_schedule_origin = 'annotation' WHERE source_id = 'main' SETTINGS mutations_sync = 1")
+        .execute().await.expect("record deployment schedule");
+
     let facts = read_health(ch).await.expect("read sibling schedules");
 
     assert_eq!(facts.summaries.len(), 2);
     for (source, expected) in [
         (
             "main",
-            serde_json::json!({"crons": ["0 5 * * *"], "timezone": "UTC", "origin": "annotation", "suspended": true}),
+            serde_json::json!({"crons": ["0 5 * * *"], "timezone": "UTC", "origin": "annotation", "suspended": true, "inherited": {"crons": ["0 5 * * *"], "origin": "annotation"}}),
         ),
         (
             "second",
-            serde_json::json!({"crons": ["0 17 * * *"], "timezone": "Europe/Berlin", "origin": "descriptor", "suspended": false}),
+            serde_json::json!({"crons": ["0 17 * * *"], "timezone": "Europe/Berlin", "origin": "descriptor", "suspended": false, "inherited": null}),
         ),
     ] {
         let summary = facts
@@ -91,7 +94,7 @@ pub(super) async fn the_newest_sealed_tick_supplies_the_schedule(
     assert!(summary.configured);
     assert_eq!(
         serde_json::to_value(&summary.schedule).expect("serialisable schedule"),
-        serde_json::json!({"crons": ["0 17 * * *"], "timezone": "UTC", "origin": "descriptor", "suspended": true})
+        serde_json::json!({"crons": ["0 17 * * *"], "timezone": "UTC", "origin": "descriptor", "suspended": true, "inherited": null})
     );
 }
 

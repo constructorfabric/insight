@@ -168,7 +168,7 @@ static LAST_SYNC_SQL: LazyLock<String> = LazyLock::new(|| {
 /// The set the controller managed on one sealed tick.
 static CONFIGURED_SET_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "SELECT DISTINCT {INSTANCE_COLUMNS}, schedules, schedule_timezone, schedule_origin, schedule_suspended \
+        "SELECT DISTINCT {INSTANCE_COLUMNS}, schedules, schedule_timezone, schedule_origin, schedule_suspended, inherited_schedules, inherited_schedule_origin \
          FROM {TABLE} \
          WHERE event = '{CONNECTOR_CONFIGURED}' AND tick_id = ?"
     )
@@ -281,6 +281,8 @@ struct ConnectorRow {
     schedule_timezone: String,
     schedule_origin: String,
     schedule_suspended: bool,
+    inherited_schedules: Vec<String>,
+    inherited_schedule_origin: String,
 }
 
 impl ConnectorRow {
@@ -295,7 +297,14 @@ impl ConnectorRow {
             self.schedule_timezone,
             &self.schedule_origin,
             self.schedule_suspended,
-        );
+        )
+        .map(|mut schedule| {
+            schedule.inherited = super::model::InheritedSchedule::from_record(
+                self.inherited_schedules,
+                &self.inherited_schedule_origin,
+            );
+            schedule
+        });
         (key, schedule)
     }
 }
@@ -530,13 +539,15 @@ mod guards {
             "schedule_timezone",
             "schedule_origin",
             "schedule_suspended",
+            "inherited_schedules",
+            "inherited_schedule_origin",
         ] {
             assert!(
                 columns.iter().any(|c| c == expected),
                 "missing {expected}: {columns:?}"
             );
         }
-        assert_eq!(columns.len(), 17, "{columns:?}");
+        assert_eq!(columns.len(), 19, "{columns:?}");
     }
 
     /// The summary answers one row per instance, so every one of the three
@@ -659,6 +670,8 @@ mod guards {
                 schedule_timezone: timezone.to_owned(),
                 schedule_origin: origin.to_owned(),
                 schedule_suspended: suspended,
+                inherited_schedules: vec![],
+                inherited_schedule_origin: String::new(),
             }
             .into_entry()
         });
@@ -680,11 +693,11 @@ mod guards {
         for (source, expected) in [
             (
                 "main",
-                serde_json::json!({"crons": ["0 5 * * *"], "timezone": "UTC", "origin": "annotation", "suspended": true}),
+                serde_json::json!({"crons": ["0 5 * * *"], "timezone": "UTC", "origin": "annotation", "suspended": true, "inherited": null}),
             ),
             (
                 "second",
-                serde_json::json!({"crons": ["0 17 * * *"], "timezone": "Europe/Berlin", "origin": "descriptor", "suspended": false}),
+                serde_json::json!({"crons": ["0 17 * * *"], "timezone": "Europe/Berlin", "origin": "descriptor", "suspended": false, "inherited": null}),
             ),
         ] {
             let summary = summaries
@@ -708,6 +721,8 @@ mod guards {
             schedule_timezone: "Europe/Sofia".to_owned(),
             schedule_origin: "annotation".to_owned(),
             schedule_suspended: true,
+            inherited_schedules: vec![],
+            inherited_schedule_origin: String::new(),
         }
         .into_entry();
         let syncs = ["main", "removed"].map(|source| SyncRow {
@@ -822,5 +837,41 @@ mod guards {
         let sql = normalised(&CONFIGURED_SET_SQL);
         assert!(sql.contains("tick_id = ?"), "{sql}");
         assert!(!sql.contains("limit "), "{sql}");
+    }
+}
+
+#[cfg(test)]
+mod inheritance_tests {
+    use super::*;
+
+    #[test]
+    fn health_serves_the_configured_instances_inheritance_or_null()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for origin in ["annotation", "descriptor", "default", ""] {
+            let row = ConnectorRow {
+                connector: "example-connector".to_owned(),
+                tenant_id: "example-tenant".to_owned(),
+                source_id: "main".to_owned(),
+                schedules: vec!["0 6 * * *".to_owned()],
+                schedule_timezone: "UTC".to_owned(),
+                schedule_origin: "api".to_owned(),
+                schedule_suspended: false,
+                inherited_schedules: if origin.is_empty() {
+                    vec![]
+                } else {
+                    vec!["0 2 * * *".to_owned()]
+                },
+                inherited_schedule_origin: origin.to_owned(),
+            };
+            let (_, schedule) = row.into_entry();
+            let json = serde_json::to_value(schedule)?;
+            let expected = if origin.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!({"crons": ["0 2 * * *"], "origin": origin})
+            };
+            assert_eq!(json["inherited"], expected, "{origin:?}");
+        }
+        Ok(())
     }
 }

@@ -85,6 +85,7 @@ def _clustered() -> Ledger:
 #: added without a line here is a request the cluster settings may not reach.
 STATEMENTS: list[tuple[str, Callable[[Ledger], object]]] = [
     ("watermark", lambda ledger: ledger.watermark()),
+    ("inherited_schedules", lambda sync_history: sync_history.inherited_schedules()),
     ("closed_job_ids", lambda ledger: ledger.closed_job_ids("2026-08-27 08:00:00.000")),
     ("abandoned_jobs", lambda ledger: ledger.abandoned_jobs("2026-08-27 08:00:00.000")),
     ("unidentified_connectors", lambda ledger: ledger.unidentified_connectors()),

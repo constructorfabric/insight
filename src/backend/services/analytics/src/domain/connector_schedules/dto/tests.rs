@@ -86,6 +86,7 @@ fn status_compares_origin_and_ordered_whitespace_normalized_crons() {
             timezone: Some("UTC".to_owned()),
             origin: origin.to_owned(),
             suspended: true,
+            inherited: None,
             recorded_at: DateTime::UNIX_EPOCH,
         });
         let requested = requested.then_some(crons.as_slice());
@@ -105,6 +106,7 @@ fn recorded_schedule_serializes_the_observed_timezone() -> Result<(), Box<dyn st
             timezone: timezone.map(str::to_owned),
             origin: "api".to_owned(),
             suspended: false,
+            inherited: None,
             recorded_at: DateTime::UNIX_EPOCH,
         };
         let json = serde_json::to_value(schedule)?;
@@ -168,6 +170,7 @@ fn completed_passes_never_turn_applied_or_inherited_into_not_applied() {
             }
             .to_owned(),
             suspended: false,
+            inherited: None,
             recorded_at: completed_passes[0],
         };
         let (status, since) = observed_status(Some(&requested), Some(&applied), &completed_passes);

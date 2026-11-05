@@ -224,6 +224,10 @@ async fn get_without_a_stored_row_returns_revision_zero_and_recorded_snapshot() 
     assert_eq!(json["applied"]["timezone"], "UTC");
     assert_eq!(json["applied"]["suspended"], true);
     assert_eq!(json["applied"]["recorded_at"], "1970-01-01T00:00:00Z");
+    assert_eq!(
+        json["applied"]["inherited"],
+        json!({"crons": ["0 2 * * *"], "origin": "descriptor"})
+    );
     assert_eq!(json["status"], "pending");
     assert_eq!(json["reconcile_schedules"], json!(["*/15 * * * *"]));
     assert_eq!(json["min_interval_minutes"], 30);

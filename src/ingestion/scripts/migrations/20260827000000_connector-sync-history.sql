@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS ingestion_history.sync_events (
     schedules          Array(String) DEFAULT [],
     schedule_timezone  LowCardinality(String) DEFAULT '',
     schedule_origin    LowCardinality(String) DEFAULT '',
-    schedule_suspended Bool DEFAULT false
+    schedule_suspended Bool DEFAULT false,
+    inherited_schedules Array(String) DEFAULT [],
+    inherited_schedule_origin LowCardinality(String) DEFAULT ''
 ) ENGINE = /*@@REPLICATED@@*/MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (event, connector, ts, event_id)
@@ -73,3 +75,9 @@ ALTER TABLE ingestion_history.sync_events
 
 ALTER TABLE ingestion_history.sync_events
     ADD COLUMN IF NOT EXISTS schedule_suspended Bool DEFAULT false AFTER schedule_origin;
+
+ALTER TABLE ingestion_history.sync_events
+    ADD COLUMN IF NOT EXISTS inherited_schedules Array(String) DEFAULT [] AFTER schedule_suspended;
+
+ALTER TABLE ingestion_history.sync_events
+    ADD COLUMN IF NOT EXISTS inherited_schedule_origin LowCardinality(String) DEFAULT '' AFTER inherited_schedules;

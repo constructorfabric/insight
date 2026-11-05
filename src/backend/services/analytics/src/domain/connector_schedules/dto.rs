@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::domain::connector_health::InheritedSchedule;
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ScheduleRequest {
@@ -22,6 +24,7 @@ pub(crate) struct RecordedSchedule {
     pub timezone: Option<String>,
     pub origin: String,
     pub suspended: bool,
+    pub inherited: Option<InheritedSchedule>,
     pub recorded_at: DateTime<Utc>,
 }
 

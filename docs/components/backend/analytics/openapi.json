@@ -70,6 +70,16 @@
             "minItems": 1,
             "type": "array"
           },
+          "inherited": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InheritedSchedule"
+              }
+            ]
+          },
           "origin": {
             "oneOf": [
               {
@@ -941,6 +951,24 @@
           "bucket",
           "key",
           "rows"
+        ],
+        "type": "object"
+      },
+      "InheritedSchedule": {
+        "properties": {
+          "crons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ScheduleOrigin"
+          }
+        },
+        "required": [
+          "crons",
+          "origin"
         ],
         "type": "object"
       },
@@ -2574,6 +2602,16 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "inherited": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InheritedSchedule"
+              }
+            ]
           },
           "origin": {
             "type": "string"

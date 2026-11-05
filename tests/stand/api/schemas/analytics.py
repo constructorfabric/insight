@@ -768,17 +768,6 @@ class ReconcileSchedule(BaseModel):
     source_id: str
 
 
-class RecordedSchedule(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    crons: list[str]
-    origin: str
-    recorded_at: UnzonedDatetime
-    suspended: bool
-    timezone: str | None = None
-
-
 class ReportCell(RootModel[str | float]):
     root: str | float
 
@@ -1156,16 +1145,6 @@ class ValueTransform(BaseModel):
     offset: float | None = None
 
 
-class AppliedSchedule(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    crons: list[str] = Field(..., description="The non-empty list recorded from the instance's `CronWorkflow`.", min_length=1)
-    origin: ScheduleOrigin | None = None
-    suspended: bool = Field(..., description='Whether the recorded `CronWorkflow` is suspended.')
-    timezone: str | None = Field(None, description="Absent when the `CronWorkflow` uses the Argo controller's timezone.")
-
-
 class BreakdownValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1255,6 +1234,14 @@ class IngestionIntensityResponse(BaseModel):
     series: Series
     to: str
     truncated: bool = Field(..., description='The group cap clipped the tail: the window is too wide for this grain\nand series to plot honestly. Never silently true — the UI says so.')
+
+
+class InheritedSchedule(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str]
+    origin: ScheduleOrigin
 
 
 class MetricDefinitionView(BaseModel):
@@ -1438,6 +1425,18 @@ class ReconcileResponse(BaseModel):
     version: int = Field(..., ge=0)
 
 
+class RecordedSchedule(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str]
+    inherited: InheritedSchedule | None = None
+    origin: str
+    recorded_at: UnzonedDatetime
+    suspended: bool
+    timezone: str | None = None
+
+
 class ReportExportRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1545,6 +1544,17 @@ class UsageSummaryResponse(BaseModel):
     since: str
     totals: UsageTotals
     until: str
+
+
+class AppliedSchedule(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str] = Field(..., description="The non-empty list recorded from the instance's `CronWorkflow`.", min_length=1)
+    inherited: InheritedSchedule | None = None
+    origin: ScheduleOrigin | None = None
+    suspended: bool = Field(..., description='Whether the recorded `CronWorkflow` is suspended.')
+    timezone: str | None = Field(None, description="Absent when the `CronWorkflow` uses the Argo controller's timezone.")
 
 
 class ConnectorHealth(BaseModel):

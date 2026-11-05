@@ -351,6 +351,21 @@ class Ledger:
         self._post(payload.encode(), query=f"INSERT INTO {TABLE} FORMAT JSONEachRow")
         return payload.count("\n") + 1
 
+    def inherited_schedules(self) -> dict[Instance, tuple[tuple[str, ...], str]]:
+        rows = self._select(
+            "SELECT connector, tenant_id, source_id, inherited_schedules, inherited_schedule_origin "
+            f"FROM {TABLE} WHERE event = 'connector.configured' AND tick_id = "
+            f"(SELECT tick_id FROM {TABLE} WHERE event = 'sweep.completed' ORDER BY ts DESC LIMIT 1) "
+            "ORDER BY ts DESC LIMIT 1 BY connector, tenant_id, source_id"
+        )
+        return {
+            Instance(row["connector"], row["tenant_id"], row["source_id"]): (
+                tuple(row["inherited_schedules"]),
+                row["inherited_schedule_origin"],
+            )
+            for row in rows
+        }
+
 
 def _cluster_from_env(source: Mapping[str, str]) -> str | None:
     """The cluster the reconcile loop was handed, or None for a single node.

@@ -142,7 +142,7 @@ sweep__build_work() {
   local entries=() shipped=()
   local name connector_dir version type cdk_image dbt_select ns_format
   local source_id secret_name cfg_hash conn_name conn_id tenant
-  local cron_name applied_schedule
+  local cron_name applied_schedule inherited inherited_origin inherited_crons requested
   local seen_descriptor=""
   # Re-delimited on US for the same reason reconcile_run does it: TAB is
   # IFS-whitespace, so the plan's empty fields would collapse and shift.
@@ -182,9 +182,17 @@ sweep__build_work() {
       log_line WARN "sweep: no CronWorkflow read for ${name}/${source_id}; recording empty schedule fields" >&2
       applied_schedule='{"schedules":[],"schedule_timezone":"","schedule_origin":"","schedule_suspended":false}'
     fi
+    inherited="$(reconcile_resolve_inherited_schedule "${name}" "${secret_name}")" || return 1
+    inherited_origin="${inherited%%$'\n'*}"
+    inherited_crons="${inherited#*$'\n'}"
+    requested="$(connector_schedules_lookup "${name}" "${source_id}")"
     entries+=("$(jq -cn --arg n "${name}" --arg t "${tenant}" \
+      --arg inherited_origin "${inherited_origin}" --arg inherited_crons "${inherited_crons}" \
+      --arg requested "${requested}" \
       --arg s "${source_id}" --arg c "${conn_id}" --argjson schedule "${applied_schedule}" \
       '{name: $n, tenant_id: $t, source_id: $s} + $schedule +
+       {inherited_schedules: ($inherited_crons | split("\n")),
+        inherited_schedule_origin: $inherited_origin, schedule_requested: ($requested != "")} +
        (if $c != "" then {connection_id: $c} else {} end)')")
   done < <(printf '%s\n' "${plan_tsv}" | tr '\t' '\037')
 

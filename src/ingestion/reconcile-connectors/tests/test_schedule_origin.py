@@ -22,6 +22,8 @@ def test_recorded_suspension_crosses_into_the_ledger(suspended: bool) -> None:
         "schedule_timezone": "UTC",
         "schedule_origin": "annotation",
         "schedule_suspended": suspended,
+        "inherited_schedules": [],
+        "inherited_schedule_origin": "",
     }
     assert read_schedule(work).row_fields() == work
 

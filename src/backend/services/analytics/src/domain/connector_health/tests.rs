@@ -266,6 +266,7 @@ fn the_summary_carries_the_recorded_applied_schedule() {
             "timezone": "Europe/Sofia",
             "origin": "annotation",
             "suspended": true,
+            "inherited": null,
         })
     );
 }

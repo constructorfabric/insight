@@ -29,6 +29,7 @@ from typing import Any, NamedTuple
 import insight_logging
 
 from . import heal, plan
+from .inherited import warn_shadowed_changes
 from .ledger import Ledger, LedgerError
 from .mover import Mover, MoverError
 from .schedule import AppliedSchedule, read_schedule
@@ -274,6 +275,8 @@ def run(stream: Any) -> int:
 
     try:
         schedules = {c.instance: c.schedule for c in connectors}
+        if any(schedule.requested for schedule in schedules.values()):
+            warn_shadowed_changes(schedules, ledger.inherited_schedules())
         written += ledger.insert(plan.plan_snapshot(configured, tick_id, schedules))
         written += ledger.insert([plan.plan_seal(tick_id)])
     except LedgerError as error:

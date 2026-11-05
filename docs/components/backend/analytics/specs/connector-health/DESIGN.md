@@ -734,6 +734,39 @@ read applies no CronWorkflow in that run, so every schedule stays as it is. Remo
 CronWorkflows of instances that are gone, and all other reconciliation work, still runs, and
 the run reports failure. Sweep records the applied result for a later health read.
 
+#### Schedule request durability
+
+Requests live in analytics' MariaDB `connector_schedules` table and survive
+redeploys and restarts. Reconcile reapplies them every pass: a removed or
+re-rendered connector CronWorkflow returns to the requested schedule within one
+successful current pass. Deploying onto an empty database loses the requests;
+recovering them requires restoring a database backup.
+
+Turning the schedule API switch off keeps requests and uses deployment schedules;
+turning it on reapplies the requests. An older toolbox image without the API read
+writes the Secret annotation schedule (or its descriptor/default fallback) until
+the next current pass restores the request.
+
+| Priority | Schedule source |
+|---|---|
+| 1 | Admin request stored in analytics |
+| 2 | Secret annotation `insight.cyberfabric.com/schedule` |
+| 3 | Connector `descriptor.yaml` `schedule` |
+| 4 | Default, `0 0 * * *` UTC |
+
+The deployment schedule is annotation, else descriptor, else default. Each
+`connector.configured` row in the sync history table
+(`ingestion_history.sync_events`) records that inherited schedule and its origin
+alongside the applied schedule. Without a request the two schedules agree.
+Older rows without inherited fields serve `inherited: null`. Both API views read
+these fields from the same configured-instance record selected by the latest
+pass-completion record (`sweep.completed`).
+
+When an active request shadows a deployment schedule changed since the previous
+completed pass, reconcile warns once for that change, naming the instance and the
+previous and new deployment schedules. An unchanged next pass does not warn
+again. Clearing the request restores that deployment schedule on the next pass.
+
 #### Sweep tick
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-seq-sweep-tick`
@@ -862,6 +895,8 @@ customer extracts, which must never carry service rows.
 | `schedule_timezone` | `LowCardinality(String) DEFAULT ''` | on configured rows, the live CronWorkflow's `spec.timezone`; empty otherwise or when absent, unreadable or missing |
 | `schedule_origin` | `LowCardinality(String) DEFAULT ''` | on configured rows, the live CronWorkflow's `insight.cyberfabric.com/schedule-origin` annotation; empty otherwise or when absent, unreadable or missing |
 | `schedule_suspended` | `Bool DEFAULT false` | on configured rows, the live CronWorkflow's `spec.suspend`; false otherwise or when absent, unreadable or missing |
+| `inherited_schedules` | `Array(String) DEFAULT []` | on the `connector.configured` row, the deployment schedule; empty when unrecorded |
+| `inherited_schedule_origin` | `LowCardinality(String) DEFAULT ''` | annotation, descriptor or default for the deployment schedule; empty when unrecorded |
 
 `ENGINE = /*@@REPLICATED@@*/MergeTree` (`MergeTree` on a single node, `ReplicatedMergeTree` on a
 cluster), `PARTITION BY toYYYYMM(ts)`,

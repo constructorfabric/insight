@@ -89,7 +89,6 @@ reconcile_compute_schedule() {
 reconcile_resolve_schedule() {
   local connector="$1"
   local secret_name="${2:-}"
-  local namespace="${INSIGHT_NAMESPACE}"
   local source_id="${3-}"
   local schedule
   if [[ "${_CONNECTOR_SCHEDULES_STATUS-}" == "ok" ]]; then
@@ -97,6 +96,14 @@ reconcile_resolve_schedule() {
     schedule="$(connector_schedules_lookup "${connector}" "${source_id}")"
     [[ -z "${schedule}" ]] || { printf '%s' "${schedule}"; return 0; }
   fi
+  reconcile_resolve_inherited_schedule "${connector}" "${secret_name}"
+}
+
+reconcile_resolve_inherited_schedule() {
+  local connector="$1"
+  local secret_name="$2"
+  local namespace="${INSIGHT_NAMESPACE}"
+  local schedule
   [[ -n "${secret_name}" ]] || \
     secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
   if [[ -n "${secret_name}" ]]; then

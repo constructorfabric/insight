@@ -103,6 +103,12 @@ pub(in crate::domain) async fn schedules_follow_the_latest_completed_tick(
     .execute()
     .await?;
 
+    ch.query(
+        "ALTER TABLE ingestion_history.sync_events UPDATE inherited_schedules = ['0 2 * * *'], \
+         inherited_schedule_origin = 'annotation' WHERE tick_id = 'tick-completed' AND source_id = 'main' \
+         SETTINGS mutations_sync = 1",
+    ).execute().await?;
+
     for (source, crons, origin, suspended) in [
         ("main", &["0 5 * * *", "0 17 * * *"][..], "api", true),
         ("second", &["0 7 * * *"][..], "annotation", false),
@@ -118,6 +124,7 @@ pub(in crate::domain) async fn schedules_follow_the_latest_completed_tick(
             "{source}"
         );
         assert_eq!(schedule.suspended, suspended, "{source}");
+        assert_inherited_schedule(&schedule, source)?;
         assert_eq!(
             schedule.recorded_at.timestamp_millis(),
             pass_completed_ms,
@@ -143,5 +150,20 @@ pub(in crate::domain) async fn schedules_follow_the_latest_completed_tick(
     ch.query("TRUNCATE TABLE ingestion_history.sync_events")
         .execute()
         .await?;
+    Ok(())
+}
+
+fn assert_inherited_schedule(schedule: &super::dto::RecordedSchedule, source: &str) -> R {
+    let inherited = serde_json::to_value(&schedule.inherited)?;
+    assert_eq!(
+        inherited,
+        if source == "main" {
+            serde_json::json!({"crons": ["0 2 * * *"], "origin": "annotation"})
+        } else {
+            serde_json::Value::Null
+        },
+        "{source}"
+    );
+
     Ok(())
 }

@@ -416,7 +416,7 @@ class TestSweptRowsLandAndResolve:
             _apply_migration(MIGRATIONS / "20260827000000_connector-sync-history.sql")
 
             rows = _rows(
-                f"SELECT connector, tenant_id, source_id, schedules, schedule_timezone, schedule_origin, schedule_suspended "
+                f"SELECT connector, tenant_id, source_id, schedules, schedule_timezone, schedule_origin, schedule_suspended, inherited_schedules, inherited_schedule_origin "
                 f"FROM {TABLE} WHERE event = 'connector.configured'"
             )
             assert rows == [
@@ -428,6 +428,8 @@ class TestSweptRowsLandAndResolve:
                     "schedule_timezone": "",
                     "schedule_origin": "",
                     "schedule_suspended": False,
+                    "inherited_schedules": [],
+                    "inherited_schedule_origin": "",
                 }
             ]
         finally:
@@ -492,6 +494,8 @@ class TestSweptRowsLandAndResolve:
             "schedule_timezone": "UTC",
             "schedule_origin": "annotation",
             "schedule_suspended": suspended,
+            "inherited_schedules": ["0 5 * * *"],
+            "inherited_schedule_origin": "annotation",
         }
         work = {
             "tick_id": "tick-schedule",
@@ -503,7 +507,7 @@ class TestSweptRowsLandAndResolve:
             assert self.entry.run(io.StringIO(json.dumps(work))) == 0
 
         rows = _rows(
-            f"SELECT schedules, schedule_timezone, schedule_origin, schedule_suspended "
+            f"SELECT schedules, schedule_timezone, schedule_origin, schedule_suspended, inherited_schedules, inherited_schedule_origin "
             f"FROM {TABLE} WHERE event = 'connector.configured'"
         )
         assert rows == [schedule]
