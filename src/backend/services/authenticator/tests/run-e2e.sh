@@ -283,6 +283,7 @@ AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
 
 echo "==> run the MCP OAuth lifecycle"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
+E2E_REDIS_URL=redis://localhost:6399 \
   cargo test --release -p authenticator --test e2e_mcp_oauth -- --ignored --nocapture
 
 echo "==> run the refresh rotation-with-grace loop (step 10.1)"

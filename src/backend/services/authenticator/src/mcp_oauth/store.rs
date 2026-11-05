@@ -14,17 +14,32 @@ redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
 return 1
 ";
 
-const PUT_CLIENT_LUA: &str = r"
-redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[3])
-if redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[5]) then
+const ACTIVATE_CLIENT_LUA: &str = r"
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[1])
+if redis.call('EXISTS', KEYS[1]) == 0 then
   return 0
 end
-redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
-redis.call('ZADD', KEYS[2], ARGV[4], ARGV[6])
+local counted = redis.call('ZSCORE', KEYS[2], ARGV[4])
+if not counted and redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[3]) then
+  return 2
+end
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+redis.call('ZADD', KEYS[2], ARGV[5], ARGV[4])
 return 1
 ";
 
-const CLIENT_INDEX_KEY: &str = "{mcp_oauth}:clients";
+const ACTIVE_CAPACITY_LUA: &str = r"
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+if redis.call('ZSCORE', KEYS[1], ARGV[2]) then
+  return 1
+end
+if redis.call('ZCARD', KEYS[1]) < tonumber(ARGV[3]) then
+  return 1
+end
+return 0
+";
+
+const CLIENT_INDEX_KEY: &str = "{mcp_oauth}:v2:clients";
 
 #[derive(Debug, thiserror::Error)]
 pub enum McpOAuthStoreError {
@@ -34,6 +49,8 @@ pub enum McpOAuthStoreError {
     Serialization(#[from] serde_json::Error),
     #[error("MCP OAuth client registration quota exhausted")]
     ClientQuotaExceeded,
+    #[error("MCP OAuth client registration expired")]
+    ClientExpired,
 }
 
 #[derive(Clone)]
@@ -55,28 +72,56 @@ impl McpOAuthStore {
         &self,
         client: &RegisteredClient,
         ttl_seconds: u64,
+    ) -> Result<(), McpOAuthStoreError> {
+        self.set_json_ex(client_key(&client.client_id), client, ttl_seconds)
+            .await
+    }
+
+    pub async fn activate_client(
+        &self,
+        client_id: &str,
+        ttl_seconds: u64,
         max_clients: u64,
         now: u64,
     ) -> Result<(), McpOAuthStoreError> {
         let mut conn = self.conn.clone();
-        let value = serde_json::to_string(client)?;
         let expires_at = now.saturating_add(ttl_seconds);
-        let stored: i64 = redis::Script::new(PUT_CLIENT_LUA)
-            .key(client_key(&client.client_id))
+        let outcome: i64 = redis::Script::new(ACTIVATE_CLIENT_LUA)
+            .key(client_key(client_id))
             .key(CLIENT_INDEX_KEY)
-            .arg(value)
-            .arg(ttl_seconds)
             .arg(now)
-            .arg(expires_at)
+            .arg(ttl_seconds)
             .arg(max_clients)
-            .arg(&client.client_id)
+            .arg(client_id)
+            .arg(expires_at)
             .invoke_async(&mut conn)
             .await?;
-        if stored == 1 {
-            Ok(())
-        } else {
-            Err(McpOAuthStoreError::ClientQuotaExceeded)
+        match outcome {
+            1 => Ok(()),
+            0 => Err(McpOAuthStoreError::ClientExpired),
+            2 => Err(McpOAuthStoreError::ClientQuotaExceeded),
+            _ => Err(McpOAuthStoreError::Redis(redis::RedisError::from((
+                redis::ErrorKind::UnexpectedReturnType,
+                "unexpected ACTIVATE_CLIENT_LUA result",
+            )))),
         }
+    }
+
+    pub async fn active_capacity_for(
+        &self,
+        client_id: &str,
+        max_clients: u64,
+        now: u64,
+    ) -> Result<bool, McpOAuthStoreError> {
+        let mut conn = self.conn.clone();
+        let admitted: i64 = redis::Script::new(ACTIVE_CAPACITY_LUA)
+            .key(CLIENT_INDEX_KEY)
+            .arg(now)
+            .arg(client_id)
+            .arg(max_clients)
+            .invoke_async(&mut conn)
+            .await?;
+        Ok(admitted == 1)
     }
 
     pub async fn client(
