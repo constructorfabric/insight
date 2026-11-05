@@ -11,23 +11,9 @@ import { quantile } from "@/lib/insight/within-team-peer";
  * active scope, never the whole org implicitly.
  */
 
-/** Representative period value: total for sums, median across people otherwise. */
-export function representative(
-  r: NormalizedMetricResult | undefined,
-  ids: readonly string[],
-): number | null {
-  if (!r) return null;
-  const vals = ids
-    .map((id) => forEntity(r, id).value)
-    .filter((v): v is number => v != null && Number.isFinite(v));
-  if (!vals.length) return null;
-  if (r.computation === "sum") return vals.reduce((a, b) => a + b, 0);
-  return quantile([...vals].sort((a, b) => a - b), 0.5);
-}
-
 /**
  * Median across people, regardless of the result's own `computation` kind.
- * Unlike `representative`, this never sums — useful for stat-tile sections
+ * Never sums, unlike `perPersonReading`'s average — useful for stat-tile sections
  * that want a per-person median health read on a metric that's normally
  * summed (e.g. a counter's per-person spread), without re-wrapping the
  * result to fake a different computation kind.
@@ -56,6 +42,35 @@ export function perCapita(r: NormalizedMetricResult, ids: readonly string[]): nu
     }
   }
   return active ? total / active : 0;
+}
+
+/** A scope's figure read per person: mean over active people for sums, median otherwise. */
+export type PerPersonReading =
+  | { kind: "average"; value: number; active: number; total: number }
+  | { kind: "median"; value: number; people: number };
+
+/** Null when nobody in scope has a value for the metric. */
+export function perPersonReading(
+  r: NormalizedMetricResult | undefined,
+  ids: readonly string[],
+): PerPersonReading | null {
+  if (!r) return null;
+  const values = entityValues(r, ids).map((e) => e.value);
+  if (!values.length) return null;
+
+  if (r.computation !== "sum") {
+    const sorted = [...values].sort((a, b) => a - b);
+    return { kind: "median", value: quantile(sorted, 0.5), people: values.length };
+  }
+
+  const active = values.filter((v) => v > 0);
+  const activeTotal = active.reduce((a, b) => a + b, 0);
+  return {
+    kind: "average",
+    value: active.length ? activeTotal / active.length : 0,
+    active: active.length,
+    total: values.reduce((a, b) => a + b, 0),
+  };
 }
 
 /** One person's value for a metric, kept together so a figure can name its people. */
