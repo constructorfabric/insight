@@ -4,9 +4,7 @@ use toolkit::api::{
     OpenApiRegistry, OperationBuilder, ParamSpec, ResponseHeaderSpec, ResponseHeaderType,
 };
 
-use crate::domain::connector_schedules::dto::{
-    ReconcileResponse, ScheduleRequest, ScheduleResponse,
-};
+use crate::domain::connector_schedules::dto::{ScheduleRequest, ScheduleResponse};
 
 const PATH: &str = "/v1/connectors/{connector}/{source_id}/schedule";
 
@@ -93,26 +91,7 @@ pub(super) fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Rou
         .handler(super::delete)
         .register(router, openapi);
 
-    register_list(router, openapi)
-}
-
-fn register_list(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
-    OperationBuilder::get("/v1/connector-schedules")
-        .operation_id("analytics_api.connector_schedules.list")
-        .summary(
-            "All non-empty requested schedules (service with connector-schedules-reader scope)",
-        )
-        .authenticated()
-        .no_license_required()
-        .json_response_with_schema::<ReconcileResponse>(
-            openapi,
-            StatusCode::OK,
-            "Complete ordered requested schedule list",
-        )
-        .standard_errors(openapi)
-        .error_503(openapi)
-        .handler(super::list)
-        .register(router, openapi)
+    router
 }
 
 fn etag() -> ResponseHeaderSpec {

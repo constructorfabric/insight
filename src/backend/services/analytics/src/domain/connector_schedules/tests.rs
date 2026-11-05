@@ -63,7 +63,7 @@ fn cleared_rows_keep_the_revision_and_request_metadata() -> R {
             .is_empty()
     );
     assert!(response.applied.is_none());
-    assert_eq!(response.status, dto::ScheduleStatus::Inherited);
+    assert_eq!(response.status, dto::ScheduleStatus::Pending);
     Ok(())
 }
 

@@ -4,7 +4,6 @@ use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use axum::response::Response;
 use axum::{Extension, Json, Router};
-use chrono::{DateTime, Utc};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -80,19 +79,6 @@ pub(super) async fn harness_with_config(
     })
 }
 
-pub(super) fn app(
-    db: DatabaseConnection,
-    ch_url: &str,
-    enabled: bool,
-    ctx: SecurityContext,
-    identity: IdentityClient,
-) -> Result<Router, Box<dyn std::error::Error>> {
-    Ok(router(
-        state(db, ch_url, schedule_config(enabled), identity)?,
-        ctx,
-    ))
-}
-
 fn state(
     db: DatabaseConnection,
     ch_url: &str,
@@ -163,20 +149,11 @@ pub(super) async fn body(response: Response) -> Result<Value, Box<dyn std::error
 
 #[derive(Debug, Serialize, clickhouse::Row)]
 pub(super) struct ConfiguredInstanceRecord {
-    pub schedules: Vec<String>,
-    pub schedule_timezone: String,
-    pub schedule_origin: String,
-    pub schedule_suspended: bool,
-    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
-    pub pass_completed_at: DateTime<Utc>,
+    pub connector: String,
 }
 
 pub(super) fn configured_instance_record() -> ConfiguredInstanceRecord {
     ConfiguredInstanceRecord {
-        schedules: vec!["0 3 * * *".to_owned()],
-        schedule_timezone: "UTC".to_owned(),
-        schedule_origin: "api".to_owned(),
-        schedule_suspended: true,
-        pass_completed_at: DateTime::UNIX_EPOCH,
+        connector: "example-tracker".to_owned(),
     }
 }

@@ -14,9 +14,6 @@ async fn a_noop_put_never_overwrites_a_real_put() -> R {
     for real_first in [true, false] {
         let (connector, uri) = identity();
         let sync_history = Mock::new();
-        for _ in 0..3 {
-            sync_history.add(handlers::provide([configured_instance_record()]));
-        }
         let h = harness(
             db.clone(),
             sync_history.url(),
@@ -25,8 +22,9 @@ async fn a_noop_put_never_overwrites_a_real_put() -> R {
             true,
         )
         .await?;
+        let target = (&h, &sync_history);
         assert_eq!(
-            send(&h, "PUT", &uri, Some("\"0\""), &["0 6 * * *"])
+            send(target, "PUT", &uri, Some("\"0\""), &["0 6 * * *"])
                 .await?
                 .0,
             StatusCode::OK
@@ -45,7 +43,7 @@ async fn a_noop_put_never_overwrites_a_real_put() -> R {
                     barrier.clone(),
                     AFTER_WRITE_READ_RELEASE.scope(
                         real_release.clone(),
-                        send(&h, "PUT", &uri, Some("\"1\""), &["0 9 * * *"]),
+                        send(target, "PUT", &uri, Some("\"1\""), &["0 9 * * *"]),
                     ),
                 )
                 .await;
@@ -60,7 +58,7 @@ async fn a_noop_put_never_overwrites_a_real_put() -> R {
                     barrier.clone(),
                     AFTER_WRITE_READ_RELEASE.scope(
                         noop_release.clone(),
-                        send(&h, "PUT", &uri, Some("\"1\""), &["0 6 * * *"]),
+                        send(target, "PUT", &uri, Some("\"1\""), &["0 6 * * *"]),
                     ),
                 )
                 .await;

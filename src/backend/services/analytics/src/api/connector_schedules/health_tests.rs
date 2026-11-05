@@ -68,10 +68,7 @@ async fn sync_history(query: Bytes) -> Response {
             schedule_suspended: false,
         }]);
     }
-    assert!(
-        query.contains("argMax") || query.contains("max(ts) AS pass_completed_at"),
-        "{query}"
-    );
+    assert!(query.contains("argMax"), "{query}");
     Response::new(Body::empty())
 }
 
@@ -90,14 +87,19 @@ async fn health_requests(through_router: bool) -> R {
     });
     let server = server.abort_handle();
     let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_query_results([vec![Model {
-            connector: "example-tracker".to_owned(),
-            source_id: "main".to_owned(),
-            crons: json!(["0 6 * * *"]),
-            revision: 1,
-            updated_by: CALLER,
-            updated_at: DateTime::UNIX_EPOCH,
-        }]])
+        .append_query_results([vec![
+            crate::domain::connector_schedules::test_support::snapshot_row(
+                Some(&Model {
+                    connector: "example-tracker".to_owned(),
+                    source_id: "main".to_owned(),
+                    crons: json!(["0 6 * * *"]),
+                    revision: 1,
+                    updated_by: CALLER,
+                    updated_at: DateTime::UNIX_EPOCH,
+                }),
+                None,
+            ),
+        ]])
         .into_connection();
     let h = harness(db, &url, true, context("user", &[])?, true).await?;
     let response = if through_router {

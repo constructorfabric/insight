@@ -57,21 +57,21 @@ fn the_summary_contract_describes_the_recorded_schedule() -> Result<(), Box<dyn 
         "#/components/schemas/ScheduleRequestState"
     );
     assert_eq!(
-        schemas["ScheduleRequestState"]["properties"]["not_applied_since"]["format"],
+        schemas["RecordedSchedule"]["properties"]["observed_at"]["format"],
         "date-time"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn the_health_handler_serializes_nullable_and_not_applied_request_facts()
+async fn the_health_handler_serializes_nullable_and_acknowledged_request_facts()
 -> Result<(), Box<dyn std::error::Error>> {
     let response: ConnectorHealthResponse = serde_json::from_value(serde_json::json!({
         "as_of": "2026-01-15T13:00:00Z", "history_available": true,
         "connectors": [
             {"connector": "example-tracker", "configured": true, "schedule_request": {
-                "crons": [], "status": "not_applied", "updated_at": "2026-01-15T12:00:00Z",
-                "updated_by": "00000000-0000-4000-8000-000000000001", "not_applied_since": "2026-01-15T12:45:00Z"
+                "crons": [], "revision": 2, "status": "error", "applied": null, "inherited": null, "updated_at": "2026-01-15T12:00:00Z",
+                "updated_by": "00000000-0000-4000-8000-000000000001", "error": {"attempted_revision": 2, "attempted_at": "2026-01-15T12:45:00Z", "message": "synthetic failure"}
             }},
             {"connector": "example-directory", "configured": true}
         ]
@@ -84,12 +84,9 @@ async fn the_health_handler_serializes_nullable_and_not_applied_request_facts()
         body["connectors"][0]["schedule_request"]["crons"],
         serde_json::json!([])
     );
+    assert_eq!(body["connectors"][0]["schedule_request"]["status"], "error");
     assert_eq!(
-        body["connectors"][0]["schedule_request"]["status"],
-        "not_applied"
-    );
-    assert_eq!(
-        body["connectors"][0]["schedule_request"]["not_applied_since"],
+        body["connectors"][0]["schedule_request"]["error"]["attempted_at"],
         "2026-01-15T12:45:00Z"
     );
     assert!(body["connectors"][1]["schedule_request"].is_null());

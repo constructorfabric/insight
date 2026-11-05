@@ -1,8 +1,10 @@
+use chrono::DateTime;
 use sea_orm::{DatabaseBackend, DbErr, MockDatabase};
 use serde_json::json;
 use uuid::Uuid;
 
 use super::*;
+use crate::domain::connector_schedules::test_support::{acknowledgement, snapshot_row};
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -30,131 +32,88 @@ fn row(crons: serde_json::Value) -> Model {
     }
 }
 
-#[test]
-fn requests_match_both_instance_keys_and_keep_clear_metadata() -> R {
-    for (crons, expected) in [(json!(["0 3 * * *"]), "applied"), (json!([]), "pending")] {
+#[tokio::test]
+async fn health_batches_requests_and_acknowledgements_including_clears_and_inheritance() -> R {
+    for (crons, expected) in [(json!(["0 3 * * *"]), "applied"), (json!([]), "inherited")] {
+        let request = row(crons.clone());
+        let ack = acknowledgement();
+        let mut inherited = acknowledgement();
+        inherited.source_id = "second".to_owned();
+        inherited.applied_revision = Some(0);
+        inherited.attempted_revision = 0;
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results([vec![
+                snapshot_row(Some(&request), Some(&ack)),
+                snapshot_row(None, Some(&inherited)),
+            ]])
+            .into_connection();
         let mut response = health()?;
-        attach(&mut response, &[row(crons.clone())], &[]);
+        response.checked_at = None;
+        let config = ConnectorSchedulesConfig {
+            enabled: true,
+            ..ConnectorSchedulesConfig::default()
+        };
+        enrich_health(&db, &config, &mut response).await;
         let state = serde_json::to_value(&response.connectors[0].schedule_request)?;
         assert_eq!(state["crons"], crons);
         assert_eq!(state["status"], expected);
         assert_eq!(state["updated_by"], Uuid::from_u128(1).to_string());
         assert_eq!(state["updated_at"], "1970-01-01T00:00:00Z");
-        for other in &response.connectors[1..] {
-            assert!(other.schedule_request.is_none());
-        }
+        assert_eq!(state["revision"], 2);
+        assert_eq!(state["applied"]["revision"], 2);
+        assert_eq!(state["inherited"]["origin"], "descriptor");
+        let inherited_state = serde_json::to_value(&response.connectors[1].schedule_request)?;
+        assert_eq!(inherited_state["status"], "inherited");
+        assert!(inherited_state["updated_at"].is_null());
+        assert!(response.connectors[2].schedule_request.is_none());
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 1);
+        let sql = format!("{log:?}");
+        assert!(sql.contains("connector_schedule_acknowledgements"), "{sql}");
+        assert!(!sql.contains("JSON_LENGTH"), "{sql}");
     }
     Ok(())
 }
 
 #[test]
-fn matching_annotation_crons_do_not_apply_the_health_request() -> R {
-    let mut response = health()?;
-    response.connectors[0]
-        .schedule
-        .as_mut()
-        .ok_or("missing schedule")?
-        .origin = Some(ScheduleOrigin::Annotation);
-    attach(&mut response, &[row(json!(["0 3 * * *"]))], &[]);
-    let state = response.connectors[0]
-        .schedule_request
-        .as_ref()
-        .ok_or("missing request")?;
-    assert_eq!(state.status, ScheduleStatus::Pending);
-    Ok(())
-}
-
-#[tokio::test]
-async fn health_pass_completion_reads_stop_at_checked_at_in_milliseconds() -> R {
-    let sync_history = clickhouse::test::Mock::new();
-    let bound = sync_history.add(clickhouse::test::handlers::record_ddl());
-    let ch = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
-        sync_history.url(),
-        "analytics",
-    ));
-    let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_query_results([vec![row(json!(["0 6 * * *"]))]])
-        .into_connection();
-    let mut response = health()?;
-    response.checked_at = Some("2026-01-15T12:45:00.123Z".to_owned());
-    let through =
-        DateTime::parse_from_rfc3339(response.checked_at.as_ref().ok_or("missing checked_at")?)?;
-    let config = ConnectorSchedulesConfig {
-        enabled: true,
-        ..ConnectorSchedulesConfig::default()
-    };
-    enrich_health(&db, &ch, &config, &mut response).await;
-    let query = bound.query().await;
-    assert!(
-        query.contains(&format!(
-            "ts <= fromUnixTimestamp64Milli({})",
-            through.timestamp_millis()
-        )),
-        "{query}"
-    );
-    assert_eq!(
-        response.connectors[0]
-            .schedule_request
-            .as_ref()
-            .ok_or("missing request")?
-            .status,
-        ScheduleStatus::Pending
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn pass_completion_failure_keeps_health_requests_null() -> R {
-    let sync_history = clickhouse::test::Mock::new();
-    sync_history.add(clickhouse::test::handlers::failure(
-        clickhouse::test::status::INTERNAL_SERVER_ERROR,
-    ));
-    let ch = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
-        sync_history.url(),
-        "analytics",
-    ));
-    let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_query_results([vec![row(json!(["0 6 * * *"]))]])
-        .into_connection();
-    let mut response = health()?;
-    let before = serde_json::to_value(&response)?;
-    let config = ConnectorSchedulesConfig {
-        enabled: true,
-        ..ConnectorSchedulesConfig::default()
-    };
-    enrich_health(&db, &ch, &config, &mut response).await;
-    assert!(response.history_available);
-    assert!(
-        response
-            .connectors
-            .iter()
-            .all(|row| row.schedule_request.is_none())
-    );
-    assert_eq!(serde_json::to_value(&response)?, before);
+fn health_uses_acknowledgement_errors_instead_of_the_configured_schedule() -> R {
+    let request = row(json!(["0 3 * * *"]));
+    for (attempted, expected) in [(2, "error"), (1, "pending")] {
+        let mut ack = acknowledgement();
+        ack.applied_revision = Some(1);
+        ack.attempted_revision = attempted;
+        ack.last_error = Some("synthetic readback failure".to_owned());
+        let mut response = health()?;
+        attach(
+            &mut response,
+            &[Snapshot {
+                request: Some(request.clone()),
+                acknowledgement: Some(ack),
+            }],
+        );
+        let state = serde_json::to_value(&response.connectors[0].schedule_request)?;
+        assert_eq!(state["status"], expected);
+        assert_eq!(state["error"]["attempted_revision"], attempted);
+        assert_eq!(state["error"]["message"], "synthetic readback failure");
+    }
     Ok(())
 }
 
 #[test]
-fn inherited_requests_are_absent_and_failed_passes_use_the_shared_rule() -> R {
+fn missing_acknowledgements_leave_observations_unknown_and_requests_pending() -> R {
     let mut response = health()?;
-    let mut cleared = row(json!([]));
-    cleared.source_id = "second".to_owned();
-    let completed_passes = [
-        DateTime::UNIX_EPOCH + chrono::Duration::minutes(30),
-        DateTime::UNIX_EPOCH + chrono::Duration::minutes(15),
-    ];
     attach(
         &mut response,
-        &[row(json!(["0 6 * * *"])), cleared],
-        &completed_passes,
+        &[Snapshot {
+            request: Some(row(json!([]))),
+            acknowledgement: None,
+        }],
     );
-    let state = response.connectors[0]
-        .schedule_request
-        .as_ref()
-        .ok_or("missing request")?;
-    assert_eq!(state.status, ScheduleStatus::NotApplied);
-    assert_eq!(state.not_applied_since, Some(completed_passes[0]));
-    assert!(response.connectors[1].schedule_request.is_none());
+    let state = serde_json::to_value(&response.connectors[0].schedule_request)?;
+    assert_eq!(state["status"], "pending");
+    assert!(state["applied"].is_null());
+    assert!(state["inherited"].is_null());
+    assert!(state["error"].is_null());
     Ok(())
 }
 
@@ -163,44 +122,29 @@ async fn maria_failure_keeps_every_request_null_and_health_available() -> R {
     let db = MockDatabase::new(DatabaseBackend::MySql)
         .append_query_errors([DbErr::Custom("synthetic failure".to_owned())])
         .into_connection();
-    let ch = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
-        "http://127.0.0.1:1",
-        "analytics",
-    ));
     let mut response = health()?;
     let before = serde_json::to_value(&response)?;
     let config = ConnectorSchedulesConfig {
         enabled: true,
         ..ConnectorSchedulesConfig::default()
     };
-    enrich_health(&db, &ch, &config, &mut response).await;
+    enrich_health(&db, &config, &mut response).await;
     assert!(response.history_available);
-    assert_eq!(serde_json::to_value(&response)?, before);
     assert!(
         response
             .connectors
             .iter()
             .all(|row| row.schedule_request.is_none())
     );
-    assert_eq!(db.into_transaction_log().len(), 1);
+    assert_eq!(serde_json::to_value(&response)?, before);
     Ok(())
 }
 
 #[tokio::test]
-async fn editing_off_reads_no_requests() -> R {
+async fn editing_off_never_reads_requests() -> R {
     let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
-    let ch = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
-        "http://127.0.0.1:1",
-        "analytics",
-    ));
     let mut response = health()?;
-    enrich_health(
-        &db,
-        &ch,
-        &ConnectorSchedulesConfig::default(),
-        &mut response,
-    )
-    .await;
+    enrich_health(&db, &ConnectorSchedulesConfig::default(), &mut response).await;
     assert!(
         response
             .connectors

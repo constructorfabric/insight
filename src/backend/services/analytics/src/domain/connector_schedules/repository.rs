@@ -1,10 +1,9 @@
 use chrono::{SubsecRound, Utc};
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, SqlErr,
+    ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, SqlErr,
 };
 use uuid::Uuid;
 
-use super::dto::{ReconcileResponse, ReconcileSchedule};
 use super::{Error, Instance, Revision};
 use crate::infra::db::entities::connector_schedules::{ActiveModel, Column, Entity, Model};
 
@@ -23,10 +22,6 @@ pub(super) async fn read(
         .filter(Column::SourceId.eq(instance.source_id.as_str()))
         .one(db)
         .await?)
-}
-
-pub(super) async fn all(db: &DatabaseConnection) -> Result<Vec<Model>, Error> {
-    Ok(Entity::find().all(db).await?)
 }
 
 pub(super) async fn write(
@@ -105,30 +100,6 @@ pub(super) async fn write(
 async fn stale(db: &DatabaseConnection, instance: &Instance) -> Result<Error, Error> {
     let current = read(db, instance).await?;
     Ok(Error::Stale(current.map_or(0, |row| row.revision)))
-}
-
-pub(crate) async fn list(db: &DatabaseConnection) -> Result<ReconcileResponse, Error> {
-    let rows = Entity::find()
-        .filter(sea_orm::sea_query::Expr::cust("JSON_LENGTH(crons) > 0"))
-        .order_by_asc(Column::Connector)
-        .order_by_asc(Column::SourceId)
-        .all(db)
-        .await?;
-    let schedules = rows
-        .into_iter()
-        .map(|row| {
-            Ok(ReconcileSchedule {
-                connector: row.connector,
-                source_id: row.source_id,
-                crons: serde_json::from_value(row.crons).map_err(Error::StoredCrons)?,
-                revision: row.revision,
-            })
-        })
-        .collect::<Result<_, Error>>()?;
-    Ok(ReconcileResponse {
-        version: 1,
-        schedules,
-    })
 }
 
 #[cfg(test)]

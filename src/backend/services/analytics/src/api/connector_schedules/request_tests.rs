@@ -142,6 +142,9 @@ async fn unchanged_puts_and_deletes_return_the_current_revision() -> R {
         };
         let db = MockDatabase::new(DatabaseBackend::MySql)
             .append_query_results([vec![row]])
+            .append_query_results([Vec::<
+                crate::infra::db::entities::connector_schedule_acknowledgements::Model,
+            >::new()])
             .into_connection();
         let h = harness(db, sync_history.url(), true, context("user", &[])?, true).await?;
         let response = h

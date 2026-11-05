@@ -1,7 +1,6 @@
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use toolkit_canonical_errors::{CanonicalError, Http, Problem};
-use toolkit_security::SecurityContext;
 
 use crate::api::ADMIN_ONLY;
 use crate::api::error::ConnectorScheduleError;
@@ -11,20 +10,6 @@ pub(super) fn admin_only() -> CanonicalError {
     ConnectorScheduleError::permission_denied()
         .with_reason(ADMIN_ONLY)
         .create()
-}
-
-pub(super) fn require_reader(ctx: &SecurityContext) -> Result<(), CanonicalError> {
-    if ctx.subject_type() == Some("service")
-        && ctx
-            .token_scopes()
-            .iter()
-            .any(|scope| scope == "connector-schedules-reader")
-    {
-        return Ok(());
-    }
-    Err(ConnectorScheduleError::permission_denied()
-        .with_reason("service subject with exact connector-schedules-reader scope required")
-        .create())
 }
 
 #[derive(Debug)]

@@ -258,6 +258,14 @@ class IngestionPoint(BaseModel):
     rows: int = Field(..., ge=0)
 
 
+class InheritedSchedule(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    crons: list[str]
+    origin: str
+
+
 class MetricComputation(StrEnum):
     sum = 'sum'
     ratio = 'ratio'
@@ -758,23 +766,14 @@ class PutSettingsRequest(BaseModel):
     system_prompt: str
 
 
-class ReconcileSchedule(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    connector: str
-    crons: list[str]
-    revision: int = Field(..., ge=0)
-    source_id: str
-
-
 class RecordedSchedule(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
     crons: list[str]
+    observed_at: UnzonedDatetime
     origin: str
-    recorded_at: UnzonedDatetime
+    revision: int = Field(..., ge=0)
     suspended: bool
     timezone: str | None = None
 
@@ -930,6 +929,15 @@ class SavedQuerySummary(BaseModel):
     name: str
 
 
+class ScheduleAttemptError(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    attempted_at: UnzonedDatetime
+    attempted_revision: int = Field(..., ge=0)
+    message: str
+
+
 class ScheduleOrigin(StrEnum):
     api = 'api'
     annotation = 'annotation'
@@ -947,7 +955,7 @@ class ScheduleRequest(BaseModel):
 class ScheduleStatus(StrEnum):
     applied = 'applied'
     pending = 'pending'
-    not_applied = 'not_applied'
+    error = 'error'
     inherited = 'inherited'
 
 
@@ -1430,14 +1438,6 @@ class MetricSnapshot(BaseModel):
     value: str = Field(..., description='The formatted value the tile shows.')
 
 
-class ReconcileResponse(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    schedules: list[ReconcileSchedule]
-    version: int = Field(..., ge=0)
-
-
 class ReportExportRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1483,11 +1483,14 @@ class ScheduleRequestState(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    applied: RecordedSchedule | None = None
     crons: list[str]
-    not_applied_since: UnzonedDatetime | None = None
+    error: ScheduleAttemptError | None = None
+    inherited: InheritedSchedule | None = None
+    revision: int = Field(..., ge=0)
     status: ScheduleStatus
-    updated_at: UnzonedDatetime
-    updated_by: UUID
+    updated_at: UnzonedDatetime | None = None
+    updated_by: UUID | None = None
 
 
 class ScheduleResponse(BaseModel):
@@ -1497,8 +1500,9 @@ class ScheduleResponse(BaseModel):
     applied: RecordedSchedule | None = None
     connector: str
     editable: bool
+    error: ScheduleAttemptError | None = None
+    inherited: InheritedSchedule | None = None
     min_interval_minutes: int = Field(..., ge=30, le=1440)
-    not_applied_since: UnzonedDatetime | None = None
     reconcile_schedules: list[str]
     requested: RequestedSchedule | None = None
     revision: int = Field(..., ge=0)

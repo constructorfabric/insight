@@ -15,7 +15,7 @@ use super::{AppState, require_admin};
 use crate::domain::connector_schedules::{self as domain, Change, Instance, Revision};
 use domain::dto::ScheduleResponse;
 use domain::validation::Crons;
-use error::{ScheduleError, admin_only, domain_error, require_reader};
+use error::{ScheduleError, admin_only, domain_error};
 
 pub(super) fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     routes::register(router, openapi)
@@ -59,13 +59,7 @@ async fn put(
     )
     .map_err(|problem| domain_error(domain::Error::Invalid(problem)))?;
     let response = editor
-        .write(
-            &state.db,
-            &state.ch,
-            revision,
-            Change::Put(crons),
-            ctx.subject_id(),
-        )
+        .write(&state.db, revision, Change::Put(crons), ctx.subject_id())
         .await
         .map_err(domain_error)?;
     Ok(reply(response))
@@ -89,25 +83,10 @@ async fn delete(
     .map_err(domain_error)?;
     let revision = if_match(&headers).map_err(domain_error)?;
     let response = editor
-        .write(
-            &state.db,
-            &state.ch,
-            revision,
-            Change::Delete,
-            ctx.subject_id(),
-        )
+        .write(&state.db, revision, Change::Delete, ctx.subject_id())
         .await
         .map_err(domain_error)?;
     Ok(reply(response))
-}
-
-async fn list(
-    Extension(state): Extension<Arc<AppState>>,
-    Extension(ctx): Extension<SecurityContext>,
-) -> Result<Json<domain::dto::ReconcileResponse>, ScheduleError> {
-    require_reader(&ctx)?;
-    let response = domain::list(&state.db).await.map_err(domain_error)?;
-    Ok(Json(response))
 }
 
 fn if_match(headers: &HeaderMap) -> Result<Revision, domain::Error> {
@@ -139,8 +118,6 @@ mod support;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-mod contract_tests;
 #[cfg(test)]
 mod timeline_tests;
 

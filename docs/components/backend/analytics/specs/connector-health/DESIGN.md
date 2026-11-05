@@ -507,7 +507,10 @@ design.
         "status": "pending",
         "updated_at": "2026-01-15T09:10:00Z",
         "updated_by": "00000000-0000-4000-8000-000000000001",
-        "not_applied_since": null
+        "revision": 2,
+        "applied": null,
+        "inherited": null,
+        "error": null
       },
       "last_sync": {
         "job_id": "8412",
@@ -555,21 +558,24 @@ Shape rules that the generated contract enforces:
 | Field | Type | Description |
 |---|---|---|
 | `schedule` | object or null | Applied schedule from the configured-instance records of the last completed pass. |
-| `schedule_request` | object or null | Stored request for `(connector, source_id)`; null when editing is off, inherited, absent or unavailable. |
+| `schedule_request` | object or null | Request and acknowledgement record for `(connector, source_id)`; null when editing is off, both are absent or the read is unavailable. |
 | `schedule_request.crons` | array of strings | Requested UTC expressions; empty for a clear. |
-| `schedule_request.status` | string | `pending`, `not_applied` or `applied`, using the same comparison as the schedule API. |
-| `schedule_request.updated_at` | timestamp | Last real request change. |
-| `schedule_request.updated_by` | UUID string | Admin who made that change. |
-| `schedule_request.not_applied_since` | timestamp or null | Qualifying pass's completion time, only for `not_applied`. |
+| `schedule_request.status` | string | `error`, `pending`, `inherited` or `applied`, using the same revision rules as the schedule API. |
+| `schedule_request.updated_at` | timestamp or null | Last real request change; null without a request row. |
+| `schedule_request.updated_by` | UUID string or null | Admin who made that change; null without a request row. |
+| `schedule_request.revision` | unsigned integer | Current requested revision, or zero without a request row. |
+| `schedule_request.applied` | object or null | Acknowledged crons, timezone, origin, suspended state, revision and `observed_at`. |
+| `schedule_request.inherited` | object or null | Deployment fallback crons and origin from the acknowledgement record. |
+| `schedule_request.error` | object or null | Last failed attempt: `attempted_revision`, `attempted_at`, `message`. |
 
 - **Nullable fields are always emitted.** No field is skipped when absent, so a client sees
   `null` rather than a missing key. The generated contract still marks them optional, which is
   what every other DTO on this service does — a lone shape with its own nullability convention
   would cost more than the looser contract does, since handling `null` handles both.
 - `last_sync` is null for a configured connector that has never synced.
-- Schedule requests are read in one MariaDB query for the whole health response. A failed
-  MariaDB read leaves every `schedule_request` null and does not fail health. Pass-completion evidence
-  is bounded by `checked_at`, so a newer pass cannot be compared with an older applied snapshot.
+- Requests and acknowledgement records are joined in one batched MariaDB query for the whole
+  health response, including clears and inherited instances without request rows. A failed read
+  leaves every `schedule_request` null and keeps sync facts readable. Observations carry their own timestamps.
 - `schedule` is the applied schedule recorded in the newest sealed configured set, dated by
   `checked_at`, never an intended schedule. It is null outside that set or when its row has
   an empty `schedules` array, including rows predating those columns. Otherwise `crons` is
@@ -617,9 +623,10 @@ audit metadata. Every real change advances the revision; concurrent real changes
 the same revision have exactly one winner. Clearing retains the revision so an older edit
 cannot recreate an override unnoticed. With editing disabled, writes return 409.
 Stored requests remain keyed by `(connector, source_id)` across removal and reconfiguration:
-GET and DELETE accept an unconfigured pair with a stored row (`applied: null`, existing status,
+GET and DELETE accept an unconfigured pair with a stored row (acknowledged observations,
 `If-Match` and revision rules), PUT still requires configuration, every verb returns the existing
-404 when both are absent, and the service endpoint lists non-empty requests regardless of configuration.
+404 when both are absent. The configured-instance record in the latest completed sync history
+pass remains the membership check.
 
 `PUT` accepts only a JSON object containing `crons`, a list of one to ten distinct five-field
 UTC expressions (each at most 100 characters). Duplicates are compared after horizontal
@@ -656,25 +663,30 @@ The limit applies only to writes through this API: reconcile, Secret annotations
 descriptors are not checked. Stored schedules predating a raised minimum remain served;
 a new PUT must satisfy the current minimum.
 
-`applied.timezone` is read from `schedule_timezone` alongside the recorded crons, origin,
-suspension and pass-completion time in one sync-history query. An empty recorded timezone
-is returned as null, matching the health API's controller-time semantics; UTC is never inferred.
+`requested` preserves request audit metadata, including empty-array clear tombstones.
+The schedule API and health rows' `schedule_request` derive status from the acknowledgement
+record in this order:
 
-`requested` preserves the stored request's audit metadata even when its `crons` is empty
-after DELETE. It is null only when no request has been stored. `status` is `applied` when a
-request matches the recorded API-origin schedule, `pending` when those differ or a cleared
-request still has recorded API origin, and `inherited` otherwise. Matching compares cron
-lists in order after whitespace normalization. Suspension does not affect this comparison.
-`pending` becomes `not_applied` only when a pass known to have started after the save finishes
-without applying the request. The sync history records `sweep.completed` with `tick_id` and `ts`;
-it has no `sweep.started` event or pass-start timestamp. The tick is a workflow pod correlation
-ID (or an ID minted by the sweep), not evidence of pass start. Therefore both APIs require
-two distinct completed ticks strictly after `updated_at`; the newer record identifies the
-qualifying pass and its timestamp is `not_applied_since`. Duplicate completion records of
-one tick count once. Completed-pass queries stop at the applied schedule's pass completion,
-preventing a concurrent newer pass from being used against older recorded crons. A pass possibly running before the save never
-suffices. Applied and inherited states always return null `not_applied_since`.
-Request state never substitutes for an observed schedule.
+1. `error` when `last_error` is present and `attempted_revision` equals the current requested revision.
+2. `pending` without an acknowledgement record, without an applied revision, or when the requested revision exceeds it.
+3. `inherited` when no override remains, including an acknowledged clear.
+4. `applied` when the current override revision has been verified.
+
+A newer save remains pending even if its crons equal an older applied revision. An older failed
+attempt does not mask that pending save. A missing acknowledgement record leaves `applied`,
+`inherited` and `error` null; it never supplies an assumed default.
+
+`applied` contains acknowledged `crons`, nullable `timezone`, `origin`, `suspended`, `revision`
+and `observed_at`. `inherited: {crons, origin}` is the deployment fallback from the same record.
+`error: {attempted_revision, attempted_at, message}` preserves the last failed attempt even
+when it belongs to an older revision. No pass-completion inference participates in status.
+A failed attempt preserves the previous successful observation.
+
+Analytics only migrates and reads acknowledgement records. The next change adds the ingestion
+writer: after applying a CronWorkflow it reads it back and verifies identity, schedules,
+timezone and origin before advancing the applied revision and observation time. It acknowledges
+the snapshot revision it applied; a concurrent newer save stays pending. A clear applies the
+fresh deployment fallback before it is acknowledged. Full reconciliation uses the same writer.
 
 `reconcile_schedules` comes from `ingestion.reconcile.schedule`, the same value that renders
 the reconcile CronWorkflow. The umbrella supplies its one-element JSON array through
@@ -830,10 +842,29 @@ facts.
 
 Analytics owns `connector_schedules` in its MariaDB database, keyed by
 `(connector, source_id)`, with requested cron expressions, revision, caller and update time.
-An empty retained row means inheritance and still participates in revision checks. The
-service endpoint, `GET /v1/connector-schedules`, requires a service principal with the exact
-`connector-schedules-reader` role and serves every non-empty request in a versioned response.
-A storage or decode failure fails the entire read rather than returning an empty set.
+An empty retained row requests inheritance and still participates in revision checks.
+
+The analytics migrator owns two additional relations, each in its own forward migration:
+
+- `connector_schedule_requests_v1` is a `SQL SECURITY DEFINER` view exposing exactly
+  `connector, source_id, revision, crons`, including clears. Its columns are frozen; an
+  incompatible change requires another version. Ingestion reads the view directly from MariaDB;
+  there is no schedule reader HTTP endpoint or service-principal reader role check in analytics.
+- `connector_schedule_acknowledgements` stores one acknowledgement record per
+  `(connector, source_id)`, using the request table's ASCII binary identity types, without a
+  foreign key. Nullable successful observation fields are `applied_revision` (unsigned bigint),
+  `applied_crons` (JSON array), `applied_timezone` (varchar 64), `applied_origin` (varchar 16),
+  `suspended` (boolean), and `observed_at` (datetime with millisecond precision). Deployment
+  fallback fields are `deployment_crons` (JSON array) and `deployment_origin` (varchar 16).
+  Attempt fields are `attempted_revision` (unsigned bigint), `attempted_at` (datetime with
+  millisecond precision), and nullable `last_error` (varchar 512). Revision zero represents
+  inheritance without a request row; an applied revision cannot exceed the attempted revision.
+  Origins are `api`, `annotation`, `descriptor`, or `default`; deployment fallback excludes `api`.
+  JSON-array, origin and revision CHECKs are registered with the startup probe.
+
+The next change supplies ingestion's acknowledgement writer and narrow credentials: SELECT
+on the versioned view and INSERT/UPDATE on acknowledgements. Analytics does not write
+acknowledgements; tests and stand fixtures supply synthetic records in this change.
 
 #### `ingestion_history.sync_events`
 

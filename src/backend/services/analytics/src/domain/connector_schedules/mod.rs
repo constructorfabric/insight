@@ -1,7 +1,8 @@
+mod acknowledgements;
 pub(crate) mod dto;
 mod health;
+mod membership;
 mod repository;
-mod sync_history;
 pub(crate) use health::enrich_health;
 pub(crate) mod validation;
 
@@ -10,9 +11,9 @@ use uuid::Uuid;
 
 use crate::config::ConnectorSchedulesConfig;
 use crate::domain::connector_health::{ConnectorName, SourceId};
+use crate::infra::db::entities::connector_schedule_acknowledgements::Model as Acknowledgement;
 use crate::infra::db::entities::connector_schedules::Model;
 use dto::{RequestedSchedule, ScheduleResponse};
-pub(crate) use repository::list;
 use validation::Crons;
 
 #[derive(Debug, thiserror::Error)]
@@ -90,33 +91,23 @@ pub(crate) async fn get(
     config: &ConnectorSchedulesConfig,
     instance: &Instance,
 ) -> Result<ScheduleResponse, Error> {
-    let applied_and_completion = match sync_history::applied_schedule_and_pass_completion(
-        ch,
-        instance.connector.as_str(),
-        instance.source_id.as_str(),
-    )
-    .await
-    {
-        Ok(applied_and_completion) => Ok(applied_and_completion),
+    let membership = match membership::require(ch, instance).await {
+        Ok(()) => Ok(()),
         Err(error @ Error::NotFound { .. }) => Err(error),
         Err(error) => return Err(error),
     };
     let row = repository::read(db, instance).await?;
-    let (applied, pass_completed_at) = match applied_and_completion {
-        Ok(applied_and_completion) => applied_and_completion,
-        Err(Error::NotFound { .. }) if row.is_some() => (None, chrono::Utc::now()),
-        Err(error) => return Err(error),
-    };
-    let response = response(instance, config, row, applied)?;
-    observe(ch, response, pass_completed_at).await
+    if row.is_none() {
+        membership?;
+    }
+    let acknowledgement = acknowledgements::read(db, instance).await?;
+    response(instance, config, row, acknowledgement.as_ref())
 }
 
 #[derive(Debug)]
 pub(crate) struct Editor<'a> {
     instance: &'a Instance,
     config: &'a ConnectorSchedulesConfig,
-    applied: Option<dto::RecordedSchedule>,
-    pass_completed_at: chrono::DateTime<chrono::Utc>,
 }
 
 pub(crate) async fn editor<'a>(
@@ -124,21 +115,11 @@ pub(crate) async fn editor<'a>(
     config: &'a ConnectorSchedulesConfig,
     instance: &'a Instance,
 ) -> Result<Editor<'a>, Error> {
-    let (applied, pass_completed_at) = sync_history::applied_schedule_and_pass_completion(
-        ch,
-        instance.connector.as_str(),
-        instance.source_id.as_str(),
-    )
-    .await?;
+    membership::require(ch, instance).await?;
     if !config.enabled {
         return Err(Error::Disabled);
     }
-    Ok(Editor {
-        instance,
-        config,
-        applied,
-        pass_completed_at,
-    })
+    Ok(Editor { instance, config })
 }
 
 pub(crate) async fn clear_editor<'a>(
@@ -158,19 +139,13 @@ pub(crate) async fn clear_editor<'a>(
     if !config.enabled {
         return Err(Error::Disabled);
     }
-    Ok(Editor {
-        instance,
-        config,
-        applied: None,
-        pass_completed_at: chrono::Utc::now(),
-    })
+    Ok(Editor { instance, config })
 }
 
 impl Editor<'_> {
     pub(crate) async fn write(
         self,
         db: &DatabaseConnection,
-        ch: &insight_clickhouse::Client,
         revision: Revision,
         change: Change,
         caller: Uuid,
@@ -180,38 +155,16 @@ impl Editor<'_> {
             Change::Delete => Vec::new(),
         };
         let row = repository::write(db, self.instance, revision, crons, caller).await?;
-        let response = response(self.instance, self.config, row, self.applied)?;
-        observe(ch, response, self.pass_completed_at).await
+        let acknowledgement = acknowledgements::read(db, self.instance).await?;
+        response(self.instance, self.config, row, acknowledgement.as_ref())
     }
-}
-
-async fn observe(
-    ch: &insight_clickhouse::Client,
-    mut response: ScheduleResponse,
-    pass_completed_at: chrono::DateTime<chrono::Utc>,
-) -> Result<ScheduleResponse, Error> {
-    if response.status != dto::ScheduleStatus::Pending
-        || response
-            .requested
-            .as_ref()
-            .is_none_or(|request| request.updated_at >= pass_completed_at)
-    {
-        return Ok(response);
-    }
-    let completed_passes = sync_history::completed_passes(ch, pass_completed_at).await?;
-    (response.status, response.not_applied_since) = dto::observed_status(
-        response.requested.as_ref(),
-        response.applied.as_ref(),
-        &completed_passes,
-    );
-    Ok(response)
 }
 
 fn response(
     instance: &Instance,
     config: &ConnectorSchedulesConfig,
     row: Option<Model>,
-    applied: Option<dto::RecordedSchedule>,
+    acknowledgement: Option<&Acknowledgement>,
 ) -> Result<ScheduleResponse, Error> {
     let revision = row.as_ref().map_or(0, |row| row.revision);
     let requested = row
@@ -226,9 +179,11 @@ fn response(
         })
         .transpose()?;
     let status = dto::status(
+        revision,
         requested.as_ref().map(|r| r.crons.as_slice()),
-        applied.as_ref(),
+        acknowledgement,
     );
+    let (applied, inherited, error) = acknowledgements::fields(acknowledgement)?;
     Ok(ScheduleResponse {
         connector: instance.connector.as_str().to_owned(),
         source_id: instance.source_id.as_str().to_owned(),
@@ -237,7 +192,8 @@ fn response(
         requested,
         applied,
         status,
-        not_applied_since: None,
+        inherited,
+        error,
         reconcile_schedules: config.reconcile_schedules.clone(),
         min_interval_minutes: config.min_interval_minutes,
     })
@@ -245,6 +201,9 @@ fn response(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod test_support;
 
 #[cfg(test)]
 pub(super) mod live_tests;

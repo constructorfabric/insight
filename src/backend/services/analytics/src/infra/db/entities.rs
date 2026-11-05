@@ -1,5 +1,34 @@
 //! `SeaORM` entity definitions for `MariaDB` tables.
 
+pub(crate) mod connector_schedule_acknowledgements {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "connector_schedule_acknowledgements")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub connector: String,
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub source_id: String,
+        pub applied_revision: Option<u64>,
+        pub applied_crons: Option<Json>,
+        pub applied_timezone: Option<String>,
+        pub applied_origin: Option<String>,
+        pub suspended: Option<bool>,
+        pub deployment_crons: Json,
+        pub deployment_origin: String,
+        pub observed_at: Option<ChronoDateTimeUtc>,
+        pub attempted_revision: u64,
+        pub attempted_at: ChronoDateTimeUtc,
+        pub last_error: Option<String>,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 pub(crate) mod connector_schedules {
     use sea_orm::entity::prelude::*;
 

@@ -278,15 +278,11 @@ async fn the_ledger_reads_answer_from_real_rows() {
     let Some(ch) = client_or_skip() else { return };
     apply_migration(&ch, MIGRATION).await;
 
-    crate::domain::connector_schedules::live_tests::completed_passes_collapse_ticks_and_include_only_the_cutoff(&ch)
-        .await
-        .expect("pass completion cutoff and distinct ticks");
-
-    let at = Stamps::fresh();
-
-    crate::domain::connector_schedules::live_tests::schedules_follow_the_latest_completed_tick(&ch)
+    crate::domain::connector_schedules::live_tests::configured_instances_follow_the_latest_completed_tick(&ch)
         .await
         .expect("schedule sync history reads");
+
+    let at = Stamps::fresh();
 
     schedules::a_configured_row_before_the_schedule_migration_reads_as_unknown(&ch, &at).await;
 

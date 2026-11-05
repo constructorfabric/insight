@@ -9,7 +9,6 @@ from ..operations import SOME_CONNECTOR, SOME_SOURCE_ID
 from ..schemas import ConnectorHealthResponse, ProblemDocument
 from ..schemas.analytics import ScheduleResponse
 
-READER = analytics_path("/v1/connector-schedules")
 UNKNOWN = analytics_path(f"/v1/connectors/{SOME_CONNECTOR}/{SOME_SOURCE_ID}/schedule")
 
 
@@ -22,7 +21,9 @@ def schedule_path(admin_operator_session: PersonaSession) -> Iterator[str]:
     instances = [
         row
         for row in summary.connectors
-        if row.configured and row.source_id and row.connector.startswith("stand-scratch-")
+        if row.configured
+        and row.source_id == "main"
+        and row.connector == "stand-scratch-connector-schedules"
     ]
     assert instances, (
         "Seed a synthetic stand-scratch-* configured instance before running schedule lifecycle tests"
@@ -33,7 +34,10 @@ def schedule_path(admin_operator_session: PersonaSession) -> Iterator[str]:
     before = client.get(path)
     assert before.status_code == 200, before.text
     initial = before.parse(ScheduleResponse)
-    assert initial.status.value == "inherited"
+    assert initial.status.value == "pending"
+    assert initial.applied is None
+    assert initial.inherited is None
+    assert initial.error is None
     assert initial.requested is None or initial.requested.crons == []
     try:
         yield path
@@ -44,13 +48,13 @@ def schedule_path(admin_operator_session: PersonaSession) -> Iterator[str]:
         cleared = client.delete(path, headers={"If-Match": current.headers["etag"]})
         assert cleared.status_code == 200, cleared.text
         restored = cleared.parse(ScheduleResponse)
-        assert restored.status.value == "inherited"
+        assert restored.status.value == "pending"
         assert restored.requested is None or restored.requested.crons == []
 
 
 @pytest.mark.requires_seed("admin_operator")
 @pytest.mark.reliability
-def test_schedule_lifecycle_preserves_revisions_and_restores_inheritance(
+def test_schedule_lifecycle_preserves_revisions_and_requests_inheritance(
     admin_operator_session: PersonaSession, schedule_path: str
 ) -> None:
     client = admin_operator_session.client
@@ -105,7 +109,7 @@ def test_schedule_lifecycle_preserves_revisions_and_restores_inheritance(
         deleted = client.delete(schedule_path, headers={"If-Match": current.headers["etag"]})
         assert deleted.status_code == 200, deleted.text
         inherited = deleted.parse(ScheduleResponse)
-        assert inherited.status.value == "inherited"
+        assert inherited.status.value == "pending"
         assert inherited.revision == revision + 2
         assert inherited.requested is not None
         assert inherited.requested.crons == []
@@ -199,10 +203,45 @@ def test_a_non_admin_cannot_read_or_edit_a_schedule(
 
 
 @pytest.mark.requires_seed("admin_operator")
-@pytest.mark.security
-def test_a_user_session_cannot_read_reconcile_schedules(
-    admin_operator_session: PersonaSession,
+@pytest.mark.reliability
+@pytest.mark.parametrize(
+    "source_id, status, applied_revision", [("applied", "applied", 1), ("error", "error", 0)]
+)
+def test_acknowledgement_records_supply_schedule_status_and_details(
+    admin_operator_session: PersonaSession, source_id: str, status: str, applied_revision: int
 ) -> None:
-    response = admin_operator_session.client.get(READER)
-    assert response.status_code == 403, response.text
-    assert response.parse(ProblemDocument).status == 403
+    client = admin_operator_session.client
+    response = client.get(
+        analytics_path(f"/v1/connectors/stand-scratch-connector-schedules/{source_id}/schedule")
+    )
+    assert response.status_code == 200, response.text
+    schedule = response.parse(ScheduleResponse)
+    assert schedule.status.value == status
+    assert schedule.applied is not None
+    assert schedule.applied.revision == applied_revision
+    assert schedule.applied.timezone == "UTC"
+    assert schedule.applied.observed_at.isoformat() == "2026-01-15T12:01:00+00:00"
+    assert schedule.inherited is not None
+    assert schedule.inherited.crons == ["0 3 * * *"]
+    assert schedule.inherited.origin == "default"
+    if status == "error":
+        assert schedule.error is not None
+        assert schedule.error.attempted_revision == 1
+        assert schedule.error.message == "synthetic readback failure"
+    else:
+        assert schedule.error is None
+        assert schedule.applied.crons == ["0 6 * * *"]
+        assert schedule.applied.origin == "api"
+    health_response = client.get(analytics_path("/v1/connector-health"))
+    assert health_response.status_code == 200, health_response.text
+    health = health_response.parse(ConnectorHealthResponse)
+    row = next(
+        row
+        for row in health.connectors
+        if row.connector == schedule.connector and row.source_id == source_id
+    )
+    assert row.schedule_request is not None
+    assert row.schedule_request.status.value == status
+    assert row.schedule_request.applied == schedule.applied
+    assert row.schedule_request.inherited == schedule.inherited
+    assert row.schedule_request.error == schedule.error

@@ -45,23 +45,6 @@ async fn changed_crons_at_the_maximum_revision_never_update() -> R {
 }
 
 #[tokio::test]
-async fn health_reads_all_requests_including_clears_in_one_query() -> R {
-    let mut cleared = stored();
-    cleared.source_id = "second".to_owned();
-    cleared.crons = serde_json::json!([]);
-    let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_query_results([vec![stored(), cleared]])
-        .into_connection();
-    let rows = all(&db).await?;
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[1].crons, serde_json::json!([]));
-    let log = db.into_transaction_log();
-    assert_eq!(log.len(), 1);
-    assert!(!format!("{log:?}").contains("JSON_LENGTH"));
-    Ok(())
-}
-
-#[tokio::test]
 async fn clearing_revision_zero_never_writes_and_refuses_an_existing_row() -> R {
     let instance = Instance::parse("example-tracker", "main")?;
     for exists in [false, true] {
@@ -127,29 +110,6 @@ async fn compare_and_set_real_changes_only_update_the_expected_revision() -> R {
             );
         }
     }
-    Ok(())
-}
-
-#[tokio::test]
-async fn reconcile_reads_every_nonempty_schedule_in_one_ordered_query() -> R {
-    let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_query_results([vec![stored()]])
-        .into_connection();
-    let response = list(&db).await?;
-    assert_eq!(response.version, 1);
-    assert_eq!(response.schedules.len(), 1);
-    assert_eq!(response.schedules[0].crons, ["0 3 * * *"]);
-    let log = db.into_transaction_log();
-    assert_eq!(log.len(), 1);
-    let sql = format!("{log:?}");
-    assert!(sql.contains("JSON_LENGTH(crons) > 0"), "{sql}");
-    assert!(
-        sql.contains(
-            "ORDER BY `connector_schedules`.`connector` ASC, `connector_schedules`.`source_id` ASC"
-        ),
-        "{sql}"
-    );
-    assert!(!sql.contains("LIMIT"), "{sql}");
     Ok(())
 }
 

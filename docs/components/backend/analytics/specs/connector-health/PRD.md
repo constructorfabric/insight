@@ -313,10 +313,13 @@ an empty or unknown origin remains unknown. The page's last-checked stamp dates 
 Analytics stores a requested schedule per `(connector, source_id)`. Admins set and clear it
 through the schedule API using `If-Match` to prevent overwriting a concurrent edit. Clearing
 requests inheritance. Requests survive instance removal; while
-absent, a stored row remains readable with `applied: null` and clearable with the usual
+absent, a stored row and its acknowledgement remain readable and clearable with the usual
 `If-Match` and revision rules, but PUT returns 404. A pair with neither configuration nor a
-stored row returns 404 on every verb. The service endpoint lists all non-empty requests and
-requires a service principal with the `connector-schedules-reader` role.
+stored row returns 404 on every verb. Membership still comes from the configured-instance
+record in the latest completed sync history pass. Ingestion reads requests directly from
+MariaDB through a `SQL SECURITY DEFINER` view, `connector_schedule_requests_v1`, exposing
+exactly `connector, source_id, revision, crons`, including clears. These columns are frozen;
+incompatible changes require a new version. No schedule reader HTTP endpoint is provided.
 An unchanged request preserves its revision and audit metadata; stale edits report the current
 revision. Invalid requests identify the expression and field to fix. Duplicate expressions and
 expressions that can never run under Argo's calendar rules are rejected. Schedules requested
@@ -325,16 +328,31 @@ A requested schedule may not start more often than the stand's minimum interval,
 The conservative frequency check merges all minute/hour starts into one UTC day and checks
 adjacent gaps including midnight, ignoring day-of-month, month and day-of-week fields;
 this refuses some schedules whose times never fall on the same day.
-The schedule API reports `status`: `applied` when the recorded API schedule matches the
-request, `pending` while the requested or cleared state differs from the recorded state,
-`not_applied` once a pass known to have started after the save completed without applying it,
-and `inherited` when no request or recorded API override remains. The sync history has no pass-start
-timestamp: require the second distinct tick completion strictly after the save, and return that
-completion record's time as `not_applied_since`. A first completion record may belong to a
-pass already running at save time and never suffices. The health response carries nullable `schedule_request` metadata
-on every row, including empty crons for a clear; editing off and inherited state yield null.
-One MariaDB query reads all requests; failure leaves every request null without failing health.
-This state does not replace the page's recorded schedule.
+The schedule API and health rows' `schedule_request` report status from one MariaDB
+acknowledgement record per instance, in this order:
+
+1. `error`: the latest attempt of the current requested revision failed.
+2. `pending`: no acknowledgement record or successful observation exists, or the requested revision exceeds the applied revision.
+3. `inherited`: no override remains, including an acknowledged clear.
+4. `applied`: the current override revision was verified.
+
+An older failed attempt never masks a newer pending save. Cron equality and ClickHouse pass
+completions do not establish application. The response carries acknowledged crons, timezone,
+origin, suspended state, revision and `observed_at`; the deployment fallback as
+`inherited: {crons, origin}`; and the last failure as
+`error: {attempted_revision, attempted_at, message}`. Missing acknowledgement records leave
+those fields unknown, never an invented default. Failed attempts retain the previous
+successful observation. Revision zero represents inheritance without a request row.
+
+Analytics migrates and reads acknowledgement records in this change. Ingestion writes them in
+the next change, after applying and reading back the CronWorkflow to verify identity, schedules,
+timezone and origin. Acknowledgements name the snapshot revision actually applied, even if a
+newer revision has since been saved. A clear becomes inherited after applying its fallback.
+
+Health enrichment joins requests and acknowledgements in one batched MariaDB read, including
+empty-cron clears and inherited instances without a request. Editing off, absent records or a
+failed read leave `schedule_request` null, while sync facts stay readable. This state does not
+replace the health page's schedule from sync history.
 
 Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
 cron expressions read in UTC. A CronWorkflow applied before this change may have no

@@ -16,17 +16,19 @@ SELECT
     'stand-scratch-connector-schedules',
     if(event = 'connector.configured', 'stand-scratch-connector-schedules', ''),
     if(event = 'connector.configured', 'example-tenant', ''),
-    if(event = 'connector.configured', 'main', ''),
+    instance_source,
     event,
     if(event = 'connector.configured', ['0 3 * * *'], []),
     if(event = 'connector.configured', 'UTC', ''),
     if(event = 'connector.configured', 'default', ''),
     false
 FROM (
-    SELECT arrayJoin(['connector.configured', 'sweep.completed']) AS event
+    SELECT
+        arrayJoin(['main', 'applied', 'error', '']) AS instance_source,
+        if(instance_source = '', 'sweep.completed', 'connector.configured') AS event
 )
-WHERE NOT EXISTS (
-    SELECT 1
+WHERE instance_source NOT IN (
+    SELECT source_id
     FROM ingestion_history.sync_events
     WHERE tick_id = 'stand-scratch-connector-schedules'
 );

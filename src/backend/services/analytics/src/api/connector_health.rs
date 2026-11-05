@@ -48,7 +48,6 @@ pub async fn get_connector_health(
     let mut response = ConnectorHealthResponse::from_facts(facts, Utc::now());
     crate::domain::connector_schedules::enrich_health(
         &state.db,
-        &state.ch,
         &state.config.connector_schedules,
         &mut response,
     )

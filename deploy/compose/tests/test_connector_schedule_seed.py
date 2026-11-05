@@ -28,6 +28,7 @@ set -euo pipefail
 ROOT_DIR={shlex.quote(str(ROOT))}
 TEST_STAND_ENV_FILE={shlex.quote(str(env_file))}
 COMPOSE_INSTANCE=stand-scratch-schedule
+compose_project_name() {{ printf insight-stand-scratch-schedule; }}
 TEST_STAND_BUILD_FRONTEND=false
 TEST_STAND_SKIP_BUILD=true
 test_stand_select_instance() {{ :; }}
@@ -41,6 +42,10 @@ cmd_seed() {{ :; }}
 test_stand_wait_ready() {{ :; }}
 test_stand_published_port() {{ printf '18123'; }}
 env_file_value() {{ printf 'stand-scratch-credential'; }}
+docker() {{
+  printf '%s\\n' "$*"
+  cat >/dev/null
+}}
 curl() {{
   while [[ $# -gt 0 ]]; do
     if [[ "$1" == --data-binary ]]; then printf '%s\\n' "$2"; fi
@@ -57,6 +62,8 @@ curl() {{
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines().count(f"@{FIXTURE}") == 2, result.stdout
+    assert result.stdout.count("exec -T mariadb") == 2, result.stdout
+    assert result.stdout.count("--project-name insight-stand-scratch-schedule") == 2, result.stdout
 
 
 @pytest.mark.parametrize("existing_history", [False, True])
@@ -87,7 +94,7 @@ def test_schedule_fixture_is_repeatable_with_sync_history(tmp_path: Path, existi
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    expected = "connector.configured\t1\nsweep.completed\t1\n"
+    expected = "connector.configured\t3\nsweep.completed\t1\n"
     if existing_history:
         expected += "sync.completed\t1\n"
     assert result.stdout == expected

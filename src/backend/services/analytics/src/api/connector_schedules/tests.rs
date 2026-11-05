@@ -1,12 +1,11 @@
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use clickhouse::test::{Mock, handlers, status};
-use sea_orm::{DatabaseBackend, DbErr, MockDatabase, MockExecResult};
+use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
 use serde_json::json;
 use tower::ServiceExt;
 
 use super::support::*;
 use crate::infra::db::entities::connector_schedules::Model;
-use crate::infra::identity::IdentityClient;
 
 fn empty_db() -> sea_orm::DatabaseConnection {
     MockDatabase::new(DatabaseBackend::MySql).into_connection()
@@ -144,69 +143,14 @@ async fn schedule_routes_require_the_admin_role() -> R {
 }
 
 #[tokio::test]
-async fn reconcile_requires_a_service_and_the_exact_reader_scope() -> R {
-    for (subject, scopes) in [
-        ("user", vec!["connector-schedules-reader"]),
-        ("service", vec![]),
-        ("service", vec!["*"]),
-        ("service", vec!["connector-schedules-*"]),
-        ("service", vec!["Connector-schedules-reader"]),
-    ] {
-        let app = app(
-            empty_db(),
-            "http://127.0.0.1:1",
-            true,
-            context(subject, &scopes)?,
-            IdentityClient::new("http://127.0.0.1:1")?,
-        )?;
-        let response = app
-            .oneshot(request(
-                "GET",
-                "/v1/connector-schedules",
-                None,
-                &json!(null),
-            )?)
-            .await?;
-        assert_eq!(
-            response.status(),
-            StatusCode::FORBIDDEN,
-            "{subject}, {scopes:?}"
-        );
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn reconcile_fails_closed_on_database_errors_even_with_editing_off() -> R {
-    let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_query_errors([DbErr::Custom("synthetic read failure".to_owned())])
-        .into_connection();
-    let app = app(
-        db,
-        "http://127.0.0.1:1",
-        false,
-        context("service", &["connector-schedules-reader"])?,
-        IdentityClient::new("http://127.0.0.1:1")?,
-    )?;
-    let response = app
-        .oneshot(request(
-            "GET",
-            "/v1/connector-schedules",
-            None,
-            &json!(null),
-        )?)
-        .await?;
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body(response).await?["status"], 503);
-    Ok(())
-}
-
-#[tokio::test]
 async fn get_without_a_stored_row_returns_revision_zero_and_recorded_snapshot() -> R {
     let sync_history = Mock::new();
     sync_history.add(handlers::provide([configured_instance_record()]));
     let db = MockDatabase::new(DatabaseBackend::MySql)
         .append_query_results([Vec::<Model>::new()])
+        .append_query_results([Vec::<
+            crate::infra::db::entities::connector_schedule_acknowledgements::Model,
+        >::new()])
         .into_connection();
     let h = harness(db, sync_history.url(), false, context("user", &[])?, true).await?;
     let response = h
@@ -220,10 +164,8 @@ async fn get_without_a_stored_row_returns_revision_zero_and_recorded_snapshot() 
     assert_eq!(json["revision"], 0);
     assert_eq!(json["editable"], false);
     assert!(json["requested"].is_null());
-    assert_eq!(json["applied"]["origin"], "api");
-    assert_eq!(json["applied"]["timezone"], "UTC");
-    assert_eq!(json["applied"]["suspended"], true);
-    assert_eq!(json["applied"]["recorded_at"], "1970-01-01T00:00:00Z");
+    assert!(json["applied"].is_null());
+    assert!(json["inherited"].is_null());
     assert_eq!(json["status"], "pending");
     assert_eq!(json["reconcile_schedules"], json!(["*/15 * * * *"]));
     assert_eq!(json["min_interval_minutes"], 30);
@@ -359,6 +301,6 @@ fn schedule_contract_documents_routes_preconditions_and_etags() -> R {
     }
     assert!(path["put"]["responses"]["415"].is_object());
     assert!(path["put"]["responses"].get("422").is_none());
-    assert!(json["paths"]["/v1/connector-schedules"]["get"].is_object());
+    assert!(json["paths"]["/v1/connector-schedules"].is_null());
     Ok(())
 }

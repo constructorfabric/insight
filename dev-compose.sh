@@ -2077,7 +2077,11 @@ test_stand_seed_connector_schedules() {
   : "${ch_pass:?CLICKHOUSE_PASSWORD must be set in the stand env file}"
   curl --fail --silent --show-error -u "${ch_user}:${ch_pass}" \
     --data-binary "@$ROOT_DIR/tests/stand/fixtures/connector-schedules.sql" \
-    "http://localhost:${ch_port}/"
+    "http://localhost:${ch_port}/" || return 1
+  docker compose --project-name "$(compose_project_name "$COMPOSE_INSTANCE")" \
+    --env-file "$TEST_STAND_ENV_FILE" -f "$ROOT_DIR/docker-compose.yml" \
+    exec -T mariadb sh -c 'MYSQL_PWD="$MARIADB_PASSWORD" exec mariadb --user="$MARIADB_USER" analytics' \
+    < "$ROOT_DIR/tests/stand/fixtures/connector-schedule-acknowledgements.sql"
 }
 
 # 0 when `table` was rebuilt during this run AND carries a positive observation.

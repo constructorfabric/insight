@@ -1,56 +1,10 @@
 use chrono::{Duration, Utc};
 
-use super::{Error, sync_history};
+use super::Error;
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
-pub(in crate::domain) async fn completed_passes_collapse_ticks_and_include_only_the_cutoff(
-    ch: &insight_clickhouse::Client,
-) -> R {
-    ch.query("TRUNCATE TABLE ingestion_history.sync_events")
-        .execute()
-        .await?;
-
-    let cutoff = chrono::SubsecRound::trunc_subsecs(Utc::now(), 3);
-    let first = cutoff - Duration::minutes(2);
-    let duplicate = cutoff - Duration::minutes(1);
-    for (tick, at) in [
-        ("tick-old", first),
-        ("tick-old", duplicate),
-        ("tick-cutoff", cutoff),
-        ("tick-later", cutoff + Duration::milliseconds(1)),
-    ] {
-        ch.query(
-            "INSERT INTO ingestion_history.sync_events (ts, tick_id, event) \
-             VALUES (fromUnixTimestamp64Milli(?), ?, 'sweep.completed')",
-        )
-        .bind(at.timestamp_millis())
-        .bind(tick)
-        .execute()
-        .await?;
-    }
-
-    assert_eq!(
-        sync_history::completed_passes(ch, cutoff).await?,
-        [cutoff, duplicate]
-    );
-    assert_eq!(
-        sync_history::completed_passes(ch, cutoff - Duration::milliseconds(1)).await?,
-        [duplicate]
-    );
-    assert!(
-        sync_history::completed_passes(ch, first - Duration::milliseconds(1))
-            .await?
-            .is_empty()
-    );
-
-    ch.query("TRUNCATE TABLE ingestion_history.sync_events")
-        .execute()
-        .await?;
-    Ok(())
-}
-
-pub(in crate::domain) async fn schedules_follow_the_latest_completed_tick(
+pub(in crate::domain) async fn configured_instances_follow_the_latest_completed_tick(
     ch: &insight_clickhouse::Client,
 ) -> R {
     ch.query("TRUNCATE TABLE ingestion_history.sync_events")
@@ -103,43 +57,21 @@ pub(in crate::domain) async fn schedules_follow_the_latest_completed_tick(
     .execute()
     .await?;
 
-    for (source, crons, origin, suspended) in [
-        ("main", &["0 5 * * *", "0 17 * * *"][..], "api", true),
-        ("second", &["0 7 * * *"][..], "annotation", false),
-    ] {
-        let schedule = sync_history::applied_schedule(ch, "example-tracker", source)
-            .await?
-            .ok_or_else(|| format!("missing applied schedule for {source}"))?;
-        assert_eq!(schedule.crons, crons, "{source}");
-        assert_eq!(schedule.origin, origin, "{source}");
-        assert_eq!(
-            schedule.timezone.as_deref(),
-            if source == "main" { Some("UTC") } else { None },
-            "{source}"
-        );
-        assert_eq!(schedule.suspended, suspended, "{source}");
-        assert_eq!(
-            schedule.recorded_at.timestamp_millis(),
-            pass_completed_ms,
-            "{source}"
-        );
+    for source in ["main", "second", "no-schedule"] {
+        let instance = super::Instance::parse("example-tracker", source)?;
+        super::membership::require(ch, &instance).await?;
     }
 
     for source in ["old-only", "open-only"] {
         assert!(
             matches!(
-                sync_history::applied_schedule(ch, "example-tracker", source).await,
+                super::membership::require(ch, &super::Instance::parse("example-tracker", source)?)
+                    .await,
                 Err(Error::NotFound { .. })
             ),
             "{source} is absent from the latest completed tick"
         );
     }
-    assert!(
-        sync_history::applied_schedule(ch, "example-tracker", "no-schedule")
-            .await?
-            .is_none()
-    );
-
     ch.query("TRUNCATE TABLE ingestion_history.sync_events")
         .execute()
         .await?;

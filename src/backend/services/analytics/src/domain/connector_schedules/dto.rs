@@ -16,13 +16,14 @@ pub(crate) struct RequestedSchedule {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub(crate) struct RecordedSchedule {
     pub crons: Vec<String>,
     pub timezone: Option<String>,
     pub origin: String,
     pub suspended: bool,
-    pub recorded_at: DateTime<Utc>,
+    pub revision: u64,
+    pub observed_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
@@ -30,7 +31,7 @@ pub(crate) struct RecordedSchedule {
 pub(crate) enum ScheduleStatus {
     Applied,
     Pending,
-    NotApplied,
+    Error,
     Inherited,
 }
 
@@ -43,100 +44,62 @@ pub(crate) struct ScheduleResponse {
     pub requested: Option<RequestedSchedule>,
     pub applied: Option<RecordedSchedule>,
     pub status: ScheduleStatus,
-    pub not_applied_since: Option<DateTime<Utc>>,
+    pub inherited: Option<InheritedSchedule>,
+    pub error: Option<ScheduleAttemptError>,
     pub reconcile_schedules: Vec<String>,
     #[schema(minimum = 30, maximum = 1440)]
     pub min_interval_minutes: u16,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ReconcileSchedule {
-    pub connector: String,
-    pub source_id: String,
-    pub crons: Vec<String>,
-    pub revision: u64,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ReconcileResponse {
-    pub version: u8,
-    pub schedules: Vec<ReconcileSchedule>,
-}
-
 impl toolkit::api::api_dto::RequestApiDto for ScheduleRequest {}
 impl toolkit::api::api_dto::ResponseApiDto for ScheduleResponse {}
-impl toolkit::api::api_dto::ResponseApiDto for ReconcileResponse {}
 
-pub(super) fn status(
-    requested: Option<&[String]>,
-    applied: Option<&RecordedSchedule>,
-) -> ScheduleStatus {
-    status_for_crons(
-        requested,
-        applied
-            .filter(|schedule| schedule.origin == "api")
-            .map(|schedule| schedule.crons.as_slice()),
-    )
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub(crate) struct InheritedSchedule {
+    pub crons: Vec<String>,
+    pub origin: String,
 }
 
-pub(super) fn status_for_crons(
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ScheduleAttemptError {
+    pub attempted_revision: u64,
+    pub attempted_at: DateTime<Utc>,
+    pub message: String,
+}
+
+pub(super) fn status(
+    revision: u64,
     requested: Option<&[String]>,
-    api: Option<&[String]>,
+    acknowledgement: Option<&super::Acknowledgement>,
 ) -> ScheduleStatus {
-    let Some(requested) = requested.filter(|crons| !crons.is_empty()) else {
-        return if api.is_some() {
-            ScheduleStatus::Pending
-        } else {
-            ScheduleStatus::Inherited
-        };
+    let Some(ack) = acknowledgement else {
+        return ScheduleStatus::Pending;
     };
-    if api.is_some_and(|crons| {
-        crons.len() == requested.len()
-            && crons
-                .iter()
-                .zip(requested)
-                .all(|(a, b)| super::validation::normalize(a) == super::validation::normalize(b))
-    }) {
-        ScheduleStatus::Applied
-    } else {
-        ScheduleStatus::Pending
+    if ack.attempted_revision == revision && ack.last_error.is_some() {
+        return ScheduleStatus::Error;
     }
+    if ack
+        .applied_revision
+        .is_none_or(|applied| revision > applied)
+    {
+        return ScheduleStatus::Pending;
+    }
+    if requested.is_none_or(<[String]>::is_empty) {
+        return ScheduleStatus::Inherited;
+    }
+    ScheduleStatus::Applied
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub(crate) struct ScheduleRequestState {
     pub crons: Vec<String>,
+    pub revision: u64,
     pub status: ScheduleStatus,
-    pub updated_at: DateTime<Utc>,
-    pub updated_by: Uuid,
-    pub not_applied_since: Option<DateTime<Utc>>,
-}
-
-pub(super) fn observed_status(
-    requested: Option<&RequestedSchedule>,
-    applied: Option<&RecordedSchedule>,
-    completed_passes: &[DateTime<Utc>],
-) -> (ScheduleStatus, Option<DateTime<Utc>>) {
-    let status = status(requested.map(|request| request.crons.as_slice()), applied);
-    after_pass(status, requested, completed_passes)
-}
-
-pub(super) fn after_pass(
-    status: ScheduleStatus,
-    requested: Option<&RequestedSchedule>,
-    completed_passes: &[DateTime<Utc>],
-) -> (ScheduleStatus, Option<DateTime<Utc>>) {
-    let failed_pass = requested.and_then(|request| {
-        let [latest, previous, ..] = completed_passes else {
-            return None;
-        };
-        (*previous > request.updated_at).then_some(*latest)
-    });
-    if status == ScheduleStatus::Pending && failed_pass.is_some() {
-        (ScheduleStatus::NotApplied, failed_pass)
-    } else {
-        (status, None)
-    }
+    pub updated_at: Option<DateTime<Utc>>,
+    pub updated_by: Option<Uuid>,
+    pub applied: Option<RecordedSchedule>,
+    pub inherited: Option<InheritedSchedule>,
+    pub error: Option<ScheduleAttemptError>,
 }
 
 #[cfg(test)]
