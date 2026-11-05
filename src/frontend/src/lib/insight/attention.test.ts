@@ -343,6 +343,32 @@ describe("what counts as a move", () => {
   });
 });
 
+describe("which way an adverse move went", () => {
+  it.each([
+    { direction: "higher_is_better" as const, from: 9, to: 1 },
+    { direction: "lower_is_better" as const, from: 12, to: 25 },
+  ])(
+    "carries the metric's direction so a $direction move reads the way it went",
+    ({ direction, from, to }) => {
+      const metric = (value: number) =>
+        normalizeMetricResults([
+          { ...aiMetric(value, "ai.sessions"), direction },
+        ]);
+      const items = metricAttentionItems(
+        AI_DEF,
+        metric(to),
+        metric(from),
+        "me@x.com",
+        HEADLINE
+      );
+      expect(items[0], `${direction} ${from} -> ${to}`).toMatchObject({
+        kind: "fell",
+        direction,
+      });
+    }
+  );
+});
+
 describe("ordering", () => {
   it("puts the metric furthest outside its cohort's spread first", () => {
     // A falls by two thirds, B by one third — so percent-of-median ranks A
@@ -415,6 +441,7 @@ describe("orderAttentionItems", () => {
     spreadGap: 1,
     relGap: 1,
     kind: "behind",
+    direction: "higher_is_better",
     noPrevious: false,
     ...over,
   });
