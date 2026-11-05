@@ -229,8 +229,6 @@ sources:
         evidence_granularity: source_summary
       - key: active_day
         evidence_granularity: derived_population
-      - key: active_modality
-        evidence_granularity: derived_population
       - key: chat_active_day
         evidence_granularity: derived_population
       - key: meeting_free_day
@@ -2348,23 +2346,6 @@ metrics:
         measure_key: workday_meeting_hours
       - input_role: denominator
         measure_key: working_hours
-    dimensions: []
-  - metric_key: collab.breadth
-    source_key: collab
-    subject: activity
-    label: Collaboration Breadth
-    short_label: Modalities
-    description: Distinct collaboration modalities used
-    explanation: Distinct collaboration modalities — chat, meetings, email, documents — a person was deliberately active in during the period.
-    unit: modalities
-    format: integer
-    direction: neutral
-    entity_type: person
-    computation: distinct_count
-    peer_cohort_key: org_unit
-    inputs:
-      - input_role: value
-        measure_key: active_modality
     dimensions: []
   - metric_key: collab.meetings_organized
     source_key: collab

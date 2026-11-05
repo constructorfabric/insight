@@ -366,7 +366,6 @@ const COLLABORATION_COLLECTION: MetricCollectionConfig = {
       key: "collab.focus_time_pct",
       views: [{ view: "period" }, { view: "peer" }],
     },
-    { key: "collab.breadth", views: [{ view: "period" }, { view: "peer" }] },
     {
       key: "collab.emails_sent",
       views: [

@@ -1,8 +1,8 @@
 """The metrics derived from a person's active days, across tools and addresses.
 
-An active day has a deliberate action under any of the person's addresses. Breadth
-counts the modalities behind those days, a meeting-free day is an active day without
-meeting time under any address, and focus is 100 minus meeting hours as a share of
+An active day has a deliberate action under any of the person's addresses, a
+meeting-free day is an active day without meeting time under any address, and focus
+is 100 minus meeting hours as a share of
 working hours over the active days, with one working day per day however many
 addresses were active and a day's meetings counted up to its working hours. Both
 leave out addresses no meeting source ever reported, whose meeting time is unknown.
@@ -29,7 +29,6 @@ EMPTY_WINDOW = ("2026-11-01", "2026-11-30")
 FOCUS = "collab.focus_time_pct"
 DERIVED_METRICS = (
     "collab.active_days",
-    "collab.breadth",
     "collab.meeting_free_days",
     "collab.focus_time_pct",
 )
@@ -37,25 +36,21 @@ DERIVED_METRICS = (
 EXPECTED = {
     ALICE: {
         "collab.active_days": 5,
-        "collab.breadth": 4,
         "collab.meeting_free_days": 2,
         "collab.focus_time_pct": 65.0,
     },
     BOB: {
         "collab.active_days": 2,
-        "collab.breadth": 2,
         "collab.meeting_free_days": 1,
         "collab.focus_time_pct": 81.25,
     },
     CAROL: {
         "collab.active_days": 1,
-        "collab.breadth": 1,
         "collab.meeting_free_days": 1,
         "collab.focus_time_pct": 100.0,
     },
     DAVE: {
         "collab.active_days": 1,
-        "collab.breadth": 1,
         "collab.meeting_free_days": None,
         "collab.focus_time_pct": None,
     },
