@@ -173,7 +173,7 @@ beforeEach(() => {
 describe("AiCostView", () => {
   it("renders headline KPIs: Claude-only cost, active users, org lines", () => {
     render(<AiCostView item={null} />);
-    expect(screen.getByText("AI potential usage cost")).toBeInTheDocument();
+    expect(screen.getByText("AI potential cost")).toBeInTheDocument();
     expect(screen.getByText("Claude Code only")).toBeInTheDocument();
     // 3 of the 5 people in scope (lead included) have active days > 0
     expect(screen.getByText("Active AI users")).toBeInTheDocument();
@@ -199,7 +199,7 @@ describe("AiCostView", () => {
     mocks.grid.byKey = drop(mocks.grid.byKey);
     mocks.tools.byKey = drop(mocks.tools.byKey);
     render(<AiCostView item={null} />);
-    expect(screen.getByText("AI potential usage cost")).toBeInTheDocument();
+    expect(screen.getByText("AI potential cost")).toBeInTheDocument();
     // A $0 actual cost would assert that nothing was billed.
     expect(screen.queryByText(/actual cost/)).not.toBeInTheDocument();
     expect(screen.queryByText(/actual .* \/ active user/)).not.toBeInTheDocument();
@@ -292,7 +292,7 @@ describe("AiCostView", () => {
     render(<AiCostView item="autofix" />);
     expect(screen.getByText(/no autofix data is collected/i)).toBeInTheDocument();
     // no fabricated KPI cards behind it
-    expect(screen.queryByText("AI potential usage cost")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI potential cost")).not.toBeInTheDocument();
   });
 
   it("groups cost and adoption by unit when a slice is active", () => {
@@ -357,6 +357,6 @@ describe("AiCostView", () => {
     mocks.roster = [];
     render(<AiCostView item={null} />);
     expect(screen.getByText(/No people in the current scope/)).toBeInTheDocument();
-    expect(screen.queryByText("AI potential usage cost")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI potential cost")).not.toBeInTheDocument();
   });
 });

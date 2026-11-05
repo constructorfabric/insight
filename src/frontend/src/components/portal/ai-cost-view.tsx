@@ -401,7 +401,7 @@ export function AiCostView({ item }: { item: string | null }) {
       {/* Headline */}
       <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
         <Tile
-          label="AI potential usage cost"
+          label="AI potential cost"
           value={hasCost ? costMoney(totalCost) : "—"}
           note={hasActual ? `actual cost ${actualMoney(totalActual)}` : null}
           sub="Claude Code only"
