@@ -68,7 +68,7 @@ Then, for the viewer alone:
 
 Or, for a team:
 
-1. **Per person**: six tiles: commits, pull requests merged, tasks closed, messages sent, AI cost, AI extra usage cost. Each: change vs previous period of the same length (none for All time); "team total · N per active person".
+1. **Per person**: six tiles: commits, pull requests merged, tasks closed, messages sent, AI cost, AI extra usage cost. Each shows the figure per person: the average over active people for a count ("average of N active people · T total"), the median otherwise ("median of N people"). The change vs previous period of the same length (none for All time) compares those per-person figures. A tile opens the people it was taken over, each a step from their own records.
 2. **AI adoption**: people using AI, as a share of the team.
 3. **Needs attention**: collapsible rows, one per metric, with people count.
 4. **By direction**: one card per direction.

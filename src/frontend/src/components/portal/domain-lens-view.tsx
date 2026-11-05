@@ -68,14 +68,10 @@ import type {
 } from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import {
-  personsEvidenceSelection,
-  type MetricEvidenceSelection,
-} from "@/api/metric-drilldown-client";
-import {
   useMetricEvidenceOptional,
   type EvidencePeopleView,
 } from "@/components/metric-evidence-context";
-import { peopleEvidenceView } from "@/lib/portal/evidence-people";
+import { peopleEvidenceView, type RosterLookups } from "@/lib/portal/evidence-people";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
 import {
@@ -105,8 +101,9 @@ import {
   fmtCompact,
   medianAcross,
   perCapita,
-  representative,
+  perPersonReading,
   topDecile,
+  type PerPersonReading,
 } from "@/lib/portal/metric-stats";
 import {
   lensEntry,
@@ -839,6 +836,7 @@ function Section({
           labelSource={spec.labelSource}
           grid={grid}
           memberIds={memberIds}
+          roster={{ nameByEntity, personIdByEntity }}
           unattributedByKey={unattributedByKey}
         />
       );
@@ -1340,43 +1338,20 @@ function HeadlineSection({
   labelSource,
   grid,
   memberIds,
+  roster,
   unattributedByKey,
 }: {
   metrics: readonly string[];
   labelSource?: "short";
   grid: GridData;
   memberIds: readonly string[];
+  roster: RosterLookups;
   unattributedByKey: Map<string, number | null>;
 }) {
   const cards = metrics
-    .map((key) => {
-      const r = grid.byKey.get(key);
-      if (!r) return null;
-      const now = representative(r, memberIds);
-      const isSum = r.computation === "sum";
-      const unattributed = isSum ? (unattributedByKey.get(key) ?? null) : null;
-      if (now == null && !(unattributed != null && unattributed > 0)) return null;
-      const prev = representative(grid.previousByKey.get(key), memberIds);
-      // The records that carry the figure: its own, unless the family says
-      // another metric holds them (a line count is carried by commits).
-      const carrier = grid.byKey.get(evidenceMetricFor(key));
-      return { key, r, now, prev, isSum, carrier, unattributed };
-    })
+    .map((key) => headlineCard(key, grid, memberIds, roster, unattributedByKey))
     .filter((x): x is NonNullable<typeof x> => x != null);
   if (!cards.length) return null;
-
-  // Every drillable card of the row, so the dialog a reader opens on one of
-  // them lists its neighbours — the same set the members grid offers from a
-  // row of cells. Deduplicated by metric: two tiles carried by one metric
-  // would otherwise name the same key twice, which the request refuses.
-  const seen = new Set<string>();
-  const targets = cards.flatMap((c) => {
-    if (!c.carrier?.drilldown || seen.has(c.carrier.metric_key)) return [];
-    const selection = personsEvidenceSelection(c.carrier.selection, memberIds);
-    if (!selection) return [];
-    seen.add(c.carrier.metric_key);
-    return [{ selection, label: c.carrier.label }];
-  });
 
   return (
     <section className="flex flex-col gap-3">
@@ -1384,57 +1359,117 @@ function HeadlineSection({
         Per person
       </p>
       <div data-slot="headline-grid" className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-4">
-        {cards.map((c) => (
-          <HeadlineCard
-            key={c.key}
-            card={c}
-            labelSource={labelSource}
-            targets={targets}
-            memberIds={memberIds}
-          />
-        ))}
+        {cards.map((c) =>
+          c.kind === "members" ? (
+            <HeadlineCard key={c.key} card={c} labelSource={labelSource} />
+          ) : (
+            <UnattributedOnlyCard key={c.key} card={c} labelSource={labelSource} />
+          )
+        )}
       </div>
     </section>
   );
 }
 
-/**
- * One headline figure, and the records it was taken over.
- *
- * The card opens the evidence dialog for the WHOLE roster rather than for a
- * person: the number on it is the roster's, and a reader asking what it is
- * made of is asking about all of them. Nothing here names an individual —
- * the dialog lists records, and who did what stays inside it.
- *
- * A metric whose evidence cannot be read renders as a plain card: an
- * affordance that opens an empty dialog is worse than none.
- */
+/** Work nobody reached, for a sum metric at organisation level; null otherwise. */
+function positiveShare(
+  r: NormalizedMetricResult,
+  key: string,
+  unattributedByKey: Map<string, number | null>
+): number | null {
+  if (r.computation !== "sum") return null;
+  const share = unattributedByKey.get(key) ?? null;
+  return share != null && share > 0 ? share : null;
+}
+
+function headlineCard(
+  key: string,
+  grid: GridData,
+  memberIds: readonly string[],
+  roster: RosterLookups,
+  unattributedByKey: Map<string, number | null>
+) {
+  const r = grid.byKey.get(key);
+  if (!r) return null;
+
+  const unattributed = positiveShare(r, key, unattributedByKey);
+  const reading = perPersonReading(r, memberIds);
+  if (!reading) {
+    return unattributed == null
+      ? null
+      : { kind: "share-only" as const, key, r, unattributed };
+  }
+
+  const prev = perPersonReading(grid.previousByKey.get(key), memberIds);
+  const figure = formatMetricValue(reading.value, r.format, r.unit);
+  const title =
+    reading.kind === "median"
+      ? `${r.label} · median ${figure} per person`
+      : reading.active === 0
+        ? `${r.label} · no activity`
+        : `${r.label} · ${figure} per active person`;
+  const carrier = grid.byKey.get(evidenceMetricFor(key)) ?? null;
+  const people = peopleEvidenceView(r, memberIds, title, roster, carrier);
+  return {
+    kind: "members" as const,
+    key,
+    r,
+    reading,
+    prev: prev?.value ?? null,
+    people,
+    unattributed,
+  };
+}
+
+function readingCaption(reading: PerPersonReading, r: NormalizedMetricResult): string[] {
+  if (reading.kind === "median") {
+    return [`median of ${reading.people} ${reading.people === 1 ? "person" : "people"}`];
+  }
+  if (reading.active === 0) return ["no activity"];
+  const people = reading.active === 1 ? "person" : "people";
+  const total = formatMetricValue(reading.total, r.format, null);
+  return [`average of ${reading.active} active ${people}`, `${total} total`];
+}
+
+/** The share beside the members' total; null when there is none or no total to add it to. */
+function unattributedCaption(
+  reading: PerPersonReading,
+  unattributed: number | null,
+  r: NormalizedMetricResult
+): string[] | null {
+  if (unattributed == null || reading.kind === "median") return null;
+  return [
+    `+ ${formatMetricValue(unattributed, r.format, null)} unattributed`,
+    `${formatMetricValue(reading.total + unattributed, r.format, null)} in all`,
+  ];
+}
+
+function CaptionParts({ parts }: { parts: readonly string[] }) {
+  return parts.map((part, i) => (
+    <Fragment key={part}>
+      {i > 0 ? " · " : null}
+      <span className="inline-block">{part}</span>
+    </Fragment>
+  ));
+}
+
 function HeadlineCard({
   card,
   labelSource,
-  targets,
-  memberIds,
 }: {
   card: {
     r: NormalizedMetricResult;
-    /** The roster's figure; null when no member has a value, leaving only the share. */
-    now: number | null;
+    reading: PerPersonReading;
     prev: number | null;
-    isSum: boolean;
-    carrier: NormalizedMetricResult | undefined;
+    people: EvidencePeopleView;
     /** Organisation-wide work that reaches no person; null below org level. */
     unattributed: number | null;
   };
   labelSource?: "short";
-  targets: readonly { selection: MetricEvidenceSelection; label: string }[];
-  memberIds: readonly string[];
 }) {
   const evidence = useMetricEvidenceOptional();
   const c = card;
-  const selection =
-    c.now != null && c.carrier?.drilldown
-      ? personsEvidenceSelection(c.carrier.selection, memberIds)
-      : null;
+  const share = unattributedCaption(c.reading, c.unattributed, c.r);
   const body = (
     <CardContent className="flex flex-col gap-1 p-4">
       <div className="flex items-center justify-between gap-2">
@@ -1446,19 +1481,26 @@ function HeadlineCard({
           text={labelSource === "short" ? (c.r.short_label ?? c.r.label) : undefined}
           className={TEXT_NAME}
         />
-        {c.now != null ? (
-          <Delta now={c.now} prev={c.prev} direction={c.r.direction} showUnavailable />
-        ) : null}
+        <Delta now={c.reading.value} prev={c.prev} direction={c.r.direction} showUnavailable />
       </div>
-      {c.now != null ? (
-        <MemberFigure card={{ ...c, now: c.now }} memberIds={memberIds} />
-      ) : (
-        <UnattributedOnlyFigure card={c} />
-      )}
+      <div className={TEXT_FIGURE}>
+        {formatMetricValue(c.reading.value, c.r.format, c.r.unit)}
+      </div>
+      {/* Each part wraps as a unit, so a narrow card breaks between them. */}
+      <div className="text-xs font-medium text-muted-foreground">
+        <CaptionParts parts={readingCaption(c.reading, c.r)} />
+      </div>
+      {/* INVARIANT: the share stays outside the members' figures, or the
+        per-person reading would absorb work nobody did. */}
+      {share ? (
+        <div data-slot="headline-unattributed" className="text-xs text-muted-foreground">
+          <CaptionParts parts={share} />
+        </div>
+      ) : null}
     </CardContent>
   );
 
-  if (!selection || !evidence) return <Card className="py-0">{body}</Card>;
+  if (!evidence) return <Card className="py-0">{body}</Card>;
 
   return (
     <Card className="py-0 transition-colors hover:bg-card-hover focus-within:ring-2 focus-within:ring-ring">
@@ -1466,11 +1508,7 @@ function HeadlineCard({
         type="button"
         aria-haspopup="dialog"
         className="w-full cursor-pointer text-left focus-visible:outline-none"
-        onClick={() =>
-          evidence.openEvidenceTargets(targets, {
-            activeMetricKey: selection.metric_key,
-          })
-        }
+        onClick={() => evidence.openEvidencePeople(c.people)}
       >
         {body}
       </button>
@@ -1478,65 +1516,36 @@ function HeadlineCard({
   );
 }
 
-/** The roster's figure, with the organisation's unattributed share beside it. */
-function MemberFigure({
+/**
+ * No member has a value, so the card carries only the work nobody reached. It
+ * opens nothing: no person's records hold that work.
+ */
+function UnattributedOnlyCard({
   card: c,
-  memberIds,
+  labelSource,
 }: {
-  card: {
-    r: NormalizedMetricResult;
-    now: number;
-    isSum: boolean;
-    unattributed: number | null;
-  };
-  memberIds: readonly string[];
+  card: { r: NormalizedMetricResult; unattributed: number };
+  labelSource?: "short";
 }) {
   return (
-    <>
-      <div className={TEXT_FIGURE}>
-        {formatMetricValue(c.now, c.r.format, c.r.unit)}
-      </div>
-      {/* The team total leads, because the dialog this card opens lists the
-        roster's records — a per-person figure on the face and a roster-sized
-        table behind it read as a contradiction. The per-person figure keeps
-        its place underneath, where the comparison it serves still works. */}
-      <div className="text-xs font-medium text-muted-foreground">
-        {c.isSum
-          ? `team total · ${formatMetricValue(perCapita(c.r, memberIds), c.r.format, c.r.unit)} per active person`
-          : "median / person"}
-      </div>
-      {/* INVARIANT: the share stays outside the team total, or the
-        per-person figure would absorb work nobody did. */}
-      {c.unattributed != null && c.unattributed > 0 ? (
+    <Card className="py-0">
+      <CardContent className="flex flex-col gap-1 p-4">
+        <MetricName
+          metric={c.r}
+          text={labelSource === "short" ? (c.r.short_label ?? c.r.label) : undefined}
+          className={TEXT_NAME}
+        />
+        <div className={TEXT_FIGURE}>
+          {formatMetricValue(c.unattributed, c.r.format, c.r.unit)}
+        </div>
         <div
           data-slot="headline-unattributed"
-          className="text-xs text-muted-foreground"
+          className="text-xs font-medium text-muted-foreground"
         >
-          {`+ ${formatMetricValue(c.unattributed, c.r.format, c.r.unit)} unattributed · ${formatMetricValue(c.now + c.unattributed, c.r.format, c.r.unit)} in all`}
+          all unattributed · no person reached
         </div>
-      ) : null}
-    </>
-  );
-}
-
-/** No member has a value, so the card carries only the work nobody reached. */
-function UnattributedOnlyFigure({
-  card: c,
-}: {
-  card: { r: NormalizedMetricResult; unattributed: number | null };
-}) {
-  return (
-    <>
-      <div className={TEXT_FIGURE}>
-        {formatMetricValue(c.unattributed ?? 0, c.r.format, c.r.unit)}
-      </div>
-      <div
-        data-slot="headline-unattributed"
-        className="text-xs font-medium text-muted-foreground"
-      >
-        all unattributed · no person reached
-      </div>
-    </>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -2948,13 +2957,12 @@ function DirectionCardsSection({
                 c.keys.map((key) => {
                   const r = grid.byKey.get(key);
                   if (!r) return null;
-                  const now = representative(r, memberIds);
-                  if (now == null) return null;
-                  const prev = representative(
+                  const reading = perPersonReading(r, memberIds);
+                  if (!reading) return null;
+                  const prev = perPersonReading(
                     grid.previousByKey.get(key),
                     memberIds
                   );
-                  const isSum = r.computation === "sum";
                   return (
                     <div
                       key={key}
@@ -2968,12 +2976,16 @@ function DirectionCardsSection({
                       <span className="flex items-center gap-2">
                         <span className="font-medium tabular-nums">
                           {formatMetricValue(
-                            isSum ? perCapita(r, memberIds) : now,
+                            reading.value,
                             r.format,
                             r.unit
                           )}
                         </span>
-                        <Delta now={now} prev={prev} direction={r.direction} />
+                        <Delta
+                          now={reading.value}
+                          prev={prev?.value ?? null}
+                          direction={r.direction}
+                        />
                       </span>
                     </div>
                   );
