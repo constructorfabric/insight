@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 import { Pending } from "@/components/portal/domain-lens-view";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@gears-frontx/ui-kit";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import type { MetricCollectionConfig } from "@/lib/metrics/collection";
 import { pickTrendBucket } from "@/lib/portal/trend-data";

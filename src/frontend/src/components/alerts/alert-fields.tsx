@@ -6,17 +6,17 @@ import { FieldSelect } from "@/components/alerts/field-select";
 import { DefinitionPicker } from "@/components/custom/definition-picker";
 import { Row } from "@/components/custom/editor/controls";
 import { refusal } from "@/components/custom/refusal";
-import { Button } from "@gears-frontx/ui-kit";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Button,
+  Checkbox,
   Field,
   FieldError,
   FieldLabel,
   FieldLegend,
   FieldSet,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
+  Input,
+  Switch,
+} from "@gears-frontx/ui-kit";
 import { conditionColumns } from "@/lib/alerts/condition";
 import {
   CONTEXT_COLUMNS_MAX,

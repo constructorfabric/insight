@@ -4,15 +4,15 @@ import { useState, type ComponentType, type ReactNode } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { refusal } from "@/components/custom/refusal";
-import { Button } from "@gears-frontx/ui-kit";
-import { Card, CardContent } from "@/components/ui/card";
 import {
+  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@gears-frontx/ui-kit";
+import { Card, CardContent } from "@/components/ui/card";
 import { PREVIEWED, type PreviewedKind } from "@/lib/custom/catalogue-paths";
 import { changedAgo } from "@/lib/custom/changed-ago";
 import { TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";

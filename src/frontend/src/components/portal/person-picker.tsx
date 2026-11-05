@@ -23,7 +23,7 @@ import { personDisplayName } from "@/lib/identities/person-display";
 import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Input } from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
 import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";

@@ -33,22 +33,18 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@gears-frontx/ui-kit";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { formatMetricNumber } from "@/lib/format";
-import {
+  Input,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@gears-frontx/ui-kit";
+import { formatMetricNumber } from "@/lib/format";
 import { Spinner } from "@/components/ui/spinner";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { nextSort } from "@/lib/metrics/evidence-rows";

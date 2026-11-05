@@ -3,7 +3,7 @@ import { useState } from "react";
 
 import { OrgTree } from "@/components/org-tree";
 import { ItemButton } from "@/components/portal/pane-nav";
-import { Input } from "@/components/ui/input";
+import { Input } from "@gears-frontx/ui-kit";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {

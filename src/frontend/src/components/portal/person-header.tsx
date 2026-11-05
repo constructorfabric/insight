@@ -2,15 +2,15 @@ import { useNavigate } from "@tanstack/react-router";
 import { Check, ChevronsUpDown, ChevronUp, Users } from "lucide-react";
 import { useMemo } from "react";
 
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@gears-frontx/ui-kit";
 import { useIcPerson } from "@/queries/ic-dashboard";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { useOrgScope } from "@/lib/portal/use-org-scope";

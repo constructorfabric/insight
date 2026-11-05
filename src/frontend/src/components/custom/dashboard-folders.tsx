@@ -11,8 +11,8 @@ import {
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-} from "@/components/ui/dropdown-menu";
-import { toast } from "@gears-frontx/ui-kit";
+  toast,
+} from "@gears-frontx/ui-kit";
 import { folderChoices, type FolderChoice } from "@/lib/custom/folder-choices";
 import { useIsAdmin } from "@/queries/identity-me";
 import {

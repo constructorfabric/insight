@@ -4,7 +4,7 @@ import { useState } from "react";
 import { DEFINITION_NAME_MAX } from "@/api/custom-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { refusal } from "@/components/custom/refusal";
-import { Input } from "@/components/ui/input";
+import { Input } from "@gears-frontx/ui-kit";
 import {
   invalidateDashboardList,
   useDuplicateDashboard,

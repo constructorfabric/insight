@@ -13,9 +13,10 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  Input,
+  Separator,
+  Skeleton,
 } from "@gears-frontx/ui-kit";
-import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 import {
   Sheet,
   SheetContent,
@@ -23,7 +24,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Skeleton } from "@/components/ui/skeleton";
 import { PanelLeftIcon } from "lucide-react";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";

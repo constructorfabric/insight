@@ -1,8 +1,8 @@
 import { ChevronDown, Tag, X } from "lucide-react";
 
 import type { TagSummary } from "@/api/custom-client";
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Button,
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
@@ -11,7 +11,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@gears-frontx/ui-kit";
 
 export function TagFilter({
   tags,

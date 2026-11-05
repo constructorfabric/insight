@@ -18,7 +18,8 @@ vi.mock("@/components/ui/sidebar", () => ({
   ),
 }));
 
-vi.mock("@/components/ui/dropdown-menu", () => ({
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
   DropdownMenu: ({ children }: { children?: React.ReactNode }) => (
     <div>{children}</div>
   ),

@@ -18,9 +18,9 @@ import {
   DialogHeader,
   DialogTitle,
   toast,
+  Input,
+  Label,
 } from "@gears-frontx/ui-kit";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { audienceChosen, granteesFor } from "@/lib/custom/initial-grants";
 import { TEXT_BODY } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";

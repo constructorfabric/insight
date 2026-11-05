@@ -6,13 +6,13 @@ import {
   useMetricEvidenceOptional,
   withOwnTarget,
 } from "@/components/metric-evidence-context";
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@gears-frontx/ui-kit";
 import { cn } from "@/lib/utils";
 
 export function MetricCardActions({

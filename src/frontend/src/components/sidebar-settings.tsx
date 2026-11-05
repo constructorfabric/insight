@@ -5,7 +5,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { Switch } from "@/components/ui/switch";
+import { Switch } from "@gears-frontx/ui-kit";
 import {
   setPortalShowPlanned,
   usePortalShowPlanned,

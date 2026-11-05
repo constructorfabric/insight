@@ -21,7 +21,7 @@ import {
   XAxis,
   YAxis,
 } from "@/components/ui/chart";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@gears-frontx/ui-kit";
 
 /** One plotted series: its metric key, its label, and how to draw it. */
 export type SectionTrendSeries = {

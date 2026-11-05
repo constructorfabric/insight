@@ -2,8 +2,7 @@ import { useId, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight } from "lucide-react";
 
 import type { DatasetRecord, DeclaredField } from "@/api/custom-client";
-import { Button } from "@gears-frontx/ui-kit";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Button, Checkbox } from "@gears-frontx/ui-kit";
 import {
   Collapsible,
   CollapsibleContent,
