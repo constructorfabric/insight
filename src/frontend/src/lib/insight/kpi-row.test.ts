@@ -158,6 +158,52 @@ describe("metricKpiTiles", () => {
     );
     expect(tiles[0]?.delta?.text).toBe("+5 pp");
   });
+
+  it.each([
+    { previous: 10, current: 10, delta: { text: "±0%", status: "neutral", down: false } },
+    { previous: 1000, current: 1004, delta: { text: "±0%", status: "neutral", down: false } },
+    { previous: 1000, current: 996, delta: { text: "±0%", status: "neutral", down: false } },
+    { previous: null, current: 10, delta: null },
+    { previous: 10, current: 20, delta: { text: "2×", status: "good", down: false } },
+  ])(
+    "says unchanged only when an earlier value exists: $previous -> $current",
+    ({ previous, current, delta }) => {
+      const tiles = metricKpiTiles(
+        normalizeMetricResults([metricResult("git.commits", current)]),
+        normalizeMetricResults([metricResult("git.commits", previous)]),
+        "me@x.com"
+      );
+      expect(tiles[0]?.delta, `previous ${previous}, current ${current}`).toEqual(delta);
+    }
+  );
+
+  it.each([
+    { previous: 72, current: 72 },
+    { previous: 72.2, current: 71.9 },
+  ])(
+    "says unchanged in points for a percent ratio that did not move: $previous -> $current",
+    ({ previous, current }) => {
+      const percentRatio = {
+        format: "percent",
+        computation: "ratio",
+        scale: 100,
+      } as Partial<MetricResult>;
+      const tiles = metricKpiTiles(
+        normalizeMetricResults([
+          metricResult("collab.focus_time_pct", current, percentRatio),
+        ]),
+        normalizeMetricResults([
+          metricResult("collab.focus_time_pct", previous, percentRatio),
+        ]),
+        "me@x.com"
+      );
+      expect(tiles[0]?.delta, `previous ${previous}, current ${current}`).toEqual({
+        text: "0 pp",
+        status: "neutral",
+        down: false,
+      });
+    }
+  );
 });
 
 describe("one finding, one mark", () => {
