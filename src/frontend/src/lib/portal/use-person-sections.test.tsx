@@ -176,7 +176,7 @@ describe("usePersonSectionCollection", () => {
 
 describe("usePersonSectionStandings", () => {
   it("marks a section whose metric sits below its cohort", () => {
-    mocks.byKey = normalizeMetricResults([metric("git.commits", 1, 20)]);
+    mocks.byKey = normalizeMetricResults([metric("git.default_branch_commits", 1, 20)]);
     const git = standings().find((s) => s.id === "git_output")!;
     expect(git.hasData).toBe(true);
     expect(git.status).toBe("warn");
@@ -184,12 +184,12 @@ describe("usePersonSectionStandings", () => {
   });
 
   it("counts a measured zero as data — it is a finding, not a gap", () => {
-    mocks.byKey = normalizeMetricResults([metric("git.commits", 0, 20)]);
+    mocks.byKey = normalizeMetricResults([metric("git.default_branch_commits", 0, 20)]);
     expect(standings().find((s) => s.id === "git_output")!.hasData).toBe(true);
   });
 
   it("reports no data when nothing in the section has a value", () => {
-    mocks.byKey = normalizeMetricResults([metric("git.commits", null, 20)]);
+    mocks.byKey = normalizeMetricResults([metric("git.default_branch_commits", null, 20)]);
     const git = standings().find((s) => s.id === "git_output")!;
     expect(git.hasData).toBe(false);
     expect(git.phrase).toBe("no comparison");
@@ -201,11 +201,11 @@ describe("usePersonSectionStandings", () => {
     // listing, never from whether this viewer's comparison pool happens to
     // hold readings: a viewer who can see few people would otherwise report a
     // live connector as missing, and the smaller their reach the more often.
-    mocks.byKey = normalizeMetricResults([metric("git.commits", null, 20)]);
+    mocks.byKey = normalizeMetricResults([metric("git.default_branch_commits", null, 20)]);
 
     mocks.definitions = [
       {
-        metric_key: "git.commits",
+        metric_key: "git.default_branch_commits",
         is_enabled: true,
         schema_status: "ok",
         schema_error_code: null,
@@ -219,7 +219,7 @@ describe("usePersonSectionStandings", () => {
     // Same person, same empty own value — only the listing changed.
     mocks.definitions = [
       {
-        metric_key: "git.commits",
+        metric_key: "git.default_branch_commits",
         is_enabled: true,
         schema_status: "ok",
         schema_error_code: null,
@@ -234,10 +234,10 @@ describe("usePersonSectionStandings", () => {
   it("does not call a section unmeasured because this viewer's pool is empty", () => {
     // The regression this replaced: an empty pool used to mean "no data
     // reaches us". It now means nothing at all — the listing decides.
-    mocks.byKey = normalizeMetricResults([metric("git.commits", null, 20, 0)]);
+    mocks.byKey = normalizeMetricResults([metric("git.default_branch_commits", null, 20, 0)]);
     mocks.definitions = [
       {
-        metric_key: "git.commits",
+        metric_key: "git.default_branch_commits",
         is_enabled: true,
         schema_status: "ok",
         schema_error_code: null,
@@ -271,7 +271,7 @@ describe("while the definition listing is still loading", () => {
     // nothing about this person, then flip a moment later. Pending has to
     // cover the listing too, not just the metric collection.
     mocks.definitionsPending = true;
-    mocks.byKey = normalizeMetricResults([metric("git.commits", null, 20)]);
+    mocks.byKey = normalizeMetricResults([metric("git.default_branch_commits", null, 20)]);
     expect(standings().every((s) => s.isPending)).toBe(true);
     mocks.definitionsPending = false;
   });

@@ -76,7 +76,7 @@ updates:
       - dependency-name: utoipa
         versions: [">=6"]
 
-  - package-ecosystem: pip
+  - package-ecosystem: uv
     directory: /src/ingestion/tools/seed
     schedule:
       interval: daily

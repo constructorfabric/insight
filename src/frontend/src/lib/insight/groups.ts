@@ -187,7 +187,11 @@ const AI_ADOPTION_COLLECTION: MetricCollectionConfig = {
 const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
   metrics: [
     {
-      key: "git.commits",
+      // INVARIANT: no `branch_scope` breakdown on a metric already scoped to
+      // one branch: `/v1/metric-results` refuses a dimension a metric does not
+      // declare, and the call is all-or-nothing, so it would blank the whole
+      // section.
+      key: "git.default_branch_commits",
       // The forge split is asked for so the section can name what it was
       // watching. One breakdown per class is enough for that line, and this
       // is the metric every git source reports.
@@ -198,54 +202,19 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
       ],
     },
     {
-      // INVARIANT: no `branch_scope` breakdown on a metric already scoped to
-      // one branch. Not merely because the dimension would be constant —
-      // `/v1/metric-results` refuses a dimension a metric does not declare,
-      // and the call is all-or-nothing, so it would blank the whole section.
-      //
-      // The split keys stay in this collection even with no block of their
-      // own: `lens-configs.ts` may only name keys a group declares.
-      key: "git.default_branch_commits",
-      views: [{ view: "period" }, { view: "peer" }],
-    },
-    {
-      key: "git.prs_merged",
-      // `branch_scope` splits landed work from work still in flight. Two
-      // groups, so the summary card's ribbon always lights up — and one
-      // breakdown per card, because a second dimension cross-tabs into
-      // "GitHub · Default branch" instead of giving the plain pair.
-      views: [
-        { view: "period" },
-        { view: "peer" },
-        { view: "breakdown", dimensions: ["branch_scope"] },
-      ],
-    },
-    {
       key: "git.default_branch_prs_merged",
       views: [{ view: "period" }, { view: "peer" }],
     },
     {
-      key: "git.lines_added",
-      views: [
-        { view: "period" },
-        { view: "peer" },
-        { view: "breakdown", dimensions: ["branch_scope"] },
-      ],
-    },
-    {
-      key: "git.lines_removed",
+      key: "git.default_branch_lines_added",
       views: [{ view: "period" }, { view: "peer" }],
     },
-    // The pre-split keys back the Repositories lens headline, where the
-    // question is "did it land on the trunk", not the pair's ratio.
-    // `git.default_branch_prs_merged` is already above — a key may appear
-    // once per request, and the API rejects the WHOLE request otherwise.
+    {
+      key: "git.default_branch_lines_removed",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
     {
       key: "git.default_branch_code_lines",
-      views: [{ view: "period" }, { view: "peer" }],
-    },
-    {
-      key: "git.non_default_branch_code_lines",
       views: [{ view: "period" }, { view: "peer" }],
     },
     {
@@ -319,24 +288,15 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
       views: [{ view: "period" }, { view: "peer" }, { view: "histogram" }],
     },
     {
-      key: "git.code_lines",
-      views: [
-        { view: "period" },
-        { view: "peer" },
-        { view: "breakdown", dimensions: ["branch_scope"] },
-      ],
+      key: "git.default_branch_prs_created",
+      views: [{ view: "period" }, { view: "peer" }],
     },
     {
-      key: "git.prs_created",
-      views: [
-        { view: "period" },
-        { view: "peer" },
-        { view: "breakdown", dimensions: ["branch_scope"] },
-      ],
+      key: "git.default_branch_merge_rate",
+      views: [{ view: "period" }, { view: "peer" }],
     },
-    { key: "git.merge_rate", views: [{ view: "period" }, { view: "peer" }] },
     {
-      key: "git.commits_per_active_day",
+      key: "git.default_branch_commits_per_active_day",
       views: [{ view: "period" }, { view: "peer" }],
     },
   ],
@@ -344,19 +304,6 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
 
 const GIT_LINES_TABLE_COLUMN = {
   label: "Lines",
-  template: [
-    { metric: "git.lines_added", prefix: "+", tone: "success" },
-    { text: " / " },
-    {
-      metric: "git.lines_removed",
-      prefix: "−",
-      tone: "destructive",
-    },
-  ],
-} satisfies MetricTimeseriesTableColumnConfig;
-
-const GIT_LINES_DEFAULT_TABLE_COLUMN = {
-  label: "Lines (default)",
   template: [
     { metric: "git.default_branch_lines_added", prefix: "+", tone: "success" },
     { text: " / " },
@@ -526,34 +473,28 @@ export const GROUPS: readonly MetricGroup[] = [
     title: "Git output",
     collection: GIT_OUTPUT_COLLECTION,
     card: {
-      preview: ["git.commits", "git.prs_merged", "git.code_lines"],
+      preview: [
+        "git.default_branch_commits",
+        "git.default_branch_prs_merged",
+        "git.default_branch_code_lines",
+      ],
     },
     drilldown: [
       {
         id: "output-by-repository",
         view: "timeseries",
-        // Each total is followed by its default-branch reading, so a row says
-        // how much work a repository saw and how much of it landed without
-        // making the reader open a second block to find out.
         metrics: [
-          "git.commits",
           "git.default_branch_commits",
-          "git.prs_merged",
           "git.default_branch_prs_merged",
-          "git.lines_added",
-          "git.lines_removed",
           "git.default_branch_lines_added",
           "git.default_branch_lines_removed",
         ],
         defaultPresentation: "table",
         table: {
           columns: [
-            { metric: "git.commits" },
-            { metric: "git.default_branch_commits", labelSource: "short" },
-            { metric: "git.prs_merged", labelSource: "short" },
+            { metric: "git.default_branch_commits" },
             { metric: "git.default_branch_prs_merged", labelSource: "short" },
             GIT_LINES_TABLE_COLUMN,
-            GIT_LINES_DEFAULT_TABLE_COLUMN,
           ],
         },
         groupBy: {
@@ -561,7 +502,7 @@ export const GROUPS: readonly MetricGroup[] = [
           limits: {
             repository: {
               count: 10,
-              rankBy: "git.commits",
+              rankBy: "git.default_branch_commits",
               includeRemainder: true,
             },
           },
@@ -570,36 +511,15 @@ export const GROUPS: readonly MetricGroup[] = [
       {
         id: "lines-added-by-category",
         view: "timeseries",
-        metrics: ["git.lines_added", "git.lines_removed"],
+        metrics: [
+          "git.default_branch_lines_added",
+          "git.default_branch_lines_removed",
+        ],
         table: {
           columns: [GIT_LINES_TABLE_COLUMN],
         },
         groupBy: {
           default: "category",
-        },
-      },
-      {
-        // Landed work against work still in flight. Two groups only, so no
-        // limits: `branch_scope` is a partition, not a long tail. Last of the
-        // timeseries blocks because groups.test.ts indexes them positionally.
-        id: "output-by-branch-scope",
-        view: "timeseries",
-        metrics: [
-          "git.commits",
-          "git.prs_merged",
-          "git.lines_added",
-          "git.lines_removed",
-        ],
-        defaultPresentation: "table",
-        table: {
-          columns: [
-            { metric: "git.commits" },
-            { metric: "git.prs_merged", labelSource: "short" },
-            GIT_LINES_TABLE_COLUMN,
-          ],
-        },
-        groupBy: {
-          default: "branch_scope",
         },
       },
       {
@@ -694,7 +614,7 @@ export const HEATMAP_METRIC_KEYS: readonly string[] = [
   "tasks.closed_task",
   "tasks.closed_unknown",
   "tasks.resolution_time",
-  "git.prs_merged",
+  "git.default_branch_prs_merged",
   "git.pr_cycle_time_h",
   "collab.focus_time_pct",
   "collab.meeting_hours",
@@ -734,13 +654,13 @@ export const HEATMAP_COLLECTION: MetricCollectionConfig = {
 export const KPI_ROW: readonly string[] = [
   "tasks.closed",
   "collab.focus_time_pct",
-  "git.prs_merged",
+  "git.default_branch_prs_merged",
   "ai.active_days",
   "ai.accepted_lines",
   "collab.messages_sent",
   "collab.meeting_hours",
   "wiki.pages_created",
-  "git.commits",
+  "git.default_branch_commits",
 ];
 
 /** How many tiles the row shows; the rest of the candidates are fallbacks. */

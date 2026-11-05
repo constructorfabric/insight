@@ -1,18 +1,10 @@
 import type {
-  MetricEvidenceColumn,
   MetricEvidenceRow,
   MetricEvidenceSort,
 } from "@/api/metric-drilldown-client";
-import { formatMetricNumber } from "@/lib/format";
 
-export function cellText(
-  value: unknown,
-  type: MetricEvidenceColumn["type"]
-): string {
+export function cellText(value: unknown): string {
   if (value == null) return "—";
-  if (type === "number" && typeof value === "number") {
-    return formatMetricNumber(value, "decimal");
-  }
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);

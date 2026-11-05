@@ -830,6 +830,7 @@ function Section({
       return (
         <HeadlineSection
           metrics={spec.metrics}
+          labelSource={spec.labelSource}
           grid={grid}
           memberIds={memberIds}
           unattributedByKey={unattributedByKey}
@@ -1330,11 +1331,13 @@ function ParticipationSection({
 
 function HeadlineSection({
   metrics,
+  labelSource,
   grid,
   memberIds,
   unattributedByKey,
 }: {
   metrics: readonly string[];
+  labelSource?: "short";
   grid: GridData;
   memberIds: readonly string[];
   unattributedByKey: Map<string, number | null>;
@@ -1379,6 +1382,7 @@ function HeadlineSection({
           <HeadlineCard
             key={c.key}
             card={c}
+            labelSource={labelSource}
             targets={targets}
             memberIds={memberIds}
           />
@@ -1401,6 +1405,7 @@ function HeadlineSection({
  */
 function HeadlineCard({
   card,
+  labelSource,
   targets,
   memberIds,
 }: {
@@ -1414,6 +1419,7 @@ function HeadlineCard({
     /** Organisation-wide work that reaches no person; null below org level. */
     unattributed: number | null;
   };
+  labelSource?: "short";
   targets: readonly { selection: MetricEvidenceSelection; label: string }[];
   memberIds: readonly string[];
 }) {
@@ -1425,12 +1431,12 @@ function HeadlineCard({
   const body = (
     <CardContent className="flex flex-col gap-1 p-4">
       <div className="flex items-center justify-between gap-2">
-        {/* The full label, not the short one: `short_label` exists for a grid
-            column head or a heatmap axis, and it drops the very word that says
-            what was counted — "Issues" for issues CLOSED. A card twelve rem
-            wide has room to say it. */}
+        {/* The full label unless the section asks otherwise: a short label
+            can drop the very word that says what was counted — "Issues" for
+            issues CLOSED — so it is opted into where it still reads whole. */}
         <MetricName
           metric={c.r}
+          text={labelSource === "short" ? (c.r.short_label ?? c.r.label) : undefined}
           className={TEXT_NAME}
         />
         {c.now != null ? (

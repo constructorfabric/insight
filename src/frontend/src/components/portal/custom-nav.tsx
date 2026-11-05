@@ -1,12 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import {
-  Bell,
-  Database,
-  LayoutDashboard,
-  Sigma,
-  type LucideIcon,
-} from "lucide-react";
 
+import { visibleCatalogues } from "@/lib/custom/catalogues";
 import { useDashboardBrowse } from "@/lib/custom/dashboard-browse";
 import { FoldersGroup } from "@/components/portal/folder-rows";
 import { CountBadge, UnbuiltRow } from "@/components/portal/pane-nav";
@@ -19,25 +13,13 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { DASHBOARD_BROWSE_PLANNED, STARTER_DASHBOARDS } from "@/lib/portal/nav-model";
+import {
+  DASHBOARD_BROWSE_PLANNED,
+  STARTER_DASHBOARDS,
+} from "@/lib/portal/nav-model";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useIsAdmin } from "@/queries/identity-me";
-
-const CATALOGUES: readonly {
-  to:
-    | "/portal/custom/metrics"
-    | "/portal/custom/widgets"
-    | "/portal/custom/datasets"
-    | "/portal/custom/alerts";
-  label: string;
-  icon: LucideIcon;
-}[] = [
-  { to: "/portal/custom/metrics", label: "Metrics", icon: Sigma },
-  { to: "/portal/custom/widgets", label: "Widgets", icon: LayoutDashboard },
-  { to: "/portal/custom/datasets", label: "Datasets", icon: Database },
-  { to: "/portal/custom/alerts", label: "Alerts", icon: Bell },
-];
 
 const DASHBOARD_ROUTES = new Set(["/portal/custom/", "/portal/custom/$name"]);
 
@@ -61,7 +43,10 @@ export function CustomNav() {
                 <SidebarMenuButton
                   isActive={onDashboards && !folder && owned === narrowed}
                   render={
-                    <Link to="/portal/custom" search={{ owned: narrowed, tag }} />
+                    <Link
+                      to="/portal/custom"
+                      search={{ owned: narrowed, tag }}
+                    />
                   }
                 >
                   <Icon />
@@ -79,29 +64,41 @@ export function CustomNav() {
         </SidebarGroupContent>
       </SidebarGroup>
       <FoldersGroup />
-      {isAdmin ? <CatalogueGroup pathname={pathname} /> : null}
+      {isAdmin ? (
+        <CatalogueGroup pathname={pathname} showPlanned={showPlanned} />
+      ) : null}
       <PinnedGroup />
     </>
   );
 }
 
-function CatalogueGroup({ pathname }: { pathname: string }) {
+function CatalogueGroup({
+  pathname,
+  showPlanned,
+}: {
+  pathname: string;
+  showPlanned: boolean;
+}) {
   return (
     <SidebarGroup>
       <PaneGroupLabel>Catalogue</PaneGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
-          {CATALOGUES.map(({ to, label, icon: Icon }) => (
-            <SidebarMenuItem key={to}>
-              <SidebarMenuButton
-                isActive={pathname.startsWith(to)}
-                render={<Link to={to} />}
-              >
-                <Icon />
-                <span>{label}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
+          {visibleCatalogues(showPlanned).map(
+            ({ to, label, icon: Icon, planned }) => (
+              <SidebarMenuItem key={to}>
+                <SidebarMenuButton
+                  data-planned={planned || undefined}
+                  isActive={pathname.startsWith(to)}
+                  render={<Link to={to} />}
+                  className={planned ? "text-muted-foreground" : undefined}
+                >
+                  <Icon />
+                  <span>{label}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )
+          )}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
@@ -127,7 +124,9 @@ export function HomeDashboardsGroup() {
                 <mine.icon />
                 <span>{mine.label}</span>
               </SidebarMenuButton>
-              {mine.count != null ? <CountBadge>{mine.count}</CountBadge> : null}
+              {mine.count != null ? (
+                <CountBadge>{mine.count}</CountBadge>
+              ) : null}
             </SidebarMenuItem>
           ) : null}
           {showPlanned ? <UnbuiltRow item={STARTER_DASHBOARDS} /> : null}

@@ -251,6 +251,20 @@ describe("Explore pane", () => {
     expect(portalRouter.navigations).toHaveLength(1);
   });
 
+  it("opens a lens from the keyboard", async () => {
+    inZone("directions");
+    pane();
+    const lens = renderHook(() => usePortalLens());
+
+    screen.getByRole("button", { name: "Development" }).focus();
+    await userEvent.tab();
+    await userEvent.tab();
+    expect(screen.getByRole("button", { name: "Git output" })).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(lens.result.current).toBe("Git output");
+  });
+
   it("does not open a direction while AI & Cost is on screen", () => {
     inZone("aicost");
     pane();
