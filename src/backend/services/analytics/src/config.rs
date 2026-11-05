@@ -79,7 +79,6 @@ pub struct SqlApiConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ConnectorSchedulesConfig {
-    pub enabled: bool,
     pub reconcile_schedules: Vec<String>,
     #[serde(deserialize_with = "schedule_min_interval")]
     pub min_interval_minutes: u16,
@@ -88,7 +87,6 @@ pub struct ConnectorSchedulesConfig {
 impl Default for ConnectorSchedulesConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
             reconcile_schedules: Vec::new(),
             min_interval_minutes: 30,
         }

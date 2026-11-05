@@ -39,7 +39,6 @@ pub(crate) enum ScheduleStatus {
 pub(crate) struct ScheduleResponse {
     pub connector: String,
     pub source_id: String,
-    pub editable: bool,
     pub revision: u64,
     pub requested: Option<RequestedSchedule>,
     pub applied: Option<RecordedSchedule>,

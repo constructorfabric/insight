@@ -19,7 +19,7 @@ async fn every_admin_verb_refuses_a_pair_without_configuration_or_storage() -> R
         let db = MockDatabase::new(DatabaseBackend::MySql)
             .append_query_results([Vec::<Model>::new()])
             .into_connection();
-        let h = harness(db, sync_history.url(), true, context("user", &[])?, true).await?;
+        let h = harness(db, sync_history.url(), context("user", &[])?, true).await?;
         let response = h
             .app
             .clone()
@@ -54,14 +54,7 @@ async fn every_admin_verb_returns_unavailable_when_the_sync_history_read_fails()
     for method in ["GET", "PUT", "DELETE"] {
         let sync_history = Mock::new();
         sync_history.add(handlers::failure(status::INTERNAL_SERVER_ERROR));
-        let h = harness(
-            empty_db(),
-            sync_history.url(),
-            true,
-            context("user", &[])?,
-            true,
-        )
-        .await?;
+        let h = harness(empty_db(), sync_history.url(), context("user", &[])?, true).await?;
         let response = h
             .app
             .clone()
@@ -83,45 +76,10 @@ async fn every_admin_verb_returns_unavailable_when_the_sync_history_read_fails()
 }
 
 #[tokio::test]
-async fn editing_off_refuses_writes_with_an_explanation() -> R {
-    for method in ["PUT", "DELETE"] {
-        let sync_history = Mock::new();
-        sync_history.add(handlers::provide([configured_instance_record()]));
-        let h = harness(
-            empty_db(),
-            sync_history.url(),
-            false,
-            context("user", &[])?,
-            true,
-        )
-        .await?;
-        let response = h
-            .app
-            .clone()
-            .oneshot(request(
-                method,
-                URI,
-                Some("\"0\""),
-                &json!({"crons": ["0 3 * * *"]}),
-            )?)
-            .await?;
-        assert_eq!(response.status(), StatusCode::CONFLICT, "{method}");
-        assert!(
-            body(response)
-                .await?
-                .to_string()
-                .contains("schedule editing is turned off on this install")
-        );
-    }
-    Ok(())
-}
-
-#[tokio::test]
 async fn schedule_routes_require_the_admin_role() -> R {
     let h = harness(
         empty_db(),
         "http://127.0.0.1:1",
-        true,
         context("user", &[])?,
         false,
     )
@@ -152,7 +110,7 @@ async fn get_without_a_stored_row_returns_revision_zero_and_recorded_snapshot() 
             crate::infra::db::entities::connector_schedule_acknowledgements::Model,
         >::new()])
         .into_connection();
-    let h = harness(db, sync_history.url(), false, context("user", &[])?, true).await?;
+    let h = harness(db, sync_history.url(), context("user", &[])?, true).await?;
     let response = h
         .app
         .clone()
@@ -162,7 +120,6 @@ async fn get_without_a_stored_row_returns_revision_zero_and_recorded_snapshot() 
     assert_eq!(response.headers()["etag"], "\"0\"");
     let json = body(response).await?;
     assert_eq!(json["revision"], 0);
-    assert_eq!(json["editable"], false);
     assert!(json["requested"].is_null());
     assert!(json["applied"].is_null());
     assert!(json["inherited"].is_null());
@@ -181,14 +138,7 @@ async fn writes_require_one_well_formed_if_match_header() -> R {
         ] {
             let sync_history = Mock::new();
             sync_history.add(handlers::provide([configured_instance_record()]));
-            let h = harness(
-                empty_db(),
-                sync_history.url(),
-                true,
-                context("user", &[])?,
-                true,
-            )
-            .await?;
+            let h = harness(empty_db(), sync_history.url(), context("user", &[])?, true).await?;
             let response = h
                 .app
                 .clone()
@@ -234,7 +184,7 @@ async fn stale_update_returns_precondition_failed() -> R {
             rows_affected: 0,
         }])
         .into_connection();
-    let h = harness(db, sync_history.url(), true, context("user", &[])?, true).await?;
+    let h = harness(db, sync_history.url(), context("user", &[])?, true).await?;
     let response = h
         .app
         .clone()
@@ -263,9 +213,8 @@ fn repeated_if_match_headers_are_invalid() {
 }
 
 #[test]
-fn schedule_config_defaults_to_off_and_empty() -> R {
+fn schedule_config_defaults_to_empty_cadence() -> R {
     let config: crate::config::GearConfig = serde_json::from_value(json!({}))?;
-    assert!(!config.connector_schedules.enabled);
     assert!(config.connector_schedules.reconcile_schedules.is_empty());
     Ok(())
 }

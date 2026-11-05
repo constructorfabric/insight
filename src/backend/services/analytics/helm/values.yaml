@@ -1,8 +1,6 @@
 replicaCount: 1
 
 global:
-  connectorSchedules:
-    enabled: false
   sqlApi:
     enabled: false
   mcp:

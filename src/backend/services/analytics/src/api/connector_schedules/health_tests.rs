@@ -101,7 +101,7 @@ async fn health_requests(through_router: bool) -> R {
             ),
         ]])
         .into_connection();
-    let h = harness(db, &url, true, context("user", &[])?, true).await?;
+    let h = harness(db, &url, context("user", &[])?, true).await?;
     let response = if through_router {
         h.app
             .clone()

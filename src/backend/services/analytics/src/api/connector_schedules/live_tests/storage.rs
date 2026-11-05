@@ -175,8 +175,7 @@ async fn assert_seeded_records(db: &DatabaseConnection, connector: &str) -> R {
                 {"connector": connector, "source_id": "main", "configured": true}
             ]
         }))?;
-    crate::domain::connector_schedules::enrich_health(db, &schedule_config(true), &mut health)
-        .await;
+    crate::domain::connector_schedules::enrich_health(db, &mut health).await;
     let health = serde_json::to_value(health)?;
     for (index, expected) in [(0, "applied"), (1, "error"), (2, "pending")] {
         assert_eq!(

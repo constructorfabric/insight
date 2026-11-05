@@ -64,7 +64,6 @@ def test_schedule_lifecycle_preserves_revisions_and_requests_inheritance(
     revision = initial.revision
     initial_etag = f'"{revision}"'
     assert initial_response.headers["etag"] == initial_etag
-    assert initial.editable
     try:
         saved = client.put(
             schedule_path, headers={"If-Match": initial_etag}, json_body={"crons": ["0 6 * * *"]}

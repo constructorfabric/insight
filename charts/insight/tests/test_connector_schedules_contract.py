@@ -31,27 +31,12 @@ def render(*overrides: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def enabled(*overrides: str) -> subprocess.CompletedProcess[str]:
-    return render("--set", "global.connectorSchedules.enabled=true", *overrides)
-
-
 def resource(documents: list[dict], kind: str, name: str) -> dict:
     return next(doc for doc in documents if doc and doc["kind"] == kind and doc["metadata"]["name"] == name)
 
 
-@pytest.mark.parametrize("gitops", [False, True])
-def test_one_switch_enables_the_api(gitops: bool) -> None:
-    overrides = ["--set", "credentials.autoGenerate=false"] if gitops else []
-    result = enabled(*overrides)
-    assert result.returncode == 0, result.stderr
-    documents = list(yaml.safe_load_all(result.stdout))
-    config = resource(documents, "ConfigMap", "contract-test-analytics-gears-config")
-    gear = yaml.safe_load(config["data"]["analytics.yaml"])
-    assert gear["gears"]["analytics"]["config"]["connector_schedules"]["enabled"] is True
-
-
 def test_reported_reconcile_cadence_is_the_cronworkflow_cadence() -> None:
-    result = enabled("--set-string", "ingestion.reconcile.schedule=7 */2 * * *")
+    result = render("--set-string", "ingestion.reconcile.schedule=7 */2 * * *")
     assert result.returncode == 0, result.stderr
     documents = list(yaml.safe_load_all(result.stdout))
     cron = resource(documents, "CronWorkflow", "contract-test-reconcile-loop")
@@ -59,16 +44,10 @@ def test_reported_reconcile_cadence_is_the_cronworkflow_cadence() -> None:
     assert json.loads(secret["stringData"][CADENCE_KEY]) == cron["spec"]["schedules"] == ["7 */2 * * *"]
 
 
-def test_the_default_switch_disables_api_writes() -> None:
-    result = render()
-    assert result.returncode == 0, result.stderr
-    documents = list(yaml.safe_load_all(result.stdout))
-    gear = resource(documents, "ConfigMap", "contract-test-analytics-gears-config")["data"]["analytics.yaml"]
-    assert yaml.safe_load(gear)["gears"]["analytics"]["config"]["connector_schedules"]["enabled"] is False
-
-
-def test_enabled_switch_requires_a_reconcile_cadence() -> None:
-    result = enabled("--set-string", "ingestion.reconcile.schedule=")
+@pytest.mark.parametrize("gitops", [False, True])
+def test_schedule_requests_require_a_reconcile_cadence(gitops: bool) -> None:
+    overrides = ["--set", "credentials.autoGenerate=false"] if gitops else []
+    result = render("--set-string", "ingestion.reconcile.schedule=", *overrides)
     assert result.returncode != 0
     assert "ingestion.reconcile.schedule is required" in result.stderr
 

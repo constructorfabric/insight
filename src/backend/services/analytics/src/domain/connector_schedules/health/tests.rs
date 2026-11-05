@@ -49,11 +49,7 @@ async fn health_batches_requests_and_acknowledgements_including_clears_and_inher
             .into_connection();
         let mut response = health()?;
         response.checked_at = None;
-        let config = ConnectorSchedulesConfig {
-            enabled: true,
-            ..ConnectorSchedulesConfig::default()
-        };
-        enrich_health(&db, &config, &mut response).await;
+        enrich_health(&db, &mut response).await;
         let state = serde_json::to_value(&response.connectors[0].schedule_request)?;
         assert_eq!(state["crons"], crons);
         assert_eq!(state["status"], expected);
@@ -124,11 +120,7 @@ async fn maria_failure_keeps_every_request_null_and_health_available() -> R {
         .into_connection();
     let mut response = health()?;
     let before = serde_json::to_value(&response)?;
-    let config = ConnectorSchedulesConfig {
-        enabled: true,
-        ..ConnectorSchedulesConfig::default()
-    };
-    enrich_health(&db, &config, &mut response).await;
+    enrich_health(&db, &mut response).await;
     assert!(response.history_available);
     assert!(
         response
@@ -137,20 +129,5 @@ async fn maria_failure_keeps_every_request_null_and_health_available() -> R {
             .all(|row| row.schedule_request.is_none())
     );
     assert_eq!(serde_json::to_value(&response)?, before);
-    Ok(())
-}
-
-#[tokio::test]
-async fn editing_off_never_reads_requests() -> R {
-    let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
-    let mut response = health()?;
-    enrich_health(&db, &ConnectorSchedulesConfig::default(), &mut response).await;
-    assert!(
-        response
-            .connectors
-            .iter()
-            .all(|row| row.schedule_request.is_none())
-    );
-    assert!(db.into_transaction_log().is_empty());
     Ok(())
 }

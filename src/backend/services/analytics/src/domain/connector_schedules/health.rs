@@ -2,7 +2,6 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, FromQueryResult, Statement};
 
 use super::dto::ScheduleRequestState;
 use super::{Acknowledgement, Error, acknowledgements, dto};
-use crate::config::ConnectorSchedulesConfig;
 use crate::domain::connector_health::ConnectorHealthResponse;
 use crate::infra::db::entities::connector_schedules::Model;
 
@@ -62,14 +61,7 @@ async fn snapshot(db: &DatabaseConnection) -> Result<Vec<Snapshot>, Error> {
         .collect()
 }
 
-pub(crate) async fn enrich_health(
-    db: &DatabaseConnection,
-    config: &ConnectorSchedulesConfig,
-    response: &mut ConnectorHealthResponse,
-) {
-    if !config.enabled {
-        return;
-    }
+pub(crate) async fn enrich_health(db: &DatabaseConnection, response: &mut ConnectorHealthResponse) {
     let rows = match snapshot(db).await {
         Ok(rows) => rows,
         Err(error) => {

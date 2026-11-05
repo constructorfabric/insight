@@ -25,8 +25,6 @@ pub(crate) enum Error {
         connector: String,
         source_id: String,
     },
-    #[error("schedule editing is turned off on this install")]
-    Disabled,
     #[error("If-Match is required")]
     MissingMatch,
     #[error("If-Match must be a single quoted decimal ETag")]
@@ -116,9 +114,6 @@ pub(crate) async fn editor<'a>(
     instance: &'a Instance,
 ) -> Result<Editor<'a>, Error> {
     membership::require(ch, instance).await?;
-    if !config.enabled {
-        return Err(Error::Disabled);
-    }
     Ok(Editor { instance, config })
 }
 
@@ -135,9 +130,6 @@ pub(crate) async fn clear_editor<'a>(
     };
     if repository::read(db, instance).await?.is_none() {
         return Err(error);
-    }
-    if !config.enabled {
-        return Err(Error::Disabled);
     }
     Ok(Editor { instance, config })
 }
@@ -187,7 +179,6 @@ fn response(
     Ok(ScheduleResponse {
         connector: instance.connector.as_str().to_owned(),
         source_id: instance.source_id.as_str().to_owned(),
-        editable: config.enabled,
         revision,
         requested,
         applied,

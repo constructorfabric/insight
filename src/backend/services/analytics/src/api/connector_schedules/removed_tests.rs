@@ -26,61 +26,31 @@ fn removed() -> Mock {
 }
 
 #[tokio::test]
-async fn editing_off_refuses_to_clear_a_removed_instance() -> R {
-    let sync_history = removed();
-    let db = MockDatabase::new(DatabaseBackend::MySql)
-        .append_query_results([vec![stored(&["0 3 * * *"])], vec![stored(&["0 3 * * *"])]])
-        .append_exec_results([MockExecResult {
-            last_insert_id: 0,
-            rows_affected: 1,
-        }])
-        .append_query_results([Vec::<
-            crate::infra::db::entities::connector_schedule_acknowledgements::Model,
-        >::new()])
-        .into_connection();
-    let h = harness(db, sync_history.url(), false, context("user", &[])?, true).await?;
-    let response = h
-        .app
-        .clone()
-        .oneshot(request("DELETE", URI, Some("\"7\""), &json!(null))?)
-        .await?;
-    assert_eq!(response.status(), StatusCode::CONFLICT);
-    Ok(())
-}
-
-#[tokio::test]
 async fn removed_requests_remain_readable_with_the_existing_status_rules() -> R {
-    for enabled in [false, true] {
-        for crons in [vec!["0 3 * * *"], vec![]] {
-            let expected = "pending";
-            let sync_history = removed();
-            let db = MockDatabase::new(DatabaseBackend::MySql)
-                .append_query_results([vec![stored(&crons)]])
-                .append_query_results([Vec::<
-                    crate::infra::db::entities::connector_schedule_acknowledgements::Model,
-                >::new()])
-                .into_connection();
-            let h = harness(db, sync_history.url(), enabled, context("user", &[])?, true).await?;
-            let response = h
-                .app
-                .clone()
-                .oneshot(request("GET", URI, None, &json!(null))?)
-                .await?;
-            assert_eq!(
-                response.status(),
-                StatusCode::OK,
-                "{expected}, enabled={enabled}"
-            );
-            assert_eq!(response.headers()["etag"], "\"7\"");
-            let json = body(response).await?;
-            assert_eq!(json["revision"], 7);
-            assert_eq!(json["requested"]["crons"], json!(crons));
-            assert_eq!(json["requested"]["updated_by"], CALLER.to_string());
-            assert_eq!(json["requested"]["updated_at"], "1970-01-01T00:00:00Z");
-            assert!(json["applied"].is_null());
-            assert_eq!(json["status"], expected, "{crons:?}, enabled={enabled}");
-            assert_eq!(json["editable"], enabled);
-        }
+    for crons in [vec!["0 3 * * *"], vec![]] {
+        let expected = "pending";
+        let sync_history = removed();
+        let db = MockDatabase::new(DatabaseBackend::MySql)
+            .append_query_results([vec![stored(&crons)]])
+            .append_query_results([Vec::<
+                crate::infra::db::entities::connector_schedule_acknowledgements::Model,
+            >::new()])
+            .into_connection();
+        let h = harness(db, sync_history.url(), context("user", &[])?, true).await?;
+        let response = h
+            .app
+            .clone()
+            .oneshot(request("GET", URI, None, &json!(null))?)
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK, "{expected}");
+        assert_eq!(response.headers()["etag"], "\"7\"");
+        let json = body(response).await?;
+        assert_eq!(json["revision"], 7);
+        assert_eq!(json["requested"]["crons"], json!(crons));
+        assert_eq!(json["requested"]["updated_by"], CALLER.to_string());
+        assert_eq!(json["requested"]["updated_at"], "1970-01-01T00:00:00Z");
+        assert!(json["applied"].is_null());
+        assert_eq!(json["status"], expected, "{crons:?}");
     }
     Ok(())
 }
@@ -102,14 +72,7 @@ async fn clearing_a_removed_request_advances_the_revision_and_clears_reconcile()
             crate::infra::db::entities::connector_schedule_acknowledgements::Model,
         >::new()])
         .into_connection();
-    let h = harness(
-        db.clone(),
-        sync_history.url(),
-        true,
-        context("user", &[])?,
-        true,
-    )
-    .await?;
+    let h = harness(db.clone(), sync_history.url(), context("user", &[])?, true).await?;
     let response = h
         .app
         .clone()
@@ -142,7 +105,7 @@ async fn clearing_a_removed_request_requires_a_current_strong_if_match() -> R {
                 crate::infra::db::entities::connector_schedule_acknowledgements::Model,
             >::new()])
             .into_connection();
-        let h = harness(db, sync_history.url(), true, context("user", &[])?, true).await?;
+        let h = harness(db, sync_history.url(), context("user", &[])?, true).await?;
         let response = h
             .app
             .clone()
@@ -166,14 +129,7 @@ async fn clearing_an_already_cleared_removed_request_preserves_revision_and_audi
             crate::infra::db::entities::connector_schedule_acknowledgements::Model,
         >::new()])
         .into_connection();
-    let h = harness(
-        db.clone(),
-        sync_history.url(),
-        true,
-        context("user", &[])?,
-        true,
-    )
-    .await?;
+    let h = harness(db.clone(), sync_history.url(), context("user", &[])?, true).await?;
     let response = h
         .app
         .clone()
@@ -205,7 +161,7 @@ async fn removed_requests_cannot_be_replaced_even_when_stored() -> R {
             crate::infra::db::entities::connector_schedule_acknowledgements::Model,
         >::new()])
         .into_connection();
-    let h = harness(db, sync_history.url(), true, context("user", &[])?, true).await?;
+    let h = harness(db, sync_history.url(), context("user", &[])?, true).await?;
     let response = h
         .app
         .clone()

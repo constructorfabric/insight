@@ -100,7 +100,7 @@ async fn migration_and_schedule_lifecycle_preserve_revisions_and_caller() -> R {
     let (connector, uri) = identity();
     let sync_history = Mock::new();
     let caller = context("user", &[])?;
-    let h = harness(db.clone(), sync_history.url(), true, caller, true).await?;
+    let h = harness(db.clone(), sync_history.url(), caller, true).await?;
     let target = (&h, &sync_history);
 
     let (status, json) = send(target, "GET", &uri, None, &[]).await?;
@@ -203,14 +203,7 @@ async fn concurrent_puts_have_exactly_one_winner_for_creation_and_update() -> R 
     };
     let (connector, uri) = identity();
     let sync_history = Mock::new();
-    let h = harness(
-        db.clone(),
-        sync_history.url(),
-        true,
-        context("user", &[])?,
-        true,
-    )
-    .await?;
+    let h = harness(db.clone(), sync_history.url(), context("user", &[])?, true).await?;
     let target = (&h, &sync_history);
     for expected in [0, 1] {
         let revision = format!("\"{expected}\"");
@@ -239,14 +232,7 @@ async fn race_at_revision_one(first: (&str, &[&str]), second: (&str, &[&str])) -
     };
     let (connector, uri) = identity();
     let sync_history = Mock::new();
-    let h = harness(
-        db.clone(),
-        sync_history.url(),
-        true,
-        context("user", &[])?,
-        true,
-    )
-    .await?;
+    let h = harness(db.clone(), sync_history.url(), context("user", &[])?, true).await?;
     let target = (&h, &sync_history);
     assert_eq!(
         send(target, "PUT", &uri, Some("\"0\""), &["0 6 * * *"])

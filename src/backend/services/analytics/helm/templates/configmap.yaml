@@ -148,7 +148,6 @@ data:
       analytics:
         config:
           connector_schedules:
-            enabled: {{ .Values.global.connectorSchedules.enabled }}
             reconcile_schedules: {{ .Values.connectorSchedules.reconcileSchedules | toJson }}
             min_interval_minutes: {{ .Values.connectorSchedules.minIntervalMinutes }}
           visibility_policy: {{ .Values.visibilityPolicy | default "org_chart" | quote }}

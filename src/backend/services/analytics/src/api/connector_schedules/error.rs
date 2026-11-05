@@ -60,7 +60,7 @@ pub(super) fn domain_error(error: Error) -> ScheduleError {
         Error::NotFound { .. } => ConnectorScheduleError::not_found(error.to_string())
             .with_resource("connector instance")
             .create(),
-        Error::Disabled | Error::RevisionExhausted => ConnectorScheduleError::failed_precondition()
+        Error::RevisionExhausted => ConnectorScheduleError::failed_precondition()
             .with_precondition_violation("schedule", error.to_string(), "EDIT_UNAVAILABLE")
             .with_override(Http::status_code(409))
             .create(),
@@ -114,7 +114,6 @@ mod tests {
                 },
                 404,
             ),
-            (Error::Disabled, 409),
             (Error::MissingMatch, 428),
             (Error::Stale(4), 412),
             (Error::InvalidMatch, 400),

@@ -34,16 +34,14 @@ impl Drop for Harness {
 pub(super) async fn harness(
     db: DatabaseConnection,
     ch_url: &str,
-    enabled: bool,
     ctx: SecurityContext,
     admin: bool,
 ) -> Result<Harness, Box<dyn std::error::Error>> {
-    harness_with_config(db, ch_url, schedule_config(enabled), ctx, admin).await
+    harness_with_config(db, ch_url, schedule_config(), ctx, admin).await
 }
 
-pub(super) fn schedule_config(enabled: bool) -> ConnectorSchedulesConfig {
+pub(super) fn schedule_config() -> ConnectorSchedulesConfig {
     ConnectorSchedulesConfig {
-        enabled,
         reconcile_schedules: vec!["*/15 * * * *".to_owned()],
         ..ConnectorSchedulesConfig::default()
     }

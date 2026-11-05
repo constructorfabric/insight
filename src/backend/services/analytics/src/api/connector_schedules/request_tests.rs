@@ -12,7 +12,7 @@ async fn writes_enforce_the_configured_minimum() -> R {
     let sync_history = Mock::new();
     sync_history.add(handlers::provide([configured_instance_record()]));
     let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
-    let mut config = schedule_config(true);
+    let mut config = schedule_config();
     config.min_interval_minutes = 60;
     let h =
         harness_with_config(db, sync_history.url(), config, context("user", &[])?, true).await?;
@@ -102,7 +102,7 @@ async fn rejected_requests_identify_the_invalid_field_and_reason() -> R {
             sync_history.add(handlers::provide([configured_instance_record()]));
         }
         let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
-        let h = harness(db, sync_history.url(), true, context("user", &[])?, true).await?;
+        let h = harness(db, sync_history.url(), context("user", &[])?, true).await?;
         let response = h
             .app
             .clone()
@@ -146,7 +146,7 @@ async fn unchanged_puts_and_deletes_return_the_current_revision() -> R {
                 crate::infra::db::entities::connector_schedule_acknowledgements::Model,
             >::new()])
             .into_connection();
-        let h = harness(db, sync_history.url(), true, context("user", &[])?, true).await?;
+        let h = harness(db, sync_history.url(), context("user", &[])?, true).await?;
         let response = h
             .app
             .clone()
@@ -197,7 +197,7 @@ async fn malformed_json_and_media_types_have_actionable_handler_responses() -> R
         let sync_history = Mock::new();
         sync_history.add(handlers::provide([configured_instance_record()]));
         let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
-        let h = harness(db, sync_history.url(), true, context("user", &[])?, true).await?;
+        let h = harness(db, sync_history.url(), context("user", &[])?, true).await?;
         let mut request = request("PUT", URI, Some("\"0\""), &json!({}))?;
         request.headers_mut().remove("content-type");
         if let Some(content_type) = content_type {

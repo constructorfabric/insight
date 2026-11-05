@@ -14,14 +14,7 @@ async fn a_noop_put_never_overwrites_a_real_put() -> R {
     for real_first in [true, false] {
         let (connector, uri) = identity();
         let sync_history = Mock::new();
-        let h = harness(
-            db.clone(),
-            sync_history.url(),
-            true,
-            context("user", &[])?,
-            true,
-        )
-        .await?;
+        let h = harness(db.clone(), sync_history.url(), context("user", &[])?, true).await?;
         let target = (&h, &sync_history);
         assert_eq!(
             send(target, "PUT", &uri, Some("\"0\""), &["0 6 * * *"])

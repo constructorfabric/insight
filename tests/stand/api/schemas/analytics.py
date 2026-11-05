@@ -1499,7 +1499,6 @@ class ScheduleResponse(BaseModel):
     )
     applied: RecordedSchedule | None = None
     connector: str
-    editable: bool
     error: ScheduleAttemptError | None = None
     inherited: InheritedSchedule | None = None
     min_interval_minutes: int = Field(..., ge=30, le=1440)

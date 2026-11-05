@@ -18,9 +18,7 @@ when you go past sandbox, and you have a working gitops setup.
 
 ## Connector schedule requests
 
-Set `global.connectorSchedules.enabled: true` to enable analytics admin schedule writes.
-The switch defaults off; stored requests and schedule reads remain available when it is off.
-The local values template enables the API switch.
+Analytics admin schedule writes are always enabled.
 
 `ingestion.reconcile.schedule` supplies the cadence analytics reports to clients; GitOps
 composition reads the chart defaults and the stand overlay, so it needs no second cadence.

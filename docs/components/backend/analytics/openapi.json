@@ -3133,9 +3133,6 @@
           "connector": {
             "type": "string"
           },
-          "editable": {
-            "type": "boolean"
-          },
           "error": {
             "oneOf": [
               {
@@ -3193,7 +3190,6 @@
         "required": [
           "connector",
           "source_id",
-          "editable",
           "revision",
           "status",
           "reconcile_schedules",
