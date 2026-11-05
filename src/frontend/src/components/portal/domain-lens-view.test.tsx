@@ -1362,9 +1362,9 @@ describe("trend section", () => {
   });
 });
 
-describe("trend lines end on the last finished bucket", () => {
+describe("trend lines hold only buckets the range covers whole", () => {
   // A hundred people coarsen a quarter to weeks and a year to months, so the
-  // range's last bucket can run past its last day.
+  // range's first and last buckets can run past its ends.
   function seedLargeOrg() {
     const labels = ["a", "b", ...Array.from({ length: 97 }, (_, i) => `p${i}`)];
     mocks.tree = person("boss", {}, labels.map((l) => person(l)));
@@ -1406,36 +1406,43 @@ describe("trend lines end on the last finished bucket", () => {
 
   it.each([
     {
-      period: "a quarter ending on a Tuesday",
+      period: "a quarter starting and ending mid-week",
       range: { from: "2026-08-04", to: "2026-11-03" },
       bucket: "week",
-      buckets: ["2026-10-12", "2026-10-19", "2026-10-26", "2026-11-02"],
-      lastFinished: "2026-10-26",
+      buckets: ["2026-08-03", "2026-08-10", "2026-10-26", "2026-11-02"],
+      plotted: ["2026-08-10", "2026-10-26"],
     },
     {
-      period: "a quarter ending on a Sunday",
+      period: "a quarter running Monday to Sunday",
       range: { from: "2026-08-03", to: "2026-11-01" },
       bucket: "week",
-      buckets: ["2026-10-12", "2026-10-19", "2026-10-26"],
-      lastFinished: "2026-10-26",
+      buckets: ["2026-08-03", "2026-08-10", "2026-10-26"],
+      plotted: ["2026-08-03", "2026-08-10", "2026-10-26"],
     },
     {
-      period: "a year ending mid-month",
+      period: "a year starting and ending mid-month",
       range: { from: "2025-11-04", to: "2026-11-03" },
       bucket: "month",
-      buckets: ["2026-08-01", "2026-09-01", "2026-10-01", "2026-11-01"],
-      lastFinished: "2026-10-01",
+      buckets: ["2025-11-01", "2025-12-01", "2026-10-01", "2026-11-01"],
+      plotted: ["2025-12-01", "2026-10-01"],
+    },
+    {
+      period: "a year from the first of a month to the last of one",
+      range: { from: "2025-11-01", to: "2026-10-31" },
+      bucket: "month",
+      buckets: ["2025-11-01", "2025-12-01", "2026-09-01", "2026-10-01"],
+      plotted: ["2025-11-01", "2025-12-01", "2026-09-01", "2026-10-01"],
     },
     {
       period: "a week ending yesterday",
       range: { from: "2026-07-20", to: "2026-07-26" },
       bucket: "day",
-      buckets: ["2026-07-24", "2026-07-25", "2026-07-26"],
-      lastFinished: "2026-07-26",
+      buckets: ["2026-07-20", "2026-07-25", "2026-07-26"],
+      plotted: ["2026-07-20", "2026-07-25", "2026-07-26"],
     },
   ])(
-    "$period plots up to $lastFinished, never a $bucket the range only partly covers",
-    async ({ range, bucket, buckets, lastFinished }) => {
+    "$period plots only the $bucket buckets it holds whole",
+    async ({ range, bucket, buckets, plotted }) => {
       mocks.dateRange = range;
       seedLargeOrg();
       trendOver(buckets);
@@ -1444,17 +1451,16 @@ describe("trend lines end on the last finished bucket", () => {
       expect(mocks.requested[0]?.metrics[0]?.views).toEqual([
         { view: "timeseries", bucket },
       ]);
-      const expected = buckets.filter((b) => b <= lastFinished);
       expect(plottedDates(), `plotted buckets for ${range.from}..${range.to}`).toEqual({
-        Commits: expected,
-        "Active contributors · Commits": expected,
-        "Active people over time": expected,
+        Commits: plotted,
+        "Active contributors · Commits": plotted,
+        "Active people over time": plotted,
       });
 
       await userEvent.click(
         screen.getByRole("button", { name: "Open Commits details" }),
       );
-      expect(openedDrilldown().breakdown.map((b) => b.date)).toEqual(expected);
+      expect(openedDrilldown().breakdown.map((b) => b.date)).toEqual(plotted);
     },
   );
 });
