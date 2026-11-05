@@ -1,7 +1,7 @@
 import { ChevronDown, Tag, X } from "lucide-react";
 
 import type { TagSummary } from "@/api/custom-client";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -33,9 +33,8 @@ export function TagFilter({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button type="button" variant="outline" size="sm" icon={<Tag />}>
+          <Button type="button" variant="outline" size="sm" icon={<Tag />} end={<ChevronDown aria-hidden />}>
             {picked.length > 0 ? `Tags · ${picked.length}` : "Tags"}
-            <ChevronDown aria-hidden />
           </Button>
         }
       />

@@ -4,14 +4,13 @@ import { useState } from "react";
 
 import type { DeclaredField } from "@/api/custom-client";
 import { Held } from "@/components/custom/held-by";
-import { Button } from "@/components/ui/button";
+import { Button, Badge } from "@gears-frontx/ui-kit";
 import {
   ARRIVED,
   RecordTable,
   type Ordering,
 } from "@/components/custom/record-table";
 import { refusal } from "@/components/custom/refusal";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useLocalStorageState } from "@/hooks/use-local-storage-state";

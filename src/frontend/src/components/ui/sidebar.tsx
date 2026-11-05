@@ -8,7 +8,12 @@ import { useTranslation } from "react-i18next";
 
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import {
+  Button,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@gears-frontx/ui-kit";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -19,11 +24,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { PanelLeftIcon } from "lucide-react";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
@@ -269,19 +269,16 @@ function SidebarTrigger({
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
       variant="ghost"
-      size="icon-sm"
+      size="sm"
       className={cn(className)}
+      aria-label={t("common.ui_components.sidebar.toggle")}
       onClick={(event) => {
         onClick?.(event);
         toggleSidebar();
       }}
       {...props}
-    >
-      <PanelLeftIcon className="rtl:rotate-180" />
-      <span className="sr-only">
-        {t("common.ui_components.sidebar.toggle")}
-      </span>
-    </Button>
+      icon={<PanelLeftIcon className="rtl:rotate-180" />}
+    />
   );
 }
 

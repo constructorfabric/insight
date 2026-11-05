@@ -27,13 +27,13 @@ import { MetricEvidencePeople } from "@/components/metric-evidence-people";
 import { MetricEvidenceTable } from "@/components/metric-evidence-table";
 import { withTypeDimension } from "@/lib/metrics/provider-links";
 import { useDeclaredMetricDimensions } from "@/queries/metric-definitions";
-import { Button } from "@/components/ui/button";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@gears-frontx/ui-kit";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -285,7 +285,7 @@ export function MetricEvidenceDialog({
       onOpenChange={(open) => !open && closeDialog()}
     >
       {state && (activeTarget || showPeople) ? (
-        <DialogContent className="flex h-[calc(100dvh-2rem)] max-h-[52rem] w-[calc(100vw-2rem)] max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[calc(100dvh-4rem)] sm:w-[calc(100vw-4rem)] sm:max-w-[90rem] [&_[data-slot=dialog-close]]:top-5">
+        <DialogContent className="flex h-[calc(100dvh-2rem)] max-h-[52rem] w-[calc(100vw-2rem)] max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[calc(100dvh-4rem)] sm:w-[calc(100vw-4rem)] sm:max-w-[90rem]">
           <DialogHeader className="shrink-0 border-b p-5 pr-14">
             {people && drilled ? (
               <div className="flex">
@@ -385,8 +385,7 @@ export function MetricEvidenceDialog({
                         (query.isError && !query.data)
                       }
                       render={
-                        <Button variant="outline" size="sm">
-                          {exporting ? <Spinner /> : <Download />}
+                        <Button variant="outline" size="sm" icon={<Download />} loading={exporting}>
                           Export
                         </Button>
                       }

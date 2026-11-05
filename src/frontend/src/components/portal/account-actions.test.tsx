@@ -25,7 +25,7 @@ const hooks = vi.hoisted(() => {
     error: null as unknown,
   });
   return {
-    toast: { success: vi.fn(), error: vi.fn() },
+    toast: { add: vi.fn() },
     bind: verb(),
     detach: verb(),
     /** What else the holder has — decides whether a detach is offered. */
@@ -49,7 +49,10 @@ const hooks = vi.hoisted(() => {
 vi.mock("@/hooks/use-debounced-value", () => ({
   useDebouncedValue: <T,>(value: T) => value,
 }));
-vi.mock("@/components/ui/sonner", () => ({ toast: hooks.toast }));
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
+  toast: hooks.toast,
+}));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useBindAccount: () => hooks.bind,
@@ -60,6 +63,7 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
 }));
 
 import { AccountActions } from "./account-actions";
+import { toastsOf } from "@/test/toast";
 
 const REF = {
   source: "github",
@@ -91,8 +95,7 @@ beforeEach(() => {
     verb.error = null;
     verb.isPending = false;
   }
-  hooks.toast.success.mockClear();
-  hooks.toast.error.mockClear();
+  hooks.toast.add.mockClear();
   // Two accounts by default, so the detach verb is on offer in the cases that
   // are not about the detach gate.
   hooks.owned.data = { person_id: BOB.person_id, accounts: [{}, {}] };
@@ -456,7 +459,7 @@ describe("AccountActions", () => {
     expect(screen.getByText(/0 applied/i)).toBeInTheDocument();
     // The account kept its binding: there is still something here to decide.
     expect(onDecided).not.toHaveBeenCalled();
-    expect(hooks.toast.error).toHaveBeenCalledOnce();
+    expect(toastsOf(hooks.toast.add, "error")).toHaveLength(1);
   });
 
   // The whole point of handing the window back: what it shows — the candidate
@@ -488,7 +491,7 @@ describe("AccountActions", () => {
     );
 
     expect(onDecided).toHaveBeenCalledOnce();
-    expect(hooks.toast.success).toHaveBeenCalledOnce();
+    expect(toastsOf(hooks.toast.add, "success")).toHaveLength(1);
     // Counters belong to the window that stays; a clean result reports by toast.
     expect(screen.queryByText(/1 applied/i)).not.toBeInTheDocument();
   });
@@ -523,10 +526,7 @@ describe("AccountActions", () => {
     );
 
     expect(onDecided).toHaveBeenCalledOnce();
-    expect(hooks.toast.success).toHaveBeenCalledWith(
-      "Already decided — nothing changed.",
-      expect.anything(),
-    );
+    expect(toastsOf(hooks.toast.add, "success")).toContainEqual(expect.objectContaining({ title: "Already decided — nothing changed." }));
   });
 
   // The confirmation over these buttons is modal, so it already blocks them.

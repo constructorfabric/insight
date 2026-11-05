@@ -2,17 +2,16 @@ import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { Search } from "lucide-react";
 
 import type { MetricDefinition } from "@/api/metric-definitions-client";
-import { Button } from "@/components/ui/button";
+import {
+  Button,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@gears-frontx/ui-kit";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import type { MetricFamily } from "@/lib/reports/families";
 import { cn } from "@/lib/utils";
 import { TEXT_EYEBROW } from "@/lib/type-scale";
@@ -68,69 +67,67 @@ export function ReportMetricPicker({
   }
 
   return (
-    <TooltipProvider delay={300}>
-      <div className="flex flex-col">
-        <div className="flex flex-col gap-3 pt-3">
-          <div className="px-4">
-            <div className="relative">
-              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search metrics"
-                aria-label="Search metrics"
-                className="ps-8"
-              />
-            </div>
+    <div className="flex flex-col">
+      <div className="flex flex-col gap-3 pt-3">
+        <div className="px-4">
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search metrics"
+              aria-label="Search metrics"
+              className="ps-8"
+            />
           </div>
-          <Tabs
-            value={activeFamily}
-            onValueChange={(value) => setPickedFamily(String(value))}
-          >
-            <div className="flex overflow-x-auto overflow-y-hidden border-b px-4">
-              <TabsList
-                variant="line"
-                className={cn("w-max", styles.tabsList)}
-              >
+        </div>
+        <Tabs
+          value={activeFamily}
+          onValueChange={(value) => setPickedFamily(String(value))}
+        >
+          <div className="flex overflow-x-auto overflow-y-hidden border-b px-4">
+            <TabsList
+              variant="line"
+              className={cn("w-max", styles.tabsList)}
+            >
+              <FamilyTab
+                value={ALL_FAMILIES}
+                label="All metrics"
+                families={families}
+                selected={selected}
+              />
+              {families.map((family) => (
                 <FamilyTab
-                  value={ALL_FAMILIES}
-                  label="All metrics"
-                  families={families}
+                  key={family.family}
+                  value={family.family}
+                  label={familyTabLabel(family.name)}
+                  families={[family]}
                   selected={selected}
                 />
-                {families.map((family) => (
-                  <FamilyTab
-                    key={family.family}
-                    value={family.family}
-                    label={familyTabLabel(family.name)}
-                    families={[family]}
-                    selected={selected}
-                  />
-                ))}
-              </TabsList>
-            </div>
-          </Tabs>
-        </div>
-
-        <div className="flex flex-col gap-5 p-4">
-          {visibleFamilies.map(({ family, metrics }) => (
-            <MetricFamilyGroup
-              key={family.family}
-              family={family}
-              visibleMetrics={metrics}
-              selected={selected}
-              setSelected={setSelected}
-            />
-          ))}
-          {visibleFamilies.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">
-              No metrics match this search.
-            </p>
-          ) : null}
-        </div>
+              ))}
+            </TabsList>
+          </div>
+        </Tabs>
       </div>
-    </TooltipProvider>
+
+      <div className="flex flex-col gap-5 p-4">
+        {visibleFamilies.map(({ family, metrics }) => (
+          <MetricFamilyGroup
+            key={family.family}
+            family={family}
+            visibleMetrics={metrics}
+            selected={selected}
+            setSelected={setSelected}
+          />
+        ))}
+        {visibleFamilies.length === 0 ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            No metrics match this search.
+          </p>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -197,7 +194,7 @@ function MetricFamilyGroup({
           <Button
             type="button"
             variant="link"
-            size="xs"
+            size="sm"
             onClick={() =>
               setSelected((current) =>
                 allPicked

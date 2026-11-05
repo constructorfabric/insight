@@ -5,9 +5,8 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import { PeriodSelectorBar } from "@/components/widgets/period-selector-bar";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
@@ -89,30 +88,28 @@ function ViewFilters() {
           </span>
           {/* Every "vs median" on every screen is computed against whatever this
             names, and the word alone does not say so. */}
-          <TooltipProvider delay={200}>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    className="cursor-help text-muted-foreground"
-                    aria-label="What the cohort controls"
-                  >
-                    <HelpCircle className="size-3.5" />
-                  </button>
-                }
-              />
-              <TooltipContent
-                side="bottom"
-                className="max-w-xs text-xs leading-relaxed"
-              >
-                The people every comparison on screen is made against. "Team
-                (all)" compares within the org you are looking at; picking an
-                attribute compares each person with the people who share their
-                value for it.
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="cursor-help text-muted-foreground"
+                  aria-label="What the cohort controls"
+                >
+                  <HelpCircle className="size-3.5" />
+                </button>
+              }
+            />
+            <TooltipContent
+              side="bottom"
+              className="max-w-xs text-xs leading-relaxed"
+            >
+              The people every comparison on screen is made against. "Team
+              (all)" compares within the org you are looking at; picking an
+              attribute compares each person with the people who share their
+              value for it.
+            </TooltipContent>
+          </Tooltip>
           <SliceSelect dims={dims} />
         </span>
       ) : null}

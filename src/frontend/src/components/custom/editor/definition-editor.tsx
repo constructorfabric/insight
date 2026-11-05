@@ -4,9 +4,8 @@ import { useState } from "react";
 
 import { DEFINITION_NAME_MAX, type EditableKind } from "@/api/custom-client";
 import { TextView } from "@/components/custom/editor/text-view";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
 import {
   hold,
   retype,
@@ -145,9 +144,9 @@ export function DefinitionEditor({
       <div className="flex items-center gap-2">
         <Button
           type="submit"
-          disabled={given === "" || taken || !sendable(held) || store.isPending}
+          disabled={given === "" || taken || !sendable(held)}
+          loading={store.isPending}
         >
-          {store.isPending ? <Spinner className="size-3" /> : null}
           Save
         </Button>
         {held.unparsed ? (

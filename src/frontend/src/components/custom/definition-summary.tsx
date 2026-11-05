@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 
 import type { MetricDefinition, MetricRead, Widget } from "@/api/custom-client";
 import { MetricName } from "@/components/custom/metric-name";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@gears-frontx/ui-kit";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { metricSource } from "@/lib/custom/metric-source";
 import { cn } from "@/lib/utils";

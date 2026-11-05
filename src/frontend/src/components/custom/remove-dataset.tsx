@@ -1,5 +1,5 @@
 import { ConfirmRemove } from "@/components/custom/confirm-remove";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { useRemoveDataset } from "@/queries/custom";
 
 /**

@@ -8,7 +8,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@gears-frontx/ui-kit";
 import { itemKey, parseAccountKey } from "@/lib/identities/account-key";
 
 /**

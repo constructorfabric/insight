@@ -1,7 +1,7 @@
 import { Sparkles } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   Popover,
   PopoverContent,

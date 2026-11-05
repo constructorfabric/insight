@@ -2,7 +2,7 @@ import { useId, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight } from "lucide-react";
 
 import type { DatasetRecord, DeclaredField } from "@/api/custom-client";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Collapsible,
@@ -117,8 +117,7 @@ function Columns({
     <Collapsible>
       <CollapsibleTrigger
         render={
-          <Button variant="ghost" size="sm" className="self-start">
-            <ChevronDown className="size-4" />
+          <Button variant="ghost" size="sm" className="self-start" icon={<ChevronDown className="size-4" />}>
             Columns · {drawn.length} of {fields.length}
           </Button>
         }

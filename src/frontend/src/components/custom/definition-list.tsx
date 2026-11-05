@@ -7,7 +7,7 @@ import {
   type Paging,
 } from "@/components/custom/definition-paging";
 import { DefinitionSearch } from "@/components/custom/definition-search";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   Empty,
   EmptyActions,

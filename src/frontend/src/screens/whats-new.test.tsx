@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import "@/i18n";
 
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { TooltipProvider } from "@gears-frontx/ui-kit";
 import { WhatsNewBody } from "@/screens/whats-new";
 
 // Section names now repeat across the release and Coming next, so assertions

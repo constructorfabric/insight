@@ -4,7 +4,7 @@ import { useState, type ComponentType, type ReactNode } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { refusal } from "@/components/custom/refusal";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   DropdownMenu,
@@ -160,7 +160,7 @@ function CatalogueMenu({
             <Button
               type="button"
               variant="ghost"
-              size="icon-sm"
+              size="sm"
               className="text-muted-foreground"
               aria-label={`More for ${title}`}
               icon={<Ellipsis />}

@@ -11,7 +11,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import { PeerComparison } from "@/components/widgets/metric-views/peer-comparison";
 import { MetricCardActions } from "@/components/widgets/metric-views/metric-card-actions";
 import {

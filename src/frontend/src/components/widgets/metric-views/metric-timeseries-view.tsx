@@ -14,7 +14,7 @@ import {
   withOwnTarget,
   type EvidenceDialogTarget,
 } from "@/components/metric-evidence-context";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -135,12 +135,11 @@ function DimensionControls({
               <Button
                 type="button"
                 variant="outline"
-                size="icon-sm"
+                size="sm"
                 aria-label="Filters"
                 title="Filters"
-              >
-                <ListFilter className="size-4" />
-              </Button>
+                icon={<ListFilter className="size-4" />}
+              />
             }
           />
           <PopoverContent align="start" className="w-72">
@@ -157,7 +156,7 @@ function DimensionControls({
                     <Button
                       type="button"
                       variant="ghost"
-                      size="xs"
+                      size="sm"
                       onClick={() => onFilterChange(filter.dimension, [])}
                     >
                       Clear
@@ -207,16 +206,16 @@ function DimensionControls({
             key={filter.dimension}
             type="button"
             variant="secondary"
-            size="xs"
+            size="sm"
             className="rounded-full"
             aria-label={`Clear ${dimensionName(filter.dimension)} filter`}
             onClick={() => onFilterChange(filter.dimension, [])}
+            end={<X className="size-3" />}
           >
             {dimensionName(filter.dimension)}:{" "}
             {filter.selectedLabels.length === 1
               ? filter.selectedLabels[0]
               : `${filter.selectedLabels.length} selected`}
-            <X className="size-3" />
           </Button>
         ))}
     </div>
@@ -572,7 +571,7 @@ export function MetricTimeseriesView({
             <Button
               type="button"
               variant="outline"
-              size="icon-sm"
+              size="sm"
               disabled={data.isFetching}
               aria-label="View supporting data"
               title="View supporting data"
@@ -583,9 +582,8 @@ export function MetricTimeseriesView({
                     .join(" & "),
                 })
               }
-            >
-              <Database className="size-4" />
-            </Button>
+              icon={<Database className="size-4" />}
+            />
           ) : null}
           <TimeseriesExportMenu
             id={id}
@@ -598,18 +596,17 @@ export function MetricTimeseriesView({
             <Button
               type="button"
               variant="outline"
-              size="icon-sm"
+              size="sm"
               aria-label={expanded ? "Scroll the table" : "Show every row"}
               title={expanded ? "Scroll the table" : "Show every row"}
               aria-pressed={expanded}
               onClick={() => setExpanded((value) => !value)}
-            >
-              {expanded ? (
+              icon={expanded ? (
                 <ChevronsDownUp className="size-4" />
               ) : (
                 <ChevronsUpDown className="size-4" />
               )}
-            </Button>
+            />
           ) : null}
           <TimeseriesPresentationToggle
             presentation={presentation}

@@ -6,7 +6,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 
 import { formatMetricNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -305,7 +305,7 @@ export function MetricTimeseriesTable({
             key={side}
             type="button"
             variant="outline"
-            size="icon-sm"
+            size="sm"
             aria-label={label}
             title={label}
             onClick={() => page(side)}
@@ -313,9 +313,8 @@ export function MetricTimeseriesTable({
               "absolute z-40 rounded-full bg-card shadow-md",
               place
             )}
-          >
-            <Icon className="size-4" />
-          </Button>
+            icon={<Icon className="size-4" />}
+          />
         );
       })}
       <Table

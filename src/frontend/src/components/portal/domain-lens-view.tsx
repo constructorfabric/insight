@@ -25,9 +25,8 @@ import {
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import {
   BarChart,
   CartesianGrid,
@@ -2655,93 +2654,91 @@ function OwnershipSection({
       </p>
       <Card>
         <CardContent className="flex flex-col gap-2 p-4">
-         <TooltipProvider delay={HOVER_DELAY_MS}>
           <ul
-            className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
-            aria-label="What each colour in a bar means"
+          className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
+          aria-label="What each colour in a bar means"
           >
-            <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] bg-primary" />
-              Top person
-            </li>
-            <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] bg-primary/50" />
-              Next 2
-            </li>
-            <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] border border-border bg-muted" />
-              Everyone else
-            </li>
+          <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] bg-primary" />
+            Top person
+          </li>
+          <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] bg-primary/50" />
+            Next 2
+          </li>
+          <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] border border-border bg-muted" />
+            Everyone else
+          </li>
           </ul>
           {visible.map((row) => (
-            <div key={row.value} className="flex items-center gap-3">
-              <div
-                className="w-44 shrink-0 truncate text-sm md:w-64 lg:w-80"
-                title={row.label}
-              >
-                {row.label}
-              </div>
-              <div
-                className="flex h-3.5 flex-1 gap-0.5"
-                role="img"
-                aria-label={`${row.label}: top person ${ownershipPct(row.top1)}, top three ${ownershipPct(row.top3)}`}
-              >
-                <OwnershipSegment
-                  className="rounded-[3px] bg-primary"
-                  width={row.top1 * 100}
-                  who={row.topName ? [row.topName] : []}
-                  share={ownershipPct(row.top1)}
-                  role="Top person"
-                />
-                {row.top3 > row.top1 ? (
-                  <OwnershipSegment
-                    className="rounded-[3px] bg-primary/50"
-                    width={(row.top3 - row.top1) * 100}
-                    who={row.nextNames}
-                    share={ownershipPct(row.top3 - row.top1)}
-                    role="Next 2"
-                  />
-                ) : null}
-                {row.top3 < 1 ? (
-                  <OwnershipSegment
-                    className="rounded-[3px] border border-border bg-muted"
-                    width={(1 - row.top3) * 100}
-                    who={[]}
-                    share={ownershipPct(1 - row.top3)}
-                    role={
-                      row.othersCount
-                        ? `Everyone else · ${row.othersCount} ${row.othersCount === 1 ? "person" : "people"}`
-                        : "Everyone else"
-                    }
-                  />
-                ) : null}
-              </div>
-              <div className="w-40 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-                <span
-                  className={
-                    row.top1 >= OWNERSHIP_RISK_SHARE
-                      ? "font-medium text-warning"
-                      : "font-medium text-foreground"
-                  }
-                >
-                  top-1 {ownershipPct(row.top1)}
-                </span>{" "}
-                · top-3 {ownershipPct(row.top3)}
-              </div>
+          <div key={row.value} className="flex items-center gap-3">
+            <div
+              className="w-44 shrink-0 truncate text-sm md:w-64 lg:w-80"
+              title={row.label}
+            >
+              {row.label}
             </div>
+            <div
+              className="flex h-3.5 flex-1 gap-0.5"
+              role="img"
+              aria-label={`${row.label}: top person ${ownershipPct(row.top1)}, top three ${ownershipPct(row.top3)}`}
+            >
+              <OwnershipSegment
+                className="rounded-[3px] bg-primary"
+                width={row.top1 * 100}
+                who={row.topName ? [row.topName] : []}
+                share={ownershipPct(row.top1)}
+                role="Top person"
+              />
+              {row.top3 > row.top1 ? (
+                <OwnershipSegment
+                  className="rounded-[3px] bg-primary/50"
+                  width={(row.top3 - row.top1) * 100}
+                  who={row.nextNames}
+                  share={ownershipPct(row.top3 - row.top1)}
+                  role="Next 2"
+                />
+              ) : null}
+              {row.top3 < 1 ? (
+                <OwnershipSegment
+                  className="rounded-[3px] border border-border bg-muted"
+                  width={(1 - row.top3) * 100}
+                  who={[]}
+                  share={ownershipPct(1 - row.top3)}
+                  role={
+                    row.othersCount
+                      ? `Everyone else · ${row.othersCount} ${row.othersCount === 1 ? "person" : "people"}`
+                      : "Everyone else"
+                  }
+                />
+              ) : null}
+            </div>
+            <div className="w-40 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+              <span
+                className={
+                  row.top1 >= OWNERSHIP_RISK_SHARE
+                    ? "font-medium text-warning"
+                    : "font-medium text-foreground"
+                }
+              >
+                top-1 {ownershipPct(row.top1)}
+              </span>{" "}
+              · top-3 {ownershipPct(row.top3)}
+            </div>
+          </div>
           ))}
           {rows.length > visible.length || expanded ? (
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="cursor-pointer self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            >
-              {expanded
-                ? `Show top ${OWNERSHIP_ROWS}`
-                : `+${rows.length - visible.length} more`}
-            </button>
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="cursor-pointer self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            {expanded
+              ? `Show top ${OWNERSHIP_ROWS}`
+              : `+${rows.length - visible.length} more`}
+          </button>
           ) : null}
-         </TooltipProvider>
         </CardContent>
       </Card>
     </section>
@@ -3041,9 +3038,6 @@ function shareLabel(pct: number): string {
   return `${Math.round(pct)}%`;
 }
 
-/** Same dwell as every other hover explanation in the product. */
-const HOVER_DELAY_MS = 400;
-
 /** Rows shown before the reader opts into the full list. */
 const BAR_LIST_COLLAPSED = 12;
 
@@ -3138,123 +3132,121 @@ export function BarList({
       </p>
       <Card>
         <CardContent className="flex flex-col gap-2 p-4">
-          <TooltipProvider delay={HOVER_DELAY_MS}>
-            {legend.length ? (
-              <ul
-                className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
-                aria-label="What each colour in a bar means"
-              >
-                {legend.map((entry) => (
-                  <li
-                    key={entry.seed}
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground"
-                  >
-                    <span
-                      aria-hidden
-                      className="size-2.5 shrink-0 rounded-[2px]"
-                      style={{ backgroundColor: entry.color }}
-                    />
-                    {entry.label}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {visible.map((row) => (
-              <div key={row.key} className="flex items-center gap-3">
-                {/* A dimension value is often a path (`owner/repo`), and the part
-                  that tells two rows apart is at the END — so the column grows
-                  with the viewport and the full value stays on hover. */}
-                <div
-                  className="w-44 shrink-0 truncate text-sm md:w-64 lg:w-80"
-                  title={row.label}
+          {legend.length ? (
+            <ul
+              className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
+              aria-label="What each colour in a bar means"
+            >
+              {legend.map((entry) => (
+                <li
+                  key={entry.seed}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground"
                 >
-                  {row.href ? (
-                    <a
-                      href={row.href}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="hover:text-foreground hover:underline"
-                    >
-                      {row.label}
-                    </a>
+                  <span
+                    aria-hidden
+                    className="size-2.5 shrink-0 rounded-[2px]"
+                    style={{ backgroundColor: entry.color }}
+                  />
+                  {entry.label}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {visible.map((row) => (
+            <div key={row.key} className="flex items-center gap-3">
+              {/* A dimension value is often a path (`owner/repo`), and the part
+                that tells two rows apart is at the END — so the column grows
+                with the viewport and the full value stays on hover. */}
+              <div
+                className="w-44 shrink-0 truncate text-sm md:w-64 lg:w-80"
+                title={row.label}
+              >
+                {row.href ? (
+                  <a
+                    href={row.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="hover:text-foreground hover:underline"
+                  >
+                    {row.label}
+                  </a>
+                ) : (
+                  row.label
+                )}
+              </div>
+              <div className="h-6 flex-1 overflow-hidden rounded bg-muted">
+                {/* One bar, however it is cut: the width is the row's share of
+                  the largest row, and the segments divide THAT width, so a
+                  split bar stays comparable with an unsplit one. */}
+                <div
+                  className="flex h-full overflow-hidden rounded"
+                  style={{ width: `${Math.round((row.value / max) * 100)}%` }}
+                >
+                  {row.segments?.length ? (
+                    row.segments.map((segment) => (
+                      <Tooltip key={segment.seed}>
+                        <TooltipTrigger
+                          render={
+                            <BarPiece
+                              className="h-full first:rounded-s last:rounded-e"
+                              style={{
+                                width: `${(segment.value / row.value) * 100}%`,
+                                backgroundColor: colors[segment.seed],
+                              }}
+                              onOpen={
+                                onOpen &&
+                                (canOpen?.(row, segment) ?? true)
+                                  ? () => onOpen(row, segment)
+                                  : undefined
+                              }
+                              label={`${row.label} · ${segment.label}`}
+                            />
+                          }
+                        />
+                        <TooltipContent side="top">
+                          {segment.label} ·{" "}
+                          {formatMetricValue(segment.value, format, unit)} ·{" "}
+                          {shareLabel((segment.value / row.value) * 100)}
+                          {onOpen ? " · click to open the records" : ""}
+                        </TooltipContent>
+                      </Tooltip>
+                    ))
                   ) : (
-                    row.label
+                    <BarPiece
+                      className="h-full w-full rounded bg-primary/25"
+                      onOpen={
+                        onOpen && (canOpen?.(row) ?? true)
+                          ? () => onOpen(row)
+                          : undefined
+                      }
+                      label={row.label}
+                    />
                   )}
                 </div>
-                <div className="h-6 flex-1 overflow-hidden rounded bg-muted">
-                  {/* One bar, however it is cut: the width is the row's share of
-                    the largest row, and the segments divide THAT width, so a
-                    split bar stays comparable with an unsplit one. */}
-                  <div
-                    className="flex h-full overflow-hidden rounded"
-                    style={{ width: `${Math.round((row.value / max) * 100)}%` }}
-                  >
-                    {row.segments?.length ? (
-                      row.segments.map((segment) => (
-                        <Tooltip key={segment.seed}>
-                          <TooltipTrigger
-                            render={
-                              <BarPiece
-                                className="h-full first:rounded-s last:rounded-e"
-                                style={{
-                                  width: `${(segment.value / row.value) * 100}%`,
-                                  backgroundColor: colors[segment.seed],
-                                }}
-                                onOpen={
-                                  onOpen &&
-                                  (canOpen?.(row, segment) ?? true)
-                                    ? () => onOpen(row, segment)
-                                    : undefined
-                                }
-                                label={`${row.label} · ${segment.label}`}
-                              />
-                            }
-                          />
-                          <TooltipContent side="top">
-                            {segment.label} ·{" "}
-                            {formatMetricValue(segment.value, format, unit)} ·{" "}
-                            {shareLabel((segment.value / row.value) * 100)}
-                            {onOpen ? " · click to open the records" : ""}
-                          </TooltipContent>
-                        </Tooltip>
-                      ))
-                    ) : (
-                      <BarPiece
-                        className="h-full w-full rounded bg-primary/25"
-                        onOpen={
-                          onOpen && (canOpen?.(row) ?? true)
-                            ? () => onOpen(row)
-                            : undefined
-                        }
-                        label={row.label}
-                      />
-                    )}
-                  </div>
-                </div>
-                {/* Beside the bar, not on it: a segment fill is a full-strength
-                  colour, and no single text colour stays legible across every
-                  hue a palette can hand out. */}
-                {/* Fixed width, right-aligned: sized by its content the column
-                  would differ on every row, and every bar would end somewhere
-                  else. */}
-                <div className="w-28 shrink-0 text-right text-xs font-medium text-muted-foreground tabular-nums md:w-36">
-                  {formatMetricValue(row.value, format, unit)}
-                  {showShare ? ` · ${shareLabel(row.pct)}` : ""}
-                </div>
               </div>
-            ))}
-            {rows.length > BAR_LIST_COLLAPSED ? (
-              <button
-                type="button"
-                onClick={() => setExpanded((v) => !v)}
-                className="self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-              >
-                {expanded
-                  ? "Show less"
-                  : `+${rows.length - BAR_LIST_COLLAPSED} more`}
-              </button>
-            ) : null}
-          </TooltipProvider>
+              {/* Beside the bar, not on it: a segment fill is a full-strength
+                colour, and no single text colour stays legible across every
+                hue a palette can hand out. */}
+              {/* Fixed width, right-aligned: sized by its content the column
+                would differ on every row, and every bar would end somewhere
+                else. */}
+              <div className="w-28 shrink-0 text-right text-xs font-medium text-muted-foreground tabular-nums md:w-36">
+                {formatMetricValue(row.value, format, unit)}
+                {showShare ? ` · ${shareLabel(row.pct)}` : ""}
+              </div>
+            </div>
+          ))}
+          {rows.length > BAR_LIST_COLLAPSED ? (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              {expanded
+                ? "Show less"
+                : `+${rows.length - BAR_LIST_COLLAPSED} more`}
+            </button>
+          ) : null}
           {notes?.length ? (
             <div className="mt-4 flex flex-col gap-1 border-t pt-3">
               {notes.map((note) => (

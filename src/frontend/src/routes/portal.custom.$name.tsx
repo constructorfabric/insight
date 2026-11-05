@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Ellipsis, Maximize2, Table2 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button, Badge } from "@gears-frontx/ui-kit";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,7 +33,6 @@ import { CustomWidget } from "@/components/custom/custom-widget";
 import { ExpandedWidget } from "@/components/custom/expanded-widget";
 import { refusal } from "@/components/custom/refusal";
 import { WidgetDrilldown } from "@/components/custom/widget-drilldown";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -368,7 +367,7 @@ function DashboardWidgetSlot({
         {expands(widget) ? (
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="sm"
             aria-label={`Expand ${heading}`}
             className="-my-1 text-muted-foreground"
             icon={<Maximize2 />}
@@ -381,7 +380,7 @@ function DashboardWidgetSlot({
               render={
                 <Button
                   variant="ghost"
-                  size="icon-sm"
+                  size="sm"
                   aria-label={`More for ${heading}`}
                   className="-my-1 text-muted-foreground"
                   icon={<Ellipsis />}

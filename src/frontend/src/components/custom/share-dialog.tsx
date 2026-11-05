@@ -13,14 +13,14 @@ import {
 import { FieldSelect } from "@/components/alerts/field-select";
 import { refusal } from "@/components/custom/refusal";
 import { PersonPicker } from "@/components/portal/person-picker";
-import { Button } from "@/components/ui/button";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { toast } from "@/components/ui/sonner";
+  toast,
+} from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -107,7 +107,7 @@ export function ShareDialog({
 
   function dismiss(notice: string | null) {
     queryClient.removeQueries({ queryKey: grantsQuery(target).queryKey });
-    if (notice) toast.error(notice);
+    if (notice) toast.add({ type: "error", title: notice });
     close();
   }
 
@@ -245,7 +245,7 @@ function GrantRow({
       <Button
         type="button"
         variant="ghost"
-        size="icon-sm"
+        size="sm"
         aria-label={`Stop sharing with ${shown}`}
         disabled={pending}
         icon={<X />}

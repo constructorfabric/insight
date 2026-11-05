@@ -18,7 +18,7 @@ import { ScanSearch, Search } from "lucide-react";
 import type { AccountMatch } from "@/api/identity-client";
 import { CaseDialog, type CaseRow } from "@/components/portal/case-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@gears-frontx/ui-kit";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Empty,

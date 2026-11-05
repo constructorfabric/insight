@@ -7,7 +7,7 @@ import {
   AlertDescription,
   AlertTitle,
 } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 
 export function ErrorFallback({
   error,

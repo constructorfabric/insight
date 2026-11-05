@@ -27,12 +27,11 @@
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "@/components/ui/sonner";
+import { toast, Button } from "@gears-frontx/ui-kit";
 
 import type { CorrectionResponse, PersonSummary } from "@/api/identity-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { personDisplayName } from "@/lib/identities/person-display";
 import {
@@ -120,7 +119,10 @@ export function MergeCaseDialog({
       return;
     }
 
-    toast.success(t("identities.outcomes.toast_applied", { count: result.applied }));
+    toast.add({
+      type: "success",
+      title: t("identities.outcomes.toast_applied", { count: result.applied }),
+    });
     onClose();
   };
 
@@ -190,7 +192,7 @@ export function MergeCaseDialog({
             <span>{t("identities.dialogs.merge_preview_failed")}</span>
             <Button
               type="button"
-              size="xs"
+              size="sm"
               variant="outline"
               onClick={() => moving.refetch()}
             >
@@ -250,11 +252,12 @@ function report(
 ) {
   const applied = combineOutcomes(landed).applied;
   setFailure(reason);
-  toast.error(reason, {
-    description:
-      applied > 0
-        ? t("identities.outcomes.toast_partial", { count: applied })
-        : undefined,
+  toast.add({
+    type: "error",
+    title: reason,
+    description: applied > 0
+      ? t("identities.outcomes.toast_partial", { count: applied })
+      : undefined,
   });
 }
 

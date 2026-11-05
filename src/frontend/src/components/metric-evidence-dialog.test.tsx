@@ -88,7 +88,8 @@ vi.mock("@/components/metric-evidence-table", () => ({
   },
 }));
 
-vi.mock("@/components/ui/dialog", () => ({
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
   Dialog: ({
     children,
     onOpenChange,

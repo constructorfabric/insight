@@ -5,7 +5,7 @@ import type {
   DashboardVisibility,
   Folder,
 } from "@/api/custom-client";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@gears-frontx/ui-kit";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
 import { changedAgo } from "@/lib/custom/changed-ago";
 import { TEXT_LABEL } from "@/lib/type-scale";

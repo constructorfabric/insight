@@ -3,14 +3,10 @@ import { formatMetricValue } from "@/lib/format";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import { peerSpread, type PeerStanding } from "@/lib/metrics/peer-standing";
 import { cn } from "@/lib/utils";
-
-/** Matches the metric-name tooltips beside it, so a sweep stays quiet. */
-const HOVER_DELAY_MS = 400;
 
 /** Half the axis, in cohort spreads. Beyond this a mark pins to the edge. */
 const MAX_SPREADS = 2.5;
@@ -147,23 +143,21 @@ export function PeerMark({
   // many people the middle was taken over, since a middle of four is a
   // different claim from a middle of forty.
   return (
-    <TooltipProvider delay={HOVER_DELAY_MS}>
-      <Tooltip>
-        <TooltipTrigger render={<span className="inline-flex">{svg}</span>} />
-        <TooltipContent
-          side="top"
-          className="flex-col items-start gap-1 text-left leading-relaxed"
-        >
-          <p>{describe(spreads, metricLabel)}</p>
-          {standing.stats ? (
-            <p className="text-background/70">
-              {standing.stats.n} compared · middle {show(standing.stats.p50)} ·
-              middle half {show(standing.stats.p25)}–{show(standing.stats.p75)}
-            </p>
-          ) : null}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex">{svg}</span>} />
+      <TooltipContent
+        side="top"
+        className="flex-col items-start gap-1 text-left leading-relaxed"
+      >
+        <p>{describe(spreads, metricLabel)}</p>
+        {standing.stats ? (
+          <p className="text-background/70">
+            {standing.stats.n} compared · middle {show(standing.stats.p50)} ·
+            middle half {show(standing.stats.p25)}–{show(standing.stats.p75)}
+          </p>
+        ) : null}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
