@@ -48,6 +48,93 @@ fn requests_match_both_instance_keys_and_keep_clear_metadata() -> R {
 }
 
 #[test]
+fn matching_annotation_crons_do_not_apply_the_health_request() -> R {
+    let mut response = health()?;
+    response.connectors[0]
+        .schedule
+        .as_mut()
+        .ok_or("missing schedule")?
+        .origin = Some(ScheduleOrigin::Annotation);
+    attach(&mut response, &[row(json!(["0 3 * * *"]))], &[]);
+    let state = response.connectors[0]
+        .schedule_request
+        .as_ref()
+        .ok_or("missing request")?;
+    assert_eq!(state.status, ScheduleStatus::Pending);
+    Ok(())
+}
+
+#[tokio::test]
+async fn health_pass_completion_reads_stop_at_checked_at_in_milliseconds() -> R {
+    let sync_history = clickhouse::test::Mock::new();
+    let bound = sync_history.add(clickhouse::test::handlers::record_ddl());
+    let ch = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
+        sync_history.url(),
+        "analytics",
+    ));
+    let db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_results([vec![row(json!(["0 6 * * *"]))]])
+        .into_connection();
+    let mut response = health()?;
+    response.checked_at = Some("2026-01-15T12:45:00.123Z".to_owned());
+    let through =
+        DateTime::parse_from_rfc3339(response.checked_at.as_ref().ok_or("missing checked_at")?)?;
+    let config = ConnectorSchedulesConfig {
+        enabled: true,
+        ..ConnectorSchedulesConfig::default()
+    };
+    enrich_health(&db, &ch, &config, &mut response).await;
+    let query = bound.query().await;
+    assert!(
+        query.contains(&format!(
+            "ts <= fromUnixTimestamp64Milli({})",
+            through.timestamp_millis()
+        )),
+        "{query}"
+    );
+    assert_eq!(
+        response.connectors[0]
+            .schedule_request
+            .as_ref()
+            .ok_or("missing request")?
+            .status,
+        ScheduleStatus::Pending
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn pass_completion_failure_keeps_health_requests_null() -> R {
+    let sync_history = clickhouse::test::Mock::new();
+    sync_history.add(clickhouse::test::handlers::failure(
+        clickhouse::test::status::INTERNAL_SERVER_ERROR,
+    ));
+    let ch = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
+        sync_history.url(),
+        "analytics",
+    ));
+    let db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_results([vec![row(json!(["0 6 * * *"]))]])
+        .into_connection();
+    let mut response = health()?;
+    let before = serde_json::to_value(&response)?;
+    let config = ConnectorSchedulesConfig {
+        enabled: true,
+        ..ConnectorSchedulesConfig::default()
+    };
+    enrich_health(&db, &ch, &config, &mut response).await;
+    assert!(response.history_available);
+    assert!(
+        response
+            .connectors
+            .iter()
+            .all(|row| row.schedule_request.is_none())
+    );
+    assert_eq!(serde_json::to_value(&response)?, before);
+    Ok(())
+}
+
+#[test]
 fn inherited_requests_are_absent_and_failed_passes_use_the_shared_rule() -> R {
     let mut response = health()?;
     let mut cleared = row(json!([]));

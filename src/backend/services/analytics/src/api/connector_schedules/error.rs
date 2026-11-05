@@ -135,6 +135,14 @@ mod tests {
             (Error::InvalidMatch, 400),
             (Error::RevisionExhausted, 409),
             (
+                Error::StoredCrons(
+                    serde_json::from_str::<Vec<String>>("{}")
+                        .err()
+                        .ok_or("expected invalid stored crons")?,
+                ),
+                503,
+            ),
+            (
                 Error::Invalid(
                     crate::domain::connector_schedules::validation::Violation::new(
                         "crons[0]",

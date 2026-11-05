@@ -26,6 +26,26 @@ fn removed() -> Mock {
     sync_history
 }
 
+#[tokio::test]
+async fn editing_off_refuses_to_clear_a_removed_instance() -> R {
+    let sync_history = removed();
+    let db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_results([vec![stored(&["0 3 * * *"])], vec![stored(&["0 3 * * *"])]])
+        .append_exec_results([MockExecResult {
+            last_insert_id: 0,
+            rows_affected: 1,
+        }])
+        .into_connection();
+    let h = harness(db, sync_history.url(), false, context("user", &[])?, true).await?;
+    let response = h
+        .app
+        .clone()
+        .oneshot(request("DELETE", URI, Some("\"7\""), &json!(null))?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    Ok(())
+}
+
 #[derive(Debug, Serialize, clickhouse::Row)]
 struct CompletedPassRecord {
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]

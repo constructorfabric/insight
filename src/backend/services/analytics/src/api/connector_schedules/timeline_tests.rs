@@ -73,6 +73,74 @@ async fn a_save_during_a_pass_waits_for_the_following_complete_pass() -> R {
 }
 
 #[tokio::test]
+async fn get_pass_completion_reads_stop_at_the_applied_snapshot_in_milliseconds() -> R {
+    let sync_history = Mock::new();
+    let through = DateTime::UNIX_EPOCH + Duration::hours(2) + Duration::milliseconds(123);
+    sync_history.add(handlers::provide([ConfiguredInstanceRecord {
+        pass_completed_at: through,
+        ..configured_instance_record()
+    }]));
+    let bound = sync_history.add(handlers::record_ddl());
+    let db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_results([vec![Model {
+            connector: "example-tracker".to_owned(),
+            source_id: "main".to_owned(),
+            crons: json!(["0 6 * * *"]),
+            revision: 2,
+            updated_by: CALLER,
+            updated_at: DateTime::UNIX_EPOCH,
+        }]])
+        .into_connection();
+    let h = harness(db, sync_history.url(), true, context("user", &[])?, true).await?;
+    let response = h
+        .app
+        .clone()
+        .oneshot(request("GET", URI, None, &json!(null))?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let query = bound.query().await;
+    assert!(
+        query.contains(&format!(
+            "ts <= fromUnixTimestamp64Milli({})",
+            through.timestamp_millis()
+        )),
+        "{query}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn pass_completion_failure_makes_get_unavailable() -> R {
+    let sync_history = Mock::new();
+    sync_history.add(handlers::provide([ConfiguredInstanceRecord {
+        pass_completed_at: DateTime::UNIX_EPOCH + Duration::hours(2),
+        ..configured_instance_record()
+    }]));
+    sync_history.add(handlers::failure(
+        clickhouse::test::status::INTERNAL_SERVER_ERROR,
+    ));
+    let db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_results([vec![Model {
+            connector: "example-tracker".to_owned(),
+            source_id: "main".to_owned(),
+            crons: json!(["0 6 * * *"]),
+            revision: 2,
+            updated_by: CALLER,
+            updated_at: DateTime::UNIX_EPOCH,
+        }]])
+        .into_connection();
+    let h = harness(db, sync_history.url(), true, context("user", &[])?, true).await?;
+    let response = h
+        .app
+        .clone()
+        .oneshot(request("GET", URI, None, &json!(null))?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body(response).await?["status"], 503);
+    Ok(())
+}
+
+#[tokio::test]
 async fn matching_annotation_crons_never_apply_an_api_request() -> R {
     let response = at_pass(&["0 3 * * *"], "annotation", 1).await?;
     assert_eq!(response["status"], "not_applied");

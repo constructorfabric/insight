@@ -146,3 +146,6 @@ mod timeline_tests;
 
 #[cfg(test)]
 mod removed_tests;
+
+#[cfg(test)]
+mod health_tests;

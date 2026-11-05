@@ -16,6 +16,35 @@ fn stored() -> Model {
 }
 
 #[tokio::test]
+async fn changed_crons_at_the_maximum_revision_never_update() -> R {
+    let instance = Instance::parse("example-tracker", "main")?;
+    let mut row = stored();
+    row.revision = u64::MAX;
+    let db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_results([vec![row]])
+        .append_exec_results([MockExecResult {
+            last_insert_id: 0,
+            rows_affected: 1,
+        }])
+        .into_connection();
+    let result = write(
+        &db,
+        &instance,
+        Revision(u64::MAX),
+        vec!["0 6 * * *".to_owned()],
+        Uuid::from_u128(2),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(Error::RevisionExhausted)),
+        "{result:?}"
+    );
+    let log = format!("{:?}", db.into_transaction_log());
+    assert!(!log.contains("UPDATE"), "{log}");
+    Ok(())
+}
+
+#[tokio::test]
 async fn health_reads_all_requests_including_clears_in_one_query() -> R {
     let mut cleared = stored();
     cleared.source_id = "second".to_owned();

@@ -1,8 +1,3 @@
-SELECT throwIf(
-    (SELECT count() FROM ingestion_history.sync_events) != 0,
-    'Connector schedule fixture requires a fresh compose stand with an empty sync history'
-);
-
 INSERT INTO ingestion_history.sync_events (
     ts,
     tick_id,
@@ -29,4 +24,9 @@ SELECT
     false
 FROM (
     SELECT arrayJoin(['connector.configured', 'sweep.completed']) AS event
+)
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM ingestion_history.sync_events
+    WHERE tick_id = 'stand-scratch-connector-schedules'
 );

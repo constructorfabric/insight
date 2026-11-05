@@ -47,3 +47,15 @@ fn schedule_minimum_environment_overrides_the_yaml_value() -> R {
     assert_eq!(config["min_interval_minutes"].as_u64(), Some(60));
     Ok(())
 }
+
+#[test]
+fn schedule_cadence_environment_overrides_yaml_with_a_json_list() -> R {
+    let config = schedule_config(
+        "reconcile_schedules",
+        "['0 * * * *']",
+        r#"["7 */2 * * *", "19 */3 * * *"]"#,
+    )?;
+    let expected: Value = serde_yaml::from_str("['7 */2 * * *', '19 */3 * * *']")?;
+    assert_eq!(config["reconcile_schedules"], expected);
+    Ok(())
+}

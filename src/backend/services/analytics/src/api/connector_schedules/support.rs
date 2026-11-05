@@ -22,6 +22,7 @@ pub(super) const URI: &str = "/v1/connectors/example-tracker/main/schedule";
 
 pub(super) struct Harness {
     pub app: Router,
+    pub state: Arc<AppState>,
     identity: tokio::task::JoinHandle<()>,
 }
 
@@ -35,6 +36,24 @@ pub(super) async fn harness(
     db: DatabaseConnection,
     ch_url: &str,
     enabled: bool,
+    ctx: SecurityContext,
+    admin: bool,
+) -> Result<Harness, Box<dyn std::error::Error>> {
+    harness_with_config(db, ch_url, schedule_config(enabled), ctx, admin).await
+}
+
+pub(super) fn schedule_config(enabled: bool) -> ConnectorSchedulesConfig {
+    ConnectorSchedulesConfig {
+        enabled,
+        reconcile_schedules: vec!["*/15 * * * *".to_owned()],
+        ..ConnectorSchedulesConfig::default()
+    }
+}
+
+pub(super) async fn harness_with_config(
+    db: DatabaseConnection,
+    ch_url: &str,
+    config: ConnectorSchedulesConfig,
     ctx: SecurityContext,
     admin: bool,
 ) -> Result<Harness, Box<dyn std::error::Error>> {
@@ -52,9 +71,11 @@ pub(super) async fn harness(
     let identity_task = tokio::spawn(async move {
         let _ = axum::serve(listener, identity_app).await;
     });
-    let app = app(db, ch_url, enabled, ctx, identity)?;
+    let state = state(db, ch_url, config, identity)?;
+    let app = router(Arc::clone(&state), ctx);
     Ok(Harness {
         app,
+        state,
         identity: identity_task,
     })
 }
@@ -66,15 +87,23 @@ pub(super) fn app(
     ctx: SecurityContext,
     identity: IdentityClient,
 ) -> Result<Router, Box<dyn std::error::Error>> {
+    Ok(router(
+        state(db, ch_url, schedule_config(enabled), identity)?,
+        ctx,
+    ))
+}
+
+fn state(
+    db: DatabaseConnection,
+    ch_url: &str,
+    connector_schedules: ConnectorSchedulesConfig,
+    identity: IdentityClient,
+) -> Result<Arc<AppState>, Box<dyn std::error::Error>> {
     let config = GearConfig {
-        connector_schedules: ConnectorSchedulesConfig {
-            enabled,
-            reconcile_schedules: vec!["*/15 * * * *".to_owned()],
-            ..ConnectorSchedulesConfig::default()
-        },
+        connector_schedules,
         ..GearConfig::default()
     };
-    let state = Arc::new(AppState {
+    Ok(Arc::new(AppState {
         db,
         ch: insight_clickhouse::Client::new(insight_clickhouse::Config::new(ch_url, "analytics")),
         identity,
@@ -87,11 +116,13 @@ pub(super) fn app(
         report_artifacts: Arc::new(tokio::sync::Semaphore::new(1)),
         config,
         external_links: crate::domain::external_links::ExternalSourceRegistry::default(),
-    });
-    let app = crate::api::build_operations(Router::new(), &OpenApiRegistryImpl::new())
+    }))
+}
+
+fn router(state: Arc<AppState>, ctx: SecurityContext) -> Router {
+    crate::api::build_operations(Router::new(), &OpenApiRegistryImpl::new())
         .layer(Extension(ctx))
-        .layer(Extension(state));
-    Ok(app)
+        .layer(Extension(state))
 }
 
 pub(super) fn context(

@@ -67,6 +67,12 @@ def test_the_default_switch_disables_api_writes() -> None:
     assert yaml.safe_load(gear)["gears"]["analytics"]["config"]["connector_schedules"]["enabled"] is False
 
 
+def test_enabled_switch_requires_a_reconcile_cadence() -> None:
+    result = enabled("--set-string", "ingestion.reconcile.schedule=")
+    assert result.returncode != 0
+    assert "ingestion.reconcile.schedule is required" in result.stderr
+
+
 @pytest.mark.parametrize("minimum", [None, 60])
 def test_schedule_minimum_is_rendered_in_the_analytics_config(minimum: int | None) -> None:
     overrides = [] if minimum is None else ["--set", f"analytics.connectorSchedules.minIntervalMinutes={minimum}"]

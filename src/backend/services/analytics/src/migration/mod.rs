@@ -91,6 +91,10 @@ mod tests {
         // first — there is no string-matching slop in this comparison.
         let expected: &[(&str, &[&str])] = &[
             (
+                "connector_schedules",
+                m20261103_000001_connector_schedules::REQUIRED_CHECKS,
+            ),
+            (
                 "metric_sources",
                 m20261030_000001_baseline::REQUIRED_SOURCE_CHECKS,
             ),

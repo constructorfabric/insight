@@ -77,6 +77,17 @@ def test_schedule_lifecycle_preserves_revisions_and_restores_inheritance(
         pending = pending_response.parse(ScheduleResponse)
         assert pending == requested
         assert pending_response.headers["etag"] == saved.headers["etag"]
+        health_response = client.get(analytics_path("/v1/connector-health"))
+        assert health_response.status_code == 200, health_response.text
+        health = health_response.parse(ConnectorHealthResponse)
+        row = next(
+            row
+            for row in health.connectors
+            if row.connector == requested.connector and row.source_id == requested.source_id
+        )
+        assert row.schedule_request is not None
+        assert row.schedule_request.crons == ["0 6 * * *"]
+        assert row.schedule_request.status.value == "pending"
         for method in ["PUT", "DELETE"]:
             stale = client.request(
                 method,

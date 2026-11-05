@@ -8,6 +8,35 @@ use super::support::*;
 use crate::infra::db::entities::connector_schedules::Model;
 
 #[tokio::test]
+async fn writes_enforce_the_configured_minimum() -> R {
+    let sync_history = Mock::new();
+    sync_history.add(handlers::provide([configured_instance_record()]));
+    let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
+    let mut config = schedule_config(true);
+    config.min_interval_minutes = 60;
+    let h =
+        harness_with_config(db, sync_history.url(), config, context("user", &[])?, true).await?;
+    let response = h
+        .app
+        .clone()
+        .oneshot(request(
+            "PUT",
+            URI,
+            Some("\"0\""),
+            &json!({"crons": ["0,30 * * * *"]}),
+        )?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        body(response)
+            .await?
+            .to_string()
+            .contains("at most once every 60 minutes")
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn rejected_requests_identify_the_invalid_field_and_reason() -> R {
     for (uri, payload, field, reason, reads_sync_history) in [
         (
