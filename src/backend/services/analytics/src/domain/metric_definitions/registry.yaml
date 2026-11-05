@@ -209,10 +209,6 @@ sources:
         alias_collapse: max
       - key: meetings_organized
         evidence_granularity: source_summary
-      - key: adhoc_meetings_attended
-        evidence_granularity: source_summary
-      - key: scheduled_meetings_attended
-        evidence_granularity: source_summary
       - key: emails_sent
         evidence_granularity: source_summary
       - key: emails_received
@@ -242,6 +238,7 @@ sources:
     dimensions:
       - tool
       - scope
+      - kind
   - source:
       key: task
       kind: managed_observation
@@ -2292,7 +2289,7 @@ metrics:
     label: Meetings
     short_label: Mtgs
     description: Distinct meetings and one-to-one calls attended
-    explanation: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do.
+    explanation: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do. The kind breakdown tells Teams scheduled meetings, Teams ad hoc meetings (Meet Now from a chat) and Teams calls apart; Zoom reports no such split, so Zoom meetings are one kind.
     unit: meetings
     format: integer
     direction: lower_is_better
@@ -2304,6 +2301,7 @@ metrics:
         measure_key: meetings_attended
     dimensions:
       - tool
+      - kind
   - metric_key: collab.meeting_free_days
     source_key: collab
     subject: meetings
@@ -2363,42 +2361,6 @@ metrics:
     inputs:
       - input_role: value
         measure_key: meetings_organized
-    dimensions:
-      - tool
-  - metric_key: collab.adhoc_meetings
-    source_key: collab
-    subject: meetings
-    label: Ad-hoc meetings
-    short_label: Ad-hoc mtgs
-    description: Unscheduled meetings attended
-    explanation: Unscheduled Microsoft Teams meetings a person attended. Meet Now started from a chat counts as ad hoc; started from the calendar it counts as scheduled. Zoom does not report this split, so Zoom meetings are not included.
-    unit: meetings
-    format: integer
-    direction: neutral
-    entity_type: person
-    computation: sum
-    peer_cohort_key: org_unit
-    inputs:
-      - input_role: value
-        measure_key: adhoc_meetings_attended
-    dimensions:
-      - tool
-  - metric_key: collab.scheduled_meetings
-    source_key: collab
-    subject: meetings
-    label: Scheduled meetings
-    short_label: Sched. mtgs
-    description: Scheduled meetings attended
-    explanation: Scheduled Microsoft Teams meetings a person attended. Zoom does not report this split, so Zoom meetings are not included.
-    unit: meetings
-    format: integer
-    direction: neutral
-    entity_type: person
-    computation: sum
-    peer_cohort_key: org_unit
-    inputs:
-      - input_role: value
-        measure_key: scheduled_meetings_attended
     dimensions:
       - tool
   - metric_key: tasks.closed

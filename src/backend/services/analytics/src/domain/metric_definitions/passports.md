@@ -670,7 +670,7 @@ is an order statistic instead, and always answers with one that did.
 - Reads: meetings_attended
 - Formula: sum(meetings_attended)
 - Shape: integer, lower_is_better, unit meetings
-- Notes: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do.
+- Notes: Distinct meetings a person attended across meeting tools. Microsoft Teams one-to-one calls count as meetings, as two-person Zoom meetings do. The kind breakdown tells Teams scheduled meetings, Teams ad hoc meetings (Meet Now from a chat) and Teams calls apart; Zoom reports no such split, so Zoom meetings are one kind.
 
 ## collab.meeting_free_days — Meeting-free days
 
@@ -695,22 +695,6 @@ is an order statistic instead, and always answers with one that did.
 - Formula: sum(meetings_organized)
 - Shape: integer, neutral, unit meetings
 - Notes: Meetings a person organized in Microsoft Teams or Zoom. A Zoom meeting counts for its host on the day it started, and only if someone besides the host attended.
-
-## collab.adhoc_meetings — Ad-hoc meetings
-
-- Source: collab (collab_metric_observations)
-- Reads: adhoc_meetings_attended
-- Formula: sum(adhoc_meetings_attended)
-- Shape: integer, neutral, unit meetings
-- Notes: Unscheduled Microsoft Teams meetings a person attended. Meet Now started from a chat counts as ad hoc; started from the calendar it counts as scheduled. Zoom does not report this split, so Zoom meetings are not included.
-
-## collab.scheduled_meetings — Scheduled meetings
-
-- Source: collab (collab_metric_observations)
-- Reads: scheduled_meetings_attended
-- Formula: sum(scheduled_meetings_attended)
-- Shape: integer, neutral, unit meetings
-- Notes: Scheduled Microsoft Teams meetings a person attended. Zoom does not report this split, so Zoom meetings are not included.
 
 ## tasks.closed — Issues closed
 
