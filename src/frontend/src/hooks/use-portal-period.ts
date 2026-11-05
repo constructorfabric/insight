@@ -26,6 +26,7 @@ export function usePortalPeriod(): {
   customRange: CustomRange | null;
   dateRange: DateRange;
   compareTo: DateRange;
+  comparisonNoun: PeriodValue | "period";
   setPeriod: (period: PeriodValue) => void;
   setCustomRange: (range: CustomRange | null) => void;
 } {
@@ -48,6 +49,7 @@ export function usePortalPeriod(): {
     () => comparisonRange(dateRange, period, customRange),
     [dateRange, period, customRange],
   );
+  const comparisonNoun = customRange ? "period" : period;
 
   const setPeriod = useCallback(
     (next: PeriodValue) => {
@@ -73,7 +75,15 @@ export function usePortalPeriod(): {
   );
 
   return useMemo(
-    () => ({ period, customRange, dateRange, compareTo, setPeriod, setCustomRange }),
-    [period, customRange, dateRange, compareTo, setPeriod, setCustomRange],
+    () => ({
+      period,
+      customRange,
+      dateRange,
+      compareTo,
+      comparisonNoun,
+      setPeriod,
+      setCustomRange,
+    }),
+    [period, customRange, dateRange, compareTo, comparisonNoun, setPeriod, setCustomRange],
   );
 }

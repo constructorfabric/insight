@@ -49,7 +49,7 @@ export function SingleGroupView({
   personId: string;
   groupId: GroupId;
 }) {
-  const { period, dateRange, compareTo } = usePortalPeriod();
+  const { dateRange, compareTo, comparisonNoun } = usePortalPeriod();
   const entityId = normalizePersonId(personId);
   const def = GROUPS.find((d) => d.id === groupId) ?? null;
 
@@ -228,7 +228,7 @@ export function SingleGroupView({
                     injectedData.previousByKey?.get(metric.metric_key) ?? null
                   }
                   entityId={entityId}
-                  periodNoun={period}
+                  periodNoun={comparisonNoun}
                 />
               ))
             )}

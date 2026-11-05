@@ -8,7 +8,6 @@ import { IcNeedsAttention } from "@/components/widgets/dashboard/ic-needs-attent
 import { PersonCoverage } from "@/components/widgets/dashboard/person-coverage";
 import { KpiTile } from "@/components/widgets/dashboard/kpi-tile";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
-import type { PeriodValue } from "@/types/insight";
 import {
   metricAttentionItems,
   orderAttentionItems,
@@ -60,13 +59,6 @@ const TILE_GRID: Record<number, string> = {
   4: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4",
 };
 
-/** What the previous period IS, so the badge can be named in plain words. */
-const PERIOD_NOUN: Record<PeriodValue, string> = {
-  week: "week",
-  month: "month",
-  quarter: "quarter",
-  year: "year",
-};
 const CLOSED_ENTITY = { type: "person" as const, ids: [] };
 const CLOSED_DRILLDOWN_DATA = {
   byKey: new Map(),
@@ -118,7 +110,7 @@ export function MetricGroupsView({
   const showKpis = content === "glance";
   const showAttention = content !== "none";
   const cohortLabel = useCohortLabel();
-  const { period, dateRange, compareTo } = usePortalPeriod();
+  const { period, dateRange, compareTo, comparisonNoun } = usePortalPeriod();
   const entityId = normalizePersonId(personId);
   // Whose page this is. A person reading their own page and a manager
   // reading it want different things first — see `orderAttentionItems`.
@@ -373,7 +365,7 @@ export function MetricGroupsView({
                   <KpiTile
                     key={tile.key}
                     tile={tile}
-                    periodNoun={PERIOD_NOUN[period]}
+                    periodNoun={comparisonNoun}
                     trend={personTrendPoints(
                       trendData.byKey.get(tile.key),
                       entityId,

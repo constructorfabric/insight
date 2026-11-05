@@ -85,6 +85,7 @@ vi.mock("@/hooks/use-portal-period", () => ({
     period: mocks.period,
     dateRange: mocks.range,
     compareTo: mocks.compareTo,
+    comparisonNoun: mocks.period,
   }),
 }));
 vi.mock("@/components/widgets/dashboard/kpi-tile", () => ({
