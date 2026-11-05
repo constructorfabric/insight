@@ -633,10 +633,13 @@ write_k8s_local() {
   fi
   echo "" >&2
 
-  local core_token signing_key
+  local core_token signing_key reconcile_key reconcile_public_key
   core_token=$(openssl rand -hex 32)
   signing_key=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve)
   signing_key=$(printf '%s\n' "$signing_key" | sed 's/^/      /')
+  reconcile_key=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve)
+  reconcile_public_key=$(printf '%s\n' "$reconcile_key" | openssl pkey -pubout)
+  reconcile_key=$(printf '%s\n' "$reconcile_key" | sed 's/^/      /')
 
   # ── Write inventory.yaml ─────────────────────────────────────────
   trap 'if [[ $? -ne 0 ]]; then
@@ -758,6 +761,17 @@ insight-local-insight-authenticator-signing-keys: |
     current.pem: |
 $signing_key
 
+insight-local-insight-reconcile-signing-key: |
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: insight-reconcile-signing-key
+    namespace: insight
+  type: Opaque
+  stringData:
+    private.pem: |
+$reconcile_key
+
 # insight-local-insight-oidc: |
 #   apiVersion: v1
 #   kind: Secret
@@ -797,8 +811,10 @@ EOF
   cp "$values_tmpl" "$values_out"
   yq -i ".global.tenantDefaultId = \"$TENANT_DEFAULT_ID\"" "$values_out"
   yq -i ".ingestion.reconcile.tenantId = \"$TENANT_DEFAULT_ID\"" "$values_out"
+  RECONCILE_PUBLIC_KEY="$reconcile_public_key" yq -i '.authenticator.serviceTokens.services.reconcile.public_keys = [strenv(RECONCILE_PUBLIC_KEY)]' "$values_out"
   if [[ "$sys_airbyte" == "false" || "$sys_argo" == "false" ]]; then
     yq -i '.ingestion.templates.enabled = false' "$values_out"
+    yq -i '.global.connectorSchedules.enabled = false' "$values_out"
   fi
 
   # Full auth: the dev login identity is a realm user (must exist in

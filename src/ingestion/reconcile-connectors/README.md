@@ -101,3 +101,31 @@ missing event means the loop did not run):
 - `reconcile.failed`   — abnormal abort (set -e path), exit_code
 
 Find one tick in Loki: `{namespace="insight"} | json | run_id="<pod>"`.
+
+## Connector schedules
+
+Connector schedules use API > Secret annotation > descriptor schedule > default
+precedence. The API key is the exact `(connector, source_id)` pair; a missing
+entry falls through to the other tiers. Applied origins are `api`, `annotation`,
+`descriptor` and `default`; the sweep preserves the applied origin in the sync history.
+
+Set `CONNECTOR_SCHEDULES_ENABLED=true` to enable the API tier. All other values,
+including unset, leave it off. When enabled, all of these must be non-empty:
+
+- `CONNECTOR_SCHEDULES_URL`: the complete analytics schedules endpoint URL.
+- `SERVICE_TOKEN_URL`: the complete authenticator token endpoint URL and assertion audience.
+- `SERVICE_TOKEN_NAME`: the registered service name, with role `connector-schedules-reader`.
+- `SERVICE_TOKEN_KEY_FILE`: a PEM EC P-256 private key, in PKCS#8 or SEC1 format.
+- `SERVICE_TOKEN_TENANT_ID`: the tenant UUID for the token request.
+
+Reconcile and adopt read the API once per run, including scoped runs and dry
+runs, before applying any CronWorkflow. Each HTTP call has a 5 second connection
+limit and a 15 second total limit, without retries or redirects. Node's built-in
+crypto signs a unique ES256 assertion with a 50 second lifetime; Python's standard
+library and curl handle the exchange without additional packages.
+
+The whole schedules response must validate before any entry is used. A failed
+read logs one ERROR with its reason, skips schedule resolution and apply,
+continues other work and returns non-zero at the end. Cleanup still removes
+CronWorkflows for deleted instances and connectors.
+Dry runs still read the API and report the schedule origin they would apply.

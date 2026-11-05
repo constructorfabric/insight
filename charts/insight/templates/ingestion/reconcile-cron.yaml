@@ -32,6 +32,16 @@ spec:
   failedJobsHistoryLimit:     {{ default 3 .Values.ingestion.reconcile.failedJobsHistoryLimit }}
   workflowSpec:
     serviceAccountName: {{ include "insight.fullname" . }}-reconcile
+    {{- if .Values.global.connectorSchedules.enabled }}
+    volumes:
+      - name: service-token-key
+        secret:
+          secretName: {{ required "ingestion.reconcile.serviceTokenKeySecret is required" .Values.ingestion.reconcile.serviceTokenKeySecret | quote }}
+          defaultMode: 0444
+          items:
+            - key: private.pem
+              path: private.pem
+    {{- end }}
     entrypoint: run
     activeDeadlineSeconds: 1800
     # Garbage-collect both Workflow CRs and their pods after completion.
@@ -57,6 +67,9 @@ spec:
             - "-c"
             - "bash /ingestion/reconcile-connectors/main.sh"
           env:
+            {{- if .Values.global.connectorSchedules.enabled }}
+            {{- include "insight.connectorSchedulesEnv" . | nindent 12 }}
+            {{- end }}
             # Correlation id stamped on every JSON log line (lib/log.sh):
             # one tick's lines group in Loki via `| json | run_id="..."`.
             - name: RECONCILE_RUN_ID
@@ -158,6 +171,12 @@ spec:
                   name: {{ required "gitCliProxy.existingSecret is required" .Values.gitCliProxy.existingSecret | quote }}
                   key: APP__gears__git_cli_proxy__config__proxy_token
             {{- end }}
+          {{- if .Values.global.connectorSchedules.enabled }}
+          volumeMounts:
+            - name: service-token-key
+              mountPath: /etc/insight/reconcile
+              readOnly: true
+          {{- end }}
           resources:
             requests:
               cpu: {{ required "ingestion.reconcile.resources.requests.cpu is required" .Values.ingestion.reconcile.resources.requests.cpu | quote }}

@@ -311,12 +311,13 @@ time. The API also serves the recorded schedule origin, which the page does not 
 an empty or unknown origin remains unknown. The page's last-checked stamp dates these facts too.
 
 Analytics stores a requested schedule per `(connector, source_id)`. Admins set and clear it
-through the schedule API using `If-Match` to prevent overwriting a concurrent edit. Clearing
-requests inheritance. Requests survive instance removal; while
+through the schedule API using `If-Match` to prevent overwriting a concurrent edit. Reconcile
+resolves API request > Secret annotation > descriptor > default, applying a change within
+one successful pass. Clearing restores inheritance. A failed API read changes no schedule.
+Requests survive instance removal and reapply when the same pair is configured again; while
 absent, a stored row remains readable with `applied: null` and clearable with the usual
 `If-Match` and revision rules, but PUT returns 404. A pair with neither configuration nor a
-stored row returns 404 on every verb. The service endpoint lists all non-empty requests and
-requires a service principal with the `connector-schedules-reader` role.
+stored row returns 404 on every verb, and reconcile continues listing all non-empty requests.
 An unchanged request preserves its revision and audit metadata; stale edits report the current
 revision. Invalid requests identify the expression and field to fix. Duplicate expressions and
 expressions that can never run under Argo's calendar rules are rejected. Schedules requested
@@ -384,9 +385,8 @@ against.
 The schedule API separately returns the configured reconcile cron expressions, so a client
 can forecast the next pass while a request is pending. This intended cadence does not replace
 the measured recording interval or establish that reconciliation ran. A per-stand switch,
-`global.connectorSchedules.enabled`, defaults off and controls admin writes; reads remain
-available when it is off. Applying requests through reconcile, its schedule precedence,
-read-failure policy and reader enablement are a separate change.
+`global.connectorSchedules.enabled`, defaults off and controls both admin writes and
+reconcile's API tier; reads remain available when it is off.
 
 ## 6. Non-Functional Requirements
 
@@ -477,8 +477,8 @@ operator reads the gap from timestamps; the product computes no cadence and clai
 intended schedule.
 
 An admin can request a different cadence or clear an override through the API (FR-13).
-The applied facts can differ from that request until sync history records a matching schedule;
-FR-12 keeps the intended pass time separate from evidence of progress.
+Until the next successful reconcile pass and pass-completion recording, the applied facts can differ
+from that request; FR-12 keeps the intended pass time separate from evidence of progress.
 
 ### UC-3 — A fresh install is read correctly
 

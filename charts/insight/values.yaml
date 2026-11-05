@@ -96,6 +96,7 @@ credentials:
 # services sets `image.repository` explicitly.
 global:
   connectorSchedules:
+    # Enables admin schedule requests and reconcile's API schedule tier.
     enabled: false
   imagePullSecrets: [] # pull-secrets for a private registry
   storageClass: "" # empty = default StorageClass of the cluster
@@ -249,6 +250,8 @@ ingestion:
   # Reconcile loop: descriptor-driven Airbyte connector reconciliation,
   # cron-scheduled inside the cluster (see templates/ingestion/reconcile-cron.yaml).
   reconcile:
+    # Existing Secret containing reconcile's EC P-256 private.pem signing key.
+    serviceTokenKeySecret: insight-reconcile-signing-key
     schedule: "*/15 * * * *"
     # Airbyte workspace UUID is auto-discovered at runtime via ab_workspace_id (ADR-0009) — no value to set.
     destinationId: "" # Optional override: explicit Airbyte destination UUID. Leave empty for fresh installs — reconcile auto-creates the Bronze ClickHouse destination by name (ADR-0012).

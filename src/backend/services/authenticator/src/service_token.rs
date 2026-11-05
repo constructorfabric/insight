@@ -572,6 +572,42 @@ mod tests {
     }
 
     #[test]
+    fn rotation_accepts_both_keys_until_the_old_key_is_removed() {
+        let (old_private, old_public) = keypair();
+        let (new_private, new_public) = keypair();
+        let cfg = ServiceTokensConfig {
+            services: HashMap::from([(
+                "testclient".to_owned(),
+                crate::config::ServiceRegistryEntry {
+                    public_keys: vec![old_public, new_public.clone()],
+                    public_key_paths: vec![],
+                    roles: vec!["service".to_owned()],
+                },
+            )]),
+            ..Default::default()
+        };
+        let overlap = ServiceRegistry::build(&cfg).unwrap();
+        let claims = assertion("testclient", 30);
+        let old_assertion = sign(&old_private, &claims);
+        let new_assertion = sign(&new_private, &claims);
+        for signed in [&old_assertion, &new_assertion] {
+            assert_eq!(
+                verify_assertion(&overlap, AUD, 60, 30, signed)
+                    .unwrap()
+                    .service,
+                "testclient"
+            );
+        }
+
+        let rotated = registry("testclient", &new_public);
+        assert_eq!(
+            verify_assertion(&rotated, AUD, 60, 30, &old_assertion).unwrap_err(),
+            "assertion_verification_failed"
+        );
+        assert!(verify_assertion(&rotated, AUD, 60, 30, &new_assertion).is_ok());
+    }
+
+    #[test]
     fn rejects_wrong_key() {
         let (_priv_pem, pub_pem) = keypair();
         let (attacker_priv, _) = keypair();

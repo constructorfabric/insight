@@ -18,15 +18,38 @@ when you go past sandbox, and you have a working gitops setup.
 
 ## Connector schedule requests
 
-Set `global.connectorSchedules.enabled: true` to enable analytics admin schedule writes.
-The switch defaults off; stored requests and schedule reads remain available when it is off.
-The local values template enables the API switch.
+Enable API schedule requests for a stand after provisioning its reconcile signing key:
 
-`ingestion.reconcile.schedule` supplies the cadence analytics reports to clients; GitOps
+1. Generate a separate EC P-256 keypair in a protected directory:
+
+   ```bash
+   umask 077
+   openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
+     -pkeyopt ec_param_enc:named_curve -out private.pem
+   openssl pkey -in private.pem -pubout -out public.pem
+   ```
+
+2. Put the contents of `public.pem` in the stand's values under
+   `authenticator.serviceTokens.services.reconcile.public_keys` (a list of PEM strings),
+   with `roles: [connector-schedules-reader]` on that entry. Keep the private key out of values.
+3. Create an Opaque Secret in the application namespace with key `private.pem`. Seal it with
+   the stand's sealed-secrets certificate and commit only the sealed manifest. List it in
+   the inventory's `secrets.services` so the normal sealing/deploy flow includes it. Set
+   `ingestion.reconcile.serviceTokenKeySecret` to its name; the chart defaults to
+   `insight-reconcile-signing-key`.
+4. Set `global.connectorSchedules.enabled: true`, keep `ingestion.templates.enabled: true`,
+   and configure a tenant UUID in `authenticator.oidc.defaultTenantId` or, as its fallback,
+   `global.tenantDefaultId`. Deploy the values and sealed Secret together.
+
+The switch defaults off. It enables analytics admin writes and reconcile's API tier together.
+`ingestion.reconcile.schedule` also supplies the cadence analytics reports to clients; GitOps
 composition reads the chart defaults and the stand overlay, so it needs no second cadence.
 After changing that cadence, recompose application Secrets and restart analytics so it loads
-the updated environment. The API stores requests and reports their status from sync history;
-applying requests through reconcile is a separate change.
+the updated environment.
+
+The local wizard generates and registers this keypair automatically. It writes the private
+Secret into the existing 0600 cleartext store for sealing and enables the switch only when
+both Airbyte and Argo templates are enabled. The functional CI overlay leaves the feature off.
 
 ## What's in this directory
 

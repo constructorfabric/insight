@@ -28,7 +28,7 @@ Realises [PRD.md](PRD.md). Scoped addition to the
 [Analytics service design](../../DESIGN.md) on the read side and to the reconcile loop on the
 write side. Everything the parent design already specifies — the admin gate, error taxonomy,
 OpenAPI registration — applies unchanged; this document adds the sync history, requested
-schedule storage, API routes, and one portal pane.
+schedule storage, reconcile integration, API routes, and one portal pane.
 
 ## 1. Architecture Overview
 
@@ -613,7 +613,7 @@ cannot recreate an override unnoticed. With editing disabled, writes return 409.
 Stored requests remain keyed by `(connector, source_id)` across removal and reconfiguration:
 GET and DELETE accept an unconfigured pair with a stored row (`applied: null`, existing status,
 `If-Match` and revision rules), PUT still requires configuration, every verb returns the existing
-404 when both are absent, and the service endpoint lists non-empty requests regardless of configuration.
+404 when both are absent, and reconcile lists non-empty requests regardless of configuration.
 
 `PUT` accepts only a JSON object containing `crons`, a list of one to ten distinct five-field
 UTC expressions (each at most 100 characters). Duplicates are compared after horizontal
@@ -646,8 +646,8 @@ and analytics refuses to start outside that range. The analytics chart sets it t
 validation runs after all per-expression checks and returns a canonical field violation
 on the expression ending the shortest gap, naming both starts and the minimum.
 The limit applies only to writes through this API: reconcile, Secret annotations and
-descriptors are not checked. Stored schedules predating a raised minimum remain served;
-a new PUT must satisfy the current minimum.
+descriptors are not checked. Stored schedules predating a raised minimum remain served
+and applied; a new PUT must satisfy the current minimum.
 
 `applied.timezone` is read from `schedule_timezone` alongside the recorded crons, origin,
 suspension and pass-completion time in one sync-history query. An empty recorded timezone
@@ -724,6 +724,15 @@ Holds the ledger. Unavailable ⇒ the sweep skips the tick and the read surface 
 other warehouse-backed read.
 
 ### 3.6 Interactions & Sequences
+
+Before instance work, reconcile reads `GET /v1/connector-schedules` once, authenticated by
+an ES256 service token for `reconcile` with the `connector-schedules-reader` role. It resolves
+the whole response before using it. Per instance the precedence is API request > Secret
+annotation > descriptor > default; a successful pass applies the selected schedule and origin
+to the CronWorkflow. An API edit therefore takes effect within one successful pass. A failed
+read applies no CronWorkflow in that run, so every schedule stays as it is. Removing the
+CronWorkflows of instances that are gone, and all other reconciliation work, still runs, and
+the run reports failure. Sweep records the applied result for a later health read.
 
 #### Sweep tick
 
@@ -824,9 +833,8 @@ facts.
 Analytics owns `connector_schedules` in its MariaDB database, keyed by
 `(connector, source_id)`, with requested cron expressions, revision, caller and update time.
 An empty retained row means inheritance and still participates in revision checks. The
-service endpoint, `GET /v1/connector-schedules`, requires a service principal with the exact
-`connector-schedules-reader` role and serves every non-empty request in a versioned response.
-A storage or decode failure fails the entire read rather than returning an empty set.
+reconcile read serves every non-empty request; a storage or decode failure fails the entire
+read rather than returning an empty set.
 
 #### `ingestion_history.sync_events`
 
@@ -921,7 +929,7 @@ user and checks that `SELECT` is allowed while `INSERT`, `CREATE`, `DROP`, `TRUN
 | ledger table | ClickHouse migration, applied by the post-upgrade hook |
 | ledger grant | the query-path role's definition, applied by the same hook before the migrations |
 | sweep | the reconcile loop's existing image and CronWorkflow |
-| configuration | per-stand API writes switch, minimum interval and reported reconcile cadence |
+| configuration | per-stand switch and reconcile service-token key/registry |
 | health and schedule routes | analytics service |
 | requested schedules | analytics MariaDB migration |
 | pane | portal bundle |
@@ -929,11 +937,18 @@ user and checks that `SELECT` is allowed while `INSERT`, `CREATE`, `DROP`, `TRUN
 Nothing here adds a deployable unit. The sweep runs inside a controller that already exists,
 and the API routes run on a service that already serves the portal.
 
-`global.connectorSchedules.enabled` defaults false and controls analytics editing. Turning
-it off retains stored requests and leaves reads available. The local values template enables
-the switch. Applying stored requests through reconcile, its precedence and read-failure
-policy, and the reader's service-token provisioning and switch wiring belong to the separate
-reconcile integration change.
+`global.connectorSchedules.enabled` defaults false and drives both analytics editing and
+reconcile's API tier. Enabling requires ingestion templates, a UUID from
+`authenticator.oidc.defaultTenantId` falling back to `global.tenantDefaultId`, a key Secret
+named by `ingestion.reconcile.serviceTokenKeySecret` containing `private.pem`, and a
+`authenticator.serviceTokens.services.reconcile` registry entry with the reader role. Helm
+refuses incomplete configuration even when credentials are composed outside the chart. The
+private key is mounted read-only; the token endpoint equals the assertion audience. The local
+wizard generates the keypair and registers the private Secret in the sealing inventory;
+declining Airbyte or Argo also disables the switch.
+
+Turning `global.connectorSchedules.enabled` off retains stored requests while reconcile
+uses the deployment's schedules; turning it on again reapplies those requests on the next pass.
 
 ## 4. Additional context
 

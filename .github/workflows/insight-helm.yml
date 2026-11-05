@@ -7,6 +7,8 @@ on:
       - "charts/insight/**"
       - "src/backend/services/**/helm/**"
       - "src/frontend/helm/**"
+      - "deploy/compose/insight-init.sh"
+      - "deploy/compose/tests/**"
       - "deploy/gitops/scripts/**"
       - "deploy/gitops/environments/local/**"
       - ".github/workflows/insight-helm.yml"
@@ -31,7 +33,13 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install test dependencies
-        run: pip install --quiet pytest pyyaml
+        run: |
+          pip install --quiet pytest pyyaml
+          if ! command -v openssl >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y openssl
+          fi
+          openssl version
       - name: Install yq
         env:
           YQ_VERSION: 4.54.1
@@ -57,5 +65,6 @@ jobs:
           python -m pytest
           charts/insight/tests/
           src/backend/services/identity-resolution/helm/tests/
+          deploy/compose/tests/
           deploy/gitops/scripts/tests/
           -q

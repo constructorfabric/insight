@@ -275,32 +275,34 @@ for x in json.load(sys.stdin): print(x)')
   done <<<"${matching_connections}"
 
   # Apply (or update) the per-connector Argo CronWorkflow.
-  if [[ "${dry_run}" -eq 1 ]]; then
-    printf 'CHANGE  %s: would create/update Argo CronWorkflow\n' "${name}"
-  else
-    local conn_name; conn_name="$(reconcile_compute_connection_name "${name}" "${source_id_label}")"
+  if connector_schedules_writable; then
     local schedule_details schedule_origin schedule
-    schedule_details="$(reconcile_resolve_schedule "${name}" "${secret_name}")"
+    schedule_details="$(reconcile_resolve_schedule "${name}" "${secret_name}" "${source_id_label}")"
     schedule_origin="${schedule_details%%$'\n'*}"
     schedule="${schedule_details#*$'\n'}"
-    local tenant;    tenant="$(reconcile_compute_tenant "${name}")"
-    # `source_id_label` — read above off the connector's one instance — is what
-    # the rendered CronWorkflow carries as `insight_source_id` for
-    # ingestion-pipeline, and what the schedule is named after.
-    # ADOPT_DRY_RUN guarded above (would_call branch).
-    local apply_rc=0 apply_error
-    apply_error="$(argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                            "${source_id_label}" "${dbt_select}" "${schedule_origin}" 2>&1 >/dev/null)" \
-      || apply_rc=$?
-    apply_error="$(argo_error_reason "${apply_error}")"
-    if [[ "${apply_rc}" -eq 0 ]]; then
-      log_line INFO "${name}: created Argo CronWorkflow $(argo_cron_workflow_name "${name}" "${tenant}" "${source_id_label}")"
-    elif [[ "${apply_rc}" -eq 2 ]]; then
-      log_line ERROR "${name}: created Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")${apply_error:+: ${apply_error}}"
-      return 1
+    if [[ "${dry_run}" -eq 1 ]]; then
+      printf 'CHANGE  %s: would create/update Argo CronWorkflow (origin=%s)\n' "${name}" "${schedule_origin}"
     else
-      log_line ERROR "${name}: failed to create/update Argo CronWorkflow${apply_error:+: ${apply_error}}"
-      return 1
+      local conn_name; conn_name="$(reconcile_compute_connection_name "${name}" "${source_id_label}")"
+      local tenant;    tenant="$(reconcile_compute_tenant "${name}")"
+      # `source_id_label` — read above off the connector's one instance — is what
+      # the rendered CronWorkflow carries as `insight_source_id` for
+      # ingestion-pipeline, and what the schedule is named after.
+      # ADOPT_DRY_RUN guarded above (would_call branch).
+      local apply_rc=0 apply_error
+      apply_error="$(argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
+                              "${source_id_label}" "${dbt_select}" "${schedule_origin}" 2>&1 >/dev/null)" \
+        || apply_rc=$?
+      apply_error="$(argo_error_reason "${apply_error}")"
+      if [[ "${apply_rc}" -eq 0 ]]; then
+        log_line INFO "${name}: created Argo CronWorkflow $(argo_cron_workflow_name "${name}" "${tenant}" "${source_id_label}")"
+      elif [[ "${apply_rc}" -eq 2 ]]; then
+        log_line ERROR "${name}: created Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")${apply_error:+: ${apply_error}}"
+        return 1
+      else
+        log_line ERROR "${name}: failed to create/update Argo CronWorkflow${apply_error:+: ${apply_error}}"
+        return 1
+      fi
     fi
   fi
   # silence unused-arg shellcheck warning (workspace_id and connector_dir
@@ -316,6 +318,8 @@ adopt_run() {
   _ADOPT_SKIPPED=0
   _ADOPT_WARNINGS=0
   _ADOPT_FAILED=0
+  connector_schedules_read
+  connector_schedules_writable || _ADOPT_FAILED=$((_ADOPT_FAILED + 1))
   local dry_run="${1:-${ADOPT_DRY_RUN:-0}}"  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
   local opt_connector="${2:-}"
 
@@ -360,5 +364,6 @@ adopt_run() {
     "${_ADOPT_ADOPTED}" "${_ADOPT_SKIPPED}" "${_ADOPT_WARNINGS}" "${_ADOPT_FAILED}"
   : "${dry_run}"
   : "${connector_dir:=}" "${ns_format:=}"  # silence unused-warning when no descriptors found
+  return $(( _ADOPT_FAILED > 0 ? 2 : 0 ))
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-return
 }

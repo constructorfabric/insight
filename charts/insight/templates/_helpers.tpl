@@ -254,7 +254,43 @@ Fail-fast checks that run at helm template / install time.
 Invoked from NOTES.txt so they fire on every install.
 ==============================================================================
 */}}
+{{- define "insight.serviceTokenAudience" -}}
+{{- printf "http://%s-authenticator.%s.svc.cluster.local:8093/internal/token" .Release.Name .Release.Namespace -}}
+{{- end -}}
+
+{{- define "insight.validateConnectorSchedules" -}}
+  {{- if .Values.global.connectorSchedules.enabled -}}
+    {{- if not .Values.ingestion.templates.enabled -}}
+      {{- fail "global.connectorSchedules.enabled=true requires ingestion.templates.enabled=true" -}}
+    {{- end -}}
+    {{- $tenant := .Values.authenticator.oidc.defaultTenantId | default .Values.global.tenantDefaultId -}}
+    {{- if not (regexMatch "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" (toString $tenant)) -}}
+      {{- fail "global.connectorSchedules.enabled=true requires a UUID in authenticator.oidc.defaultTenantId or global.tenantDefaultId" -}}
+    {{- end -}}
+    {{- $_ := required "global.connectorSchedules.enabled=true requires ingestion.reconcile.serviceTokenKeySecret" .Values.ingestion.reconcile.serviceTokenKeySecret -}}
+    {{- $reconcile := index .Values.authenticator.serviceTokens.services "reconcile" -}}
+    {{- if not $reconcile -}}
+      {{- fail "global.connectorSchedules.enabled=true requires authenticator.serviceTokens.services.reconcile" -}}
+    {{- end -}}
+    {{- $hasKey := false -}}
+    {{- range $keys := list $reconcile.public_keys $reconcile.public_key_paths -}}
+      {{- range $key := $keys -}}
+        {{- if trim $key -}}
+          {{- $hasKey = true -}}
+        {{- end -}}
+      {{- end -}}
+    {{- end -}}
+    {{- if not $hasKey -}}
+      {{- fail "global.connectorSchedules.enabled=true requires a non-empty key in authenticator.serviceTokens.services.reconcile.public_keys or authenticator.serviceTokens.services.reconcile.public_key_paths" -}}
+    {{- end -}}
+    {{- if not (has "connector-schedules-reader" $reconcile.roles) -}}
+      {{- fail "global.connectorSchedules.enabled=true requires connector-schedules-reader in authenticator.serviceTokens.services.reconcile.roles" -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+
 {{- define "insight.validate" -}}
+  {{- include "insight.validateConnectorSchedules" . -}}
   {{- /* GitOps + autoGenerate guard.
          Under ArgoCD/Flux, charts are rendered with `helm template` where
          Helm's `lookup` always returns nil. Combined with `autoGenerate=true`,
@@ -360,4 +396,19 @@ Invoked from NOTES.txt so they fire on every install.
       {{- end -}}
     {{- end -}}
   {{- end -}}
+{{- end -}}
+
+{{- define "insight.connectorSchedulesEnv" -}}
+- name: CONNECTOR_SCHEDULES_ENABLED
+  value: "true"
+- name: CONNECTOR_SCHEDULES_URL
+  value: {{ printf "http://%s:%v/v1/connector-schedules" (include "insight-analytics.fullname" .Subcharts.analytics) .Values.analytics.service.port | quote }}
+- name: SERVICE_TOKEN_URL
+  value: {{ include "insight.serviceTokenAudience" . | quote }}
+- name: SERVICE_TOKEN_NAME
+  value: reconcile
+- name: SERVICE_TOKEN_KEY_FILE
+  value: /etc/insight/reconcile/private.pem
+- name: SERVICE_TOKEN_TENANT_ID
+  value: {{ .Values.authenticator.oidc.defaultTenantId | default .Values.global.tenantDefaultId | quote }}
 {{- end -}}

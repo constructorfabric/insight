@@ -122,6 +122,11 @@ gateway:
     limits:   { cpu: 500m, memory: 128Mi }
 
 authenticator:
+  serviceTokens:
+    services:
+      reconcile:
+        public_keys: []
+        roles: [connector-schedules-reader]
   image: { repository: insight-authenticator, tag: dev, pullPolicy: IfNotPresent }
   replicaCount: 1
   # authn-tls sidecar cert is issued by the bootstrap `local-ca` ClusterIssuer.

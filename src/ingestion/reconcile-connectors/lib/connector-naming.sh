@@ -29,6 +29,7 @@ _CN_PY_DIR="$(cd "${_CN_LIB_DIR}/../python" && pwd)"
 # stable under any load order.
 # shellcheck source=./discover.sh
 source "${_CN_LIB_DIR}/discover.sh"
+source "${_CN_LIB_DIR}/connector-schedules.sh"
 
 # ---------------------------------------------------------------------------
 # reconcile_compute_source_id <connector_name>
@@ -71,7 +72,7 @@ reconcile_compute_connection_name() {
 
 # ---------------------------------------------------------------------------
 # reconcile_compute_schedule <connector_name> [secret_name]
-# Schedule precedence: Secret annotation > descriptor.yaml.schedule > default.
+# Schedule precedence: API > Secret annotation > descriptor.yaml.schedule > default.
 # Stdout: one cron per line — `descriptor.schedule` may be a list, so callers
 # MUST keep the value quoted end to end or the extra crons are lost.
 #
@@ -89,7 +90,13 @@ reconcile_resolve_schedule() {
   local connector="$1"
   local secret_name="${2:-}"
   local namespace="${INSIGHT_NAMESPACE}"
+  local source_id="${3-}"
   local schedule
+  if [[ "${_CONNECTOR_SCHEDULES_STATUS-}" == "ok" ]]; then
+    [[ -n "${source_id}" ]] || source_id="$(reconcile_compute_source_id "${connector}")"
+    schedule="$(connector_schedules_lookup "${connector}" "${source_id}")"
+    [[ -z "${schedule}" ]] || { printf '%s' "${schedule}"; return 0; }
+  fi
   [[ -n "${secret_name}" ]] || \
     secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
   if [[ -n "${secret_name}" ]]; then

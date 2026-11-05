@@ -73,6 +73,7 @@ secrets:
     - { name: insight-v3-core-token,             enabled: true  }
     # ES256 gateway-JWT signing key (current.pem) mounted by the authenticator.
     - { name: insight-authenticator-signing-keys, enabled: true }
+    - { name: insight-reconcile-signing-key,      enabled: true }
     # Real-IdP OIDC secret. Off for local — the authenticator logs in against the
     # in-cluster Keycloak; its leaf config is composed at deploy time by
     # compose-app-secrets.sh, not sealed here.

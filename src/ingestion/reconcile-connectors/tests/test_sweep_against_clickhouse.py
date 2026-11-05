@@ -432,8 +432,7 @@ class TestSweptRowsLandAndResolve:
             ]
         finally:
             _query(f"DROP TABLE IF EXISTS {TABLE}")
-            for migration in sorted(MIGRATIONS.glob("*connector-sync-history*.sql")):
-                _apply_migration(migration)
+            _apply_migration(MIGRATIONS / "20260827000000_connector-sync-history.sql")
 
     def test_a_first_sweep_lands_the_whole_retained_history(self) -> None:
         with _StubMover() as mover:
@@ -484,8 +483,7 @@ class TestSweptRowsLandAndResolve:
             assert upgraded == fresh, "reapplying the migration must preserve the fresh column order and types"
         finally:
             _query(f"DROP TABLE IF EXISTS {TABLE}")
-            for migration in sorted(MIGRATIONS.glob("*connector-sync-history*.sql")):
-                _apply_migration(migration)
+            _apply_migration(MIGRATIONS / "20260827000000_connector-sync-history.sql")
 
     @pytest.mark.parametrize("suspended", [True, False])
     def test_a_configured_schedule_preserves_suspension(self, suspended: bool) -> None:
@@ -901,8 +899,7 @@ class TestSweptRowsLandAndResolve:
                 f"NULL, toDateTime64('{_ch_stamp(_stamp(-2))}', 3, 'UTC'), 91000, 42)"
             )
 
-            for migration in sorted(MIGRATIONS.glob("*connector-sync-history*.sql")):
-                _apply_migration(migration)
+            _apply_migration(MIGRATIONS / "20260827000000_connector-sync-history.sql")
 
             migrated = self._legacy_columns("kept")
             assert len(migrated) == 1, "the row survives the migration"
@@ -920,8 +917,7 @@ class TestSweptRowsLandAndResolve:
             assert self._identity("kept") == {"tenant_id": TENANT, "source_id": SOURCE}
         finally:
             _query(f"DROP TABLE IF EXISTS {TABLE}")
-            for migration in sorted(MIGRATIONS.glob("*connector-sync-history*.sql")):
-                _apply_migration(migration)
+            _apply_migration(MIGRATIONS / "20260827000000_connector-sync-history.sql")
 
     def test_the_seal_keeps_the_empty_identity_it_is_meant_to_have(self) -> None:
         """It is about the tick, not about anything that synced."""
