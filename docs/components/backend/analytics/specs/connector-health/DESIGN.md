@@ -438,7 +438,7 @@ and use minutes while that rounded value is under 60. Beyond that, round the del
 to whole hours and use hours while that rounded value is under 24; otherwise use
 rounded whole days. Rounding precedes unit selection: 59 minutes 45 seconds reads
 `in ~1 h`, and 23 hours 50 minutes reads `in ~1 d`.
-The page does not display the schedule origin; the API still serves it.
+The table does not display the applied schedule origin; the API still serves it.
 A null schedule renders as `—` without a tooltip (FR-13). Header text may wrap onto two
 lines in this table; body cells retain their existing wrapping.
 
@@ -451,7 +451,9 @@ this precedence:
 1. Suspended: `Suspended`, with `Suspended: no run is scheduled.` in the tooltip.
 2. Null timezone: `Unknown`, with `Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.` in the tooltip.
 3. Any unreadable expression: `Unknown`, with `Next run unknown: a recorded expression cannot be read.` in the tooltip.
-4. Otherwise: the approximate relative interval, with the recorded schedule in the tooltip.
+4. Parsed expressions with no occurrence are skipped when taking the earliest live start.
+   If none runs: `Unknown`, with `No next run: the recorded expressions never run.` in the tooltip.
+5. Otherwise: the approximate relative interval, with the recorded schedule in the tooltip.
 
 Croner uses five fields and day-of-month/day-of-week OR semantics to match Argo's
 robfig/cron v3, including `@hourly`, `@daily`, `@weekly`, `@monthly` and `@yearly`.
@@ -679,6 +681,47 @@ after applying a CronWorkflow it reads it back and verifies identity, schedules,
 origin before advancing the applied revision and observation time. It acknowledges the
 snapshot revision it applied; a concurrent newer save stays pending. A clear applies the fresh
 deployment fallback before it is acknowledged.
+
+The expanded row places a Schedule pane left of Recent syncs. When the table overflows its
+scroll container, the expanded pane stays sticky at the left edge and fits the container's
+visible width minus cell padding, with both cards shrinking or stacking without horizontal
+scrolling inside the pane. Runs now uses recorded health
+facts; Requested appears only while a saved request differs, with attribution
+from identity me. Both show recognised UTC preset words and muted cron expressions.
+Pending says `Saved. Until the request is applied, the current schedule keeps running.`
+Its header chip says `● Pending`. Error shows the acknowledgement message and attempt time
+and invites the admin to edit and save again; Save stays enabled for an unchanged errored request.
+The header chips read `Error`, `Applied` or `Inherited` for the other statuses.
+Status is in a polite live region.
+An applied transition is dated with the acknowledgement’s `observed_at` and stays announced
+until collapse. Edit is available for every loaded schedule.
+Collapsed Next sync cells retain their forecast text and recorded-schedule tooltip,
+with a reserved status slot below for a change-pending or Error chip from the summary’s
+request state. Error’s title includes the message and attempt time; the slot stays reserved
+when no chip is visible. The deployment-schedule line and reset destination read the
+top-level `inherited` fallback, independently of the last successful `applied` observation.
+
+Every schedule status chip, in the pane header and collapsed row's reserved slot, is a
+focusable tooltip trigger linked by `aria-describedby`. One shared helper builds separate,
+vertically stacked lines from the API's requested, applied, inherited, error and revision
+facts: attribution and the older running revision and crons for Pending, the checked running
+revision and overridden deployment origin for Applied, the failed attempt and older running revision
+for Error, and the deployment origin and crons for Inherited. Missing records are stated
+explicitly. Collapsed chips use the summary's request state without loading the detailed
+schedule; timestamps use the page's UTC format.
+
+The editor replaces the pane and uses existing themed UI controls. Presets cover every N
+hours (1, 2, 3, 4, 6, 8, 12), every day at a UTC time, weekdays at a UTC time,
+and one to ten custom UTC cron rows, each with an English reading from cronstrue.
+Prefill picks a preset only if it reproduces the ordered list exactly.
+It previews the saved UTC crons. Every preset stays offered.
+The page does not duplicate API cron validation. Writes use the last read's ETag.
+A 400 shows all field descriptions without changing input; a 412 refetches values
+and ETag into the open editor and dates the concurrent change. Other failures retain input.
+PUT and DELETE invalidate summary and row schedule queries. Save, Cancel and Escape return
+focus to Edit. The page polls the summary
+and open schedule every 30 seconds while a visible request is pending or errored;
+afterwards schedule polling stops and summary returns to its existing one-minute cadence.
 
 ### 3.4 Internal Dependencies
 

@@ -1,3 +1,5 @@
+import { Cron } from "croner";
+
 import type {
   AppliedSchedule,
   ConnectorHealth,
@@ -21,14 +23,18 @@ export interface NextRunView {
   detail: string | null;
 }
 
-export function describeNextRun(schedule: AppliedSchedule, now: Date): NextRunView {
+export function describeNextRun(
+  schedule: AppliedSchedule,
+  now: Date
+): NextRunView {
   if (schedule.suspended) {
     return { text: "Suspended", detail: "Suspended: no run is scheduled." };
   }
   if (schedule.timezone == null) {
     return {
       text: "Unknown",
-      detail: "Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.",
+      detail:
+        "Next run unknown: this schedule runs in the Argo controller's timezone, which is not recorded.",
     };
   }
 
@@ -41,12 +47,27 @@ export function describeNextRun(schedule: AppliedSchedule, now: Date): NextRunVi
     for (const expression of schedule.crons) {
       const next = nextScheduledRun(expression, schedule.timezone, now);
       if (next == null) {
-        return unreadable;
+        const cron = new Cron(expression.replaceAll("?", "*"), {
+          timezone: schedule.timezone,
+          mode: "5-part",
+        });
+        if (
+          cron.getPattern() == null ||
+          /[LW#]/i.test(expression.replace(/\b(?:JUL|WED)\b/gi, ""))
+        )
+          return unreadable;
+        continue;
       }
       earliest = Math.min(earliest, next.getTime());
     }
 
     const delay = earliest - now.getTime();
+    if (!Number.isFinite(delay) && schedule.crons.length > 0) {
+      return {
+        text: "Unknown",
+        detail: "No next run: the recorded expressions never run.",
+      };
+    }
     if (!Number.isFinite(delay)) return unreadable;
 
     return { text: describeNextRunDelay(delay), detail: null };
@@ -197,7 +218,7 @@ export function describeRecording(
   summary: Pick<
     ConnectorHealthSummary,
     "as_of" | "checked_at" | "typical_read_interval_ms" | "history_available"
-  >,
+  >
 ): RecordingView {
   if (!summary.history_available || summary.checked_at == null) {
     return {
@@ -241,7 +262,11 @@ export function describeRecording(
     };
   }
 
-  return { state: "current", label: `Last checked ${describeAge(age)}`, detail: "" };
+  return {
+    state: "current",
+    label: `Last checked ${describeAge(age)}`,
+    detail: "",
+  };
 }
 
 /**
@@ -257,7 +282,10 @@ function staleAfter(interval: number | null | undefined): number | null {
   if (interval == null || !Number.isFinite(interval) || interval <= 0) {
     return null;
   }
-  const clamped = Math.min(Math.max(interval, MIN_INTERVAL_MS), MAX_INTERVAL_MS);
+  const clamped = Math.min(
+    Math.max(interval, MIN_INTERVAL_MS),
+    MAX_INTERVAL_MS
+  );
   return clamped * STALE_AFTER_INTERVALS;
 }
 
@@ -274,7 +302,10 @@ function staleAfter(interval: number | null | undefined): number | null {
  * page. Reporting "just now" there would be the page asserting a freshness it
  * has no basis for.
  */
-function elapsedMs(asOf: string, since: string | null | undefined): number | null {
+function elapsedMs(
+  asOf: string,
+  since: string | null | undefined
+): number | null {
   const now = parseStamp(asOf);
   const then = parseStamp(since);
   if (now === null || then === null) return null;
@@ -288,7 +319,8 @@ function elapsedMs(asOf: string, since: string | null | undefined): number | nul
  * confident absolute timestamp. The service emits RFC 3339, so requiring that
  * shape costs nothing and refuses everything else.
  */
-const RFC3339 = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/;
+const RFC3339 =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/;
 
 function parseStamp(raw: string | null | undefined): number | null {
   if (typeof raw !== "string" || !RFC3339.test(raw)) return null;
@@ -381,7 +413,10 @@ export function formatDuration(durationMs: number | null | undefined): string {
  * that maps the mover's vocabulary stays the only one — a second `=== "running"`
  * here would silently stop agreeing with the badge beside it.
  */
-const IN_FLIGHT: ReadonlySet<ConnectorStateName> = new Set(["queued", "syncing"]);
+const IN_FLIGHT: ReadonlySet<ConnectorStateName> = new Set([
+  "queued",
+  "syncing",
+]);
 
 export interface DurationView {
   /** What the cell prints. */
@@ -408,8 +443,9 @@ export interface DurationView {
  * drifting from it by whatever the two machines disagree about.
  */
 export function describeDuration(
-  sync: Pick<SyncFact, "status" | "started_at" | "duration_ms"> | null | undefined,
-  asOf: string,
+  sync:
+    Pick<SyncFact, "status" | "started_at" | "duration_ms"> | null | undefined,
+  asOf: string
 ): DurationView {
   if (sync == null) return { text: UNMEASURED, inFlight: false };
   if (!IN_FLIGHT.has(stateOf(sync.status).state)) {

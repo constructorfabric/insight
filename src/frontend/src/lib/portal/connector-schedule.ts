@@ -4,6 +4,12 @@ const MINUTE_MS = 60_000;
 const MAX_TIMEZONE_SHIFT_MS = 24 * 60 * MINUTE_MS;
 const MAX_SCHEDULE_CANDIDATES = 8;
 
+export function isScheduleOverride<T extends { crons: string[] }>(
+  requested: T | null | undefined
+): requested is T {
+  return requested != null && requested.crons.length > 0;
+}
+
 function timezoneOffset(formatter: Intl.DateTimeFormat, date: Date): number {
   const parts = Object.fromEntries(
     formatter.formatToParts(date).map(({ type, value }) => [type, value])
@@ -24,6 +30,8 @@ function repeatedRunAfter(
   timezone: string,
   now: Date
 ): Date | null {
+  if (timezone === "UTC") return null;
+
   const formatter = new Intl.DateTimeFormat("en-GB", {
     timeZone: timezone,
     year: "numeric",
@@ -74,11 +82,7 @@ function nextArgoRun(cron: Cron, timezone: string, now: Date): Date | null {
   return repeated;
 }
 
-export function nextScheduledRun(
-  expression: string,
-  timezone: string,
-  now: Date
-): Date | null {
+function parseArgoCron(expression: string, timezone: string): Cron | null {
   const withoutNames = expression.replace(
     /\b(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|SUN|MON|TUE|WED|THU|FRI|SAT)\b/gi,
     ""
@@ -86,11 +90,44 @@ export function nextScheduledRun(
   if (!expression.trim().startsWith("@") && /[LW#]/i.test(withoutNames))
     return null;
 
-  const cron = new Cron(expression.replaceAll("?", "*"), {
-    timezone,
+  const fields = expression.trim().replaceAll("?", "*").split(/\s+/);
+  for (const index of [2, 4]) {
+    if (fields[index]?.split(",").some((item) => /^\*(?:\/0*1)?$/.test(item)))
+      fields[index] = "*";
+  }
+  return new Cron(fields.join(" "), {
+    ...(timezone === "UTC" ? { utcOffset: 0 } : { timezone }),
     mode: "5-part",
     domAndDow: false,
     sloppyRanges: true,
   });
-  return nextArgoRun(cron, timezone, now);
+}
+
+export function nextScheduledRuns(
+  expression: string,
+  timezone: string,
+  now: Date,
+  count: number,
+  until: number
+): Date[] {
+  const cron = parseArgoCron(expression, timezone);
+  if (cron == null) return [];
+
+  const result: Date[] = [];
+  let cursor = now;
+  for (let index = 0; index < count; index++) {
+    const next = nextArgoRun(cron, timezone, cursor);
+    if (next == null || next.getTime() > until) break;
+    result.push(next);
+    cursor = next;
+  }
+  return result;
+}
+
+export function nextScheduledRun(
+  expression: string,
+  timezone: string,
+  now: Date
+): Date | null {
+  return nextScheduledRuns(expression, timezone, now, 1, Infinity)[0] ?? null;
 }

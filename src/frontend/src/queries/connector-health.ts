@@ -1,8 +1,18 @@
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 
 import {
   getConnectorHealth,
   getConnectorSyncs,
+  getConnectorSchedule,
+  putConnectorSchedule,
+  deleteConnectorSchedule,
+  type ScheduleRead,
+  type ScheduleStatus,
   type ConnectorHealthSummary,
   type ConnectorInstanceRef,
   type ConnectorSyncHistory,
@@ -31,7 +41,69 @@ export function useConnectorHealth(): UseQueryResult<ConnectorHealthSummary> {
     // the SERVER sent, so it does not move on its own. Without this the age
     // freezes the moment the page renders, and an operator watching an incident
     // would never see recording stop.
-    refetchInterval: RECHECK_MS,
+    refetchInterval: (query) =>
+      query.state.data?.connectors.some((row) =>
+        scheduleNeedsPolling(row.schedule_request?.status)
+      )
+        ? 30_000
+        : RECHECK_MS,
+  });
+}
+
+export function scheduleNeedsPolling(
+  status: ScheduleStatus | undefined
+): boolean {
+  return status === "pending" || status === "error";
+}
+
+export function useConnectorSchedule(
+  instance: ConnectorInstanceRef,
+  polling: boolean
+): UseQueryResult<ScheduleRead> {
+  const { session } = useAuth();
+  return useQuery({
+    queryKey: [
+      ...KEY,
+      "schedule",
+      instanceKey(instance),
+      sessionAuthorizationScope(session),
+    ],
+    queryFn: () => getConnectorSchedule(instance),
+    enabled: instance.source_id != null,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchInterval: (query) =>
+      polling || scheduleNeedsPolling(query.state.data?.schedule.status)
+        ? 30_000
+        : false,
+  });
+}
+
+export function useWriteConnectorSchedule(instance: ConnectorInstanceRef) {
+  const client = useQueryClient();
+  const { session } = useAuth();
+  return useMutation({
+    mutationFn: ({ etag, crons }: { etag: string; crons: string[] | null }) =>
+      crons === null
+        ? deleteConnectorSchedule(instance, etag)
+        : putConnectorSchedule(instance, etag, crons),
+    onSuccess: async (read) => {
+      client.setQueryData(
+        [
+          ...KEY,
+          "schedule",
+          instanceKey(instance),
+          sessionAuthorizationScope(session),
+        ],
+        read
+      );
+      await Promise.all([
+        client.invalidateQueries({ queryKey: [...KEY, "summary"] }),
+        client.invalidateQueries({
+          queryKey: [...KEY, "schedule", instanceKey(instance)],
+        }),
+      ]);
+    },
   });
 }
 
@@ -42,7 +114,7 @@ export function useConnectorHealth(): UseQueryResult<ConnectorHealthSummary> {
  * from the other's cache entry, because two installations share the name.
  */
 export function useConnectorSyncs(
-  instance: ConnectorInstanceRef | null,
+  instance: ConnectorInstanceRef | null
 ): UseQueryResult<ConnectorSyncHistory> {
   const { session } = useAuth();
   return useQuery({

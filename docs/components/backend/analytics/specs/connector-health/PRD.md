@@ -183,7 +183,7 @@ reachable.
 - The read surface: two admin endpoints and one portal page — per-connector summary and
   per-connector sync history.
 - Replacing the current Data health pane with this page.
-- Admin API management of each connector instance's requested sync schedule.
+- Admin API and page management of each connector instance's requested sync schedule.
 
 ### 4.2 Out of Scope
 
@@ -305,13 +305,15 @@ A caller without that role is refused, and the refusal names the surface it was 
 Each connector instance shows the schedule the reconcile loop actually applied, with its
 timezone and whether the CronWorkflow is suspended, as recorded in the newest sealed
 configured set. The tooltip shows the recorded cron expressions without computing
-a cadence or claiming an intended schedule. Outside that set, or where the row records no
+a cadence or claiming an intended schedule; the Schedule pane describes recognised UTC
+presets. Outside that set, or where the row records no
 cron expressions, the schedule is unknown. An empty recorded timezone means controller
-time. The API also serves the recorded schedule origin, which the page does not display;
+time. The API also serves the recorded schedule origin, which the table does not display;
 an empty or unknown origin remains unknown. The page's last-checked stamp dates these facts too.
 
 Analytics stores a requested schedule per `(connector, source_id)`. Admins set and clear it
-through the schedule API using `If-Match` to prevent overwriting a concurrent edit. Clearing
+through the expanded row's schedule editor or the schedule API using `If-Match` to prevent
+overwriting a concurrent edit. Clearing
 requests inheritance. Requests survive instance removal; while
 absent, a stored row and its acknowledgement remain readable and clearable with the usual
 `If-Match` and revision rules, but PUT returns 404. A pair with neither configuration nor a
@@ -374,6 +376,22 @@ metadata. A missing source id, a failed read or an undecodable stored row leaves
 `schedule_request` null for the affected rows, while sync facts stay readable. This state does not
 replace the health page's schedule from sync history.
 
+The editor offers every 1, 2, 3, 4, 6, 8 or 12 hours, daily and weekday presets
+at a UTC time, and one to ten custom UTC expression rows with individual English readings.
+It previews saved crons. Every preset stays offered.
+Validation remains server-owned. A 400 preserves input and shows field descriptions; a 412
+reloads values and revision for review. Other failures retain input.
+Save and reset close on success, and Save, Cancel and Escape restore focus to Edit.
+The pane keeps Runs now and Requested separate, attributes requests to you or another admin,
+and announces Pending with `Saved. Until the request is applied, the current schedule keeps running.`,
+Error with its message and attempt time, and a transition to Applied dated by `observed_at`.
+Error offers a retry by editing and saving the same request again. The header also identifies
+Inherited. The deployment-schedule line and reset destination use top-level `inherited`.
+Collapsed Next sync cells combine the forecast and its schedule tooltip with a reserved
+slot for Pending or Error request chips; Error exposes its message and attempt time.
+While a visible request is pending or errored, the summary and open schedule refetch
+every 30 seconds; otherwise the summary retains its existing recording-age refresh cadence.
+
 Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
 cron expressions read in UTC. A CronWorkflow applied before this change may have no
 timezone; its empty recorded value still means controller time.
@@ -390,8 +408,9 @@ recorded facts, never a measured fact or a late, fresh or stale verdict. The nex
 unknown when the timezone is not recorded or an expression cannot be read; there is none
 when the CronWorkflow is suspended. The column reads `Unknown` for an unknown next start,
 `Suspended` for suspension, or `—` without a tooltip when no schedule was recorded.
-Argo skips a start while the previous run of that
-CronWorkflow is still going (`concurrencyPolicy: Forbid`), so a forecast start may not
+Expressions that parse but never run do not hide a start from another expression; when
+none runs, the column reads `Unknown` and its tooltip explains that none runs.
+Argo skips a start while the previous run of that CronWorkflow is still going (`concurrencyPolicy: Forbid`), so a forecast start may not
 happen.
 
 ### 5.3 Degradation
@@ -520,9 +539,9 @@ start is a forecast from recorded expressions and timezone, not evidence of a ru
 operator reads the gap from timestamps; the product computes no cadence and claims no
 intended schedule.
 
-An admin can request a different cadence or clear an override through the API (FR-13).
+An admin can request a different cadence or clear an override from the expanded row or through the API (FR-13).
 The applied facts can differ from that request until the acknowledgement record reports the
-requested revision; FR-12 keeps the intended pass time separate from evidence of progress.
+requested revision.
 
 ### UC-3 — A fresh install is read correctly
 

@@ -172,7 +172,6 @@ describe("the next scheduled start", () => {
     ["0 0 22 * * *"],
     ["0 0 22 * * * 2027"],
     ["2027-01-01T00:00:00Z"],
-    ["0 0 31 2 *"],
     ["0 0 L * *"],
     ["0 0 1W * *"],
     ["0 0 * * MON#2"],
@@ -186,6 +185,33 @@ describe("the next scheduled start", () => {
       detail: "Next run unknown: a recorded expression cannot be read.",
     });
   });
+
+  it.each(["0 0 31 2 *", "0 6 30 2 *"])(
+    "explains that a parsed expression never runs: %s",
+    (expression) => {
+      expect(
+        describeNextRun(schedule({ crons: [expression], timezone: "UTC" }), NOW)
+      ).toEqual({
+        text: "Unknown",
+        detail: "No next run: the recorded expressions never run.",
+      });
+    }
+  );
+
+  it.each([
+    ["0 6 31 2 *", "0 13 * * *"],
+    ["0 13 * * *", "0 6 31 2 *"],
+  ])(
+    "keeps the next live start alongside a dead expression: %j",
+    (...crons) => {
+      expect(
+        describeNextRun(schedule({ crons, timezone: "UTC" }), NOW)
+      ).toEqual({
+        text: "in ~1 h",
+        detail: null,
+      });
+    }
+  );
 
   it("does not throw on an invalid timezone or clock", () => {
     for (const [recorded, now] of [
