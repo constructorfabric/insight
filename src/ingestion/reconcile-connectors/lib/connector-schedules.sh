@@ -47,7 +47,16 @@ connector_schedules_acknowledge() {
       observed='{}'
     fi
   fi
-  plan="$(jq -c --arg connector "${connector}" --arg source_id "${source_id}" \
+  plan="$(connector_schedules_plan "${connector}" "${source_id}" "${tenant}" "${schedule}" "${origin}" "${deployment}")" || return 1
+  jq -c --argjson plan "${plan}" --argjson error "${error}" \
+    '{plan:$plan,error:$error,observed:.}' <<<"${observed}" \
+    | python3 "${_CONNECTOR_SCHEDULES_PY_DIR}/acknowledge_connector_schedule.py"
+}
+
+connector_schedules_plan() {
+  local connector="$1" source_id="$2" tenant="$3" schedule="$4" origin="$5" deployment="$6" name
+  name="$(argo_cron_workflow_name "${connector}" "${tenant}" "${source_id}")" || return 1
+  jq -c --arg connector "${connector}" --arg source_id "${source_id}" \
     --arg name "${name}" --arg namespace "${INSIGHT_NAMESPACE}" --arg tenant "${tenant}" \
     --arg schedule "${schedule}" --arg origin "${origin}" --arg deployment "${deployment}" \
     '. as $snapshot |
@@ -55,8 +64,5 @@ connector_schedules_acknowledge() {
        crons:($schedule | split("\n")), origin:$origin,
        deployment_crons:($deployment | split("\n") | .[1:]),
        deployment_origin:($deployment | split("\n") | .[0]),
-       revision:([$snapshot.schedules[] | select(.connector==$connector and .source_id==$source_id) | .revision][0] // 0)}' <<<"${_CONNECTOR_SCHEDULES_RESULT}")" || return 1
-  jq -c --argjson plan "${plan}" --argjson error "${error}" \
-    '{plan:$plan,error:$error,observed:.}' <<<"${observed}" \
-    | python3 "${_CONNECTOR_SCHEDULES_PY_DIR}/acknowledge_connector_schedule.py"
+       revision:([$snapshot.schedules[] | select(.connector==$connector and .source_id==$source_id) | .revision][0] // 0)}' <<<"${_CONNECTOR_SCHEDULES_RESULT}"
 }

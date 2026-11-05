@@ -63,7 +63,7 @@ Each connector instance syncs on its own CronWorkflow, in UTC. Its schedule come
 3. the `schedule` in the connector's `descriptor.yaml`;
 4. `0 0 * * *`, midnight UTC.
 
-The instance is the pair of the Secret's `connector` and `source-id` annotations; the Secret's own name plays no part. An admin's saved schedule belongs to that pair, so changing `source-id` makes a new instance with no saved schedule. Resetting the schedule on the page returns the instance to the annotation, the descriptor or the default, in that order. A saved schedule reaches the CronWorkflow at the next reconcile pass.
+The instance is the pair of the Secret's `connector` and `source-id` annotations; the Secret's own name plays no part. An admin's saved schedule belongs to that pair, so changing `source-id` makes a new instance with no saved schedule. Resetting the schedule on the page returns the instance to the annotation, the descriptor or the default, in that order. A saved schedule reaches the CronWorkflow within about a minute.
 
 ```yaml
 metadata:

@@ -11,7 +11,7 @@ from schedule_database import connect
 PREFIX = "insight.cyberfabric.com/"
 
 
-def observation_matches(plan: dict, observed: dict) -> bool:
+def identity_matches(plan: dict, observed: dict) -> bool:
     if not isinstance(observed, dict):
         return False
     metadata = observed.get("metadata", {})
@@ -31,14 +31,23 @@ def observation_matches(plan: dict, observed: dict) -> bool:
         return False
     return (
         metadata.get("name") == plan["name"]
+        and ("uid" not in plan or metadata.get("uid") == plan["uid"])
         and metadata.get("namespace") == plan["namespace"]
         and labels.get(PREFIX + "connector") == plan["connector"]
         and labels.get(PREFIX + "tenant") == plan["tenant"]
         and labels.get("app.kubernetes.io/component") == "connector-sync"
         and [p.get("value") for p in parameters if p.get("name") == "insight_source_id"] == [plan["source_id"]]
-        and spec.get("schedules") == plan["crons"]
+    )
+
+
+def observation_matches(plan: dict, observed: dict) -> bool:
+    if not identity_matches(plan, observed):
+        return False
+    spec = observed["spec"]
+    return (
+        spec.get("schedules") == plan["crons"]
         and spec.get("timezone") == "UTC"
-        and annotations.get(PREFIX + "schedule-origin") == plan["origin"]
+        and observed["metadata"].get("annotations", {}).get(PREFIX + "schedule-origin") == plan["origin"]
         and type(spec.get("suspend", False)) is bool
     )
 
@@ -46,7 +55,12 @@ def observation_matches(plan: dict, observed: dict) -> bool:
 def acknowledge(env: Mapping[str, str], payload: dict) -> bool:
     plan = payload["plan"]
     error = payload.get("error")
-    if error not in {None, "schedule apply failed", "schedule readback failed"}:
+    if error not in {
+        None,
+        "schedule apply failed",
+        "schedule readback failed",
+        "next full pass creates the missing CronWorkflow",
+    }:
         error = "schedule apply failed"
     observed = payload.get("observed", {})
     if error is None and not observation_matches(plan, observed):

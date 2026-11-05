@@ -37,6 +37,8 @@ import string
 import sys
 from pathlib import Path
 
+from schedule_fields import render_schedule_fields
+
 
 def main() -> int:
     p = argparse.ArgumentParser()
@@ -64,19 +66,21 @@ def main() -> int:
     # did not.
     dbt_select_staging = "tag:staging,tag:jira" if args.connector == "jira" else ""
 
-    schedules = [line.strip() for line in args.schedule.splitlines() if line.strip()]
-    if not schedules:
+    try:
+        fields = render_schedule_fields(args.schedule, args.schedule_origin)
+    except ValueError:
         sys.stderr.write("render_cronworkflow: --schedule carries no cron expression\n")
         return 2
     # INVARIANT: a flow array stays on one line. The template substitutes into
     # its own header comment too, where a multi-line value would break out.
-    schedules_flow = json.dumps(schedules)
+    schedules_flow = json.dumps(fields["schedules"])
 
     env = {
         "CONNECTOR": args.connector,
         "CONNECTION_NAME": args.connection_name,
         "SCHEDULES": schedules_flow,
-        "SCHEDULE_ORIGIN": args.schedule_origin,
+        "SCHEDULE_ORIGIN": fields["origin"],
+        "SCHEDULE_TIMEZONE": fields["timezone"],
         "TENANT": args.tenant,
         "CRON_NAME": args.cron_name,
         "INSIGHT_SOURCE_ID": args.insight_source_id,

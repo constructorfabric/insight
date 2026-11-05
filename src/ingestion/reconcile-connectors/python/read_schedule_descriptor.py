@@ -19,5 +19,18 @@ def read_schedule(path: Path) -> tuple[str, ...]:
     return tuple(crons)
 
 
+def validate_directory(root: Path) -> None:
+    if not root.is_dir():
+        raise ValueError("missing descriptor directory")
+    for path in root.rglob("descriptor.yaml"):
+        read_schedule(path)
+        document = yaml.safe_load(path.read_text())
+        if not document.get("name") or document.get("version") is None:
+            raise ValueError("descriptor requires name and version")
+
+
 if __name__ == "__main__":
-    print("\n".join(read_schedule(Path(sys.argv[1]))), end="")
+    if sys.argv[1] == "--directory":
+        validate_directory(Path(sys.argv[2]))
+    else:
+        print("\n".join(read_schedule(Path(sys.argv[1]))), end="")

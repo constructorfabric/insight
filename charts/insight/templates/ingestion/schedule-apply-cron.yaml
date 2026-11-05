@@ -1,0 +1,52 @@
+{{- if .Values.ingestion.templates.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ include "insight.fullname" . }}-schedule-apply
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: schedule-apply
+    {{- include "insight.labels" . | nindent 4 }}
+    {{- with .Values.ingestion.reconcile.argoInstanceId }}
+    workflows.argoproj.io/controller-instanceid: {{ . | quote }}
+    {{- end }}
+spec:
+  schedules:
+    - {{ required "ingestion.scheduleApply.schedule is required" .Values.ingestion.scheduleApply.schedule | quote }}
+  timezone: UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    synchronization:
+      mutexes:
+        - name: {{ include "insight.fullname" . }}-reconcile
+    serviceAccountName: {{ include "insight.fullname" . }}-reconcile
+    entrypoint: run
+    activeDeadlineSeconds: 1800
+    ttlStrategy:
+      secondsAfterCompletion: 600
+      secondsAfterFailure: 3600
+    podGC:
+      strategy: OnPodCompletion
+    {{- with .Values.global.imagePullSecrets }}
+    imagePullSecrets:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    templates:
+      - name: run
+        container:
+          image: {{ required "ingestion.toolboxImage is required" .Values.ingestion.toolboxImage | quote }}
+          command: [bash, /ingestion/reconcile-connectors/schedule-apply.sh]
+          env:
+            {{- include "insight.connectorSchedulesEnv" . | nindent 12 }}
+            - name: INSIGHT_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: CONNECTORS_DIR
+              value: /ingestion/connectors
+            - name: INSIGHT_TENANT_ID
+              value: {{ required "ingestion.reconcile.tenantId is required" .Values.ingestion.reconcile.tenantId | quote }}
+          resources:
+            {{- toYaml .Values.ingestion.reconcile.resources | nindent 12 }}
+{{- end }}
