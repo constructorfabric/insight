@@ -1,6 +1,6 @@
 spec_version: 1
 description: >
-  Metrics: collab.active_days, collab.breadth, collab.meeting_free_days and
+  Metrics: collab.active_days, collab.meeting_free_days and
   collab.focus_time_pct — the metrics derived from a person's active days.
   How it's computed (bronze → silver → gold):
     • bronze: daily Microsoft 365 email, Teams and OneDrive reports, and Zoom
@@ -9,7 +9,7 @@ description: >
       only while someone else is in it.
     • gold:   an active day has a deliberate action (email sent, chat message, file
       engaged, meeting or call attended), whatever the address it came from.
-      Breadth counts the modalities behind those days. A meeting-free day is an
+      A meeting-free day is an
       active day with no meeting time under any address. Focus is 100 minus the
       meeting hours as a share of working hours over the active days; meeting
       time counts up to the working hours of the day and address it came from, and
@@ -19,15 +19,14 @@ description: >
   Cast (Engineering, 8 working hours a day):
     alice — Mon Dec 14 email · Tue Teams meeting 2 h · Wed Teams chat, and a 4 h
             Zoom meeting under her second address · Thu Teams meeting 10 h · Sat a
-            file in OneDrive → 5 active days, 4 modalities, 2 meeting-free days,
+            file in OneDrive → 5 active days, 2 meeting-free days,
             focus 100 − 100·(2+4+8)/40 = 65.
-    bob   — Mon Zoom meeting 3 h · Tue email → 2 days, 2 modalities, 1 free day,
+    bob   — Mon Zoom meeting 3 h · Tue email → 2 days, 1 free day,
             focus 100 − 100·3/16 = 81.25.
-    carol — Wed email, and a Zoom session nobody else joined → 1 day, 1 modality,
-            1 free day, focus 100.
+    carol — Wed email, and a Zoom session nobody else joined → 1 day, 1 free day,
+            focus 100.
     dave  — Tue email, and no meeting source has ever reported him → 1 active day,
-            1 modality, no meeting-free days and no focus: his meeting time is
-            unknown.
+            no meeting-free days and no focus: his meeting time is unknown.
   Cases: one active day across two addresses and tools · a meeting under either
   address ends a meeting-free day · days without any meeting count toward focus ·
   a day's meetings count up to its working hours · a solo Zoom session is no

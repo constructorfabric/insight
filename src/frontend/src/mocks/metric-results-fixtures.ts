@@ -301,17 +301,6 @@ export const COLLAB_METRIC_FIXTURES: MetricResult[] = [
       { view: "period", values: [{ entity_id: "alice@example.com", value: 22 }] },
     ],
   },
-  {
-    metric_key: "collab.breadth",
-    label: "Collaboration Breadth",
-    unit: "modalities",
-    format: "integer",
-    direction: "neutral",
-    computation: "distinct_count",
-    views: [
-      { view: "period", values: [{ entity_id: "alice@example.com", value: 3 }] },
-    ],
-  },
 ];
 
 /**

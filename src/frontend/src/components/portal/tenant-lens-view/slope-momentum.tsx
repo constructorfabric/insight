@@ -10,7 +10,11 @@ import {
   YAxis,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { formatMetricValue } from "@/lib/format";
+import {
+  formatHoursDuration,
+  formatMetricValue,
+  isDurationUnit,
+} from "@/lib/format";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import type { TenantSectionSpec } from "@/lib/portal/lens-configs";
 import { cn } from "@/lib/utils";
@@ -45,8 +49,12 @@ function resolveHalves(
 }
 
 function deltaText(r: NormalizedMetricResult, delta: number): string {
+  const sign = delta >= 0 ? "+" : "−";
+  if (isDurationUnit(r.unit)) {
+    return `${sign}${formatHoursDuration(Math.abs(delta))}`;
+  }
   const unit = r.format === "percent" ? " pts" : r.unit ? ` ${r.unit}` : "";
-  return `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1)}${unit}`;
+  return `${sign}${Math.abs(delta).toFixed(1)}${unit}`;
 }
 
 /** First half of the window against the second, one line per value. */

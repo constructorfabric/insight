@@ -16,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { formatHoursDuration, isDurationUnit } from "@/lib/format";
 
 const PREVIEW_ROWS = 20;
 
@@ -129,5 +130,6 @@ function formatPreviewCell(
       maximumFractionDigits: 15,
     }).format(value);
   }
+  if (isDurationUnit(column.unit)) return formatHoursDuration(value);
   return column.unit ? `${value} ${column.unit}` : String(value);
 }
