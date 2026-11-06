@@ -4,7 +4,6 @@ import { useViewer } from "@/auth";
 import { DomainLensView, Pending } from "@/components/portal/domain-lens-view";
 import { HomeDashboards } from "@/components/portal/home-dashboards";
 import { MetricGroupsView } from "@/components/portal/metric-groups-view";
-import { OwnCoverage } from "@/components/portal/own-coverage";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { visibleGroups, type GroupId } from "@/lib/insight/groups";
 import { homeItemShown, useHomeSubject } from "@/lib/portal/home-subject";
@@ -108,12 +107,6 @@ function OwnItem({ item }: { item: string }) {
             embedded
             onSelectGroup={openSection}
           />
-        </OwnThemePage>
-      );
-    case "coverage":
-      return (
-        <OwnThemePage item={item} title={own.title} tagline={own.tagline}>
-          <OwnCoverage personId={personId} onOpenSection={openSection} />
         </OwnThemePage>
       );
   }

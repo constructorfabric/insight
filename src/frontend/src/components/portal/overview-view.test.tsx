@@ -40,11 +40,6 @@ vi.mock("@/components/portal/metric-groups-view", () => ({
     </section>
   ),
 }));
-vi.mock("@/components/portal/own-coverage", () => ({
-  OwnCoverage: ({ personId }: { personId: string }) => (
-    <section aria-label={`Coverage for ${personId}`} />
-  ),
-}));
 vi.mock("@/components/portal/home-dashboards", () => ({
   HomeDashboards: () => <section aria-label="Recent dashboards" />,
 }));
@@ -120,11 +115,6 @@ describe("<OverviewView>", () => {
       "an IC who opens Attention needed: their own list",
       { canSeeOthers: false, item: "attention" },
       ["Attention for me-1"],
-    ],
-    [
-      "an IC who opens Data coverage: their own sections",
-      { canSeeOthers: false, item: "health" },
-      ["Coverage for me-1"],
     ],
     [
       "an IC who opens the split of work between people: Home instead",

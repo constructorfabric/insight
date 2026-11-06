@@ -23,7 +23,6 @@ def test_navigation_shows_every_expected_zone_and_entry(
             "By direction": (),
             "Trend": (),
             "Attention needed": (),
-            "Data coverage": (),
             "Contribution breakdown": (),
         },
         "Explore": {
@@ -80,7 +79,6 @@ def test_navigation_shows_every_expected_zone_and_entry(
         "page-overview-by-direction",
         "page-overview-trend",
         "page-overview-attention",
-        "page-overview-health",
         "page-overview-contribution",
         "page-custom-dashboards",
         "page-custom-dashboard",
