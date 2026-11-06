@@ -1,0 +1,7 @@
+INSERT INTO declarative_manifest_image_version
+    (major_version, image_version, image_sha, created_at, updated_at)
+VALUES
+    (5, '5.17.0', 'sha256:9c6bfd080a247b7781ce5b25687e7c44e29d31315d0bf656584b38810521bbaa', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+    (6, '6.61.6', 'sha256:a86098c6af1cf9d0b4484f33c973981a4d4f16740924ce9325b01ee4c8ca33df', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+    (7, '7.27.0', 'sha256:b68768a6ef880500de7b3b228f60045126e45b0f336e0bc6ff8a361d95162f69', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT (major_version) DO NOTHING;

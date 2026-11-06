@@ -44,6 +44,8 @@ access
 !deploy/gitops/bootstrap/local/**
 !deploy/gitops/environments/local/
 !deploy/gitops/environments/local/**
+deploy/gitops/environments/local/**/__pycache__/
+deploy/gitops/environments/local/**/*.pyc
 
 # IDE
 .vs/

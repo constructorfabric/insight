@@ -1,0 +1,5 @@
+image: ""
+upstream: ""
+upstreamTimeout: 300
+controlToken: synthetic-control-token
+journalRetention: 1000

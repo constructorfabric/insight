@@ -32,6 +32,8 @@ on:
       - "src/ingestion/tests/connectors/**"
       # insight-seed component root.
       - "src/ingestion/tools/seed/**"
+      - "src/ingestion/tools/mock-source/**"
+      - "src/ingestion/tools/mock-airbyte-api/**"
       # The guards job runs the reconcile renderer's contract tests.
       - "src/ingestion/reconcile-connectors/**"
   push:
@@ -49,6 +51,8 @@ on:
       - "src/ingestion/silver/_shared/**"
       - "src/ingestion/tests/connectors/**"
       - "src/ingestion/tools/seed/**"
+      - "src/ingestion/tools/mock-source/**"
+      - "src/ingestion/tools/mock-airbyte-api/**"
       - "src/ingestion/reconcile-connectors/**"
   workflow_dispatch:
     inputs:
@@ -222,6 +226,10 @@ jobs:
             echo "Schedule account grant test must run in CI"
             exit 1
           fi
+
+      - name: Scheduling harness tools
+        if: ${{ !cancelled() }}
+        run: python3 -m pytest src/ingestion/tools/mock-source/tests src/ingestion/tools/mock-airbyte-api/tests -q
 
       # A table-wide max(_version) boundary lets one producer's newest row hide
       # another producer's rows from a silver class for good (#2927).
