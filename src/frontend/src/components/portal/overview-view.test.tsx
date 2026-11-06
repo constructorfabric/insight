@@ -102,14 +102,9 @@ describe("<OverviewView>", () => {
       ["Recent dashboards", "Lens Overview"],
     ],
     [
-      "a viewer with a cohort who opens a theme: the team's",
-      { canSeeOthers: true, item: "trend" },
-      ["Lens Overview · Trend"],
-    ],
-    [
-      "an IC who opens the trend: their own",
-      { canSeeOthers: false, item: "trend" },
-      ["Lens Trend for me-1"],
+      "an IC who opens By direction: their own",
+      { canSeeOthers: false, item: "by-direction" },
+      ["Lens By direction for me-1"],
     ],
     [
       "a viewer with a cohort who opens By direction: the team's",
@@ -170,11 +165,11 @@ describe("<OverviewView>", () => {
   it("holds a theme while the viewer's reach resolves", () => {
     viewer.reachPending = true;
 
-    render(<OverviewView item="trend" />);
+    render(<OverviewView item="by-direction" />);
 
     expect(shownSections()).toEqual([]);
     expect(screen.getByRole("status")).toBeInTheDocument();
-    expect(screen.getByTestId("page-overview-trend")).toBeInTheDocument();
+    expect(screen.getByTestId("page-overview-by-direction")).toBeInTheDocument();
   });
 
   it.each([false, true])(

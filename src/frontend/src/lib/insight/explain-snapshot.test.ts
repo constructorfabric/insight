@@ -23,7 +23,7 @@ const AUTHORS: TrendChartInput = {
 };
 
 const CONTEXT = {
-  title: "Overview · Trend",
+  title: "Development · Repositories",
   bucket: "month",
   since: "2026-06-01",
   until: "2026-08-31",
@@ -85,7 +85,7 @@ describe("trendSnapshot", () => {
     expect(snapshot.since).toBe("2026-06-01");
     expect(snapshot.until).toBe("2026-08-31");
     expect(snapshot.period).toBe("month");
-    expect(snapshot.label).toBe("Overview · Trend");
+    expect(snapshot.label).toBe("Development · Repositories");
   });
 
   it("indexes every line by one shared axis of bucket dates", () => {

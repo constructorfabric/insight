@@ -197,7 +197,7 @@ describe("shell layout: phone", () => {
     expect(screen.getByRole("button", { name: "Home", expanded: false })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Explore" })).not.toBeInTheDocument();
     // …and the zone's own sections are already there.
-    expect(screen.getByText("Trend")).toBeInTheDocument();
+    expect(screen.getByText("By direction")).toBeInTheDocument();
   });
 
   it("expands the zone list on demand and re-collapses after a pick", async () => {
@@ -222,10 +222,10 @@ describe("shell layout: phone", () => {
     const user = await openDrawer();
     const itemState = renderHook(() => usePortalItem());
 
-    await user.click(screen.getByText("Trend"));
+    await user.click(screen.getByText("By direction"));
 
-    expect(itemState.result.current).toBe("trend");
-    expect(screen.queryByText("Trend")).not.toBeInTheDocument();
+    expect(itemState.result.current).toBe("by-direction");
+    expect(screen.queryByText("By direction")).not.toBeInTheDocument();
   });
 
   it("keeps the settings menu one tap away instead of inline", async () => {
@@ -339,9 +339,9 @@ describe("shell layout: narrow (tablet)", () => {
 
     // The pane starts expanded in this bare harness (no PaneStateForLayout), so
     // the sections are reachable; picking one must collapse it.
-    await user.click(screen.getByText("Trend"));
+    await user.click(screen.getByText("By direction"));
 
-    expect(itemState.result.current).toBe("trend");
+    expect(itemState.result.current).toBe("by-direction");
     expect(document.querySelector('[data-state="collapsed"]')).not.toBeNull();
   });
 });
@@ -357,7 +357,7 @@ describe("shell layout: narrow (tablet), keyboard", () => {
     const pane = () => container.querySelector('[data-slot="sidebar-container"]');
     expect(pane(), "expanded pane").not.toHaveAttribute("inert");
 
-    await user.click(screen.getByText("Trend"));
+    await user.click(screen.getByText("By direction"));
     expect(pane(), "collapsed pane").toHaveAttribute("inert");
 
     await user.click(screen.getByRole("button", { name: /sidebar/i }));

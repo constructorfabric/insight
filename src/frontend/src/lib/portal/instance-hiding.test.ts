@@ -40,11 +40,11 @@ const wiki = DIRECTIONS.find((d) => d.id === "wiki")!;
 
 describe("zoneSections under nav.hide", () => {
   it("drops a hidden item from its group", () => {
-    const policy = hide(["zone:overview/item:trend"]);
+    const policy = hide(["zone:overview/item:by-direction"]);
 
     const items = zoneSections("overview", policy).flatMap((g) => g.items);
 
-    expect(items.map((i) => i.id)).not.toContain("trend");
+    expect(items.map((i) => i.id)).not.toContain("by-direction");
   });
 
   it("drops a group whose every item is hidden", () => {
@@ -65,23 +65,23 @@ describe("zoneSections under nav.hide", () => {
 
 describe("zoneSections under nav.planned", () => {
   it("demotes an item marked by the install policy", () => {
-    const policy = planned(["zone:overview/item:trend"]);
+    const policy = planned(["zone:overview/item:by-direction"]);
     const items = zoneSections("overview", policy).flatMap((g) => g.items);
 
     const split = partitionByReadiness(items, true);
 
-    expect(split.planned.map((i) => i.id)).toContain("trend");
-    expect(split.live.map((i) => i.id)).not.toContain("trend");
+    expect(split.planned.map((i) => i.id)).toContain("by-direction");
+    expect(split.live.map((i) => i.id)).not.toContain("by-direction");
   });
 
   it("hides a marked item from a reader who opted out of planned sections", () => {
-    const policy = planned(["zone:overview/item:trend"]);
+    const policy = planned(["zone:overview/item:by-direction"]);
     const items = zoneSections("overview", policy).flatMap((g) => g.items);
 
     const split = partitionByReadiness(items, false);
 
     expect([...split.live, ...split.planned].map((i) => i.id)).not.toContain(
-      "trend"
+      "by-direction"
     );
   });
 
@@ -95,9 +95,9 @@ describe("zoneSections under nav.planned", () => {
 
 describe("resolveZoneItem under the install policy", () => {
   it("sends a deep link into a hidden item to the first shown entry", () => {
-    const policy = hide(["zone:overview/item:trend"]);
+    const policy = hide(["zone:overview/item:by-direction"]);
 
-    expect(resolveZoneItem("overview", "trend", policy)).toBe("at-a-glance");
+    expect(resolveZoneItem("overview", "by-direction", policy)).toBe("at-a-glance");
   });
 
   it("skips a hidden item when picking the zone default", () => {
@@ -241,7 +241,7 @@ describe("directions under the install policy", () => {
 
 describe("what the install policy must NOT touch", () => {
   it("leaves the full item catalog for labels and telemetry", () => {
-    expect(zoneItems("overview").map((i) => i.id)).toContain("trend");
+    expect(zoneItems("overview").map((i) => i.id)).toContain("by-direction");
   });
 });
 
