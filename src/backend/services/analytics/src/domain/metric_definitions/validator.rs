@@ -18,6 +18,8 @@ use crate::domain::metric_definitions::repository::{
 };
 use crate::domain::metric_drilldown::with_evidence_query_limits;
 
+mod coverage;
+
 // Dimension coverage is checked over a trailing window anchored at the
 // newest observed row, not at today(): rows predating a dimension's
 // introduction would otherwise fail coverage forever, and a paused
@@ -433,8 +435,9 @@ impl MetricDefinitionValidator {
         if windows.is_empty() {
             return;
         }
+        let mut results = Vec::with_capacity(spec.dimensions.len());
         for dimension in &spec.dimensions {
-            match self
+            let result = self
                 .dimension_present_on_all_rows(
                     relation,
                     source_key,
@@ -442,26 +445,11 @@ impl MetricDefinitionValidator {
                     &windows,
                     dimension,
                 )
-                .await
-            {
-                Ok(true) => {}
-                Ok(false) => {
-                    tracing::warn!(
-                        metric_key = %spec.metric_key,
-                        dimension,
-                        "declared dimension is not covered on all rows"
-                    );
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        metric_key = %spec.metric_key,
-                        dimension,
-                        "metric dimension probe failed"
-                    );
-                }
-            }
+                .await;
+            results.push((dimension.as_str(), result));
         }
+
+        coverage::report(&spec.metric_key, results);
     }
 
     async fn has_columns(
