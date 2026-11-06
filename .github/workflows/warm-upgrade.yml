@@ -67,22 +67,11 @@ permissions:
 # Routing: .github/runners/README.md.
 jobs:
   warm-upgrade:
-    name: Deploy onto a warm installation (${{ matrix.server }})
+    name: Deploy onto a warm installation
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - server: ClickHouse (pinned)
-            id: pinned
-            image-pin: CLICKHOUSE_SERVER_IMAGE
-          - server: Altinity 25.8.16.10002.altinitystable
-            id: altinity
-            image-pin: CLICKHOUSE_ALTINITY_SERVER_IMAGE
     env:
-      CLICKHOUSE_CONTAINER: warm-upgrade-clickhouse-${{ matrix.id }}
-      CLICKHOUSE_IMAGE_PIN: ${{ matrix.image-pin }}
+      CLICKHOUSE_CONTAINER: warm-upgrade-clickhouse
       CLICKHOUSE_USER: insight
       CLICKHOUSE_PASSWORD: insight
       CLICKHOUSE_DATABASE: insight
@@ -111,15 +100,13 @@ jobs:
           # pins.env is plain KEY=VALUE, so it doubles as a $GITHUB_ENV fragment.
           cat src/ingestion/scripts/bootstrap-db/pins.env >> "$GITHUB_ENV"
           source src/ingestion/scripts/bootstrap-db/pins.env
-          image="${!CLICKHOUSE_IMAGE_PIN}"
-          echo "CLICKHOUSE_SERVER_IMAGE=${image}" >> "$GITHUB_ENV"
           # The bridge gateway is the runner host as seen from inside a
           # container: one address that works for dbt on the host and for the
           # destination-clickhouse container the sim starts, which reaches the
           # published port. `host.docker.internal` does not resolve on Linux.
           host="$(docker network inspect bridge -f '{{ (index .IPAM.Config 0).Gateway }}')"
           echo "CLICKHOUSE_URL=http://${host}:8123" >> "$GITHUB_ENV"
-          CLICKHOUSE_SERVER_IMAGE="$image" \
+          CLICKHOUSE_SERVER_IMAGE="$CLICKHOUSE_SERVER_IMAGE" \
             .github/workflows/scripts/start-clickhouse.sh "${CLICKHOUSE_CONTAINER}"
 
       - name: Resolve the installed-release commit
