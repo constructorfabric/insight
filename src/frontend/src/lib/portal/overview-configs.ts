@@ -53,20 +53,6 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     tagline: "where to look next",
     sections: [{ kind: "direction-cards", variant: "full" }],
   },
-  trend: {
-    title: "Overview · Trend",
-    tagline: "org totals over time",
-    sections: [
-      {
-        kind: "trend",
-        metrics: [
-          "git.default_branch_prs_merged",
-          "git.default_branch_code_lines",
-        ],
-        activeContributorsFor: "git.default_branch_prs_merged",
-      },
-    ],
-  },
   attention: {
     title: "Overview · Attention needed",
     tagline: "who to look at",
@@ -122,22 +108,6 @@ export const OWN_OVERVIEW_ITEMS: Record<string, OwnOverviewItem> = {
       title: "By direction",
       tagline: "your work in each direction",
       sections: [{ kind: "direction-cards", variant: "full" }],
-    },
-  },
-  trend: {
-    kind: "lens",
-    config: {
-      title: "Trend",
-      tagline: "your totals over time",
-      sections: [
-        {
-          kind: "trend",
-          metrics: [
-            "git.default_branch_prs_merged",
-            "git.default_branch_code_lines",
-          ],
-        },
-      ],
     },
   },
   attention: {

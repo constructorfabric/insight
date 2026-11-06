@@ -73,7 +73,7 @@ Or, for a team:
 3. **Needs attention**: collapsible rows, one per metric, with people count.
 4. **By direction**: one card per direction.
 
-Each theme in the pane reads the same subject as Home. Pane: At a glance, By direction, Trend, Attention needed, Data coverage, Contribution breakdown (team only); Dashboards group: My dashboards with count, Starter dashboards (planned).
+Each theme in the pane reads the same subject as Home. Pane: At a glance, By direction, Attention needed, Data coverage, Contribution breakdown (team only); Dashboards group: My dashboards with count, Starter dashboards (planned).
 
 ## Dashboards
 

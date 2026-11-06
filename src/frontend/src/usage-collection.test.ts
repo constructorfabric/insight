@@ -50,9 +50,9 @@ describe("recordScreens", () => {
   });
 
   it("composes the portal zone and item into the screen", () => {
-    recordScreens(historyStub("/portal", "?zone=overview&item=trend").history);
+    recordScreens(historyStub("/portal", "?zone=overview&item=by-direction").history);
 
-    expect(mocks.recordPageView).toHaveBeenCalledWith("/portal/overview/trend");
+    expect(mocks.recordPageView).toHaveBeenCalledWith("/portal/overview/by-direction");
   });
 
   it("records a screen once however often history fires", () => {
@@ -64,7 +64,7 @@ describe("recordScreens", () => {
   });
 
   it("records a zone change as the screen it opened, not the one it left", () => {
-    const { history, navigateRouterOnly } = historyStub("/portal", "?zone=overview&item=trend");
+    const { history, navigateRouterOnly } = historyStub("/portal", "?zone=overview&item=by-direction");
     recordScreens(history);
     mocks.recordPageView.mockClear();
 
@@ -170,9 +170,9 @@ describe("recordScreens", () => {
   });
 
   it("ignores a mode outside the identities console", () => {
-    recordScreens(historyStub("/portal", "?zone=overview&item=trend&mode=person").history);
+    recordScreens(historyStub("/portal", "?zone=overview&item=by-direction&mode=person").history);
 
-    expect(mocks.recordPageView).toHaveBeenCalledWith("/portal/overview/trend");
+    expect(mocks.recordPageView).toHaveBeenCalledWith("/portal/overview/by-direction");
   });
 });
 
