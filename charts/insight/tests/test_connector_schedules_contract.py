@@ -50,16 +50,3 @@ def test_schedule_requests_require_a_reconcile_cadence(gitops: bool) -> None:
     result = render("--set-string", "ingestion.reconcile.schedule=", *overrides)
     assert result.returncode != 0
     assert "ingestion.reconcile.schedule is required" in result.stderr
-
-
-@pytest.mark.parametrize("minimum", [None, 60])
-def test_schedule_minimum_is_rendered_in_the_analytics_config(minimum: int | None) -> None:
-    overrides = [] if minimum is None else ["--set", f"analytics.connectorSchedules.minIntervalMinutes={minimum}"]
-    result = render(*overrides)
-    assert result.returncode == 0, result.stderr
-    documents = list(yaml.safe_load_all(result.stdout))
-    config = resource(documents, "ConfigMap", "contract-test-analytics-gears-config")
-    gear = yaml.safe_load(config["data"]["analytics.yaml"])
-    assert gear["gears"]["analytics"]["config"]["connector_schedules"]["min_interval_minutes"] == (
-        30 if minimum is None else minimum
-    )

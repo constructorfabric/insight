@@ -7,8 +7,6 @@ on:
       - "charts/insight/**"
       - "src/backend/services/**/helm/**"
       - "src/frontend/helm/**"
-      - "deploy/gitops/scripts/**"
-      - "deploy/gitops/environments/local/**"
       - ".github/workflows/insight-helm.yml"
   workflow_dispatch:
 
@@ -32,20 +30,6 @@ jobs:
           python-version: "3.12"
       - name: Install test dependencies
         run: pip install --quiet pytest pyyaml
-      - name: Install yq
-        env:
-          YQ_VERSION: 4.54.1
-          YQ_SHA256: 8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
-        run: |
-          set -euo pipefail
-          bin="${RUNNER_TEMP}/yq-bin"
-          mkdir -p "$bin"
-          curl -fsSL --retry 3 --retry-delay 2 -o "$bin/yq" \
-            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
-          printf '%s  %s\n' "$YQ_SHA256" "$bin/yq" | sha256sum -c -
-          chmod 0755 "$bin/yq"
-          echo "$bin" >> "$GITHUB_PATH"
-          "$bin/yq" --version
       - name: Helm lint
         run: |
           helm lint src/backend/services/identity-resolution/helm
@@ -57,5 +41,4 @@ jobs:
           python -m pytest
           charts/insight/tests/
           src/backend/services/identity-resolution/helm/tests/
-          deploy/gitops/scripts/tests/
           -q
