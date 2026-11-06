@@ -126,6 +126,22 @@ def census_entry(key: str, *, jira_id: str, extracted_at: str = OBSERVED_AT) -> 
     }
 
 
+def user(account_id: str, *, email: str | None, extracted_at: str = OBSERVED_AT) -> dict[str, Any]:
+    """One account as /users/search returned it; `email` is None when Jira hides it."""
+    return {
+        **_airbyte(extracted_at),
+        "tenant_id": TENANT_ID,
+        "source_id": SOURCE_ID,
+        "unique_key": f"{TENANT_ID}-{SOURCE_ID}-{account_id}",
+        "account_id": account_id,
+        "email": email,
+        "display_name": f"User {account_id}",
+        "account_type": "atlassian",
+        "active": True,
+        "collected_at": extracted_at,
+    }
+
+
 def status(status_id: str, *, name: str, category_key: str, extracted_at: str = OBSERVED_AT) -> dict[str, Any]:
     """One row of the status dimension; `category_key` is Jira's statusCategory key."""
     return {
