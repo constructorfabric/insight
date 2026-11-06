@@ -1,3 +1,5 @@
+{{ config(tags=['ci_only']) }}
+
 -- Unit test for the `jira_field_kind` classifier: every kind, plus the pairs
 -- where two fields share a structure and only one column separates them.
 --

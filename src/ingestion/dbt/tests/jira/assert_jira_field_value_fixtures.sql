@@ -1,3 +1,5 @@
+{{ config(tags=['ci_only']) }}
+
 -- Unit test for the `jira_norm_*` value normalizers.
 --
 -- The JSON *shapes* are Jira's; the content is synthetic. Every case is a shape

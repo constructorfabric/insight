@@ -1,3 +1,16 @@
+{{ config(
+    tags=['connector_quality', 'jira'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'A Jira issue fills at most one story point candidate field',
+        'domain': 'task-tracking',
+        'category': 'consistency',
+        'tier': 'warn',
+        'remediation': 'An issue holds a value in two story point candidate fields at once, so the estimate is ambiguous. Clear the value from all but one candidate field in Jira; if both are meant to hold it, the story point resolution and this check have to change together.'
+    }
+) }}
+
 -- The generic field snapshot replaced a CTE that coalesced over story-points
 -- candidate fields per issue (specs/DATA-COMPLETENESS.md). Dropping it is only
 -- safe while no issue holds a value in more than one candidate: a project's
@@ -26,4 +39,3 @@ INNER JOIN candidates AS c
 WHERE length(s.value_ids) > 0
 GROUP BY s.insight_source_id, s.issue_id, s.id_readable
 HAVING count() > 1
-LIMIT 100

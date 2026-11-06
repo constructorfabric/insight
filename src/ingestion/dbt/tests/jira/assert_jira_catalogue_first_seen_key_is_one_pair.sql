@@ -1,3 +1,5 @@
+{{ config(tags=['ci_only']) }}
+
 -- Each catalogue key names one tenant-and-source pair.
 --
 -- Raw rows are not unique on purpose: two racing runs may each record the same

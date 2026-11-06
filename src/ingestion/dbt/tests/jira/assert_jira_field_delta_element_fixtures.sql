@@ -1,3 +1,5 @@
+{{ config(tags=['ci_only']) }}
+
 -- Unit test for `jira_delta_action` and `jira_delta_element`: the element-wise
 -- path taken by `obj_array` fields (components, fix versions, affects versions,
 -- issue links, attachments).
