@@ -8,26 +8,27 @@
     tags=['hubspot', 'silver:class_crm_pipelines']
 ) }}
 
--- The connector re-reads every pipeline each sync and a stage edit need not
--- move the pipeline's updatedAt, so the extraction time versions the row.
-WITH src AS (
-    {% for tbl in ['deal_pipelines', 'ticket_pipelines'] %}
+-- A stage edit need not move the pipeline's updatedAt, so the poll time
+-- versions the row; a pipeline the latest poll no longer returns is deleted.
+WITH polls AS (
+    {{ hubspot_pipeline_polls() }}
+),
+
+src AS (
     SELECT
         tenant_id,
         source_id,
-        concat(tenant_id, '-', source_id, '-', objectType, '-', id) AS unique_key,
-        id                                              AS pipeline_id,
-        objectType                                      AS object_type,
+        concat(tenant_id, '-', source_id, '-', object_type, '-', pipeline_id) AS unique_key,
+        pipeline_id,
+        object_type,
         label,
         CAST(displayOrder AS Nullable(Int64))           AS display_order,
-        toUInt8(coalesce(archived, false))              AS is_deleted,
+        toUInt8(coalesce(archived, false) OR {{ hubspot_absent_from_poll('_airbyte_extracted_at', 'polled_at') }}) AS is_deleted,
         createdAt                                       AS created_at,
         updatedAt                                       AS updated_at,
         data_source,
-        toUnixTimestamp64Milli(_airbyte_extracted_at)   AS _version
-    FROM {{ source('bronze_hubspot', tbl) }}
-    {% if not loop.last %}UNION ALL{% endif %}
-    {% endfor %}
+        toUnixTimestamp64Milli(polled_at)               AS _version
+    FROM polls
 )
 
 {{ hubspot_staging_tail('src') }}
