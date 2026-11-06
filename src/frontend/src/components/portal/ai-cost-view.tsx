@@ -14,7 +14,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { formatMetricValue } from "@/lib/format";
 import { GROUPS } from "@/lib/insight/groups";

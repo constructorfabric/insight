@@ -8,15 +8,13 @@ import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@gears-frontx/ui-kit";
-import {
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import { pathSegments } from "@/lib/custom/dataset-path";
 import { read } from "@/lib/custom/editor/document";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";

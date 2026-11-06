@@ -23,7 +23,7 @@ export function ViewAsBanner(): React.ReactElement | null {
   if (!session?.impersonatorEmail) return null;
 
   return (
-    <Alert className="rounded-none border-0 border-b text-warning">
+    <Alert className="rounded-none border-0 border-b">
       <UserRoundSearch />
       <AlertTitle>
         {t("view_as_banner.title", { email: session.email })}

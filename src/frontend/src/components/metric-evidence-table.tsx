@@ -29,15 +29,13 @@ import {
   TooltipContent,
   TooltipTrigger,
   Spinner,
-} from "@gears-frontx/ui-kit";
-import {
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import {
   cellText,
   evidenceRowKeys,

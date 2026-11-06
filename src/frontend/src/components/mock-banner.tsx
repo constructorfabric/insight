@@ -16,7 +16,7 @@ export function MockBanner(): React.ReactElement | null {
   if (!isVisible()) return null;
 
   return (
-    <Alert className="rounded-none border-0 border-b text-warning">
+    <Alert className="rounded-none border-0 border-b">
       <TriangleAlertIcon />
       <AlertTitle>{t("mock_banner.title")}</AlertTitle>
       <AlertDescription>

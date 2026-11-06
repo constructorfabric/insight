@@ -21,15 +21,13 @@ import {
   TabsList,
   TabsTrigger,
   Spinner,
-} from "@gears-frontx/ui-kit";
-import {
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import { formatMetricNumber } from "@/lib/format";
 import { nextSort } from "@/lib/metrics/evidence-rows";
 import { sameEvidenceSubject } from "@/lib/metrics/evidence-placeholder";

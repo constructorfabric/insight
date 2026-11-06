@@ -12,15 +12,13 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@gears-frontx/ui-kit";
-import {
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import {
   UNMEASURED,
   SCHEDULE_HEADING,

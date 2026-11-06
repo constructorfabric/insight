@@ -3,15 +3,15 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronRight } from "lucide-react";
 
 import type { EvidencePersonRow } from "@/components/metric-evidence-context";
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Button,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import { cn } from "@/lib/utils";
 
 /** Same geometry as the record table's: values, then the rail that opens them. */
