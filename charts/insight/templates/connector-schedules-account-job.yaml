@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "insight.fullname" . }}-schedule-db-provision
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "insight.fullname" . }}-schedule-db-provision
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ .Values.global.connectorSchedules.database.secretName | quote }}]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "insight.fullname" . }}-schedule-db-provision
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "insight.fullname" . }}-schedule-db-provision
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "insight.fullname" . }}-schedule-db-provision
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "insight.fullname" . }}-schedule-db-provision
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "15"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "insight.fullname" . }}-schedule-db-provision
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: provision
+          image: {{ required "ingestion.toolboxImage is required" .Values.ingestion.toolboxImage | quote }}
+          command: [python3, /ingestion/reconcile-connectors/python/provision_schedule_secret.py]
+          env:
+            - name: INSIGHT_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: INSIGHT_RELEASE
+              value: {{ .Release.Name | quote }}
+            - name: CONNECTOR_SCHEDULES_SECRET_NAME
+              value: {{ .Values.global.connectorSchedules.database.secretName | quote }}
+            - name: CONNECTOR_SCHEDULES_SECRET_USER_KEY
+              value: {{ .Values.global.connectorSchedules.database.userKey | quote }}
+            - name: CONNECTOR_SCHEDULES_SECRET_PASSWORD_KEY
+              value: {{ .Values.global.connectorSchedules.database.passwordKey | quote }}
+            - name: CONNECTOR_SCHEDULES_DB_HOST
+              value: {{ include "insight.mariadb.host" . | quote }}
+            - name: CONNECTOR_SCHEDULES_DB_PORT
+              value: {{ include "insight.mariadb.port" . | quote }}
+            - name: CONNECTOR_SCHEDULES_DB_NAME
+              value: {{ include "insight.mariadb.database" . | quote }}
+            - name: CONNECTOR_SCHEDULES_DB_USER
+              value: root
+            - name: CONNECTOR_SCHEDULES_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: insight-db-creds
+                  key: mariadb-root-password
+            - name: CONNECTOR_SCHEDULES_ACCOUNT_USER
+              value: {{ .Values.global.connectorSchedules.database.username | quote }}

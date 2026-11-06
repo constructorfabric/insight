@@ -19,6 +19,7 @@
   - [3.6 Interactions & Sequences](#36-interactions--sequences)
   - [3.7 Database schemas & tables](#37-database-schemas--tables)
   - [3.8 Deployment Topology](#38-deployment-topology)
+  - [3.9 Reconcile schedule application](#39-reconcile-schedule-application)
 - [4. Additional context](#4-additional-context)
   - [4.1 What was deliberately not built](#41-what-was-deliberately-not-built)
 
@@ -673,11 +674,11 @@ and `observed_at`. `inherited: {crons, origin}` is the deployment fallback from 
 when it belongs to an older revision.
 A failed attempt preserves the previous successful observation.
 
-Analytics only migrates and reads acknowledgement records. The next change adds the ingestion
-writer: after applying a CronWorkflow it reads it back and verifies identity, schedules,
-timezone and origin before advancing the applied revision and observation time. It acknowledges
-the snapshot revision it applied; a concurrent newer save stays pending. A clear applies the
-fresh deployment fallback before it is acknowledged. Full reconciliation uses the same writer.
+Analytics only migrates and reads acknowledgement records. Ingestion writes them (§3.9):
+after applying a CronWorkflow it reads it back and verifies identity, schedules, timezone and
+origin before advancing the applied revision and observation time. It acknowledges the
+snapshot revision it applied; a concurrent newer save stays pending. A clear applies the fresh
+deployment fallback before it is acknowledged.
 
 ### 3.4 Internal Dependencies
 
@@ -857,9 +858,8 @@ analytics derives the status using the rules in §3.3. An empty cron array is a 
 | `example-git` | `main` | 2 / `[]` | 2 / `["0 */4 * * *"]` / `descriptor` | 2 | — | `inherited` |
 | `example-wiki` | `main` | no request | 0 / `["0 4 * * *"]` / `descriptor` | 0 | — | `inherited` |
 
-The next change supplies ingestion's acknowledgement writer and narrow credentials: SELECT
-on the versioned view and INSERT/UPDATE on acknowledgements. Analytics does not write
-acknowledgements; tests and stand fixtures supply synthetic records in this change.
+Ingestion writes acknowledgement records with its own MariaDB account (§3.9): SELECT on the
+versioned view and SELECT/INSERT/UPDATE on acknowledgements. Analytics does not write them.
 
 #### `ingestion_history.sync_events`
 
@@ -958,11 +958,55 @@ user and checks that `SELECT` is allowed while `INSERT`, `CREATE`, `DROP`, `TRUN
 | requested schedules | analytics MariaDB migration |
 | pane | portal bundle |
 
-Nothing here adds a deployable unit. The sweep runs inside a controller that already exists,
-and the API routes run on a service that already serves the portal.
+Analytics editing, the reconcile database reader and schedule-account provisioning
+are always enabled. The chart generates schedule credentials when credential
+autogeneration is enabled and reuses them through Secret lookup on upgrades;
+supplied credentials take precedence.
 
-Applying stored requests through reconcile, its precedence and read-failure policy belong
-to the separate reconcile integration change.
+### 3.9 Reconcile schedule application
+
+Reconcile and adopt read one complete, bounded PyMySQL snapshot from the
+`SQL SECURITY DEFINER` view `connector_schedule_requests_v1` per pass. Its frozen
+columns are `connector, source_id, revision, crons`; empty arrays carry clear revisions.
+The view exposes no audit identities. A nonempty request for the exact instance wins
+before the Secret annotation, descriptor schedule and midnight UTC default. Resolve
+annotation → descriptor → default separately as the deployment fallback, even when
+a request is effective. Neither fallback fields nor historical warning comparisons
+are added to sync history.
+
+Any connection, authorization, limit or row-validation failure refuses the whole
+snapshot. That pass applies no connector CronWorkflow, still removes deleted
+instances and performs its other work, then reports failure. A failed annotation
+or descriptor read stops the instance's application rather than selecting defaults.
+Dry runs read and resolve without acknowledging.
+
+After apply, reconcile reads the same CronWorkflow back and verifies name,
+namespace, connector, tenant and source identity, `spec.schedules`, UTC timezone
+and schedule-origin. A verified observation upserts the applied snapshot revision,
+crons, timezone, origin, suspension, deployment crons/origin, `observed_at`, attempt
+revision/time and a null error. It never rereads the request to label success:
+applying snapshot N while N+1 is saved acknowledges N, leaving N+1 pending.
+Instances without a request use revision zero. A clear acknowledges its own revision
+after applying the newly resolved deployment fallback, then reads as inherited.
+
+Failed apply or readback upserts only attempt revision/time and a bounded generic
+`last_error` on an existing acknowledgement record, preserving successful observation
+and deployment fields. A first failed attempt has no successful observation.
+A write failure fails the pass. Every later pass reapplies, reads back and upserts,
+including unchanged revisions, so drift and interrupted writes retry idempotently.
+
+A dedicated MariaDB account and default role per Kubernetes stand grant SELECT on the view
+and SELECT/INSERT/UPDATE on `connector_schedule_acknowledgements` only. Acknowledgement
+SELECT supports MariaDB's upsert privilege checks. It has no base-table, DELETE or DDL
+privileges. Credentials come from environment or files and never appear in arguments
+or diagnostics. Runtime pods receive only
+this account's credentials. A separate provisioning hook at weight 15 runs after
+the analytics migration job at 10; hook-visible credential twins exist at weight -5.
+When no account Secret is supplied, the hook generates the password once, stores it in
+the Secret and reuses it on later runs; a supplied Secret wins. The local Kubernetes
+initializer persists a separate password, which GitOps composition turns into that
+Secret. External databases require
+an administrator with permission to provision these equivalent grants.
 
 ## 4. Additional context
 

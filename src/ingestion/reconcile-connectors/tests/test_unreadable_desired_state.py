@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 #: Everything `reconcile_run` reaches for, answering harmlessly and recording
 #: that it was called. Only the plan read is varied per case.
 STUBS = """
+connector_schedules_read() { _CONNECTOR_SCHEDULES_STATUS=ok; _CONNECTOR_SCHEDULES_RESULT='{"schedules":[]}'; }
 log_init()          { :; }
 log_close()         { :; }
 log_run_summary()   { :; }

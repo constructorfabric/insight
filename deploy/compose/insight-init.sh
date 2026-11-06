@@ -633,10 +633,11 @@ write_k8s_local() {
   fi
   echo "" >&2
 
-  local core_token signing_key
+  local core_token signing_key schedule_password
   core_token=$(openssl rand -hex 32)
   signing_key=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve)
   signing_key=$(printf '%s\n' "$signing_key" | sed 's/^/      /')
+  schedule_password=$(openssl rand -hex 32)
 
   # ── Write inventory.yaml ─────────────────────────────────────────
   trap 'if [[ $? -ne 0 ]]; then
@@ -734,6 +735,7 @@ insight-local-insight-db-creds: |
   stringData:
     mariadb-root-password: "$mdb_root_esc"
     mariadb-password:      "$mdb_pass_esc"
+    schedule-db-password: "$schedule_password"
     clickhouse-password:   "$ch_pass_esc"
     redis-password:        "redis-local"
 

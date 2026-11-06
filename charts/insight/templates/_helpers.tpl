@@ -254,7 +254,14 @@ Fail-fast checks that run at helm template / install time.
 Invoked from NOTES.txt so they fire on every install.
 ==============================================================================
 */}}
+{{- define "insight.validateConnectorSchedules" -}}
+  {{- if not .Values.ingestion.templates.enabled -}}
+    {{- fail "connector schedules require ingestion.templates.enabled=true" -}}
+  {{- end -}}
+{{- end -}}
+
 {{- define "insight.validate" -}}
+  {{- include "insight.validateConnectorSchedules" . -}}
   {{- /* GitOps + autoGenerate guard.
          Under ArgoCD/Flux, charts are rendered with `helm template` where
          Helm's `lookup` always returns nil. Combined with `autoGenerate=true`,
@@ -360,4 +367,20 @@ Invoked from NOTES.txt so they fire on every install.
       {{- end -}}
     {{- end -}}
   {{- end -}}
+{{- end -}}
+
+{{- define "insight.connectorSchedulesEnv" -}}
+- name: CONNECTOR_SCHEDULES_DB_HOST
+  value: {{ include "insight.mariadb.host" . | quote }}
+- name: CONNECTOR_SCHEDULES_DB_PORT
+  value: {{ include "insight.mariadb.port" . | quote }}
+- name: CONNECTOR_SCHEDULES_DB_NAME
+  value: {{ include "insight.mariadb.database" . | quote }}
+{{- range $env, $key := dict "USER" .Values.global.connectorSchedules.database.userKey "PASSWORD" .Values.global.connectorSchedules.database.passwordKey }}
+- name: CONNECTOR_SCHEDULES_DB_{{ $env }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $.Values.global.connectorSchedules.database.secretName | quote }}
+      key: {{ $key | quote }}
+{{- end }}
 {{- end -}}

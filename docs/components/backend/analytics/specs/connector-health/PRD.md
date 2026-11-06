@@ -340,10 +340,32 @@ crons, timezone, origin, suspended state, revision and `observed_at`; the deploy
 those fields unknown, never an invented default. Failed attempts retain the previous
 successful observation. Revision zero represents inheritance without a request row.
 
-Analytics migrates and reads acknowledgement records in this change. Ingestion writes them in
-the next change, after applying and reading back the CronWorkflow to verify identity, schedules,
-timezone and origin. Acknowledgements name the snapshot revision actually applied, even if a
-newer revision has since been saved. A clear becomes inherited after applying its fallback.
+Reconcile and adopt read the entire request view once per pass through bounded,
+parameterized PyMySQL queries. Precedence is nonempty request → Secret annotation →
+descriptor → midnight UTC default. The deployment fallback independently follows
+annotation → descriptor → default and lives only in the acknowledgement record.
+No fallback columns or shadowed-change warnings are added to sync history.
+
+A failed snapshot applies no schedules, still removes deleted instances and fails
+the pass. Failed annotation or descriptor reads never select defaults. After apply,
+read back the CronWorkflow and verify instance identity, schedules, UTC timezone and
+origin before recording success. Success records applied revision, crons, timezone,
+origin, suspension, deployment crons/origin and observation/attempt timestamps.
+Acknowledgements name the snapshot revision actually applied even after a concurrent
+newer save, which remains pending. A clear acknowledges its revision after applying
+fallback and becomes inherited; an instance without a request uses revision zero.
+Apply/readback failures update only attempt fields and a bounded generic error while
+preserving the previous successful observation. An acknowledgement write failure
+fails the pass, and the next pass retries application and the upsert idempotently.
+
+Each Kubernetes stand has a dedicated MariaDB account and default role: SELECT on the request
+view and SELECT/INSERT/UPDATE on acknowledgements only, with no base-table access,
+DELETE or DDL. Acknowledgement SELECT supports MariaDB's upsert privilege checks.
+Runtime credentials come from environment or files and never appear in
+arguments or errors. Provision after analytics migration (hook weight 15 after 10), with
+hook-visible credentials. Without a supplied account Secret, the hook generates the
+password once and reuses it; a supplied Secret wins. External databases require
+equivalent administrator provisioning.
 
 Health enrichment joins requests and acknowledgements in one batched MariaDB read, including
 empty-cron clears and inherited instances without a request. An instance with a source id and
@@ -407,8 +429,8 @@ the page shows the age and says the cadence is unmeasured — it does not conclu
 recording stopped, because with no cadence recorded there is nothing for the age to be late
 against.
 
-Applying requests through reconcile, its schedule precedence and read-failure policy are a
-separate change.
+Reconcile applies requests using the schedule precedence and read-failure policy described
+in the design.
 
 ## 6. Non-Functional Requirements
 

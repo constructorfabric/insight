@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 #: The real plan reader, naming, and guard; everything else answers harmlessly.
 STUBS = """
+connector_schedules_read() { _CONNECTOR_SCHEDULES_STATUS=ok; _CONNECTOR_SCHEDULES_RESULT='{"schedules":[]}'; }
 log_init()          { :; }
 log_close()         { :; }
 log_run_summary()   { :; }

@@ -153,7 +153,7 @@ _argo_delete_cronworkflow_named() {
 
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
 argo_render_cronworkflow() {
-  local schedule_origin="${7:?schedule origin must be supplied as argument 7 (annotation, descriptor or default)}"
+  local schedule_origin="${7:?schedule origin must be supplied as argument 7 (api, annotation, descriptor or default)}"
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
   local insight_source_id="$5" dbt_select="$6"
   local cron_name
@@ -176,7 +176,7 @@ argo_error_reason() {
 }
 
 argo_apply_cronworkflow() {
-  local schedule_origin="${7:?schedule origin must be supplied as argument 7 (annotation, descriptor or default)}"
+  local schedule_origin="${7:?schedule origin must be supplied as argument 7 (api, annotation, descriptor or default)}"
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
   local insight_source_id="$5" dbt_select="$6"
 

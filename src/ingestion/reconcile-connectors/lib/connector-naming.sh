@@ -29,6 +29,7 @@ _CN_PY_DIR="$(cd "${_CN_LIB_DIR}/../python" && pwd)"
 # stable under any load order.
 # shellcheck source=./discover.sh
 source "${_CN_LIB_DIR}/discover.sh"
+source "${_CN_LIB_DIR}/connector-schedules.sh"
 
 # ---------------------------------------------------------------------------
 # reconcile_compute_source_id <connector_name>
@@ -71,7 +72,7 @@ reconcile_compute_connection_name() {
 
 # ---------------------------------------------------------------------------
 # reconcile_compute_schedule <connector_name> [secret_name]
-# Schedule precedence: Secret annotation > descriptor.yaml.schedule > default.
+# Schedule precedence: API > Secret annotation > descriptor.yaml.schedule > default.
 # Stdout: one cron per line — `descriptor.schedule` may be a list, so callers
 # MUST keep the value quoted end to end or the extra crons are lost.
 #
@@ -88,14 +89,27 @@ reconcile_compute_schedule() {
 reconcile_resolve_schedule() {
   local connector="$1"
   local secret_name="${2:-}"
-  local namespace="${INSIGHT_NAMESPACE}"
-  local schedule
+  local source_id="${3-}"
+  local deployment="${4-}" schedule
+  connector_schedules_writable || return 1
+  [[ -n "${deployment}" ]] || deployment="$(reconcile_resolve_deployment_schedule "${connector}" "${secret_name}")" || return 1
+  if [[ "${_CONNECTOR_SCHEDULES_STATUS-}" == "ok" ]]; then
+    [[ -n "${source_id}" ]] || source_id="$(reconcile_compute_source_id "${connector}")"
+    schedule="$(connector_schedules_lookup "${connector}" "${source_id}")" || return 1
+    [[ -z "${schedule}" ]] || { printf '%s' "${schedule}"; return 0; }
+  fi
+  printf '%s' "${deployment}"
+}
+
+reconcile_resolve_deployment_schedule() {
+  local connector="$1" secret_name="${2:-}"
+  local namespace="${INSIGHT_NAMESPACE}" schedule
   [[ -n "${secret_name}" ]] || \
-    secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null || true)"
+    secret_name="$(disc_match_descriptor_to_secret "${connector}" "${namespace}" 2>/dev/null)" || return 1
   if [[ -n "${secret_name}" ]]; then
     schedule="$(kubectl -n "${namespace}" get secret "${secret_name}" \
       -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/schedule}' \
-      2>/dev/null || true)"
+      2>/dev/null)" || return 1
     [[ -n "${schedule}" ]] && { printf 'annotation\n%s' "${schedule}"; return 0; }
   fi
   # Resolve descriptor path by glob — connectors are nested under an area
@@ -106,9 +120,8 @@ reconcile_resolve_schedule() {
   desc_glob=("${CONNECTORS_DIR}"/*/"${connector}"/descriptor.yaml)
   desc_path="${desc_glob[0]}"
   if [[ -f "${desc_path}" ]]; then
-    schedule="$(python3 "${_CN_PY_DIR}/parse_descriptor.py" \
-      --descriptor "${desc_path}" \
-      --field schedule 2>/dev/null || true)"
+    schedule="$(python3 "${_CN_PY_DIR}/read_schedule_descriptor.py" \
+      "${desc_path}" 2>/dev/null)" || return 1
     [[ -n "${schedule}" ]] && { printf 'descriptor\n%s' "${schedule}"; return 0; }
   fi
   printf 'default\n0 0 * * *'

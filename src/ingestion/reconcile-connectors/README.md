@@ -101,3 +101,42 @@ missing event means the loop did not run):
 - `reconcile.failed`   — abnormal abort (set -e path), exit_code
 
 Find one tick in Loki: `{namespace="insight"} | json | run_id="<pod>"`.
+
+## Connector schedules
+
+Reconcile and adopt always read one complete snapshot per pass from MariaDB's versioned
+`connector_schedule_requests_v1` view, including empty-array clears. The exact
+`(connector, source_id)` pair selects a request. Precedence is nonempty request →
+Secret annotation → descriptor schedule → `0 0 * * *`. The deployment fallback
+is the annotation, descriptor or default even when a request wins.
+
+Configure `CONNECTOR_SCHEDULES_DB_HOST`, `CONNECTOR_SCHEDULES_DB_NAME`,
+`CONNECTOR_SCHEDULES_DB_USER` and `CONNECTOR_SCHEDULES_DB_PASSWORD` through the
+environment or each setting's `_FILE` variant. `CONNECTOR_SCHEDULES_DB_PORT`
+defaults to 3306. Credentials never enter process arguments or diagnostic messages.
+PyMySQL uses a five-second connection timeout, fifteen-second socket timeouts,
+a ten-second statement limit and a 10,000-row/four-MiB snapshot limit. Any bad
+row refuses the entire snapshot.
+
+A failed snapshot applies no CronWorkflow, continues other work, still deletes
+removed instances and fails the pass. A failed Secret or descriptor read stops
+that instance's schedule application. Dry runs read requests and report the
+selected origin without applying or acknowledging anything.
+
+After applying a CronWorkflow, GET it and check its name, namespace, connector,
+tenant, source identity, schedules, UTC timezone and origin. Only a matching
+readback advances the acknowledgement record's applied revision, schedule,
+suspended state, deployment fallback, origins and observation time. Use the
+revision from the pass snapshot, so a concurrent newer save remains pending.
+Clears retain their revision and acknowledge the resolved fallback; instances
+without a request use revision zero. Apply/readback failures update only attempt
+revision/time and a bounded generic error on an existing record. They preserve
+the last successful observation. A failed acknowledgement write fails the pass;
+the next pass repeats application and the upsert idempotently.
+
+The dedicated MariaDB account has a default role with SELECT on the view and
+SELECT/INSERT/UPDATE on `connector_schedule_acknowledgements`, with no base-table,
+DELETE or DDL privileges. Acknowledgement SELECT supports MariaDB's upsert
+privilege checks. A Helm hook at weight 15 provisions it after analytics migration
+at weight 10. Deployment fallback lives only in the
+acknowledgement record; sync history remains unchanged.

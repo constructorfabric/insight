@@ -28,6 +28,7 @@ SELECTOR = "tag:alpha"
 #: under test is the loop that reads the descriptors, so the per-connector work
 #: is replaced by a record of the arguments it was handed.
 STUBS = """
+connector_schedules_read() { _CONNECTOR_SCHEDULES_STATUS=ok; _CONNECTOR_SCHEDULES_RESULT='{"schedules":[]}'; }
 log_line()          { printf '%s\\n' "$*" >&2; }
 log_event()         { :; }
 ab_workspace_id()      { printf 'workspace-1'; }
