@@ -20,8 +20,8 @@ description: >
   `state` is bound to `ignored`, so the board is the only thing that can speak
   for its status.
 
-  `dev_time` cannot be used here, and the reason is worth stating: it is a
-  closed-issue measure, stamped `toDate(final_close_at)` and summing only spans
+  `flow_efficiency` cannot be used here, and the reason is worth stating: it is
+  a closed-issue measure, stamped `toDate(final_close_at)` and summing only spans
   that start before the close. An issue that never closes has no such date and
   no such measure, whatever its spans look like.
 
