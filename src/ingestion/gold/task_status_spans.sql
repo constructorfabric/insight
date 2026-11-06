@@ -15,11 +15,10 @@
 ) }}
 
 -- Per-issue status spans: each status event paired with the next. The last
--- span ends per CURRENT state — at the close for currently-done issues, live
--- to build time otherwise. Keying the tail on the close time alone would end
--- a reopened issue's current span before it starts; the row filter below
--- would then drop it, hiding the reopen from transition detection and
--- freezing its in-progress accrual.
+-- span ends per CURRENT state — where it starts for currently-done issues,
+-- live to build time otherwise. INVARIANT: never at `final_close_at`: that is
+-- the entry into done, which precedes a later done-to-done move (the filter
+-- below would drop that span) and a reopened issue's current span.
 --
 -- Materialized once per build (ClickHouse re-inlines every WITH reference);
 -- the class read keeps FINAL (RMT parts are not duplicate-immune).
@@ -69,9 +68,7 @@ FROM (
                 i -> (
                     (e.evs[i]).1,
                     if(i = length(e.evs),
-                       if(s.status_category = 'done',
-                          ifNull(s.final_close_at, (e.evs[i]).1),
-                          now()),
+                       if(s.status_category = 'done', (e.evs[i]).1, now()),
                        (e.evs[i + 1]).1),
                     (e.evs[i]).2
                 ),
