@@ -1242,6 +1242,6 @@ non-breaking.
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | `persons` schema evolves under us | Reader SQL drifts and silently returns wrong fields. | Centralise SQL with the repositories in `src/infra/db/`; integration tests pin column names. |
-| Misconfigured `tenant_default_id` in multi-tenant cluster | Wrong-tenant data served to a caller whose JWT lacks a tenant. | The signed JWT claim always wins; helm validator warns when `tenantDefaultId` is set with `identityResolution.deploy=true` in a production overlay (planned). |
+| Misconfigured `tenant_default_id` in multi-tenant cluster | Wrong-tenant data served to a caller whose JWT lacks a tenant. | The signed JWT claim always wins; the chart sets `tenant_default_id` only from `authenticator.oidc.defaultTenantId`, the install's one tenant, and refuses to render with any other tenant key. |
 | Seed pipeline never runs on a fresh cluster | Every lookup returns 404 indefinitely. | `/health` only checks DB reachability — the operator sees green pods and an empty `persons` table; document the post-install seed step in the README. |
 | BambooHR connector evolves the `value_type` set | New observations are silently ignored. | Hardcoded routing in ADR-0007 + integration test that asserts the projection of each known `value_type`. |

@@ -62,6 +62,16 @@ class Subjects:
         self.env_file = env_file
         self.tenant_id = tenant_id
 
+    def for_tenant(self, tenant_id: str) -> Subjects:
+        """The same instance's people, minted and read under another tenant."""
+        return Subjects(
+            self.cfg,
+            repo_root=self.repo_root,
+            project=self.project,
+            env_file=self.env_file,
+            tenant_id=tenant_id,
+        )
+
     def publish(self, *, timeout_s: float = 600.0) -> None:
         """Run persons-seed, which mints from the identity inputs and publishes.
 

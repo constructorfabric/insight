@@ -81,3 +81,20 @@ def test_a_bronze_row_without_a_tenant_builds_and_the_tenant_tests_report_it(cas
 
     failing = case.failing_tests(tenant_tests(model))
     assert reported in failing, f"{model} should report the {table} row without a tenant: {sorted(failing)}"
+
+
+IDENTITY_AUTHOR = {
+    "unique_key": f"no-tenant-{SOURCE}-author@example.com",
+    "repo_full_name": "example-org/example-repo",
+    "author_email": "author@example.com",
+    "author_login": "example-login",
+    "author_id": 101,
+    "collected_at": "2026-01-10T00:00:00Z",
+}
+
+
+def test_the_identity_inputs_refuse_a_bronze_row_without_a_tenant(case: Warehouse) -> None:
+    case.insert("commit_authors", None, IDENTITY_AUTHOR, "2026-01-10T00:00:00")
+
+    with pytest.raises(AssertionError, match="Cannot parse UUID"):
+        case.build("+github__identity_inputs")
