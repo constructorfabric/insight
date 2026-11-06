@@ -9,6 +9,9 @@ The census check measures an issue's first sighting, which the availability
 snapshot stamps with the build time, against the newest issue extraction. The
 issue rows are therefore extracted two hours after the build, as if the issue
 scan ran a sync after the census first saw them.
+
+The field-history class is rebuilt with the rest: a check reads the whole class,
+and earlier modules leave their own rows in it.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from conftest import PROD_SELECTOR, Invocation, Warehouse, truncate_bronze
 from helpers import census_entry, event, field, issue, item, worklog, worklog_tombstone
 
 POST_SYNC_SELECTION = "tag:connector_quality,tag:jira"
-SELECTOR = f"{PROD_SELECTOR} jira__issue_availability_history class_task_worklogs"
+SELECTOR = f"{PROD_SELECTOR} jira__issue_availability_history class_task_worklogs class_task_field_history"
 
 HEALTHY_ISSUE_ID = "10001"
 UNFETCHED_ISSUE_ID = "10002"

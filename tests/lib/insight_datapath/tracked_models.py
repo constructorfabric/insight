@@ -15,6 +15,8 @@ from collections.abc import Sequence
 from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import DbtRunner
 
+GOLD_TAG_SELECTOR = "tag:gold"
+
 
 class TrackedModels:
     """dbt builds whose output the next test truncates.
@@ -37,7 +39,11 @@ class TrackedModels:
             return
         self._record(models)
         prefix = "+" if with_ancestors else ""
-        self._dbt.build(" ".join(f"{prefix}{model}" for model in sorted(models)))
+        # INVARIANT: gold is rebuilt only after silver, so a test that also reads
+        # gold must wait for the gold build; eager selection would run it here.
+        self._dbt.build(
+            " ".join(f"{prefix}{model}" for model in sorted(models)), exclude=GOLD_TAG_SELECTOR
+        )
 
     def run(self, models: Sequence[str], *, full_refresh: bool = False) -> None:
         """`dbt run` the named models — for models whose own dbt tests a

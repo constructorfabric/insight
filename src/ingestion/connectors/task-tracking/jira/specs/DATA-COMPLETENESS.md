@@ -67,7 +67,7 @@ that what the API reported actually landed:
 
 | test | catches |
 |------|---------|
-| `assert_census_issue_has_full_record` | an issue the census observed as present and the incremental scan enumerated, but whose full `jira_issue` record is missing — the sync committed the lightweight parent row and lost the payload (the green-but-empty failure mode) |
+| `assert_census_issue_has_full_record` | an issue the census observed as present, with evidence that it changed before the last issue scan ran, whose full `jira_issue` record is missing — the scan was required to collect it and did not (the green-but-empty failure mode); see [Census versus full record](#census-versus-full-record) |
 | `assert_availability_ids_and_timestamps` | availability rows with missing ids, empty state, or a present issue without a last-seen timestamp — malformed census emissions |
 | `assert_worklog_deletion_state_consistent` | a worklog with an authoritative deletion tombstone still flagged alive in the class contract — a regression in the deletion signals |
 
@@ -75,3 +75,34 @@ Together with the source-freshness gates already declared on `bronze_jira`
 (warn 36h / error 72h, now covering the census tables too) these are the
 automated "missing IDs, values, timestamps, or deletion state" validation
 required by #2419's definition of done.
+
+### Census versus full record
+
+The census sees every issue, including issues untouched since the start date,
+which the incremental scan legitimately never fetches in full. A missing full
+record is therefore a finding only for an issue the scan was required to
+collect: one that changed inside the scanned window, before the scan last ran.
+
+The census row cannot say when the issue changed. It carries the id and key
+alone, because that is what lets Jira serve it in 5000-row pages, and the start
+date is connector config that never reaches the warehouse. The check reads the
+change from evidence the warehouse already holds instead. An issue is required
+when any of these holds:
+
+| evidence | change time | why it implies a required scan |
+|----------|-------------|--------------------------------|
+| a `jira_issue_keys` row | its `updated` | the scan enumerated the issue, so the sync committed the lightweight row and lost the payload |
+| a `jira_worklogs` row | the earliest worklog `updated` | worklogs arrive through `/worklog/updated` on a cursor of their own, bounded by the same start date; a worklog change bumps the issue's `updated`, so the scan's window covers it |
+| an id at or above the smallest id created in the last 30 days | the issue's first census sighting | Jira assigns ids in creation order, so the issue was created inside that window and after any plausible start date |
+
+Each kind of evidence counts only when its change time is more than an hour
+older than the newest `jira_issue` extraction of the same source. A change
+newer than that is not yet the scan's to collect, and the next sync's lookback
+reaches it.
+
+An issue with none of this evidence is not flagged, whether it was never
+changed or was changed without a trace the warehouse holds — a field edit both
+scan streams missed on an issue without worklogs is out of the check's reach.
+`src/ingestion/dbt/tests/jira/transform/test_census_completeness.py` seeds
+the keys and worklog evidence, an issue with none, and a change inside the race
+window, and asserts exactly which are findings.
