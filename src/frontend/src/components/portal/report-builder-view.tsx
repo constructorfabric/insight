@@ -12,8 +12,9 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  ToggleGroup,
+  ToggleGroupItem,
 } from "@gears-frontx/ui-kit";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { ReportBuilderActions } from "@/components/portal/report-builder-actions";
 import {

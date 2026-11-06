@@ -15,14 +15,13 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@gears-frontx/ui-kit";
-import { Calendar } from "@/components/ui/calendar";
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@gears-frontx/ui-kit";
+import { Calendar } from "@/components/ui/calendar";
 import type { CustomRange, PeriodValue } from "@/types/insight";
 
 function parseIso(iso: string): Date {

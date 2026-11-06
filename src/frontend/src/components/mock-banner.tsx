@@ -1,7 +1,7 @@
 import { TriangleAlertIcon } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@gears-frontx/ui-kit";
 
 function isVisible(): boolean {
   if (!import.meta.env.DEV) return false;
@@ -16,7 +16,7 @@ export function MockBanner(): React.ReactElement | null {
   if (!isVisible()) return null;
 
   return (
-    <Alert variant="warning" className="rounded-none border-0 border-b">
+    <Alert className="rounded-none border-0 border-b text-warning">
       <TriangleAlertIcon />
       <AlertTitle>{t("mock_banner.title")}</AlertTitle>
       <AlertDescription>

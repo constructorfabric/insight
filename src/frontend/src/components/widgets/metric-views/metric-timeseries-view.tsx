@@ -22,16 +22,15 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@gears-frontx/ui-kit";
-import { Card, CardContent } from "@/components/ui/card";
-import {
   Popover,
   PopoverContent,
   PopoverHeader,
   PopoverTitle,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@gears-frontx/ui-kit";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   TimeseriesBody,
   TimeseriesExportMenu,

@@ -27,15 +27,9 @@ import type {
   ResolutionRates,
 } from "@/api/identity-client";
 import { QUEUE_FIRST_PAGE, QUEUE_MAX_ITEMS } from "@/api/identity-client";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { CenteredSpinner } from "@/components/widgets/centered-spinner";
-import { AccountSearchView } from "@/components/portal/account-search-view";
-import { CaseDialog } from "@/components/portal/case-dialog";
-import { ConfirmGroupButton } from "@/components/portal/confirm-group-button";
-import { MergeCaseDialog } from "@/components/portal/merge-case-dialog";
-import { PersonAccountsView } from "@/components/portal/person-accounts-view";
-import { PersonCell } from "@/components/portal/person-cell";
 import {
+  Alert,
+  AlertDescription,
   Badge,
   Button,
   Tabs,
@@ -45,6 +39,13 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@gears-frontx/ui-kit";
+import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import { AccountSearchView } from "@/components/portal/account-search-view";
+import { CaseDialog } from "@/components/portal/case-dialog";
+import { ConfirmGroupButton } from "@/components/portal/confirm-group-button";
+import { MergeCaseDialog } from "@/components/portal/merge-case-dialog";
+import { PersonAccountsView } from "@/components/portal/person-accounts-view";
+import { PersonCell } from "@/components/portal/person-cell";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import {
   Empty,
