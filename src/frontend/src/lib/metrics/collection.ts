@@ -19,6 +19,7 @@ import type {
   PersonAbsenceContext,
   RollupView,
   TimeseriesView,
+  UnattributedView,
 } from "@/api/metric-results-client";
 
 type MetricCollectionBucket = MetricBucket | "auto";
@@ -47,7 +48,8 @@ type MetricCollectionViewConfig =
       dimensions: string[];
       groupLimit?: MetricGroupLimit;
     }
-  | { view: "histogram" };
+  | { view: "histogram" }
+  | { view: "unattributed" };
 
 interface MetricCollectionMetricConfig {
   key: string;
@@ -154,6 +156,7 @@ export type NormalizedMetricResult = {
   breakdown?: BreakdownView;
   rollup?: RollupView;
   histogram?: HistogramView;
+  unattributed?: UnattributedView;
   /** Set when a view's computation failed server-side (first error wins). */
   error?: Pick<MetricErrorView, "code" | "message">;
   /**
@@ -266,6 +269,9 @@ export function normalizeMetricResult(
       case "histogram":
         normalized.histogram = view;
         break;
+      case "unattributed":
+        normalized.unattributed = view;
+        break;
       case "error":
         // A failed view arrives in its requested slot; the slot's field stays
         // unset and downstream reads are optional-chained already. First
@@ -317,6 +323,7 @@ export function projectComparison(
       breakdown: undefined,
       rollup: undefined,
       histogram: undefined,
+      unattributed: undefined,
     };
     if (result.period) {
       projected.period = {
@@ -432,7 +439,8 @@ export const MAX_PROJECTED_ROWS = 4500;
  * `projectViews(["period", "peer"])`, so none should ride a chunked request.
  * Rollup is not chunkable either, and for a harder reason: its rows carry no
  * entity grain, so per-chunk results cannot be merged (a median or a distinct
- * person count over half the roster is not half the answer).
+ * person count over half the roster is not half the answer). Unattributed
+ * names no entity at all: every chunk would repeat the same tenant figure.
  */
 export function entityChunkSize(
   collection: MetricCollectionConfig
@@ -444,7 +452,8 @@ export function entityChunkSize(
         view.view === "timeseries" ||
         view.view === "breakdown" ||
         view.view === "rollup" ||
-        view.view === "histogram"
+        view.view === "histogram" ||
+        view.view === "unattributed"
       ) {
         return null;
       }
@@ -558,6 +567,8 @@ function toRequestView(
       };
     case "histogram":
       return { view: "histogram" };
+    case "unattributed":
+      return { view: "unattributed" };
     default:
       exhaustive(view);
   }

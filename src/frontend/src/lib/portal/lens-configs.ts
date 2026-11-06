@@ -31,6 +31,8 @@ export type SectionSpec =
   | {
       kind: "headline";
       metrics: readonly string[];
+      /** At organisation level, also show the work that reaches no person. */
+      unattributed?: true;
       /** Heads each card with the catalogue's short label where it has one. */
       labelSource?: "short";
     }
@@ -683,7 +685,11 @@ const DEV: Record<string, LensEntry> = {
     title: "Development · Delivery",
     notIngested: "Jira is not connected yet.",
     sections: [
-      { kind: "headline", metrics: ["tasks.closed", "tasks.bugs_fixed"] },
+      {
+        kind: "headline",
+        metrics: ["tasks.closed", "tasks.bugs_fixed", "tasks.logged_hours"],
+        unattributed: true,
+      },
       {
         kind: "stat-tiles",
         title: "Typical task times (median)",

@@ -326,3 +326,55 @@ export function useMetricCollectionSet(
   }
   return out;
 }
+
+/**
+ * The organisation-wide share of each metric that reaches no person, keyed by
+ * metric. Its own request, never chunked with a roster: the figure names no
+ * entity, so a chunk would repeat it. `anchorId` is any one person the viewer
+ * may see — the request needs an entity, the view ignores it; null disables.
+ */
+export interface UnattributedShares {
+  byKey: Map<string, number | null>;
+  isPending: boolean;
+  isError: boolean;
+  refetch: () => void;
+}
+
+export function useUnattributedShares(
+  metricKeys: readonly string[],
+  anchorId: string | null,
+  range: DateRange
+): UnattributedShares {
+  const collection = useMemo<MetricCollectionConfig>(
+    () => ({
+      metrics: metricKeys.map((key) => ({
+        key,
+        views: [{ view: "unattributed" }],
+      })),
+    }),
+    [metricKeys]
+  );
+  const result = useMetricCollection(
+    collection,
+    { type: "person", ids: anchorId ? [anchorId] : [] },
+    range
+  );
+
+  const byKey = useMemo(
+    () =>
+      new Map(
+        [...result.byKey].map(([key, metric]) => [
+          key,
+          metric.unattributed?.value ?? null,
+        ])
+      ),
+    [result.byKey]
+  );
+
+  return {
+    byKey,
+    isPending: result.isPending,
+    isError: result.isError,
+    refetch: result.refetch,
+  };
+}

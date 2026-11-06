@@ -78,6 +78,9 @@ fe7bc730b8204f07  JiraToken          tests/datapath/metrics/tasks/tasks_reopen_r
 e6400951ec3d32be  JiraToken          tests/datapath/metrics/tasks/tasks_resolution_time.test.yaml  # synthetic e2e metric fixture value
 8848e1dc2118ce68  JiraToken          tests/datapath/metrics/tasks/tasks_stale_in_progress.test.yaml  # synthetic e2e metric fixture value
 8cc09af247045802  JiraToken          tests/datapath/metrics/tasks/tasks_stale_in_progress.test.yaml  # synthetic e2e metric fixture value
+0a551632562edc5e  JiraToken          tests/datapath/metrics/tasks/tasks_unattributed_share.test.yaml  # synthetic e2e metric fixture value
+6bd5b367c6aeddcf  JiraToken          tests/datapath/metrics/tasks/tasks_unattributed_share.test.yaml  # synthetic e2e metric fixture value
+b916a623d2f3e970  JiraToken          tests/datapath/metrics/tasks/tasks_unattributed_share.test.yaml  # synthetic e2e metric fixture value
 a17758cf03c537dc  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_accuracy.test.yaml  # synthetic e2e metric fixture value
 de93042515ab723b  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_accuracy.test.yaml  # synthetic e2e metric fixture value
 30824eb2a2d37486  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_deleted_excluded.test.yaml  # synthetic e2e metric fixture value

@@ -255,6 +255,7 @@ MATRIX: Sequence[Expectation] = (
         transform=_INVERTED_PERCENT,
     ),
     Expectation("tasks.flow_efficiency", "task", Tier.EXACT_RATIO, scale=100.0, transform=_PERCENT),
+    Expectation("tasks.logged_hours", "task", Tier.EXACT_SUM),
     Expectation("tasks.on_time_delivery", "task", Tier.EXACT_RATIO, scale=100.0),
     Expectation("tasks.pickup_time", "task", Tier.EXACT_MEDIAN),
     Expectation("tasks.reopen_rate", "task", Tier.EXACT_RATIO, scale=100.0),

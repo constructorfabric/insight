@@ -419,6 +419,17 @@ export const TASK_METRIC_FIXTURES: MetricResult[] = [
     ],
   },
   {
+    metric_key: "tasks.logged_hours",
+    label: "Logged time",
+    unit: "h",
+    format: "decimal",
+    direction: "higher_is_better",
+    computation: "sum",
+    views: [
+      { view: "period", values: [{ entity_id: "alice@example.com", value: 31.5 }] },
+    ],
+  },
+  {
     metric_key: "tasks.worklog_accuracy",
     label: "Worklog Accuracy",
     unit: "%",

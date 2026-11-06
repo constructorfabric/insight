@@ -584,6 +584,32 @@ describe("rollup view", () => {
   });
 });
 
+describe("unattributed view", () => {
+  const UNATTRIBUTED_COLLECTION: MetricCollectionConfig = {
+    metrics: [{ key: "tasks.closed", views: [{ view: "unattributed" }] }],
+  };
+
+  it("asks for the share in one request that never chunks", () => {
+    const request = buildMetricCollectionRequest(
+      UNATTRIBUTED_COLLECTION,
+      { type: "person", ids: ["alice@example.com"] },
+      RANGE
+    );
+
+    expect(request.metrics[0]?.views).toEqual([{ view: "unattributed" }]);
+    expect(entityChunkSize(UNATTRIBUTED_COLLECTION)).toBeNull();
+  });
+
+  it("normalizes onto the unattributed field", () => {
+    const normalized = normalizeMetricResult({
+      ...SUM_METRIC_FIXTURE,
+      views: [{ view: "unattributed", value: 3 }],
+    });
+
+    expect(normalized.unattributed).toEqual({ view: "unattributed", value: 3 });
+  });
+});
+
 describe("resolveBucket", () => {
   it("keeps explicit buckets", () => {
     expect(resolveBucket("month", RANGE)).toBe("month");

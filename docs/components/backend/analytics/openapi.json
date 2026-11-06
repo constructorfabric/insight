@@ -1886,6 +1886,27 @@
             "type": "object"
           },
           {
+            "properties": {
+              "value": {
+                "format": "double",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "view": {
+                "enum": [
+                  "unattributed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "view"
+            ],
+            "type": "object"
+          },
+          {
             "description": "This view's computation failed; sibling views and metrics are\nunaffected. `message` detail depends on the caller's role: admins get\nthe underlying description, everyone else a generic one.",
             "properties": {
               "code": {
@@ -2328,6 +2349,21 @@
               "view": {
                 "enum": [
                   "histogram"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The tenant-wide sum of the work that resolves to no person: rows with no\nperson account or email, and accounts identity has not bound. Sum\nmetrics only; work bound to the excluded person is not counted.",
+            "properties": {
+              "view": {
+                "enum": [
+                  "unattributed"
                 ],
                 "type": "string"
               }
