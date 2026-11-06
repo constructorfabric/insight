@@ -96,7 +96,7 @@ class DbtRunner:
         if not res.success:
             raise DbtError(self._failure_message("closure build failed", res.exception))
 
-    def build(self, selector: str) -> None:
+    def build(self, selector: str, *, exclude: str | None = None) -> None:
         """Build the selected models via the in-process runner.
 
         Reuses the session runner (no interpreter cold-start), and dbt's
@@ -107,12 +107,13 @@ class DbtRunner:
         """
         if self._runner is None:
             raise DbtError("dbt_runner.setup() must be called before build()")
-        LOG.info("dbt build --select %s", selector)
+        LOG.info("dbt build --select %s%s", selector, f" --exclude {exclude}" if exclude else "")
         res = self._runner.invoke(
             [
                 "build",
                 "--select",
                 selector,
+                *(["--exclude", exclude] if exclude else []),
                 *self._base_flags(),
                 *self._warm_parse_flags(),
                 "--defer",
