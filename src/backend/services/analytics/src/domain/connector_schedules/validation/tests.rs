@@ -17,7 +17,7 @@ fn accepts_standard_cron_fields_and_normalizes_horizontal_whitespace() -> R {
         "0 0 ? * ?",
         "  0\t  3 *  * *  ",
     ] {
-        let crons = Crons::parse(&[value.to_owned()], 1)
+        let crons = Crons::parse(&[value.to_owned()])
             .map_err(|e| format!("should accept {value:?}: {e}"))?
             .into_vec();
         assert_eq!(crons, [super::normalize(value)], "should accept: {value:?}");
@@ -25,7 +25,7 @@ fn accepts_standard_cron_fields_and_normalizes_horizontal_whitespace() -> R {
     let ten = (0..10)
         .map(|minute| format!("{minute} * * * *"))
         .collect::<Vec<_>>();
-    assert_eq!(Crons::parse(&ten, 1)?.into_vec().len(), 10);
+    assert_eq!(Crons::parse(&ten)?.into_vec().len(), 10);
     Ok(())
 }
 
@@ -76,7 +76,7 @@ fn rejects_unsupported_or_out_of_range_cron_syntax_with_a_problem() {
         "*/999999999999999999999 3 * * *",
         &long,
     ] {
-        let result = Crons::parse(&[value.to_owned()], 1);
+        let result = Crons::parse(&[value.to_owned()]);
         assert!(result.is_err(), "should reject: {value:?}");
         assert!(
             !result
@@ -89,7 +89,7 @@ fn rejects_unsupported_or_out_of_range_cron_syntax_with_a_problem() {
     }
     for count in [0, 11] {
         assert!(
-            Crons::parse(&vec!["0 3 * * *".to_owned(); count], 1).is_err(),
+            Crons::parse(&vec!["0 3 * * *".to_owned(); count]).is_err(),
             "should reject count: {count}"
         );
     }
@@ -114,7 +114,7 @@ fn calendar_validity_uses_robfig_day_matching_and_star_bits() {
         ("0 6 */2 FEB MON", true),
         ("0 6 */1 FEB MON", true),
     ] {
-        let result = Crons::parse(&[value.to_owned()], 1);
+        let result = Crons::parse(&[value.to_owned()]);
         assert_eq!(result.is_ok(), runs, "{value}: {result:?}");
         if !runs {
             let Err(problem) = result else {
@@ -136,7 +136,7 @@ fn cron_errors_name_the_expression_and_the_cron_field() {
         ("0 6 * 13 *", "month"),
         ("0 6 * * 7", "day of week"),
     ] {
-        let Err(problem) = Crons::parse(&["0 6 * * *".to_owned(), value.to_owned()], 1) else {
+        let Err(problem) = Crons::parse(&["0 6 * * *".to_owned(), value.to_owned()]) else {
             panic!("should reject: {value}");
         };
         assert_eq!(problem.field, "crons[1]", "{value}");
@@ -151,7 +151,7 @@ fn cron_errors_name_the_expression_and_the_cron_field() {
 
 #[test]
 fn whitespace_normalized_duplicates_identify_both_expressions() {
-    let Err(problem) = Crons::parse(&["0 6 * * *".to_owned(), " 0\t6 * * * ".to_owned()], 1) else {
+    let Err(problem) = Crons::parse(&["0 6 * * *".to_owned(), " 0\t6 * * * ".to_owned()]) else {
         panic!("should reject duplicate");
     };
     assert_eq!(problem.field, "crons[1]");

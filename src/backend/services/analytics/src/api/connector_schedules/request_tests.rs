@@ -8,44 +8,8 @@ use super::support::*;
 use crate::infra::db::entities::connector_schedules::Model;
 
 #[tokio::test]
-async fn writes_enforce_the_configured_minimum() -> R {
-    let sync_history = Mock::new();
-    sync_history.add(handlers::provide([configured_instance_record()]));
-    let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
-    let mut config = schedule_config();
-    config.min_interval_minutes = 60;
-    let h =
-        harness_with_config(db, sync_history.url(), config, context("user", &[])?, true).await?;
-    let response = h
-        .app
-        .clone()
-        .oneshot(request(
-            "PUT",
-            URI,
-            Some("\"0\""),
-            &json!({"crons": ["0,30 * * * *"]}),
-        )?)
-        .await?;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert!(
-        body(response)
-            .await?
-            .to_string()
-            .contains("at most once every 60 minutes")
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn rejected_requests_identify_the_invalid_field_and_reason() -> R {
     for (uri, payload, field, reason, reads_sync_history) in [
-        (
-            URI,
-            json!({"crons": ["*/15 * * * *"]}),
-            "crons[0]",
-            "has starts 15 minutes apart",
-            true,
-        ),
         (
             URI,
             json!({"crons": ["0 6 31 2 *"]}),
@@ -161,7 +125,6 @@ async fn unchanged_puts_and_deletes_return_the_current_revision() -> R {
         assert_eq!(response.headers()["etag"], "\"7\"");
         let json = body(response).await?;
         assert_eq!(json["revision"], 7);
-        assert_eq!(json["min_interval_minutes"], 30, "{method}");
         if method == "PUT" {
             assert_eq!(json["requested"]["updated_at"], "1970-01-01T00:00:00Z");
         } else {

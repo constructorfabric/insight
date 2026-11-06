@@ -9,7 +9,6 @@ pub(crate) mod validation;
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
 
-use crate::config::ConnectorSchedulesConfig;
 use crate::domain::connector_health::{ConnectorName, SourceId};
 use crate::infra::db::entities::connector_schedule_acknowledgements::Model as Acknowledgement;
 use crate::infra::db::entities::connector_schedules::Model;
@@ -86,7 +85,6 @@ pub(crate) enum Change {
 pub(crate) async fn get(
     db: &DatabaseConnection,
     ch: &insight_clickhouse::Client,
-    config: &ConnectorSchedulesConfig,
     instance: &Instance,
 ) -> Result<ScheduleResponse, Error> {
     let membership = match membership::require(ch, instance).await {
@@ -99,31 +97,28 @@ pub(crate) async fn get(
         membership?;
     }
     let acknowledgement = acknowledgements::read(db, instance).await?;
-    response(instance, config, row, acknowledgement.as_ref())
+    response(instance, row, acknowledgement.as_ref())
 }
 
 #[derive(Debug)]
 pub(crate) struct Editor<'a> {
     instance: &'a Instance,
-    config: &'a ConnectorSchedulesConfig,
 }
 
 pub(crate) async fn editor<'a>(
     ch: &'a insight_clickhouse::Client,
-    config: &'a ConnectorSchedulesConfig,
     instance: &'a Instance,
 ) -> Result<Editor<'a>, Error> {
     membership::require(ch, instance).await?;
-    Ok(Editor { instance, config })
+    Ok(Editor { instance })
 }
 
 pub(crate) async fn clear_editor<'a>(
     db: &DatabaseConnection,
     ch: &'a insight_clickhouse::Client,
-    config: &'a ConnectorSchedulesConfig,
     instance: &'a Instance,
 ) -> Result<Editor<'a>, Error> {
-    let error = match editor(ch, config, instance).await {
+    let error = match editor(ch, instance).await {
         Ok(editor) => return Ok(editor),
         Err(error @ Error::NotFound { .. }) => error,
         Err(error) => return Err(error),
@@ -131,7 +126,7 @@ pub(crate) async fn clear_editor<'a>(
     if repository::read(db, instance).await?.is_none() {
         return Err(error);
     }
-    Ok(Editor { instance, config })
+    Ok(Editor { instance })
 }
 
 impl Editor<'_> {
@@ -148,13 +143,12 @@ impl Editor<'_> {
         };
         let row = repository::write(db, self.instance, revision, crons, caller).await?;
         let acknowledgement = acknowledgements::read(db, self.instance).await?;
-        response(self.instance, self.config, row, acknowledgement.as_ref())
+        response(self.instance, row, acknowledgement.as_ref())
     }
 }
 
 fn response(
     instance: &Instance,
-    config: &ConnectorSchedulesConfig,
     row: Option<Model>,
     acknowledgement: Option<&Acknowledgement>,
 ) -> Result<ScheduleResponse, Error> {
@@ -185,8 +179,6 @@ fn response(
         status,
         inherited,
         error,
-        reconcile_schedules: config.reconcile_schedules.clone(),
-        min_interval_minutes: config.min_interval_minutes,
     })
 }
 

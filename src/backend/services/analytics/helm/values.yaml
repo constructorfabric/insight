@@ -80,10 +80,6 @@ migrateEnvSecret: ""
 
 visibilityPolicy: "org_chart"
 
-connectorSchedules:
-  reconcileSchedules: []
-  minIntervalMinutes: 30
-
 # Gateway-JWT verification (cf-gears-oidc-authn-plugin, NGINX_BFF R1). These
 # render into the plugin's `jwt.trusted_issuers` / `expected_audience` in the
 # ConfigMap (nested/list-shaped, so not env-injectable). The plugin resolves the

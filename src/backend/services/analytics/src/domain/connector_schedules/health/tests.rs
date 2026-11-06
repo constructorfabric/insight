@@ -4,7 +4,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::*;
-use crate::domain::connector_schedules::test_support::{acknowledgement, snapshot_row};
+use crate::domain::connector_schedules::test_support::acknowledgement;
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -32,8 +32,8 @@ fn row(crons: serde_json::Value) -> Model {
     }
 }
 
-#[tokio::test]
-async fn health_batches_requests_and_acknowledgements_including_clears_and_inheritance() -> R {
+#[test]
+fn health_attaches_request_metadata_including_clears_and_inheritance() -> R {
     for (crons, expected) in [(json!(["0 3 * * *"]), "applied"), (json!([]), "inherited")] {
         let request = row(crons.clone());
         let ack = acknowledgement();
@@ -41,15 +41,21 @@ async fn health_batches_requests_and_acknowledgements_including_clears_and_inher
         inherited.source_id = "second".to_owned();
         inherited.applied_revision = Some(0);
         inherited.attempted_revision = 0;
-        let db = MockDatabase::new(DatabaseBackend::MySql)
-            .append_query_results([vec![
-                snapshot_row(Some(&request), Some(&ack)),
-                snapshot_row(None, Some(&inherited)),
-            ]])
-            .into_connection();
         let mut response = health()?;
         response.checked_at = None;
-        enrich_health(&db, &mut response).await;
+        attach(
+            &mut response,
+            &[
+                Snapshot {
+                    request: Some(request),
+                    acknowledgement: Some(ack),
+                },
+                Snapshot {
+                    request: None,
+                    acknowledgement: Some(inherited),
+                },
+            ],
+        );
         let state = serde_json::to_value(&response.connectors[0].schedule_request)?;
         assert_eq!(state["crons"], crons);
         assert_eq!(state["status"], expected);
@@ -69,11 +75,6 @@ async fn health_batches_requests_and_acknowledgements_including_clears_and_inher
                 .status,
             dto::ScheduleStatus::Inherited
         );
-        let log = db.into_transaction_log();
-        assert_eq!(log.len(), 1);
-        let sql = format!("{log:?}");
-        assert!(sql.contains("connector_schedule_acknowledgements"), "{sql}");
-        assert!(!sql.contains("JSON_LENGTH"), "{sql}");
     }
     Ok(())
 }

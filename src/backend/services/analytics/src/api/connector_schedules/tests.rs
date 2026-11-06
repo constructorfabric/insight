@@ -124,8 +124,6 @@ async fn get_without_a_request_or_acknowledgement_returns_revision_zero_and_inhe
     assert!(json["applied"].is_null());
     assert!(json["inherited"].is_null());
     assert_eq!(json["status"], "inherited");
-    assert_eq!(json["reconcile_schedules"], json!(["*/15 * * * *"]));
-    assert_eq!(json["min_interval_minutes"], 30);
     Ok(())
 }
 
@@ -210,13 +208,6 @@ fn repeated_if_match_headers_are_invalid() {
         super::if_match(&headers),
         Err(super::domain::Error::InvalidMatch)
     ));
-}
-
-#[test]
-fn schedule_config_defaults_to_empty_cadence() -> R {
-    let config: crate::config::GearConfig = serde_json::from_value(json!({}))?;
-    assert!(config.connector_schedules.reconcile_schedules.is_empty());
-    Ok(())
 }
 
 #[test]

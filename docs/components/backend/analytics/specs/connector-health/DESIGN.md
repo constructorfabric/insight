@@ -613,7 +613,7 @@ Shape rules that the generated contract enforces:
 The schedule request contract (FR-13, UC-2) adds admin-only
 `GET /v1/connectors/{connector}/{source_id}/schedule`, `PUT` and `DELETE`
 on the same path. A read returns `requested`, the recorded `applied` schedule, `revision`,
-`status` and `reconcile_schedules`. Writes require a strong quoted revision in `If-Match`:
+`status`, `inherited` and `error`. Writes require a strong quoted revision in `If-Match`:
 missing is 428, malformed is 400, and a stale revision is 412. The comparison and write are
 atomic for every real change. A 412 includes the current revision in `context.revision` and
 as a strong quoted `ETag`. With a matching `If-Match`, a `PUT` equal to the stored ordered
@@ -647,21 +647,6 @@ retains the star bit with no step or step 1, a larger step clears it, and list i
 bits. When either day field retains the star bit, both day fields must match; otherwise they
 are ORed. Under AND semantics, at least one listed day of month must exist in a listed
 month (February permits 29). An explicit full weekday range is restricted for this purpose.
-The frequency check merges the minute/hour starts from every expression into one UTC day
-and requires every adjacent gap, including the midnight wrap, to meet the stand's minimum
-interval. It ignores day-of-month, month and day-of-week fields, conservatively refusing
-some schedules whose times never fall on the same day. The default is 30 minutes;
-`connector_schedules.min_interval_minutes` (environment variable
-`APP__gears__analytics__config__connector_schedules__min_interval_minutes`) accepts 30–1440
-and analytics refuses to start outside that range. The analytics chart sets it through
-`connectorSchedules.minIntervalMinutes`, overridden in umbrella values as
-`analytics.connectorSchedules.minIntervalMinutes`. GET, PUT and DELETE responses include
-`min_interval_minutes` so clients can read the limit before submission. Frequency
-validation runs after all per-expression checks and returns a canonical field violation
-on the expression ending the shortest gap, naming both starts and the minimum.
-The limit applies only to writes through this API: reconcile, Secret annotations and
-descriptors are not checked. Stored schedules predating a raised minimum remain served;
-a new PUT must satisfy the current minimum.
 
 `requested` preserves request audit metadata, including empty-array clear tombstones.
 The schedule API and health rows' `schedule_request` derive status from the acknowledgement
@@ -685,7 +670,7 @@ acknowledgement remains `pending`.
 `applied` contains acknowledged `crons`, nullable `timezone`, `origin`, `suspended`, `revision`
 and `observed_at`. `inherited: {crons, origin}` is the deployment fallback from the same record.
 `error: {attempted_revision, attempted_at, message}` preserves the last failed attempt even
-when it belongs to an older revision. No pass-completion inference participates in status.
+when it belongs to an older revision.
 A failed attempt preserves the previous successful observation.
 
 Analytics only migrates and reads acknowledgement records. The next change adds the ingestion
@@ -693,14 +678,6 @@ writer: after applying a CronWorkflow it reads it back and verifies identity, sc
 timezone and origin before advancing the applied revision and observation time. It acknowledges
 the snapshot revision it applied; a concurrent newer save stays pending. A clear applies the
 fresh deployment fallback before it is acknowledged. Full reconciliation uses the same writer.
-
-`reconcile_schedules` comes from `ingestion.reconcile.schedule`, the same value that renders
-the reconcile CronWorkflow. The umbrella supplies its one-element JSON array through
-`APP__gears__analytics__config__connector_schedules__reconcile_schedules`; Figment parses
-the environment value as a list. The GitOps secret composer resolves that value from the
-chart defaults and stand overlay too. A client can forecast a pending request's next pass
-from this field; the health page's recording-stopped decision still uses measured pass-completion gaps
-(FR-12).
 
 ### 3.4 Internal Dependencies
 
@@ -850,7 +827,8 @@ Analytics owns `connector_schedules` in its MariaDB database, keyed by
 `(connector, source_id)`, with requested cron expressions, revision, caller and update time.
 An empty retained row requests inheritance and still participates in revision checks.
 
-The analytics migrator owns two additional relations, each in its own forward migration:
+The analytics migrator creates all three relations in one forward migration,
+`m20261103_000001_connector_schedules`. The two additional relations are:
 
 - `connector_schedule_requests_v1` is a `SQL SECURITY DEFINER` view exposing exactly
   `connector, source_id, revision, crons`, including clears. Its columns are frozen; an
@@ -867,6 +845,17 @@ The analytics migrator owns two additional relations, each in its own forward mi
   inheritance without a request row; an applied revision cannot exceed the attempted revision.
   Origins are `api`, `annotation`, `descriptor`, or `default`; deployment fallback excludes `api`.
   JSON-array, origin and revision CHECKs are registered with the startup probe.
+
+The following rows are synthetic examples. Each request is shown beside its acknowledgement;
+analytics derives the status using the rules in §3.3. An empty cron array is a clear.
+
+| Connector | Source ID | Request revision / crons | Applied revision / crons / origin | Attempted revision | Last error | Derived status |
+|---|---|---|---|---|---|---|
+| `example-hr` | `example-hr-main` | 29 / `["1 3 * * *"]` | 29 / `["1 3 * * *"]` / `api` | 29 | — | `applied` |
+| `example-tracker` | `main` | 3 / `["0 6 * * *"]` | 2 / `["0 4 * * *"]` / `api` | 2 | — | `pending` |
+| `example-chat` | `main` | 5 / `["0 */6 * * *"]` | 4 / `["0 3 * * *"]` / `api` | 5 | `schedule readback mismatch` | `error` |
+| `example-git` | `main` | 2 / `[]` | 2 / `["0 */4 * * *"]` / `descriptor` | 2 | — | `inherited` |
+| `example-wiki` | `main` | no request | 0 / `["0 4 * * *"]` / `descriptor` | 0 | — | `inherited` |
 
 The next change supplies ingestion's acknowledgement writer and narrow credentials: SELECT
 on the versioned view and INSERT/UPDATE on acknowledgements. Analytics does not write
@@ -965,7 +954,6 @@ user and checks that `SELECT` is allowed while `INSERT`, `CREATE`, `DROP`, `TRUN
 | ledger table | ClickHouse migration, applied by the post-upgrade hook |
 | ledger grant | the query-path role's definition, applied by the same hook before the migrations |
 | sweep | the reconcile loop's existing image and CronWorkflow |
-| configuration | per-stand API writes switch, minimum interval and reported reconcile cadence |
 | health and schedule routes | analytics service |
 | requested schedules | analytics MariaDB migration |
 | pane | portal bundle |

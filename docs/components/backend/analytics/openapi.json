@@ -3153,18 +3153,6 @@
               }
             ]
           },
-          "min_interval_minutes": {
-            "format": "int32",
-            "maximum": 1440,
-            "minimum": 30,
-            "type": "integer"
-          },
-          "reconcile_schedules": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
           "requested": {
             "oneOf": [
               {
@@ -3191,9 +3179,7 @@
           "connector",
           "source_id",
           "revision",
-          "status",
-          "reconcile_schedules",
-          "min_interval_minutes"
+          "status"
         ],
         "type": "object"
       },

@@ -12,7 +12,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use crate::api::AppState;
-use crate::config::{ConnectorSchedulesConfig, GearConfig};
+use crate::config::GearConfig;
 use crate::infra::identity::IdentityClient;
 
 pub(super) type R = Result<(), Box<dyn std::error::Error>>;
@@ -21,7 +21,6 @@ pub(super) const URI: &str = "/v1/connectors/example-tracker/main/schedule";
 
 pub(super) struct Harness {
     pub app: Router,
-    pub state: Arc<AppState>,
     identity: tokio::task::JoinHandle<()>,
 }
 
@@ -34,23 +33,6 @@ impl Drop for Harness {
 pub(super) async fn harness(
     db: DatabaseConnection,
     ch_url: &str,
-    ctx: SecurityContext,
-    admin: bool,
-) -> Result<Harness, Box<dyn std::error::Error>> {
-    harness_with_config(db, ch_url, schedule_config(), ctx, admin).await
-}
-
-pub(super) fn schedule_config() -> ConnectorSchedulesConfig {
-    ConnectorSchedulesConfig {
-        reconcile_schedules: vec!["*/15 * * * *".to_owned()],
-        ..ConnectorSchedulesConfig::default()
-    }
-}
-
-pub(super) async fn harness_with_config(
-    db: DatabaseConnection,
-    ch_url: &str,
-    config: ConnectorSchedulesConfig,
     ctx: SecurityContext,
     admin: bool,
 ) -> Result<Harness, Box<dyn std::error::Error>> {
@@ -68,11 +50,10 @@ pub(super) async fn harness_with_config(
     let identity_task = tokio::spawn(async move {
         let _ = axum::serve(listener, identity_app).await;
     });
-    let state = state(db, ch_url, config, identity)?;
+    let state = state(db, ch_url, identity)?;
     let app = router(Arc::clone(&state), ctx);
     Ok(Harness {
         app,
-        state,
         identity: identity_task,
     })
 }
@@ -80,13 +61,9 @@ pub(super) async fn harness_with_config(
 fn state(
     db: DatabaseConnection,
     ch_url: &str,
-    connector_schedules: ConnectorSchedulesConfig,
     identity: IdentityClient,
 ) -> Result<Arc<AppState>, Box<dyn std::error::Error>> {
-    let config = GearConfig {
-        connector_schedules,
-        ..GearConfig::default()
-    };
+    let config = GearConfig::default();
     Ok(Arc::new(AppState {
         db,
         ch: insight_clickhouse::Client::new(insight_clickhouse::Config::new(ch_url, "analytics")),

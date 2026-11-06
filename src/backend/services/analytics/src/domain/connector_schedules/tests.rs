@@ -44,7 +44,6 @@ fn if_match_requires_one_quoted_unsigned_decimal_revision() -> R {
 #[test]
 fn cleared_rows_keep_the_revision_and_request_metadata() -> R {
     let instance = Instance::parse("example-tracker", "main")?;
-    let config = ConnectorSchedulesConfig::default();
     let row = Model {
         connector: "example-tracker".to_owned(),
         source_id: "main".to_owned(),
@@ -53,7 +52,7 @@ fn cleared_rows_keep_the_revision_and_request_metadata() -> R {
         updated_by: Uuid::from_u128(1),
         updated_at: chrono::DateTime::UNIX_EPOCH,
     };
-    let response = response(&instance, &config, Some(row), None)?;
+    let response = response(&instance, Some(row), None)?;
     assert_eq!(response.revision, 4);
     assert!(
         response
@@ -78,28 +77,4 @@ fn invalid_instance_ids_name_the_path_parameter() {
         };
         assert_eq!(problem.field, field);
     }
-}
-
-#[test]
-fn raising_the_minimum_keeps_stored_schedules_readable() -> R {
-    let instance = Instance::parse("example-tracker", "main")?;
-    let config = ConnectorSchedulesConfig {
-        min_interval_minutes: 60,
-        ..ConnectorSchedulesConfig::default()
-    };
-    let row = Model {
-        connector: "example-tracker".to_owned(),
-        source_id: "main".to_owned(),
-        crons: serde_json::json!(["*/15 * * * *"]),
-        revision: 7,
-        updated_by: Uuid::from_u128(1),
-        updated_at: chrono::DateTime::UNIX_EPOCH,
-    };
-    let response = response(&instance, &config, Some(row), None)?;
-    assert_eq!(response.min_interval_minutes, 60);
-    assert_eq!(
-        response.requested.ok_or("missing stored request")?.crons,
-        ["*/15 * * * *"]
-    );
-    Ok(())
 }

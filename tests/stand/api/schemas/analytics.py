@@ -1501,8 +1501,6 @@ class ScheduleResponse(BaseModel):
     connector: str
     error: ScheduleAttemptError | None = None
     inherited: InheritedSchedule | None = None
-    min_interval_minutes: int = Field(..., ge=30, le=1440)
-    reconcile_schedules: list[str]
     requested: RequestedSchedule | None = None
     revision: int = Field(..., ge=0)
     source_id: str

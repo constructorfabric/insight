@@ -22,15 +22,14 @@ impl Violation {
 pub(crate) struct Crons(Vec<String>);
 
 impl Crons {
-    pub(crate) fn parse(raw: &[String], min_interval_minutes: u16) -> Result<Self, Violation> {
+    pub(crate) fn parse(raw: &[String]) -> Result<Self, Violation> {
         if !(1..=10).contains(&raw.len()) {
             return Err(Violation::new("crons", "expected 1 to 10 cron expressions"));
         }
         let mut normalized = Vec::with_capacity(raw.len());
-        let mut expressions = Vec::with_capacity(raw.len());
         for (index, cron) in raw.iter().enumerate() {
             let field = format!("crons[{index}]");
-            let (expression, bits) = expression(cron).map_err(|problem| {
+            let expression = expression(cron).map_err(|problem| {
                 Violation::new(&field, format!("expression {index} {cron:?}: {problem}"))
             })?;
             if let Some(previous) = normalized.iter().position(|item| item == &expression) {
@@ -42,9 +41,7 @@ impl Crons {
                 ));
             }
             normalized.push(expression);
-            expressions.push(bits);
         }
-        frequency::check(&normalized, &expressions, min_interval_minutes)?;
         Ok(Self(normalized))
     }
 
@@ -60,7 +57,7 @@ pub(super) fn normalize(raw: &str) -> String {
         .join(" ")
 }
 
-fn expression(raw: &str) -> Result<(String, [u64; 5]), String> {
+fn expression(raw: &str) -> Result<String, String> {
     if raw.chars().count() > 100 {
         return Err("cron expression exceeds 100 characters".to_owned());
     }
@@ -86,7 +83,7 @@ fn expression(raw: &str) -> Result<(String, [u64; 5]), String> {
             .map_err(|problem| format!("{}: {problem}", FIELD_NAMES[index]))?;
     }
     calendar(&bits)?;
-    Ok((normalized, bits))
+    Ok(normalized)
 }
 
 fn calendar(bits: &[u64; 5]) -> Result<(), String> {
@@ -186,9 +183,5 @@ fn value(raw: &str, index: usize) -> Result<u32, String> {
     Ok(number)
 }
 
-mod frequency;
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod frequency_tests;

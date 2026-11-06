@@ -153,7 +153,7 @@ def test_writes_require_if_match(
 
 @pytest.mark.requires_seed("admin_operator")
 @pytest.mark.reliability
-@pytest.mark.parametrize("cron", ["not a cron", "* * * * *"])
+@pytest.mark.parametrize("cron", ["not a cron"])
 def test_invalid_crons_report_field_violations(
     admin_operator_session: PersonaSession, schedule_path: str, cron: str
 ) -> None:

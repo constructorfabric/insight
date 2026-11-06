@@ -45,9 +45,6 @@ pub(crate) struct ScheduleResponse {
     pub status: ScheduleStatus,
     pub inherited: Option<InheritedSchedule>,
     pub error: Option<ScheduleAttemptError>,
-    pub reconcile_schedules: Vec<String>,
-    #[schema(minimum = 30, maximum = 1440)]
-    pub min_interval_minutes: u16,
 }
 
 impl toolkit::api::api_dto::RequestApiDto for ScheduleRequest {}

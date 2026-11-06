@@ -1,7 +1,3 @@
-use std::collections::BTreeMap;
-
-use sea_orm::{Iterable, ModelTrait, Value};
-
 use super::Acknowledgement;
 use crate::infra::db::entities::connector_schedules::Model;
 
@@ -23,35 +19,10 @@ pub(crate) fn acknowledgement() -> Acknowledgement {
     }
 }
 
-pub(crate) fn snapshot_row(
-    request: Option<&Model>,
-    ack: Option<&Acknowledgement>,
-) -> BTreeMap<String, Value> {
-    let mut row = BTreeMap::new();
-    for column in crate::infra::db::entities::connector_schedules::Column::iter() {
-        row.insert(
-            format!("r_{}", sea_orm::Iden::to_string(&column)),
-            request.map_or(Value::String(None), |r| r.get(column)),
-        );
-    }
-    for column in crate::infra::db::entities::connector_schedule_acknowledgements::Column::iter() {
-        row.insert(
-            format!("a_{}", sea_orm::Iden::to_string(&column)),
-            ack.map_or(Value::String(None), |a| a.get(column)),
-        );
-    }
-    row
-}
-
 pub(crate) fn schedule_response(
     request: Model,
     ack: &Acknowledgement,
 ) -> Result<super::dto::ScheduleResponse, super::Error> {
     let instance = super::Instance::parse(&request.connector, &request.source_id)?;
-    super::response(
-        &instance,
-        &crate::config::ConnectorSchedulesConfig::default(),
-        Some(request),
-        Some(ack),
-    )
+    super::response(&instance, Some(request), Some(ack))
 }

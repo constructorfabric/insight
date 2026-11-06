@@ -324,10 +324,6 @@ An unchanged request preserves its revision and audit metadata; stale edits repo
 revision. Invalid requests identify the expression and field to fix. Duplicate expressions and
 expressions that can never run under Argo's calendar rules are rejected. Schedules requested
 through this API are always UTC; the recorded applied response includes its observed timezone.
-A requested schedule may not start more often than the stand's minimum interval, 30 minutes by default.
-The conservative frequency check merges all minute/hour starts into one UTC day and checks
-adjacent gaps including midnight, ignoring day-of-month, month and day-of-week fields;
-this refuses some schedules whose times never fall on the same day.
 The schedule API and health rows' `schedule_request` report status from one MariaDB
 acknowledgement record per instance, in this order:
 
@@ -336,9 +332,8 @@ acknowledgement record per instance, in this order:
 3. `inherited`: no override remains, including an acknowledged clear.
 4. `applied`: the current override revision was verified.
 
-An older failed attempt never masks a newer pending save. Cron equality and ClickHouse pass
-completions do not establish application. The response carries acknowledged crons, timezone,
-origin, suspended state, revision and `observed_at`; the deployment fallback as
+An older failed attempt never masks a newer pending save. The response carries acknowledged
+crons, timezone, origin, suspended state, revision and `observed_at`; the deployment fallback as
 `inherited: {crons, origin}`; and the last failure as
 `error: {attempted_revision, attempted_at, message}`. Missing acknowledgement records leave
 those fields unknown, never an invented default. Failed attempts retain the previous
@@ -409,10 +404,8 @@ the page shows the age and says the cadence is unmeasured — it does not conclu
 recording stopped, because with no cadence recorded there is nothing for the age to be late
 against.
 
-The schedule API separately returns the configured reconcile cron expressions, so a client
-can forecast the next pass while a request is pending. This intended cadence does not replace
-the measured recording interval or establish that reconciliation ran. Applying requests
-through reconcile, its schedule precedence and read-failure policy are a separate change.
+Applying requests through reconcile, its schedule precedence and read-failure policy are a
+separate change.
 
 ## 6. Non-Functional Requirements
 
