@@ -30,7 +30,7 @@ def function_body(name: str) -> str:
 
 
 def run(
-    call: str, column_type: str, null_rows: str, tmp_path: Path
+    call: str, column_type: str, null_rows: str, tmp_path: Path, default_kind: str = "", default_expression: str = ""
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """`column_type` answers the system.columns probe (PROBE_FAILS fails it),
     `null_rows` answers the NULL count; every other statement is logged and
@@ -46,6 +46,12 @@ _ch_http_query() {{
   sql="$(cat)"
   printf '%s\\n;;\\n' "$sql" >> "$LOG"
   case "$sql" in
+    *"default_kind = 'DEFAULT'"*)
+      if [[ "$DEFAULT_KIND" == DEFAULT && "$sql" == *"default_expression = '$DEFAULT_EXPRESSION'"* ]]; then
+        printf '1\\n'
+      else
+        printf '0\\n'
+      fi ;;
     *"FROM system.columns"*)
       if [[ "$COLUMN_TYPE" == "{PROBE_FAILS}" ]]; then
         printf 'Code: 999. DB::Exception: Service unavailable\\n'; return 22
@@ -64,7 +70,14 @@ echo '{REACHED_THE_END}'
         ["bash", "-c", script],
         capture_output=True,
         text=True,
-        env={"PATH": "/usr/bin:/bin", "LOG": str(log), "COLUMN_TYPE": column_type, "NULL_ROWS": null_rows},
+        env={
+            "PATH": "/usr/bin:/bin",
+            "LOG": str(log),
+            "COLUMN_TYPE": column_type,
+            "NULL_ROWS": null_rows,
+            "DEFAULT_KIND": default_kind,
+            "DEFAULT_EXPRESSION": default_expression,
+        },
         check=False,
     )
     statements = [s.strip() for s in log.read_text().split("\n;;\n") if s.strip()]
@@ -86,7 +99,8 @@ def test_a_narrowing_gives_the_null_rows_the_fallback_before_the_type_changes(tm
     assert REACHED_THE_END in result.stdout
     assert alters(statements) == [
         "ALTER TABLE staging.jira__worklog_snapshot UPDATE is_deleted = 0 WHERE is_deleted IS NULL SETTINGS mutations_sync = 2",
-        "ALTER TABLE staging.jira__worklog_snapshot MODIFY COLUMN is_deleted UInt8",
+        "ALTER TABLE staging.jira__worklog_snapshot MODIFY COLUMN is_deleted UInt8 DEFAULT 0",
+        "ALTER TABLE staging.jira__worklog_snapshot MODIFY COLUMN is_deleted REMOVE DEFAULT",
     ]
 
 
@@ -94,7 +108,45 @@ def test_a_narrowing_with_no_null_row_changes_the_type_alone(tmp_path: Path) -> 
     result, statements = run(NARROW, "Nullable(UInt8)", "0", tmp_path)
 
     assert result.returncode == 0, result.stderr
-    assert alters(statements) == ["ALTER TABLE staging.jira__worklog_snapshot MODIFY COLUMN is_deleted UInt8"]
+    assert alters(statements) == [
+        "ALTER TABLE staging.jira__worklog_snapshot MODIFY COLUMN is_deleted UInt8 DEFAULT 0",
+        "ALTER TABLE staging.jira__worklog_snapshot MODIFY COLUMN is_deleted REMOVE DEFAULT",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("call", "column_type", "fallback", "relation", "column"),
+    [
+        (NARROW, "UInt8", "0", "staging.jira__worklog_snapshot", "is_deleted"),
+        (
+            "retype_column_not_null silver class_crm_activities timestamp 'DateTime64(3)' 'toDateTime64(0, 3)'",
+            "DateTime64(3)",
+            "toDateTime64(0, 3)",
+            "silver.class_crm_activities",
+            "timestamp",
+        ),
+    ],
+)
+def test_a_restart_removes_the_fallback_default_after_the_type_changed(
+    call: str, column_type: str, fallback: str, relation: str, column: str, tmp_path: Path
+) -> None:
+    result, statements = run(call, column_type, "0", tmp_path, "DEFAULT", fallback)
+
+    assert result.returncode == 0, result.stderr
+    assert REACHED_THE_END in result.stdout
+    assert alters(statements) == [f"ALTER TABLE {relation} MODIFY COLUMN {column} REMOVE DEFAULT"]
+
+
+@pytest.mark.parametrize(("default_kind", "default_expression"), [("DEFAULT", "1"), ("", ""), ("MATERIALIZED", "0")])
+def test_a_converged_column_checks_default_ownership_and_leaves_other_defaults_alone(
+    default_kind: str, default_expression: str, tmp_path: Path
+) -> None:
+    result, statements = run(NARROW, "UInt8", "0", tmp_path, default_kind, default_expression)
+
+    assert result.returncode == 0, result.stderr
+    assert REACHED_THE_END in result.stdout
+    assert not alters(statements), f"the heal altered a column with {default_kind} {default_expression}"
+    assert any("default_kind = 'DEFAULT'" in s and "default_expression = '0'" in s for s in statements)
 
 
 @pytest.mark.parametrize("column_type", ["UInt8", "String", ""])
