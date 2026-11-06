@@ -85,6 +85,7 @@ class Invocation:
     success: bool
     statuses: tuple[str, ...]
     log: str
+    status_by_node: dict[str, str]
 
 
 class Dbt:
@@ -113,11 +114,13 @@ class Dbt:
         self._log.clear()
         runner = dbtRunner(callbacks=[lambda event: self._log.append(event.info.msg)])
         result = runner.invoke([*args, *self._base])
-        statuses = tuple(str(node.status) for node in getattr(result.result, "results", ()))
+        results = getattr(result.result, "results", ())
+        statuses = tuple(str(node.status) for node in results)
+        status_by_node = {node.node.name: str(node.status) for node in results}
         log = "\n".join(self._log)
         if result.exception is not None:
             log = f"{log}\n{result.exception}"
-        return Invocation(success=result.success, statuses=statuses, log=log[-8000:])
+        return Invocation(success=result.success, statuses=statuses, log=log[-8000:], status_by_node=status_by_node)
 
     def invoke(self, *args: str) -> Invocation:
         return self._invoke(*args)
@@ -448,7 +451,7 @@ def clear_stateful_link_inputs(warehouse: Warehouse) -> None:
     warehouse.execute("TRUNCATE TABLE IF EXISTS staging.jira__issue_link_snapshot")
 
 
-def _truncate_bronze(warehouse: Warehouse) -> None:
+def truncate_bronze(warehouse: Warehouse) -> None:
     # Spelled out rather than looped over a tuple of names: a table name cannot
     # be bound as a parameter, so a loop would have to format the statement, and
     # a formatted SQL string is the shape the security gate rejects on sight.
@@ -458,6 +461,8 @@ def _truncate_bronze(warehouse: Warehouse) -> None:
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_statuses")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_comments")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_keys")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_worklogs")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_worklog_deleted")
     clear_stateful_link_inputs(warehouse)
     warehouse.generation += 1
 
@@ -495,7 +500,7 @@ class Batch:
         return self.scenarios[test]
 
     def _build(self) -> None:
-        _truncate_bronze(self.warehouse)
+        truncate_bronze(self.warehouse)
         for name, scenario in self.scenarios.items():
             spec = self._cases[name]
             scenario.seed(
@@ -512,7 +517,7 @@ def _phased(warehouse: Warehouse, request: pytest.FixtureRequest) -> dict[str, B
         for item in request.session.items
         if isinstance(item, pytest.Function) and item.module is request.module and hasattr(item.obj, "phased")
     ]
-    _truncate_bronze(warehouse)
+    truncate_bronze(warehouse)
     try:
         return run_phased(
             items, lambda index: Scenario(warehouse, source=f"{SOURCE_ID}-phased-{index}"), warehouse.build
@@ -537,5 +542,5 @@ def scenario(warehouse: Warehouse, request: pytest.FixtureRequest, _batch: Batch
     """
     if hasattr(request.function, "case"):
         return _batch.scenario(request.function.__name__)
-    _truncate_bronze(warehouse)
+    truncate_bronze(warehouse)
     return Scenario(warehouse)
