@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   COMPARISONS,
   MAX_GROUP_DEPTH,

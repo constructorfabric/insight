@@ -8,13 +8,13 @@ import {
 } from "lucide-react";
 
 import type { DateRange } from "@/api/period-to-date-range";
-import { Button } from "@/components/ui/button";
 import {
+  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -89,16 +89,12 @@ export function TimeseriesExportMenu({
           <Button
             type="button"
             variant="outline"
-            size="icon-sm"
+            size="sm"
             aria-label="Export"
             title="Export"
-          >
-            {isExporting ? (
-              <Spinner className="size-4" />
-            ) : (
-              <Download className="size-4" />
-            )}
-          </Button>
+            icon={<Download className="size-4" />}
+            loading={isExporting}
+          />
         }
       />
       <DropdownMenuContent align="end">

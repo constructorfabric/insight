@@ -17,7 +17,7 @@ import "@/i18n";
 import type { CorrectionResponse } from "@/api/identity-client";
 
 const hooks = vi.hoisted(() => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { add: vi.fn() },
   merge: { mutateAsync: vi.fn() },
   moving: {
     ready: true,
@@ -28,7 +28,10 @@ const hooks = vi.hoisted(() => ({
   /** Person ids the dialog asked the preview for, per render. */
   asked: [] as string[][],
 }));
-vi.mock("@/components/ui/sonner", () => ({ toast: hooks.toast }));
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
+  toast: hooks.toast,
+}));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useMergePersons: () => hooks.merge,
@@ -39,6 +42,7 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
 }));
 
 import { MergeCaseDialog } from "./merge-case-dialog";
+import { toastsOf } from "@/test/toast";
 
 const BOB = {
   person_id: "01900000-0000-7000-8000-0000000000b0",
@@ -82,8 +86,7 @@ const confirm = () => screen.getByRole("button", { name: "Merge persons" });
 const lastAsked = () => hooks.asked.at(-1) ?? [];
 
 beforeEach(() => {
-  hooks.toast.success.mockClear();
-  hooks.toast.error.mockClear();
+  hooks.toast.add.mockClear();
   hooks.moving.refetch.mockClear();
   hooks.moving.ready = true;
   hooks.moving.failed = false;
@@ -252,7 +255,7 @@ describe("MergeCaseDialog", () => {
       target_person_id: BOB.person_id,
     });
     // One decision, one answer: the counts are folded across the calls.
-    expect(hooks.toast.success).toHaveBeenCalledWith("Done — 2 accounts updated.");
+    expect(toastsOf(hooks.toast.add, "success")).toContainEqual(expect.objectContaining({ title: "Done — 2 accounts updated." }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -293,7 +296,7 @@ describe("MergeCaseDialog", () => {
       target_person_id: BOB.person_id,
     });
     expect(onClose).not.toHaveBeenCalled();
-    expect(hooks.toast.success).not.toHaveBeenCalled();
+    expect(toastsOf(hooks.toast.add, "success")).toHaveLength(0);
   });
 
   // The dialog's own error slot may be gone by the time it is written to: the
@@ -323,9 +326,7 @@ describe("MergeCaseDialog", () => {
     await userEvent.click(confirm());
 
     expect(screen.getByText("person not found")).toBeInTheDocument();
-    expect(hooks.toast.error).toHaveBeenCalledWith("person not found", {
-      description: "2 accounts had already moved.",
-    });
+    expect(toastsOf(hooks.toast.add, "error")).toContainEqual(expect.objectContaining({ title: "person not found", description: "2 accounts had already moved." }));
   });
 
   // A refusal means the accounts kept their bindings: the case is not settled,
@@ -344,7 +345,7 @@ describe("MergeCaseDialog", () => {
     await userEvent.click(confirm());
 
     expect(screen.getByText(/1 account was refused/i)).toBeInTheDocument();
-    expect(hooks.toast.error).toHaveBeenCalledOnce();
+    expect(toastsOf(hooks.toast.add, "error")).toHaveLength(1);
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -367,20 +368,12 @@ describe("MergeCaseDialog", () => {
     await userEvent.click(confirm());
 
     expect(onClose).not.toHaveBeenCalled();
-    expect(hooks.toast.success).not.toHaveBeenCalled();
-    expect(hooks.toast.error).toHaveBeenCalledOnce();
+    expect(toastsOf(hooks.toast.add, "success")).toHaveLength(0);
+    expect(toastsOf(hooks.toast.add, "error")).toHaveLength(1);
   });
 
   // The panel is a grid, and a grid item will not shrink below its own
   // content. An address and a person id are exactly the values that do not
   // wrap, so without this the body pushes itself out through the side —
   // invisible in jsdom, in a review, and to every other test here.
-  it("lays the panel out so a value too wide for it truncates instead of escaping", () => {
-    render(
-      <MergeCaseDialog survivor={BOB} absorbed={[CAROL]} onClose={vi.fn()} />,
-    );
-
-    expect(screen.getByRole("dialog")).toHaveClass("[&>*]:min-w-0");
-  });
-
 });

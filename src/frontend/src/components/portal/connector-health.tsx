@@ -7,7 +7,12 @@ import type {
 } from "@/api/connector-health-client";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { Badge } from "@/components/ui/badge";
+import {
+  Badge,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@gears-frontx/ui-kit";
 import {
   Table,
   TableBody,
@@ -16,12 +21,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   UNMEASURED,
   SCHEDULE_HEADING,
@@ -235,31 +234,29 @@ function ScheduleCell({
       {schedule == null ? (
         UNMEASURED
       ) : (
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger
-              aria-describedby={tooltipId}
-              render={
-                <button type="button" className="cursor-help text-left" />
-              }
-            >
-              {nextRun?.text}
-            </TooltipTrigger>
-            <TooltipContent id={tooltipId} role="tooltip">
-              <div className="flex flex-col">
-                {schedule.crons.map((cron, index) => (
-                  <span key={index} className="block font-mono">
-                    {cron}
-                  </span>
-                ))}
-                <span className="block text-muted-foreground">
-                  {describeSchedule(schedule)}
+        <Tooltip>
+          <TooltipTrigger
+            aria-describedby={tooltipId}
+            render={
+              <button type="button" className="cursor-help text-left" />
+            }
+          >
+            {nextRun?.text}
+          </TooltipTrigger>
+          <TooltipContent id={tooltipId} role="tooltip">
+            <div className="flex flex-col">
+              {schedule.crons.map((cron, index) => (
+                <span key={index} className="block font-mono">
+                  {cron}
                 </span>
-                {nextRun?.detail != null && <span className="block">{nextRun.detail}</span>}
-              </div>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+              ))}
+              <span className="block text-muted-foreground">
+                {describeSchedule(schedule)}
+              </span>
+              {nextRun?.detail != null && <span className="block">{nextRun.detail}</span>}
+            </div>
+          </TooltipContent>
+        </Tooltip>
       )}
     </TableCell>
   );

@@ -3,7 +3,7 @@ import { Dialog as SheetPrimitive } from "@base-ui/react/dialog"
 import { useTranslation } from "react-i18next"
 
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
+import { Button } from "@gears-frontx/ui-kit"
 import { XIcon } from "lucide-react"
 
 function Sheet({ ...props }: SheetPrimitive.Root.Props) {
@@ -66,14 +66,12 @@ function SheetContent({
               <Button
                 variant="ghost"
                 className="absolute top-4 end-4"
-                size="icon-sm"
+                size="sm"
+                aria-label={t("common.actions.close")}
+                icon={<XIcon />}
               />
             }
-          >
-            <XIcon
-            />
-            <span className="sr-only">{t("common.actions.close")}</span>
-          </SheetPrimitive.Close>
+          />
         )}
       </SheetPrimitive.Popup>
     </SheetPortal>

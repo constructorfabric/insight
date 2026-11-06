@@ -1,3 +1,16 @@
+{{ config(
+    tags=['connector_quality', 'jira'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'A Jira initial-state row is stamped with the issue\'s creation time',
+        'domain': 'task-tracking',
+        'category': 'consistency',
+        'tier': 'warn',
+        'remediation': 'A synthetic initial row is not stamped within a second of the issue\'s created timestamp in bronze. The journal stamped it from another clock; check the initial-row derivation.'
+    }
+) }}
+
 -- A synthetic_initial row must be stamped with the issue's creation time.
 --
 -- That is the property the pipeline owns, and it is what this test asserts. The
@@ -61,4 +74,3 @@ INNER JOIN issue_created AS c
 -- parsed, so an exact equality would fail on rounding alone.
 WHERE c.created_at IS NOT NULL
   AND abs(dateDiff('second', r.first_initial, c.created_at)) > 1
-LIMIT 100

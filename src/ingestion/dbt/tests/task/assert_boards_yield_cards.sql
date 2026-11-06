@@ -1,3 +1,16 @@
+{{ config(
+    tags=['connector_quality', 'github'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'A GitHub source that read board fields and card events also read cards',
+        'domain': 'task-tracking',
+        'category': 'completeness',
+        'tier': 'warn',
+        'remediation': 'The source collected project fields and card status events but no project items, so every board-derived status is empty. Check that the project items stream is selected and that its last sync completed; a first partial sync can show this until the next one.'
+    }
+) }}
+
 -- The board card stream sweeps every board and keeps what it gets. A sweep that
 -- comes back empty is indistinguishable from a genuinely quiet week: GraphQL
 -- answers 200 whether the board is empty, the token lost its project scope, or
@@ -42,4 +55,3 @@ INNER JOIN board_events AS e
     ON e.tenant_id = b.tenant_id AND e.source_id = b.source_id
 LEFT ANTI JOIN cards AS c
     ON c.tenant_id = b.tenant_id AND c.source_id = b.source_id
-LIMIT 100

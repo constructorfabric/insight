@@ -6,7 +6,7 @@ import {
   SelectLabel,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@gears-frontx/ui-kit";
 import type { SliceDim } from "@/lib/insight/slices";
 import { PLANNED_SLICES } from "@/lib/insight/slices";
 import { NO_COHORT_REASON } from "@/lib/portal/cohort-options";

@@ -1,5 +1,5 @@
 import { NewDashboardButton } from "@/components/custom/create-dashboard-dialog";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   Empty,
   EmptyActions,

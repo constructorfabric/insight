@@ -6,9 +6,7 @@ import {
   selectedMembers,
   type MemberSelection,
 } from "@/components/portal/member-selection";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
+import { Button, Checkbox, Input } from "@gears-frontx/ui-kit";
 import {
   Popover,
   PopoverContent,
@@ -80,7 +78,7 @@ export function MemberFilter({
             <Button
               type="button"
               variant="ghost"
-              size="xs"
+              size="sm"
               onClick={() => onChange({ kind: "all" })}
             >
               All
@@ -88,7 +86,7 @@ export function MemberFilter({
             <Button
               type="button"
               variant="ghost"
-              size="xs"
+              size="sm"
               onClick={() =>
                 onChange({ kind: "selected", ids: new Set<string>() })
               }

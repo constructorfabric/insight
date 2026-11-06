@@ -7,7 +7,7 @@ import type {
 } from "@/api/ingestion-client";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   BarChart,
   CartesianGrid,

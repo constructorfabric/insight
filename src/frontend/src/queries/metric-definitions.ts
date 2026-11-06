@@ -140,9 +140,9 @@ export interface AvailableMetricKeys {
  * The metric keys this installation can actually serve.
  *
  * Callers use it to ask only for what exists — see
- * `filterCollectionToAvailable`. Disabled definitions are excluded: the backend
- * rejects them the same way it rejects an unknown key, and one rejected key
- * fails the whole request.
+ * `filterCollectionToAvailable`. Disabled definitions and definitions the
+ * validator put in schema error are excluded: the backend rejects both the same
+ * way it rejects an unknown key, and one rejected key fails the whole request.
  *
  * `isPending` exists because firing an unfiltered request "just for now" is not
  * free: it is exactly the 400 this gate removes, so a caller waits for the
@@ -160,7 +160,9 @@ export function useAvailableMetricKeys(): AvailableMetricKeys {
     () =>
       data
         ? new Set(
-            data.metrics.filter((m) => m.is_enabled).map((m) => m.metric_key)
+            data.metrics
+              .filter((m) => m.is_enabled && m.schema_status !== "error")
+              .map((m) => m.metric_key)
           )
         : null,
     [data]

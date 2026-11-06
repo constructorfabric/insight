@@ -9,14 +9,14 @@ import {
 } from "@/api/custom-client";
 import { CustomWidget } from "@/components/custom/custom-widget";
 import { WidgetDrilldown } from "@/components/custom/widget-drilldown";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
+  Badge,
+  Button,
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@gears-frontx/ui-kit";
 import { dashboardWidgetResultQuery } from "@/queries/custom";
 import { useIsAdmin } from "@/queries/identity-me";
 

@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 
 interface ReportBuilderActionsProps {
@@ -59,8 +59,8 @@ export function ReportBuilderActions({
           Clear
         </Button>
         {running ? (
-          <Button type="button" variant="outline" onClick={onCancel}>
-            <X className="size-4" /> Cancel
+          <Button type="button" variant="outline" onClick={onCancel} icon={<X className="size-4" />}>
+            Cancel
           </Button>
         ) : null}
         <Button

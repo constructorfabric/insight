@@ -9,9 +9,7 @@ import { useState } from "react";
 import type { Experiment } from "@/api/previews-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Button, Input, Label } from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
@@ -158,9 +156,10 @@ function CreateExperimentForm() {
         </div>
         <Button
           type="submit"
-          disabled={!name.trim() || !tag.trim() || create.isPending}
+          disabled={!name.trim() || !tag.trim()}
+          icon={<Plus />}
+          loading={create.isPending}
         >
-          {create.isPending ? <Spinner /> : <Plus />}
           Create
         </Button>
       </div>
@@ -274,8 +273,8 @@ function ExperimentList() {
                           aria-label={`Open experiment ${experiment.name}`}
                         />
                       }
+                      icon={<ExternalLink />}
                     >
-                      <ExternalLink />
                       Open
                     </Button>
                     <Button

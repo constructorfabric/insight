@@ -27,8 +27,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
+  Input,
+} from "@gears-frontx/ui-kit";
 import { PaneGroupLabel } from "@/components/portal/pane-group-label";
 import {
   SidebarGroup,

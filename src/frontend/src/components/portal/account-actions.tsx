@@ -43,7 +43,7 @@ import { OutcomeAlert } from "@/components/portal/outcome-alert";
 import { PersonCell } from "@/components/portal/person-cell";
 import { PersonId } from "@/components/portal/person-id";
 import { PersonPicker } from "@/components/portal/person-picker";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { useCorrectionReport } from "@/hooks/use-correction-report";
 import type { AccountRef } from "@/lib/identities/account-key";
 import { apiErrorReason } from "@/lib/query-console/api-error";
@@ -198,7 +198,7 @@ export function AccountActions({
             {confirmable ? (
               <Button
                 type="button"
-                size="xs"
+                size="sm"
                 disabled={busy}
                 onClick={() =>
                   boundCard && setAction({ kind: "bind", person: boundCard })
@@ -224,7 +224,7 @@ export function AccountActions({
                 <PersonCell person={candidate} className="min-w-0 flex-1" />
                 <Button
                   type="button"
-                  size="xs"
+                  size="sm"
                   variant="outline"
                   disabled={busy}
                   onClick={() => setAction({ kind: "bind", person: candidate })}

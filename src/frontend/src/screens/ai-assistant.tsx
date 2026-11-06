@@ -9,7 +9,7 @@
 import { Lock, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { Button, Input, Textarea } from "@gears-frontx/ui-kit";
 import {
   Card,
   CardContent,
@@ -17,8 +17,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { useIsAdmin } from "@/queries/identity-me";
 import {
   useAiConfig,
@@ -336,9 +334,8 @@ function ContextCard({
                     variant="ghost"
                     aria-label={`Delete ${entry.title}`}
                     onClick={() => remove.mutate(entry.id)}
-                  >
-                    <Trash2 className="size-4" aria-hidden />
-                  </Button>
+                    icon={<Trash2 className="size-4" aria-hidden />}
+                  />
                 ) : null}
               </li>
             ))}
@@ -381,8 +378,7 @@ function ContextCard({
 
         {canWrite && !adding ? (
           <div>
-            <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
-              <Plus className="size-4" aria-hidden />
+            <Button size="sm" variant="outline" onClick={() => setAdding(true)} icon={<Plus className="size-4" aria-hidden />}>
               Add entry
             </Button>
           </div>

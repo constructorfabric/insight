@@ -3,7 +3,7 @@ import { Pencil } from "lucide-react";
 
 import type { DashboardAccess } from "@/api/custom-client";
 import { DashboardMenu } from "@/components/custom/dashboard-menu";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 

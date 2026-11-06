@@ -12,18 +12,17 @@ import {
 import type { PersonSummary } from "@/api/identity-client";
 import { refusal } from "@/components/custom/refusal";
 import { VisibilityField } from "@/components/custom/visibility-field";
-import { Button } from "@/components/ui/button";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { toast } from "@/components/ui/sonner";
-import { Spinner } from "@/components/ui/spinner";
+  toast,
+  Input,
+  Label,
+} from "@gears-frontx/ui-kit";
 import { askAssistant } from "@/lib/custom/assistant-draft";
 import { audienceChosen, granteesFor } from "@/lib/custom/initial-grants";
 import { useAssistantAvailable } from "@/lib/portal/use-assistant-available";
@@ -170,9 +169,10 @@ export function CreateDashboardDialog({
       });
       close();
       if (made.shareFailure !== null) {
-        toast.error(
-          refusal(made.shareFailure.refused, "Created, but couldn't share it.")
-        );
+        toast.add({
+          type: "error",
+          title: refusal(made.shareFailure.refused, "Created, but couldn't share it."),
+        });
       }
       void navigate({ to: "/portal/custom/$name", params: { name: made.id } });
     } catch (failure) {
@@ -259,10 +259,10 @@ export function CreateDashboardDialog({
             </Button>
             <Button
               type="button"
-              disabled={!ready || pending}
+              disabled={!ready}
               onClick={() => void submit()}
+              loading={pending}
             >
-              {pending ? <Spinner className="size-3" /> : null}
               Create
             </Button>
           </DialogFooter>

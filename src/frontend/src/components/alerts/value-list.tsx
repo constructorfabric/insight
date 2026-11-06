@@ -5,7 +5,7 @@ import {
   ComboboxChip,
   ComboboxChips,
   ComboboxChipsInput,
-} from "@/components/ui/combobox";
+} from "@gears-frontx/ui-kit";
 import { withListValues } from "@/lib/alerts/condition";
 import { saidId } from "@/lib/custom/editor/aria";
 import { TEXT_LABEL } from "@/lib/type-scale";

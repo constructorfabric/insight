@@ -101,95 +101,156 @@
   "whats_new": {
     "nav_label": "What's new",
     "eyebrow": "Insight · What's new",
-    "title": "What's new · 31 August 2026",
+    "title": "What's new · November 2026",
     "stamp": {
       "release_label": "Release",
-      "release": "26.08",
-      "highlights_label": "Highlights",
-      "highlights": "13 improvements",
-      "focus_label": "Focus",
-      "focus": "more data coming in, and the new UI over it"
+      "release": "26.11"
     },
     "improvements_label": "Improvements you'll notice",
+    "other_changes": {
+      "label": "Other changes and fixes",
+      "items": {
+        "expand_widget": "Added an expanded view for widgets.",
+        "dashboard_range": "Added a time range picker to each custom dashboard.",
+        "collab_names": "Gave Collaboration metrics clearer names: Focus Time is now Time Outside Meetings, and Email Read Actions is now Email Read Events.",
+        "meeting_kinds": "Split Meetings by kind and removed the Scheduled and Ad-hoc Meetings cards."
+      }
+    },
     "sections": {
-      "new_ui": {
-        "title": "New UI"
-      },
-      "git": {
-        "title": "Git"
+      "dashboards": {
+        "title": "Dashboards"
       },
       "connectors": {
         "title": "Connectors"
       },
-      "identity": {
-        "title": "Identity"
+      "ai_cost": {
+        "title": "AI & Cost"
       },
-      "data_health": {
-        "title": "Data health"
+      "collaboration": {
+        "title": "Collaboration"
       },
-      "reports": {
-        "title": "Reports"
-      },
-      "sign_in": {
-        "title": "Sign-in"
+      "new_ui": {
+        "title": "New UI"
       }
     },
     "items": {
-      "new_pages": {
-        "title": "The pages the portal has now",
-        "description_html": "The portal replaced the old sidebar app. It holds Overview, Directions, Person, People, AI & Cost and a Report builder, plus a Manage area with the Metric catalog, Connector health, Identities and Platform usage."
+      "build_dashboards": {
+        "title": "Custom dashboards",
+        "description_html": "Build custom metrics, widgets and dashboards through MCP, from any table in the warehouse. Share them to view or edit, and organize them with folders and tags. Building requires administrator access."
       },
-      "drilldown": {
-        "title": "See the records behind a number",
-        "description_html": "Drill-down was added: open a metric and see the commits, pull requests and tasks behind the number."
+      "allure": {
+        "title": "Allure TestOps",
+        "description_html": "New connector: test launches, results, test cases, failure categories and defects, each linked back to Allure."
       },
-      "git_proxy": {
-        "title": "Git data comes through our own proxy",
-        "description_html": "Git collection ran through the vendor connector and gave out on big repositories. It now goes through our own proxy, which handles larger repositories."
+      "youtrack": {
+        "title": "YouTrack",
+        "description_html": "Issues, sprints, comments, worklogs and field history now count in task metrics, like Jira and GitHub."
       },
-      "default_branch": {
-        "title": "Git output split by what reached the default branch",
-        "description_html": "Commits and lines counted everything pushed anywhere, so abandoned work read like delivered work. Every Git total is now paired with how much of it reached the default branch."
+      "gitlab": {
+        "title": "GitLab",
+        "description_html": "Rebuilt on the git proxy, like GitHub and Bitbucket. Adds line counts, CI pipelines and jobs, and deployments."
       },
-      "bamboohr": {
-        "title": "BambooHR: every custom field, without naming them",
-        "description_html": "Custom fields had to be configured one by one. They now come across on their own, and the sync completes on the fields the API key can read instead of failing on the ones it cannot."
+      "codex_credits": {
+        "title": "Codex spend",
+        "description_html": "Extra usage cost now includes Codex, at the credit price you set."
       },
-      "jira": {
-        "title": "Jira: the whole data set, not just open issues",
-        "description_html": "Collection now covers deleted and trashed issues, projects access was lost to, deleted worklogs, custom fields, board columns and estimation fields, and project leads. A deletion and a lost permission used to look the same — both silence — and are now told apart."
+      "meetings_once": {
+        "title": "Meeting counts",
+        "description_html": "Teams and Zoom meeting counts are now consistent, and a Zoom meeting joined from two addresses counts once. Zoom participants who join without signing in are matched to a person by display name, or kept for an administrator to match in Identities."
       },
-      "github": {
-        "title": "GitHub: issues, boards and file-level changes",
-        "description_html": "The GitHub connector was rebuilt. It now collects Issues and Projects V2 boards as task delivery, and file-level changes identified by their content."
+      "rail": {
+        "title": "New sidebar",
+        "description_html": "Six sections: Home, Dashboards, Explore, People, Reports and Manage. Directions and AI & Cost are under Explore, Person and People under People. Old links still work."
       },
-      "bitbucket": {
-        "title": "Bitbucket: moved onto the git proxy",
-        "description_html": "The Bitbucket connector was replaced. It reads through the git proxy now, and repositories can be left out by name pattern."
-      },
-      "claude_team": {
-        "title": "Claude Team: seats and spend collected",
-        "description_html": "Claude Team is now a connector like any other. Seats, per-person usage and the billed spend arrive on their own sync."
-      },
-      "identity_resolution": {
-        "title": "Identity resolution",
-        "description_html": "One person turns up as several accounts — GitHub, Jira, BambooHR, Claude — and their work was counted as several people. Those accounts are now matched to one person, and where the match is not certain an operator decides it under Manage → Identities."
-      },
-      "data_health": {
-        "title": "Data health — when each source last synced",
-        "description_html": "Nothing said whether the data behind a chart was current. Connector health lists each source with the state of its last sync, so a connector that stalled says so instead of going quiet."
-      },
-      "reports": {
-        "title": "Take any metric away as a file",
-        "description_html": "A new Report builder lets you pick the metrics, the people and the period, and download the result as CSV or Excel."
-      },
-      "github_login": {
-        "title": "Sign in with GitHub",
-        "description_html": "Getting into Insight meant being provisioned first. GitHub sign-in works now."
+      "home": {
+        "title": "Home",
+        "description_html": "Opens for everyone with your own metrics, attention list and recent dashboards. Managers switch between Me and My team."
       }
     },
     "history_label": "Earlier releases",
     "history": {
+      "release_2026_08_31": {
+        "title": "What's new — 31 August 2026",
+        "release": "26.08",
+        "summary": "13 improvements · more data coming in, and the new UI over it",
+        "sections": {
+          "new_ui": {
+            "title": "New UI"
+          },
+          "git": {
+            "title": "Git"
+          },
+          "connectors": {
+            "title": "Connectors"
+          },
+          "identity": {
+            "title": "Identity"
+          },
+          "data_health": {
+            "title": "Data health"
+          },
+          "reports": {
+            "title": "Reports"
+          },
+          "sign_in": {
+            "title": "Sign-in"
+          }
+        },
+        "items": {
+          "new_pages": {
+            "title": "The pages the portal has now",
+            "description_html": "The portal replaced the old sidebar app. It holds Overview, Directions, Person, People, AI & Cost and a Report builder, plus a Manage area with the Metric catalog, Connector health, Identities and Platform usage."
+          },
+          "drilldown": {
+            "title": "See the records behind a number",
+            "description_html": "Drill-down was added: open a metric and see the commits, pull requests and tasks behind the number."
+          },
+          "git_proxy": {
+            "title": "Git data comes through our own proxy",
+            "description_html": "Git collection ran through the vendor connector and gave out on big repositories. It now goes through our own proxy, which handles larger repositories."
+          },
+          "default_branch": {
+            "title": "Git output split by what reached the default branch",
+            "description_html": "Commits and lines counted everything pushed anywhere, so abandoned work read like delivered work. Every Git total is now paired with how much of it reached the default branch."
+          },
+          "bamboohr": {
+            "title": "BambooHR: every custom field, without naming them",
+            "description_html": "Custom fields had to be configured one by one. They now come across on their own, and the sync completes on the fields the API key can read instead of failing on the ones it cannot."
+          },
+          "jira": {
+            "title": "Jira: the whole data set, not just open issues",
+            "description_html": "Collection now covers deleted and trashed issues, projects access was lost to, deleted worklogs, custom fields, board columns and estimation fields, and project leads. A deletion and a lost permission used to look the same — both silence — and are now told apart."
+          },
+          "github": {
+            "title": "GitHub: issues, boards and file-level changes",
+            "description_html": "The GitHub connector was rebuilt. It now collects Issues and Projects V2 boards as task delivery, and file-level changes identified by their content."
+          },
+          "bitbucket": {
+            "title": "Bitbucket: moved onto the git proxy",
+            "description_html": "The Bitbucket connector was replaced. It reads through the git proxy now, and repositories can be left out by name pattern."
+          },
+          "claude_team": {
+            "title": "Claude Team: seats and spend collected",
+            "description_html": "Claude Team is now a connector like any other. Seats, per-person usage and the billed spend arrive on their own sync."
+          },
+          "identity_resolution": {
+            "title": "Identity resolution",
+            "description_html": "One person turns up as several accounts — GitHub, Jira, BambooHR, Claude — and their work was counted as several people. Those accounts are now matched to one person, and where the match is not certain an operator decides it under Manage → Identities."
+          },
+          "data_health": {
+            "title": "Data health — when each source last synced",
+            "description_html": "Nothing said whether the data behind a chart was current. Connector health lists each source with the state of its last sync, so a connector that stalled says so instead of going quiet."
+          },
+          "reports": {
+            "title": "Take any metric away as a file",
+            "description_html": "A new Report builder lets you pick the metrics, the people and the period, and download the result as CSV or Excel."
+          },
+          "github_login": {
+            "title": "Sign in with GitHub",
+            "description_html": "Getting into Insight meant being provisioned first. GitHub sign-in works now."
+          }
+        }
+      },
       "release_2026_07_31": {
         "title": "What's new — 31 July 2026",
         "release": "0.4.69",
@@ -289,7 +350,7 @@
         }
       }
     },
-    "footer": "Insight · what's new · 31 August 2026"
+    "footer": "Insight · what's new · November 2026"
   },
   "auth": {
     "loginFailedAccessDenied": "Your account is not authorized to access this application. Contact your administrator if you believe this is a mistake.",

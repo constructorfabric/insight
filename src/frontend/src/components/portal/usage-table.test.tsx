@@ -7,13 +7,15 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { openTooltip } from "@/test/tooltip";
+
 import { TruncatedCell, VirtualTable, type Column } from "./usage-table";
 
 async function popupFor(trigger: string) {
   await userEvent.hover(screen.getByText(trigger));
 
   return waitFor(() => {
-    const popup = document.querySelector('[data-slot="tooltip-content"]');
+    const popup = openTooltip();
     if (!popup) throw new Error("the tooltip has not opened");
     return popup;
   });

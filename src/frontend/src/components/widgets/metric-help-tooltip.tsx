@@ -3,9 +3,8 @@ import type { ReactElement } from "react";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
 import { cn } from "@/lib/utils";
 
@@ -14,22 +13,11 @@ export interface MetricHelpTooltipProps {
   help: MetricHelpText | null;
   /** The metric's full name, for a surface that shortens or may cut it. */
   name?: string;
-  /** The surface itself becomes the trigger — see the note below. */
+  /** The metric's name as the surface writes it: the trigger. */
   children: ReactElement;
 }
 
-/** Long enough that sweeping the mouse across a row of tiles stays quiet. */
-const HOVER_DELAY_MS = 400;
-
-/**
- * What a metric means, on the surface that shows it.
- *
- * The TRIGGER is the whole tile or row rather than a help icon beside the
- * name. A row of five tiles would otherwise grow five more icons — and the
- * tile is already a button, so making it the trigger costs no new tab stop
- * and answers a keyboard reader on focus, which a hover-only badge never
- * does.
- */
+/** What a metric means, on the name that shows it. */
 export function MetricHelpTooltip({
   help,
   name,
@@ -37,23 +25,22 @@ export function MetricHelpTooltip({
 }: MetricHelpTooltipProps) {
   // Nothing to say ⇒ the surface renders unchanged, with no dead affordance.
   if (!help && !name) return children;
+
   return (
-    <TooltipProvider delay={HOVER_DELAY_MS}>
-      <Tooltip>
-        <TooltipTrigger render={children} />
-        <TooltipContent
-          data-testid="metric-help"
-          side="top"
-          className="flex-col items-start gap-1.5 text-left text-sm leading-relaxed"
-        >
-          {name ? <p className="font-medium">{name}</p> : null}
-          {help?.description ? <p>{help.description}</p> : null}
-          {help?.explanation ? (
-            <p className="text-background/70">{help.explanation}</p>
-          ) : null}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipContent
+        data-testid="metric-help"
+        side="top"
+        className="flex-col items-start gap-1.5 text-left text-sm leading-relaxed"
+      >
+        {name ? <p className="font-medium">{name}</p> : null}
+        {help?.description ? <p>{help.description}</p> : null}
+        {help?.explanation ? (
+          <p className="text-background/70">{help.explanation}</p>
+        ) : null}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

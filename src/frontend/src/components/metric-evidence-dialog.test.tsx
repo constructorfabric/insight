@@ -88,7 +88,8 @@ vi.mock("@/components/metric-evidence-table", () => ({
   },
 }));
 
-vi.mock("@/components/ui/dialog", () => ({
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
   Dialog: ({
     children,
     onOpenChange,
@@ -110,14 +111,6 @@ vi.mock("@/components/ui/dialog", () => ({
     <div>{children}</div>
   ),
   DialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
-}));
-
-vi.mock("@tanstack/react-router", async () => {
-  const { portalRouterMock } = await import("@/test/portal-router");
-  return portalRouterMock();
-});
-
-vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -136,9 +129,6 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
       {children}
     </button>
   ),
-}));
-
-vi.mock("@/components/ui/select", () => ({
   Select: ({
     children,
     onValueChange,
@@ -167,6 +157,11 @@ vi.mock("@/components/ui/select", () => ({
     <span>{children}</span>
   ),
 }));
+
+vi.mock("@tanstack/react-router", async () => {
+  const { portalRouterMock } = await import("@/test/portal-router");
+  return portalRouterMock();
+});
 
 const selection = {
   metric_key: "git.commits",

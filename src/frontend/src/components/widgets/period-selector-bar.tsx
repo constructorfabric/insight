@@ -10,7 +10,12 @@ import {
   validateDateRange,
   type DateRange,
 } from "@/api/period-to-date-range";
-import { Button } from "@/components/ui/button";
+import {
+  Button,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@gears-frontx/ui-kit";
 import { Calendar } from "@/components/ui/calendar";
 import {
   Popover,
@@ -18,12 +23,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import type { CustomRange, PeriodValue } from "@/types/insight";
 
 function parseIso(iso: string): Date {
@@ -177,27 +176,25 @@ export function PeriodSelectorBar({
                 {/* The range spells out to ~140px; below `sm` the calendar icon
                     stands in for it and the popover shows the actual dates. */}
                 <span className="hidden sm:inline">{activeRangeLabel}</span>
-                <TooltipProvider delay={200}>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span
-                          className="rounded bg-muted px-1 py-px text-xs font-semibold tracking-wider text-muted-foreground uppercase"
-                          aria-label="Days are counted in UTC"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          UTC
-                        </span>
-                      }
-                    />
-                    <TooltipContent
-                      side="bottom"
-                      className="max-w-xs text-xs leading-relaxed"
-                    >
-                      All dates here are bucketed by UTC midnight.
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        className="rounded bg-muted px-1 py-px text-xs font-semibold tracking-wider text-muted-foreground uppercase"
+                        aria-label="Days are counted in UTC"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        UTC
+                      </span>
+                    }
+                  />
+                  <TooltipContent
+                    side="bottom"
+                    className="max-w-xs text-xs leading-relaxed"
+                  >
+                    All dates here are bucketed by UTC midnight.
+                  </TooltipContent>
+                </Tooltip>
               </ToggleGroupItem>
             }
           />
