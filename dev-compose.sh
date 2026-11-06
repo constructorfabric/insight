@@ -2068,6 +2068,22 @@ test_stand_ch_query() {
           "http://localhost:${ch_port}/" 2>/dev/null || true)"
 }
 
+test_stand_seed_connector_schedules() {
+  local ch_port ch_user ch_pass
+  ch_port="$(test_stand_published_port CLICKHOUSE_HTTP_PORT)" || return 1
+  ch_user="$(env_file_value "$TEST_STAND_ENV_FILE" CLICKHOUSE_USER)"
+  ch_pass="$(env_file_value "$TEST_STAND_ENV_FILE" CLICKHOUSE_PASSWORD)"
+  : "${ch_user:?CLICKHOUSE_USER must be set in the stand env file}"
+  : "${ch_pass:?CLICKHOUSE_PASSWORD must be set in the stand env file}"
+  curl --fail --silent --show-error -u "${ch_user}:${ch_pass}" \
+    --data-binary "@$ROOT_DIR/tests/stand/fixtures/connector-schedules.sql" \
+    "http://localhost:${ch_port}/" || return 1
+  docker compose --project-name "$(compose_project_name "$COMPOSE_INSTANCE")" \
+    --env-file "$TEST_STAND_ENV_FILE" -f "$ROOT_DIR/docker-compose.yml" \
+    exec -T mariadb sh -c 'MYSQL_PWD="$MARIADB_PASSWORD" exec mariadb --user="$MARIADB_USER" analytics' \
+    < "$ROOT_DIR/tests/stand/fixtures/connector-schedule-acknowledgements.sql"
+}
+
 # 0 when `table` was rebuilt during this run AND carries a positive observation.
 # Otherwise non-zero, echoing which half failed.
 #
@@ -2386,6 +2402,8 @@ cmd_test_stand() {
       # Re-seed explicitly now that the env file is complete.
       cmd_seed --env-file "$TEST_STAND_ENV_FILE" all || return 1
 
+      test_stand_seed_connector_schedules || return 1
+
       test_stand_wait_ready "$run_started_at" || return 1
 
       echo "=== test-stand is ready ==="
@@ -2439,7 +2457,8 @@ cmd_test_stand() {
     seed)
       [[ -f "$TEST_STAND_ENV_FILE" ]] || {
         echo "ERROR: $TEST_STAND_ENV_FILE not found — run: ./dev-compose.sh test-stand up" >&2; return 1; }
-      cmd_seed --env-file "$TEST_STAND_ENV_FILE" "${@:-all}"
+      cmd_seed --env-file "$TEST_STAND_ENV_FILE" "${@:-all}" || return 1
+      test_stand_seed_connector_schedules
       ;;
 
     test)

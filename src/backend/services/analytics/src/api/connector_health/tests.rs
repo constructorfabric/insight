@@ -50,8 +50,46 @@ fn the_summary_contract_describes_the_recorded_schedule() -> Result<(), Box<dyn 
     );
     assert_eq!(
         schemas["ScheduleOrigin"]["enum"],
-        serde_json::json!(["annotation", "descriptor", "default"])
+        serde_json::json!(["api", "annotation", "descriptor", "default"])
     );
+    assert_eq!(
+        schemas["ConnectorHealth"]["properties"]["schedule_request"]["oneOf"][1]["$ref"],
+        "#/components/schemas/ScheduleRequestState"
+    );
+    assert_eq!(
+        schemas["RecordedSchedule"]["properties"]["observed_at"]["format"],
+        "date-time"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn health_responses_serialize_nullable_and_acknowledged_request_facts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let response: ConnectorHealthResponse = serde_json::from_value(serde_json::json!({
+        "as_of": "2026-01-15T13:00:00Z", "history_available": true,
+        "connectors": [
+            {"connector": "example-tracker", "configured": true, "schedule_request": {
+                "crons": [], "revision": 2, "status": "error", "applied": null, "inherited": null, "updated_at": "2026-01-15T12:00:00Z",
+                "updated_by": "00000000-0000-4000-8000-000000000001", "error": {"attempted_revision": 2, "attempted_at": "2026-01-15T12:45:00Z", "message": "synthetic failure"}
+            }},
+            {"connector": "example-directory", "configured": true}
+        ]
+    }))?;
+    let response = Json(response).into_response();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 65536).await?;
+    let body: serde_json::Value = serde_json::from_slice(&bytes)?;
+    assert_eq!(
+        body["connectors"][0]["schedule_request"]["crons"],
+        serde_json::json!([])
+    );
+    assert_eq!(body["connectors"][0]["schedule_request"]["status"], "error");
+    assert_eq!(
+        body["connectors"][0]["schedule_request"]["error"]["attempted_at"],
+        "2026-01-15T12:45:00Z"
+    );
+    assert!(body["connectors"][1]["schedule_request"].is_null());
     Ok(())
 }
 

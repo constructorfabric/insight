@@ -45,7 +45,9 @@ pub async fn get_connector_health(
 
     let facts = read_health(&state.ch).await.map_err(read_error)?;
 
-    Ok(Json(ConnectorHealthResponse::from_facts(facts, Utc::now())))
+    let mut response = ConnectorHealthResponse::from_facts(facts, Utc::now());
+    crate::domain::connector_schedules::enrich_health(&state.db, &mut response).await;
+    Ok(Json(response))
 }
 
 pub async fn get_connector_syncs(

@@ -40,6 +40,7 @@ SOME_ACCOUNT_ID: Final[str] = "stand-in-account"
 #: hyphens and refuses anything else, so a stand-in outside that shape would be
 #: refused before the gate under test was reached.
 SOME_CONNECTOR: Final[str] = "stand-in-connector"
+SOME_SOURCE_ID: Final[str] = "stand-in-source"
 
 #: Stand-in for `{metric_key}`, which is a dotted `family.name` string rather
 #: than a UUID. Kept a DOTTED key on purpose: the literal `export`/`import`
@@ -56,6 +57,7 @@ _PARAMETERS: Final[dict[str, str]] = {
     SOME_METRIC_KEY: "{metric_key}",
     SOME_ACCOUNT_ID: "{account_id}",
     SOME_CONNECTOR: "{connector}",
+    SOME_SOURCE_ID: "{source_id}",
 }
 
 
@@ -147,6 +149,9 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     # Connector health. Both are `.authenticated()` at the edge with the
     # operator gate inside the handler, so the refusal is invisible here and
     # asserted in test_connector_health.py.
+    _a("GET", f"/v1/connectors/{SOME_CONNECTOR}/{SOME_SOURCE_ID}/schedule"),
+    _a("PUT", f"/v1/connectors/{SOME_CONNECTOR}/{SOME_SOURCE_ID}/schedule"),
+    _a("DELETE", f"/v1/connectors/{SOME_CONNECTOR}/{SOME_SOURCE_ID}/schedule"),
     _a("GET", "/v1/connector-health"),
     _a("GET", f"/v1/connector-health/{SOME_CONNECTOR}/syncs"),
 )

@@ -163,7 +163,7 @@ reachable.
 - **Bronze schemas exist for every connector the build knows**, configured or not; storage
   presence alone cannot distinguish *never configured* from *configured and broken*. The
   recorded configured set provides that distinction.
-- **Sync schedules live in the cluster's workflow layer**, not in the mover; the mover cannot
+- **Applied sync schedules live in the cluster's workflow layer**, not in the mover; the mover cannot
   say when the next sync is due, only what its past jobs did.
 - **Freshness thresholds are declared per connector in transform-layer source definitions
   and have no runtime-readable form.** Until they do, the surface reports facts without
@@ -183,9 +183,12 @@ reachable.
 - The read surface: two admin endpoints and one portal page — per-connector summary and
   per-connector sync history.
 - Replacing the current Data health pane with this page.
+- Admin API management of each connector instance's requested sync schedule.
 
 ### 4.2 Out of Scope
 
+- **Tenant scoping** — schedule storage and reads use the instance identity without tenant
+  isolation; every install has one tenant.
 - **Whether a sync's data reached storage.** The page reports what the mover states it moved
   and does not verify it against storage. Pairing a self-report with an independent count
   requires measuring at sync time inside the ingestion pipeline, which this iteration does
@@ -307,6 +310,48 @@ cron expressions, the schedule is unknown. An empty recorded timezone means cont
 time. The API also serves the recorded schedule origin, which the page does not display;
 an empty or unknown origin remains unknown. The page's last-checked stamp dates these facts too.
 
+Analytics stores a requested schedule per `(connector, source_id)`. Admins set and clear it
+through the schedule API using `If-Match` to prevent overwriting a concurrent edit. Clearing
+requests inheritance. Requests survive instance removal; while
+absent, a stored row and its acknowledgement remain readable and clearable with the usual
+`If-Match` and revision rules, but PUT returns 404. A pair with neither configuration nor a
+stored row returns 404 on every verb. Membership still comes from the configured-instance
+record in the latest completed sync history pass. Ingestion reads requests directly from
+MariaDB through a `SQL SECURITY DEFINER` view, `connector_schedule_requests_v1`, exposing
+exactly `connector, source_id, revision, crons`, including clears. These columns are frozen;
+incompatible changes require a new version. No schedule reader HTTP endpoint is provided.
+An unchanged request preserves its revision and audit metadata; stale edits report the current
+revision. Invalid requests identify the expression and field to fix. Duplicate expressions and
+expressions that can never run under Argo's calendar rules are rejected. Schedules requested
+through this API are always UTC; the recorded applied response includes its observed timezone.
+The schedule API and health rows' `schedule_request` report status from one MariaDB
+acknowledgement record per instance, in this order:
+
+1. `inherited`: no request row or a cleared request, and no acknowledgement record.
+2. `error`: the latest attempt of the current requested revision failed.
+3. `pending`: no acknowledgement record or applied revision exists, or the requested revision exceeds the applied revision.
+4. `inherited`: no override remains, including an acknowledged clear.
+5. `applied`: the current override revision was verified.
+
+An older failed attempt never masks a newer pending save. The response carries acknowledged
+crons, timezone, origin, suspended state, revision and `observed_at`; the deployment fallback as
+`inherited: {crons, origin}`; and the last failure as
+`error: {attempted_revision, attempted_at, message}`. Missing acknowledgement records leave
+those fields unknown, never an invented default. Failed attempts retain the previous
+successful observation. Revision zero represents inheritance without a request row.
+
+Analytics migrates and reads acknowledgement records in this change. Ingestion writes them in
+the next change, after applying and reading back the CronWorkflow to verify identity, schedules,
+timezone and origin. Acknowledgements name the snapshot revision actually applied, even if a
+newer revision has since been saved. A clear becomes inherited after applying its fallback.
+
+Health enrichment joins requests and acknowledgements in one batched MariaDB read, including
+empty-cron clears and inherited instances without a request. An instance with a source id and
+no records gets an inherited state at revision zero with unknown observations and request
+metadata. A missing source id, a failed read or an undecodable stored row leaves
+`schedule_request` null for the affected rows, while sync facts stay readable. This state does not
+replace the health page's schedule from sync history.
+
 Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
 cron expressions read in UTC. A CronWorkflow applied before this change may have no
 timezone; its empty recorded value still means controller time.
@@ -361,6 +406,9 @@ connector's recorded applied schedule (FR-13). Where too few reads establish an 
 the page shows the age and says the cadence is unmeasured — it does not conclude that
 recording stopped, because with no cadence recorded there is nothing for the age to be late
 against.
+
+Applying requests through reconcile, its schedule precedence and read-failure policy are a
+separate change.
 
 ## 6. Non-Functional Requirements
 
@@ -449,6 +497,10 @@ unknown once the next sealed tick records its absence (FR-13). Otherwise, the ap
 start is a forecast from recorded expressions and timezone, not evidence of a run. The
 operator reads the gap from timestamps; the product computes no cadence and claims no
 intended schedule.
+
+An admin can request a different cadence or clear an override through the API (FR-13).
+The applied facts can differ from that request until the acknowledgement record reports the
+requested revision; FR-12 keeps the intended pass time separate from evidence of progress.
 
 ### UC-3 — A fresh install is read correctly
 

@@ -27,8 +27,8 @@
 Realises [PRD.md](PRD.md). Scoped addition to the
 [Analytics service design](../../DESIGN.md) on the read side and to the reconcile loop on the
 write side. Everything the parent design already specifies — the admin gate, error taxonomy,
-OpenAPI registration — applies unchanged; this document adds one table, one writer, two
-endpoints, and one portal pane.
+OpenAPI registration — applies unchanged; this document adds the sync history, requested
+schedule storage, API routes, and one portal pane.
 
 ## 1. Architecture Overview
 
@@ -47,7 +47,7 @@ metadata-only grant is not a reachable permission state. Widening the read-only 
 role to see bronze is not acceptable for a page that reports on it.
 
 What remains is a ledger: the reconcile loop reads the mover's job history on its own cadence
-and records what it found. The request path then touches one relation and nothing else, and
+and records what it found. The health request path then touches one relation and nothing else, and
 the page stays up when everything above it is down.
 
 The ledger buys a second thing the mover cannot: **history that outlives its source.** Delete
@@ -64,7 +64,7 @@ a connection in the mover and its job history goes with it; the ledger keeps six
 - First sweep backfills retained history (FR-3) — drives the watermark, whose empty state is
   what makes the first sweep read the mover's whole retained window.
 - The configured set is recorded (FR-4) — drives the sealed per-tick snapshot.
-- Facts, not verdicts (FR-7) — drives a wire shape that ships observations and no state enum.
+- Facts, not verdicts (FR-7) — drives a health wire shape that ships observations and no state enum.
 - The read path depends on nothing external (FR-11) — drives the single-relation read.
 - A stopped recorder is visible (FR-12) — drives serving the age of the last read beside the
   facts it produced.
@@ -205,7 +205,7 @@ column the reader and the writer will disagree about.
 | `records_reported` | the last attempt's count; NULL if it reported none | NULL | NULL |
 | `schedules` | empty array | live CronWorkflow `spec.schedules`; empty array if unreadable or missing | empty array |
 | `schedule_timezone` | empty | live CronWorkflow `spec.timezone`; empty if absent, unreadable or missing | empty |
-| `schedule_origin` | empty | live CronWorkflow annotation `insight.cyberfabric.com/schedule-origin` (`annotation`, `descriptor`, `default`); empty if absent, unreadable or missing | empty |
+| `schedule_origin` | empty | live CronWorkflow annotation `insight.cyberfabric.com/schedule-origin` (`api`, `annotation`, `descriptor`, `default`); empty if absent, unreadable or missing | empty |
 | `schedule_suspended` | false | live CronWorkflow `spec.suspend`; false if absent, unreadable or missing | false |
 
 Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
@@ -502,6 +502,16 @@ design.
         "origin": "annotation",
         "suspended": false
       },
+      "schedule_request": {
+        "crons": ["0 3 * * *"],
+        "status": "pending",
+        "updated_at": "2026-01-15T09:10:00Z",
+        "updated_by": "00000000-0000-4000-8000-000000000001",
+        "revision": 2,
+        "applied": null,
+        "inherited": null,
+        "error": null
+      },
       "last_sync": {
         "job_id": "8412",
         "status": "succeeded",
@@ -545,16 +555,32 @@ disagree, the generated one is right.
 
 Shape rules that the generated contract enforces:
 
+| Field | Type | Description |
+|---|---|---|
+| `schedule` | object or null | Applied schedule from the configured-instance records of the last completed pass. |
+| `schedule_request` | object or null | Request and acknowledgement record for `(connector, source_id)`; null when the instance has no source id or the read is unavailable. |
+| `schedule_request.crons` | array of strings | Requested UTC expressions; empty for a clear. |
+| `schedule_request.status` | string | `error`, `pending`, `inherited` or `applied`, using the same revision rules as the schedule API. |
+| `schedule_request.updated_at` | timestamp or null | Last real request change; null without a request row. |
+| `schedule_request.updated_by` | UUID string or null | Admin who made that change; null without a request row. |
+| `schedule_request.revision` | unsigned integer | Current requested revision, or zero without a request row. |
+| `schedule_request.applied` | object or null | Acknowledged crons, timezone, origin, suspended state, revision and `observed_at`. |
+| `schedule_request.inherited` | object or null | Deployment fallback crons and origin from the acknowledgement record. |
+| `schedule_request.error` | object or null | Last failed attempt: `attempted_revision`, `attempted_at`, `message`. |
+
 - **Nullable fields are always emitted.** No field is skipped when absent, so a client sees
   `null` rather than a missing key. The generated contract still marks them optional, which is
   what every other DTO on this service does — a lone shape with its own nullability convention
   would cost more than the looser contract does, since handling `null` handles both.
 - `last_sync` is null for a configured connector that has never synced.
+- Requests and acknowledgement records are joined in one batched MariaDB query for the whole
+  health response, including clears and inherited instances without request rows. A failed read
+  leaves every `schedule_request` null and keeps sync facts readable. Observations carry their own timestamps.
 - `schedule` is the applied schedule recorded in the newest sealed configured set, dated by
   `checked_at`, never an intended schedule. It is null outside that set or when its row has
   an empty `schedules` array, including rows predating those columns. Otherwise `crons` is
   the non-empty list as recorded; `timezone` is null for an empty recorded value, meaning
-  the Argo controller's timezone. `origin` is `annotation`, `descriptor`, or `default`, and
+  the Argo controller's timezone. `origin` is `api`, `annotation`, `descriptor`, or `default`, and
   null for an empty or unknown recorded value. `suspended` is an always-present boolean
   read from `schedule_suspended`, defaulting to false. No value is inferred (FR-13).
 - **`as_of` and `checked_at` are different clocks and both are needed.** `as_of` is when the
@@ -583,6 +609,75 @@ Shape rules that the generated contract enforces:
   is reachable, the read logs when it truncates rather than dropping rows silently. The cap
   applies to the merged answer, not only to the statement that reads the syncs: the summary is
   the union of two relations, and bounding one of them bounds nothing.
+
+The schedule request contract (FR-13, UC-2) adds admin-only
+`GET /v1/connectors/{connector}/{source_id}/schedule`, `PUT` and `DELETE`
+on the same path. A read returns `requested`, the recorded `applied` schedule, `revision`,
+`status`, `inherited` and `error`. Writes require a strong quoted revision in `If-Match`:
+missing is 428, malformed is 400, and a stale revision is 412. The comparison and write are
+atomic for every real change. A 412 includes the current revision in `context.revision` and
+as a strong quoted `ETag`. With a matching `If-Match`, a `PUT` equal to the stored ordered
+list after horizontal whitespace normalization, or a `DELETE` of an absent or already
+cleared request, returns 200 with the current state and revision without writing or updating
+audit metadata. Every real change advances the revision; concurrent real changes against
+the same revision have exactly one winner. Clearing retains the revision so an older edit
+cannot recreate an override unnoticed.
+Stored requests remain keyed by `(connector, source_id)` across removal and reconfiguration:
+GET and DELETE accept an unconfigured pair with a stored row (acknowledged observations,
+`If-Match` and revision rules), PUT still requires configuration, every verb returns the existing
+404 when both are absent. The configured-instance record in the latest completed sync history
+pass remains the membership check.
+
+`PUT` accepts only a JSON object containing `crons`, a list of one to ten distinct five-field
+UTC expressions (each at most 100 characters). Duplicates are compared after horizontal
+whitespace normalization. Invalid JSON, missing or mistyped fields, unknown fields and cron
+violations return canonical invalid-argument 400 responses with field violations. Unknown
+`timezone` explains that schedules are always UTC. Missing or wrong `Content-Type` returns
+a canonical 415 with detail that `application/json` is required. Cron violations name
+`crons[index]` (zero-based), the expression index and text, and the cron field by name;
+path violations name `connector` or `source_id`. A 404 identifies the requested
+`connector/source_id`, says it is not configured on this install, and directs the admin to
+Connector health for configured instances by connector and source id.
+
+Expressions that can never fire are rejected with a reason naming the impossible calendar
+condition. Calendar validation follows robfig/cron v3.0.1
+[`dayMatches`](https://github.com/robfig/cron/blob/v3.0.1/spec.go) and the
+[parser's star bit](https://github.com/robfig/cron/blob/v3.0.1/parser.go): a wildcard day field
+retains the star bit with no step or step 1, a larger step clears it, and list items combine
+bits. When either day field retains the star bit, both day fields must match; otherwise they
+are ORed. Under AND semantics, at least one listed day of month must exist in a listed
+month (February permits 29). An explicit full weekday range is restricted for this purpose.
+
+`requested` preserves request audit metadata, including empty-array clear tombstones.
+The schedule API and health rows' `schedule_request` derive status from the acknowledgement
+record in this order:
+
+| Order | Condition | Status |
+|---|---|---|
+| 1 | No request row or a cleared request, and no acknowledgement record | `inherited` |
+| 2 | `last_error` is present and `attempted_revision` equals the current requested revision | `error` |
+| 3 | No acknowledgement record, no applied revision, or the requested revision exceeds it | `pending` |
+| 4 | No override remains, including an acknowledged clear | `inherited` |
+| 5 | The current override revision has been verified | `applied` |
+
+A newer save remains pending even if its crons equal an older applied revision. An older failed
+attempt does not mask that pending save. A missing acknowledgement record leaves `applied`,
+`inherited` and `error` null; it never supplies an assumed default. With no request or a
+cleared request and no acknowledgement, status is `inherited` because the deployment
+schedule is not recorded yet. An override request with revision greater than zero and no
+acknowledgement remains `pending`.
+
+`applied` contains acknowledged `crons`, nullable `timezone`, `origin`, `suspended`, `revision`
+and `observed_at`. `inherited: {crons, origin}` is the deployment fallback from the same record.
+`error: {attempted_revision, attempted_at, message}` preserves the last failed attempt even
+when it belongs to an older revision.
+A failed attempt preserves the previous successful observation.
+
+Analytics only migrates and reads acknowledgement records. The next change adds the ingestion
+writer: after applying a CronWorkflow it reads it back and verifies identity, schedules,
+timezone and origin before advancing the applied revision and observation time. It acknowledges
+the snapshot revision it applied; a concurrent newer save stays pending. A clear applies the
+fresh deployment fallback before it is acknowledged. Full reconciliation uses the same writer.
 
 ### 3.4 Internal Dependencies
 
@@ -728,6 +823,44 @@ facts.
 
 ### 3.7 Database schemas & tables
 
+Analytics owns `connector_schedules` in its MariaDB database, keyed by
+`(connector, source_id)`, with requested cron expressions, revision, caller and update time.
+An empty retained row requests inheritance and still participates in revision checks.
+
+The analytics migrator creates all three relations in one forward migration,
+`m20261103_000001_connector_schedules`. The two additional relations are:
+
+- `connector_schedule_requests_v1` is a `SQL SECURITY DEFINER` view exposing exactly
+  `connector, source_id, revision, crons`, including clears. Its columns are frozen; an
+  incompatible change requires another version. Ingestion reads the view directly from MariaDB;
+  there is no schedule reader HTTP endpoint or service-principal reader role check in analytics.
+- `connector_schedule_acknowledgements` stores one acknowledgement record per
+  `(connector, source_id)`, using the request table's ASCII binary identity types, without a
+  foreign key. Nullable successful observation fields are `applied_revision` (unsigned bigint),
+  `applied_crons` (JSON array), `applied_timezone` (varchar 64), `applied_origin` (varchar 16),
+  `suspended` (boolean), and `observed_at` (datetime with millisecond precision). Deployment
+  fallback fields are `deployment_crons` (JSON array) and `deployment_origin` (varchar 16).
+  Attempt fields are `attempted_revision` (unsigned bigint), `attempted_at` (datetime with
+  millisecond precision), and nullable `last_error` (varchar 512). Revision zero represents
+  inheritance without a request row; an applied revision cannot exceed the attempted revision.
+  Origins are `api`, `annotation`, `descriptor`, or `default`; deployment fallback excludes `api`.
+  JSON-array, origin and revision CHECKs are registered with the startup probe.
+
+The following rows are synthetic examples. Each request is shown beside its acknowledgement;
+analytics derives the status using the rules in §3.3. An empty cron array is a clear.
+
+| Connector | Source ID | Request revision / crons | Applied revision / crons / origin | Attempted revision | Last error | Derived status |
+|---|---|---|---|---|---|---|
+| `example-hr` | `example-hr-main` | 29 / `["1 3 * * *"]` | 29 / `["1 3 * * *"]` / `api` | 29 | — | `applied` |
+| `example-tracker` | `main` | 3 / `["0 6 * * *"]` | 2 / `["0 4 * * *"]` / `api` | 2 | — | `pending` |
+| `example-chat` | `main` | 5 / `["0 */6 * * *"]` | 4 / `["0 3 * * *"]` / `api` | 5 | `schedule readback mismatch` | `error` |
+| `example-git` | `main` | 2 / `[]` | 2 / `["0 */4 * * *"]` / `descriptor` | 2 | — | `inherited` |
+| `example-wiki` | `main` | no request | 0 / `["0 4 * * *"]` / `descriptor` | 0 | — | `inherited` |
+
+The next change supplies ingestion's acknowledgement writer and narrow credentials: SELECT
+on the versioned view and INSERT/UPDATE on acknowledgements. Analytics does not write
+acknowledgements; tests and stand fixtures supply synthetic records in this change.
+
 #### `ingestion_history.sync_events`
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-dbtable-sync-events`
@@ -821,17 +954,22 @@ user and checks that `SELECT` is allowed while `INSERT`, `CREATE`, `DROP`, `TRUN
 | ledger table | ClickHouse migration, applied by the post-upgrade hook |
 | ledger grant | the query-path role's definition, applied by the same hook before the migrations |
 | sweep | the reconcile loop's existing image and CronWorkflow |
-| configuration | none — the sweep reuses the credentials the reconcile loop already holds |
-| two routes | analytics service |
+| health and schedule routes | analytics service |
+| requested schedules | analytics MariaDB migration |
 | pane | portal bundle |
 
 Nothing here adds a deployable unit. The sweep runs inside a controller that already exists,
-and the read surface is two more routes on a service that already serves the portal.
+and the API routes run on a service that already serves the portal.
+
+Applying stored requests through reconcile, its precedence and read-failure policy belong
+to the separate reconcile integration change.
 
 ## 4. Additional context
 
 ### 4.1 What was deliberately not built
 
+- **Tenant scoping.** The schedule key and reads have no tenant predicate; every install has one
+  tenant.
 - **Verifying that a sync's data reached storage.** It needs a measurement taken at sync
   time, inside the ingestion pipeline, against a window that has passed by the time a sweep
   runs. That puts recording code on the critical ingestion path, where a recorder appended

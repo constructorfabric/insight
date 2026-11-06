@@ -278,12 +278,19 @@ async fn the_ledger_reads_answer_from_real_rows() {
     let Some(ch) = client_or_skip() else { return };
     apply_migration(&ch, MIGRATION).await;
 
+    crate::domain::connector_schedules::live_tests::configured_instances_follow_the_latest_completed_tick(&ch)
+        .await
+        .expect("schedule sync history reads");
+
     let at = Stamps::fresh();
 
     schedules::a_configured_row_before_the_schedule_migration_reads_as_unknown(&ch, &at).await;
 
     truncate(&ch).await;
     schedules::configured_siblings_keep_their_own_schedules(&ch, &at).await;
+    crate::api::connector_schedule_health::assert_health_enrichment(&ch)
+        .await
+        .expect("health handler enriches schedule requests");
 
     truncate(&ch).await;
     schedules::the_newest_sealed_tick_supplies_the_schedule(&ch, &at).await;
