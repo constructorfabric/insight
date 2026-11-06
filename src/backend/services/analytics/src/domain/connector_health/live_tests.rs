@@ -288,6 +288,9 @@ async fn the_ledger_reads_answer_from_real_rows() {
 
     truncate(&ch).await;
     schedules::configured_siblings_keep_their_own_schedules(&ch, &at).await;
+    crate::api::connector_schedule_health::assert_health_enrichment(&ch)
+        .await
+        .expect("health handler enriches schedule requests");
 
     truncate(&ch).await;
     schedules::the_newest_sealed_tick_supplies_the_schedule(&ch, &at).await;

@@ -66,6 +66,11 @@ fn health_attaches_request_metadata_including_clears_and_inheritance() -> R {
         assert_eq!(state["inherited"]["origin"], "descriptor");
         let inherited_state = serde_json::to_value(&response.connectors[1].schedule_request)?;
         assert_eq!(inherited_state["status"], "inherited");
+        assert_eq!(
+            inherited_state["inherited"],
+            json!({"crons": ["0 5 * * *"], "origin": "descriptor"})
+        );
+        assert_eq!(inherited_state["applied"]["revision"], 0);
         assert!(inherited_state["updated_at"].is_null());
         assert_eq!(
             response.connectors[2]
@@ -148,5 +153,53 @@ async fn maria_failure_keeps_every_request_null_and_health_available() -> R {
             .all(|row| row.schedule_request.is_none())
     );
     assert_eq!(serde_json::to_value(&response)?, before);
+    Ok(())
+}
+
+#[test]
+fn health_enriches_unconfigured_instances_but_not_rows_without_a_source() -> R {
+    let mut response = health()?;
+    response.connectors[0].source_id = None;
+    response.connectors[1].configured = false;
+    attach(&mut response, &[]);
+    assert!(response.connectors[0].schedule_request.is_none());
+    let state = response.connectors[1]
+        .schedule_request
+        .as_ref()
+        .ok_or("unconfigured state missing")?;
+    assert_eq!(state.status, dto::ScheduleStatus::Inherited);
+    assert_eq!(state.revision, 0);
+    Ok(())
+}
+
+#[test]
+fn undecodable_stored_crons_only_hide_the_affected_request_state() -> R {
+    let mut response = health()?;
+    let mut valid = row(json!(["0 3 * * *"]));
+    valid.source_id = "second".to_owned();
+    let mut ack = acknowledgement();
+    ack.source_id = "second".to_owned();
+    attach(
+        &mut response,
+        &[
+            Snapshot {
+                request: Some(row(json!({}))),
+                acknowledgement: None,
+            },
+            Snapshot {
+                request: Some(valid),
+                acknowledgement: Some(ack),
+            },
+        ],
+    );
+    assert!(response.connectors[0].schedule_request.is_none());
+    let state = response.connectors[1]
+        .schedule_request
+        .as_ref()
+        .ok_or("valid state missing")?;
+    assert_eq!(state.crons, ["0 3 * * *"]);
+    assert_eq!(state.revision, 2);
+    assert_eq!(state.status, dto::ScheduleStatus::Applied);
+    assert!(response.connectors[2].schedule_request.is_some());
     Ok(())
 }

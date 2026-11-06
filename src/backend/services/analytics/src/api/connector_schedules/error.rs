@@ -148,6 +148,29 @@ mod tests {
         ] {
             let problem = serde_json::to_value(domain_error(error).problem)?;
             assert_eq!(problem["status"], status, "{problem}");
+            if status != 503 {
+                assert_eq!(
+                    problem["context"]["resource_type"],
+                    "gts.cf.insight.analytics_api.connector_schedule.v1~"
+                );
+            }
+            let kind = match status {
+                400 => "invalid_argument",
+                404 => "not_found",
+                409 | 412 | 428 => "failed_precondition",
+                503 => "service_unavailable",
+                _ => return Err("unexpected problem status".into()),
+            };
+            assert_eq!(
+                problem["type"],
+                format!("gts://gts.cf.core.errors.err.v1~cf.core.err.{kind}.v1~")
+            );
+            if status == 409 {
+                assert_eq!(
+                    problem["context"]["violations"][0]["type"],
+                    "EDIT_UNAVAILABLE"
+                );
+            }
             assert!(!problem.to_string().contains("synthetic private error"));
         }
         Ok(())
@@ -163,6 +186,23 @@ mod tests {
             assert_eq!(problem["context"]["revision"], revision);
             assert_eq!(problem["context"]["violations"][0]["subject"], "If-Match");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn admin_refusals_identify_the_problem_type_resource_and_reason()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let problem = serde_json::to_value(Problem::from(admin_only()))?;
+        assert_eq!(problem["status"], 403);
+        assert_eq!(
+            problem["type"],
+            "gts://gts.cf.core.errors.err.v1~cf.core.err.permission_denied.v1~"
+        );
+        assert_eq!(
+            problem["context"]["resource_type"],
+            "gts.cf.insight.analytics_api.connector_schedule.v1~"
+        );
+        assert_eq!(problem["context"]["reason"], crate::api::ADMIN_ONLY);
         Ok(())
     }
 

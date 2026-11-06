@@ -12,6 +12,7 @@ use super::support::*;
 use crate::infra::db::entities::connector_schedules::{Column, Entity};
 use crate::migration::m20261103_000001_connector_schedules::Migration;
 
+mod acknowledgements;
 mod noop;
 mod removal;
 mod revisions;
@@ -206,10 +207,26 @@ async fn concurrent_puts_have_exactly_one_winner_for_creation_and_update() -> R 
         let second_cron = format!("0 {} * * *", 6 + expected * 6);
         let first_crons = [first_cron.as_str()];
         let second_crons = [second_cron.as_str()];
-        let first = send(target, "PUT", &uri, Some(&revision), &first_crons);
-        let second = send(target, "PUT", &uri, Some(&revision), &second_crons);
-        let (first, second) = tokio::join!(first, second);
-        let mut statuses = [first?.0.as_u16(), second?.0.as_u16()];
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let first = crate::domain::connector_schedules::AFTER_WRITE_READ.scope(
+            barrier.clone(),
+            send(target, "PUT", &uri, Some(&revision), &first_crons),
+        );
+        let second = crate::domain::connector_schedules::AFTER_WRITE_READ.scope(
+            barrier,
+            send(target, "PUT", &uri, Some(&revision), &second_crons),
+        );
+        let (first, second) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            tokio::join!(first, second)
+        })
+        .await?;
+        let results = [first?, second?];
+        for (status, problem) in &results {
+            if *status == StatusCode::PRECONDITION_FAILED {
+                assert_eq!(problem["context"]["revision"], expected + 1);
+            }
+        }
+        let mut statuses = results.map(|result| result.0.as_u16());
         statuses.sort_unstable();
         assert_eq!(statuses, [200, 412], "revision {expected}");
         let row = Entity::find_by_id((connector.clone(), "main".to_owned()))

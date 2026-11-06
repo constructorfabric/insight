@@ -149,7 +149,6 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     # Connector health. Both are `.authenticated()` at the edge with the
     # operator gate inside the handler, so the refusal is invisible here and
     # asserted in test_connector_health.py.
-    _a("GET", "/v1/connector-schedules"),
     _a("GET", f"/v1/connectors/{SOME_CONNECTOR}/{SOME_SOURCE_ID}/schedule"),
     _a("PUT", f"/v1/connectors/{SOME_CONNECTOR}/{SOME_SOURCE_ID}/schedule"),
     _a("DELETE", f"/v1/connectors/{SOME_CONNECTOR}/{SOME_SOURCE_ID}/schedule"),

@@ -20,6 +20,8 @@
 //! for reads, or a fresh `Uuid::now_v7()` for writes), so the suite is
 //! parallel-safe and does not collide with the domain `live_tests`.
 
+pub(crate) mod connector_schedule_health;
+
 use std::sync::Arc;
 
 use axum::Router;

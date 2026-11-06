@@ -327,10 +327,11 @@ through this API are always UTC; the recorded applied response includes its obse
 The schedule API and health rows' `schedule_request` report status from one MariaDB
 acknowledgement record per instance, in this order:
 
-1. `error`: the latest attempt of the current requested revision failed.
-2. `pending`: no acknowledgement record or successful observation exists, or the requested revision exceeds the applied revision.
-3. `inherited`: no override remains, including an acknowledged clear.
-4. `applied`: the current override revision was verified.
+1. `inherited`: no request row or a cleared request, and no acknowledgement record.
+2. `error`: the latest attempt of the current requested revision failed.
+3. `pending`: no acknowledgement record or applied revision exists, or the requested revision exceeds the applied revision.
+4. `inherited`: no override remains, including an acknowledged clear.
+5. `applied`: the current override revision was verified.
 
 An older failed attempt never masks a newer pending save. The response carries acknowledged
 crons, timezone, origin, suspended state, revision and `observed_at`; the deployment fallback as
@@ -345,8 +346,10 @@ timezone and origin. Acknowledgements name the snapshot revision actually applie
 newer revision has since been saved. A clear becomes inherited after applying its fallback.
 
 Health enrichment joins requests and acknowledgements in one batched MariaDB read, including
-empty-cron clears and inherited instances without a request. Absent records or a failed read
-leave `schedule_request` null, while sync facts stay readable. This state does not
+empty-cron clears and inherited instances without a request. An instance with a source id and
+no records gets an inherited state at revision zero with unknown observations and request
+metadata. A missing source id, a failed read or an undecodable stored row leaves
+`schedule_request` null for the affected rows, while sync facts stay readable. This state does not
 replace the health page's schedule from sync history.
 
 Reconcile writes `spec.timezone: UTC` on every connector CronWorkflow, so the recorded
@@ -496,8 +499,8 @@ operator reads the gap from timestamps; the product computes no cadence and clai
 intended schedule.
 
 An admin can request a different cadence or clear an override through the API (FR-13).
-The applied facts can differ from that request until sync history records a matching schedule;
-FR-12 keeps the intended pass time separate from evidence of progress.
+The applied facts can differ from that request until the acknowledgement record reports the
+requested revision; FR-12 keeps the intended pass time separate from evidence of progress.
 
 ### UC-3 — A fresh install is read correctly
 

@@ -138,3 +138,38 @@ async fn clearing_revision_zero_never_writes_and_refuses_an_existing_row() -> R 
     }
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "requires INTEGRATION_TESTS_MARIADB_URL"]
+async fn reordered_crons_advance_the_revision_and_preserve_the_requested_order() -> R {
+    let Some(db) = connect_or_skip().await? else {
+        return Ok(());
+    };
+    let (connector, uri) = identity();
+    let sync_history = Mock::new();
+    let h = harness(db.clone(), sync_history.url(), context("user", &[])?, true).await?;
+    let target = (&h, &sync_history);
+    for (revision, crons) in [
+        (0, ["0 3 * * *", "0 6 * * *"]),
+        (1, ["0 6 * * *", "0 3 * * *"]),
+    ] {
+        let (status, response) = send(
+            target,
+            "PUT",
+            &uri,
+            Some(&format!("\"{revision}\"")),
+            &crons,
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(response["revision"], revision + 1);
+        assert_eq!(response["requested"]["crons"], json!(crons));
+        let row = Entity::find_by_id((connector.clone(), "main".to_owned()))
+            .one(&db)
+            .await?
+            .ok_or("stored row missing")?;
+        assert_eq!(row.revision, revision + 1);
+        assert_eq!(row.crons, json!(crons));
+    }
+    clear(&db, &connector).await
+}

@@ -5371,7 +5371,7 @@
                 }
               }
             },
-            "description": "Schedule state; stored requests remain readable after instance removal with applied null",
+            "description": "Schedule state; stored requests remain readable after instance removal with acknowledged observations",
             "headers": {
               "ETag": {
                 "description": "Single quoted decimal schedule revision",

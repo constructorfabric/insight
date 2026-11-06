@@ -20,6 +20,9 @@ pub(crate) mod usage;
 mod http_live_tests;
 
 #[cfg(test)]
+pub(crate) use http_live_tests::connector_schedule_health;
+
+#[cfg(test)]
 mod openapi_tests;
 
 use axum::http::StatusCode;

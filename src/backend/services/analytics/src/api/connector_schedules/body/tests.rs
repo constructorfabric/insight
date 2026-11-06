@@ -113,3 +113,56 @@ async fn json_extraction_errors_use_canonical_details() -> R {
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn request_parsing_refuses_cron_count_boundaries_and_unknown_fields() -> R {
+    let app = Router::new().route(
+        "/",
+        put(|request| async move {
+            let request = parse(request)?;
+            let crons =
+                crate::domain::connector_schedules::validation::Crons::parse(&request.crons)
+                    .map_err(|problem| {
+                        super::super::error::domain_error(
+                            crate::domain::connector_schedules::Error::Invalid(problem),
+                        )
+                    })?;
+            Ok::<_, super::super::error::ScheduleError>(Json(json!({"crons": crons.into_vec()})))
+        }),
+    );
+    for (payload, field, detail) in [
+        (json!({"crons": []}), "crons", "1 to 10"),
+        (
+            json!({"crons": (0..11).map(|minute| format!("{minute} 3 * * *")).collect::<Vec<_>>()}),
+            "crons",
+            "1 to 10",
+        ),
+        (
+            json!({"crons": ["0 3 * * *"], "extra": true}),
+            "extra",
+            "unknown field",
+        ),
+    ] {
+        let request = Request::builder()
+            .method("PUT")
+            .uri("/")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))?;
+        let response = app.clone().oneshot(request).await?;
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "should reject: {payload}"
+        );
+        let problem = crate::api::connector_schedules::support::body(response).await?;
+        let violation = &problem["context"]["field_violations"][0];
+        assert_eq!(violation["field"], field, "{payload}: {problem}");
+        assert!(
+            violation["description"]
+                .as_str()
+                .is_some_and(|text| text.contains(detail)),
+            "{payload}: {problem}"
+        );
+    }
+    Ok(())
+}

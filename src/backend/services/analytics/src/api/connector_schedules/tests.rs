@@ -96,6 +96,16 @@ async fn schedule_routes_require_the_admin_role() -> R {
             )?)
             .await?;
         assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method}");
+        let problem = body(response).await?;
+        assert_eq!(
+            problem["context"]["resource_type"],
+            "gts.cf.insight.analytics_api.connector_schedule.v1~"
+        );
+        assert_eq!(problem["context"]["reason"], crate::api::ADMIN_ONLY);
+        assert_eq!(
+            problem["type"],
+            "gts://gts.cf.core.errors.err.v1~cf.core.err.permission_denied.v1~"
+        );
     }
     Ok(())
 }
@@ -242,5 +252,36 @@ fn schedule_contract_documents_routes_preconditions_and_etags() -> R {
     assert!(path["put"]["responses"]["415"].is_object());
     assert!(path["put"]["responses"].get("422").is_none());
     assert!(json["paths"]["/v1/connector-schedules"].is_null());
+    Ok(())
+}
+
+#[test]
+fn non_visible_ascii_if_match_is_invalid() -> R {
+    let mut headers = HeaderMap::new();
+    headers.insert("if-match", HeaderValue::from_bytes(b"\"\xff\"")?);
+    assert!(matches!(
+        super::if_match(&headers),
+        Err(super::domain::Error::InvalidMatch)
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn non_visible_ascii_if_match_is_a_bad_request() -> R {
+    let mut headers = HeaderMap::new();
+    headers.insert("if-match", HeaderValue::from_bytes(b"\"\xff\"")?);
+    for method in ["PUT", "DELETE"] {
+        let sync_history = Mock::new();
+        sync_history.add(handlers::provide([configured_instance_record()]));
+        let h = harness(empty_db(), sync_history.url(), context("user", &[])?, true).await?;
+        let mut request = request(method, URI, None, &json!({"crons": ["0 3 * * *"]}))?;
+        request.headers_mut().extend(headers.clone());
+        let response = h.app.clone().oneshot(request).await?;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{method}");
+        assert_eq!(
+            body(response).await?["context"]["field_violations"][0]["field"],
+            "If-Match"
+        );
+    }
     Ok(())
 }

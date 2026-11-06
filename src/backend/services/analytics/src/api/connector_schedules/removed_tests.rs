@@ -55,7 +55,7 @@ async fn removed_requests_remain_readable_with_the_existing_status_rules() -> R 
 }
 
 #[tokio::test]
-async fn clearing_a_removed_request_advances_the_revision_and_clears_reconcile() -> R {
+async fn clearing_a_removed_request_advances_the_revision() -> R {
     let sync_history = removed();
     let db = MockDatabase::new(DatabaseBackend::MySql)
         .append_query_results([
@@ -177,5 +177,36 @@ async fn removed_requests_cannot_be_replaced_even_when_stored() -> R {
             .as_str()
             .is_some_and(|text| text.contains("configured on this install"))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn removed_requests_keep_acknowledged_observations() -> R {
+    let sync_history = removed();
+    let mut ack = crate::domain::connector_schedules::test_support::acknowledgement();
+    ack.applied_revision = Some(7);
+    ack.attempted_revision = 7;
+    let expected = serde_json::to_value(
+        crate::domain::connector_schedules::test_support::schedule_response(
+            stored(&["0 3 * * *"]),
+            &ack,
+        )?,
+    )?;
+    let db = MockDatabase::new(DatabaseBackend::MySql)
+        .append_query_results([vec![stored(&["0 3 * * *"])]])
+        .append_query_results([vec![ack]])
+        .into_connection();
+    let h = harness(db, sync_history.url(), context("user", &[])?, true).await?;
+    let response = h
+        .app
+        .clone()
+        .oneshot(request("GET", URI, None, &json!(null))?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["etag"], "\"7\"");
+    let actual = body(response).await?;
+    assert_eq!(actual["applied"], expected["applied"]);
+    assert_eq!(actual["applied"]["revision"], 7);
+    assert_eq!(actual["status"], "applied");
     Ok(())
 }

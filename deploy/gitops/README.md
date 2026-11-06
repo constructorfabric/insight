@@ -16,16 +16,6 @@ when you go past sandbox, and you have a working gitops setup.
 > Below is the operator-facing summary; the linked docs go deeper into
 > rationale (DESIGN, PRD, ADR).
 
-## Connector schedule requests
-
-Analytics admin schedule writes are always enabled.
-
-`ingestion.reconcile.schedule` supplies the cadence analytics reports to clients; GitOps
-composition reads the chart defaults and the stand overlay, so it needs no second cadence.
-After changing that cadence, recompose application Secrets and restart analytics so it loads
-the updated environment. The API stores requests and reports their status from sync history;
-applying requests through reconcile is a separate change.
-
 ## What's in this directory
 
 ```text

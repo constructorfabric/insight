@@ -16,7 +16,7 @@ pub(super) fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Rou
         .no_license_required()
         .path_param("connector", "Connector name")
         .path_param("source_id", "Connector instance source id")
-        .json_response_with_schema::<ScheduleResponse>(openapi, StatusCode::OK, "Schedule state; stored requests remain readable after instance removal with applied null")
+        .json_response_with_schema::<ScheduleResponse>(openapi, StatusCode::OK, "Schedule state; stored requests remain readable after instance removal with acknowledged observations")
         .response_header(etag())
         .standard_errors(openapi)
         .error_503(openapi)

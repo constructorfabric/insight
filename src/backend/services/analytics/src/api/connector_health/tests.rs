@@ -64,7 +64,7 @@ fn the_summary_contract_describes_the_recorded_schedule() -> Result<(), Box<dyn 
 }
 
 #[tokio::test]
-async fn the_health_handler_serializes_nullable_and_acknowledged_request_facts()
+async fn health_responses_serialize_nullable_and_acknowledged_request_facts()
 -> Result<(), Box<dyn std::error::Error>> {
     let response: ConnectorHealthResponse = serde_json::from_value(serde_json::json!({
         "as_of": "2026-01-15T13:00:00Z", "history_available": true,

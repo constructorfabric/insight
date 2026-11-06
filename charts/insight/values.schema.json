@@ -24,7 +24,6 @@
         "toolboxImage":    { "type": "string" },
         "reconcile": {
           "type": "object",
-          "required": ["schedule"],
           "properties": {
             "schedule": { "type": "string", "default": "*/15 * * * *" },
             "destinationId": { "type": "string" },

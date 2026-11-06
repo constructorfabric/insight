@@ -13,6 +13,7 @@ async fn migrations_expose_only_the_versioned_request_columns_and_reject_invalid
     let manager = SchemaManager::new(&db);
     Migration.up(&manager).await?;
     assert_view_contract(&db, &connector).await?;
+    assert_invalid_requests(&db, &connector).await?;
     assert_invalid_records(&db, &connector).await?;
     assert_seeded_records(&db, &connector).await?;
     db.execute_raw(Statement::from_sql_and_values(
@@ -114,19 +115,20 @@ async fn assert_invalid_records(db: &DatabaseConnection, connector: &str) -> R {
             "[]",
             "api",
             "default",
-            "1",
+            "NULL",
             "-1",
         ),
     ] {
         let sql = format!("INSERT INTO connector_schedule_acknowledgements
             (connector, source_id, applied_crons, deployment_crons, applied_origin, deployment_origin, applied_revision, attempted_revision, attempted_at)
-            VALUES (?, 'main', ?, ?, ?, ?, {applied}, {attempted}, UTC_TIMESTAMP(3))");
+            VALUES (?, ?, ?, ?, ?, ?, {applied}, {attempted}, UTC_TIMESTAMP(3))");
         let result = db
             .execute_raw(Statement::from_sql_and_values(
                 DatabaseBackend::MySql,
                 sql,
                 [
                     connector.to_owned().into(),
+                    name.replace(' ', "-").into(),
                     applied_crons.into(),
                     deployment_crons.into(),
                     applied_origin.into(),
@@ -151,6 +153,13 @@ async fn assert_seeded_records(db: &DatabaseConnection, connector: &str) -> R {
     .replace("stand-scratch-connector-schedules", connector);
     db.execute_unprepared(&fixture).await?;
     db.execute_unprepared(&fixture).await?;
+    db.execute_raw(Statement::from_sql_and_values(DatabaseBackend::MySql,
+        "INSERT INTO connector_schedule_acknowledgements
+         (connector, source_id, applied_revision, applied_crons, applied_origin, suspended, observed_at,
+          deployment_crons, deployment_origin, attempted_revision, attempted_at)
+         VALUES (?, 'inherited', 0, '[\"0 5 * * *\"]', 'descriptor', false, UTC_TIMESTAMP(3),
+                 '[\"0 5 * * *\"]', 'descriptor', 0, UTC_TIMESTAMP(3))", [connector.to_owned().into()]
+    )).await?;
     let count = db
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::MySql,
@@ -159,7 +168,7 @@ async fn assert_seeded_records(db: &DatabaseConnection, connector: &str) -> R {
         ))
         .await?
         .ok_or("count missing")?;
-    assert_eq!(count.try_get::<i64>("", "total")?, 3);
+    assert_eq!(count.try_get::<i64>("", "total")?, 4);
 
     let mut health: crate::domain::connector_health::ConnectorHealthResponse =
         serde_json::from_value(json!({
@@ -167,12 +176,18 @@ async fn assert_seeded_records(db: &DatabaseConnection, connector: &str) -> R {
             "connectors": [
                 {"connector": connector, "source_id": "applied", "configured": true},
                 {"connector": connector, "source_id": "error", "configured": true},
-                {"connector": connector, "source_id": "main", "configured": true}
+                {"connector": connector, "source_id": "main", "configured": true},
+                {"connector": connector, "source_id": "inherited", "configured": true}
             ]
         }))?;
     crate::domain::connector_schedules::enrich_health(db, &mut health).await;
     let health = serde_json::to_value(health)?;
-    for (index, expected) in [(0, "applied"), (1, "error"), (2, "pending")] {
+    for (index, expected) in [
+        (0, "applied"),
+        (1, "error"),
+        (2, "pending"),
+        (3, "inherited"),
+    ] {
         assert_eq!(
             health["connectors"][index]["schedule_request"]["status"],
             expected
@@ -182,5 +197,40 @@ async fn assert_seeded_records(db: &DatabaseConnection, connector: &str) -> R {
         health["connectors"][1]["schedule_request"]["error"]["message"],
         "synthetic readback failure"
     );
+    let inherited = &health["connectors"][3]["schedule_request"];
+    assert_eq!(inherited["revision"], 0);
+    assert_eq!(
+        inherited["inherited"],
+        json!({"crons": ["0 5 * * *"], "origin": "descriptor"})
+    );
+    assert_eq!(inherited["applied"]["revision"], 0);
+    assert_eq!(inherited["applied"]["crons"], json!(["0 5 * * *"]));
+    assert_eq!(inherited.get("updated_at"), Some(&Value::Null));
+    Ok(())
+}
+
+async fn assert_invalid_requests(db: &DatabaseConnection, connector: &str) -> R {
+    for (source, crons, revision) in [("zero-revision", "[]", 0), ("object-crons", "{}", 1)] {
+        let result = db
+            .execute_raw(Statement::from_sql_and_values(
+                DatabaseBackend::MySql,
+                "INSERT INTO connector_schedules VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP(3))",
+                [
+                    connector.to_owned().into(),
+                    source.into(),
+                    crons.into(),
+                    revision.into(),
+                    CALLER.into(),
+                ],
+            ))
+            .await;
+        assert!(result.is_err(), "should reject: {source}");
+        db.execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::MySql,
+            "INSERT INTO connector_schedules VALUES (?, ?, '[]', 1, ?, UTC_TIMESTAMP(3))",
+            [connector.to_owned().into(), source.into(), CALLER.into()],
+        ))
+        .await?;
+    }
     Ok(())
 }

@@ -162,3 +162,23 @@ fn whitespace_normalized_duplicates_identify_both_expressions() {
         );
     }
 }
+
+#[test]
+fn unsupported_cron_rules_report_the_specific_problem() {
+    for (value, message) in [
+        ("0 3 * * *\n", "control characters"),
+        ("0\r 3 * * *", "control characters"),
+        ("0\0 3 * * *", "control characters"),
+        ("0\u{7f} 3 * * *", "control characters"),
+        ("@daily", "@ descriptors are not supported"),
+        ("@every 1h", "@ descriptors are not supported"),
+        ("TZ=UTC 0 3 * * *", "TZ= and CRON_TZ="),
+        ("CRON_TZ=UTC 0 3 * * *", "TZ= and CRON_TZ="),
+    ] {
+        let Err(error) = Crons::parse(&[value.to_owned()]) else {
+            panic!("should reject: {value:?}");
+        };
+        assert_eq!(error.field, "crons[0]", "{value:?}");
+        assert!(error.problem.contains(message), "{value:?}: {error}");
+    }
+}

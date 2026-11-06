@@ -39,6 +39,21 @@ async fn rejected_requests_identify_the_invalid_field_and_reason() -> R {
             true,
         ),
         (URI, json!({}), "crons", "missing required", true),
+        (URI, json!({"crons": []}), "crons", "1 to 10", true),
+        (
+            URI,
+            json!({"crons": (0..11).map(|minute| format!("{minute} 3 * * *")).collect::<Vec<_>>()}),
+            "crons",
+            "1 to 10",
+            true,
+        ),
+        (
+            URI,
+            json!({"crons": ["0 3 * * *"], "extra": true}),
+            "extra",
+            "unknown field",
+            true,
+        ),
         (
             URI,
             json!({"crons": ["0 6 * * *"], "timezone": "Europe/Sofia"}),
