@@ -518,8 +518,8 @@ jobs:
   # logic).
 
   # INVARIANT: PR validation builds amd64 only; publishing builds both supported
-  # architectures. The Rust and frontend images build arm64 on x64 runners: their
-  # Dockerfiles compile on the build platform, so QEMU only runs runtime stages.
+  # architectures on x64 runners. Dockerfiles compile and install packages on the
+  # build platform, so QEMU only runs runtime stages (all of ui-tests).
   backend-analytics:
     needs: changes
     if: |
@@ -1573,10 +1573,15 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || ((vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        if: matrix.arch != 'amd64'
+        with:
+          platforms: ${{ matrix.arch }}
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -1591,7 +1596,7 @@ jobs:
       # validate on arm64. The validate-build uses `load: true` (single-arch
       # only, into the runner's Docker daemon) so `docker run` can exercise
       # `dbt parse`. The push-build then reuses the buildx cache — mostly
-      # cache-hits on amd64, full build on arm64 (native, fast).
+      # cache-hits on amd64, full build on arm64.
       #
       # Caveat: if validate fails on amd64, the arm64 leg may have already
       # pushed an untagged digest. merge-toolbox is gated on toolbox=success
@@ -1750,10 +1755,15 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || ((vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        if: matrix.arch != 'amd64'
+        with:
+          platforms: ${{ matrix.arch }}
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -1897,10 +1907,15 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || ((vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        if: matrix.arch != 'amd64'
+        with:
+          platforms: ${{ matrix.arch }}
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -2036,10 +2051,14 @@ jobs:
       matrix:
         entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || ((vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-large' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        if: matrix.arch != 'amd64'
+        with:
+          platforms: ${{ matrix.arch }}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
