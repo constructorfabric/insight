@@ -8,231 +8,117 @@
     tags=['hubspot', 'silver:class_crm_activities']
 ) }}
 
--- Live + archived sibling Bronze tables UNION ALL'd per engagement type;
--- meetings has no archived sibling because HubSpot returns 400 on
--- /crm/v3/objects/meetings?archived=true ("Paging through deleted objects
--- is not yet supported"). `_version = greatest(updatedAt, archivedAt)` so
--- an archive event outranks the prior live update under ReplacingMergeTree.
--- Archived siblings are only synced when Airbyte's HubSpot connector is
--- configured to backfill deleted records — guard each UNION with
--- adapter.get_relation so absent archived tables don't break the build.
--- Schema derived from the dbt source so a tenant-prefixed
--- `bronze_hubspot_<tenant>` rename doesn't silently drop the archived arms.
-{%- set bronze_schema = source('bronze_hubspot', 'engagements_meetings').schema -%}
-{%- set calls_tables = ['engagements_calls'] -%}
-{%- if adapter.get_relation(database=none, schema=bronze_schema, identifier='engagements_calls_archived') -%}
-  {%- do calls_tables.append('engagements_calls_archived') -%}
-{%- endif -%}
-{%- set emails_tables = ['engagements_emails'] -%}
-{%- if adapter.get_relation(database=none, schema=bronze_schema, identifier='engagements_emails_archived') -%}
-  {%- do emails_tables.append('engagements_emails_archived') -%}
-{%- endif -%}
-{%- set tasks_tables = ['engagements_tasks'] -%}
-{%- if adapter.get_relation(database=none, schema=bronze_schema, identifier='engagements_tasks_archived') -%}
-  {%- do tasks_tables.append('engagements_tasks_archived') -%}
-{%- endif %}
+{#- One arm per engagement object. Meetings and communications have no archived
+    sibling: HubSpot answers HTTP 400 when paging their deleted records. -#}
+{%- set null_string = 'CAST(NULL AS Nullable(String))' -%}
+{%- set null_int = 'CAST(NULL AS Nullable(Int64))' -%}
+{%- set null_time = 'CAST(NULL AS Nullable(DateTime64(3)))' -%}
+{%- set arms = [
+    {
+        'table': 'engagements_calls', 'archived': true, 'type': 'call',
+        'duration': 'intDiv(toInt64OrNull(properties_hs_call_duration), 1000)',
+        'outcome': 'properties_hs_call_disposition',
+        'metadata': {'title': 'properties_hs_call_title', 'direction': 'properties_hs_call_direction'},
+        'subject': 'properties_hs_call_title', 'body': 'properties_hs_call_body',
+        'direction': 'properties_hs_call_direction', 'status': 'properties_hs_call_status',
+        'channel': null_string, 'ended_at': null_time,
+    },
+    {
+        'table': 'engagements_emails', 'archived': true, 'type': 'email',
+        'duration': null_int,
+        'outcome': 'properties_hs_email_status',
+        'metadata': {'subject': 'properties_hs_email_subject', 'direction': 'properties_hs_email_direction'},
+        'subject': 'properties_hs_email_subject', 'body': 'properties_hs_email_text',
+        'direction': 'properties_hs_email_direction', 'status': 'properties_hs_email_status',
+        'channel': null_string, 'ended_at': null_time,
+    },
+    {
+        'table': 'engagements_meetings', 'archived': false, 'type': 'meeting',
+        'started_at': 'parseDateTime64BestEffortOrNull(toString(properties_hs_meeting_start_time), 3)',
+        'duration': 'intDiv(toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(toString(properties_hs_meeting_end_time), 3)) - toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(toString(properties_hs_meeting_start_time), 3)), 1000)',
+        'outcome': 'properties_hs_meeting_outcome',
+        'metadata': {'title': 'properties_hs_meeting_title', 'location': 'properties_hs_meeting_location'},
+        'subject': 'properties_hs_meeting_title', 'body': 'properties_hs_meeting_body',
+        'direction': null_string, 'status': 'properties_hs_meeting_outcome',
+        'channel': null_string,
+        'ended_at': 'parseDateTime64BestEffortOrNull(toString(properties_hs_meeting_end_time), 3)',
+    },
+    {
+        'table': 'engagements_tasks', 'archived': true, 'type': 'task',
+        'duration': null_int,
+        'outcome': 'properties_hs_task_status',
+        'metadata': {'subject': 'properties_hs_task_subject', 'priority': 'properties_hs_task_priority', 'type': 'properties_hs_task_type'},
+        'subject': 'properties_hs_task_subject', 'body': 'properties_hs_task_body',
+        'direction': null_string, 'status': 'properties_hs_task_status',
+        'channel': null_string, 'ended_at': null_time,
+    },
+    {
+        'table': 'engagements_notes', 'archived': true, 'type': 'note',
+        'duration': null_int,
+        'outcome': null_string,
+        'metadata': {},
+        'subject': null_string, 'body': 'properties_hs_note_body',
+        'direction': null_string, 'status': null_string,
+        'channel': null_string, 'ended_at': null_time,
+    },
+    {
+        'table': 'engagements_communications', 'archived': false, 'type': 'communication',
+        'duration': null_int,
+        'outcome': null_string,
+        'metadata': {'channel': 'properties_hs_communication_channel_type', 'logged_from': 'properties_hs_communication_logged_from'},
+        'subject': null_string, 'body': 'properties_hs_communication_body',
+        'direction': null_string, 'status': null_string,
+        'channel': 'properties_hs_communication_channel_type', 'ended_at': null_time,
+    },
+] -%}
 
-WITH calls AS (
-    {% for tbl in calls_tables %}
+WITH src AS (
+    {% for arm in arms %}
+    {% set arm_loop = loop %}
+    {% for tbl in hubspot_bronze_tables(arm.table, archived=arm.archived) %}
     SELECT
         tenant_id,
         source_id,
         unique_key,
         id                                              AS activity_id,
-        'call'                                          AS activity_type,
+        '{{ arm.type }}'                                AS activity_type,
         properties_hubspot_owner_id                     AS owner_id,
-        -- Rep who logged the activity — resolves to silver.class_crm_users
-        -- via `hs_user_id` (HubSpot Owners `userId`). This is what HubSpot's
-        -- "Activities by user" report attributes on; the owner side (above)
-        -- is the record owner, often inherited from contact owner and
-        -- therefore inflated for inbound-heavy reps.
+        -- Rep who logged the activity (owners.userId); the record owner above
+        -- is often inherited from the contact owner.
         properties_hs_created_by_user_id                AS created_by_user_id,
-        nullIf(arrayElement(JSONExtract(coalesce(associations_contacts, '[]'), 'Array(String)'), 1), '')  AS contact_id,
-        nullIf(arrayElement(JSONExtract(coalesce(associations_deals, '[]'), 'Array(String)'), 1), '')     AS deal_id,
-        nullIf(arrayElement(JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1), '') AS account_id,
-        -- Deterministic fallback so timestamp never NULLs: try hs_timestamp,
-        -- then createdAt, finally epoch 0 so Silver schema `not_null` holds.
+        {{ hubspot_first_association('associations_contacts') }}  AS contact_id,
+        {{ hubspot_first_association('associations_deals') }}     AS deal_id,
+        {{ hubspot_first_association('associations_companies') }} AS account_id,
+        -- Never NULL: silver keeps `timestamp` not_null.
         coalesce(
+            {% if arm.started_at is defined %}{{ arm.started_at }},{% endif %}
             parseDateTime64BestEffortOrNull(toString(properties_hs_timestamp), 3),
             createdAt,
             toDateTime64(0, 3)
         )                                               AS timestamp,
-        -- hs_call_duration is in milliseconds. Preserve NULLs so Silver can
-        -- distinguish "unknown duration" from a real zero-duration call.
-        CASE
-            WHEN properties_hs_call_duration IS NULL THEN NULL
-            ELSE intDiv(toInt64OrNull(properties_hs_call_duration), 1000)
-        END                                             AS duration_seconds,
-        properties_hs_call_disposition                  AS outcome,
+        CAST({{ arm.duration }} AS Nullable(Int64))     AS duration_seconds,
+        CAST({{ arm.outcome }} AS Nullable(String))     AS outcome,
         toJSONString(map(
-            'title',          coalesce(toString(properties_hs_call_title), ''),
-            'direction',      coalesce(toString(properties_hs_call_direction), ''),
-            'archived',       toString(coalesce(archived, false))
+            {%- for key, expr in arm.metadata.items() %}
+            '{{ key }}', coalesce(toString({{ expr }}), ''),
+            {%- endfor %}
+            'archived', toString(coalesce(archived, false))
         ))                                              AS metadata,
         createdAt                                       AS created_at,
         data_source,
-        greatest(
-            coalesce(toUnixTimestamp64Milli(updatedAt), 0),
-            coalesce(toUnixTimestamp64Milli(archivedAt), 0)
-        ) AS _version
+        {{ hubspot_record_version() }}                  AS _version,
+        {{ hubspot_deletion_columns() }},
+        {{ hubspot_properties_map() }}                  AS properties,
+        CAST({{ arm.subject }} AS Nullable(String))     AS subject,
+        CAST({{ arm.body }} AS Nullable(String))        AS body,
+        CAST({{ arm.direction }} AS Nullable(String))   AS direction,
+        CAST({{ arm.status }} AS Nullable(String))      AS status,
+        CAST({{ arm.channel }} AS Nullable(String))     AS channel,
+        CAST({{ arm.ended_at }} AS Nullable(DateTime64(3))) AS ended_at
     FROM {{ source('bronze_hubspot', tbl) }}
-    {% if not loop.last %}UNION ALL{% endif %}
+    {% if not (loop.last and arm_loop.last) %}UNION ALL{% endif %}
     {% endfor %}
-),
-emails AS (
-    {% for tbl in emails_tables %}
-    SELECT
-        tenant_id,
-        source_id,
-        unique_key,
-        id                                              AS activity_id,
-        'email'                                         AS activity_type,
-        properties_hubspot_owner_id                     AS owner_id,
-        -- Rep who logged the activity — resolves to silver.class_crm_users
-        -- via `hs_user_id` (HubSpot Owners `userId`). This is what HubSpot's
-        -- "Activities by user" report attributes on; the owner side (above)
-        -- is the record owner, often inherited from contact owner and
-        -- therefore inflated for inbound-heavy reps.
-        properties_hs_created_by_user_id                AS created_by_user_id,
-        nullIf(arrayElement(JSONExtract(coalesce(associations_contacts, '[]'), 'Array(String)'), 1), '')  AS contact_id,
-        nullIf(arrayElement(JSONExtract(coalesce(associations_deals, '[]'), 'Array(String)'), 1), '')     AS deal_id,
-        nullIf(arrayElement(JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1), '') AS account_id,
-        -- Deterministic fallback so timestamp never NULLs: try hs_timestamp,
-        -- then createdAt, finally epoch 0 so Silver schema `not_null` holds.
-        coalesce(
-            parseDateTime64BestEffortOrNull(toString(properties_hs_timestamp), 3),
-            createdAt,
-            toDateTime64(0, 3)
-        )                                               AS timestamp,
-        CAST(NULL AS Nullable(Int64))                   AS duration_seconds,
-        properties_hs_email_status                      AS outcome,
-        toJSONString(map(
-            'subject',        coalesce(toString(properties_hs_email_subject), ''),
-            'direction',      coalesce(toString(properties_hs_email_direction), ''),
-            'archived',       toString(coalesce(archived, false))
-        ))                                              AS metadata,
-        createdAt                                       AS created_at,
-        data_source,
-        greatest(
-            coalesce(toUnixTimestamp64Milli(updatedAt), 0),
-            coalesce(toUnixTimestamp64Milli(archivedAt), 0)
-        ) AS _version
-    FROM {{ source('bronze_hubspot', tbl) }}
-    {% if not loop.last %}UNION ALL{% endif %}
     {% endfor %}
-),
-meetings AS (
-    -- engagements_meetings_archived intentionally absent: HubSpot returns
-    -- HTTP 400 on /crm/v3/objects/meetings?archived=true.
-    SELECT
-        tenant_id,
-        source_id,
-        unique_key,
-        id                                              AS activity_id,
-        'meeting'                                       AS activity_type,
-        properties_hubspot_owner_id                     AS owner_id,
-        -- Rep who logged the activity — resolves to silver.class_crm_users
-        -- via `hs_user_id` (HubSpot Owners `userId`). This is what HubSpot's
-        -- "Activities by user" report attributes on; the owner side (above)
-        -- is the record owner, often inherited from contact owner and
-        -- therefore inflated for inbound-heavy reps.
-        properties_hs_created_by_user_id                AS created_by_user_id,
-        nullIf(arrayElement(JSONExtract(coalesce(associations_contacts, '[]'), 'Array(String)'), 1), '')  AS contact_id,
-        nullIf(arrayElement(JSONExtract(coalesce(associations_deals, '[]'), 'Array(String)'), 1), '')     AS deal_id,
-        nullIf(arrayElement(JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1), '') AS account_id,
-        -- Deterministic fallback: meeting_start → hs_timestamp → createdAt → epoch 0.
-        -- Properties come as Nullable(String); parse before use.
-        coalesce(
-            parseDateTime64BestEffortOrNull(toString(properties_hs_meeting_start_time), 3),
-            parseDateTime64BestEffortOrNull(toString(properties_hs_timestamp), 3),
-            createdAt,
-            toDateTime64(0, 3)
-        )                                               AS timestamp,
-        -- Meeting duration in seconds. Preserve NULLs so "unknown duration"
-        -- is distinguishable from zero-length.
-        CASE
-            WHEN properties_hs_meeting_end_time IS NOT NULL
-             AND properties_hs_meeting_start_time IS NOT NULL
-            THEN intDiv(
-                toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(toString(properties_hs_meeting_end_time), 3))
-                  - toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(toString(properties_hs_meeting_start_time), 3)),
-                1000
-            )
-            ELSE NULL
-        END                                             AS duration_seconds,
-        properties_hs_meeting_outcome                   AS outcome,
-        toJSONString(map(
-            'title',          coalesce(toString(properties_hs_meeting_title), ''),
-            'location',       coalesce(toString(properties_hs_meeting_location), ''),
-            'archived',       toString(coalesce(archived, false))
-        ))                                              AS metadata,
-        createdAt                                       AS created_at,
-        data_source,
-        coalesce(
-            toUnixTimestamp64Milli(updatedAt),
-            0
-        ) AS _version
-    FROM {{ source('bronze_hubspot', 'engagements_meetings') }}
-),
-tasks AS (
-    {% for tbl in tasks_tables %}
-    SELECT
-        tenant_id,
-        source_id,
-        unique_key,
-        id                                              AS activity_id,
-        'task'                                          AS activity_type,
-        properties_hubspot_owner_id                     AS owner_id,
-        -- Rep who logged the activity — resolves to silver.class_crm_users
-        -- via `hs_user_id` (HubSpot Owners `userId`). This is what HubSpot's
-        -- "Activities by user" report attributes on; the owner side (above)
-        -- is the record owner, often inherited from contact owner and
-        -- therefore inflated for inbound-heavy reps.
-        properties_hs_created_by_user_id                AS created_by_user_id,
-        nullIf(arrayElement(JSONExtract(coalesce(associations_contacts, '[]'), 'Array(String)'), 1), '')  AS contact_id,
-        nullIf(arrayElement(JSONExtract(coalesce(associations_deals, '[]'), 'Array(String)'), 1), '')     AS deal_id,
-        nullIf(arrayElement(JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1), '') AS account_id,
-        -- Deterministic fallback so timestamp never NULLs: try hs_timestamp,
-        -- then createdAt, finally epoch 0 so Silver schema `not_null` holds.
-        coalesce(
-            parseDateTime64BestEffortOrNull(toString(properties_hs_timestamp), 3),
-            createdAt,
-            toDateTime64(0, 3)
-        )                                               AS timestamp,
-        CAST(NULL AS Nullable(Int64))                   AS duration_seconds,
-        properties_hs_task_status                       AS outcome,
-        toJSONString(map(
-            'subject',        coalesce(toString(properties_hs_task_subject), ''),
-            'priority',       coalesce(toString(properties_hs_task_priority), ''),
-            'type',           coalesce(toString(properties_hs_task_type), ''),
-            'archived',       toString(coalesce(archived, false))
-        ))                                              AS metadata,
-        createdAt                                       AS created_at,
-        data_source,
-        greatest(
-            coalesce(toUnixTimestamp64Milli(updatedAt), 0),
-            coalesce(toUnixTimestamp64Milli(archivedAt), 0)
-        ) AS _version
-    FROM {{ source('bronze_hubspot', tbl) }}
-    {% if not loop.last %}UNION ALL{% endif %}
-    {% endfor %}
-),
-combined AS (
-    SELECT * FROM calls
-    UNION ALL SELECT * FROM emails
-    UNION ALL SELECT * FROM meetings
-    UNION ALL SELECT * FROM tasks
 )
-{% if is_incremental() %}
-SELECT combined.*
-FROM combined
-LEFT JOIN (
-    SELECT tenant_id, source_id, max(_version) AS hwm
-    FROM {{ this }}
-    GROUP BY tenant_id, source_id
-) w
-  ON w.tenant_id = combined.tenant_id AND w.source_id = combined.source_id
-WHERE combined._version > coalesce(w.hwm, 0)
-{% else %}
-SELECT * FROM combined
-{% endif %}
+
+{{ hubspot_staging_tail('src') }}

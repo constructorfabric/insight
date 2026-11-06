@@ -20,6 +20,12 @@ classic ``AbstractSource`` path; HubSpot's search endpoint is rate-limited to
   ``updatedAt`` via client-side filter.
 - ``OwnersArchivedStream`` — same endpoint with ``archived=true``;
   incremental on ``archivedAt`` via client-side filter.
+- ``PipelinesStream`` — ``/crm/v3/pipelines/{type}`` full sweep every sync;
+  each pipeline carries its stages.
+- ``PropertyDefinitionsStream`` — ``/crm/v3/properties/{type}`` (live and
+  archived) for every synced CRM object, full sweep every sync.
+- ``PropertyHistoryStream`` — search for objects modified since state, then
+  ``batch/read`` with ``propertiesWithHistory``; one record per value change.
 
 All streams apply the Insight envelope via :func:`envelope.envelope` before
 yielding to Bronze, and each tracks its own cursor state via the CDK
@@ -29,13 +35,14 @@ yielding to Bronze, and each tracks its own cursor state via the CDK
 from __future__ import annotations
 
 import copy
+import hashlib
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, Tuple
+from collections.abc import Iterable, Mapping, MutableMapping
+from typing import Any
 
 import pendulum
 import requests
-
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams.core import Stream, StreamData
 from airbyte_cdk.sources.streams.http import HttpClient
@@ -46,14 +53,15 @@ from source_hubspot.constants import (
     ALLOWED_PROPERTIES_BY_OBJECT,
     BASE_URL,
     BATCH_READ_LIMIT,
+    HISTORY_BATCH_READ_LIMIT,
     LIST_PAGE_LIMIT,
+    PROPERTY_DEFINITION_OBJECT_TYPES,
     SEARCH_AFTER_HARD_CAP,
     SEARCH_PAGE_LIMIT,
     STREAM_REGISTRY,
 )
 from source_hubspot.envelope import envelope, inject_envelope_properties
 from source_hubspot.rate_limiting import HubspotErrorHandler
-
 
 logger = logging.getLogger("airbyte")
 
@@ -87,16 +95,14 @@ class HubspotStream(Stream, ABC):
         self._object_type = self._registry["object_type"]
         # Same allowlist ``generate_schema`` declares columns from, so the
         # ``properties_*`` keys a record carries can't drift from the schema.
-        self._allowed_property_names = ALLOWED_PROPERTIES_BY_OBJECT.get(
-            self._object_type, frozenset()
-        )
+        self._allowed_property_names = ALLOWED_PROPERTIES_BY_OBJECT.get(self._object_type, frozenset())
         self._tenant_id = tenant_id
         self._source_id = source_id
         self._start_date = start_date
         self._envelope_collisions_seen: set = set()
         # Cursor state — populated by the state setter from prior sync output;
         # advanced by read_records as records flow through.
-        self._state: Optional[pendulum.DateTime] = None
+        self._state: pendulum.DateTime | None = None
         # Stamped at construction so search streams have a stable upper bound
         # (records that arrive after ``_init_sync`` are picked up next run).
         self._init_sync = pendulum.now("UTC")
@@ -107,9 +113,7 @@ class HubspotStream(Stream, ABC):
         # is sufficient for sequential CDK execution.
         session = _TimeoutSession()
         session.headers.update({"Authorization": f"Bearer {access_token}"})
-        adapter = requests.adapters.HTTPAdapter(
-            pool_connections=2, pool_maxsize=8
-        )
+        adapter = requests.adapters.HTTPAdapter(pool_connections=2, pool_maxsize=8)
         session.mount("https://", adapter)
         self._http_client = HttpClient(
             name=f"hubspot_{stream_name}",
@@ -120,11 +124,9 @@ class HubspotStream(Stream, ABC):
 
         # Association fetcher is wired only when the registry declares any.
         assoc_targets = list(self._registry.get("associations") or [])
-        self._associations: Optional[AssociationFetcher] = (
+        self._associations: AssociationFetcher | None = (
             AssociationFetcher(
-                from_object_type=self._object_type,
-                to_object_types=assoc_targets,
-                http_client=self._http_client,
+                from_object_type=self._object_type, to_object_types=assoc_targets, http_client=self._http_client
             )
             if assoc_targets
             else None
@@ -137,11 +139,11 @@ class HubspotStream(Stream, ABC):
         return self._stream_name
 
     @property
-    def primary_key(self) -> Optional[str]:
+    def primary_key(self) -> str | None:
         return "id"
 
     @property
-    def cursor_field(self) -> Optional[str]:
+    def cursor_field(self) -> str | None:
         return self._registry["cursor_field"]
 
     # ------- State management ----------------------------------------------
@@ -166,19 +168,15 @@ class HubspotStream(Stream, ABC):
         if isinstance(parsed, pendulum.DateTime):
             self._state = parsed
         elif isinstance(parsed, pendulum.Date):
-            self._state = pendulum.datetime(
-                parsed.year, parsed.month, parsed.day, tz="UTC"
-            )
+            self._state = pendulum.datetime(parsed.year, parsed.month, parsed.day, tz="UTC")
 
-    def _advance_state(self, latest: Optional[pendulum.DateTime]) -> None:
+    def _advance_state(self, latest: pendulum.DateTime | None) -> None:
         if latest is None:
             return
         if self._state is None or latest > self._state:
             self._state = latest
 
-    def _record_cursor(
-        self, record: Mapping[str, Any]
-    ) -> Optional[pendulum.DateTime]:
+    def _record_cursor(self, record: Mapping[str, Any]) -> pendulum.DateTime | None:
         """Extract the cursor value from a record (or None if absent)."""
         if self.cursor_field is None:
             return None
@@ -212,10 +210,7 @@ class HubspotStream(Stream, ABC):
         schema = inject_envelope_properties(schema)
         props = schema.setdefault("properties", {})
         for to_type in self._registry.get("associations") or []:
-            props[f"associations_{to_type}"] = {
-                "type": ["array", "null"],
-                "items": {"type": "string"},
-            }
+            props[f"associations_{to_type}"] = {"type": ["array", "null"], "items": {"type": "string"}}
         return schema
 
     # ------- Read pipeline --------------------------------------------------
@@ -223,9 +218,9 @@ class HubspotStream(Stream, ABC):
     def read_records(
         self,
         sync_mode: SyncMode,
-        cursor_field: Optional[List[str]] = None,
-        stream_slice: Optional[Mapping[str, Any]] = None,
-        stream_state: Optional[Mapping[str, Any]] = None,
+        cursor_field: list[str] | None = None,
+        stream_slice: Mapping[str, Any] | None = None,
+        stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[StreamData]:
         """Fetch records, batch-enrich associations, envelope, and yield."""
         # CDK passes incoming state via stream_state on the first call —
@@ -233,13 +228,11 @@ class HubspotStream(Stream, ABC):
         if stream_state and self.cursor_field:
             self.state = stream_state  # type: ignore[assignment]
 
-        latest_cursor: Optional[pendulum.DateTime] = None
-        batch: List[MutableMapping[str, Any]] = []
+        latest_cursor: pendulum.DateTime | None = None
+        batch: list[MutableMapping[str, Any]] = []
         for record in self._generate_records(sync_mode, stream_slice, stream_state):
             cursor_value = self._record_cursor(record)
-            if cursor_value is not None and (
-                latest_cursor is None or cursor_value > latest_cursor
-            ):
+            if cursor_value is not None and (latest_cursor is None or cursor_value > latest_cursor):
                 latest_cursor = cursor_value
             batch.append(dict(record))
             if len(batch) >= SEARCH_PAGE_LIMIT:
@@ -250,10 +243,7 @@ class HubspotStream(Stream, ABC):
 
         self._advance_state(latest_cursor)
 
-    def _finalize_batch(
-        self,
-        batch: List[MutableMapping[str, Any]],
-    ) -> Iterable[MutableMapping[str, Any]]:
+    def _finalize_batch(self, batch: list[MutableMapping[str, Any]]) -> Iterable[MutableMapping[str, Any]]:
         if self._associations is not None:
             self._associations.enrich(batch)
         for record in batch:
@@ -269,10 +259,7 @@ class HubspotStream(Stream, ABC):
 
     @abstractmethod
     def _generate_records(
-        self,
-        sync_mode: SyncMode,
-        stream_slice: Optional[Mapping[str, Any]],
-        stream_state: Optional[Mapping[str, Any]],
+        self, sync_mode: SyncMode, stream_slice: Mapping[str, Any] | None, stream_state: Mapping[str, Any] | None
     ) -> Iterable[Mapping[str, Any]]:
         """Yield raw (pre-envelope) HubSpot records."""
         ...
@@ -306,24 +293,17 @@ class CrmSearchStream(HubspotStream):
         return f"{BASE_URL}/crm/v3/objects/{self._object_type}/search"
 
     def _generate_records(
-        self,
-        sync_mode: SyncMode,
-        stream_slice: Optional[Mapping[str, Any]],
-        stream_state: Optional[Mapping[str, Any]],
+        self, sync_mode: SyncMode, stream_slice: Mapping[str, Any] | None, stream_state: Mapping[str, Any] | None
     ) -> Iterable[Mapping[str, Any]]:
         lower = (self._state or self._start_date).to_iso8601_string()
         upper = self._init_sync.to_iso8601_string()
-        property_names = list(self._hubspot.property_names(self._object_type))
-        min_object_id: Optional[str] = None
-        after: Optional[str] = None
+        property_names = self._search_property_names()
+        min_object_id: str | None = None
+        after: str | None = None
 
         while True:
             payload = self._search_body(
-                lower=lower,
-                upper=upper,
-                property_names=property_names,
-                after=after,
-                min_object_id=min_object_id,
+                lower=lower, upper=upper, property_names=property_names, after=after, min_object_id=min_object_id
             )
             results, next_after = self._post_search(payload)
             if not results:
@@ -350,8 +330,7 @@ class CrmSearchStream(HubspotStream):
                     return
                 min_object_id = str(last_id)
                 logger.info(
-                    "Stream '%s' hit %s records in window [%s..%s]; "
-                    "restarting from hs_object_id>%s",
+                    "Stream '%s' hit %s records in window [%s..%s]; restarting from hs_object_id>%s",
                     self._stream_name,
                     SEARCH_AFTER_HARD_CAP,
                     lower,
@@ -362,15 +341,12 @@ class CrmSearchStream(HubspotStream):
                 continue
             after = next_after
 
-    def _post_search(
-        self, body: Mapping[str, Any]
-    ) -> tuple[List[Mapping[str, Any]], Optional[str]]:
+    def _search_property_names(self) -> list[str]:
+        return list(self._hubspot.property_names(self._object_type))
+
+    def _post_search(self, body: Mapping[str, Any]) -> tuple[list[Mapping[str, Any]], str | None]:
         _, resp = self._http_client.send_request(
-            "POST",
-            self._search_url(),
-            headers={"Content-Type": "application/json"},
-            json=body,
-            request_kwargs={},
+            "POST", self._search_url(), headers={"Content-Type": "application/json"}, json=body, request_kwargs={}
         )
         data = resp.json()
         results = list(data.get("results") or [])
@@ -383,24 +359,16 @@ class CrmSearchStream(HubspotStream):
         return results, next_after
 
     def _search_body(
-        self,
-        *,
-        lower: str,
-        upper: str,
-        property_names: List[str],
-        after: Optional[str],
-        min_object_id: Optional[str],
+        self, *, lower: str, upper: str, property_names: list[str], after: str | None, min_object_id: str | None
     ) -> Mapping[str, Any]:
         cursor_prop = self._search_cursor_property
-        filters: List[Mapping[str, Any]] = [
+        filters: list[Mapping[str, Any]] = [
             {"propertyName": cursor_prop, "operator": "GTE", "value": lower},
             {"propertyName": cursor_prop, "operator": "LTE", "value": upper},
         ]
         if min_object_id is not None:
             # Keyset restart — same time window, but start from the last-seen id.
-            filters.append(
-                {"propertyName": "hs_object_id", "operator": "GT", "value": min_object_id}
-            )
+            filters.append({"propertyName": "hs_object_id", "operator": "GT", "value": min_object_id})
         body: MutableMapping[str, Any] = {
             "filterGroups": [{"filters": filters}],
             "properties": property_names,
@@ -443,6 +411,12 @@ class OwnersStream(HubspotStream):
                 "firstName": {"type": ["string", "null"]},
                 "lastName": {"type": ["string", "null"]},
                 "userId": {"type": ["integer", "null"]},
+                "userIdIncludingInactive": {"type": ["integer", "null"]},
+                "type": {"type": ["string", "null"]},
+                # [{id, name, primary}] — the only team membership source a
+                # CRM-scoped token can read (/settings/v3/users/teams needs
+                # a settings scope).
+                "teams": {"type": ["array", "null"], "items": {"type": "object", "additionalProperties": True}},
                 "createdAt": {"type": ["string", "null"], "format": "date-time"},
                 "updatedAt": {"type": ["string", "null"], "format": "date-time"},
                 "archived": {"type": ["boolean", "null"]},
@@ -454,10 +428,7 @@ class OwnersStream(HubspotStream):
         return inject_envelope_properties(schema)
 
     def _generate_records(
-        self,
-        sync_mode: SyncMode,
-        stream_slice: Optional[Mapping[str, Any]],
-        stream_state: Optional[Mapping[str, Any]],
+        self, sync_mode: SyncMode, stream_slice: Mapping[str, Any] | None, stream_state: Mapping[str, Any] | None
     ) -> Iterable[Mapping[str, Any]]:
         threshold = self._state  # None on first sync → emit all
         for record in self._paginate_owners(archived=False):
@@ -466,17 +437,12 @@ class OwnersStream(HubspotStream):
 
     def _paginate_owners(self, *, archived: bool) -> Iterable[Mapping[str, Any]]:
         url = f"{BASE_URL}/crm/v3/owners/"
-        after: Optional[str] = None
+        after: str | None = None
         while True:
-            params: MutableMapping[str, Any] = {
-                "limit": LIST_PAGE_LIMIT,
-                "archived": "true" if archived else "false",
-            }
+            params: MutableMapping[str, Any] = {"limit": LIST_PAGE_LIMIT, "archived": "true" if archived else "false"}
             if after:
                 params["after"] = after
-            _, resp = self._http_client.send_request(
-                "GET", url, headers={}, params=params, request_kwargs={}
-            )
+            _, resp = self._http_client.send_request("GET", url, headers={}, params=params, request_kwargs={})
             data = resp.json()
             for rec in data.get("results") or []:
                 yield rec
@@ -489,9 +455,9 @@ class OwnersStream(HubspotStream):
     def read_records(
         self,
         sync_mode: SyncMode,
-        cursor_field: Optional[List[str]] = None,
-        stream_slice: Optional[Mapping[str, Any]] = None,
-        stream_state: Optional[Mapping[str, Any]] = None,
+        cursor_field: list[str] | None = None,
+        stream_slice: Mapping[str, Any] | None = None,
+        stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[StreamData]:
         """Envelope owners one at a time, without the batch buffer.
 
@@ -503,12 +469,10 @@ class OwnersStream(HubspotStream):
         if stream_state and self.cursor_field:
             self.state = stream_state  # type: ignore[assignment]
 
-        latest_cursor: Optional[pendulum.DateTime] = None
+        latest_cursor: pendulum.DateTime | None = None
         for record in self._generate_records(sync_mode, stream_slice, stream_state):
             cursor_value = self._record_cursor(record)
-            if cursor_value is not None and (
-                latest_cursor is None or cursor_value > latest_cursor
-            ):
+            if cursor_value is not None and (latest_cursor is None or cursor_value > latest_cursor):
                 latest_cursor = cursor_value
             yield envelope(
                 record,
@@ -521,27 +485,19 @@ class OwnersStream(HubspotStream):
 
 
 class OwnersArchivedStream(OwnersStream):
-    """Archived owners — ``/crm/v3/owners/?archived=true``, incremental on ``archivedAt``.
+    """Archived owners — ``/crm/v3/owners/?archived=true``, incremental on ``updatedAt``.
 
-    Inherits the hard-coded schema and the no-properties ``read_records``
-    override from :class:`OwnersStream`. The list endpoint has no
-    ``archivedAt`` filter, so the stream pages the full archived owner set
-    every sync but drops records whose ``archivedAt`` precedes the prior
-    cursor state.
+    HubSpot omits ``archivedAt`` on archived owners, so the cursor is the
+    ``updatedAt`` the archive stamps. As with live owners, the first sync emits
+    every archived owner regardless of ``start_date``: deals and engagements
+    keep referencing reps deactivated long before it.
     """
 
     def _generate_records(
-        self,
-        sync_mode: SyncMode,
-        stream_slice: Optional[Mapping[str, Any]],
-        stream_state: Optional[Mapping[str, Any]],
+        self, sync_mode: SyncMode, stream_slice: Mapping[str, Any] | None, stream_state: Mapping[str, Any] | None
     ) -> Iterable[Mapping[str, Any]]:
-        threshold = self._state if self._state is not None else self._start_date
-        # First sync uses start_date as floor — be inclusive so a record
-        # archived exactly at start_date isn't dropped at the boundary.
-        inclusive = self._state is None
         for record in self._paginate_owners(archived=True):
-            if _record_cursor_passes(record, "archivedAt", threshold, inclusive=inclusive):
+            if _record_cursor_passes(record, "updatedAt", self._state):
                 yield record
 
 
@@ -586,10 +542,7 @@ class CrmArchivedListStream(HubspotStream):
         return f"{BASE_URL}/crm/v3/objects/{self._object_type}/batch/read"
 
     def _generate_records(
-        self,
-        sync_mode: SyncMode,
-        stream_slice: Optional[Mapping[str, Any]],
-        stream_state: Optional[Mapping[str, Any]],
+        self, sync_mode: SyncMode, stream_slice: Mapping[str, Any] | None, stream_state: Mapping[str, Any] | None
     ) -> Iterable[Mapping[str, Any]]:
         threshold = self._state if self._state is not None else self._start_date
         inclusive = self._state is None
@@ -598,7 +551,7 @@ class CrmArchivedListStream(HubspotStream):
         # Buffer at most BATCH_READ_LIMIT stubs before flushing Pass 2 so we
         # never accumulate the full archived set in memory (large orgs can have
         # hundreds of thousands of archived records).
-        pending: List[Tuple[str, Any]] = []  # (id, archivedAt)
+        pending: list[tuple[str, Any]] = []  # (id, archivedAt)
         for stub in self._paginate_archived_ids():
             if not _record_cursor_passes(stub, "archivedAt", threshold, inclusive=inclusive):
                 continue
@@ -616,17 +569,12 @@ class CrmArchivedListStream(HubspotStream):
     def _paginate_archived_ids(self) -> Iterable[Mapping[str, Any]]:
         """Page the archived list endpoint with no ``properties=`` param."""
         url = self._list_url()
-        after: Optional[str] = None
+        after: str | None = None
         while True:
-            params: MutableMapping[str, Any] = {
-                "limit": LIST_PAGE_LIMIT,
-                "archived": "true",
-            }
+            params: MutableMapping[str, Any] = {"limit": LIST_PAGE_LIMIT, "archived": "true"}
             if after:
                 params["after"] = after
-            _, resp = self._http_client.send_request(
-                "GET", url, headers={}, params=params, request_kwargs={}
-            )
+            _, resp = self._http_client.send_request("GET", url, headers={}, params=params, request_kwargs={})
             data = resp.json()
             for rec in data.get("results") or []:
                 yield rec
@@ -637,9 +585,7 @@ class CrmArchivedListStream(HubspotStream):
                 return
 
     def _batch_read_chunk(
-        self,
-        id_ts_pairs: List[Tuple[str, Any]],
-        property_names: List[str],
+        self, id_ts_pairs: list[tuple[str, Any]], property_names: list[str]
     ) -> Iterable[Mapping[str, Any]]:
         """Fetch full properties for a chunk and overlay the Pass-1 archivedAt."""
         archived_ts = {id_: ts for id_, ts in id_ts_pairs}
@@ -649,32 +595,200 @@ class CrmArchivedListStream(HubspotStream):
                 # Pass 1 timestamp is authoritative — covers the (rare) case
                 # where batch_read omits archivedAt for a row that the list
                 # endpoint returned it for.
-                record["archivedAt"] = archived_ts.get(
-                    str(rec_id), record.get("archivedAt")
-                )
+                record["archivedAt"] = archived_ts.get(str(rec_id), record.get("archivedAt"))
             yield record
 
-    def _batch_read(
-        self, ids: List[str], property_names: List[str]
-    ) -> Iterable[Mapping[str, Any]]:
-        body: MutableMapping[str, Any] = {
-            "properties": property_names,
-            "inputs": [{"id": _id} for _id in ids],
-        }
+    def _batch_read(self, ids: list[str], property_names: list[str]) -> Iterable[Mapping[str, Any]]:
+        body: MutableMapping[str, Any] = {"properties": property_names, "inputs": [{"id": _id} for _id in ids]}
         # ``archived=true`` instructs batch_read to look up archived records;
         # without it the endpoint only resolves live ids and returns empties
         # for everything we just listed.
         url = f"{self._batch_read_url()}?archived=true"
         _, resp = self._http_client.send_request(
-            "POST",
-            url,
-            headers={"Content-Type": "application/json"},
-            json=body,
-            request_kwargs={},
+            "POST", url, headers={"Content-Type": "application/json"}, json=body, request_kwargs={}
         )
         data = resp.json()
         for rec in data.get("results") or []:
             yield rec
+
+
+# =============================================================================
+# Pipelines stream
+# =============================================================================
+
+
+class PipelinesStream(HubspotStream):
+    """``/crm/v3/pipelines/{type}`` — every pipeline with its stages.
+
+    The endpoint is a single unpaged list with no modification filter, and a
+    stage edit does not reliably move the pipeline's ``updatedAt``, so every
+    sync emits the full set; Bronze dedups on ``unique_key``.
+    """
+
+    def get_json_schema(self) -> Mapping[str, Any]:
+        schema = {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "additionalProperties": True,
+            "properties": {
+                "id": {"type": ["string", "null"]},
+                "objectType": {"type": ["string", "null"]},
+                "label": {"type": ["string", "null"]},
+                "displayOrder": {"type": ["integer", "null"]},
+                "stages": {"type": ["array", "null"], "items": {"type": "object", "additionalProperties": True}},
+                "createdAt": {"type": ["string", "null"], "format": "date-time"},
+                "updatedAt": {"type": ["string", "null"], "format": "date-time"},
+                "archived": {"type": ["boolean", "null"]},
+                "archivedAt": {"type": ["string", "null"], "format": "date-time"},
+            },
+        }
+        return inject_envelope_properties(schema)
+
+    def _generate_records(
+        self, sync_mode: SyncMode, stream_slice: Mapping[str, Any] | None, stream_state: Mapping[str, Any] | None
+    ) -> Iterable[Mapping[str, Any]]:
+        url = f"{BASE_URL}/crm/v3/pipelines/{self._object_type}"
+        _, resp = self._http_client.send_request("GET", url, headers={}, request_kwargs={})
+        for pipeline in resp.json().get("results") or []:
+            yield {**pipeline, "objectType": self._object_type}
+
+
+# =============================================================================
+# Property definitions stream
+# =============================================================================
+
+
+class PropertyDefinitionsStream(HubspotStream):
+    """``/crm/v3/properties/{type}`` for every synced CRM object type.
+
+    Live and archived definitions both land, so a deleted custom property
+    keeps its label. ``id`` is ``{objectType}:{name}`` — a property name is
+    unique only within its object type.
+    """
+
+    def get_json_schema(self) -> Mapping[str, Any]:
+        schema = {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "additionalProperties": True,
+            "properties": {
+                "id": {"type": ["string", "null"]},
+                "objectType": {"type": ["string", "null"]},
+                "name": {"type": ["string", "null"]},
+                "label": {"type": ["string", "null"]},
+                "description": {"type": ["string", "null"]},
+                "groupName": {"type": ["string", "null"]},
+                "type": {"type": ["string", "null"]},
+                "fieldType": {"type": ["string", "null"]},
+                "hubspotDefined": {"type": ["boolean", "null"]},
+                "calculated": {"type": ["boolean", "null"]},
+                "hidden": {"type": ["boolean", "null"]},
+                "hasUniqueValue": {"type": ["boolean", "null"]},
+                "displayOrder": {"type": ["integer", "null"]},
+                "options": {"type": ["array", "null"], "items": {"type": "object", "additionalProperties": True}},
+                "createdAt": {"type": ["string", "null"], "format": "date-time"},
+                "updatedAt": {"type": ["string", "null"], "format": "date-time"},
+                "archived": {"type": ["boolean", "null"]},
+                "archivedAt": {"type": ["string", "null"], "format": "date-time"},
+            },
+        }
+        return inject_envelope_properties(schema)
+
+    def _generate_records(
+        self, sync_mode: SyncMode, stream_slice: Mapping[str, Any] | None, stream_state: Mapping[str, Any] | None
+    ) -> Iterable[Mapping[str, Any]]:
+        for object_type in PROPERTY_DEFINITION_OBJECT_TYPES:
+            for archived in (False, True):
+                for definition in self._list_definitions(object_type, archived=archived):
+                    name = definition.get("name")
+                    if not name:
+                        continue
+                    yield {
+                        **definition,
+                        "id": f"{object_type}:{name}",
+                        "objectType": object_type,
+                        "archived": archived or bool(definition.get("archived")),
+                    }
+
+    def _list_definitions(self, object_type: str, *, archived: bool) -> list[Mapping[str, Any]]:
+        url = f"{BASE_URL}/crm/v3/properties/{object_type}"
+        params = {"archived": "true" if archived else "false"}
+        _, resp = self._http_client.send_request("GET", url, headers={}, params=params, request_kwargs={})
+        return list(resp.json().get("results") or [])
+
+
+# =============================================================================
+# Property history stream
+# =============================================================================
+
+
+class PropertyHistoryStream(CrmSearchStream):
+    """Value-change history of selected properties, one record per change.
+
+    The search pass reuses :class:`CrmSearchStream`'s window and keyset
+    pagination but requests only ``hs_object_id``; each page of ids is then
+    resolved through ``batch/read`` with ``propertiesWithHistory`` (HubSpot
+    caps that call at 50 inputs). A changed object re-emits its whole history,
+    so ``id`` hashes the change itself: replays land on the same
+    ``unique_key``.
+    """
+
+    @property
+    def _history_properties(self) -> list[str]:
+        return list(self._registry["history_properties"])
+
+    def get_json_schema(self) -> Mapping[str, Any]:
+        schema = {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "additionalProperties": True,
+            "properties": {
+                "id": {"type": ["string", "null"]},
+                "objectType": {"type": ["string", "null"]},
+                "objectId": {"type": ["string", "null"]},
+                "propertyName": {"type": ["string", "null"]},
+                "value": {"type": ["string", "null"]},
+                "timestamp": {"type": ["string", "null"], "format": "date-time"},
+                "sourceType": {"type": ["string", "null"]},
+                "sourceId": {"type": ["string", "null"]},
+                "sourceLabel": {"type": ["string", "null"]},
+                "updatedByUserId": {"type": ["integer", "null"]},
+                # The owning object's updatedAt — the stream cursor.
+                "updatedAt": {"type": ["string", "null"], "format": "date-time"},
+            },
+        }
+        return inject_envelope_properties(schema)
+
+    def _search_property_names(self) -> list[str]:
+        return ["hs_object_id"]
+
+    def _generate_records(
+        self, sync_mode: SyncMode, stream_slice: Mapping[str, Any] | None, stream_state: Mapping[str, Any] | None
+    ) -> Iterable[Mapping[str, Any]]:
+        pending: list[str] = []
+        for record in super()._generate_records(sync_mode, stream_slice, stream_state):
+            object_id = record.get("id")
+            if not object_id:
+                continue
+            pending.append(str(object_id))
+            if len(pending) >= HISTORY_BATCH_READ_LIMIT:
+                yield from self._history_chunk(pending)
+                pending = []
+        if pending:
+            yield from self._history_chunk(pending)
+
+    def _history_chunk(self, ids: list[str]) -> Iterable[Mapping[str, Any]]:
+        url = f"{BASE_URL}/crm/v3/objects/{self._object_type}/batch/read"
+        body = {
+            "inputs": [{"id": object_id} for object_id in ids],
+            "properties": ["hs_object_id"],
+            "propertiesWithHistory": self._history_properties,
+        }
+        _, resp = self._http_client.send_request(
+            "POST", url, headers={"Content-Type": "application/json"}, json=body, request_kwargs={}
+        )
+        for obj in resp.json().get("results") or []:
+            yield from _history_changes(self._object_type, obj)
 
 
 # =============================================================================
@@ -695,7 +809,7 @@ def _after_exceeds_cap(after: Any) -> bool:
         return False
 
 
-def _parse_datetime(value: Any) -> Optional[pendulum.DateTime]:
+def _parse_datetime(value: Any) -> pendulum.DateTime | None:
     if value is None:
         return None
     if isinstance(value, pendulum.DateTime):
@@ -710,11 +824,7 @@ def _parse_datetime(value: Any) -> Optional[pendulum.DateTime]:
 
 
 def _record_cursor_passes(
-    record: Mapping[str, Any],
-    cursor_field: str,
-    threshold: Optional[pendulum.DateTime],
-    *,
-    inclusive: bool = False,
+    record: Mapping[str, Any], cursor_field: str, threshold: pendulum.DateTime | None, *, inclusive: bool = False
 ) -> bool:
     """True if record's cursor passes ``threshold`` (or threshold absent).
 
@@ -724,12 +834,39 @@ def _record_cursor_passes(
     """
     value = _parse_datetime(record.get(cursor_field))
     if value is None:
-        logger.warning(
-            "Record id=%r has no parseable %r value; dropping from sync",
-            record.get("id"),
-            cursor_field,
-        )
+        logger.warning("Record id=%r has no parseable %r value; dropping from sync", record.get("id"), cursor_field)
         return False
     if threshold is None:
         return True
     return value >= threshold if inclusive else value > threshold
+
+
+def _history_changes(object_type: str, obj: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
+    """Flatten one batch/read result into a record per property change."""
+    object_id = str(obj.get("id"))
+    history = obj.get("propertiesWithHistory") or {}
+    for property_name, changes in history.items():
+        for change in changes or []:
+            yield {
+                "id": _history_change_id(object_id, property_name, change),
+                "objectType": object_type,
+                "objectId": object_id,
+                "propertyName": property_name,
+                "value": change.get("value"),
+                "timestamp": change.get("timestamp"),
+                "sourceType": change.get("sourceType"),
+                "sourceId": change.get("sourceId"),
+                "sourceLabel": change.get("sourceLabel"),
+                "updatedByUserId": change.get("updatedByUserId"),
+                "updatedAt": obj.get("updatedAt"),
+            }
+
+
+def _history_change_id(object_id: str, property_name: str, change: Mapping[str, Any]) -> str:
+    # INVARIANT: built only from the change itself, so a replayed history
+    # keeps every change on its first unique_key.
+    fingerprint = "\x1f".join(
+        str(change.get(key) or "") for key in ("timestamp", "value", "sourceType", "sourceId", "updatedByUserId")
+    )
+    digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:16]
+    return f"{object_id}:{property_name}:{digest}"

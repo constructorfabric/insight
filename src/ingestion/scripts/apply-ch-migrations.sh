@@ -433,6 +433,89 @@ SQL
 
 heal_task_field_history_class_event_order
 
+echo "=== Healing CRM deletion, property and team columns ==="
+# Same positional invariant: the CRM classes and their HubSpot staging gained
+# deletion, the full property map, engagement bodies and owner teams after
+# `_version`, in the order the staging models project them. Stored rows keep
+# the defaults until the full refresh the connector's major bump dispatches.
+# INVARIANT: repairs releases without #4178 (main before the release that ships it); delete once every CH_FLOOR_RELEASES release runs it.
+heal_crm_class_columns() {
+  local db="$1" table="$2" grain="$3"
+  ch_table_exists "$db" "$table" || return 0
+  echo "  ${db}.${table}"
+  case "${grain}" in
+    accounts)
+      run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS is_deleted UInt8 AFTER _version;
+ALTER TABLE ${db}.${table} MODIFY COLUMN is_deleted UInt8 AFTER _version;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS deleted_at Nullable(DateTime64(3)) AFTER is_deleted;
+ALTER TABLE ${db}.${table} MODIFY COLUMN deleted_at Nullable(DateTime64(3)) AFTER is_deleted;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS properties Map(String, String) AFTER deleted_at;
+ALTER TABLE ${db}.${table} MODIFY COLUMN properties Map(String, String) AFTER deleted_at;
+SQL
+      ;;
+    contacts)
+      run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS is_deleted UInt8 AFTER _version;
+ALTER TABLE ${db}.${table} MODIFY COLUMN is_deleted UInt8 AFTER _version;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS deleted_at Nullable(DateTime64(3)) AFTER is_deleted;
+ALTER TABLE ${db}.${table} MODIFY COLUMN deleted_at Nullable(DateTime64(3)) AFTER is_deleted;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS properties Map(String, String) AFTER deleted_at;
+ALTER TABLE ${db}.${table} MODIFY COLUMN properties Map(String, String) AFTER deleted_at;
+SQL
+      ;;
+    deals)
+      run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS is_deleted UInt8 AFTER _version;
+ALTER TABLE ${db}.${table} MODIFY COLUMN is_deleted UInt8 AFTER _version;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS deleted_at Nullable(DateTime64(3)) AFTER is_deleted;
+ALTER TABLE ${db}.${table} MODIFY COLUMN deleted_at Nullable(DateTime64(3)) AFTER is_deleted;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS properties Map(String, String) AFTER deleted_at;
+ALTER TABLE ${db}.${table} MODIFY COLUMN properties Map(String, String) AFTER deleted_at;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS currency Nullable(String) AFTER properties;
+ALTER TABLE ${db}.${table} MODIFY COLUMN currency Nullable(String) AFTER properties;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS exchange_rate Nullable(Float64) AFTER currency;
+ALTER TABLE ${db}.${table} MODIFY COLUMN exchange_rate Nullable(Float64) AFTER currency;
+SQL
+      ;;
+    activities)
+      run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS is_deleted UInt8 AFTER _version;
+ALTER TABLE ${db}.${table} MODIFY COLUMN is_deleted UInt8 AFTER _version;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS deleted_at Nullable(DateTime64(3)) AFTER is_deleted;
+ALTER TABLE ${db}.${table} MODIFY COLUMN deleted_at Nullable(DateTime64(3)) AFTER is_deleted;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS properties Map(String, String) AFTER deleted_at;
+ALTER TABLE ${db}.${table} MODIFY COLUMN properties Map(String, String) AFTER deleted_at;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS subject Nullable(String) AFTER properties;
+ALTER TABLE ${db}.${table} MODIFY COLUMN subject Nullable(String) AFTER properties;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS body Nullable(String) AFTER subject;
+ALTER TABLE ${db}.${table} MODIFY COLUMN body Nullable(String) AFTER subject;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS direction Nullable(String) AFTER body;
+ALTER TABLE ${db}.${table} MODIFY COLUMN direction Nullable(String) AFTER body;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS status Nullable(String) AFTER direction;
+ALTER TABLE ${db}.${table} MODIFY COLUMN status Nullable(String) AFTER direction;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS channel Nullable(String) AFTER status;
+ALTER TABLE ${db}.${table} MODIFY COLUMN channel Nullable(String) AFTER status;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS ended_at Nullable(DateTime64(3)) AFTER channel;
+ALTER TABLE ${db}.${table} MODIFY COLUMN ended_at Nullable(DateTime64(3)) AFTER channel;
+SQL
+      ;;
+    users)
+      run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS primary_team_id Nullable(String) AFTER _version;
+ALTER TABLE ${db}.${table} MODIFY COLUMN primary_team_id Nullable(String) AFTER _version;
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS team_ids Array(String) AFTER primary_team_id;
+ALTER TABLE ${db}.${table} MODIFY COLUMN team_ids Array(String) AFTER primary_team_id;
+SQL
+      ;;
+  esac
+}
+
+for _crm_grain in accounts activities contacts deals users; do
+  heal_crm_class_columns staging "hubspot__crm_${_crm_grain}" "${_crm_grain}"
+  heal_crm_class_columns silver "class_crm_${_crm_grain}" "${_crm_grain}"
+done
+
 echo "=== Healing collab-meeting contract schema ==="
 # Same positional invariant: collab meeting rows gained the account triple
 # after data_source (zoom-guest attribution), then the attended meeting keys

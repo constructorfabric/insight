@@ -10,8 +10,11 @@ everything else the portal returns survives inside ``raw_data``.
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Mapping, MutableMapping, MutableSet, Optional
+from collections.abc import Mapping, MutableMapping, MutableSet
+from datetime import UTC, datetime
+from typing import Any
+
+from source_hubspot.constants import BODY_PROPERTIES
 
 logger = logging.getLogger("airbyte")
 
@@ -20,16 +23,7 @@ DATA_SOURCE = "hubspot"
 # Field names injected by the envelope. A HubSpot property that collides
 # (unlikely but possible with custom flat-top properties) would otherwise be
 # silently overwritten; we log and drop it instead.
-_RESERVED_FIELD_NAMES = frozenset(
-    {
-        "tenant_id",
-        "source_id",
-        "unique_key",
-        "data_source",
-        "collected_at",
-        "raw_data",
-    }
-)
+_RESERVED_FIELD_NAMES = frozenset({"tenant_id", "source_id", "unique_key", "data_source", "collected_at", "raw_data"})
 
 # Per-property string truncation cap. Bounds the worst-case row width
 # regardless of how a portal customizes its CRM (some custom properties hold
@@ -37,19 +31,22 @@ _RESERVED_FIELD_NAMES = frozenset(
 # signal that a value was clipped so downstream isn't fooled into thinking
 # it's the full content.
 _VALUE_MAX_BYTES = 2048
+_BODY_MAX_BYTES = 65536
 _TRUNCATED_SUFFIX = "…[truncated]"
 
 
 _TRUNCATED_SUFFIX_BYTES = _TRUNCATED_SUFFIX.encode("utf-8")
 
 
-def _truncate(value: Any) -> Any:
+def _truncate(value: Any, max_bytes: int | None = None) -> Any:
     if not isinstance(value, str):
         return value
+    if max_bytes is None:
+        max_bytes = _VALUE_MAX_BYTES
     encoded = value.encode("utf-8")
-    if len(encoded) <= _VALUE_MAX_BYTES:
+    if len(encoded) <= max_bytes:
         return value
-    allowed = _VALUE_MAX_BYTES - len(_TRUNCATED_SUFFIX_BYTES)
+    allowed = max_bytes - len(_TRUNCATED_SUFFIX_BYTES)
     if allowed <= 0:
         return _TRUNCATED_SUFFIX
     # Slice on bytes; ``errors="ignore"`` drops a partial multi-byte char at
@@ -67,7 +64,7 @@ def _truncate_deep(value: Any) -> Any:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def envelope(
@@ -76,7 +73,7 @@ def envelope(
     tenant_id: str,
     source_id: str,
     allowed_property_names: frozenset,
-    collision_seen: Optional[MutableSet[str]] = None,
+    collision_seen: MutableSet[str] | None = None,
 ) -> MutableMapping[str, Any]:
     """Return a copy of ``record`` with Insight metadata injected.
 
@@ -117,13 +114,12 @@ def envelope(
             continue
         # The ``properties_`` prefix rules out collision with the unprefixed
         # reserved names, so no collision check is needed here.
-        out[f"properties_{prop_name}"] = _truncate(prop_value)
+        cap = _BODY_MAX_BYTES if prop_name in BODY_PROPERTIES else _VALUE_MAX_BYTES
+        out[f"properties_{prop_name}"] = _truncate(prop_value, cap)
 
     # Truncation is per value, never on the blob — clipping the serialized
     # JSON would leave it unparseable.
-    out["raw_data"] = json.dumps(
-        _truncate_deep(record), separators=(",", ":"), default=str
-    )
+    out["raw_data"] = json.dumps(_truncate_deep(record), separators=(",", ":"), default=str)
 
     hs_id = record.get("id")
     # Treat only None / empty string as missing — a numeric 0 is still a
@@ -150,12 +146,9 @@ def envelope(
     return out
 
 
-def _warn_once(seen: Optional[MutableSet[str]], key: str) -> None:
+def _warn_once(seen: MutableSet[str] | None, key: str) -> None:
     if seen is None or key not in seen:
-        logger.warning(
-            "HubSpot field %r collides with Insight envelope field; original value dropped",
-            key,
-        )
+        logger.warning("HubSpot field %r collides with Insight envelope field; original value dropped", key)
         if seen is not None:
             seen.add(key)
 

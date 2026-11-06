@@ -28,6 +28,9 @@ class TestOwnersSchema:
             assert field in props, f"missing envelope column: {field}"
         assert "custom_fields" not in props
 
+    def test_schema_declares_team_membership(self, owners_stream):
+        assert owners_stream.get_json_schema()["properties"]["teams"]["type"] == ["array", "null"]
+
     def test_archived_stream_inherits_schema(self, owners_archived_stream):
         assert "userId" in owners_archived_stream.get_json_schema()["properties"]
 
@@ -105,33 +108,26 @@ class TestOwnersArchived:
         client = wire(owners_archived_stream, [owners_page([])])
         list(owners_archived_stream._generate_records(None, None, None))
         assert client.calls[0]["params"]["archived"] == "true"
-        assert owners_archived_stream.cursor_field == "archivedAt"
+        assert owners_archived_stream.cursor_field == "updatedAt"
 
-    def test_first_sync_inclusive_at_start_date(self, owners_archived_stream):
-        # Record archived exactly at start_date must survive the boundary.
+    def test_first_sync_emits_owners_archived_before_start_date(self, owners_archived_stream):
+        # Archived owners carry no archivedAt; reps deactivated before start_date still own deals.
         wire(
             owners_archived_stream,
-            [
-                owners_page(
-                    [
-                        owner(1, archivedAt="2024-01-01T00:00:00Z"),
-                        owner(2, archivedAt="2023-12-31T23:59:59Z"),  # before start: dropped
-                    ]
-                )
-            ],
+            [owners_page([owner(1, updated="2020-01-01T00:00:00Z"), owner(2, updated="2024-06-01T00:00:00Z")])],
         )
         out = list(owners_archived_stream._generate_records(None, None, None))
-        assert [r["id"] for r in out] == ["1"]
+        assert [r["id"] for r in out] == ["1", "2"]
 
     def test_later_sync_exclusive_above_state(self, owners_archived_stream):
-        owners_archived_stream.state = {"archivedAt": "2024-06-01T00:00:00Z"}
+        owners_archived_stream.state = {"updatedAt": "2024-06-01T00:00:00Z"}
         wire(
             owners_archived_stream,
             [
                 owners_page(
                     [
-                        owner(1, archivedAt="2024-06-01T00:00:00Z"),  # == state: dropped
-                        owner(2, archivedAt="2024-06-02T00:00:00Z"),
+                        owner(1, updated="2024-06-01T00:00:00Z"),  # == state: dropped
+                        owner(2, updated="2024-06-02T00:00:00Z"),
                     ]
                 )
             ],
