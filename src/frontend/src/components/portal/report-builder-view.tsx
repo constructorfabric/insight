@@ -7,13 +7,13 @@ import type {
 } from "@/api/reports-client";
 import { MAX_REPORT_PEOPLE } from "@/api/reports-client";
 import { Card, CardContent } from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
+  Spinner,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@gears-frontx/ui-kit";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { ReportBuilderActions } from "@/components/portal/report-builder-actions";
 import {

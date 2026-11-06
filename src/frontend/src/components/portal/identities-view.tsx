@@ -41,13 +41,11 @@ import {
   Tabs,
   TabsList,
   TabsTrigger,
-} from "@gears-frontx/ui-kit";
-import { Card, CardContent, CardTitle } from "@/components/ui/card";
-import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@gears-frontx/ui-kit";
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import {
   Empty,
   EmptyDescription,

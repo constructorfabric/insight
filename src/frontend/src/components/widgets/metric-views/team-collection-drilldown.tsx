@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 import type { DateRange } from "@/api/period-to-date-range";
 import { Card, CardContent } from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@gears-frontx/ui-kit";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import {
   MembersGrid,

@@ -1,7 +1,6 @@
 import { X } from "lucide-react";
 
-import { Button } from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
+import { Button, Spinner } from "@gears-frontx/ui-kit";
 
 interface ReportBuilderActionsProps {
   selectedCount: number;

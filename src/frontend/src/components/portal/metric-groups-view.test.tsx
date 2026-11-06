@@ -180,9 +180,9 @@ describe("MetricGroupsView", () => {
 
   it("spins while any group collection is pending", () => {
     seedSet({ isPending: true });
-    const { container } = render(<MetricGroupsView personId="p@x" groupIds={GROUPS} />);
+    render(<MetricGroupsView personId="p@x" groupIds={GROUPS} />);
     expect(screen.queryByTestId("group-card-git_output")).not.toBeInTheDocument();
-    expect(container.querySelector(".animate-spin")).not.toBeNull();
+    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
   });
 
   it("surfaces a group failure as a retryable error, not empty cards", async () => {

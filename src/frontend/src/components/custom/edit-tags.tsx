@@ -3,14 +3,13 @@ import { useId, useState, type RefObject } from "react";
 
 import { DASHBOARD_TAGS_MAX, TAG_NAME_MAX } from "@/api/custom-client";
 import { refusal } from "@/components/custom/refusal";
-import { Button, Checkbox, Input } from "@gears-frontx/ui-kit";
+import { Button, Checkbox, Input, Spinner } from "@gears-frontx/ui-kit";
 import {
   Popover,
   PopoverContent,
   PopoverHeader,
   PopoverTitle,
 } from "@/components/ui/popover";
-import { Spinner } from "@/components/ui/spinner";
 import { sameTagName } from "@/lib/custom/tag-names";
 import {
   dashboardTagsQuery,

@@ -28,8 +28,8 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  Spinner,
 } from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,

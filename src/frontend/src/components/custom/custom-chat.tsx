@@ -8,8 +8,7 @@ import type { ChatCreated, ChatReply } from "@/api/custom-client";
 import { ChatProse } from "@/components/custom/chat-prose";
 import { refusal } from "@/components/custom/refusal";
 import { CustomTable } from "@/components/custom/custom-table";
-import { Badge, Button, Textarea } from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
+import { Badge, Button, Textarea, Spinner } from "@gears-frontx/ui-kit";
 import {
   takeAssistantDraft,
   useAssistantDraft,

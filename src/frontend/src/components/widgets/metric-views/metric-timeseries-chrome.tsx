@@ -14,8 +14,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Spinner,
 } from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { ChartEmpty } from "@/components/widgets/metric-views/chart-empty";

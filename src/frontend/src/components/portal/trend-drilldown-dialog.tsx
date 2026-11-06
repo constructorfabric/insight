@@ -20,8 +20,8 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
+  Spinner,
 } from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,

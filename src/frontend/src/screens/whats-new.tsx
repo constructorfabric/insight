@@ -5,7 +5,7 @@ import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@gears-frontx/ui-kit";
 
 // The release reads as sections, the way the written release notes are grouped.
 // Each section is one row of the release card, styled like the archived

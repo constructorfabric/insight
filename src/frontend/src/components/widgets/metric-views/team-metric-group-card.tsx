@@ -6,7 +6,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@gears-frontx/ui-kit";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import type { MetricGroup } from "@/lib/insight/groups";
 import { countableSignals } from "@/lib/insight/metric-containment";
