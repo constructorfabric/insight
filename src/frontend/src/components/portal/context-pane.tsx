@@ -29,6 +29,7 @@ import {
   resolveZoneItem,
   zoneSections,
 } from "@/lib/portal/nav-model";
+import { useMetricsViewPaneShown } from "@/lib/portal/metrics-view-pane";
 import { usePortalItem } from "@/lib/portal/portal-nav";
 import { railItemFor, type RailId } from "@/lib/portal/rail-model";
 import { useDismissDrawer } from "@/lib/portal/use-dismiss-drawer";
@@ -64,6 +65,12 @@ export function ContextPane() {
   const rail = railItemFor(nav.activeZone);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dismissDrawer = useDismissDrawer();
+  const item = usePortalItem();
+  const metricsPaneShown = useMetricsViewPaneShown();
+
+  const metricsViewOpen =
+    nav.activeZone === "people" && resolveZoneItem("people", item) === "metrics";
+  if (!drawer && metricsViewOpen && !metricsPaneShown) return null;
 
   return (
     <Sidebar

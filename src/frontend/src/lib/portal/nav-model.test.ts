@@ -199,14 +199,14 @@ describe("peopleItemsFor", () => {
   it("names the team views for an organisation with reporting lines", () => {
     const items = peopleItemsFor(false);
 
-    expect(items.map((item) => item.id)).toEqual(["roster", "employees"]);
-    expect(items.map((item) => item.label)).toEqual(["My team", "Roster · by role"]);
+    expect(items.map((item) => item.id)).toEqual(["roster", "employees", "metrics"]);
+    expect(items.map((item) => item.label)).toEqual(["My team", "Roster · by role", "Metrics view"]);
   });
 
   it("names the same views for an organisation with no reporting lines", () => {
     const items = peopleItemsFor(true);
 
-    expect(items.map((item) => item.id)).toEqual(["roster", "employees"]);
-    expect(items.map((item) => item.label)).toEqual(["Overview", "Roster"]);
+    expect(items.map((item) => item.id)).toEqual(["roster", "employees", "metrics"]);
+    expect(items.map((item) => item.label)).toEqual(["Overview", "Roster", "Metrics view"]);
   });
 });

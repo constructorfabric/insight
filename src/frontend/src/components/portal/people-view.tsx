@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 
 import { EmployeesView } from "@/components/portal/employees-view";
+import { MetricsView } from "@/components/portal/metrics-view";
 import { TeamStateView } from "@/components/portal/team-state-view";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { normalizePersonId } from "@/lib/metrics/entity";
@@ -45,6 +46,9 @@ export function PeopleView({
   }
   if (item === "employees") {
     return <EmployeesView />;
+  }
+  if (item === "metrics") {
+    return <MetricsView />;
   }
   // Default (roster): the team-state dashboard over the active org scope.
   return <TeamStateView />;

@@ -28,6 +28,7 @@ import {
   Share2,
   Sparkles,
   Star,
+  Table2,
   Ticket,
   TrendingUp,
   Users,
@@ -336,6 +337,7 @@ export const STARTER_DASHBOARDS: PaneItem = {
 export const PEOPLE_ITEMS: readonly PaneItem[] = [
   { id: "roster", label: "My team", icon: Users },
   { id: "employees", label: "Roster · by role", icon: List },
+  { id: "metrics", label: "Metrics view", icon: Table2 },
 ];
 
 /**
@@ -348,6 +350,7 @@ export const PEOPLE_ITEMS: readonly PaneItem[] = [
 const FLAT_PEOPLE_ITEMS: readonly PaneItem[] = [
   { id: "roster", label: "Overview", icon: LayoutGrid },
   { id: "employees", label: "Roster", icon: Users },
+  { id: "metrics", label: "Metrics view", icon: Table2 },
 ];
 
 export function peopleItemsFor(
