@@ -82,10 +82,11 @@ export const ZONES: readonly Zone[] = [
   { id: "manage", label: "Manage", kind: "manage" },
 ];
 
-/** Zones every viewer may open: Home, their own page and Dashboards. */
+/** Zones every viewer may open: Home, their own page, Reports and Dashboards. */
 export const ZONES_FOR_EVERYONE: ReadonlySet<string> = new Set([
   "overview",
   "person",
+  "reports",
   "custom",
 ]);
 

@@ -42,6 +42,11 @@ describe("landingDecision", () => {
       "keep",
     ],
     [
+      "Reports stands without waiting, since a viewer may report on themself",
+      { zone: "reports", ...unresolved, canSeeOthers: false, isAdmin: false },
+      "keep",
+    ],
+    [
       "Dashboards stand without waiting",
       { zone: "custom", ...unresolved, canSeeOthers: false, isAdmin: false },
       "keep",
