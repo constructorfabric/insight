@@ -258,7 +258,13 @@ def comment(
 
 
 def worklog(
-    worklog_id: int, *, jira_id: str, key: str, started: str = CREATED_AT, extracted_at: str = OBSERVED_AT
+    worklog_id: int,
+    *,
+    jira_id: str,
+    key: str,
+    started: str = CREATED_AT,
+    author: str = "author-acct",
+    extracted_at: str = OBSERVED_AT,
 ) -> dict[str, Any]:
     """One worklog entry on an issue; the feed is instance-wide and keyed by the issue id."""
     return {
@@ -271,7 +277,7 @@ def worklog(
         "worklog_id": worklog_id,
         "id_readable": key,
         "jira_id": jira_id,
-        "author_account_id": "author-acct",
+        "author_account_id": author,
         "started": started,
         "created": started,
         "updated": started,

@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
-from conftest import FIELD_HISTORY_SELECTOR, LIFECYCLE_SELECTOR, Scenario, Warehouse, _truncate_bronze
+from conftest import FIELD_HISTORY_SELECTOR, LIFECYCLE_SELECTOR, Scenario, Warehouse, truncate_bronze
 from helpers import comment, event, field, issue, item, worklog
 
 POINTS = "customfield_10001"
@@ -53,6 +53,15 @@ DROP_TENANTLESS = {
         "ALTER TABLE bronze_jira.jira_worklogs DELETE WHERE tenant_id IS NULL SETTINGS mutations_sync = 2"
     ),
 }
+
+
+TRUNCATE_CLASSES = (
+    "TRUNCATE TABLE IF EXISTS silver.class_task_field_history",
+    "TRUNCATE TABLE IF EXISTS silver.class_task_links",
+    "TRUNCATE TABLE IF EXISTS silver.class_task_field_metadata",
+    "TRUNCATE TABLE IF EXISTS silver.class_task_field_text",
+    "TRUNCATE TABLE IF EXISTS silver.class_task_field_current_text",
+)
 
 
 def _without_tenant(record: dict[str, Any]) -> dict[str, Any]:
@@ -105,7 +114,7 @@ def _rebuild(warehouse: Warehouse, model: str) -> None:
 
 @pytest.fixture(scope="module")
 def built(warehouse: Warehouse) -> Iterator[Warehouse]:
-    _truncate_bronze(warehouse)
+    truncate_bronze(warehouse)
     Scenario(warehouse).seed(
         fields=[
             field(POINTS, name="Story Points", schema_type="number"),
@@ -118,7 +127,9 @@ def built(warehouse: Warehouse) -> Iterator[Warehouse]:
     )
     warehouse.build(SELECTOR)
     yield warehouse
-    _truncate_bronze(warehouse)
+    truncate_bronze(warehouse)
+    for statement in TRUNCATE_CLASSES:
+        warehouse.execute(statement)
 
 
 @pytest.mark.parametrize("model", sorted(CASES))

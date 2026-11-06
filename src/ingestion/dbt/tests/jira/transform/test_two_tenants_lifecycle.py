@@ -7,6 +7,8 @@ entities on it. Each event carries the tenant of the issue it lands on.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from conftest import LIFECYCLE_SELECTOR, Scenario
 from helpers import OTHER_TENANT, SOURCE_ID, TENANT_ID, as_other_tenant, comment, issue, worklog
@@ -26,7 +28,12 @@ WORKLOG_EVENTS_SQL = (
     " FROM staging.jira__worklog_lifecycle_events FINAL WHERE insight_source_id = {src:String}"
 )
 
-ENTITIES = {"comment": (comment, "comments", COMMENT_EVENTS_SQL), "worklog": (worklog, "worklogs", WORKLOG_EVENTS_SQL)}
+
+def _worklog(key: str, worklog_id: int, *, jira_id: str, updated: str, author: str) -> dict[str, Any]:
+    return worklog(worklog_id, jira_id=jira_id, key=key, started=updated, author=author)
+
+
+ENTITIES = {"comment": (comment, "comments", COMMENT_EVENTS_SQL), "worklog": (_worklog, "worklogs", WORKLOG_EVENTS_SQL)}
 
 
 @pytest.mark.parametrize("entity", sorted(ENTITIES))
