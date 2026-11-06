@@ -28,8 +28,8 @@ const PROBE_WINDOW_DAYS: u32 = 35;
 // Managed observation relations are dbt-created and can appear (or regress)
 // while the service is running — a one-shot startup scan would pin
 // `table_not_found` until the next pod restart. Sweeps are idempotent:
-// transient probe failures never overwrite an established status, and
-// status writes pin `updated_at`.
+// failures of blocking probes never overwrite an established status, and
+// status writes pin `updated_at`. Dimension probes only warn.
 const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
 
 #[derive(Clone)]
@@ -384,18 +384,14 @@ impl MetricDefinitionValidator {
             .copied()
             .filter(|key| last_dates.contains_key(*key))
             .collect::<Vec<_>>();
-        if let Some(outcome) = self
-            .check_dimension_coverage(
-                relation,
-                target.source_key,
-                spec,
-                &observed_keys,
-                &last_dates,
-            )
-            .await
-        {
-            return (outcome, observed);
-        }
+        self.check_dimension_coverage(
+            relation,
+            target.source_key,
+            spec,
+            &observed_keys,
+            &last_dates,
+        )
+        .await;
 
         match freshness {
             Freshness::Complete(_) => (ProbeOutcome::Definitive(ValidationState::Ok), observed),
@@ -430,13 +426,12 @@ impl MetricDefinitionValidator {
         spec: &MetricDefinitionValidationSpec,
         observed_keys: &[&str],
         last_dates: &HashMap<String, NaiveDate>,
-    ) -> Option<ProbeOutcome> {
-        // Window each measure against its OWN newest observation, never the
-        // definition-wide max: a stale measure judged against a fresher
-        // sibling's date sees an empty window and fakes DimensionNotCovered.
+    ) {
+        // INVARIANT: each measure's window uses its own newest observation;
+        // a fresher sibling's date can create a false coverage warning.
         let windows = measure_windows(observed_keys, last_dates);
         if windows.is_empty() {
-            return None;
+            return;
         }
         for dimension in &spec.dimensions {
             match self
@@ -451,17 +446,22 @@ impl MetricDefinitionValidator {
             {
                 Ok(true) => {}
                 Ok(false) => {
-                    return Some(ProbeOutcome::Definitive(ValidationState::Error(
-                        MetricSchemaErrorCode::DimensionNotCovered,
-                    )));
+                    tracing::warn!(
+                        metric_key = %spec.metric_key,
+                        dimension,
+                        "declared dimension is not covered on all rows"
+                    );
                 }
                 Err(error) => {
-                    tracing::warn!(error = %error, "metric dimension probe failed");
-                    return Some(ProbeOutcome::Inconclusive);
+                    tracing::warn!(
+                        error = %error,
+                        metric_key = %spec.metric_key,
+                        dimension,
+                        "metric dimension probe failed"
+                    );
                 }
             }
         }
-        None
     }
 
     async fn has_columns(
@@ -858,8 +858,7 @@ fn resolve_probe_target<'a>(
 }
 
 /// Data-freshness classification of a definition's declared measures against
-/// the dates observed for them. Orthogonal to dimension coverage, which gates
-/// separately.
+/// the dates observed for them. Dimension coverage is diagnostic only.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Freshness {
     /// No declared measure has ever been observed.
