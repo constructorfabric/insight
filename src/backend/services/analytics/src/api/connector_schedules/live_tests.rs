@@ -14,6 +14,7 @@ use crate::migration::m20261103_000001_connector_schedules::Migration;
 
 mod noop;
 mod removal;
+mod revisions;
 mod storage;
 
 async fn connect_or_skip() -> Result<Option<DatabaseConnection>, Box<dyn std::error::Error>> {
@@ -25,12 +26,6 @@ async fn connect_or_skip() -> Result<Option<DatabaseConnection>, Box<dyn std::er
     options.max_connections(4).sqlx_logging(false);
     let db = Database::connect(options).await?;
     Migration.up(&SchemaManager::new(&db)).await?;
-    crate::migration::m20261105_000001_connector_schedule_requests_v1::Migration
-        .up(&SchemaManager::new(&db))
-        .await?;
-    crate::migration::m20261105_000002_connector_schedule_acknowledgements::Migration
-        .up(&SchemaManager::new(&db))
-        .await?;
     Ok(Some(db))
 }
 

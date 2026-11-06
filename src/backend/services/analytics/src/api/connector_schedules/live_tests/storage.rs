@@ -11,12 +11,7 @@ async fn migrations_expose_only_the_versioned_request_columns_and_reject_invalid
     };
     let (connector, _) = identity();
     let manager = SchemaManager::new(&db);
-    crate::migration::m20261105_000001_connector_schedule_requests_v1::Migration
-        .up(&manager)
-        .await?;
-    crate::migration::m20261105_000002_connector_schedule_acknowledgements::Migration
-        .up(&manager)
-        .await?;
+    Migration.up(&manager).await?;
     assert_view_contract(&db, &connector).await?;
     assert_invalid_records(&db, &connector).await?;
     assert_seeded_records(&db, &connector).await?;

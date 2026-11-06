@@ -101,6 +101,3 @@ async fn stale(db: &DatabaseConnection, instance: &Instance) -> Result<Error, Er
     let current = read(db, instance).await?;
     Ok(Error::Stale(current.map_or(0, |row| row.revision)))
 }
-
-#[cfg(test)]
-mod tests;

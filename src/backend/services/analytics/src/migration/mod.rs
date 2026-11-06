@@ -5,8 +5,6 @@ pub(crate) mod feedback_schema;
 mod m20261014_000001_drop_unread_catalog_tables;
 mod m20261030_000001_baseline;
 pub(crate) mod m20261103_000001_connector_schedules;
-pub(crate) mod m20261105_000001_connector_schedule_requests_v1;
-pub(crate) mod m20261105_000002_connector_schedule_acknowledgements;
 
 use insight_migration::squash;
 use sea_orm_migration::prelude::*;
@@ -26,12 +24,6 @@ impl MigratorTrait for Migrator {
             m20261014_000001_drop_unread_catalog_tables::Migration,
         ));
         migrations.push(Box::new(m20261103_000001_connector_schedules::Migration));
-        migrations.push(Box::new(
-            m20261105_000001_connector_schedule_requests_v1::Migration,
-        ));
-        migrations.push(Box::new(
-            m20261105_000002_connector_schedule_acknowledgements::Migration,
-        ));
         migrations
     }
 }
@@ -43,7 +35,7 @@ impl MigratorTrait for Migrator {
 pub const REQUIRED_CHECKS_BY_TABLE: &[(&str, &[&str])] = &[
     (
         "connector_schedule_acknowledgements",
-        m20261105_000002_connector_schedule_acknowledgements::REQUIRED_CHECKS,
+        m20261103_000001_connector_schedules::REQUIRED_ACKNOWLEDGEMENT_CHECKS,
     ),
     (
         "connector_schedules",
@@ -91,10 +83,7 @@ mod tests {
             names.get(squashed.len() + 1),
             Some(&"m20261014_000001_drop_unread_catalog_tables")
         );
-        assert_eq!(
-            names.last(),
-            Some(&"m20261105_000002_connector_schedule_acknowledgements")
-        );
+        assert_eq!(names.last(), Some(&"m20261103_000001_connector_schedules"));
     }
 
     /// A table whose migration declares CHECKs must be registered in
@@ -107,7 +96,7 @@ mod tests {
         let expected: &[(&str, &[&str])] = &[
             (
                 "connector_schedule_acknowledgements",
-                m20261105_000002_connector_schedule_acknowledgements::REQUIRED_CHECKS,
+                m20261103_000001_connector_schedules::REQUIRED_ACKNOWLEDGEMENT_CHECKS,
             ),
             (
                 "connector_schedules",
