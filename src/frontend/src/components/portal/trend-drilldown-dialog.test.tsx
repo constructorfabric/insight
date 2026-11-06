@@ -52,7 +52,8 @@ vi.mock("@/components/metric-evidence-table", () => ({
   },
 }));
 
-vi.mock("@/components/ui/dialog", () => ({
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
   Dialog: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogContent: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
@@ -61,9 +62,6 @@ vi.mock("@/components/ui/dialog", () => ({
     <div>{children}</div>
   ),
   DialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
-}));
-
-vi.mock("@/components/ui/tabs", () => ({
   Tabs: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   TabsList: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   TabsTrigger: ({ children }: { children: ReactNode }) => (

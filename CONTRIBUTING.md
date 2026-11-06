@@ -75,12 +75,13 @@ team; CEO sees the whole org tree. To use CEO more set email to `email_ceo@compa
 
 ## Prerequisites
 
-**Compose path** — only Docker:
+**Compose path** — Docker and `uv`:
 
 | Tool | Min | Install |
 | --- | --- | --- |
 | Docker Engine | 24+ | Docker Desktop / OrbStack / distro package |
 | docker compose v2 | 2.20+ | bundled with Docker Desktop/OrbStack |
+| uv | any | `brew install uv` / [installer](https://docs.astral.sh/uv/getting-started/installation/) — `dev-compose.sh` uses it to generate the Keycloak realm |
 | git | any | xcode-select / apt / winget |
 
 No Rust / Node / pnpm on the host — every build runs in a

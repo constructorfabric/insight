@@ -1,3 +1,16 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'One field history row per issue, field and event',
+        'domain': 'task-tracking',
+        'category': 'grain',
+        'tier': 'warn',
+        'remediation': 'More than one row survives FINAL for an issue, field and event. Rows written under an older key formula stay until the class is fully refreshed; otherwise two producers emit the same event.'
+    }
+) }}
+
 -- After ReplacingMergeTree merge there must be at most one row per primary key.
 -- (FINAL forces merge — if >1 row appears, our key is wrong or writes race something we missed.)
 -- Grouping mirrors the silver key: (tenant_id, insight_source_id, data_source, issue_id, field_id, event_id).
@@ -17,4 +30,3 @@ SELECT
 FROM silver.class_task_field_history FINAL
 GROUP BY tenant_id, insight_source_id, data_source, issue_id, field_id, event_id
 HAVING n > 1
-LIMIT 100

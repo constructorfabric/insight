@@ -136,6 +136,33 @@ def _hostile_by_sha(history: Sequence[DayHistory]) -> dict[str, str]:
     )
 
 
+def _linked_shas(shas: Sequence[str], index: int, pr_count: int) -> list[str]:
+    """The day's commits a request links, dealt round-robin across its requests.
+
+    A day with fewer commits than requests wraps instead of leaving the tail
+    linkless: gold derives a request's author attribution from these links, and
+    a commit on two requests is ordinary git.
+    """
+    return list(shas[index::pr_count]) or ([shas[index % len(shas)]] if shas else [])
+
+
+def in_flight_shas(history: Sequence[DayHistory]) -> frozenset[str]:
+    """Commits whose every linked request is still unmerged.
+
+    They sit on a branch that has not landed, so the connector reports them
+    outside the default branch; a commit no request links was pushed straight
+    to it.
+    """
+    in_flight: set[str] = set()
+    landed: set[str] = set()
+    for day in history:
+        shas = [_sha(c.hash) for c in day.commits]
+        for index, pr in enumerate(day.prs):
+            linked = _linked_shas(shas, index, len(day.prs))
+            (landed if pr.merged_on else in_flight).update(linked)
+    return frozenset(in_flight - landed)
+
+
 def seed_commits(
     client: clickhouse_connect.driver.client.Client,
     history: Sequence[DayHistory],
@@ -162,6 +189,7 @@ def seed_commits(
         "is_in_default_branch",
     ]
     hostile = _hostile_by_sha(history)
+    unlanded = in_flight_shas(history)
     rows: list[tuple[object, ...]] = []
     for day in history:
         at = _dt.datetime.combine(day.date, _dt.time(12, tzinfo=_dt.UTC))
@@ -190,7 +218,7 @@ def seed_commits(
                         "additions": int(commit.lines_added),
                         "deletions": int(commit.lines_removed),
                         "changed_files": 1,
-                        "is_in_default_branch": True,
+                        "is_in_default_branch": sha not in unlanded,
                     },
                 )
             )
@@ -329,11 +357,7 @@ def seed_pull_requests(
         at = _dt.datetime.combine(day.date, _dt.time(12, tzinfo=_dt.UTC))
         for index, pr in enumerate(day.prs):
             merged = pr.merged_on.isoformat() if pr.merged_on else None
-            # Deal the day's commits round-robin across the day's requests. A
-            # day with fewer commits than requests wraps instead of leaving the
-            # tail linkless: gold derives a request's author attribution from
-            # these links, while a commit on two requests is ordinary git.
-            linked = shas[index :: len(day.prs)] or ([shas[index % len(shas)]] if shas else [])
+            linked = _linked_shas(shas, index, len(day.prs))
             prs.append(
                 _positioned(
                     pr_cols,
@@ -418,6 +442,41 @@ def seed_pull_requests(
     }
 
 
+def seed_branches(
+    client: clickhouse_connect.driver.client.Client,
+    tenant_uuid: str,
+) -> int:
+    """The repository's default branch, which every seeded request targets.
+
+    Gold scopes a request by comparing its target with the repository's declared
+    default branch, so without this row every request reads as outside it.
+    """
+    truncate(client, "bronze_github", "branches")
+    cols = [
+        *AIRBYTE_COLS,
+        *IDENTITY_COLS,
+        "repository",
+        "name",
+        "head_sha",
+        "head_committed_date",
+        "is_default",
+    ]
+    row = _positioned(
+        cols,
+        {
+            **_envelope(tenant_uuid),
+            "_airbyte_raw_id": deterministic_uuid("git.branch.raw", REPO_SLUG),
+            "unique_key": f"{tenant_uuid}:{SOURCE_ID}:{REPO_SLUG}:main",
+            "repository": f"https://github.com/{REPO_SLUG}.git",
+            "name": "main",
+            "head_sha": "",
+            "head_committed_date": None,
+            "is_default": True,
+        },
+    )
+    return bulk_insert(client, "bronze_github", "branches", cols, [row])
+
+
 def seed_commit_authors(
     client: clickhouse_connect.driver.client.Client,
     history: Sequence[DayHistory],
@@ -480,6 +539,8 @@ def generate(
     truncate(client, "silver", "class_git_file_changes")
     truncate(client, "silver", "class_git_pull_requests")
     truncate(client, "silver", "class_git_pull_requests_commits")
+    truncate(client, "staging", "github__repository_branches")
+    truncate(client, "silver", "class_git_repository_branches")
 
     if history is None:
         history = build_history(roster, days)
@@ -488,5 +549,6 @@ def generate(
         "bronze_github.commits": seed_commits(client, history, tenant_uuid),
         "bronze_github.file_changes": seed_file_changes(client, history, tenant_uuid),
         "bronze_github.commit_authors": seed_commit_authors(client, history, tenant_uuid),
+        "bronze_github.branches": seed_branches(client, tenant_uuid),
         **seed_pull_requests(client, history, tenant_uuid),
     }

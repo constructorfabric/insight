@@ -477,6 +477,15 @@ pull_request_measures AS (
             []
         ),
         if(
+            created_on IS NOT NULL AND branch_scope_value = 'default',
+            [tuple(
+                'default_pr_created_merged',
+                toFloat64(state = 'MERGED'),
+                toDateTime64(assumeNotNull(created_on), 3)
+            )],
+            []
+        ),
+        if(
             created_on IS NOT NULL,
             [tuple('pr_abandoned', toFloat64(closed_on IS NOT NULL AND state != 'MERGED'), toDateTime64(assumeNotNull(created_on), 3))],
             []
@@ -698,10 +707,12 @@ SELECT
     '' AS account_id,
     assumeNotNull(metric_date) AS metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
-    'commit_day' AS measure_key,
+    day_measure AS measure_key,
     concat(
         toString(metric_date),
-        ':commit_day:',
+        ':',
+        day_measure,
+        ':',
         hex(sipHash128(toString(arrayMap(d -> tuple(d.1, d.2), source_dimensions))))
     ) AS record_id,
     'commit_day' AS record_kind,
@@ -712,10 +723,14 @@ SELECT
     source_dimensions AS dimensions,
     CAST(map() AS Map(String, String)) AS details
 FROM {{ ref('git_authored_commits') }}
+ARRAY JOIN arrayConcat(
+    ['commit_day'],
+    if(branch_scope_value = 'default', ['default_commit_day'], [])
+) AS day_measure
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL
-GROUP BY tenant_id, entity_id, metric_date, source_dimensions
+GROUP BY tenant_id, entity_id, metric_date, source_dimensions, day_measure
 
 UNION ALL
 

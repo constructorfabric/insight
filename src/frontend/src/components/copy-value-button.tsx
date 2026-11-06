@@ -7,9 +7,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
-import { toast } from "@/components/ui/sonner";
+import { toast, Button } from "@gears-frontx/ui-kit";
 
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const COPIED_RESET_MS = 1500;
@@ -52,7 +51,7 @@ export function CopyValueButton({
       );
     } catch {
       setCopied(false);
-      toast.error(errorMessage);
+      toast.add({ type: "error", title: errorMessage });
     }
   }
 
@@ -60,7 +59,7 @@ export function CopyValueButton({
     <Button
       type="button"
       variant="ghost"
-      size="icon-xs"
+      size="sm"
       className={cn(
         "shrink-0 text-muted-foreground hover:text-foreground",
         className,
@@ -71,8 +70,7 @@ export function CopyValueButton({
         event.stopPropagation();
         void copyValue();
       }}
-    >
-      {copied ? <Check /> : <Copy />}
-    </Button>
+      icon={copied ? <Check /> : <Copy />}
+    />
   );
 }

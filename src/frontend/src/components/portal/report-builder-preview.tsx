@@ -1,13 +1,13 @@
 import { FileSpreadsheet, FileText } from "lucide-react";
 
 import type { ReportColumn, ReportPreviewResponse } from "@/api/reports-client";
-import { Button } from "@/components/ui/button";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@gears-frontx/ui-kit";
 import {
   Table,
   TableBody,
@@ -16,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { formatHoursDuration, isDurationUnit } from "@/lib/format";
 
 const PREVIEW_ROWS = 20;
 
@@ -96,16 +97,18 @@ export function ReportPreviewDialog({
                 size="sm"
                 disabled={running}
                 onClick={() => onExport("csv")}
+                icon={<FileText className="size-4" />}
               >
-                <FileText className="size-4" /> CSV
+                CSV
               </Button>
               <Button
                 type="button"
                 size="sm"
                 disabled={running}
                 onClick={() => onExport("xlsx")}
+                icon={<FileSpreadsheet className="size-4" />}
               >
-                <FileSpreadsheet className="size-4" /> Excel
+                Excel
               </Button>
             </div>
           </>
@@ -129,5 +132,6 @@ function formatPreviewCell(
       maximumFractionDigits: 15,
     }).format(value);
   }
+  if (isDurationUnit(column.unit)) return formatHoursDuration(value);
   return column.unit ? `${value} ${column.unit}` : String(value);
 }

@@ -1,7 +1,6 @@
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button, Input } from "@gears-frontx/ui-kit";
 import {
   OPERATORS,
   blankValue,

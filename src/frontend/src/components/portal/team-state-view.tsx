@@ -12,9 +12,8 @@ import {
   MembersGrid,
   type MembersGridProps,
 } from "@/components/widgets/dashboard/members-grid";
-import { Button } from "@/components/ui/button";
+import { Button, Switch } from "@gears-frontx/ui-kit";
 import { Card, CardContent } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { formatMetricValue } from "@/lib/format";
 import {
@@ -103,7 +102,7 @@ function TeamMembersSection({ members, ...gridProps }: MembersGridProps) {
  * narrows it to direct reports.
  */
 export function TeamStateView() {
-  const { period, dateRange } = usePortalPeriod();
+  const { dateRange, compareTo } = usePortalPeriod();
 
   const orgScope = useOrgScope();
   const portalScope = usePortalScope();
@@ -177,7 +176,7 @@ export function TeamStateView() {
     gridCollection.metrics.length ? gridCollection : EMPTY_COLLECTION,
     { type: "person", ids: memberIds },
     dateRange,
-    period,
+    compareTo,
   );
 
   const teamName = orgScope.label;

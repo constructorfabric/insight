@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 
 import type {
   ConnectorHealth,
@@ -7,7 +7,12 @@ import type {
 } from "@/api/connector-health-client";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { Badge } from "@/components/ui/badge";
+import {
+  Badge,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@gears-frontx/ui-kit";
 import {
   Table,
   TableBody,
@@ -16,12 +21,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   UNMEASURED,
   SCHEDULE_HEADING,
@@ -228,32 +227,24 @@ function ScheduleCell({
   schedule: ConnectorHealth["schedule"];
 }) {
   const tooltipId = useId();
-  const [open, setOpen] = useState(false);
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    if (!open) return;
-
-    const timer = setInterval(() => setNow(new Date()), 30_000);
-    return () => clearInterval(timer);
-  }, [open]);
+  const nextRun = schedule == null ? null : describeNextRun(schedule, new Date());
 
   return (
     <TableCell>
       {schedule == null ? (
         UNMEASURED
       ) : (
-        <TooltipProvider>
-          <Tooltip onOpenChange={(nextOpen) => {
-            if (nextOpen) setNow(new Date());
-            setOpen(nextOpen);
-          }}>
-            <TooltipTrigger
-              aria-describedby={tooltipId}
-              render={
-                <button type="button" className="cursor-help text-left" />
-              }
-            >
+        <Tooltip>
+          <TooltipTrigger
+            aria-describedby={tooltipId}
+            render={
+              <button type="button" className="cursor-help text-left" />
+            }
+          >
+            {nextRun?.text}
+          </TooltipTrigger>
+          <TooltipContent id={tooltipId} role="tooltip">
+            <div className="flex flex-col">
               {schedule.crons.map((cron, index) => (
                 <span key={index} className="block font-mono">
                   {cron}
@@ -262,12 +253,10 @@ function ScheduleCell({
               <span className="block text-muted-foreground">
                 {describeSchedule(schedule)}
               </span>
-            </TooltipTrigger>
-            <TooltipContent id={tooltipId} role="tooltip">
-              {describeNextRun(schedule, now)}
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+              {nextRun?.detail != null && <span className="block">{nextRun.detail}</span>}
+            </div>
+          </TooltipContent>
+        </Tooltip>
       )}
     </TableCell>
   );

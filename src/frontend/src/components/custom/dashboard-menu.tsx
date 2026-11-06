@@ -24,15 +24,15 @@ import { FolderSubmenu } from "@/components/custom/dashboard-folders";
 import { refusal } from "@/components/custom/refusal";
 import { EditTags } from "@/components/custom/edit-tags";
 import { ShareDialog } from "@/components/custom/share-dialog";
-import { Button } from "@/components/ui/button";
 import {
+  Button,
+  toast,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { toast } from "@/components/ui/sonner";
+} from "@gears-frontx/ui-kit";
 import { usePinToggle } from "@/hooks/use-pin-toggle";
 import { dashboardAllows } from "@/lib/custom/dashboard-access";
 import { useAddToFolder } from "@/queries/custom";
@@ -87,7 +87,10 @@ export function DashboardMenu({
       { folder: folder.id, dashboard: id },
       {
         onError: (error) =>
-          toast.error(refusal(error, "Couldn't add it to the folder.")),
+          toast.add({
+            type: "error",
+            title: refusal(error, "Couldn't add it to the folder."),
+          }),
       }
     );
   }
@@ -101,7 +104,7 @@ export function DashboardMenu({
               ref={trigger}
               type="button"
               variant="ghost"
-              size="icon-sm"
+              size="sm"
               className="text-muted-foreground"
               aria-label={`More for ${name}`}
               icon={<Ellipsis />}

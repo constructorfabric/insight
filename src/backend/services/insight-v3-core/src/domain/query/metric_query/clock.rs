@@ -65,11 +65,15 @@ pub(super) fn clock_expression(
 }
 
 pub(super) fn bucket_expression(grain: Grain, clock: &str) -> String {
+    // WORKAROUND: ClickHouse refuses a timezone argument on a `Date` clock, so
+    // every clock is read as a UTC `DateTime` before it is bucketed.
+    let instant = format!("toDateTime({clock}, 'UTC')");
+
     match grain {
-        Grain::Hour => format!("toStartOfHour({clock}, 'UTC')"),
-        Grain::Day => format!("toStartOfDay({clock}, 'UTC')"),
-        Grain::Week => format!("toStartOfWeek({clock}, 1, 'UTC')"),
-        Grain::Month => format!("toStartOfMonth({clock}, 'UTC')"),
+        Grain::Hour => format!("toStartOfHour({instant}, 'UTC')"),
+        Grain::Day => format!("toStartOfDay({instant}, 'UTC')"),
+        Grain::Week => format!("toStartOfWeek({instant}, 1, 'UTC')"),
+        Grain::Month => format!("toStartOfMonth({instant}, 'UTC')"),
     }
 }
 

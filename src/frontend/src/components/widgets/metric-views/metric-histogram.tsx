@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/card";
 import { ChartEmpty } from "@/components/widgets/metric-views/chart-empty";
 import { MetricCardActions } from "@/components/widgets/metric-views/metric-card-actions";
-import { formatMetricNumber } from "@/lib/format";
+import { formatMetricNumber, formatMetricValue } from "@/lib/format";
 import { forEntity, type NormalizedMetricResult } from "@/lib/metrics/collection";
 import { STATUS_COLOR_VAR, statusVsMedian, type Status } from "@/lib/status";
 
@@ -107,7 +107,6 @@ function buildRows(
 export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
   const data = forEntity(metric, entityId);
   const bins = data.histogram[0]?.bins ?? [];
-  const unit = metric.unit ? ` ${metric.unit}` : "";
   const ownMedian = data.value;
   const peerMedian = data.peer?.median ?? null;
   const direction = directionText(metric);
@@ -126,7 +125,7 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
             {[
               direction,
               peerMedian != null
-                ? `vs peer median ${formatMetricNumber(peerMedian, metric.format)}${unit}`
+                ? `vs peer median ${formatMetricValue(peerMedian, metric.format, metric.unit)}`
                 : null,
             ]
               .filter(Boolean)
@@ -134,12 +133,11 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
           </span>
         </div>
         {ownMedian != null ? (
-          // 24px matches the ⋯ box beside it, so both sit on one centre line.
-          <span className="shrink-0 text-xs leading-6 text-muted-foreground">
+          // 32px matches the ⋯ box beside it, so both sit on one centre line.
+          <span className="shrink-0 text-xs leading-8 text-muted-foreground">
             Median{" "}
             <span className="font-semibold text-foreground tabular-nums">
-              {formatMetricNumber(ownMedian, metric.format)}
-              {unit}
+              {formatMetricValue(ownMedian, metric.format, metric.unit)}
             </span>
           </span>
         ) : null}

@@ -15,8 +15,7 @@ import { useAlertMetric } from "@/components/alerts/use-alert-metric";
 import { useAlertPreview } from "@/components/alerts/use-alert-preview";
 import { TextView } from "@/components/custom/editor/text-view";
 import { refusal } from "@/components/custom/refusal";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { Button } from "@gears-frontx/ui-kit";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { isRevisionConflict } from "@/lib/alerts/conflict";
 import { fitCondition } from "@/lib/alerts/condition";
@@ -426,8 +425,7 @@ function AlertEditor({
       ) : null}
 
       <div className="flex items-center gap-3">
-        <Button type="submit" size="sm" disabled={saving || !sendable(held)}>
-          {saving ? <Spinner className="size-3" /> : null}
+        <Button type="submit" size="sm" disabled={!sendable(held)} loading={saving}>
           {base ? "Save changes" : "Create alert"}
         </Button>
         {held.unparsed ? (

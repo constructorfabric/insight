@@ -14,8 +14,8 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+  Button,
+} from "@gears-frontx/ui-kit";
 import type { DateRange } from "@/api/period-to-date-range";
 import type { MetricGroup } from "@/lib/insight/groups";
 import type { PeerCohortLabel } from "@/lib/peers";
@@ -26,7 +26,6 @@ import {
   serializeLocalStorageBoolean,
   useLocalStorageState,
 } from "@/hooks/use-local-storage-state";
-import type { PeriodValue } from "@/types/insight";
 
 /** Data target for a metrics-backed group's drilldown body. */
 export type MetricDrilldownTarget =
@@ -44,7 +43,7 @@ export interface GroupDrilldownSheetProps {
   def: MetricGroup;
   metricTarget?: MetricDrilldownTarget;
   range?: DateRange;
-  period?: PeriodValue;
+  compareTo?: DateRange;
   cohortLabel?: PeerCohortLabel;
 }
 
@@ -55,7 +54,7 @@ export function GroupDrilldownSheet({
   def,
   metricTarget,
   range,
-  period,
+  compareTo,
   cohortLabel = "department",
 }: GroupDrilldownSheetProps) {
   return (
@@ -72,7 +71,7 @@ export function GroupDrilldownSheet({
           def={def}
           metricTarget={metricTarget}
           range={range}
-          period={period}
+          compareTo={compareTo}
           cohortLabel={cohortLabel}
         />
       </DialogContent>
@@ -84,13 +83,13 @@ function DrilldownPanel({
   def,
   metricTarget,
   range,
-  period,
+  compareTo,
   cohortLabel,
 }: {
   def: MetricGroup;
   metricTarget?: MetricDrilldownTarget;
   range?: DateRange;
-  period?: PeriodValue;
+  compareTo?: DateRange;
   cohortLabel: PeerCohortLabel;
 }) {
   const [expanded, setExpanded] = useLocalStorageState<boolean>({
@@ -112,19 +111,21 @@ function DrilldownPanel({
         <div className="flex items-center gap-0.5">
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="sm"
             onClick={() => setExpanded((v) => !v)}
             aria-label={expanded ? "Shrink" : "Expand"}
-          >
-            {expanded ? <Minimize2 /> : <Maximize2 />}
-          </Button>
+            icon={expanded ? <Minimize2 /> : <Maximize2 />}
+          />
           <DialogClose
             render={
-              <Button variant="ghost" size="icon-sm" aria-label="Close" />
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Close"
+                icon={<XIcon />}
+              />
             }
-          >
-            <XIcon />
-          </DialogClose>
+          />
         </div>
       </DialogHeader>
       <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto">
@@ -148,12 +149,12 @@ function DrilldownPanel({
               cohortLabel={cohortLabel}
             />
           </CollectionDrilldown>
-        ) : metricTarget?.kind === "team" && range && period ? (
+        ) : metricTarget?.kind === "team" && range && compareTo ? (
           <TeamCollectionDrilldown
             def={def}
             members={metricTarget.members}
             range={range}
-            period={period}
+            compareTo={compareTo}
             cohortLabel={cohortLabel}
           />
         ) : (

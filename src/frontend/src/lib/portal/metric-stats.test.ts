@@ -11,7 +11,7 @@ import {
   groupCoverage,
   medianAcross,
   perCapita,
-  representative,
+  perPersonReading,
   topDecile,
 } from "./metric-stats";
 
@@ -134,16 +134,50 @@ describe("topDecile", () => {
   });
 });
 
-describe("perCapita / representative", () => {
+describe("perCapita", () => {
   it("perCapita divides by ACTIVE people only", () => {
     const r = fixture({ period: [["a", 10], ["b", 0], ["c", 20]] });
     expect(perCapita(r, ["a", "b", "c"])).toBe(15);
   });
-  it("representative sums counters and medians ratios", () => {
-    const sum = fixture({ period: [["a", 1], ["b", 2]] });
-    expect(representative(sum, ["a", "b"])).toBe(3);
-    const med = fixture({ computation: "ratio", period: [["a", 10], ["b", 30]] });
-    expect(representative(med, ["a", "b"])).toBe(20);
+});
+
+describe("perPersonReading", () => {
+  const IDS = ["a", "b", "c", "d"];
+  it.each([
+    {
+      name: "averages a sum over active people and keeps the whole total",
+      r: fixture({ period: [["a", 10], ["b", 0], ["c", 20]] }),
+      want: { kind: "average", value: 15, active: 2, total: 30 },
+    },
+    {
+      name: "reads all-zero sums as nobody active",
+      r: fixture({ period: [["a", 0], ["b", 0]] }),
+      want: { kind: "average", value: 0, active: 0, total: 0 },
+    },
+    {
+      name: "drops people without a finite value",
+      r: fixture({ period: [["a", 6], ["b", null], ["c", Number.NaN]] }),
+      want: { kind: "average", value: 6, active: 1, total: 6 },
+    },
+    {
+      name: "medians a non-additive metric across everyone who reports it",
+      r: fixture({ computation: "ratio", period: [["a", 1], ["b", 0], ["c", 9]] }),
+      want: { kind: "median", value: 1, people: 3 },
+    },
+    {
+      name: "medians an even count between the middle two",
+      r: fixture({ computation: "ratio", period: [["a", 10], ["b", 30]] }),
+      want: { kind: "median", value: 20, people: 2 },
+    },
+  ])("$name", ({ r, want }) => {
+    expect(perPersonReading(r, IDS), JSON.stringify(want)).toEqual(want);
+  });
+
+  it.each([
+    { name: "a missing metric", r: undefined },
+    { name: "a scope where nobody has a value", r: fixture({ period: [["z", 5]] }) },
+  ])("is null for $name", ({ r }) => {
+    expect(perPersonReading(r, IDS)).toBeNull();
   });
 });
 
@@ -159,10 +193,9 @@ describe("familyObserved", () => {
 });
 
 describe("medianAcross", () => {
-  it("medians a summable metric instead of summing it (unlike representative)", () => {
+  it("medians a summable metric instead of summing it", () => {
     const r = fixture({ computation: "sum", period: [["a", 10], ["b", 20], ["c", 30]] });
     expect(medianAcross(r, ["a", "b", "c"])).toBe(20);
-    expect(representative(r, ["a", "b", "c"])).toBe(60);
   });
   it("null when the metric is missing", () => expect(medianAcross(undefined, ["a"])).toBeNull());
 });

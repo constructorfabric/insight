@@ -1,3 +1,16 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Issue link intervals are possible',
+        'domain': 'task-tracking',
+        'category': 'physical_bound',
+        'tier': 'warn',
+        'remediation': 'A link interval ends at or before it starts, ends at the epoch, or starts at the epoch while claiming a known start. The producer named by data_source defaulted a missing timestamp; check its join that supplies valid_from and valid_to.'
+    }
+) }}
+
 -- An interval that cannot have happened.
 --
 -- Three shapes, and the second is why this test exists. ClickHouse answers an
@@ -31,4 +44,3 @@ FROM {{ ref('class_task_links') }} FINAL
 WHERE (valid_to IS NOT NULL AND valid_to <= valid_from)
    OR valid_to = toDateTime64(0, 3)
    OR (valid_from = toDateTime64(0, 3) AND valid_from_known = 1)
-LIMIT 100

@@ -10,14 +10,14 @@ import {
   MetricSummary,
   WidgetSummary,
 } from "@/components/custom/definition-summary";
-import { Button } from "@/components/ui/button";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@gears-frontx/ui-kit";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { drawable, startsOver } from "@/lib/custom/drilldown";
 import { nextSort } from "@/lib/metrics/evidence-rows";
@@ -94,28 +94,25 @@ export function WidgetDrilldown({
             {view.kind === "rows" ? null : (
               <Button
                 variant="ghost"
-                size="icon-sm"
+                size="sm"
                 aria-label="Back to the rows"
                 onClick={() => setView({ kind: "rows" })}
-              >
-                <ArrowLeft />
-              </Button>
+                icon={<ArrowLeft />}
+              />
             )}
             <span className="min-w-0 truncate">{heading}</span>
             {/* Placed as the kit places its close button - over the corner,
                 not in this row - so the two sit on one line, one step apart. */}
             <Button
               variant="ghost"
-              size="icon"
               className="absolute top-4 right-14 z-[2] w-9"
               aria-pressed={filling}
               aria-label={
                 filling ? "Shrink the dialog back" : "Fill the window"
               }
               onClick={() => setFilling((was) => !was)}
-            >
-              {filling ? <Minimize2 /> : <Maximize2 />}
-            </Button>
+              icon={filling ? <Minimize2 /> : <Maximize2 />}
+            />
           </DialogTitle>
           {view.kind === "rows" ? null : (
             <DialogDescription>

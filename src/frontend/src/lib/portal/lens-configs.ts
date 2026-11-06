@@ -28,7 +28,12 @@ import {
 export type ConcentrationFraming = "bus-factor" | "load-balance";
 
 export type SectionSpec =
-  | { kind: "headline"; metrics: readonly string[] }
+  | {
+      kind: "headline";
+      metrics: readonly string[];
+      /** Heads each card with the catalogue's short label where it has one. */
+      labelSource?: "short";
+    }
   | { kind: "stat-tiles"; title: string; metrics: readonly string[] }
   | {
       kind: "trend";
@@ -527,6 +532,16 @@ const GIT_CATEGORY_NOTES = [
   "Code — whatever the other categories did not claim.",
 ] as const;
 
+export const IN_FLIGHT_LENS = "Work in flight";
+
+export const IN_FLIGHT_METRICS = {
+  commits: "git.non_default_branch_commits",
+  codeLines: "git.non_default_branch_code_lines",
+  linesAdded: "git.non_default_branch_lines_added",
+  prsCreated: "git.non_default_branch_prs_created",
+  prsMerged: "git.non_default_branch_prs_merged",
+} as const;
+
 const DEV: Record<string, LensEntry> = {
   Overview: {
     title: "Development",
@@ -534,22 +549,29 @@ const DEV: Record<string, LensEntry> = {
     sections: [
       {
         kind: "headline",
-        metrics: ["git.commits", "git.prs_merged", "git.lines_added"],
+        metrics: [
+          "git.default_branch_commits",
+          "git.default_branch_prs_merged",
+          "git.default_branch_lines_added",
+        ],
       },
       {
         kind: "stat-tiles",
         title: "Typical values (median)",
-        metrics: ["git.pr_cycle_time_h", "git.pr_size", "git.merge_rate"],
+        metrics: ["git.pr_cycle_time_h", "git.pr_size", "git.default_branch_merge_rate"],
       },
-      { kind: "trend", metrics: ["git.commits", "git.prs_merged"] },
+      {
+        kind: "trend",
+        metrics: ["git.default_branch_commits", "git.default_branch_prs_merged"],
+      },
       {
         kind: "concentration",
-        metrics: ["git.commits"],
+        metrics: ["git.default_branch_commits"],
         framing: "bus-factor",
       },
       {
         kind: "composition",
-        metric: "git.lines_added",
+        metric: "git.default_branch_lines_added",
         dimension: "category",
         title: "Lines by category",
         // The taxonomy is a path match in the warehouse, so the labels alone
@@ -564,28 +586,22 @@ const DEV: Record<string, LensEntry> = {
     title: "Development · Git output",
     sections: [
       {
-        // Each split key sits beside the total it refines, so a reader meets
-        // the two together rather than as unrelated tiles. Only the
-        // default-branch side is drawn: the other half is the total minus it,
-        // and naming both would spend four tiles on two facts.
-        //
-        // The two big figures are per ACTIVE person, each over its own active
-        // count, so they are not a share of one another — the team totals
-        // under them are what divide.
         kind: "headline",
+        labelSource: "short",
         metrics: [
-          "git.commits",
           "git.default_branch_commits",
-          "git.prs_created",
-          "git.prs_merged",
+          "git.default_branch_prs_created",
           "git.default_branch_prs_merged",
-          "git.code_lines",
+          "git.default_branch_code_lines",
         ],
       },
-      { kind: "trend", metrics: ["git.commits", "git.prs_merged"] },
+      {
+        kind: "trend",
+        metrics: ["git.default_branch_commits", "git.default_branch_prs_merged"],
+      },
       {
         kind: "distribution",
-        metric: "git.commits",
+        metric: "git.default_branch_commits",
         title: "How many commits people made",
         caption:
           "How many people fall in each commit-count band — when the bars stretch far to the right, a few people account for most of it.",
@@ -593,15 +609,46 @@ const DEV: Record<string, LensEntry> = {
       },
       {
         kind: "concentration",
-        metrics: ["git.commits"],
+        metrics: ["git.default_branch_commits"],
         framing: "bus-factor",
       },
       {
         kind: "composition",
-        metric: "git.lines_added",
+        metric: "git.default_branch_lines_added",
         dimension: "repository",
         splitBy: "category",
         title: "Lines by repository",
+      },
+    ],
+  },
+  [IN_FLIGHT_LENS]: {
+    title: "Development · Work in flight",
+    tagline: "not on the default branch yet",
+    sections: [
+      {
+        kind: "headline",
+        labelSource: "short",
+        metrics: [
+          IN_FLIGHT_METRICS.commits,
+          IN_FLIGHT_METRICS.codeLines,
+          IN_FLIGHT_METRICS.prsCreated,
+          IN_FLIGHT_METRICS.prsMerged,
+        ],
+      },
+      { kind: "trend", metrics: [IN_FLIGHT_METRICS.commits] },
+      {
+        kind: "distribution",
+        metric: IN_FLIGHT_METRICS.commits,
+        title: "Who has commits in flight",
+        caption: "How many people fall in each band of commits not yet on the default branch.",
+        unitLabel: "commits in flight per person",
+      },
+      {
+        kind: "composition",
+        metric: IN_FLIGHT_METRICS.linesAdded,
+        dimension: "repository",
+        splitBy: "category",
+        title: "Lines in flight by repository",
       },
     ],
   },
@@ -616,8 +663,8 @@ const DEV: Record<string, LensEntry> = {
           "git.pr_cycle_time_h",
           "git.pr_size",
           "git.commit_size",
-          "git.merge_rate",
-          "git.commits_per_active_day",
+          "git.default_branch_merge_rate",
+          "git.default_branch_commits_per_active_day",
         ],
       },
       {
@@ -702,7 +749,7 @@ const DEV: Record<string, LensEntry> = {
       {
         kind: "stat-tiles",
         title: "Outcomes (median across people)",
-        metrics: ["git.merge_rate", "git.pr_abandonment_rate"],
+        metrics: ["git.default_branch_merge_rate", "git.pr_abandonment_rate"],
       },
     ],
   },
@@ -926,16 +973,14 @@ const DEV: Record<string, LensEntry> = {
       {
         kind: "headline",
         metrics: [
-          "git.prs_merged",
           "git.default_branch_prs_merged",
           "git.default_branch_code_lines",
-          "git.non_default_branch_code_lines",
         ],
       },
       {
         kind: "trend",
-        metrics: ["git.prs_created", "git.prs_merged"],
-        activeContributorsFor: "git.prs_merged",
+        metrics: ["git.default_branch_prs_created", "git.default_branch_prs_merged"],
+        activeContributorsFor: "git.default_branch_prs_merged",
       },
       {
         kind: "stat-tiles",
@@ -945,20 +990,13 @@ const DEV: Record<string, LensEntry> = {
           "git.pr_cycle_time_p75_h",
           "git.pr_size",
           "git.pr_commits",
-          "git.merge_rate",
-          "git.commits_per_active_day",
+          "git.default_branch_merge_rate",
+          "git.default_branch_commits_per_active_day",
         ],
       },
       {
         kind: "composition",
-        metric: "git.code_lines",
-        dimension: "repository",
-        splitBy: "branch_scope",
-        title: "Lines by repository — default vs other branches",
-      },
-      {
-        kind: "composition",
-        metric: "git.prs_merged",
+        metric: "git.default_branch_prs_merged",
         dimension: "repository",
         title: "PRs merged by repository",
       },
@@ -968,17 +1006,16 @@ const DEV: Record<string, LensEntry> = {
         dimension: "repository",
         noun: "repositories",
         metrics: [
-          "git.prs_merged",
           "git.default_branch_prs_merged",
-          "git.lines_added",
-          "git.lines_removed",
+          "git.default_branch_lines_added",
+          "git.default_branch_lines_removed",
           "git.pr_cycle_time_h",
           "git.pr_commits",
         ],
       },
       {
         kind: "ownership",
-        metric: "git.code_lines",
+        metric: "git.default_branch_code_lines",
         dimension: "repository",
         title: "Ownership concentration — share of lines by top contributors",
       },
@@ -988,8 +1025,7 @@ const DEV: Record<string, LensEntry> = {
         title: "How long pull requests stayed open",
       },
     ],
-    // One repository: who carried it, when the work landed, and how it splits
-    // between the trunk and everything else.
+    // One repository: who carried it and when the work landed.
     drilldown: {
       dimension: "repository",
       tagline: "one repository",
@@ -997,9 +1033,8 @@ const DEV: Record<string, LensEntry> = {
         {
           kind: "headline",
           metrics: [
-            "git.prs_merged",
             "git.default_branch_prs_merged",
-            "git.commits",
+            "git.default_branch_commits",
             "git.default_branch_code_lines",
           ],
         },
@@ -1011,7 +1046,7 @@ const DEV: Record<string, LensEntry> = {
             "git.pr_cycle_time_p75_h",
             "git.pr_size",
             "git.pr_commits",
-            "git.merge_rate",
+            "git.default_branch_merge_rate",
             "git.review_coverage",
           ],
         },
@@ -1022,16 +1057,10 @@ const DEV: Record<string, LensEntry> = {
         },
         {
           kind: "heatmap-hours",
-          metric: "git.commits",
-          title: "When commits land",
+          metric: "git.default_branch_commits",
+          title: "When commits were made",
           caption:
             "Weekday × two-hour block, in UTC. Click a block for its commits.",
-        },
-        {
-          kind: "composition",
-          metric: "git.code_lines",
-          dimension: "branch_scope",
-          title: "Where the lines went — default branch vs the rest",
         },
         {
           kind: "ownership",

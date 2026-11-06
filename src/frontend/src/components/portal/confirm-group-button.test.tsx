@@ -14,10 +14,13 @@ import "@/i18n";
 import type { AttentionItem, CorrectionResponse } from "@/api/identity-client";
 
 const hooks = vi.hoisted(() => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { add: vi.fn() },
   bind: { mutateAsync: vi.fn(), reset: vi.fn() },
 }));
-vi.mock("@/components/ui/sonner", () => ({ toast: hooks.toast }));
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
+  toast: hooks.toast,
+}));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useBindAccounts: () => hooks.bind,
@@ -25,6 +28,7 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
 
 import { ConfirmGroupButton } from "./confirm-group-button";
 import { groupIsConfirmable } from "@/lib/identities/cases";
+import { toastsOf } from "@/test/toast";
 
 const SOURCE_ID = "01900000-0000-7000-8000-00000000aa01";
 
@@ -58,8 +62,7 @@ const confirmIn = (dialog: HTMLElement) =>
   within(dialog).getByRole("button", { name: "Confirm" });
 
 beforeEach(() => {
-  hooks.toast.success.mockClear();
-  hooks.toast.error.mockClear();
+  hooks.toast.add.mockClear();
   hooks.bind.reset.mockClear();
   hooks.bind.mutateAsync.mockReset();
   hooks.bind.mutateAsync.mockResolvedValue(applied(1));
@@ -150,7 +153,7 @@ describe("ConfirmGroupButton", () => {
       ],
       comment: "roster is right",
     });
-    expect(hooks.toast.success).toHaveBeenCalledOnce();
+    expect(toastsOf(hooks.toast.add, "success")).toHaveLength(1);
   });
 
   // The endpoint caps a call at 1000 bindings. A bigger group is several calls
@@ -172,7 +175,7 @@ describe("ConfirmGroupButton", () => {
     expect(hooks.bind.mutateAsync).toHaveBeenCalledTimes(2);
     expect(hooks.bind.mutateAsync.mock.calls[0][0].bindings).toHaveLength(1000);
     expect(hooks.bind.mutateAsync.mock.calls[1][0].bindings).toHaveLength(1);
-    expect(hooks.toast.success).toHaveBeenCalledWith("Done — 1001 accounts updated.");
+    expect(toastsOf(hooks.toast.add, "success")).toContainEqual(expect.objectContaining({ title: "Done — 1001 accounts updated." }));
   });
 
   // Rows are pruned as each call lands, so this dialog can be unmounted before a
@@ -194,8 +197,8 @@ describe("ConfirmGroupButton", () => {
     await userEvent.click(confirmIn(dialog));
 
     expect(within(screen.getByRole("dialog")).getByText("person not found")).toBeInTheDocument();
-    expect(hooks.toast.error).toHaveBeenCalledWith("person not found");
-    expect(hooks.toast.success).not.toHaveBeenCalled();
+    expect(toastsOf(hooks.toast.add, "error")).toContainEqual(expect.objectContaining({ title: "person not found" }));
+    expect(toastsOf(hooks.toast.add, "success")).toHaveLength(0);
   });
 
   it("keeps the dialog open when the server refused an account", async () => {
@@ -214,6 +217,6 @@ describe("ConfirmGroupButton", () => {
     await userEvent.click(confirmIn(dialog));
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(hooks.toast.error).toHaveBeenCalledOnce();
+    expect(toastsOf(hooks.toast.add, "error")).toHaveLength(1);
   });
 });

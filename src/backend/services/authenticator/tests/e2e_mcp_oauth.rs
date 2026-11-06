@@ -4,12 +4,17 @@ mod common;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+use redis::AsyncCommands as _;
+use redis::aio::MultiplexedConnection;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
 const COOKIE: &str = "__Host-sid";
 const REDIRECT_URI: &str = "http://127.0.0.1:3210/callback";
 const VERIFIER: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+const CLIENT_INDEX_KEY: &str = "{mcp_oauth}:v2:clients";
+const PENDING_CLIENT_TTL_SECS: i64 = 24 * 60 * 60;
+const ACTIVE_CLIENT_MIN_TTL_SECS: i64 = 364 * 24 * 60 * 60;
 
 #[derive(Deserialize)]
 struct RegisteredClient {
@@ -152,15 +157,14 @@ async fn authorize(
     (code, session, csrf)
 }
 
-async fn exchange_code(
+async fn exchange_code_response(
     http: &common::Client,
     auth_base: &str,
     client_id: &str,
     resource: &str,
     code: &str,
-) -> TokenResponse {
-    let response = http
-        .post(format!("{auth_base}/auth/oauth/token"))
+) -> reqwest::Response {
+    http.post(format!("{auth_base}/auth/oauth/token"))
         .form(&[
             ("grant_type", "authorization_code"),
             ("client_id", client_id),
@@ -171,9 +175,44 @@ async fn exchange_code(
         ])
         .send()
         .await
-        .unwrap();
+        .unwrap()
+}
+
+async fn exchange_code(
+    http: &common::Client,
+    auth_base: &str,
+    client_id: &str,
+    resource: &str,
+    code: &str,
+) -> TokenResponse {
+    let response = exchange_code_response(http, auth_base, client_id, resource, code).await;
     assert_eq!(response.status(), 200);
     response.json::<TokenResponse>().await.unwrap()
+}
+
+fn client_key(client_id: &str) -> String {
+    format!("{{mcp_oauth}}:client:{client_id}")
+}
+
+async fn client_record_ttl(redis: &mut MultiplexedConnection, client_id: &str) -> i64 {
+    redis.ttl(client_key(client_id)).await.unwrap()
+}
+
+async fn client_is_counted(redis: &mut MultiplexedConnection, client_id: &str) -> bool {
+    let score: Option<f64> = redis.zscore(CLIENT_INDEX_KEY, client_id).await.unwrap();
+    score.is_some()
+}
+
+async fn assert_client_is_active(redis: &mut MultiplexedConnection, client_id: &str) {
+    let ttl = client_record_ttl(redis, client_id).await;
+    assert!(
+        ttl > ACTIVE_CLIENT_MIN_TTL_SECS,
+        "an exchanged client must be kept for a year, record TTL was {ttl} s"
+    );
+    assert!(
+        client_is_counted(redis, client_id).await,
+        "an exchanged client must be counted in {CLIENT_INDEX_KEY}"
+    );
 }
 
 async fn refresh_token(
@@ -258,4 +297,84 @@ async fn oauth_lifecycle_issues_rotates_and_revokes_tokens() {
     )
     .await;
     assert_eq!(after_revoke.status(), 400);
+}
+
+#[tokio::test]
+#[ignore = "requires a running authenticator + Keycloak + Redis stack"]
+async fn unused_registration_expires_within_a_day_and_is_not_counted() {
+    let auth_base = env("AUTH_BASE", "http://localhost:8083");
+    let http = common::client();
+    let mut redis = common::store::connect().await;
+
+    let client = register_client(&http, &auth_base).await;
+
+    let ttl = client_record_ttl(&mut redis, &client.client_id).await;
+    assert!(
+        (1..=PENDING_CLIENT_TTL_SECS).contains(&ttl),
+        "an unused registration must expire within a day, record TTL was {ttl} s"
+    );
+    assert!(
+        !client_is_counted(&mut redis, &client.client_id).await,
+        "an unused registration must not be counted in {CLIENT_INDEX_KEY}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires a running authenticator + Keycloak + Redis stack"]
+async fn exchanged_client_is_kept_for_a_year_and_counted() {
+    let auth_base = env("AUTH_BASE", "http://localhost:8083");
+    let test_user = env("E2E_USER", "dev@company.nonpresent");
+    let resource = format!("{auth_base}/mcp");
+    let http = common::client();
+    let mut redis = common::store::connect().await;
+
+    let client = register_client(&http, &auth_base).await;
+    let (code, _, _) = authorize(&http, &auth_base, &test_user, &client.client_id, &resource).await;
+    exchange_code(&http, &auth_base, &client.client_id, &resource, &code).await;
+
+    assert_client_is_active(&mut redis, &client.client_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires a running authenticator + Keycloak + Redis stack"]
+async fn active_client_exchanges_another_code() {
+    let auth_base = env("AUTH_BASE", "http://localhost:8083");
+    let test_user = env("E2E_USER", "dev@company.nonpresent");
+    let resource = format!("{auth_base}/mcp");
+    let http = common::client();
+    let mut redis = common::store::connect().await;
+
+    let client = register_client(&http, &auth_base).await;
+    for _ in 0..2 {
+        let (code, _, _) =
+            authorize(&http, &auth_base, &test_user, &client.client_id, &resource).await;
+        exchange_code(&http, &auth_base, &client.client_id, &resource, &code).await;
+    }
+
+    assert_client_is_active(&mut redis, &client.client_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires a running authenticator + Keycloak + Redis stack"]
+async fn code_for_an_expired_registration_is_an_invalid_grant() {
+    let auth_base = env("AUTH_BASE", "http://localhost:8083");
+    let test_user = env("E2E_USER", "dev@company.nonpresent");
+    let resource = format!("{auth_base}/mcp");
+    let http = common::client();
+    let mut redis = common::store::connect().await;
+
+    let client = register_client(&http, &auth_base).await;
+    let (code, _, _) = authorize(&http, &auth_base, &test_user, &client.client_id, &resource).await;
+    let _: () = redis.del(client_key(&client.client_id)).await.unwrap();
+
+    let response =
+        exchange_code_response(&http, &auth_base, &client.client_id, &resource, &code).await;
+
+    assert_eq!(response.status(), 400);
+    let body = response.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(body["error"], "invalid_grant", "{body}");
+    assert!(
+        !client_is_counted(&mut redis, &client.client_id).await,
+        "an expired registration must not be counted in {CLIENT_INDEX_KEY}"
+    );
 }

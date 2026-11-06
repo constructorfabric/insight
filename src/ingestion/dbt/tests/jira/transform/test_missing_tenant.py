@@ -114,7 +114,7 @@ def built(warehouse: Warehouse) -> Iterator[Warehouse]:
         issues=[issue("TST-1", fields={POINTS: 5, NOTES: "body"})],
         events=[event("TST-1", 101, "2026-01-06T10:00:00", [item(POINTS, frm="3", frm_str="3", to="5", to_str="5")])],
         comments=[comment("TST-1", 501, jira_id="TST-1", updated="2026-01-06T10:00:00.000+0000")],
-        worklogs=[worklog("TST-1", 601, jira_id="TST-1", updated="2026-01-06T10:00:00.000+0000")],
+        worklogs=[worklog(601, jira_id="TST-1", key="TST-1", started="2026-01-06T10:00:00.000+0000")],
     )
     warehouse.build(SELECTOR)
     yield warehouse

@@ -410,6 +410,7 @@ mod tests {
             ("commit_count", "non_default_commit_count"),
             ("pr_created", "default_pr_created"),
             ("pr_created", "non_default_pr_created"),
+            ("pr_created_merged", "default_pr_created_merged"),
             ("pr_merged", "default_pr_merged"),
             ("pr_merged", "non_default_pr_merged"),
         ] {

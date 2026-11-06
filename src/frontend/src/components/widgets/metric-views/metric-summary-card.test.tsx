@@ -75,8 +75,9 @@ describe("MetricSummaryCard", () => {
       />,
     );
     expect(screen.getByText("Meeting hours")).toBeInTheDocument();
-    expect(screen.getByText("20")).toBeInTheDocument();
-    expect(screen.getByText("h")).toBeInTheDocument();
+    // Hours render as a duration that carries its own unit, so no side "h".
+    expect(screen.getByText("20 h")).toBeInTheDocument();
+    expect(screen.queryByText("h")).not.toBeInTheDocument();
     const toggle = screen.getByRole("button", { name: /By tool/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("slack")).not.toBeInTheDocument();

@@ -7,6 +7,7 @@ import {
   KpiTilePlaceholder,
 } from "@/components/widgets/dashboard/kpi-tile";
 import type { KpiTileData } from "@/lib/insight/kpi-row";
+import { AppTooltips } from "@/test/tooltip";
 
 function tile(overrides: Partial<KpiTileData> = {}): KpiTileData {
   return {
@@ -126,6 +127,26 @@ describe("KpiTile", () => {
     );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
+
+  it("opens no explanation over the rest of the tile", async () => {
+    render(<KpiTile periodNoun="month" tile={tile()} onOpenGroup={vi.fn()} />, {
+      wrapper: AppTooltips,
+    });
+
+    await userEvent.hover(screen.getByRole("button"));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(screen.queryByTestId("metric-help")).not.toBeInTheDocument();
+  });
+
+  it("names the metric in full on keyboard focus when it opens nothing", async () => {
+    render(<KpiTile periodNoun="month" tile={tile({ groupId: null })} />);
+
+    await userEvent.tab();
+
+    const tip = await screen.findByTestId("metric-help");
+    expect(tip.firstElementChild).toHaveTextContent("Active AI days");
+  });
 });
 
 describe("KpiTilePlaceholder", () => {
@@ -134,18 +155,18 @@ describe("KpiTilePlaceholder", () => {
     expect(screen.getByText("Coming soon")).toBeInTheDocument();
   });
 
-  it("explains the metric on hover, in the catalog's own words", async () => {
+  it("explains the metric on its name, in the catalog's own words", async () => {
     // The number alone is not readable: a viewer meeting "14" has no way to
     // learn what it counts. The tile itself is the trigger, so the answer is
     // one pointer-rest away instead of one more icon per tile.
     render(<KpiTile periodNoun="month" tile={tile()} onOpenGroup={vi.fn()} />);
-    await userEvent.hover(screen.getByRole("button"));
+    await userEvent.hover(screen.getByText("Active AI days"));
     const tip = await screen.findByTestId("metric-help");
     expect(tip).toHaveTextContent("Days with any AI tool activity");
     expect(tip).toHaveTextContent("Counted from tool events");
   });
 
-  it("opens nothing for a metric the catalog says nothing about", async () => {
+  it("names the metric in full on hover, since the tile may cut its name", async () => {
     render(
       <KpiTile
         periodNoun="month"
@@ -153,8 +174,9 @@ describe("KpiTilePlaceholder", () => {
         onOpenGroup={vi.fn()}
       />
     );
-    await userEvent.hover(screen.getByRole("button"));
-    expect(screen.queryByTestId("metric-help")).not.toBeInTheDocument();
+    await userEvent.hover(screen.getByText("Active AI days"));
+    const tip = await screen.findByTestId("metric-help");
+    expect(tip).toHaveTextContent(/^Active AI days$/);
   });
 
   it("says where the value sits when it is exactly at the median", () => {

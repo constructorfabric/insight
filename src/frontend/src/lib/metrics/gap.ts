@@ -4,6 +4,7 @@ import {
   formatMetricValue,
   formatMultiple,
   formatPp,
+  roundMetricValue,
 } from "@/lib/format";
 
 /**
@@ -37,19 +38,24 @@ export interface GapInput {
   unit: string | null;
 }
 
+function displayedIntegerGap(input: GapInput): GapInput {
+  if (input.median == null) return input;
+  const value = roundMetricValue(input.value, "integer");
+  const median = roundMetricValue(input.median, "integer");
+  const gapDelta = value - median;
+  const gapPct = median === 0 ? null : gapDelta / Math.abs(median);
+  return { ...input, value, median, gapPct, gapDelta };
+}
+
 /**
  * Returns `null` when the magnitude would render as zero — a "0 pp" or "0%"
  * beside two visibly equal numbers reads as a bug, so callers drop the gap
  * text (or say "at the median") instead.
  */
-export function formatGapMagnitude({
-  value,
-  median,
-  gapPct,
-  gapDelta,
-  format,
-  unit,
-}: GapInput): string | null {
+export function formatGapMagnitude(input: GapInput): string | null {
+  const { value, median, gapPct, gapDelta, format, unit } =
+    input.format === "integer" ? displayedIntegerGap(input) : input;
+
   // Percentage metrics diverge in percentage POINTS, not a ratio: a relative
   // "−39%" beside a "90%" median reads as points and misstates the gap, and a
   // multiple ("0.6×") is meaningless. The value and median render as rounded

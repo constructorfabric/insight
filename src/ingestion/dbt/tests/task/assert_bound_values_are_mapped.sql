@@ -1,3 +1,16 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Every observed status and issue type value is mapped',
+        'domain': 'task-tracking',
+        'category': 'coverage',
+        'tier': 'warn',
+        'remediation': 'A status or issue type value appears in the field history of a source that has bindings, but no value map entry covers it, so issues in that value never resolve to a canonical state. Add the mapping for the value named in the finding; a new workflow status shows here until an admin maps it.'
+    }
+) }}
+
 -- Every value of a field bound to a lifecycle role must have a mapping. An
 -- unmapped status value is worse than an error: it produces no dimension row,
 -- gold treats anything that is not `done` as open, and the issue never closes —
@@ -15,9 +28,10 @@ WITH bound AS (
         field_id,
         argMax(role, (valid_from, recorded_at)) AS role
     FROM config.task_field_roles FINAL
-    WHERE is_deleted = 0 AND valid_from <= now64(3)
+    WHERE valid_from <= now64(3)
     GROUP BY tenant_id, insight_source_id, data_source, field_id
-    HAVING role IN ('status', 'issuetype')
+    HAVING argMax(is_deleted, (valid_from, recorded_at)) = 0
+       AND role IN ('status', 'issuetype')
 ),
 
 -- Statuses are decided in `task_value_map`, issue types in
@@ -85,4 +99,3 @@ LEFT ANTI JOIN mapped AS m
     AND m.data_source = o.data_source
     AND m.field_id = o.field_id
     AND m.value_id = o.value_id
-LIMIT 100

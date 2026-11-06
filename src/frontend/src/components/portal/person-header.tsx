@@ -2,15 +2,15 @@ import { useNavigate } from "@tanstack/react-router";
 import { Check, ChevronsUpDown, ChevronUp, Users } from "lucide-react";
 import { useMemo } from "react";
 
-import { Button } from "@/components/ui/button";
 import {
+  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@gears-frontx/ui-kit";
 import { useIcPerson } from "@/queries/ic-dashboard";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
@@ -168,21 +168,21 @@ export function PersonHeader({ person }: { person: string }) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 gap-1 text-muted-foreground"
+            className="gap-1 text-muted-foreground"
             onClick={() => goPerson(supervisorPersonId)}
+            icon={<ChevronUp className="size-3.5" />}
           >
-            <ChevronUp className="size-3.5" />
-            <span className="max-w-40 truncate">{supervisorName}</span>
+            <span className="block max-w-40 truncate">{supervisorName}</span>
           </Button>
         ) : null}
         {teamTarget && canScopeToTeam ? (
           <Button
             variant="outline"
             size="sm"
-            className="h-8 gap-1.5"
+            className="gap-1.5"
             onClick={() => goTeam(teamTarget)}
+            icon={<Users className="size-3.5" />}
           >
-            <Users className="size-3.5" />
             {isManager ? "Team" : "Peers"}
           </Button>
         ) : null}

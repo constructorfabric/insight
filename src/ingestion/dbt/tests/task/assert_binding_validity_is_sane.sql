@@ -1,3 +1,16 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Board bindings carry a sane validity window',
+        'domain': 'task-tracking',
+        'category': 'configuration',
+        'tier': 'warn',
+        'remediation': 'A binding decision starts more than a day in the future, or two different decisions share one key. Check the rows named in the finding in the config binding tables: a future valid_from may be a decision scheduled on purpose; two rows under one key mean the writer collapsed two decisions and one of them is lost.'
+    }
+) }}
+
 -- A binding dated in the future silently does not apply, and two rows sharing
 -- one (key, valid_from, recorded_at) make which decision won undefined. Both
 -- are authoring mistakes that produce no error of their own.
@@ -70,5 +83,3 @@ FROM (
     GROUP BY tenant_id, insight_source_id, field, unique_key
     HAVING c > 1
 )
-
-LIMIT 100

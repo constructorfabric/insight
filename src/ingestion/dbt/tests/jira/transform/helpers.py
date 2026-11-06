@@ -132,6 +132,22 @@ def census_entry(key: str, *, jira_id: str, extracted_at: str = OBSERVED_AT) -> 
     }
 
 
+def user(account_id: str, *, email: str | None, extracted_at: str = OBSERVED_AT) -> dict[str, Any]:
+    """One account as /users/search returned it; `email` is None when Jira hides it."""
+    return {
+        **_airbyte(extracted_at),
+        "tenant_id": TENANT_ID,
+        "source_id": SOURCE_ID,
+        "unique_key": f"{TENANT_ID}-{SOURCE_ID}-{account_id}",
+        "account_id": account_id,
+        "email": email,
+        "display_name": f"User {account_id}",
+        "account_type": "atlassian",
+        "active": True,
+        "collected_at": extracted_at,
+    }
+
+
 def status(status_id: str, *, name: str, category_key: str, extracted_at: str = OBSERVED_AT) -> dict[str, Any]:
     """One row of the status dimension; `category_key` is Jira's statusCategory key."""
     return {
@@ -242,30 +258,38 @@ def comment(
 
 
 def worklog(
-    key: str,
-    worklog_id: int,
-    *,
-    jira_id: str,
-    updated: str,
-    author: str = "author-acct",
-    extracted_at: str = OBSERVED_AT,
+    worklog_id: int, *, jira_id: str, key: str, started: str = CREATED_AT, extracted_at: str = OBSERVED_AT
 ) -> dict[str, Any]:
-    """One worklog of an issue, as the worklog stream lands it; `updated` dates its lifecycle event."""
+    """One worklog entry on an issue; the feed is instance-wide and keyed by the issue id."""
     return {
         **_airbyte(extracted_at),
         "id": str(worklog_id),
+        "issueId": jira_id,
         "tenant_id": TENANT_ID,
         "source_id": SOURCE_ID,
         "unique_key": f"{SOURCE_ID}-worklog-{worklog_id}",
         "worklog_id": worklog_id,
-        "jira_id": jira_id,
-        "issueId": jira_id,
         "id_readable": key,
-        "author_account_id": author,
-        "started": updated,
+        "jira_id": jira_id,
+        "author_account_id": "author-acct",
+        "started": started,
+        "created": started,
+        "updated": started,
         "time_spent_seconds": 3600,
-        "comment": f"worklog {worklog_id}",
-        "created": updated,
-        "updated": updated,
+        "collected_at": extracted_at,
+    }
+
+
+def worklog_tombstone(worklog_id: int, *, deleted_at_ms: int, extracted_at: str = OBSERVED_AT) -> dict[str, Any]:
+    """One `/worklog/deleted` entry: Jira's authoritative word that the worklog is gone."""
+    return {
+        **_airbyte(extracted_at),
+        "worklogId": worklog_id,
+        "updatedTime": deleted_at_ms,
+        "tenant_id": TENANT_ID,
+        "source_id": SOURCE_ID,
+        "unique_key": f"{SOURCE_ID}-worklog-deleted-{worklog_id}",
+        "worklog_id": worklog_id,
+        "deleted_at_ms": deleted_at_ms,
         "collected_at": extracted_at,
     }

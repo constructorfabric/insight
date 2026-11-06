@@ -1,3 +1,16 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Mapped status values are canonical states',
+        'domain': 'task-tracking',
+        'category': 'configuration',
+        'tier': 'error',
+        'remediation': 'A value map entry for a status-role field targets a value outside new, in_progress, done and undefined, so gold cannot classify issues in it. Correct the target_value of the entry named in the finding.'
+    }
+) }}
+
 -- A canonical value must fall inside the domain its field's role permits.
 -- `role` is a low-cardinality string rather than an enum, so the database
 -- constrains neither it nor the values bound under it — this test is what
@@ -15,8 +28,23 @@ WITH bound AS (
         field_id,
         argMax(role, (valid_from, recorded_at)) AS role
     FROM config.task_field_roles FINAL
-    WHERE is_deleted = 0 AND valid_from <= now64(3)
+    WHERE valid_from <= now64(3)
     GROUP BY tenant_id, insight_source_id, data_source, field_id
+    HAVING argMax(is_deleted, (valid_from, recorded_at)) = 0
+),
+
+latest_mappings AS (
+    SELECT
+        tenant_id,
+        insight_source_id,
+        data_source,
+        field_id,
+        value_id,
+        canonical_value,
+        is_deleted
+    FROM config.task_value_map FINAL
+    ORDER BY recorded_at DESC
+    LIMIT 1 BY tenant_id, insight_source_id, data_source, field_id, value_id, valid_from
 )
 
 SELECT
@@ -27,7 +55,7 @@ SELECT
     m.value_id,
     b.role,
     m.canonical_value
-FROM config.task_value_map AS m FINAL
+FROM latest_mappings AS m
 INNER JOIN bound AS b
     ON b.tenant_id = m.tenant_id
     AND b.insight_source_id = m.insight_source_id
@@ -38,4 +66,3 @@ WHERE m.is_deleted = 0
       (b.role = 'status' AND m.canonical_value IN ('new', 'in_progress', 'done', 'undefined'))
       OR b.role != 'status'
   )
-LIMIT 100

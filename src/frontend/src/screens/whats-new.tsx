@@ -11,21 +11,41 @@ import {
 // Each section is one row of the release card, styled like the archived
 // releases below: its name sits in the left column, its entries on the right.
 const RELEASE_SECTIONS = [
-  { id: "new_ui", itemKeys: ["new_pages", "drilldown"] },
-  { id: "git", itemKeys: ["git_proxy", "default_branch"] },
   {
-    id: "connectors",
-    itemKeys: ["bamboohr", "jira", "github", "bitbucket", "claude_team"],
+    id: "dashboards",
+    itemKeys: ["build_dashboards"],
   },
-  { id: "identity", itemKeys: ["identity_resolution"] },
-  { id: "data_health", itemKeys: ["data_health"] },
-  { id: "reports", itemKeys: ["reports"] },
-  { id: "sign_in", itemKeys: ["github_login"] },
+  { id: "collaboration", itemKeys: ["meetings_once"] },
+  { id: "connectors", itemKeys: ["allure", "youtrack", "gitlab"] },
+  { id: "ai_cost", itemKeys: ["codex_credits"] },
+  { id: "new_ui", itemKeys: ["rail", "home"] },
+] as const;
+
+const OTHER_CHANGES = [
+  "expand_widget",
+  "dashboard_range",
+  "collab_names",
+  "meeting_kinds",
 ] as const;
 
 // Past releases stay on the page so a reader can see the whole history, newest
 // first, and are grouped into sections the same way the current one is.
 const PAST_RELEASES = [
+  {
+    id: "release_2026_08_31",
+    sections: [
+      { id: "new_ui", itemKeys: ["new_pages", "drilldown"] },
+      { id: "git", itemKeys: ["git_proxy", "default_branch"] },
+      {
+        id: "connectors",
+        itemKeys: ["bamboohr", "jira", "github", "bitbucket", "claude_team"],
+      },
+      { id: "identity", itemKeys: ["identity_resolution"] },
+      { id: "data_health", itemKeys: ["data_health"] },
+      { id: "reports", itemKeys: ["reports"] },
+      { id: "sign_in", itemKeys: ["github_login"] },
+    ],
+  },
   {
     id: "release_2026_07_31",
     sections: [
@@ -158,18 +178,6 @@ export function WhatsNewBody() {
               </span>{" "}
               {t("whats_new.stamp.release")}
             </span>
-            <span>
-              <span className="font-semibold text-foreground">
-                {t("whats_new.stamp.highlights_label")}
-              </span>{" "}
-              {t("whats_new.stamp.highlights")}
-            </span>
-            <span>
-              <span className="font-semibold text-foreground">
-                {t("whats_new.stamp.focus_label")}
-              </span>{" "}
-              {t("whats_new.stamp.focus")}
-            </span>
           </div>
         </section>
 
@@ -179,6 +187,30 @@ export function WhatsNewBody() {
           </h3>
           <div className="mt-3 divide-y overflow-hidden rounded-lg border bg-card">
             <ReleaseSections baseKey="whats_new" sections={RELEASE_SECTIONS} />
+            <Collapsible>
+              <CollapsibleTrigger
+                render={
+                  <button
+                    type="button"
+                    className="group flex w-full cursor-pointer items-center gap-1.5 px-4 py-3 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase transition-colors hover:bg-muted sm:px-5"
+                  />
+                }
+              >
+                {t("whats_new.other_changes.label")}
+                <ChevronDown className="size-3.5 shrink-0 transition-transform group-data-[panel-open]:rotate-180" />
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="grid gap-x-5 px-4 pb-4 sm:grid-cols-[10rem_1fr] sm:px-5 sm:pb-5">
+                  <ul className="flex list-disc flex-col gap-1.5 pl-4 text-sm leading-relaxed text-muted-foreground sm:col-start-2">
+                    {OTHER_CHANGES.map((key) => (
+                      <li key={key}>
+                        {t(`whats_new.other_changes.items.${key}`)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           </div>
         </section>
 

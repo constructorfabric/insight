@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronRight } from "lucide-react";
 
 import type { EvidencePersonRow } from "@/components/metric-evidence-context";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import {
   Table,
   TableBody,
@@ -150,16 +150,15 @@ export function MetricEvidencePeople({
                     <Button
                       type="button"
                       variant="ghost"
-                      size="icon-xs"
+                      size="sm"
                       aria-label={`Open records for ${row.name}`}
                       className="text-muted-foreground"
                       onClick={(event) => {
                         event.stopPropagation();
                         onDrill(row);
                       }}
-                    >
-                      <ChevronRight aria-hidden />
-                    </Button>
+                      icon={<ChevronRight aria-hidden />}
+                    />
                   ) : null}
                 </TableCell>
               </TableRow>

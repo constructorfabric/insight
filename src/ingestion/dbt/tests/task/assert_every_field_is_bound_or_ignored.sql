@@ -1,3 +1,16 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Every field with events is bound to a role or ignored',
+        'domain': 'task-tracking',
+        'category': 'coverage',
+        'tier': 'warn',
+        'remediation': 'A source with bindings has field history for a field no binding names, so the field is neither used nor explicitly ignored. Bind it to a role or mark it ignored; a field newly added in the tracker shows here until an admin decides.'
+    }
+) }}
+
 -- A field carrying events, in a source that has declared any binding at all,
 -- must be bound to a role or explicitly marked `ignored`. The distinction is
 -- the point: `ignored` says somebody looked and decided, silence says nobody
@@ -43,4 +56,3 @@ LEFT ANTI JOIN declared AS d
     AND d.insight_source_id = e.insight_source_id
     AND d.data_source = e.data_source
     AND d.field_id = e.field_id
-LIMIT 100

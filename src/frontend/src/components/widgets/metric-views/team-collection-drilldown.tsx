@@ -11,7 +11,6 @@ import {
 import type { MetricGroup } from "@/lib/insight/groups";
 import type { PeerCohortLabel } from "@/lib/peers";
 import { useMemberGridData } from "@/queries/member-grid";
-import type { PeriodValue } from "@/types/insight";
 import { cn } from "@/lib/utils";
 
 export interface TeamMemberRef {
@@ -23,7 +22,7 @@ export interface TeamCollectionDrilldownProps {
   def: MetricGroup;
   members: TeamMemberRef[];
   range: DateRange;
-  period: PeriodValue;
+  compareTo: DateRange;
   cohortLabel?: PeerCohortLabel;
   className?: string;
 }
@@ -39,7 +38,7 @@ export function TeamCollectionDrilldown({
   def,
   members,
   range,
-  period,
+  compareTo,
   cohortLabel = "department",
   className,
 }: TeamCollectionDrilldownProps) {
@@ -59,7 +58,7 @@ export function TeamCollectionDrilldown({
     def.collection,
     { type: "person", ids: gridMembers.map((member) => member.entityId) },
     range,
-    period
+    compareTo
   );
 
   if (members.length === 0) {

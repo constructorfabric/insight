@@ -44,8 +44,9 @@ const assistant = vi.hoisted(() => ({ available: false }));
 vi.mock("@/lib/portal/use-assistant-available", () => ({
   useAssistantAvailable: () => assistant.available,
 }));
-vi.mock("@/components/ui/sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
+  toast: { add: vi.fn() },
 }));
 vi.mock("@/hooks/use-debounced-value", () => ({
   useDebouncedValue: <T,>(value: T) => value,
@@ -59,11 +60,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@/i18n";
 import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@gears-frontx/ui-kit";
 import { useAssistantDraft } from "@/lib/custom/assistant-draft";
 import { portalRouter } from "@/test/portal-router";
 
 import { CreateDashboardDialog } from "./create-dashboard-dialog";
+import { toastsOf } from "@/test/toast";
 
 const { BOB, CAROL } = people.ids;
 const NEW_ID = "dash-new";
@@ -225,10 +227,10 @@ describe("<CreateDashboardDialog>", () => {
 
     await user.click(createButton());
 
-    expect(
-      await screen.findByRole("status", { name: "Loading" })
-    ).toBeVisible();
-    expect(createButton()).toBeDisabled();
+    await waitFor(() =>
+      expect(createButton()).toHaveAttribute("aria-busy", "true")
+    );
+    expect(createButton()).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   });
 
@@ -272,9 +274,7 @@ describe("<CreateDashboardDialog>", () => {
     await waitFor(() =>
       expect(portalRouter.pathname).toBe(`/portal/custom/${NEW_ID}`)
     );
-    expect(toast.error).toHaveBeenCalledWith(
-      "Only an administrator can do this."
-    );
+    expect(toastsOf(vi.mocked(toast.add), "error")).toContainEqual(expect.objectContaining({ title: "Only an administrator can do this." }));
   });
 
   it("offers no start choice while the Assistant is unavailable", () => {

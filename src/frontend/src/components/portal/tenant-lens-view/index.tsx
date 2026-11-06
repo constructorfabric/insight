@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 import { Pending } from "@/components/portal/domain-lens-view";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@gears-frontx/ui-kit";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import type { MetricCollectionConfig } from "@/lib/metrics/collection";
 import { pickTrendBucket } from "@/lib/portal/trend-data";
@@ -53,7 +53,7 @@ import { tenantData } from "./data";
  * collections, and a first-/second-half pair for the slope/momentum sections.
  */
 export function TenantLensView({ config, "data-testid": testId }: { config: TenantLensConfig; "data-testid"?: string }) {
-  const { period, dateRange } = usePortalPeriod();
+  const { dateRange, compareTo } = usePortalPeriod();
   // One entity → the projected-row budget is all headroom; the picker still
   // guards a pathological custom range, and month always fits.
   const bucket = pickTrendBucket(1, dateRange) ?? "month";
@@ -67,7 +67,7 @@ export function TenantLensView({ config, "data-testid": testId }: { config: Tena
     plan.collections[0],
     { type: "tenant" },
     dateRange,
-    { previousPeriod: period }
+    { compareTo }
   );
   const extraEntries = useMemo(
     () =>

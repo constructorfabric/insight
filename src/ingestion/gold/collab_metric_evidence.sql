@@ -82,8 +82,13 @@ meeting_source AS (
         meetings_attended + ifNull(calls_count, 0) AS meetings_and_calls_attended,
         attended_meeting_keys,
         meetings_organized,
-        adhoc_meetings_attended,
-        scheduled_meetings_attended,
+        -- INVARIANT: the Teams kinds add up to meetings_attended exactly: the
+        -- splits are capped by the total, and whatever the total holds beyond
+        -- them keeps its own kind rather than vanishing.
+        least(ifNull(scheduled_meetings_attended, 0), meetings_attended) AS teams_scheduled_attended,
+        least(ifNull(adhoc_meetings_attended, 0), meetings_attended - teams_scheduled_attended) AS teams_adhoc_attended,
+        meetings_attended - teams_scheduled_attended - teams_adhoc_attended AS teams_other_attended,
+        ifNull(calls_count, 0) AS teams_calls_attended,
         audio_duration_seconds,
         video_duration_seconds,
         screen_share_duration_seconds,
@@ -92,7 +97,29 @@ meeting_source AS (
         CAST(
             [tuple('tool', tool_value, tool_label)]
             AS Array(Tuple(key String, value String, label Nullable(String)))
-        ) AS tool_dimensions
+        ) AS tool_dimensions,
+        -- INVARIANT: every meetings_attended row carries a `kind`; a tool
+        -- without a split is its own kind.
+        CAST(
+            [tuple('tool', tool_value, tool_label), tuple('kind', tool_value, tool_label)]
+            AS Array(Tuple(key String, value String, label Nullable(String)))
+        ) AS tool_kind_dimensions,
+        CAST(
+            [tuple('tool', tool_value, tool_label), tuple('kind', 'teams_scheduled', 'Teams scheduled')]
+            AS Array(Tuple(key String, value String, label Nullable(String)))
+        ) AS teams_scheduled_dimensions,
+        CAST(
+            [tuple('tool', tool_value, tool_label), tuple('kind', 'teams_adhoc', 'Teams ad hoc')]
+            AS Array(Tuple(key String, value String, label Nullable(String)))
+        ) AS teams_adhoc_dimensions,
+        CAST(
+            [tuple('tool', tool_value, tool_label), tuple('kind', 'teams_other', 'Teams other')]
+            AS Array(Tuple(key String, value String, label Nullable(String)))
+        ) AS teams_other_dimensions,
+        CAST(
+            [tuple('tool', tool_value, tool_label), tuple('kind', 'teams_call', 'Teams calls')]
+            AS Array(Tuple(key String, value String, label Nullable(String)))
+        ) AS teams_call_dimensions
     FROM {{ ref('class_collab_meeting_activity') }} FINAL
     WHERE (account_source_type != 'email' OR person_key LIKE '%@%')
       AND date IS NOT NULL
@@ -156,30 +183,28 @@ deliberate_activity AS (
         entity_id,
         metric_date,
         tool_value,
-        modality,
         CAST(
             [tuple('tool', tool_value, {{ collab_tool_label('tool_value') }})]
             AS Array(Tuple(key String, value String, label Nullable(String)))
-        ) AS tool_dimensions,
-        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
+        ) AS tool_dimensions
     FROM (
-        SELECT DISTINCT tenant_id, entity_id, metric_date, tool_value, modality
+        SELECT DISTINCT tenant_id, entity_id, metric_date, tool_value
         FROM (
-            SELECT tenant_id, entity_id, metric_date, tool_value, 'chat' AS modality
+            SELECT tenant_id, entity_id, metric_date, tool_value
             FROM chat_source
             WHERE total_chat_messages > 0
             UNION ALL
-            SELECT tenant_id, entity_id, metric_date, tool_value, 'email' AS modality
+            SELECT tenant_id, entity_id, metric_date, tool_value
             FROM email_source
             WHERE sent_count > 0
             UNION ALL
-            SELECT tenant_id, entity_id, metric_date, tool_value, 'documents' AS modality
+            SELECT tenant_id, entity_id, metric_date, tool_value
             FROM document_source
             WHERE viewed_or_edited_count > 0
                OR shared_internally_count > 0
                OR shared_externally_count > 0
             UNION ALL
-            SELECT tenant_id, entity_id, metric_date, tool_value, 'meetings' AS modality
+            SELECT tenant_id, entity_id, metric_date, tool_value
             FROM meeting_source
             WHERE meetings_and_calls_attended > 0
         )
@@ -316,14 +341,6 @@ value_measures AS (
 
     UNION ALL
 
-    {{ sum_measure('adhoc_meetings_attended', 'meeting_source', 'adhoc_meetings_attended', 'tool_dimensions') }}
-
-    UNION ALL
-
-    {{ sum_measure('scheduled_meetings_attended', 'meeting_source', 'scheduled_meetings_attended', 'tool_dimensions') }}
-
-    UNION ALL
-
     {{ sum_measure('workday_meeting_hours', 'workday_source', 'workday_meeting_hours', 'no_dimensions') }}
 
     UNION ALL
@@ -351,17 +368,27 @@ chat_active_day_grain AS (
     FROM chat_source
     WHERE total_chat_messages > 0
 ),
-active_modality_grain AS (
-    SELECT DISTINCT
-        tenant_id,
-        entity_id,
-        metric_date,
-        modality,
-        no_dimensions
-    FROM deliberate_activity
-),
 meeting_summary_measures AS (
-    {{ sum_measure('meetings_attended', 'meeting_source', 'meetings_and_calls_attended', 'tool_dimensions', where='empty(attended_meeting_keys)') }}
+    -- INVARIANT: a reported Teams day always keeps one row (the scheduled
+    -- kind, even at 0) so the metric answers 0 rather than null for it; the
+    -- other kinds appear only when counted.
+    {{ sum_measure('meetings_attended', 'meeting_source', 'teams_scheduled_attended', 'teams_scheduled_dimensions', where="empty(attended_meeting_keys) AND tool_value = 'm365'") }}
+
+    UNION ALL
+
+    {{ sum_measure('meetings_attended', 'meeting_source', 'teams_adhoc_attended', 'teams_adhoc_dimensions', where="empty(attended_meeting_keys) AND tool_value = 'm365' AND teams_adhoc_attended > 0") }}
+
+    UNION ALL
+
+    {{ sum_measure('meetings_attended', 'meeting_source', 'teams_other_attended', 'teams_other_dimensions', where="empty(attended_meeting_keys) AND tool_value = 'm365' AND teams_other_attended > 0") }}
+
+    UNION ALL
+
+    {{ sum_measure('meetings_attended', 'meeting_source', 'teams_calls_attended', 'teams_call_dimensions', where="empty(attended_meeting_keys) AND tool_value = 'm365' AND teams_calls_attended > 0") }}
+
+    UNION ALL
+
+    {{ sum_measure('meetings_attended', 'meeting_source', 'meetings_and_calls_attended', 'tool_kind_dimensions', where="empty(attended_meeting_keys) AND tool_value != 'm365'") }}
 ),
 attendance_measures AS (
     -- INVARIANT: a meeting counts once for a person however many addresses they
@@ -378,7 +405,7 @@ attendance_measures AS (
         'meetings_attended' AS measure_key,
         toNullable(toFloat64(1)) AS value,
         toNullable(concat(insight_source_id, ':', meeting_key)) AS subject_key,
-        tool_dimensions AS dimensions,
+        tool_kind_dimensions AS dimensions,
         'source_summary' AS granularity,
         'meeting' AS record_label,
         map('meeting', meeting_key) AS details
@@ -402,10 +429,6 @@ attendance_measures AS (
 ),
 subject_measures AS (
     {{ distinct_measure('active_day', 'active_day_grain', 'metric_date', 'tool_dimensions') }}
-
-    UNION ALL
-
-    {{ distinct_measure('active_modality', 'active_modality_grain', 'modality', 'no_dimensions') }}
 
     UNION ALL
 

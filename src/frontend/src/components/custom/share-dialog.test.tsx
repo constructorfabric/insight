@@ -47,8 +47,9 @@ vi.mock("@/queries/person-name", () => ({
     data: people.names[personId ?? ""] ?? null,
   }),
 }));
-vi.mock("@/components/ui/sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
+  toast: { add: vi.fn() },
 }));
 vi.mock("@/hooks/use-debounced-value", () => ({
   useDebouncedValue: <T,>(value: T) => value,
@@ -63,9 +64,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@/i18n";
 import * as customClient from "@/api/custom-client";
 import { CustomApiError, type GrantTarget } from "@/api/custom-client";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@gears-frontx/ui-kit";
 
 import { ShareDialog } from "./share-dialog";
+import { toastsOf } from "@/test/toast";
 
 const { OWNER, BOB, CAROL } = people.ids;
 
@@ -287,8 +289,8 @@ describe.each(TARGETS)("<ShareDialog> for %s", (_label, target) => {
       }
 
       await waitFor(() => expect(onClose, `case: ${_case}`).toHaveBeenCalled());
-      expect(toast.error).toHaveBeenCalledOnce();
-      expect(toast.error).toHaveBeenCalledWith(REFUSALS[target.kind].sentence);
+      expect(toastsOf(vi.mocked(toast.add), "error")).toHaveLength(1);
+      expect(toastsOf(vi.mocked(toast.add), "error")).toContainEqual(expect.objectContaining({ title: REFUSALS[target.kind].sentence }));
       expect(screen.queryByRole("alert")).toBeNull();
     }
   );
@@ -304,9 +306,7 @@ describe.each(TARGETS)("<ShareDialog> for %s", (_label, target) => {
     renderDialog(target, onClose);
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(toast.error).toHaveBeenCalledWith(
-      "You do not have permission to perform this operation"
-    );
+    expect(toastsOf(vi.mocked(toast.add), "error")).toContainEqual(expect.objectContaining({ title: "You do not have permission to perform this operation" }));
   });
 
   it.each([
@@ -336,7 +336,7 @@ describe.each(TARGETS)("<ShareDialog> for %s", (_label, target) => {
       }
 
       await waitFor(() => expect(onClose, `case: ${_case}`).toHaveBeenCalled());
-      expect(toast.error).not.toHaveBeenCalled();
+      expect(toastsOf(vi.mocked(toast.add), "error")).toHaveLength(0);
       expect(screen.queryByRole("alert")).toBeNull();
     }
   );

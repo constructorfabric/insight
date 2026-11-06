@@ -165,6 +165,10 @@ name: jira
 # returns ids alone, so `id_readable` stayed empty. MINOR per ADR-0015: the
 # manifest changes, the next sync rewrites the census in full, and nothing
 # stored changes meaning.
+# 18.4.1: a response Jira marks with a refused sign-in fails the request as a
+# config error, and the check also reads `jira_user`, so invalid credentials
+# fail both the check and the sync instead of collecting nothing (#3744, #3746).
+# PATCH per ADR-0015: the manifest changes and nothing stored changes.
 # 19.0.0 (major): every Jira producer of a task class carries `tenant_id` after
 # `unique_key` and leads its key with the tenant, and the journal derives,
 # deletes and batches per tenant. MAJOR because rows already written change

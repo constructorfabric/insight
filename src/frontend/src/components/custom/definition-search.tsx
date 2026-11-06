@@ -1,6 +1,6 @@
 import { Search } from "lucide-react";
 
-import { Input } from "@/components/ui/input";
+import { Input } from "@gears-frontx/ui-kit";
 import { cn } from "@/lib/utils";
 
 /**

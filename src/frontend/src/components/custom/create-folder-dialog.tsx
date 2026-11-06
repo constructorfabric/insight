@@ -10,18 +10,17 @@ import {
 import type { PersonSummary } from "@/api/identity-client";
 import { refusal } from "@/components/custom/refusal";
 import { VisibilityField } from "@/components/custom/visibility-field";
-import { Button } from "@/components/ui/button";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { toast } from "@/components/ui/sonner";
-import { Spinner } from "@/components/ui/spinner";
+  toast,
+  Input,
+  Label,
+} from "@gears-frontx/ui-kit";
 import { audienceChosen, granteesFor } from "@/lib/custom/initial-grants";
 import { TEXT_BODY } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -109,9 +108,10 @@ export function CreateFolderDialog({
         isAdmin && granteesFor(visibility, people).length > 0
       );
       if (made.shareFailure !== null) {
-        toast.error(
-          refusal(made.shareFailure.refused, "Created, but couldn't share it.")
-        );
+        toast.add({
+          type: "error",
+          title: refusal(made.shareFailure.refused, "Created, but couldn't share it."),
+        });
       }
     } catch (failure) {
       setError(refusal(failure, "Couldn't create the folder."));
@@ -187,10 +187,10 @@ export function CreateFolderDialog({
             </Button>
             <Button
               type="button"
-              disabled={!ready || pending}
+              disabled={!ready}
               onClick={() => void submit()}
+              loading={pending}
             >
-              {pending ? <Spinner className="size-3" /> : null}
               Create
             </Button>
           </DialogFooter>

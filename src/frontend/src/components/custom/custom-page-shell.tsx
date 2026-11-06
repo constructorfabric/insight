@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { PanelRightClose, Sparkles } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { useAssistantDraft } from "@/lib/custom/assistant-draft";
 
 const HIDDEN_KEY = "insight.custom.assistant-hidden";
@@ -64,14 +64,13 @@ export function CustomPageShell({
         <div className="flex shrink-0 justify-center border-t bg-sidebar p-2 lg:w-12 lg:border-s lg:border-t-0">
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="sm"
             aria-label="Open assistant"
             aria-expanded={false}
             className="text-muted-foreground"
             onClick={toggle}
-          >
-            <Sparkles />
-          </Button>
+            icon={<Sparkles />}
+          />
         </div>
       ) : null}
       <div
@@ -81,14 +80,13 @@ export function CustomPageShell({
         {/* Open, it belongs in the panel's own header, beside its title. */}
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="sm"
           aria-label="Collapse assistant"
           aria-expanded
           className="absolute end-2 top-2 z-10 text-muted-foreground"
           onClick={toggle}
-        >
-          <PanelRightClose />
-        </Button>
+          icon={<PanelRightClose />}
+        />
         {chat}
       </div>
     </div>

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   NO_METRIC_VALUE,
+  formatHoursDuration,
+  formatMetricFigure,
   formatMetricNumber,
   formatMetricValue,
   formatPp,
@@ -10,6 +12,7 @@ import {
   formatUtcInstant,
   metricDisplayUnit,
   roundMetricValue,
+  splitMetricValue,
 } from "@/lib/format";
 
 describe("formatMetricNumber / formatMetricValue / metricDisplayUnit", () => {
@@ -47,10 +50,36 @@ describe("formatMetricNumber / formatMetricValue / metricDisplayUnit", () => {
     expect(formatMetricValue(0, "percent")).toBe("0%");
   });
 
+  it("renders hours as clock time, carrying the unit in the value", () => {
+    expect(formatHoursDuration(1.25)).toBe("1 h 15 min");
+    expect(formatHoursDuration(0.75)).toBe("45 min");
+    expect(formatHoursDuration(3)).toBe("3 h");
+    expect(formatHoursDuration(0)).toBe("0 min");
+    expect(formatHoursDuration(-1.5)).toBe("-1 h 30 min");
+    // 59.99 min rounds up into the next hour, never to "1 h 60 min".
+    expect(formatHoursDuration(1.9999)).toBe("2 h");
+    // Minutes drop once the number is past what a decimal resolved.
+    expect(formatHoursDuration(1234.6)).toBe("1,235 h");
+    expect(formatMetricValue(1.25, "decimal", "h")).toBe("1 h 15 min");
+    expect(formatMetricFigure(1.25, "decimal", "h")).toBe("1 h 15 min");
+    expect(metricDisplayUnit("decimal", "h")).toBeUndefined();
+    expect(splitMetricValue(1.25, "decimal", "h")).toEqual({
+      number: "1 h 15 min",
+      unit: "",
+    });
+  });
+
+  it("formatMetricFigure leaves the unit to the side element when one renders", () => {
+    expect(formatMetricFigure(5, "integer", "commits")).toBe("5");
+    expect(formatMetricFigure(42.4, "percent", null)).toBe("42%");
+    expect(formatMetricFigure(1234, "currency", "USD")).toBe("$1,234");
+    expect(formatMetricFigure(null, "integer", "commits")).toBe(NO_METRIC_VALUE);
+  });
+
   it("hides the side unit when the number already carries it", () => {
     expect(metricDisplayUnit("currency", "USD")).toBeUndefined();
     expect(metricDisplayUnit("percent", "%")).toBeUndefined();
-    expect(metricDisplayUnit("integer", "h")).toBe("h");
+    expect(metricDisplayUnit("integer", "commits")).toBe("commits");
     expect(metricDisplayUnit("integer", null)).toBeUndefined();
   });
 });

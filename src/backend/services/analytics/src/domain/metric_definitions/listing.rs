@@ -537,7 +537,7 @@ mod tests {
         assert_eq!(view.revision_window_days, None);
 
         // The product row under the same key still reports both.
-        let mut builtin = row(key, None, "AI actual usage cost — approximate distribution");
+        let mut builtin = row(key, None, "AI extra cost, spread by day");
         builtin.last_observed_date = Some(date("2026-03-10"));
         let Ok(views) = build_views(vec![builtin], HashMap::new(), HashMap::new()) else {
             panic!("canonical rows must map");
@@ -635,7 +635,7 @@ mod tests {
         let mut r = row(
             "ai.daily_approximate_extra_usage_cost",
             None,
-            "AI actual usage cost — approximate distribution",
+            "AI extra cost, spread by day",
         );
         r.last_observed_date = Some(date("2026-03-10"));
 

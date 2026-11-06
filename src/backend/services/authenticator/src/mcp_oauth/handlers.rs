@@ -26,19 +26,22 @@ use crate::session::SessionRecord;
 use super::store::McpOAuthStoreError;
 use super::types::{
     AuthorizationCodeGrant, AuthorizationDecision, AuthorizeQuery, ClientRegistrationRequest,
-    GRANT_LIFETIME_SECONDS, MCP_RESOURCES, OAuthError, PendingAuthorization, RefreshGrant,
-    RegisteredClient, RevocationRequest, TokenRequest, TokenResponse, mcp_resource_for, mcp_scopes,
-    redirect_uri_matches, valid_code_verifier, validated_registration,
+    GRANT_LIFETIME_SECONDS, MAX_PARAMETER_LENGTH, MCP_RESOURCES, OAuthError, PendingAuthorization,
+    RefreshGrant, RegisteredClient, RevocationRequest, TokenRequest, TokenResponse,
+    mcp_resource_for, mcp_scopes, redirect_uri_matches, valid_code_verifier,
+    validated_registration,
 };
 
 const ADMIN_ROLE: &str = "admin";
-const CLIENT_REGISTRATION_TTL_SECONDS: u64 = 365 * 24 * 60 * 60;
+// INVARIANT: pending clients are uncapped; REGISTRATION_RATE_LIMIT x TTL bounds them to 28,820,
+// and validated_registration's field limits keep each record under 100 KiB of JSON.
+const PENDING_CLIENT_TTL_SECONDS: u64 = 24 * 60 * 60;
+const ACTIVE_CLIENT_TTL_SECONDS: u64 = 365 * 24 * 60 * 60;
 const MAX_REGISTERED_CLIENTS: u64 = 1_000;
 const REGISTRATION_RATE_LIMIT: BucketSpec = BucketSpec {
     burst: 20,
     per_minute: 20,
 };
-const MAX_PARAMETER_LENGTH: usize = 2_048;
 const REFERRER_POLICY: &str = "referrer-policy";
 const X_CONTENT_TYPE_OPTIONS: &str = "x-content-type-options";
 
@@ -86,24 +89,13 @@ pub async fn register_client(
             return oauth_error(StatusCode::BAD_REQUEST, "invalid_client_metadata", reason);
         }
     };
-    match state
+    if let Err(error) = state
         .mcp_oauth
-        .put_client(
-            &client,
-            CLIENT_REGISTRATION_TTL_SECONDS,
-            MAX_REGISTERED_CLIENTS,
-            now_secs(),
-        )
+        .put_client(&client, PENDING_CLIENT_TTL_SECONDS)
         .await
     {
-        Ok(()) => {}
-        Err(McpOAuthStoreError::ClientQuotaExceeded) => {
-            return registration_limited("client registration capacity exhausted");
-        }
-        Err(error) => {
-            tracing::error!(error = %error, "could not store MCP OAuth client");
-            return temporarily_unavailable();
-        }
+        tracing::error!(error = %error, "could not store MCP OAuth client");
+        return temporarily_unavailable();
     }
 
     json_response(StatusCode::CREATED, &client)
@@ -237,6 +229,9 @@ pub async fn decide(
     }
     if !fresh_admin(&state, &record).await {
         return redirect_json(&pending, Some(("access_denied", "admin access required")));
+    }
+    if let Err(response) = ensure_active_capacity(&state, &pending).await {
+        return response;
     }
 
     let code = random_token();
@@ -481,8 +476,67 @@ async fn exchange_code(state: &AppState, headers: &HeaderMap, request: TokenRequ
     let Some(record) = active_admin_session(state, &grant.session_id).await else {
         return invalid_grant();
     };
+    if let Err(response) = activate_client(state, &grant.client_id).await {
+        return response;
+    }
 
     issue_initial_tokens(state, headers, &record, &grant).await
+}
+
+#[expect(
+    clippy::result_large_err,
+    reason = "the Err is the ready OAuth error response, not an error type to box"
+)]
+async fn activate_client(state: &AppState, client_id: &str) -> Result<(), Response> {
+    let activated = state
+        .mcp_oauth
+        .activate_client(
+            client_id,
+            ACTIVE_CLIENT_TTL_SECONDS,
+            MAX_REGISTERED_CLIENTS,
+            now_secs(),
+        )
+        .await;
+    match activated {
+        Ok(()) => Ok(()),
+        Err(McpOAuthStoreError::ClientExpired) => Err(invalid_grant()),
+        Err(McpOAuthStoreError::ClientQuotaExceeded) => {
+            tracing::warn!("MCP OAuth active client capacity filled after authorization");
+            Err(invalid_grant())
+        }
+        Err(error @ (McpOAuthStoreError::Redis(_) | McpOAuthStoreError::Serialization(_))) => {
+            tracing::error!(error = %error, "could not activate MCP OAuth client");
+            Err(temporarily_unavailable())
+        }
+    }
+}
+
+#[expect(
+    clippy::result_large_err,
+    reason = "the Err is the ready OAuth error response, not an error type to box"
+)]
+async fn ensure_active_capacity(
+    state: &AppState,
+    pending: &PendingAuthorization,
+) -> Result<(), Response> {
+    let admitted = state
+        .mcp_oauth
+        .active_capacity_for(&pending.client_id, MAX_REGISTERED_CLIENTS, now_secs())
+        .await;
+    match admitted {
+        Ok(true) => Ok(()),
+        Ok(false) => {
+            tracing::warn!("MCP OAuth active client capacity exhausted");
+            Err(redirect_json(
+                pending,
+                Some(("temporarily_unavailable", "client capacity exhausted")),
+            ))
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "could not check MCP OAuth client capacity");
+            Err(temporarily_unavailable())
+        }
+    }
 }
 
 async fn exchange_refresh(

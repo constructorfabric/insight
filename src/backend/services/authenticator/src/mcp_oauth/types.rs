@@ -42,6 +42,9 @@ pub fn mcp_scopes() -> [&'static str; MCP_RESOURCES.len()] {
     MCP_RESOURCES.map(|resource| resource.scope)
 }
 pub const GRANT_LIFETIME_SECONDS: u64 = 30 * 24 * 60 * 60;
+pub const MAX_PARAMETER_LENGTH: usize = 2_048;
+pub const MAX_REDIRECT_URIS: usize = 8;
+pub const MAX_CLIENT_NAME_CHARS: usize = 100;
 
 #[derive(Debug, Deserialize)]
 pub struct ClientRegistrationRequest {
@@ -158,7 +161,7 @@ pub fn validated_registration(
     request: ClientRegistrationRequest,
     client_id: String,
 ) -> Result<RegisteredClient, &'static str> {
-    if request.redirect_uris.is_empty() || request.redirect_uris.len() > 8 {
+    if request.redirect_uris.is_empty() || request.redirect_uris.len() > MAX_REDIRECT_URIS {
         return Err("redirect_uris must contain between 1 and 8 entries");
     }
     if request
@@ -197,7 +200,7 @@ pub fn validated_registration(
         .unwrap_or_else(|| "MCP client".to_owned())
         .trim()
         .chars()
-        .take(100)
+        .take(MAX_CLIENT_NAME_CHARS)
         .collect::<String>();
     if client_name.is_empty() {
         return Err("client_name must not be empty");
@@ -236,6 +239,9 @@ pub fn valid_code_verifier(verifier: &str) -> bool {
 }
 
 fn valid_redirect_uri(value: &str) -> bool {
+    if value.len() > MAX_PARAMETER_LENGTH {
+        return false;
+    }
     let Ok(uri) = Url::parse(value) else {
         return false;
     };
@@ -254,11 +260,58 @@ mod tests {
     use std::error::Error;
 
     use super::{
-        ClientRegistrationRequest, redirect_uri_matches, valid_code_verifier,
-        validated_registration,
+        ClientRegistrationRequest, MAX_CLIENT_NAME_CHARS, MAX_PARAMETER_LENGTH,
+        redirect_uri_matches, valid_code_verifier, validated_registration,
     };
 
     type R = Result<(), Box<dyn Error>>;
+
+    fn registration(client_name: &str, redirect_uri: String) -> ClientRegistrationRequest {
+        ClientRegistrationRequest {
+            client_name: Some(client_name.to_owned()),
+            redirect_uris: vec![redirect_uri],
+            grant_types: Vec::new(),
+            response_types: Vec::new(),
+            token_endpoint_auth_method: None,
+        }
+    }
+
+    fn redirect_uri_of_length(length: usize) -> String {
+        let prefix = "https://client.example/";
+        format!("{prefix}{}", "a".repeat(length - prefix.len()))
+    }
+
+    #[test]
+    fn registration_accepts_a_redirect_uri_at_the_parameter_limit() {
+        let request = registration("MCP client", redirect_uri_of_length(MAX_PARAMETER_LENGTH));
+
+        assert!(validated_registration(request, "client-id".to_owned()).is_ok());
+    }
+
+    #[test]
+    fn registration_rejects_a_redirect_uri_over_the_parameter_limit() {
+        let request = registration(
+            "MCP client",
+            redirect_uri_of_length(MAX_PARAMETER_LENGTH + 1),
+        );
+
+        assert!(matches!(
+            validated_registration(request, "client-id".to_owned()),
+            Err("redirect_uris contains an unsupported URI")
+        ));
+    }
+
+    #[test]
+    fn registration_stores_at_most_the_client_name_limit() -> R {
+        let long_name = "\u{1F600}".repeat(MAX_CLIENT_NAME_CHARS * 10);
+        let request = registration(&long_name, "https://client.example/callback".to_owned());
+
+        let client = validated_registration(request, "client-id".to_owned())
+            .map_err(std::io::Error::other)?;
+
+        assert_eq!(client.client_name.chars().count(), MAX_CLIENT_NAME_CHARS);
+        Ok(())
+    }
 
     #[test]
     fn registration_applies_supported_public_client_metadata() -> R {

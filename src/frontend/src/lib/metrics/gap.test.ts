@@ -84,6 +84,28 @@ describe("formatGapMagnitude", () => {
     ).toBe("-40%");
   });
 
+  it.each([
+    { value: 10, median: 2.5, format: "integer", expected: "3.3×" },
+    { value: 3, median: 4.5, format: "integer", expected: "-40%" },
+    { value: 2.6, median: 5, format: "integer", expected: "-40%" },
+    { value: 5, median: 0.4, format: "integer", expected: "+5" },
+    { value: 10, median: 2.5, format: "decimal", expected: "4×" },
+    { value: 3, median: 4.5, format: "decimal", expected: "-33%" },
+  ] as const)(
+    "an integer gap reconciles with the rounded value and median it sits beside: $value vs $median ($format)",
+    ({ value, median, format, expected }) => {
+      const gap = formatGapMagnitude({
+        value,
+        median,
+        gapPct: (value - median) / median,
+        gapDelta: value - median,
+        format,
+        unit: null,
+      });
+      expect(gap, `${value} vs ${median} (${format})`).toBe(expected);
+    }
+  );
+
   it("falls back to a signed absolute delta when the median is ~0", () => {
     expect(
       formatGapMagnitude({
