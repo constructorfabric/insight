@@ -8,7 +8,7 @@ vi.mock("@tanstack/react-router", async () => {
  * sorted roster; search filters across name/title/department; rows link into
  * Person; identity failures surface as a retryable error.
  */
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -31,6 +31,8 @@ const mocks = vi.hoisted(() => ({
     isError: false,
     refetch: vi.fn(),
   },
+  directoryAsked: [] as readonly string[],
+  directory: new Map<string, string>(),
 }));
 
 vi.mock("@/auth", () => ({
@@ -46,6 +48,12 @@ vi.mock("@/queries/identity-me", () => ({
 }));
 vi.mock("@/queries/visible-roster", () => ({
   useVisibleRoster: () => mocks.roster,
+}));
+vi.mock("@/queries/directory-names", () => ({
+  useDirectoryNames: (personIds: readonly string[]) => {
+    mocks.directoryAsked = personIds;
+    return mocks.directory;
+  },
 }));
 
 import { EmployeesView } from "./employees-view";
@@ -87,6 +95,8 @@ beforeEach(() => {
   ];
   mocks.roster.isPending = false;
   mocks.roster.isError = false;
+  mocks.directoryAsked = [];
+  mocks.directory = new Map();
   mocks.ic.isPending = false;
   mocks.ic.isError = false;
   mocks.ic.data = person("boss", { display_name: "Boss", job_title: "Director" }, [
@@ -119,6 +129,30 @@ describe("EmployeesView", () => {
     await userEvent.type(screen.getByRole("textbox"), "quality");
     expect(screen.getAllByRole("link").map((a) => a.textContent)).toEqual(["Zoe"]);
     expect(screen.getByText(/1 of 3/)).toBeInTheDocument();
+  });
+
+  it("names the viewer's own manager from the tenant directory without listing them", () => {
+    mocks.roster.roster = [
+      rosterPerson("boss", pid("chief"), { job_title: "Director" }),
+      rosterPerson("zoe", pid("boss")),
+    ];
+    mocks.directory = new Map([[pid("chief"), "Chief Example"]]);
+
+    render(<EmployeesView />);
+
+    expect(mocks.directoryAsked).toEqual([pid("chief")]);
+    const bossRow = screen.getByRole("link", { name: "Boss" }).closest("tr")!;
+    expect(within(bossRow).getByText("Chief Example")).toBeInTheDocument();
+    expect(screen.getAllByRole("link").map((a) => a.textContent)).toEqual([
+      "Boss",
+      "Zoe",
+    ]);
+  });
+
+  it("asks the directory for no one when every manager is on the roster", () => {
+    render(<EmployeesView />);
+
+    expect(mocks.directoryAsked).toEqual([]);
   });
 
   it("surfaces an identity failure as a retryable error", async () => {

@@ -86,6 +86,20 @@ describe("listPeople", () => {
     );
   });
 
+  it("asks the tenant directory for the named people only", async () => {
+    mockFetch.mockResolvedValueOnce(response({ items: [] }));
+
+    await listPeople({
+      visibility: "tenant",
+      ids: ["person-a", "person-b"],
+      limit: 2,
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/identity/v1/people?visibility=tenant&ids=person-a%2Cperson-b&limit=2"
+    );
+  });
+
   it("rejects a malformed roster response", async () => {
     mockFetch.mockResolvedValueOnce(response({ items: null }));
 

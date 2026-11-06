@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import { personName } from "@/lib/identities/person-display";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
+import { useDirectoryNames } from "@/queries/directory-names";
 import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
 import { cn } from "@/lib/utils";
@@ -33,10 +34,33 @@ interface EmployeeRow {
   status: string;
 }
 
-function rosterEmployees(roster: readonly PeopleListItem[]): EmployeeRow[] {
+function managersOffRoster(roster: readonly PeopleListItem[]): string[] {
+  const onRoster = new Set(
+    roster.map((person) => person.person_id.toLowerCase()),
+  );
+  const missing = roster
+    .map((person) => person.manager_person_id?.toLowerCase())
+    .filter((id): id is string => id != null && !onRoster.has(id));
+
+  return [...new Set(missing)].sort();
+}
+
+function rosterEmployees(
+  roster: readonly PeopleListItem[],
+  directoryNames: ReadonlyMap<string, string>,
+): EmployeeRow[] {
   const byId = new Map(
     roster.map((person) => [person.person_id.toLowerCase(), person]),
   );
+  const managerName = (managerId: string): string => {
+    const key = managerId.toLowerCase();
+    const rostered = byId.get(key);
+
+    return rostered
+      ? (personName(rostered) ?? "")
+      : (directoryNames.get(key) ?? "");
+  };
+
   return roster
     .map((person) => ({
       personId: person.person_id,
@@ -45,7 +69,7 @@ function rosterEmployees(roster: readonly PeopleListItem[]): EmployeeRow[] {
       department: person.attributes.department ?? "",
       division: person.attributes.division ?? "",
       supervisorName: person.manager_person_id
-        ? personName(byId.get(person.manager_person_id.toLowerCase()) ?? {}) ?? ""
+        ? managerName(person.manager_person_id)
         : "",
       status: person.attributes.status ?? "",
     }))
@@ -62,9 +86,14 @@ export function EmployeesView() {
   const visibleRoster = useVisibleRoster(true);
   const [query, setQuery] = useState("");
 
-  const employees = useMemo(
-    () => rosterEmployees(visibleRoster.roster),
+  const offRoster = useMemo(
+    () => managersOffRoster(visibleRoster.roster),
     [visibleRoster.roster],
+  );
+  const directoryNames = useDirectoryNames(offRoster);
+  const employees = useMemo(
+    () => rosterEmployees(visibleRoster.roster, directoryNames),
+    [visibleRoster.roster, directoryNames],
   );
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
