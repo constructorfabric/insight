@@ -7,6 +7,7 @@ import type { MetricResultsRequest } from "@/api/metric-results-client";
 import { isPersonId } from "@/lib/metrics/entity";
 
 import { ADMIN_ASSIGNMENTS } from "./admin-assignments";
+import { connectorScheduleMocks } from "./connector-schedules";
 import { buildMetricDefinitions } from "./metric-definitions-factory";
 import { dashboardHandlers } from "./dashboard-handlers";
 import {
@@ -999,11 +1000,12 @@ function connectorHealthHandlers() {
     tenant_id: "00000000-0000-4000-8000-000000000001",
     source_id: `${connector}-main`,
     configured,
-    schedule,
+    ...connectorScheduleMocks.summary(connector, `${connector}-main`, schedule),
     last_sync: histories[connector]?.[0] ?? null,
   });
 
   return [
+    ...connectorScheduleMocks.handlers,
     http.get("/api/analytics/v1/connector-health", () => {
       const now = new Date();
       return HttpResponse.json({
@@ -1016,7 +1018,7 @@ function connectorHealthHandlers() {
             suspended: false,
             crons: ["0 22 * * *", "0 10 * * *"],
             timezone: "Europe/Sofia",
-            origin: "annotation",
+            origin: "api",
           }),
           summaryRow("example-directory", true, {
             suspended: false,

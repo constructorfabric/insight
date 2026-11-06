@@ -56,7 +56,12 @@ export interface ConnectorInstance {
   source_id?: string | null;
 }
 
-export type ScheduleOrigin = "annotation" | "descriptor" | "default";
+export type ScheduleOrigin = "api" | "annotation" | "descriptor" | "default";
+
+export interface InheritedSchedule {
+  crons: string[];
+  origin: string;
+}
 
 export interface AppliedSchedule {
   crons: string[];
@@ -65,12 +70,100 @@ export interface AppliedSchedule {
   origin?: ScheduleOrigin | null;
 }
 
+export interface RecordedSchedule extends Omit<AppliedSchedule, "origin"> {
+  origin: string;
+  revision: number;
+  observed_at: string;
+}
+
+export interface ScheduleAttemptError {
+  attempted_revision: number;
+  attempted_at: string;
+  message: string;
+}
+
 export interface ConnectorHealth extends ConnectorInstance {
   connector: string;
   configured: boolean;
   schedule?: AppliedSchedule | null;
+  schedule_request?: ScheduleRequestState | null;
   last_sync?: SyncFact | null;
 }
+
+export type ScheduleStatus = "inherited" | "pending" | "applied" | "error";
+
+export interface RequestedSchedule {
+  crons: string[];
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface ScheduleRequestState {
+  crons: string[];
+  revision: number;
+  status: ScheduleStatus;
+  updated_at?: string | null;
+  updated_by?: string | null;
+  applied?: RecordedSchedule | null;
+  inherited?: InheritedSchedule | null;
+  error?: ScheduleAttemptError | null;
+}
+
+export interface ConnectorSchedule {
+  connector: string;
+  source_id: string;
+  revision: number;
+  requested?: RequestedSchedule | null;
+  applied?: RecordedSchedule | null;
+  inherited?: InheritedSchedule | null;
+  error?: ScheduleAttemptError | null;
+  status: ScheduleStatus;
+}
+
+export interface ScheduleRead {
+  schedule: ConnectorSchedule;
+  etag: string;
+}
+
+async function scheduleRequest(
+  instance: ConnectorInstanceRef,
+  method: "GET" | "PUT" | "DELETE",
+  etag?: string,
+  crons?: string[]
+): Promise<ScheduleRead> {
+  const headers: Record<string, string> = {};
+  if (etag !== undefined) headers["If-Match"] = etag;
+  if (method === "PUT") headers["Content-Type"] = "application/json";
+  const res = await fetchWithAuth(
+    `${BASE}/connectors/${encodeURIComponent(instance.connector)}/${encodeURIComponent(instance.source_id ?? "")}/schedule`,
+    {
+      method,
+      headers,
+      body: method === "PUT" ? JSON.stringify({ crons }) : undefined,
+    }
+  );
+  if (!res.ok)
+    throw new AnalyticsApiError(res.status, await res.json().catch(() => null));
+  const schedule = (await res.json()) as ConnectorSchedule;
+  const revision = res.headers.get("ETag");
+  if (revision === null)
+    throw new Error(
+      "The schedule response has no revision. Reload and try again."
+    );
+  return { schedule, etag: revision };
+}
+
+export const getConnectorSchedule = (instance: ConnectorInstanceRef) =>
+  scheduleRequest(instance, "GET");
+export const putConnectorSchedule = (
+  instance: ConnectorInstanceRef,
+  etag: string,
+  crons: string[]
+) => scheduleRequest(instance, "PUT", etag, crons);
+export const deleteConnectorSchedule = (
+  instance: ConnectorInstanceRef,
+  etag: string
+) => scheduleRequest(instance, "DELETE", etag);
 
 /** One installation, as the caller names it when asking for its history. */
 export interface ConnectorInstanceRef extends ConnectorInstance {
@@ -109,7 +202,7 @@ export async function getConnectorHealth(): Promise<ConnectorHealthSummary> {
 }
 
 export async function getConnectorSyncs(
-  instance: ConnectorInstanceRef,
+  instance: ConnectorInstanceRef
 ): Promise<ConnectorSyncHistory> {
   // Both halves or neither. The service refuses half an identity rather than
   // widening the window back to every installation, and a source id is unique
@@ -123,7 +216,7 @@ export async function getConnectorSyncs(
   const query = scope.toString();
   const res = await fetchWithAuth(
     `${BASE}/connector-health/${encodeURIComponent(instance.connector)}/syncs` +
-      (query === "" ? "" : `?${query}`),
+      (query === "" ? "" : `?${query}`)
   );
   if (!res.ok) {
     throw new AnalyticsApiError(res.status, await res.json().catch(() => null));

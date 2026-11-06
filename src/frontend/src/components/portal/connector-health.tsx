@@ -13,6 +13,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@gears-frontx/ui-kit";
+import { ConnectorSchedulePane } from "@/components/portal/connector-schedule-pane";
+import { ConnectorScheduleRequestChip } from "@/components/portal/connector-schedule-request-chip";
 import {
   Table,
   TableBody,
@@ -36,8 +38,14 @@ import {
   instanceKey,
   type ConnectorTone,
 } from "@/lib/portal/connector-health";
-import { useConnectorHealth, useConnectorSyncs } from "@/queries/connector-health";
-import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
+import {
+  useConnectorHealth,
+  useConnectorSyncs,
+} from "@/queries/connector-health";
+import {
+  activatesRow,
+  activatesRowByKey,
+} from "@/lib/identities/row-activation";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -69,19 +77,36 @@ export function ConnectorHealthPane() {
   const { data, isPending, isError, refetch } = useConnectorHealth();
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  if (isPending) return <CenteredSpinner data-testid="page-manage-connector-health" className="min-h-[60vh]" />;
+  if (isPending)
+    return (
+      <CenteredSpinner
+        data-testid="page-manage-connector-health"
+        className="min-h-[60vh]"
+      />
+    );
   if (isError || data === undefined) {
     return (
-      <div data-testid="page-manage-connector-health" className="mx-auto w-full max-w-md p-8">
+      <div
+        data-testid="page-manage-connector-health"
+        className="mx-auto w-full max-w-md p-8"
+      >
         <ComingSoon variant="card" state="error" onRetry={() => refetch()} />
       </div>
     );
   }
 
   const recording = describeRecording(data);
+  const polling = data.connectors.some(
+    (row) =>
+      row.schedule_request?.status === "pending" ||
+      row.schedule_request?.status === "error"
+  );
 
   return (
-    <div data-testid="page-manage-connector-health" className="flex flex-col gap-3 p-4 md:p-6">
+    <div
+      data-testid="page-manage-connector-health"
+      className="flex flex-col gap-3 p-4 md:p-6"
+    >
       <div>
         <h1 className="text-lg font-semibold tracking-tight">
           Connector health
@@ -93,7 +118,7 @@ export function ConnectorHealthPane() {
             "text-sm",
             recording.state === "stopped" || recording.state === "unreadable"
               ? "text-destructive"
-              : "text-muted-foreground",
+              : "text-muted-foreground"
           )}
         >
           <p>{recording.label}</p>
@@ -111,18 +136,26 @@ export function ConnectorHealthPane() {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border">
-          <Table>
+          <Table containerClassName="@container">
             <TableHeader>
               <TableRow>
                 <TableHead className="whitespace-normal">Connector</TableHead>
                 {/* One connector can be configured more than once; this is the
                     only cell that tells those rows apart. */}
                 <TableHead className="whitespace-normal">Instance</TableHead>
-                <TableHead className="whitespace-normal">{SCHEDULE_HEADING}</TableHead>
+                <TableHead className="whitespace-normal">
+                  {SCHEDULE_HEADING}
+                </TableHead>
                 <TableHead className="whitespace-normal">State</TableHead>
-                <TableHead className="whitespace-normal">Last sync started</TableHead>
-                <TableHead className="text-right whitespace-normal">Duration</TableHead>
-                <TableHead className="text-right whitespace-normal">Records reported</TableHead>
+                <TableHead className="whitespace-normal">
+                  Last sync started
+                </TableHead>
+                <TableHead className="text-right whitespace-normal">
+                  Duration
+                </TableHead>
+                <TableHead className="text-right whitespace-normal">
+                  Records reported
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -165,9 +198,11 @@ export function ConnectorHealthPane() {
                     }}
                     className="cursor-pointer select-text"
                   >
-                    <TableCell className="font-medium">{row.connector}</TableCell>
+                    <TableCell className="font-medium">
+                      {row.connector}
+                    </TableCell>
                     <InstanceCell instance={row} />
-                    <ScheduleCell schedule={row.schedule} />
+                    <ScheduleCell row={row} />
                     <TableCell>
                       <Badge
                         variant="secondary"
@@ -176,18 +211,34 @@ export function ConnectorHealthPane() {
                         {state.label}
                       </Badge>
                     </TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">
+                    <TableCell className="text-muted-foreground tabular-nums">
                       {formatStarted(row.last_sync?.started_at ?? null)}
                     </TableCell>
                     <DurationCell sync={row.last_sync} asOf={data.as_of} />
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                    <TableCell className="text-right text-muted-foreground tabular-nums">
                       {formatRecords(row.last_sync?.records_reported ?? null)}
                     </TableCell>
                   </TableRow>,
                   open ? (
                     <TableRow key={`syncs-${key}`}>
-                      <TableCell colSpan={COLUMNS} id={panelId} className="bg-muted/40">
-                        <RecentSyncs instance={row} asOf={data.as_of} />
+                      <TableCell
+                        colSpan={COLUMNS}
+                        id={panelId}
+                        className="bg-muted/40"
+                      >
+                        <div className="sticky left-2 grid w-[calc(100cqw-1rem)] max-w-full gap-4 py-2 [overflow-wrap:anywhere] whitespace-normal lg:@3xl:grid-cols-2">
+                          {row.configured && row.source_id != null && (
+                            <div className="min-w-0 rounded-md border bg-background p-4">
+                              <ConnectorSchedulePane
+                                row={row}
+                                polling={polling}
+                              />
+                            </div>
+                          )}
+                          <div className="min-w-0 rounded-md border bg-background p-4">
+                            <RecentSyncs instance={row} asOf={data.as_of} />
+                          </div>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ) : null,
@@ -206,7 +257,9 @@ function InstanceCell({ instance }: { instance: ConnectorInstanceRef }) {
 
   return (
     <TableCell aria-label={label}>
-      {label === UNMEASURED ? UNMEASURED : (
+      {label === UNMEASURED ? (
+        UNMEASURED
+      ) : (
         <>
           <span className="block">{instance.source_id || UNMEASURED}</span>
           <span
@@ -221,13 +274,11 @@ function InstanceCell({ instance }: { instance: ConnectorInstanceRef }) {
   );
 }
 
-function ScheduleCell({
-  schedule,
-}: {
-  schedule: ConnectorHealth["schedule"];
-}) {
+function ScheduleCell({ row }: { row: ConnectorHealth }) {
+  const { schedule } = row;
   const tooltipId = useId();
-  const nextRun = schedule == null ? null : describeNextRun(schedule, new Date());
+  const nextRun =
+    schedule == null ? null : describeNextRun(schedule, new Date());
 
   return (
     <TableCell>
@@ -237,9 +288,7 @@ function ScheduleCell({
         <Tooltip>
           <TooltipTrigger
             aria-describedby={tooltipId}
-            render={
-              <button type="button" className="cursor-help text-left" />
-            }
+            render={<button type="button" className="cursor-help text-left" />}
           >
             {nextRun?.text}
           </TooltipTrigger>
@@ -253,11 +302,16 @@ function ScheduleCell({
               <span className="block text-muted-foreground">
                 {describeSchedule(schedule)}
               </span>
-              {nextRun?.detail != null && <span className="block">{nextRun.detail}</span>}
+              {nextRun?.detail != null && (
+                <span className="block">{nextRun.detail}</span>
+              )}
             </div>
           </TooltipContent>
         </Tooltip>
       )}
+      <div data-slot="schedule-request-status" className="mt-1 h-6">
+        <ConnectorScheduleRequestChip row={row} />
+      </div>
     </TableCell>
   );
 }
@@ -279,7 +333,7 @@ function DurationCell({
     <TableCell
       className={cn(
         "text-right tabular-nums",
-        duration.inFlight ? "text-foreground" : "text-muted-foreground",
+        duration.inFlight ? "text-foreground" : "text-muted-foreground"
       )}
     >
       {duration.text}
@@ -338,12 +392,12 @@ function SyncLine({ sync, asOf }: { sync: SyncFact; asOf: string }) {
       <span
         className={cn(
           "tabular-nums",
-          duration.inFlight ? "text-foreground" : "text-muted-foreground",
+          duration.inFlight ? "text-foreground" : "text-muted-foreground"
         )}
       >
         {duration.text}
       </span>
-      <span className="tabular-nums text-muted-foreground">
+      <span className="text-muted-foreground tabular-nums">
         {formatRecords(sync.records_reported)} records
       </span>
       {sync.records_reported == null && (
