@@ -35,7 +35,8 @@ name: zoom
 # 6.0.1 (patch): the token login requester names Zoom's reason when Zoom rejects
 #   the credentials, instead of the CDK's generic 400 text (#3758). Patch bump
 #   per ADR-0015: republish only, NO full-refresh.
-version: "6.0.1"
+# 6.0.2 (patch): full refresh rebuilds meeting sessions from all bronze; incremental runs keep the 90-day window.
+version: "6.0.2"
 schedule: 0 3 * * *
 dbt_select: tag:zoom+
 workflow: sync
