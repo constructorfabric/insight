@@ -100,7 +100,7 @@ The `jira_boards` stream (`GET /rest/agile/1.0/board`) is the substream parent f
 
 ## Operational Constraints
 
-- **Auth**: Basic Auth with email + API token. Missing/invalid token → HTTP 401; Jira project-level permission failures → 403. Both halt the run.
+- **Auth**: Basic Auth with email + API token. Missing/invalid token → HTTP 401; Jira project-level permission failures → 403. Both halt the run. Jira may instead serve a refused sign-in anonymously (200, often empty) and mark it with `X-Seraph-LoginReason: AUTHENTICATED_FAILED`; that response halts the run as a config error too. The connection check reads `jira_projects` and `jira_user`, so it needs the *Browse users and groups* permission the sync already needs.
 - **Rate limits**: Atlassian caps per-user and per-IP API calls. The connector honours `Retry-After` on HTTP 429 and 503 (both used by Atlassian for throttling) with backoff.
 - **Project scope**: projects are auto-discovered each sync via `/rest/api/3/project/search` (every project visible to the API token) and scanned per project (`project = "<KEY>"` JQL — Jira Cloud rejects unbounded queries). An incremental gate on `insight.lastIssueUpdateTime` (with a 3-day lookback) skips projects with no issue changes since the previous sync, so idle projects cost zero requests. New projects are picked up automatically on the next scheduled sync.
 - **Custom fields**: all custom fields are preserved in `jira_issue.custom_fields_json` for downstream dbt extraction.

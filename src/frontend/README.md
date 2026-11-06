@@ -144,6 +144,7 @@ nav:
     - "zone:person/section:git_output"
   planned:
     - "zone:manage/item:config"
+    - "zone:custom/item:alerts"
 ```
 
 A hidden entry disappears from every menu and from default/deep-link
@@ -151,10 +152,15 @@ resolution. A `planned` entry is demoted to the "Planned" menu group and
 toggled by the viewer's "Show planned sections" switch. Planning is entirely
 deployment-owned: entries absent from `nav.planned` are treated as live. A path
 in both lists is hidden; a path that matches nothing is ignored (malformed ones
-warn in the browser console). One control is planned in code rather than by
-path: the topbar Cohort select renders only while the switch is on, and with it
-off the `?slice=` parameter is ignored so no view compares against a cohort the
-reader cannot see or change.
+warn in the browser console). The Dashboards catalogues (`metrics`, `widgets`,
+`datasets`, `alerts`) are items of the `custom` zone. A planned catalogue stays
+in place, muted, rather than moving to a "Planned" group; one the reader is not
+shown also sends its pages and editors back to the dashboard list. An install
+that runs without metric alerts lists `zone:custom/item:alerts` under
+`nav.planned`, since the SPA cannot read the backend's switch. One control is
+planned in code rather than by path: the topbar Cohort select renders only
+while the switch is on, and with it off the `?slice=` parameter is ignored so
+no view compares against a cohort the reader cannot see or change.
 This is presentation, not authorization — the API refuses on its own
 regardless of what the menu shows. Parsing and semantics live in
 [src/lib/portal/nav-policy.ts](src/lib/portal/nav-policy.ts).

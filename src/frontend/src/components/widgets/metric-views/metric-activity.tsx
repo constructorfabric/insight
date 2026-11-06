@@ -9,7 +9,7 @@ import {
   useMetricEvidenceOptional,
   withOwnTarget,
 } from "@/components/metric-evidence-context";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { Spinner } from "@/components/ui/spinner";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import {

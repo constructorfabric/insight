@@ -25,8 +25,10 @@ WITH versioned AS (
         {{ entity_id_col }} AS entity_id,
         tenant_id,
         source_id,
+        {#- INVARIANT: NULL reads as '', as an absent key does in fields_history_raw;
+            a NULL compares as neither equal nor unequal, which drops the change. #}
         {% for f in fields %}
-        toString({{ f }}) AS {{ f }},
+        ifNull(toString({{ f }}), '') AS {{ f }},
         {% endfor %}
         {% for f in fields_raw_data %}
         JSONExtractString(ifNull(toString(raw_data), '{}'), '{{ f }}') AS {{ f }},

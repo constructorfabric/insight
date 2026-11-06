@@ -1,7 +1,6 @@
 import { useState } from "react";
 
-import { DatePicker } from "@/components/ui/date-picker";
-import { Input } from "@/components/ui/input";
+import { DatePicker, Input } from "@gears-frontx/ui-kit";
 import {
   isTime,
   momentParts,

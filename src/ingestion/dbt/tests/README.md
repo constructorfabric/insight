@@ -34,8 +34,21 @@ nothing. The runner is `charts/insight/templates/ingestion/connector-checks.yaml
 and it never fails the sync; findings emit in the same shape as the scheduled
 catalog's.
 
-An untagged singular test is in neither catalog and runs in no cluster at all —
-only under `dbt build` for build integrity.
+An untagged singular test is in neither catalog and runs in no cluster at all.
+
+## CI-only checks
+
+A check that only makes sense over controlled inputs — a fixture table of
+classifier cases, an invariant a transform suite asserts per scenario — carries
+`tags=['ci_only']` instead of a catalog tag. That is honest only where a CI
+suite selects the check's whole directory; today that is `tests/jira/`, which
+the Jira transform suite runs with `dbt test --select tests/jira`.
+
+`tests/datapath/meta/test_singular_tests_run_somewhere.py` enforces all of
+this: every singular test outside `gold/` must be scheduled, run per sync with a
+real connector slug, or be `ci_only` under a CI-selected directory. A
+`ci_only` test never also carries a catalog tag. The guard's allowlist names
+the tests that predate it and only shrinks.
 
 ## Adding a check
 
@@ -74,8 +87,8 @@ Conventions:
   connector set, so a check adapts to any tenant: a missing connector class is
   just an empty table and a clean pass. Bronze is per-connector and may be
   absent, which would make the check error. Checks that need bronze (e.g.
-  silver-to-bronze traceability) are not data quality — leave them untagged;
-  they run under `dbt build`.
+  silver-to-bronze traceability) belong to the per-connector catalog:
+  `['connector_quality', '<connector-slug>']`.
 - **No `LIMIT`.** The row count is the violation count; `store_failures` keeps
   every offending row, and samples are taken at read time from the audit table.
 - **`severity`** is the build gate: `warn` (advisory, non-blocking) or `error`

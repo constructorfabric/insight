@@ -706,6 +706,126 @@ SQL
 
 heal_focus_metrics
 
+echo "=== Healing column types a fresh install no longer creates ==="
+# dbt never retypes a column an earlier run created: an incremental model
+# inserts into the relation it finds, so one created before its model's
+# expression changed type keeps the old type for good, while a fresh install
+# of the same release creates the new one (#4057). Each heal below moves such
+# a column to the type the current model creates. The stored values fit: the
+# old expression never wrote what the new type cannot hold, and where it wrote
+# NULL the current one writes the fallback the narrowing states.
+
+# `<column>` becomes `<type>` where system.columns states another type; a
+# column the table lacks is left to the heal that adds it. Only for a change
+# every stored value survives, which each caller states.
+retype_column() {
+  local db="$1" table="$2" column="$3" type="$4" current
+  current="$(ch_column_type "${db}" "${table}" "${column}")"
+  [[ -n "${current}" && "${current}" != "${type}" ]] || return 0
+  echo "  ${db}.${table}.${column}: ${current} -> ${type}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} MODIFY COLUMN ${column} ${type};
+SQL
+}
+
+# `Nullable(<type>)` becomes `<type>`. ClickHouse refuses the narrowing while a
+# row holds NULL, so those rows first take `<fallback>`, the value the current
+# model writes where the old one wrote NULL.
+retype_column_not_null() {
+  local db="$1" table="$2" column="$3" type="$4" fallback="$5" current pending
+  current="$(ch_column_type "${db}" "${table}" "${column}")"
+  [[ "${current}" == "Nullable(${type})" ]] || return 0
+  pending="$(ch_scalar "SELECT count() FROM ${db}.${table} WHERE ${column} IS NULL")"
+  if [[ "${pending}" -gt 0 ]]; then
+    echo "  ${db}.${table}.${column}: ${pending} NULL row(s) take ${fallback}"
+    run_ch <<SQL
+ALTER TABLE ${db}.${table} UPDATE ${column} = ${fallback} WHERE ${column} IS NULL SETTINGS mutations_sync = 2;
+SQL
+  fi
+  echo "  ${db}.${table}.${column}: ${current} -> ${type}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} MODIFY COLUMN ${column} ${type};
+SQL
+}
+
+# The worklog state stopped reading a LEFT JOIN under join_use_nulls, which had
+# made `is_deleted` Nullable without ever writing a NULL; a snapshot keeps the
+# types its first build took.
+# INVARIANT: repairs releases without #3704 (main before 0.7.106); delete once every CH_FLOOR_RELEASES release runs it.
+heal_worklog_snapshot_is_deleted() {
+  ch_table_exists staging jira__worklog_snapshot || return 0
+  retype_column_not_null staging jira__worklog_snapshot is_deleted UInt8 0
+}
+
+heal_worklog_snapshot_is_deleted
+
+# The Salesforce arm, which had no fallback time, widened the class union to
+# Nullable; the HubSpot arm writes epoch 0 where it has none.
+# INVARIANT: repairs releases without #2437 (main before 0.5.124); delete once every CH_FLOOR_RELEASES release runs it.
+heal_crm_activities_timestamp() {
+  ch_table_exists silver class_crm_activities || return 0
+  retype_column_not_null silver class_crm_activities timestamp 'DateTime64(3)' 'toDateTime64(0, 3)'
+}
+
+heal_crm_activities_timestamp
+
+# Every staging counter whose class union is Nullable declares it so; a
+# relation from before that keeps the plain UInt32 of the branch that created
+# it. Widening, no value moves.
+# INVARIANT: repairs releases without #2101 (main before 0.5.40); delete once every CH_FLOOR_RELEASES release runs it.
+heal_ai_dev_usage_counters() {
+  local db="$1" table="$2" column
+  shift 2
+  ch_table_exists "${db}" "${table}" || return 0
+  for column in "$@"; do
+    retype_column "${db}" "${table}" "${column}" 'Nullable(UInt32)'
+  done
+}
+
+heal_ai_dev_usage_counters staging cursor__ai_dev_usage \
+  lines_removed total_lines_added total_lines_removed chat_requests
+heal_ai_dev_usage_counters staging claude_enterprise__ai_dev_usage \
+  lines_removed tool_use_offered tool_use_accepted commits_count pull_requests_count
+heal_ai_dev_usage_counters silver class_ai_dev_usage \
+  lines_removed total_lines_added total_lines_removed tool_use_offered tool_use_accepted \
+  chat_requests commits_count pull_requests_count
+
+# The SharePoint branch passed the bronze JSON number through as
+# Decimal(38, 9) and the class union took it; a page count is integral, so
+# the cast to Int64 changes no value.
+# INVARIANT: repairs releases without #2101 (main before 0.5.40); delete once every CH_FLOOR_RELEASES release runs it.
+heal_collab_document_visited_page_count() {
+  local db="$1" table="$2"
+  ch_table_exists "${db}" "${table}" || return 0
+  retype_column "${db}" "${table}" visited_page_count 'Nullable(Int64)'
+}
+
+heal_collab_document_visited_page_count staging m365__collab_document_activity_sharepoint
+heal_collab_document_visited_page_count silver class_collab_document_activity
+
+# The compose seed once pre-created silver.class_ai_overage from placeholder
+# DDL: String identity columns and a UInt64 version, where the model creates
+# Nullable(String) and Int64. A ReplacingMergeTree version column cannot
+# change sign in place, so a placeholder-shaped class goes only while it is
+# empty, for the next sync to create as the model does; one holding rows
+# keeps them, with the identity columns widened.
+# INVARIANT: repairs the placeholder shape #1597 retired (main before 0.3.2); delete once every CH_FLOOR_RELEASES release runs it.
+heal_ai_overage_placeholder_shape() {
+  local column version
+  ch_table_exists silver class_ai_overage || return 0
+  version="$(ch_column_type silver class_ai_overage _version)"
+  if [[ "${version}" == "UInt64" ]]; then
+    echo "  silver.class_ai_overage: placeholder-shaped (_version ${version}), goes while empty"
+    drop_retired_table_if_empty silver class_ai_overage
+    ch_table_exists silver class_ai_overage || return 0
+  fi
+  for column in insight_tenant_id source_id email account_id data_source; do
+    retype_column silver class_ai_overage "${column}" 'Nullable(String)'
+  done
+}
+
+heal_ai_overage_placeholder_shape
+
 echo "=== Removing Zoom participant device identifiers ==="
 # Connector 3.0.0 stops collecting these; rows already stored still hold them.
 # Dropping a column removes no row. Idempotent: a converged table, or one

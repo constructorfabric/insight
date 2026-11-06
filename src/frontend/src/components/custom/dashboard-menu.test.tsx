@@ -19,8 +19,9 @@ vi.mock("@/queries/identity-me", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-me")>()),
   useIsAdmin: () => ({ isAdmin: admin.isAdmin, isPending: false }),
 }));
-vi.mock("@/components/ui/sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
+  toast: { add: vi.fn() },
 }));
 
 import {
@@ -39,10 +40,11 @@ import type {
   DashboardRead,
   FolderSummary,
 } from "@/api/custom-client";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@gears-frontx/ui-kit";
 import { pinsQuery } from "@/queries/custom";
 
 import { DashboardMenu } from "./dashboard-menu";
+import { toastsOf } from "@/test/toast";
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -138,9 +140,7 @@ describe("pinning from the ··· menu", () => {
     await user.click(item);
 
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith(
-        "at most 20 dashboards can be pinned"
-      )
+      expect(toastsOf(vi.mocked(toast.add), "error")).toContainEqual(expect.objectContaining({ title: "at most 20 dashboards can be pinned" }))
     );
     expect(pinsRead()).toBeGreaterThan(before);
   });
@@ -283,7 +283,7 @@ describe("filing a dashboard from the Folders submenu", () => {
     });
     await choose(user, edited);
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    await waitFor(() => expect(toastsOf(vi.mocked(toast.add), "error")).not.toHaveLength(0));
     expect(edited).toHaveAttribute("aria-checked", "false");
   });
 

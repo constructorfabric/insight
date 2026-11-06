@@ -25,9 +25,8 @@ import {
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import {
   BarChart,
   CartesianGrid,
@@ -66,14 +65,10 @@ import type {
 } from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import {
-  personsEvidenceSelection,
-  type MetricEvidenceSelection,
-} from "@/api/metric-drilldown-client";
-import {
   useMetricEvidenceOptional,
   type EvidencePeopleView,
 } from "@/components/metric-evidence-context";
-import { peopleEvidenceView } from "@/lib/portal/evidence-people";
+import { peopleEvidenceView, type RosterLookups } from "@/lib/portal/evidence-people";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
 import {
@@ -103,8 +98,9 @@ import {
   fmtCompact,
   medianAcross,
   perCapita,
-  representative,
+  perPersonReading,
   topDecile,
+  type PerPersonReading,
 } from "@/lib/portal/metric-stats";
 import {
   lensEntry,
@@ -122,6 +118,7 @@ import {
   pickTrendBucket,
 } from "@/lib/portal/trend-data";
 import { bucketBreakdown, bucketRange } from "@/lib/portal/trend-drilldown";
+import { runningBucketStart } from "@/lib/portal/person-trend";
 import {
   TrendDrilldownDialog,
   type TrendDrilldownState,
@@ -137,6 +134,7 @@ import { TEXT_EYEBROW, TEXT_FIGURE, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
+const DAY_MS = 86_400_000;
 const OWN_NAME = "You";
 
 /**
@@ -172,7 +170,7 @@ export function DomainLensView({
    */
   gridKeys?: readonly string[];
 }) {
-  const { period, dateRange } = usePortalPeriod();
+  const { dateRange, compareTo } = usePortalPeriod();
 
   const [drilldown, setDrilldown] = useState<TrendDrilldownState | null>(null);
   // What this install shows, not what the registry declares: a gated metric
@@ -284,7 +282,7 @@ export function DomainLensView({
     gridCollection.metrics.length ? gridCollection : EMPTY_COLLECTION,
     { type: "person", ids: memberIds },
     dateRange,
-    period
+    compareTo
   );
 
   // Trend: bucket coarsened to the roster so org scope never trips the row limit.
@@ -301,6 +299,17 @@ export function DomainLensView({
   const trendBucket = useMemo(
     () => pickTrendBucket(memberIds.length, dateRange),
     [memberIds.length, dateRange]
+  );
+  const trendWindow = useMemo<TrendWindow | null>(
+    () =>
+      trendBucket
+        ? {
+            bucket: trendBucket,
+            startsFrom: dateRange.from,
+            finishedBefore: firstUnfinishedBucket(dateRange.to, trendBucket),
+          }
+        : null,
+    [trendBucket, dateRange.from, dateRange.to]
   );
   const trendCollection = useMemo<MetricCollectionConfig>(
     () => ({
@@ -565,8 +574,15 @@ export function DomainLensView({
       section.kind === "trend"
   );
   const charts =
-    trendSpec && trendBucket
-      ? trendCharts(trendSpec, grid, trend, memberIds, personId !== null)
+    trendSpec && trendWindow
+      ? trendCharts(
+          trendSpec,
+          grid,
+          trend,
+          memberIds,
+          personId !== null,
+          trendWindow
+        )
       : [];
   const drawable = charts.filter((c) => c.data.length > 1);
   // The roster the chart sums IS the drilldown's scope, so the two can never
@@ -604,13 +620,18 @@ export function DomainLensView({
     const range = bucketStart
       ? bucketRange(bucketStart, trendBucket ?? "day")
       : { from: dateRange.from, to: dateRange.to };
+    const breakdown = bucketBreakdown(
+      chart.drilldownKey,
+      trend.byKey,
+      scopedMembers
+    );
     setDrilldown({
       metricKey: chart.derived ? null : chart.drilldownKey,
       label: bucketStart ? `${chart.title} · ${bucketStart}` : chart.title,
       bucketLabel: trendBucket ?? "period",
       period: range,
       members: scopedMembers,
-      breakdown: bucketBreakdown(chart.drilldownKey, trend.byKey, scopedMembers),
+      breakdown: trendWindow ? wholeBuckets(breakdown, trendWindow) : breakdown,
     });
   };
 
@@ -663,7 +684,7 @@ export function DomainLensView({
           spec={s}
           grid={grid}
           trend={trend}
-          trendBucket={trendBucket}
+          trendWindow={trendWindow}
           compData={compData.byKey}
           compIsError={compData.isError}
           compRefetch={compData.refetch}
@@ -745,7 +766,7 @@ function Section({
   spec,
   grid,
   trend,
-  trendBucket,
+  trendWindow,
   compData,
   compIsError,
   compRefetch,
@@ -770,7 +791,7 @@ function Section({
   spec: SectionSpec;
   grid: GridData;
   trend: TrendData;
-  trendBucket: MetricBucket | null;
+  trendWindow: TrendWindow | null;
   compData: Map<string, NormalizedMetricResult>;
   compIsError: boolean;
   compRefetch: () => void;
@@ -800,8 +821,10 @@ function Section({
       return (
         <HeadlineSection
           metrics={spec.metrics}
+          labelSource={spec.labelSource}
           grid={grid}
           memberIds={memberIds}
+          roster={{ nameByEntity, personIdByEntity }}
         />
       );
     case "stat-tiles":
@@ -814,12 +837,12 @@ function Section({
         />
       );
     case "trend":
-      return trendBucket ? (
+      return trendWindow ? (
         <TrendSection
           spec={spec}
           grid={grid}
           trend={trend}
-          bucket={trendBucket}
+          trendWindow={trendWindow}
           memberIds={memberIds}
           personal={personal}
           onOpenChart={onOpenChart}
@@ -866,6 +889,7 @@ function Section({
           spec={spec}
           grid={grid}
           trend={trend}
+          trendWindow={trendWindow}
           memberIds={memberIds}
         />
       );
@@ -1210,11 +1234,13 @@ function ParticipationSection({
   spec,
   grid,
   trend,
+  trendWindow,
   memberIds,
 }: {
   spec: Extract<SectionSpec, { kind: "participation" }>;
   grid: GridData;
   trend: TrendData;
+  trendWindow: TrendWindow | null;
   memberIds: readonly string[];
 }) {
   const isActive = (byKey: Map<string, NormalizedMetricResult>, id: string) =>
@@ -1243,10 +1269,11 @@ function ParticipationSection({
         }
       }
     }
-    return [...byDate.entries()]
+    const rows = [...byDate.entries()]
       .map(([date, ids]) => ({ date, active: ids.size }))
       .sort((a, b) => a.date.localeCompare(b.date));
-  }, [spec.metrics, trend.byKey, memberIds]);
+    return trendWindow ? wholeBuckets(rows, trendWindow) : rows;
+  }, [spec.metrics, trend.byKey, memberIds, trendWindow]);
 
   const active = memberIds.filter((id) => isActive(grid.byKey, id)).length;
   const prevActive = memberIds.filter((id) =>
@@ -1299,41 +1326,36 @@ function ParticipationSection({
 
 function HeadlineSection({
   metrics,
+  labelSource,
   grid,
   memberIds,
+  roster,
 }: {
   metrics: readonly string[];
+  labelSource?: "short";
   grid: GridData;
   memberIds: readonly string[];
+  roster: RosterLookups;
 }) {
   const cards = metrics
     .map((key) => {
       const r = grid.byKey.get(key);
-      if (!r) return null;
-      const now = representative(r, memberIds);
-      if (now == null) return null;
-      const prev = representative(grid.previousByKey.get(key), memberIds);
-      const isSum = r.computation === "sum";
-      // The records that carry the figure: its own, unless the family says
-      // another metric holds them (a line count is carried by commits).
-      const carrier = grid.byKey.get(evidenceMetricFor(key));
-      return { key, r, now, prev, isSum, carrier };
+      const reading = perPersonReading(r, memberIds);
+      if (!r || !reading) return null;
+      const prev = perPersonReading(grid.previousByKey.get(key), memberIds);
+      const figure = formatMetricValue(reading.value, r.format, r.unit);
+      const title =
+        reading.kind === "median"
+          ? `${r.label} · median ${figure} per person`
+          : reading.active === 0
+            ? `${r.label} · no activity`
+            : `${r.label} · ${figure} per active person`;
+      const carrier = grid.byKey.get(evidenceMetricFor(key)) ?? null;
+      const people = peopleEvidenceView(r, memberIds, title, roster, carrier);
+      return { key, r, reading, prev: prev?.value ?? null, people };
     })
     .filter((x): x is NonNullable<typeof x> => x != null);
   if (!cards.length) return null;
-
-  // Every drillable card of the row, so the dialog a reader opens on one of
-  // them lists its neighbours — the same set the members grid offers from a
-  // row of cells. Deduplicated by metric: two tiles carried by one metric
-  // would otherwise name the same key twice, which the request refuses.
-  const seen = new Set<string>();
-  const targets = cards.flatMap((c) => {
-    if (!c.carrier?.drilldown || seen.has(c.carrier.metric_key)) return [];
-    const selection = personsEvidenceSelection(c.carrier.selection, memberIds);
-    if (!selection) return [];
-    seen.add(c.carrier.metric_key);
-    return [{ selection, label: c.carrier.label }];
-  });
 
   return (
     <section className="flex flex-col gap-3">
@@ -1342,78 +1364,68 @@ function HeadlineSection({
       </p>
       <div data-slot="headline-grid" className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-4">
         {cards.map((c) => (
-          <HeadlineCard
-            key={c.key}
-            card={c}
-            targets={targets}
-            memberIds={memberIds}
-          />
+          <HeadlineCard key={c.key} card={c} labelSource={labelSource} />
         ))}
       </div>
     </section>
   );
 }
 
-/**
- * One headline figure, and the records it was taken over.
- *
- * The card opens the evidence dialog for the WHOLE roster rather than for a
- * person: the number on it is the roster's, and a reader asking what it is
- * made of is asking about all of them. Nothing here names an individual —
- * the dialog lists records, and who did what stays inside it.
- *
- * A metric whose evidence cannot be read renders as a plain card: an
- * affordance that opens an empty dialog is worse than none.
- */
+function readingCaption(reading: PerPersonReading, r: NormalizedMetricResult): string[] {
+  if (reading.kind === "median") {
+    return [`median of ${reading.people} ${reading.people === 1 ? "person" : "people"}`];
+  }
+  if (reading.active === 0) return ["no activity"];
+  const people = reading.active === 1 ? "person" : "people";
+  const total = formatMetricValue(reading.total, r.format, null);
+  return [`average of ${reading.active} active ${people}`, `${total} total`];
+}
+
 function HeadlineCard({
   card,
-  targets,
-  memberIds,
+  labelSource,
 }: {
   card: {
     r: NormalizedMetricResult;
-    now: number;
+    reading: PerPersonReading;
     prev: number | null;
-    isSum: boolean;
-    carrier: NormalizedMetricResult | undefined;
+    people: EvidencePeopleView;
   };
-  targets: readonly { selection: MetricEvidenceSelection; label: string }[];
-  memberIds: readonly string[];
+  labelSource?: "short";
 }) {
   const evidence = useMetricEvidenceOptional();
   const c = card;
-  const selection = c.carrier?.drilldown
-    ? personsEvidenceSelection(c.carrier.selection, memberIds)
-    : null;
   const body = (
     <CardContent className="flex flex-col gap-1 p-4">
       <div className="flex items-center justify-between gap-2">
-        {/* The full label, not the short one: `short_label` exists for a grid
-            column head or a heatmap axis, and it drops the very word that says
-            what was counted — "Issues" for issues CLOSED. A card twelve rem
-            wide has room to say it. */}
+        {/* The full label unless the section asks otherwise: a short label
+            can drop the very word that says what was counted — "Issues" for
+            issues CLOSED — so it is opted into where it still reads whole. */}
         <MetricName
           metric={c.r}
+          text={labelSource === "short" ? (c.r.short_label ?? c.r.label) : undefined}
           className={TEXT_NAME}
+          truncate
+          focusable={!evidence}
         />
-        <Delta now={c.now} prev={c.prev} direction={c.r.direction} showUnavailable />
+        <Delta now={c.reading.value} prev={c.prev} direction={c.r.direction} showUnavailable />
       </div>
       <div className={TEXT_FIGURE}>
-        {formatMetricValue(c.now, c.r.format, c.r.unit)}
+        {formatMetricValue(c.reading.value, c.r.format, c.r.unit)}
       </div>
-      {/* The team total leads, because the dialog this card opens lists the
-        roster's records — a per-person figure on the face and a roster-sized
-        table behind it read as a contradiction. The per-person figure keeps
-        its place underneath, where the comparison it serves still works. */}
+      {/* Each part wraps as a unit, so a narrow card breaks between them. */}
       <div className="text-xs font-medium text-muted-foreground">
-        {c.isSum
-          ? `team total · ${formatMetricValue(perCapita(c.r, memberIds), c.r.format, c.r.unit)} per active person`
-          : "median / person"}
+        {readingCaption(c.reading, c.r).map((part, i) => (
+          <Fragment key={part}>
+            {i > 0 ? " · " : null}
+            <span className="inline-block">{part}</span>
+          </Fragment>
+        ))}
       </div>
     </CardContent>
   );
 
-  if (!selection || !evidence) return <Card className="py-0">{body}</Card>;
+  if (!evidence) return <Card className="py-0">{body}</Card>;
 
   return (
     <Card className="py-0 transition-colors hover:bg-card-hover focus-within:ring-2 focus-within:ring-ring">
@@ -1421,11 +1433,7 @@ function HeadlineCard({
         type="button"
         aria-haspopup="dialog"
         className="w-full cursor-pointer text-left focus-visible:outline-none"
-        onClick={() =>
-          evidence.openEvidenceTargets(targets, {
-            activeMetricKey: selection.metric_key,
-          })
-        }
+        onClick={() => evidence.openEvidencePeople(c.people)}
       >
         {body}
       </button>
@@ -1507,6 +1515,40 @@ export interface TrendChart {
   data: SectionTrendPoint[];
 }
 
+interface TrendWindow {
+  bucket: MetricBucket;
+  /** A bucket starting before this day began before the range did. */
+  startsFrom: string;
+  /** First bucket the range holds only part of at its end. */
+  finishedBefore: string;
+}
+
+function firstUnfinishedBucket(rangeTo: string, bucket: MetricBucket): string {
+  // INVARIANT: `rangeTo` is the range's last whole day, so the bucket running
+  // the day after it is the first one the range does not hold whole.
+  return runningBucketStart(dayAfter(rangeTo), bucket);
+}
+
+function dayAfter(isoDate: string): string {
+  return new Date(Date.parse(`${isoDate}T00:00:00Z`) + DAY_MS)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function wholeBuckets<T extends { date: string }>(
+  rows: readonly T[],
+  trendWindow: TrendWindow
+): T[] {
+  // INVARIANT: the backend aligns `bucket_start` to the bucket's own start
+  // (Monday, the 1st), never clipped to the range, so a partial first bucket
+  // starts before the range does.
+  return rows.filter(
+    (row) =>
+      row.date >= trendWindow.startsFrom &&
+      row.date < trendWindow.finishedBefore
+  );
+}
+
 /**
  * One chart per measure, plus the derived contributor count when the spec
  * asks for it. Shared with the zone header, whose explain affordance describes
@@ -1517,7 +1559,8 @@ function trendCharts(
   grid: GridData,
   trend: TrendData,
   memberIds: readonly string[],
-  personal: boolean
+  personal: boolean,
+  trendWindow: TrendWindow
 ): TrendChart[] {
   const charts = spec.metrics
     .map((key): TrendChart | null => {
@@ -1536,7 +1579,10 @@ function trendCharts(
           drilldownKey: key,
           derived: true,
           series: [{ key, label, type: "line" as const }],
-          data: buildMedianTrendData(key, trend.byKey, memberIds),
+          data: wholeBuckets(
+            buildMedianTrendData(key, trend.byKey, memberIds),
+            trendWindow
+          ),
         };
       }
       return {
@@ -1545,7 +1591,10 @@ function trendCharts(
         description: personal ? "Your total" : "Team total",
         drilldownKey: key,
         series: [{ key, label, type: "line" as const }],
-        data: buildTrendData([key], trend.byKey, memberIds),
+        data: wholeBuckets(
+          buildTrendData([key], trend.byKey, memberIds),
+          trendWindow
+        ),
       };
     })
     .filter((c): c is TrendChart => c != null);
@@ -1560,7 +1609,10 @@ function trendCharts(
       drilldownKey: activeKey,
       derived: true,
       series: [{ key: "active", label: "People", type: "line" as const }],
-      data: buildActiveContributorData(activeKey, trend.byKey, memberIds),
+      data: wholeBuckets(
+        buildActiveContributorData(activeKey, trend.byKey, memberIds),
+        trendWindow
+      ),
     });
   }
 
@@ -1571,7 +1623,7 @@ function TrendSection({
   spec,
   grid,
   trend,
-  bucket,
+  trendWindow,
   memberIds,
   personal,
   onOpenChart,
@@ -1579,12 +1631,19 @@ function TrendSection({
   spec: Extract<SectionSpec, { kind: "trend" }>;
   grid: GridData;
   trend: TrendData;
-  bucket: MetricBucket;
+  trendWindow: TrendWindow;
   memberIds: readonly string[];
   personal: boolean;
   onOpenChart: (chart: TrendChart, bucketStart?: string) => void;
 }) {
-  const charts = trendCharts(spec, grid, trend, memberIds, personal);
+  const charts = trendCharts(
+    spec,
+    grid,
+    trend,
+    memberIds,
+    personal,
+    trendWindow
+  );
 
   if (charts.length === 0) return null;
   if (trend.isError)
@@ -1616,7 +1675,7 @@ function TrendSection({
         >
           <SectionTrend
             title={chart.title}
-            description={`${chart.description} · per ${bucket}`}
+            description={`${chart.description} · per ${trendWindow.bucket}`}
             series={chart.series}
             data={chart.data}
             isPending={trend.isPending}
@@ -2595,93 +2654,91 @@ function OwnershipSection({
       </p>
       <Card>
         <CardContent className="flex flex-col gap-2 p-4">
-         <TooltipProvider delay={HOVER_DELAY_MS}>
           <ul
-            className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
-            aria-label="What each colour in a bar means"
+          className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
+          aria-label="What each colour in a bar means"
           >
-            <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] bg-primary" />
-              Top person
-            </li>
-            <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] bg-primary/50" />
-              Next 2
-            </li>
-            <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] border border-border bg-muted" />
-              Everyone else
-            </li>
+          <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] bg-primary" />
+            Top person
+          </li>
+          <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] bg-primary/50" />
+            Next 2
+          </li>
+          <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] border border-border bg-muted" />
+            Everyone else
+          </li>
           </ul>
           {visible.map((row) => (
-            <div key={row.value} className="flex items-center gap-3">
-              <div
-                className="w-44 shrink-0 truncate text-sm md:w-64 lg:w-80"
-                title={row.label}
-              >
-                {row.label}
-              </div>
-              <div
-                className="flex h-3.5 flex-1 gap-0.5"
-                role="img"
-                aria-label={`${row.label}: top person ${ownershipPct(row.top1)}, top three ${ownershipPct(row.top3)}`}
-              >
-                <OwnershipSegment
-                  className="rounded-[3px] bg-primary"
-                  width={row.top1 * 100}
-                  who={row.topName ? [row.topName] : []}
-                  share={ownershipPct(row.top1)}
-                  role="Top person"
-                />
-                {row.top3 > row.top1 ? (
-                  <OwnershipSegment
-                    className="rounded-[3px] bg-primary/50"
-                    width={(row.top3 - row.top1) * 100}
-                    who={row.nextNames}
-                    share={ownershipPct(row.top3 - row.top1)}
-                    role="Next 2"
-                  />
-                ) : null}
-                {row.top3 < 1 ? (
-                  <OwnershipSegment
-                    className="rounded-[3px] border border-border bg-muted"
-                    width={(1 - row.top3) * 100}
-                    who={[]}
-                    share={ownershipPct(1 - row.top3)}
-                    role={
-                      row.othersCount
-                        ? `Everyone else · ${row.othersCount} ${row.othersCount === 1 ? "person" : "people"}`
-                        : "Everyone else"
-                    }
-                  />
-                ) : null}
-              </div>
-              <div className="w-40 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-                <span
-                  className={
-                    row.top1 >= OWNERSHIP_RISK_SHARE
-                      ? "font-medium text-warning"
-                      : "font-medium text-foreground"
-                  }
-                >
-                  top-1 {ownershipPct(row.top1)}
-                </span>{" "}
-                · top-3 {ownershipPct(row.top3)}
-              </div>
+          <div key={row.value} className="flex items-center gap-3">
+            <div
+              className="w-44 shrink-0 truncate text-sm md:w-64 lg:w-80"
+              title={row.label}
+            >
+              {row.label}
             </div>
+            <div
+              className="flex h-3.5 flex-1 gap-0.5"
+              role="img"
+              aria-label={`${row.label}: top person ${ownershipPct(row.top1)}, top three ${ownershipPct(row.top3)}`}
+            >
+              <OwnershipSegment
+                className="rounded-[3px] bg-primary"
+                width={row.top1 * 100}
+                who={row.topName ? [row.topName] : []}
+                share={ownershipPct(row.top1)}
+                role="Top person"
+              />
+              {row.top3 > row.top1 ? (
+                <OwnershipSegment
+                  className="rounded-[3px] bg-primary/50"
+                  width={(row.top3 - row.top1) * 100}
+                  who={row.nextNames}
+                  share={ownershipPct(row.top3 - row.top1)}
+                  role="Next 2"
+                />
+              ) : null}
+              {row.top3 < 1 ? (
+                <OwnershipSegment
+                  className="rounded-[3px] border border-border bg-muted"
+                  width={(1 - row.top3) * 100}
+                  who={[]}
+                  share={ownershipPct(1 - row.top3)}
+                  role={
+                    row.othersCount
+                      ? `Everyone else · ${row.othersCount} ${row.othersCount === 1 ? "person" : "people"}`
+                      : "Everyone else"
+                  }
+                />
+              ) : null}
+            </div>
+            <div className="w-40 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+              <span
+                className={
+                  row.top1 >= OWNERSHIP_RISK_SHARE
+                    ? "font-medium text-warning"
+                    : "font-medium text-foreground"
+                }
+              >
+                top-1 {ownershipPct(row.top1)}
+              </span>{" "}
+              · top-3 {ownershipPct(row.top3)}
+            </div>
+          </div>
           ))}
           {rows.length > visible.length || expanded ? (
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="cursor-pointer self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            >
-              {expanded
-                ? `Show top ${OWNERSHIP_ROWS}`
-                : `+${rows.length - visible.length} more`}
-            </button>
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="cursor-pointer self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            {expanded
+              ? `Show top ${OWNERSHIP_ROWS}`
+              : `+${rows.length - visible.length} more`}
+          </button>
           ) : null}
-         </TooltipProvider>
         </CardContent>
       </Card>
     </section>
@@ -2841,13 +2898,12 @@ function DirectionCardsSection({
                 c.keys.map((key) => {
                   const r = grid.byKey.get(key);
                   if (!r) return null;
-                  const now = representative(r, memberIds);
-                  if (now == null) return null;
-                  const prev = representative(
+                  const reading = perPersonReading(r, memberIds);
+                  if (!reading) return null;
+                  const prev = perPersonReading(
                     grid.previousByKey.get(key),
                     memberIds
                   );
-                  const isSum = r.computation === "sum";
                   return (
                     <div
                       key={key}
@@ -2856,17 +2912,23 @@ function DirectionCardsSection({
                       <MetricName
                         metric={r}
                         text={r.label}
-                        className="min-w-0 text-muted-foreground"
+                        className="text-muted-foreground"
+                        truncate
+                        focusable={personal}
                       />
                       <span className="flex items-center gap-2">
                         <span className="font-medium tabular-nums">
                           {formatMetricValue(
-                            isSum ? perCapita(r, memberIds) : now,
+                            reading.value,
                             r.format,
                             r.unit
                           )}
                         </span>
-                        <Delta now={now} prev={prev} direction={r.direction} />
+                        <Delta
+                          now={reading.value}
+                          prev={prev?.value ?? null}
+                          direction={r.direction}
+                        />
                       </span>
                     </div>
                   );
@@ -2976,9 +3038,6 @@ function shareLabel(pct: number): string {
   return `${Math.round(pct)}%`;
 }
 
-/** Same dwell as every other hover explanation in the product. */
-const HOVER_DELAY_MS = 400;
-
 /** Rows shown before the reader opts into the full list. */
 const BAR_LIST_COLLAPSED = 12;
 
@@ -3073,123 +3132,121 @@ export function BarList({
       </p>
       <Card>
         <CardContent className="flex flex-col gap-2 p-4">
-          <TooltipProvider delay={HOVER_DELAY_MS}>
-            {legend.length ? (
-              <ul
-                className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
-                aria-label="What each colour in a bar means"
-              >
-                {legend.map((entry) => (
-                  <li
-                    key={entry.seed}
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground"
-                  >
-                    <span
-                      aria-hidden
-                      className="size-2.5 shrink-0 rounded-[2px]"
-                      style={{ backgroundColor: entry.color }}
-                    />
-                    {entry.label}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {visible.map((row) => (
-              <div key={row.key} className="flex items-center gap-3">
-                {/* A dimension value is often a path (`owner/repo`), and the part
-                  that tells two rows apart is at the END — so the column grows
-                  with the viewport and the full value stays on hover. */}
-                <div
-                  className="w-44 shrink-0 truncate text-sm md:w-64 lg:w-80"
-                  title={row.label}
+          {legend.length ? (
+            <ul
+              className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
+              aria-label="What each colour in a bar means"
+            >
+              {legend.map((entry) => (
+                <li
+                  key={entry.seed}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground"
                 >
-                  {row.href ? (
-                    <a
-                      href={row.href}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="hover:text-foreground hover:underline"
-                    >
-                      {row.label}
-                    </a>
+                  <span
+                    aria-hidden
+                    className="size-2.5 shrink-0 rounded-[2px]"
+                    style={{ backgroundColor: entry.color }}
+                  />
+                  {entry.label}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {visible.map((row) => (
+            <div key={row.key} className="flex items-center gap-3">
+              {/* A dimension value is often a path (`owner/repo`), and the part
+                that tells two rows apart is at the END — so the column grows
+                with the viewport and the full value stays on hover. */}
+              <div
+                className="w-44 shrink-0 truncate text-sm md:w-64 lg:w-80"
+                title={row.label}
+              >
+                {row.href ? (
+                  <a
+                    href={row.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="hover:text-foreground hover:underline"
+                  >
+                    {row.label}
+                  </a>
+                ) : (
+                  row.label
+                )}
+              </div>
+              <div className="h-6 flex-1 overflow-hidden rounded bg-muted">
+                {/* One bar, however it is cut: the width is the row's share of
+                  the largest row, and the segments divide THAT width, so a
+                  split bar stays comparable with an unsplit one. */}
+                <div
+                  className="flex h-full overflow-hidden rounded"
+                  style={{ width: `${Math.round((row.value / max) * 100)}%` }}
+                >
+                  {row.segments?.length ? (
+                    row.segments.map((segment) => (
+                      <Tooltip key={segment.seed}>
+                        <TooltipTrigger
+                          render={
+                            <BarPiece
+                              className="h-full first:rounded-s last:rounded-e"
+                              style={{
+                                width: `${(segment.value / row.value) * 100}%`,
+                                backgroundColor: colors[segment.seed],
+                              }}
+                              onOpen={
+                                onOpen &&
+                                (canOpen?.(row, segment) ?? true)
+                                  ? () => onOpen(row, segment)
+                                  : undefined
+                              }
+                              label={`${row.label} · ${segment.label}`}
+                            />
+                          }
+                        />
+                        <TooltipContent side="top">
+                          {segment.label} ·{" "}
+                          {formatMetricValue(segment.value, format, unit)} ·{" "}
+                          {shareLabel((segment.value / row.value) * 100)}
+                          {onOpen ? " · click to open the records" : ""}
+                        </TooltipContent>
+                      </Tooltip>
+                    ))
                   ) : (
-                    row.label
+                    <BarPiece
+                      className="h-full w-full rounded bg-primary/25"
+                      onOpen={
+                        onOpen && (canOpen?.(row) ?? true)
+                          ? () => onOpen(row)
+                          : undefined
+                      }
+                      label={row.label}
+                    />
                   )}
                 </div>
-                <div className="h-6 flex-1 overflow-hidden rounded bg-muted">
-                  {/* One bar, however it is cut: the width is the row's share of
-                    the largest row, and the segments divide THAT width, so a
-                    split bar stays comparable with an unsplit one. */}
-                  <div
-                    className="flex h-full overflow-hidden rounded"
-                    style={{ width: `${Math.round((row.value / max) * 100)}%` }}
-                  >
-                    {row.segments?.length ? (
-                      row.segments.map((segment) => (
-                        <Tooltip key={segment.seed}>
-                          <TooltipTrigger
-                            render={
-                              <BarPiece
-                                className="h-full first:rounded-s last:rounded-e"
-                                style={{
-                                  width: `${(segment.value / row.value) * 100}%`,
-                                  backgroundColor: colors[segment.seed],
-                                }}
-                                onOpen={
-                                  onOpen &&
-                                  (canOpen?.(row, segment) ?? true)
-                                    ? () => onOpen(row, segment)
-                                    : undefined
-                                }
-                                label={`${row.label} · ${segment.label}`}
-                              />
-                            }
-                          />
-                          <TooltipContent side="top">
-                            {segment.label} ·{" "}
-                            {formatMetricValue(segment.value, format, unit)} ·{" "}
-                            {shareLabel((segment.value / row.value) * 100)}
-                            {onOpen ? " · click to open the records" : ""}
-                          </TooltipContent>
-                        </Tooltip>
-                      ))
-                    ) : (
-                      <BarPiece
-                        className="h-full w-full rounded bg-primary/25"
-                        onOpen={
-                          onOpen && (canOpen?.(row) ?? true)
-                            ? () => onOpen(row)
-                            : undefined
-                        }
-                        label={row.label}
-                      />
-                    )}
-                  </div>
-                </div>
-                {/* Beside the bar, not on it: a segment fill is a full-strength
-                  colour, and no single text colour stays legible across every
-                  hue a palette can hand out. */}
-                {/* Fixed width, right-aligned: sized by its content the column
-                  would differ on every row, and every bar would end somewhere
-                  else. */}
-                <div className="w-28 shrink-0 text-right text-xs font-medium text-muted-foreground tabular-nums md:w-36">
-                  {formatMetricValue(row.value, format, unit)}
-                  {showShare ? ` · ${shareLabel(row.pct)}` : ""}
-                </div>
               </div>
-            ))}
-            {rows.length > BAR_LIST_COLLAPSED ? (
-              <button
-                type="button"
-                onClick={() => setExpanded((v) => !v)}
-                className="self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-              >
-                {expanded
-                  ? "Show less"
-                  : `+${rows.length - BAR_LIST_COLLAPSED} more`}
-              </button>
-            ) : null}
-          </TooltipProvider>
+              {/* Beside the bar, not on it: a segment fill is a full-strength
+                colour, and no single text colour stays legible across every
+                hue a palette can hand out. */}
+              {/* Fixed width, right-aligned: sized by its content the column
+                would differ on every row, and every bar would end somewhere
+                else. */}
+              <div className="w-28 shrink-0 text-right text-xs font-medium text-muted-foreground tabular-nums md:w-36">
+                {formatMetricValue(row.value, format, unit)}
+                {showShare ? ` · ${shareLabel(row.pct)}` : ""}
+              </div>
+            </div>
+          ))}
+          {rows.length > BAR_LIST_COLLAPSED ? (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              {expanded
+                ? "Show less"
+                : `+${rows.length - BAR_LIST_COLLAPSED} more`}
+            </button>
+          ) : null}
           {notes?.length ? (
             <div className="mt-4 flex flex-col gap-1 border-t pt-3">
               {notes.map((note) => (
@@ -3226,7 +3283,7 @@ export function Delta({
 }) {
   if (prev == null || prev === 0) {
     return showUnavailable ? (
-      <span className="text-xs text-muted-foreground" title="Previous period data is unavailable or zero">
+      <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground" title="Previous period data is unavailable or zero">
         No comparison
       </span>
     ) : null;

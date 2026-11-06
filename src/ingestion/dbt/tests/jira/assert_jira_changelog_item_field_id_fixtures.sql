@@ -1,3 +1,5 @@
+{{ config(tags=['ci_only']) }}
+
 -- Unit test for `jira_changelog_item_field_id`: which field a raw changelog item
 -- changes, including the system fields Jira names by label with no `fieldId`.
 --

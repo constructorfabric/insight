@@ -1,11 +1,11 @@
 import { Outlet, createRootRoute } from "@tanstack/react-router";
 
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { TooltipProvider } from "@gears-frontx/ui-kit";
 import { getPerson } from "@/api/identity-client";
 import { authStore, getViewerPersonId, signIn } from "@/auth";
 import { AuthGate } from "@/components/auth-gate";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster } from "@/components/ui/toaster";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { queryClient } from "@/query-client";
 import { FeedbackDialogProvider } from "@/components/feedback-dialog-provider";
@@ -47,9 +47,12 @@ function RootPending() {
   return <CenteredSpinner className="min-h-screen w-full" />;
 }
 
+// Long enough that a pointer passing over a row of triggers opens none of them.
+const TOOLTIP_DELAY_MS = 400;
+
 function RootLayout() {
   return (
-    <TooltipProvider>
+    <TooltipProvider delay={TOOLTIP_DELAY_MS}>
       <MetricEvidenceDialogProvider>
         <FeedbackDialogProvider>
           <AuthGate>

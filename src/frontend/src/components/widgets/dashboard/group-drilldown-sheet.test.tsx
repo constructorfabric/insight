@@ -41,7 +41,7 @@ function renderSheet(
       def={def}
       metricTarget={metricTarget}
       range={{ from: "2026-07-01", to: "2026-07-07" }}
-      period="week"
+      compareTo={{ from: "2026-06-24", to: "2026-06-30" }}
     />,
   );
 }

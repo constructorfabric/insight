@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@/i18n";
 
 const hooks = vi.hoisted(() => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { add: vi.fn() },
   submit: {
     mutate: vi.fn(),
     reset: vi.fn(),
@@ -16,7 +16,10 @@ const hooks = vi.hoisted(() => ({
   screen: "/portal/overview",
 }));
 
-vi.mock("@/components/ui/sonner", () => ({ toast: hooks.toast }));
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
+  toast: hooks.toast,
+}));
 vi.mock("@/queries/feedback", () => ({ useSubmitFeedback: () => hooks.submit }));
 vi.mock("@/telemetry", () => ({
   APP_NAME: "insight-frontend",
@@ -26,6 +29,7 @@ vi.mock("@/telemetry", () => ({
 
 import { FEEDBACK_MESSAGE_MAX } from "@/api/feedback-client";
 import { FeedbackDialog } from "./feedback-dialog";
+import { toastsOf } from "@/test/toast";
 
 function sendButton(): HTMLElement {
   return screen.getByRole("button", { name: "Send" });
@@ -36,7 +40,7 @@ beforeEach(() => {
   hooks.submit.reset.mockReset();
   hooks.submit.isPending = false;
   hooks.submit.error = null;
-  hooks.toast.success.mockReset();
+  hooks.toast.add.mockReset();
   hooks.screen = "/portal/overview";
 });
 
@@ -82,7 +86,7 @@ describe("FeedbackDialog", () => {
     await userEvent.type(message, "add an export button");
     await userEvent.click(sendButton());
 
-    expect(hooks.toast.success).toHaveBeenCalled();
+    expect(toastsOf(hooks.toast.add, "success")).not.toHaveLength(0);
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(message).toHaveValue("");
   });

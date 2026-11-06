@@ -3,49 +3,44 @@ import type { ReactElement } from "react";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
 import { cn } from "@/lib/utils";
 
 export interface MetricHelpTooltipProps {
-  /** Null ⇒ the surface renders unchanged, with no dead affordance. */
+  /** The catalog's words for the metric; null when it has none. */
   help: MetricHelpText | null;
-  /** The surface itself becomes the trigger — see the note below. */
+  /** The metric's full name, for a surface that shortens or may cut it. */
+  name?: string;
+  /** The metric's name as the surface writes it: the trigger. */
   children: ReactElement;
 }
 
-/** Long enough that sweeping the mouse across a row of tiles stays quiet. */
-const HOVER_DELAY_MS = 400;
+/** What a metric means, on the name that shows it. */
+export function MetricHelpTooltip({
+  help,
+  name,
+  children,
+}: MetricHelpTooltipProps) {
+  // Nothing to say ⇒ the surface renders unchanged, with no dead affordance.
+  if (!help && !name) return children;
 
-/**
- * What a metric means, on the surface that shows it.
- *
- * The TRIGGER is the whole tile or row rather than a help icon beside the
- * name. A row of five tiles would otherwise grow five more icons — and the
- * tile is already a button, so making it the trigger costs no new tab stop
- * and answers a keyboard reader on focus, which a hover-only badge never
- * does.
- */
-export function MetricHelpTooltip({ help, children }: MetricHelpTooltipProps) {
-  if (!help) return children;
   return (
-    <TooltipProvider delay={HOVER_DELAY_MS}>
-      <Tooltip>
-        <TooltipTrigger render={children} />
-        <TooltipContent
-          data-testid="metric-help"
-          side="top"
-          className="flex-col items-start gap-1.5 text-left text-sm leading-relaxed"
-        >
-          {help.description ? <p>{help.description}</p> : null}
-          {help.explanation ? (
-            <p className="text-background/70">{help.explanation}</p>
-          ) : null}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipContent
+        data-testid="metric-help"
+        side="top"
+        className="flex-col items-start gap-1.5 text-left text-sm leading-relaxed"
+      >
+        {name ? <p className="font-medium">{name}</p> : null}
+        {help?.description ? <p>{help.description}</p> : null}
+        {help?.explanation ? (
+          <p className="text-background/70">{help.explanation}</p>
+        ) : null}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -63,6 +58,8 @@ export interface MetricNameProps {
   className?: string;
   /** Makes the name a tab stop. Only where no control encloses it. */
   focusable?: boolean;
+  /** Keeps the name on one line, cut with an ellipsis; the tooltip then names it in full. */
+  truncate?: boolean;
 }
 
 /**
@@ -82,16 +79,23 @@ export function MetricName({
   text,
   className,
   focusable = false,
+  truncate = false,
 }: MetricNameProps) {
   const label = text ?? metric.label;
+  const shortenedFrom = label === metric.label ? undefined : metric.label;
+  const tooltipName = truncate ? metric.label : shortenedFrom;
   const help = metricHelp(metric);
-  if (!help) return <span className={className}>{label}</span>;
+  const spoken = [shortenedFrom, help?.description, help?.explanation]
+    .filter(Boolean)
+    .join(". ");
+  const nameClass = cn(truncate && "min-w-0 truncate", className);
+  if (!help && !tooltipName) return <span className={nameClass}>{label}</span>;
   return (
     <>
-      <MetricHelpTooltip help={help}>
+      <MetricHelpTooltip help={help} name={tooltipName}>
         <span
           tabIndex={focusable ? 0 : undefined}
-          className={cn("cursor-help", className)}
+          className={cn("cursor-help", nameClass)}
         >
           {label}
         </span>
@@ -101,9 +105,7 @@ export function MetricName({
           themselves buttons, and a control nested in a control is invalid
           markup with broken semantics. So the words are given to assistive
           technology directly, in the reading order they belong to. */}
-      <span className="sr-only">
-        {[help.description, help.explanation].filter(Boolean).join(". ")}
-      </span>
+      {spoken ? <span className="sr-only">{spoken}</span> : null}
     </>
   );
 }

@@ -29,7 +29,7 @@ const hooks = vi.hoisted(() => {
     error: null as unknown,
   });
   return {
-    toast: { success: vi.fn(), error: vi.fn() },
+    toast: { add: vi.fn() },
     accounts: {
       data: undefined as
         | { person_id: string; accounts: PersonAccountEntry[] }
@@ -66,7 +66,10 @@ const hooks = vi.hoisted(() => {
 vi.mock("@/hooks/use-debounced-value", () => ({
   useDebouncedValue: <T,>(value: T) => value,
 }));
-vi.mock("@/components/ui/sonner", () => ({ toast: hooks.toast }));
+vi.mock("@gears-frontx/ui-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@gears-frontx/ui-kit")>()),
+  toast: hooks.toast,
+}));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   usePersonAccounts: () => hooks.accounts,
@@ -86,6 +89,7 @@ vi.mock("@/queries/person-roles", () => ({
 }));
 
 import { PersonDialog } from "./person-dialog";
+import { toastsOf } from "@/test/toast";
 
 const ANN = "01900000-0000-7000-8000-0000000000a0";
 const BOB = "01900000-0000-7000-8000-0000000000b0";
@@ -162,8 +166,7 @@ beforeEach(() => {
     verb.isError = false;
     verb.error = null;
   }
-  hooks.toast.success.mockClear();
-  hooks.toast.error.mockClear();
+  hooks.toast.add.mockClear();
   hooks.accounts.data = undefined;
   hooks.accounts.isLoading = false;
   hooks.accounts.isError = false;
@@ -548,8 +551,8 @@ describe("PersonDialog", () => {
 
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
     expect(screen.queryByText(/refused/i)).not.toBeInTheDocument();
-    expect(hooks.toast.success).toHaveBeenCalled();
-    expect(hooks.toast.error).not.toHaveBeenCalled();
+    expect(toastsOf(hooks.toast.add, "success")).not.toHaveLength(0);
+    expect(toastsOf(hooks.toast.add, "error")).toHaveLength(0);
   });
 
   // A detach mints a person, and this window stays open rather than handing the
@@ -579,11 +582,11 @@ describe("PersonDialog", () => {
       within(confirmation()).getByRole("button", { name: /^detach$/i }),
     );
 
-    expect(hooks.toast.success).toHaveBeenCalledWith(
-      expect.any(String),
+    expect(toastsOf(hooks.toast.add, "success")).toContainEqual(
       expect.objectContaining({
+        title: expect.any(String),
         description: expect.stringContaining(minted),
-        duration: expect.any(Number),
+        timeout: expect.any(Number),
       }),
     );
   });
@@ -609,7 +612,7 @@ describe("PersonDialog", () => {
       within(confirmation()).getByRole("button", { name: /^exclude$/i }),
     );
 
-    expect(hooks.toast.success).toHaveBeenCalled();
+    expect(toastsOf(hooks.toast.add, "success")).not.toHaveLength(0);
     expect(screen.queryByText(/refused/i)).not.toBeInTheDocument();
   });
 
@@ -672,7 +675,7 @@ describe("PersonDialog", () => {
     );
 
     expect(screen.getByText(/1 refused/i)).toBeInTheDocument();
-    expect(hooks.toast.error).toHaveBeenCalled();
+    expect(toastsOf(hooks.toast.add, "error")).not.toHaveLength(0);
   });
 });
 

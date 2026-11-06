@@ -1,3 +1,4 @@
+import type { MetricDirection } from "@/api/metric-results-client";
 import { formatMetricValue, splitMetricValue } from "@/lib/format";
 import { formatGapMagnitude } from "@/lib/metrics/gap";
 import type { MetricGroup, GroupId } from "@/lib/insight/groups";
@@ -88,6 +89,8 @@ export interface AttentionItem {
    * them apart from a number alone.
    */
   kind: "fell" | "behind";
+  /** Which way is better; for a lower-is-better metric a "fell" row rose. */
+  direction: MetricDirection;
   /** True when the previous period holds no value to compare against. */
   noPrevious: boolean;
 }
@@ -200,6 +203,7 @@ export function metricAttentionItems(
       // A fall is the more specific claim, so it wins when both hold: the
       // reader learns it moved AND sees how far out it is in the same row.
       kind: fell ? "fell" : "behind",
+      direction: metric.direction,
       noPrevious: !hasPrevious,
     });
   }

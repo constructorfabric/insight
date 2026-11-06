@@ -17,7 +17,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@gears-frontx/ui-kit";
 import { visitorLabel, type VisitorNaming } from "@/lib/portal/visitor-label";
 import { cn } from "@/lib/utils";
 

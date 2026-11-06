@@ -346,6 +346,25 @@ describe("shell layout: narrow (tablet)", () => {
   });
 });
 
+describe("shell layout: narrow (tablet), keyboard", () => {
+  beforeEach(() => {
+    mocks.layout = "narrow";
+  });
+
+  it("takes a collapsed pane out of the Tab order and puts it back once opened", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<Shell />);
+    const pane = () => container.querySelector('[data-slot="sidebar-container"]');
+    expect(pane(), "expanded pane").not.toHaveAttribute("inert");
+
+    await user.click(screen.getByText("Trend"));
+    expect(pane(), "collapsed pane").toHaveAttribute("inert");
+
+    await user.click(screen.getByRole("button", { name: /sidebar/i }));
+    expect(pane(), "reopened pane").not.toHaveAttribute("inert");
+  });
+});
+
 describe("the global controls stay reachable while reading", () => {
   it("pins the topbar to the scroll container, opaquely", async () => {
     const { PortalTopBar } = await import("./portal-topbar");

@@ -1,4 +1,5 @@
 import {
+  Navigate,
   Outlet,
   createFileRoute,
   useNavigate,
@@ -11,6 +12,7 @@ import { CustomChat } from "@/components/custom/custom-chat";
 import { CustomPageShell } from "@/components/custom/custom-page-shell";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
+import { catalogueWithheldAt } from "@/lib/custom/catalogues";
 import { dashboardIdFromPath } from "@/lib/custom/dashboard-path";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useIsAdmin } from "@/queries/identity-me";
@@ -56,6 +58,10 @@ function CustomZone() {
         params: { name: created.dashboard.id },
       });
     }
+  }
+
+  if (catalogueWithheldAt(pathname, showPlanned)) {
+    return <Navigate to="/portal/custom" replace />;
   }
 
   if (isPending) return <CenteredSpinner className="min-h-40" />;

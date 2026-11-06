@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { NewDashboardButton } from "@/components/custom/create-dashboard-dialog";
 import { DashboardCard } from "@/components/custom/dashboard-card";
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { useZoneNav } from "@/lib/portal/use-zone-nav";
 import { TEXT_EYEBROW } from "@/lib/type-scale";
 import { recentDashboardsQuery } from "@/queries/custom";

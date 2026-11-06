@@ -5,10 +5,7 @@ import {
   queryMetricResults,
   type MetricRequest,
 } from "@/api/metric-results-client";
-import {
-  previousPeriodRange,
-  type DateRange,
-} from "@/api/period-to-date-range";
+import type { DateRange } from "@/api/period-to-date-range";
 import {
   buildMetricCollectionRequest,
   chunkEntityIds,
@@ -31,7 +28,6 @@ import {
   useAvailableMetricKeys,
   useDeclaredMetricDimensions,
 } from "@/queries/metric-definitions";
-import type { PeriodValue } from "@/types/insight";
 
 /**
  * The install's metric gate, as a predicate over metric keys.
@@ -53,16 +49,8 @@ function useMetricGate(): (metricKey: string) => boolean {
 
 export interface MetricCollectionOptions {
   /**
-   * When set, the request carries the previous period of the same kind as an
-   * extra window (the period value drives week/month/quarter/year shift
-   * semantics in `previousPeriodRange`). Consumers derive deltas from
-   * `previousByKey`. Shorthand for a `compareTo` range.
-   */
-  previousPeriod?: PeriodValue;
-  /**
    * The window to compare against, served in the same request and read back
-   * through `previousByKey`. Ignored when `previousPeriod` is set, which is
-   * sugar for it.
+   * through `previousByKey`.
    */
   compareTo?: DateRange;
   keepPreviousData?: boolean;
@@ -141,9 +129,7 @@ export function useMetricCollection(
   // one: it reads the same rows the primary aggregate already scans, so a delta
   // arrow no longer costs a second round trip, a second authorization and a
   // second query slot (#2651).
-  const compareTo = options?.previousPeriod
-    ? previousPeriodRange(range, options.previousPeriod)
-    : options?.compareTo;
+  const compareTo = options?.compareTo;
   const request = buildMetricCollectionRequest(
     asked,
     canonicalEntity,

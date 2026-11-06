@@ -1,3 +1,16 @@
+{{ config(
+    tags=['connector_quality', 'jira'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Jira field history values are valid UTF-8',
+        'domain': 'task-tracking',
+        'category': 'integrity',
+        'tier': 'error',
+        'remediation': 'A value id, value display or field name in the journal is not valid UTF-8, which breaks the strict readers and JSON serialisation downstream. Check where the journal truncates long text: cutting inside a multi-byte character produces this.'
+    }
+) }}
+
 -- Every string the journal carries must be valid UTF-8.
 --
 -- ClickHouse stores arbitrary bytes without complaint, and every other test
@@ -25,4 +38,3 @@ FROM {{ ref('jira__field_history_derived') }} FINAL
 WHERE arrayExists(x -> NOT isValidUTF8(x), value_ids)
    OR arrayExists(x -> NOT isValidUTF8(x), value_displays)
    OR NOT isValidUTF8(field_name)
-LIMIT 100

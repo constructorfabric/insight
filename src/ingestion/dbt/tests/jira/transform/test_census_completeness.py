@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from conftest import Scenario
-from helpers import OBSERVED_AT, SOURCE_ID, TENANT_ID, census_entry, issue
+from helpers import OBSERVED_AT, SOURCE_ID, TENANT_ID, census_entry, issue, worklog
 
 SELECTOR = "+jira__issue_availability_history"
 CHECK = "assert_census_issue_has_full_record"
@@ -86,25 +86,6 @@ def _issue_key(case: CensusCase, updated: str) -> dict[str, Any]:
     }
 
 
-def _worklog(case: CensusCase, updated: str) -> dict[str, Any]:
-    worklog_id = f"9{case.jira_id}"
-    return {
-        **_airbyte(),
-        "id": worklog_id,
-        "tenant_id": TENANT_ID,
-        "source_id": SOURCE_ID,
-        "unique_key": f"{TENANT_ID}-{SOURCE_ID}-{worklog_id}",
-        "worklog_id": worklog_id,
-        "jira_id": case.jira_id,
-        "author_account_id": "author-acct",
-        "created": updated,
-        "updated": updated,
-        "started": updated,
-        "time_spent_seconds": 3600,
-        "collected_at": OBSERVED_AT,
-    }
-
-
 def _flagged(scenario: Scenario) -> set[str]:
     invocation = scenario.warehouse.dbt_status("test", "--select", CHECK)
     assert "error" not in invocation.statuses, invocation.log
@@ -126,7 +107,11 @@ def test_a_missing_full_record_is_a_finding_only_for_an_issue_that_changed_befor
     )
     scenario.warehouse.insert(
         "bronze_jira.jira_worklogs",
-        [_worklog(case, case.worklog_changed_at) for case in CASES if case.worklog_changed_at],
+        [
+            worklog(int(f"9{case.jira_id}"), jira_id=case.jira_id, key=case.key, started=case.worklog_changed_at)
+            for case in CASES
+            if case.worklog_changed_at
+        ],
     )
 
     scenario.build(SELECTOR)

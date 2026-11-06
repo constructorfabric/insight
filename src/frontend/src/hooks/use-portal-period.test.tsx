@@ -56,4 +56,23 @@ describe("usePortalPeriod", () => {
     expect(portalRouter.search.from).toBeUndefined();
     expect(portalRouter.search.to).toBeUndefined();
   });
+
+  it.each(["week", "quarter"] as const)(
+    "compares a custom range with the same number of days before it, not with the remembered %s",
+    (preset) => {
+      act(() => writePeriodPreference(preset));
+      const { result } = renderHook(() => usePortalPeriod());
+      act(() => result.current.setCustomRange({ from: "2026-10-01", to: "2026-10-31" }));
+      expect(result.current.compareTo).toEqual({ from: "2026-08-31", to: "2026-09-30" });
+    },
+  );
+
+  it("names the comparison by the preset, and a custom range a period", () => {
+    const { result } = renderHook(() => usePortalPeriod());
+    act(() => result.current.setPeriod("month"));
+    expect(result.current.comparisonNoun, "preset").toBe("month");
+
+    act(() => result.current.setCustomRange({ from: "2026-10-01", to: "2026-10-31" }));
+    expect(result.current.comparisonNoun, "custom range").toBe("period");
+  });
 });

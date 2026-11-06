@@ -159,9 +159,11 @@ describe("useMetricCollection", () => {
     expect(result.current.byKey.get("m")?.absenceContext).toBeUndefined();
   });
 
-  it("serves the previous period as the comparison window of one request", async () => {
+  it("serves the comparison window inside the same request", async () => {
     const { result } = renderHook(
-      () => useMetricCollection(COLLECTION, ENTITY, RANGE, { previousPeriod: "month" }),
+      () => useMetricCollection(COLLECTION, ENTITY, RANGE, {
+        compareTo: { from: "2026-05-01", to: "2026-05-30" },
+      }),
       { wrapper: wrapper() },
     );
     await waitFor(() => expect(result.current.isPending).toBe(false));

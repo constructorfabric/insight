@@ -1,3 +1,16 @@
+{{ config(
+    tags=['connector_quality', 'jira'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'Jira changelog items are stored as a JSON array',
+        'domain': 'task-tracking',
+        'category': 'source_integrity',
+        'tier': 'error',
+        'remediation': 'A changelog row holds its items as an escaped JSON string instead of an array, so the field history skips every change in it. The stream must declare items as a plain string; check the connector manifest and the destination column type for jira_issue_history.'
+    }
+) }}
+
 -- Regression guard for the `items` double-encoding defect: a changelog row
 -- whose `items` is an escaped JSON string instead of an array reads as a scalar
 -- through JSONExtractArrayRaw, so jira__changelog_items skips it and the field

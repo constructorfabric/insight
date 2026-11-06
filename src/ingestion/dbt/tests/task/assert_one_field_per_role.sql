@@ -1,3 +1,16 @@
+{{ config(
+    tags=['data_quality'],
+    severity='warn',
+    store_failures=true,
+    meta={
+        'title': 'A role is bound to at most one field per source',
+        'domain': 'task-tracking',
+        'category': 'configuration',
+        'tier': 'warn',
+        'remediation': 'Two fields of one source are bound to the same role, and nothing chooses between them. Keep one binding per role, or mark the extra field ignored.'
+    }
+) }}
+
 -- A role names one field. Every consumer joins `task_field_roles_current` by
 -- role and takes what comes back, so two fields bound to the same role in one
 -- source do not compete — they MERGE. For `status` that means two independent
@@ -20,8 +33,9 @@ WITH bound AS (
         field_id,
         argMax(role, (valid_from, recorded_at)) AS role
     FROM config.task_field_roles FINAL
-    WHERE is_deleted = 0 AND valid_from <= now64(3)
+    WHERE valid_from <= now64(3)
     GROUP BY insight_source_id, data_source, field_id
+    HAVING argMax(is_deleted, (valid_from, recorded_at)) = 0
 )
 
 SELECT
@@ -33,4 +47,3 @@ FROM bound
 WHERE role != 'ignored'
 GROUP BY insight_source_id, data_source, role
 HAVING count() > 1
-LIMIT 100

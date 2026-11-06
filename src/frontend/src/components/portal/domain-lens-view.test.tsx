@@ -53,6 +53,7 @@ const mocks = vi.hoisted(() => ({
   }>,
   collectionSet: new Map<string, unknown>(),
   definitions: [] as unknown[],
+  dateRange: { from: "2026-07-20", to: "2026-07-26" },
   collections: [] as Array<{
     byKey: Map<string, NormalizedMetricResult>;
     isPending: boolean;
@@ -122,14 +123,27 @@ vi.mock("@/queries/metric-definitions", async (orig) => ({
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({
     period: "week",
-    dateRange: { from: "2026-07-20", to: "2026-07-26" },
+    dateRange: mocks.dateRange,
   }),
 }));
 // Charts are exercised by the browser/storybook project; here they'd render
 // into a 0×0 jsdom box. Stub them with introspectable placeholders.
 vi.mock("@/components/portal/section-trend", () => ({
-  SectionTrend: ({ series }: { series: unknown[] }) => (
-    <div data-testid="section-trend" data-series={JSON.stringify(series ?? []).length} />
+  SectionTrend: ({
+    title,
+    series,
+    data,
+  }: {
+    title: string;
+    series: unknown[];
+    data: Array<{ date: string }>;
+  }) => (
+    <div
+      data-testid="section-trend"
+      data-title={title}
+      data-series={JSON.stringify(series ?? []).length}
+      data-dates={JSON.stringify(data.map((p) => p.date))}
+    />
   ),
 }));
 // The sparkle reads the AI config through react-query; this suite renders the
@@ -222,6 +236,7 @@ const HEADLINE_CONFIG: LensConfig = {
 beforeEach(() => {
   mocks.call = 0;
   mocks.requested = [];
+  mocks.dateRange = { from: "2026-07-20", to: "2026-07-26" };
   seedHappyOrg();
   mocks.grid.isPending = false;
   mocks.grid.isError = false;
@@ -240,8 +255,7 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
   it("keeps metric values when Home supplies the page heading", () => {
     render(<DomainLensView config={HEADLINE_CONFIG} embedded />);
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
-    expect(screen.getByText("100 commits")).toBeInTheDocument();
-    expect(screen.getByText(/25 commits per active person/)).toBeInTheDocument();
+    expect(screen.getByText("25 commits")).toBeInTheDocument();
     expect(screen.getByText("-50%")).toBeInTheDocument();
   });
 
@@ -251,20 +265,42 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
     expect(screen.getByTitle("Compared with previous period")).toHaveTextContent("-50%");
   });
 
+  it.each([
+    ["the full label by default", undefined, "Commits that landed", "Commits"],
+    ["the short label when the section asks for it", "short" as const, "Commits", "Commits that landed"],
+  ])("heads a card with %s", (_case, labelSource, shown, absent) => {
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric("t.commits", [[pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], {
+          label: "Commits that landed",
+          short_label: "Commits",
+          unit: "commits",
+        }),
+      ],
+    ]);
+    render(
+      <DomainLensView
+        config={{ ...HEADLINE_CONFIG, sections: [{ kind: "headline", metrics: ["t.commits"], labelSource }] }}
+        embedded
+      />,
+    );
+    expect(screen.getByText(shown, { exact: true }), _case).toBeInTheDocument();
+    expect(screen.queryByText(absent, { exact: true, ignore: "script, style, .sr-only" }), _case).toBeNull();
+  });
+
   it("does not silently omit unavailable headline comparisons", () => {
     mocks.grid.previousByKey = new Map();
     render(<DomainLensView config={HEADLINE_CONFIG} embedded />);
     expect(screen.getByText("No comparison")).toHaveAttribute("title", "Previous period data is unavailable or zero");
   });
 
-  it("leads with the team total the dialog explains, and keeps the per-person read", () => {
+  it("leads with the per-person figure and keeps the team total in its caption", () => {
     render(<DomainLensView config={HEADLINE_CONFIG} />);
-    // The figure is the roster's, because that is the set the evidence dialog
-    // lists; 100 commits over 4 active people = 25/person underneath.
-    expect(screen.getByText("100 commits")).toBeInTheDocument();
-    expect(screen.getByText(/25 commits per active person/)).toBeInTheDocument();
-    expect(screen.getByText("-50%")).toBeInTheDocument();
-    // header carries the scope size + tagline — the lead and their 4 reports
+    // 100 commits over 4 active people.
+    expect(screen.getByText("25 commits")).toBeInTheDocument();
+    expect(screen.getByText("average of 4 active people")).toBeInTheDocument();
+    expect(screen.getByText("100 total")).toBeInTheDocument();
     expect(screen.getByText(/5 people · test lens/)).toBeInTheDocument();
   });
 
@@ -274,12 +310,43 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
     ]);
     mocks.grid.previousByKey = new Map();
     render(<DomainLensView config={HEADLINE_CONFIG} />);
-    // 100 total / 2 active = 50 per person, not 25
-    expect(screen.getByText(/50 commits per active person/)).toBeInTheDocument();
+    expect(screen.getByText("50 commits")).toBeInTheDocument();
+    expect(screen.getByText("average of 2 active people")).toBeInTheDocument();
+    expect(screen.getByText("100 total")).toBeInTheDocument();
+  });
+
+  it("compares per-person figures, not team totals", () => {
+    // Same 40-commit total both periods; two people carried it before, four now.
+    mocks.grid.byKey = new Map([
+      ["t.commits", metric("t.commits", IDS.map((id) => [id, 10] as [string, number]), { unit: "commits" })],
+    ]);
+    mocks.grid.previousByKey = new Map([
+      ["t.commits", metric("t.commits", [[pid("a"), 20], [pid("b"), 20], [pid("c"), 0], [pid("d"), 0]])],
+    ]);
+    render(<DomainLensView config={HEADLINE_CONFIG} />);
+    expect(screen.getByText("10 commits")).toBeInTheDocument();
+    expect(screen.getByTitle("Compared with previous period")).toHaveTextContent("-50%");
+  });
+
+  it("reads a non-additive metric as the median across the people who report it", () => {
+    mocks.grid.byKey = new Map([
+      ["t.commits", metric("t.commits", [[pid("a"), 1], [pid("b"), 2], [pid("c"), 9]], { computation: "median", unit: "h" } as Partial<NormalizedMetricResult>)],
+    ]);
+    render(<DomainLensView config={HEADLINE_CONFIG} />);
+    expect(screen.getByText("2 h")).toBeInTheDocument();
+    expect(screen.getByText("median of 3 people")).toBeInTheDocument();
+  });
+
+  it("says there was no activity rather than averaging over nobody", () => {
+    mocks.grid.byKey = new Map([
+      ["t.commits", metric("t.commits", IDS.map((id) => [id, 0] as [string, number]), { unit: "commits" })],
+    ]);
+    render(<DomainLensView config={HEADLINE_CONFIG} />);
+    expect(screen.getByText("no activity")).toBeInTheDocument();
   });
 });
 
-describe("headline cards open the records behind them", () => {
+describe("headline cards open the people behind them", () => {
   const openEvidenceTargets = vi.fn();
   const openEvidence = vi.fn();
   const openEvidencePeople = vi.fn();
@@ -294,51 +361,65 @@ describe("headline cards open the records behind them", () => {
     );
   }
 
-  it("opens the roster's own records, not one person's", async () => {
+  function drillable(key: string, values: Array<[string, number]>, over: Partial<NormalizedMetricResult> = {}) {
+    return metric(key, values, {
+      unit: "commits",
+      drilldown: { granularity: ["event"] },
+      selection: {
+        metric_key: key,
+        entity: { type: "person", ids: IDS },
+        period: { from: "2026-07-20", to: "2026-07-26" },
+        filters: [],
+      },
+      ...over,
+    } as Partial<NormalizedMetricResult>);
+  }
+
+  it("lists every person with a value, busiest first, each a step from their records", async () => {
     const user = userEvent.setup();
     mocks.grid.byKey = new Map([
-      [
-        "t.commits",
-        metric(
-          "t.commits",
-          IDS.map((id) => [id, 10] as [string, number]),
-          {
-            short_label: "Commits",
-            unit: "commits",
-            drilldown: { granularity: ["event"] },
-            selection: {
-              metric_key: "t.commits",
-              entity: { type: "person", ids: IDS },
-              period: { from: "2026-07-20", to: "2026-07-26" },
-              filters: [],
-            },
-          } as Partial<NormalizedMetricResult>
-        ),
-      ],
+      ["t.commits", drillable("t.commits", [[pid("a"), 10], [pid("b"), 0], [pid("c"), 30], [pid("d"), 20]])],
     ]);
+    drawWithEvidence();
+
+    await user.click(screen.getByRole("button", { name: /t.commits/ }));
+
+    expect(openEvidenceTargets).not.toHaveBeenCalled();
+    expect(openEvidencePeople).toHaveBeenCalledTimes(1);
+    const [view] = openEvidencePeople.mock.calls[0]!;
+    expect(view.title).toBe("t.commits · 20 commits per active person");
+    // The inactive person stays in the list: the reader sees who the average left out.
+    expect(view.rows.map((row: { entityId: string }) => row.entityId)).toEqual([
+      pid("c"), pid("d"), pid("a"), pid("b"),
+    ]);
+    expect(view.rows[0].target.selection.entity).toEqual({ type: "person", id: pid("c") });
+  });
+
+  it("drills a line count into the commits that carry it", async () => {
+    const user = userEvent.setup();
+    mocks.grid.byKey = new Map([
+      ["git.lines_added", metric("git.lines_added", [[pid("a"), 100]], { unit: "lines" })],
+      ["git.commits", drillable("git.commits", [[pid("a"), 4]])],
+    ]);
+    drawWithEvidence({ ...HEADLINE_CONFIG, sections: [{ kind: "headline", metrics: ["git.lines_added"] }] });
+
+    await user.click(screen.getByRole("button", { name: /git.lines_added/ }));
+
+    const [view] = openEvidencePeople.mock.calls[0]!;
+    expect(view.rows[0].value).toBe(100);
+    expect(view.rows[0].target.selection.metric_key).toBe("git.commits");
+  });
+
+  it("still lists the people of a metric whose records cannot be read", async () => {
+    const user = userEvent.setup();
     drawWithEvidence();
 
     await user.click(screen.getByRole("button", { name: /Commits|t.commits/ }));
 
-    expect(openEvidenceTargets).toHaveBeenCalledTimes(1);
-    const [targets, options] = openEvidenceTargets.mock.calls[0]!;
-    expect(options).toEqual({ activeMetricKey: "t.commits" });
-    // The card's figure is the roster's, so its records are the roster's too —
-    // asked for as one selection over every member.
-    expect(targets[0].selection.entity).toEqual({
-      type: "persons",
-      ids: [...IDS, pid("boss")].sort(),
-    });
-  });
-
-  it("stays a plain card for a metric whose evidence cannot be read", () => {
-    drawWithEvidence();
-
-    // The seeded metric declares no drilldown: an affordance that opens an
-    // empty dialog is worse than none.
-    expect(
-      screen.queryByRole("button", { name: /Commits|t.commits/ })
-    ).not.toBeInTheDocument();
+    const [view] = openEvidencePeople.mock.calls[0]!;
+    expect(view.rows).toHaveLength(4);
+    expect(view.rows.every((row: { target: unknown }) => row.target === null)).toBe(true);
+    expect(view.allRecords).toBeNull();
   });
 });
 
@@ -356,7 +437,7 @@ describe("rule 6: honest not-ingested gate", () => {
       />,
     );
     expect(screen.getByText("Git source isn't wired for this org yet.")).toBeInTheDocument();
-    expect(screen.queryByText(/team total/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/active people/)).not.toBeInTheDocument();
   });
 });
 
@@ -1170,6 +1251,22 @@ describe("direction-cards / attention sections", () => {
     expect(screen.getByText(/no commits/)).toBeInTheDocument();
   });
 
+  it("compares a direction card's per-person figure, not the team total", () => {
+    // Same 40-commit total both periods; two people carried it before, four now.
+    mocks.grid.byKey = new Map([
+      ["git.default_branch_commits", metric("git.default_branch_commits", IDS.map((id) => [id, 10] as [string, number]))],
+    ]);
+    mocks.grid.previousByKey = new Map([
+      ["git.default_branch_commits", metric("git.default_branch_commits", [[pid("a"), 20], [pid("b"), 20], [pid("c"), 0], [pid("d"), 0]])],
+    ]);
+    render(
+      <DomainLensView
+        config={{ title: "T", sections: [{ kind: "direction-cards", variant: "compact" }] }}
+      />,
+    );
+    expect(screen.getByText("10")).toBeInTheDocument();
+    expect(screen.getByTitle("Compared with previous period")).toHaveTextContent("-50%");
+  });
 });
 
 describe("coverage section (#2408)", () => {
@@ -1345,6 +1442,109 @@ describe("trend section", () => {
       ["a", "b"],
     ]);
   });
+});
+
+describe("trend lines hold only buckets the range covers whole", () => {
+  // A hundred people coarsen a quarter to weeks and a year to months, so the
+  // range's first and last buckets can run past its ends.
+  function seedLargeOrg() {
+    const labels = ["a", "b", ...Array.from({ length: 97 }, (_, i) => `p${i}`)];
+    mocks.tree = person("boss", {}, labels.map((l) => person(l)));
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
+  }
+
+  function trendOver(buckets: readonly string[]) {
+    const trend = emptyCollection();
+    trend.byKey = new Map([
+      [
+        "t.commits",
+        timeseries("t.commits", {
+          [pid("a")]: buckets.map((b) => [b, 3]),
+          [pid("b")]: buckets.map((b) => [b, 2]),
+        }),
+      ],
+    ]);
+    mocks.collections = [trend, emptyCollection(), emptyCollection()];
+  }
+
+  function plottedDates(): Record<string, string[]> {
+    return Object.fromEntries(
+      screen
+        .getAllByTestId("section-trend")
+        .map((node) => [
+          node.getAttribute("data-title"),
+          JSON.parse(node.getAttribute("data-dates") ?? "[]"),
+        ]),
+    );
+  }
+
+  const CONFIG: LensConfig = {
+    title: "T",
+    sections: [
+      { kind: "trend", metrics: ["t.commits"], activeContributorsFor: "t.commits" },
+      { kind: "participation", metrics: ["t.commits"], title: "Adoption", noun: "People committing" },
+    ],
+  };
+
+  it.each([
+    {
+      period: "a quarter starting and ending mid-week",
+      range: { from: "2026-08-04", to: "2026-11-03" },
+      bucket: "week",
+      buckets: ["2026-08-03", "2026-08-10", "2026-10-26", "2026-11-02"],
+      plotted: ["2026-08-10", "2026-10-26"],
+    },
+    {
+      period: "a quarter running Monday to Sunday",
+      range: { from: "2026-08-03", to: "2026-11-01" },
+      bucket: "week",
+      buckets: ["2026-08-03", "2026-08-10", "2026-10-26"],
+      plotted: ["2026-08-03", "2026-08-10", "2026-10-26"],
+    },
+    {
+      period: "a year starting and ending mid-month",
+      range: { from: "2025-11-04", to: "2026-11-03" },
+      bucket: "month",
+      buckets: ["2025-11-01", "2025-12-01", "2026-10-01", "2026-11-01"],
+      plotted: ["2025-12-01", "2026-10-01"],
+    },
+    {
+      period: "a year from the first of a month to the last of one",
+      range: { from: "2025-11-01", to: "2026-10-31" },
+      bucket: "month",
+      buckets: ["2025-11-01", "2025-12-01", "2026-09-01", "2026-10-01"],
+      plotted: ["2025-11-01", "2025-12-01", "2026-09-01", "2026-10-01"],
+    },
+    {
+      period: "a week ending yesterday",
+      range: { from: "2026-07-20", to: "2026-07-26" },
+      bucket: "day",
+      buckets: ["2026-07-20", "2026-07-25", "2026-07-26"],
+      plotted: ["2026-07-20", "2026-07-25", "2026-07-26"],
+    },
+  ])(
+    "$period plots only the $bucket buckets it holds whole",
+    async ({ range, bucket, buckets, plotted }) => {
+      mocks.dateRange = range;
+      seedLargeOrg();
+      trendOver(buckets);
+      render(<DomainLensView config={CONFIG} />);
+
+      expect(mocks.requested[0]?.metrics[0]?.views).toEqual([
+        { view: "timeseries", bucket },
+      ]);
+      expect(plottedDates(), `plotted buckets for ${range.from}..${range.to}`).toEqual({
+        Commits: plotted,
+        "Active contributors · Commits": plotted,
+        "Active people over time": plotted,
+      });
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Open Commits details" }),
+      );
+      expect(openedDrilldown().breakdown.map((b) => b.date)).toEqual(plotted);
+    },
+  );
 });
 
 describe("dimension-table (rollup: one row per dimension value)", () => {

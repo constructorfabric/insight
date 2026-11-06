@@ -1,6 +1,6 @@
 import { refusal } from "@/components/custom/refusal";
 import { isRevisionConflict } from "@/lib/alerts/conflict";
-import { Switch } from "@/components/ui/switch";
+import { Switch } from "@gears-frontx/ui-kit";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import { useSetAlertEnabled } from "@/queries/alerts";

@@ -6,13 +6,13 @@ import {
   useMetricEvidenceOptional,
   withOwnTarget,
 } from "@/components/metric-evidence-context";
-import { Button } from "@/components/ui/button";
 import {
+  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@gears-frontx/ui-kit";
 import { cn } from "@/lib/utils";
 
 export function MetricCardActions({
@@ -36,7 +36,7 @@ export function MetricCardActions({
           <Button
             type="button"
             variant="ghost"
-            size="icon-xs"
+            size="sm"
             className={cn(
               "text-muted-foreground",
               placement === "overlay" && "absolute top-4 right-4 z-10"

@@ -1,4 +1,5 @@
-import { formatMetricNumber, formatMetricValue } from "@/lib/format";
+import type { MetricDirection } from "@/api/metric-results-client";
+import { formatMetricFigure, formatPp } from "@/lib/format";
 import {
   KPI_ROW,
   KPI_ROW_MAX,
@@ -19,6 +20,7 @@ import {
   computeDelta,
   deltaStatus,
   formatTileDelta,
+  type MetricDelta,
 } from "@/lib/metrics/delta";
 import type { Status } from "@/lib/status";
 import { absenceLabel } from "@/lib/metrics/absence";
@@ -57,6 +59,22 @@ export interface KpiTileData {
   groupId: GroupId | null;
 }
 
+function tileDelta(
+  delta: MetricDelta,
+  direction: MetricDirection
+): NonNullable<KpiTileData["delta"]> {
+  const text = formatTileDelta(delta);
+  if (text == null) {
+    const unchanged = delta.kind === "pp_change" ? formatPp(0, 0) : "±0%";
+    return { text: unchanged, status: "neutral", down: false };
+  }
+  return {
+    text,
+    status: deltaStatus(delta, direction),
+    down: delta.value < 0,
+  };
+}
+
 /** Metric-collection results → tiles, in `KPI_ROW` order. */
 export function metricKpiTiles(
   byKey: Map<string, NormalizedMetricResult>,
@@ -87,23 +105,13 @@ export function metricKpiTiles(
     const previousValue = previousMetric
       ? forEntity(previousMetric, entityId).value
       : null;
-    const rawDelta = computeDelta(
-      value,
-      previousValue,
-      metric.computation,
-      metric.format
-    );
-    const deltaText = rawDelta ? formatTileDelta(rawDelta) : null;
-    const delta =
-      rawDelta && deltaText
-        ? {
-            text: deltaText,
-            status: leaveLabel
-              ? "neutral"
-              : deltaStatus(rawDelta, metric.direction),
-            down: rawDelta.value < 0,
-          }
-        : null;
+    const rawDelta: MetricDelta | null =
+      value === 0 && previousValue === 0
+        ? { kind: "percent_change", value: 0 }
+        : computeDelta(value, previousValue, metric.computation, metric.format);
+    const delta = rawDelta
+      ? tileDelta(rawDelta, leaveLabel ? "neutral" : metric.direction)
+      : null;
 
     const gapText =
       (standing.eligible || standing.reason === "time_off") &&
@@ -127,20 +135,11 @@ export function metricKpiTiles(
         // width by making the reader decode them. The tile wraps to two lines
         // instead, which costs a row of pixels once and nothing after that.
         label: metric.label,
-        value:
-          value == null
-            ? "—"
-            : metric.format === "percent"
-              ? formatMetricValue(value, metric.format, metric.unit)
-              : formatMetricNumber(value, metric.format),
+        value: formatMetricFigure(value, metric.format, metric.unit),
         delta,
         medianLabel:
           median != null
-            ? `median ${
-                metric.format === "percent"
-                  ? formatMetricValue(median, metric.format, metric.unit)
-                  : formatMetricNumber(median, metric.format)
-              }`
+            ? `median ${formatMetricFigure(median, metric.format, metric.unit)}`
             : null,
         gapText,
         gapStatus,

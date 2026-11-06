@@ -47,6 +47,8 @@ export function TileRow({
               <MetricName
                 metric={tile.r}
                 className="text-xs font-medium text-muted-foreground"
+                truncate
+                focusable
               />
               <Delta
                 now={tile.now}

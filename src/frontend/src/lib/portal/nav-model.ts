@@ -135,6 +135,7 @@ export const DIRECTIONS: readonly Direction[] = [
     lenses: [
       "Overview",
       "Git output",
+      "Work in flight",
       "Delivery",
       "Activity",
       "Flow",

@@ -9,7 +9,7 @@
 import { useTranslation } from "react-i18next";
 import { ArrowDown, ArrowUp } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@gears-frontx/ui-kit";
 import { cn } from "@/lib/utils";
 
 /** Rows past which scrolling back by hand stops being reasonable. */
@@ -49,23 +49,19 @@ export function ScrollToEnds({
       <Button
         type="button"
         variant="outline"
-        size="icon"
         className="pointer-events-auto size-8 shadow-sm"
         aria-label={t("common.actions.scroll_to_top")}
         onClick={() => jump("top")}
-      >
-        <ArrowUp className="size-4" />
-      </Button>
+        icon={<ArrowUp className="size-4" />}
+      />
       <Button
         type="button"
         variant="outline"
-        size="icon"
         className="pointer-events-auto size-8 shadow-sm"
         aria-label={t("common.actions.scroll_to_bottom")}
         onClick={() => jump("bottom")}
-      >
-        <ArrowDown className="size-4" />
-      </Button>
+        icon={<ArrowDown className="size-4" />}
+      />
     </div>
   );
 }

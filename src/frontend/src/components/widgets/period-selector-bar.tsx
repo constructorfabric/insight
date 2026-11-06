@@ -1,14 +1,21 @@
 import { CalendarIcon, CircleAlert } from "lucide-react";
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 import type { DateRange as DayPickerRange } from "react-day-picker";
 
 import {
+  latestPickableDay,
   MAX_DATE_RANGE_DAYS,
   resolveDateRange,
   toISODate,
   validateDateRange,
+  type DateRange,
 } from "@/api/period-to-date-range";
-import { Button } from "@/components/ui/button";
+import {
+  Button,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@gears-frontx/ui-kit";
 import { Calendar } from "@/components/ui/calendar";
 import {
   Popover,
@@ -16,12 +23,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import type { CustomRange, PeriodValue } from "@/types/insight";
 
 function parseIso(iso: string): Date {
@@ -69,9 +70,25 @@ const TABS: { value: PeriodValue; label: string; short: string }[] = [
 const SEGMENT =
   "bg-card text-muted-foreground aria-pressed:bg-selection-subtle aria-pressed:text-foreground";
 
+const COMPOSITE_NAVIGATION_KEYS = new Set([
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  "Home",
+  "End",
+]);
+
+// WORKAROUND: the popover is portalled out of the DOM but not out of the React
+// tree, so its key events bubble to the ToggleGroup, whose roving focus takes them.
+function keepNavigationKeysInside(event: KeyboardEvent<HTMLDivElement>) {
+  if (COMPOSITE_NAVIGATION_KEYS.has(event.key)) event.stopPropagation();
+}
+
 export interface PeriodSelectorBarProps {
   period: PeriodValue;
   customRange: CustomRange | null;
+  activeRange?: DateRange;
   onPeriodChange: (period: PeriodValue) => void;
   onRangeChange: (range: CustomRange | null) => void;
 }
@@ -79,6 +96,7 @@ export interface PeriodSelectorBarProps {
 export function PeriodSelectorBar({
   period,
   customRange,
+  activeRange: reportedRange,
   onPeriodChange,
   onRangeChange,
 }: PeriodSelectorBarProps) {
@@ -92,7 +110,7 @@ export function PeriodSelectorBar({
       : undefined
   );
 
-  const activeRange = resolveDateRange(period, customRange);
+  const activeRange = reportedRange ?? resolveDateRange(period, customRange);
   const activeRangeLabel = formatRange(activeRange.from, activeRange.to);
   const pendingRange = tempRange?.from
     ? {
@@ -158,31 +176,33 @@ export function PeriodSelectorBar({
                 {/* The range spells out to ~140px; below `sm` the calendar icon
                     stands in for it and the popover shows the actual dates. */}
                 <span className="hidden sm:inline">{activeRangeLabel}</span>
-                <TooltipProvider delay={200}>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span
-                          className="rounded bg-muted px-1 py-px text-xs font-semibold tracking-wider text-muted-foreground uppercase"
-                          aria-label="Days are counted in UTC"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          UTC
-                        </span>
-                      }
-                    />
-                    <TooltipContent
-                      side="bottom"
-                      className="max-w-xs text-xs leading-relaxed"
-                    >
-                      All dates here are bucketed by UTC midnight.
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        className="rounded bg-muted px-1 py-px text-xs font-semibold tracking-wider text-muted-foreground uppercase"
+                        aria-label="Days are counted in UTC"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        UTC
+                      </span>
+                    }
+                  />
+                  <TooltipContent
+                    side="bottom"
+                    className="max-w-xs text-xs leading-relaxed"
+                  >
+                    All dates here are bucketed by UTC midnight.
+                  </TooltipContent>
+                </Tooltip>
               </ToggleGroupItem>
             }
           />
-          <PopoverContent align="end" className="w-auto p-0">
+          <PopoverContent
+            align="end"
+            className="w-auto p-0"
+            onKeyDown={keepNavigationKeysInside}
+          >
             {tempRange?.from ? (
               <div className="border-b border-border px-4 py-3">
                 <p className="text-sm font-semibold text-foreground">
@@ -203,6 +223,7 @@ export function PeriodSelectorBar({
               showOutsideDays={false}
               selected={tempRange}
               onSelect={(r) => setTempRange(r)}
+              disabled={{ after: latestPickableDay() }}
               defaultMonth={tempRange?.from}
               numberOfMonths={
                 typeof window !== "undefined" && window.innerWidth < 640 ? 1 : 2

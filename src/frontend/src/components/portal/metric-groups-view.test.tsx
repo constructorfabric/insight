@@ -14,7 +14,6 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MetricResult } from "@/api/metric-results-client";
-import { previousPeriodRange } from "@/api/period-to-date-range";
 import type { GroupId } from "@/lib/insight/groups";
 import { normalizeMetricResults } from "@/lib/metrics/collection";
 
@@ -31,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   cohort: [] as string[],
   period: "week" as const,
   range: { from: "2026-07-20", to: "2026-07-26" },
+  compareTo: { from: "2026-07-13", to: "2026-07-19" },
   // Every `useMetricCollectionSet` call, so a test can assert WHICH windows the
   // view asked for — the mock returns one result set regardless of arguments.
   setCalls: [] as Array<{
@@ -81,7 +81,12 @@ vi.mock("@/lib/portal/portal-nav", () => ({
   usePortalItem: () => null,
 }));
 vi.mock("@/hooks/use-portal-period", () => ({
-  usePortalPeriod: () => ({ period: mocks.period, dateRange: mocks.range }),
+  usePortalPeriod: () => ({
+    period: mocks.period,
+    dateRange: mocks.range,
+    compareTo: mocks.compareTo,
+    comparisonNoun: mocks.period,
+  }),
 }));
 vi.mock("@/components/widgets/dashboard/kpi-tile", () => ({
   KpiTile: ({
@@ -134,7 +139,7 @@ function metric(key: string): MetricResult {
 }
 
 const GROUP_METRIC: Record<string, string> = {
-  git_output: "git.commits",
+  git_output: "git.default_branch_commits",
   collaboration: "collab.messages_sent",
 };
 
@@ -231,9 +236,7 @@ describe("MetricGroupsView", () => {
     const signatures = new Set(sections.map((c) => JSON.stringify(c)));
     expect(sections.length).toBeGreaterThan(1);
     expect(signatures.size).toBe(1);
-    expect(sections[0]!.compareTo).toEqual(
-      previousPeriodRange(mocks.range, mocks.period),
-    );
+    expect(sections[0]!.compareTo).toEqual(mocks.compareTo);
   });
 
   it("asks for the slice cohort under one signature too", () => {
@@ -254,7 +257,7 @@ describe("MetricGroupsView", () => {
     // peer row — an unmeasured metric gets no tile and nothing to click.
     mocks.collection.byKey = normalizeMetricResults([
       {
-        ...metric("git.commits"),
+        ...metric("git.default_branch_commits"),
         views: [
           { view: "period", values: [{ entity_id: "p@x", value: 3 }] },
           {

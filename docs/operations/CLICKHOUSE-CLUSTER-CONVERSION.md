@@ -225,18 +225,37 @@ For each database, the script:
 3. creates `<name>` `ON CLUSTER` with `ENGINE = Replicated(...)`, the engine
    and Keeper path `create-databases.sh` emits, without its `IF NOT EXISTS`;
 4. for every table, issues the table's own `CREATE` with the engine prefixed
-   `Replicated`, copies the rows with `INSERT ... SELECT`, and compares the
-   two counts; a mismatch stops it there;
+   `Replicated` under a staging name, `<table>__converting`, copies the rows
+   a reader sees with `INSERT ... SELECT`, compares the two counts, and only
+   then renames the copy to the table's own name; a mismatch stops it there,
+   with the copy left under the staging name;
 5. creates every view the same way, once the relations it reads stand.
+
+A plain `MergeTree` table is copied and counted as it stands. Every other
+engine of the family (`ReplacingMergeTree` and the rest) is copied and
+counted with `FINAL`. These engines collapse rows that share a sorting key,
+in background merges and within each inserted block, and the row that
+survives depends on the order the parts arrived in: without a version
+column, or with two rows on the same version, a raw copy can show other rows
+than the source while holding as many. The copy therefore carries only what
+a reader of the source sees, superseded rows left behind, and a table whose
+parts still hold such rows converts as it stands, with no `OPTIMIZE` first.
+A copy missing a sorting key the source holds, or a row of a plain table,
+still stops the conversion.
 
 It prints one line per relation with its row count. It is safe to re-run.
 While `standalone_<name>` still stands, a re-run resumes: a table already
-copied whole is reported as already converted and skipped, a table copied in
-part is refused by name with the statement that clears it, and a database
-with nothing left ends in "nothing to do". Once the copy is dropped (step 7),
-a database already `Replicated` is reported as such and left alone. Each
-table's copy is one HTTP request; the ceiling per request is
-`CH_HTTP_MAX_TIME_S`, six hours unless set.
+copied whole is reported as already converted and skipped, a copy left under
+its staging name is refused by that name with the statement that clears it,
+and a database with nothing left ends in "nothing to do". For a table found
+under its own name and not plain `MergeTree`, the re-run also compares a hash
+of every row both sides show under `FINAL`, which reads every column of both
+once more: a raw copy that an earlier version of the script left behind
+holds as many rows but not the same ones, and is refused by name with the
+statement that drops it. Once the copy is dropped (step 7), a database
+already `Replicated` is reported as such and left alone. Each table's copy is
+one HTTP request; the ceiling per request is `CH_HTTP_MAX_TIME_S`, six hours
+unless set.
 
 The `standalone_<name>` databases stay on the node. They are the rollback
 until step 7 drops them.

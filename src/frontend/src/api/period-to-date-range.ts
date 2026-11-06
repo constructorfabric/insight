@@ -3,7 +3,7 @@
  * YYYY-MM-DD without a timezone suffix — the backend filters by date string.
  */
 
-import { differenceInCalendarDays, isValid, parseISO } from "date-fns";
+import { differenceInCalendarDays, isValid, parseISO, subDays } from "date-fns";
 
 import type { CustomRange, PeriodValue } from "@/types/insight";
 
@@ -17,7 +17,7 @@ export type DateRangeValidation =
   | { valid: true; days: number }
   | {
       valid: false;
-      reason: "invalid_date" | "inverted" | "too_long";
+      reason: "invalid_date" | "inverted" | "too_long" | "future";
       days?: number;
     };
 
@@ -49,6 +49,7 @@ export function validateDateRange(range: DateRange): DateRangeValidation {
 
   if (!from || !to) return { valid: false, reason: "invalid_date" };
   if (from > to) return { valid: false, reason: "inverted" };
+  if (to > latestPickableDay()) return { valid: false, reason: "future" };
 
   const days = differenceInCalendarDays(to, from) + 1;
 
@@ -66,10 +67,17 @@ export function toISODate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function localToday(): Date {
+export function localToday(): Date {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return today;
+}
+
+// INVARIANT: some surfaces report by UTC day, which west of UTC can be local tomorrow.
+export function latestPickableDay(now: Date = new Date()): Date {
+  const localDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const utcDay = new Date(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return utcDay > localDay ? utcDay : localDay;
 }
 
 function subtractMonths(d: Date, months: number): Date {
@@ -179,3 +187,19 @@ export function previousPeriodRange(
   return { from: shift(range.from), to: shift(range.to) };
 }
 
+function precedingRange(range: DateRange): DateRange {
+  const from = parseISO(range.from);
+  const days = differenceInCalendarDays(parseISO(range.to), from) + 1;
+  return {
+    from: toISODate(subDays(from, days)),
+    to: toISODate(subDays(from, 1)),
+  };
+}
+
+export function comparisonRange(
+  range: DateRange,
+  period: PeriodValue,
+  customRange: CustomRange | null
+): DateRange {
+  return customRange ? precedingRange(range) : previousPeriodRange(range, period);
+}

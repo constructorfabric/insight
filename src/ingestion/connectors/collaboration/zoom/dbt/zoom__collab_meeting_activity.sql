@@ -368,7 +368,7 @@ attended_days AS (
         -- INVARIANT: 'email' says the row is keyed by person_key and carries no
         -- account; gold emits the account triple only for the other values.
         if(min(p.email) IS NULL, 'zoom-guest', 'email') AS account_source_type,
-        if(min(p.email) IS NULL, p.source_id, '') AS account_source_id,
+        if(min(p.email) IS NULL, coalesce(p.source_id, ''), '') AS account_source_id,
         if(min(p.email) IS NULL, any(p.name_key), '') AS account_id,
         -- INVARIANT: logical_meeting_id folds host-drop rejoins into one meeting;
         -- meeting_uuid stands in until the meeting is stitched.

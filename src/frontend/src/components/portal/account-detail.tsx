@@ -28,7 +28,7 @@ import type {
 } from "@/api/identity-client";
 import { AccountActions } from "@/components/portal/account-actions";
 import { PersonId } from "@/components/portal/person-id";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@gears-frontx/ui-kit";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import type { AccountRef } from "@/lib/identities/account-key";

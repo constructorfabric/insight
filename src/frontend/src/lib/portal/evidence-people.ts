@@ -28,17 +28,20 @@ export interface RosterLookups {
  * list cannot disagree with the bar or card that opened it, and no request is
  * made to build it. A metric with no readable evidence still lists its people;
  * only the step into records is missing, because only that step needs a source.
+ * `records` names the metric whose records explain the values (see
+ * `evidenceMetricFor`); null lists the people without that step.
  */
 export function peopleEvidenceView(
   r: NormalizedMetricResult,
   entityIds: readonly string[],
   title: string,
-  roster: RosterLookups
+  roster: RosterLookups,
+  records: NormalizedMetricResult | null = r
 ): EvidencePeopleView {
   const rows: EvidencePersonRow[] = entityValues(r, entityIds).map((entry) => {
     const name = roster.nameByEntity.get(entry.id) ?? entry.id;
-    const selection = r.drilldown
-      ? evidenceSelection(r.selection, entry.id)
+    const selection = records?.drilldown
+      ? evidenceSelection(records.selection, entry.id)
       : null;
     return {
       entityId: entry.id,
@@ -62,9 +65,9 @@ export function peopleEvidenceView(
 
   // INVARIANT: over the rows, never the caller's ids — a person the metric has
   // no value for is not in the list, so their records are not behind it either.
-  const allRecords = r.drilldown
+  const allRecords = records?.drilldown
     ? personsEvidenceSelection(
-        r.selection,
+        records.selection,
         rows.map((row) => row.entityId)
       )
     : null;
