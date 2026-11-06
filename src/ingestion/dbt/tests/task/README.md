@@ -51,7 +51,7 @@ dbt test --select tag:connector_quality,tag:github --profiles-dir .
 | `assert_changelog_traceable_to_bronze` | connector_quality, jira | Silver changelog row with no matching `staging.jira_changelog_items` |
 | `assert_initial_traceable_to_bronze` | connector_quality, jira | Silver initial row with no matching `bronze_jira.jira_issue` |
 | `assert_task_field_history_key_is_issue_keyed` | connector_quality, jira | A Jira silver row whose `unique_key` is not the issue-keyed formula |
-| `assert_census_issue_has_full_record` | connector_quality, jira | A censused recent issue the incremental scan never fetched |
+| `assert_census_issue_has_full_record` | connector_quality, jira | A censused issue that changed before the last scan, yet has no full record |
 | `assert_availability_ids_and_timestamps` | connector_quality, jira | An availability row missing its identifier or timestamp |
 | `assert_worklog_deletion_state_consistent` | connector_quality, jira | A tombstoned worklog still marked live |
 | `assert_issue_link_sets_are_complete` | connector_quality, github | A link set collected with fewer members than the vendor states — a nested connection cut off at its page boundary |

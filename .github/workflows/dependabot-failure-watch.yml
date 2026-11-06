@@ -34,6 +34,7 @@ jobs:
         if: steps.collect.outputs.count != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           COUNT: ${{ steps.collect.outputs.count }}
         run: |
           set -euo pipefail
