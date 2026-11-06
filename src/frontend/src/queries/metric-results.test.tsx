@@ -28,9 +28,18 @@ vi.mock("@/api/metric-definitions-client", () => ({
 const mock = vi.mocked(queryMetricResults);
 
 /** What the installation's catalog offers, per test. */
-let catalog: Array<{ metric_key: string; is_enabled: boolean }> = [];
+type CatalogEntry = {
+  metric_key: string;
+  is_enabled: boolean;
+  schema_status: "ok" | "error" | "unchecked";
+};
+let catalog: CatalogEntry[] = [];
 function offers(...keys: string[]) {
-  catalog = keys.map((metric_key) => ({ metric_key, is_enabled: true }));
+  catalog = keys.map((metric_key) => ({
+    metric_key,
+    is_enabled: true,
+    schema_status: "ok",
+  }));
 }
 
 // Echo the requested metrics/entities back as a valid response so merges and
@@ -116,6 +125,29 @@ describe("useMetricCollection", () => {
     expect(mock.mock.calls[0]![0].metrics.map((m) => m.metric_key)).toEqual(["m"]);
     expect(result.current.byKey.get("m")).toBeDefined();
     expect(result.current.byKey.get("tasks.closed_task")).toBeUndefined();
+  });
+
+  it.each([
+    { state: "a disabled", entry: { is_enabled: false }, asked: ["m"] },
+    { state: "a schema-error", entry: { schema_status: "error" }, asked: ["m"] },
+    { state: "an unchecked", entry: { schema_status: "unchecked" }, asked: ["m", "other"] },
+  ] as const)("asks for $state metric only when the backend would serve it", async ({ entry, asked }) => {
+    // The backend refuses a disabled or schema-error definition like an unknown
+    // key, and one refused key fails the whole collection.
+    offers("m", "other");
+    catalog = catalog.map((c) => (c.metric_key === "other" ? { ...c, ...entry } : c));
+    const both: MetricCollectionConfig = {
+      metrics: [
+        { key: "m", views: [{ view: "period" }] },
+        { key: "other", views: [{ view: "period" }] },
+      ],
+    };
+    const { result } = renderHook(
+      () => useMetricCollection(both, ENTITY, RANGE),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(mock.mock.calls[0]![0].metrics.map((m) => m.metric_key)).toEqual(asked);
   });
 
   it("makes no request at all when the catalog offers none of the collection", async () => {
