@@ -688,7 +688,7 @@ visible width minus cell padding, with both cards shrinking or stacking without 
 scrolling inside the pane. Runs now uses recorded health
 facts; Requested appears only while a saved request differs, with attribution
 from identity me. Both show recognised UTC preset words and muted cron expressions.
-Pending says `Saved. Until the request is applied, the current schedule keeps running.`
+Pending says `Saved. Until the request is applied, the current schedule keeps running. The change applies within about a minute.`
 Its header chip says `● Pending`. Error shows the acknowledgement message and attempt time
 and invites the admin to edit and save again; Save stays enabled for an unchanged errored request.
 The header chips read `Error`, `Applied` or `Inherited` for the other statuses.
@@ -722,6 +722,22 @@ PUT and DELETE invalidate summary and row schedule queries. Save, Cancel and Esc
 focus to Edit. The page polls the summary
 and open schedule every 30 seconds while a visible request is pending or errored;
 afterwards schedule polling stops and summary returns to its existing one-minute cadence.
+
+#### Applying a request
+
+The one-minute schedule-only loop reads requests, instance annotations, descriptors,
+managed connector CronWorkflows and acknowledgement records after acquiring the same
+release-scoped mutex as full reconciliation. It resolves every instance before changing
+anything; a failed read fails the tick without a fallback. It patches only schedules,
+timezone and schedule-origin, with UID and resourceVersion fencing, and reads the object
+back before writing its snapshot revision to the acknowledgement record. A failed attempt
+preserves the last successful observation. Matching instances need no patch or write;
+missing CronWorkflows receive an attempt error until a full pass creates them.
+
+The loop never contacts Airbyte, creates or deletes CronWorkflows, sweeps sync history or
+submits a full pass. Expected latency is 0–60 seconds plus pod startup and application;
+serialization can delay it up to the full pass's 1,800-second deadline. See
+[ADR-0004](../ADR/0004-schedule-only-application-loop.md).
 
 ### 3.4 Internal Dependencies
 
@@ -997,6 +1013,7 @@ user and checks that `SELECT` is allowed while `INSERT`, `CREATE`, `DROP`, `TRUN
 | ledger table | ClickHouse migration, applied by the post-upgrade hook |
 | ledger grant | the query-path role's definition, applied by the same hook before the migrations |
 | sweep | the reconcile loop's existing image and CronWorkflow |
+| schedule application | one-minute schedule-only CronWorkflow sharing reconciliation's mutex |
 | health and schedule routes | analytics service |
 | requested schedules | analytics MariaDB migration |
 | pane | portal bundle |
@@ -1035,12 +1052,13 @@ after applying the newly resolved deployment fallback, then reads as inherited.
 Failed apply or readback upserts only attempt revision/time and a bounded generic
 `last_error` on an existing acknowledgement record, preserving successful observation
 and deployment fields. A first failed attempt has no successful observation.
-A write failure fails the pass. Every later pass reapplies, reads back and upserts,
+A write failure fails the pass. Every later full pass reapplies, reads back and upserts,
 including unchanged revisions, so drift and interrupted writes retry idempotently.
 
 A dedicated MariaDB account and default role per Kubernetes stand grant SELECT on the view
 and SELECT/INSERT/UPDATE on `connector_schedule_acknowledgements` only. Acknowledgement
-SELECT supports MariaDB's upsert privilege checks. It has no base-table, DELETE or DDL
+SELECT supports MariaDB's upsert privilege checks and skipping matching acknowledgement
+records in the schedule-only loop. It has no base-table, DELETE or DDL
 privileges. Credentials come from environment or files and never appear in arguments
 or diagnostics. Runtime pods receive only
 this account's credentials. A separate provisioning hook at weight 15 runs after

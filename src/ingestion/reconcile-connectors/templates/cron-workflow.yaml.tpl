@@ -45,7 +45,7 @@ spec:
   # `unknown field "spec.schedule"` error (same fix as the chart's
   # reconcile-cron.yaml, PR #549).
   schedules: ${SCHEDULES}
-  timezone: UTC
+  timezone: ${SCHEDULE_TIMEZONE}
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 300
   workflowSpec:

@@ -31,6 +31,9 @@ spec:
   successfulJobsHistoryLimit: {{ default 3 .Values.ingestion.reconcile.successfulJobsHistoryLimit }}
   failedJobsHistoryLimit:     {{ default 3 .Values.ingestion.reconcile.failedJobsHistoryLimit }}
   workflowSpec:
+    synchronization:
+      mutexes:
+        - name: {{ include "insight.fullname" . }}-reconcile
     serviceAccountName: {{ include "insight.fullname" . }}-reconcile
     entrypoint: run
     activeDeadlineSeconds: 1800

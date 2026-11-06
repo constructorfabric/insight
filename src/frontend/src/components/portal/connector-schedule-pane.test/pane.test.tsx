@@ -115,6 +115,9 @@ it("keeps recorded and requested schedules separate and announces pending with a
   render(pane());
   expect(screen.getByText("Runs now")).toBeInTheDocument();
   expect(screen.getByText("Requested")).toBeInTheDocument();
+  expect(screen.getByText(/Saved. Until the request is applied/)).toHaveTextContent(
+    "Saved. Until the request is applied, the current schedule keeps running. The change applies within about a minute."
+  );
   expect(screen.getByText(/0 3 \* \* \*/)).toBeInTheDocument();
   expect(screen.getByText(/0 6 \* \* \*/)).toBeInTheDocument();
   expect(screen.getByText(/· you,/)).toBeInTheDocument();

@@ -250,6 +250,8 @@ ingestion:
     ttlSecondsAfterCompletion: 1800
     ttlSecondsAfterSuccess: 600
     ttlSecondsAfterFailure: 3600
+  scheduleApply:
+    schedule: "* * * * *"
   # Reconcile loop: descriptor-driven Airbyte connector reconciliation,
   # cron-scheduled inside the cluster (see templates/ingestion/reconcile-cron.yaml).
   reconcile:

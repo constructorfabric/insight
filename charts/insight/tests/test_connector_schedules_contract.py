@@ -103,3 +103,25 @@ def test_runtime_provisioning_owns_credentials_and_honours_supplied_secret_names
             "helm.sh/hook-weight": "-5",
             "helm.sh/hook-delete-policy": "before-hook-creation",
         }
+
+
+def test_schedule_application_and_full_reconcile_share_the_release_mutex() -> None:
+    result = render()
+    assert result.returncode == 0, result.stderr
+    documents = list(yaml.safe_load_all(result.stdout))
+    apply = resource(documents, "CronWorkflow", "contract-test-schedule-apply")["spec"]
+    reconcile = resource(documents, "CronWorkflow", "contract-test-reconcile-loop")["spec"]
+    workflow = apply["workflowSpec"]
+    full = reconcile["workflowSpec"]
+    assert apply["schedules"] == ["* * * * *"]
+    assert apply["concurrencyPolicy"] == "Forbid"
+    assert workflow["synchronization"] == full["synchronization"] == {"mutexes": [{"name": "contract-test-reconcile"}]}
+    assert workflow["serviceAccountName"] == full["serviceAccountName"]
+    container = workflow["templates"][0]["container"]
+    full_container = full["templates"][0]["container"]
+    assert container["image"] == full_container["image"]
+    assert container["command"] == ["bash", "/ingestion/reconcile-connectors/schedule-apply.sh"]
+    env = {entry["name"]: entry for entry in container["env"]}
+    for entry in full_container["env"]:
+        if entry["name"].startswith("CONNECTOR_SCHEDULES_DB_"):
+            assert env[entry["name"]] == entry

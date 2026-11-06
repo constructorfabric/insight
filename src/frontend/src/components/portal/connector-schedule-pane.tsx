@@ -155,7 +155,7 @@ export function ConnectorSchedulePane({
         {schedule?.status === "pending" && (
           <Alert className="bg-primary/10 text-primary">
             Saved. Until the request is applied, the current schedule keeps
-            running.
+            running. The change applies within about a minute.
           </Alert>
         )}
         {schedule?.status === "error" && (
