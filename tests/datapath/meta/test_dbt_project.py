@@ -14,7 +14,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from dbt.cli.main import dbtRunnerResult
+from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import PROFILE_SCHEMA, DbtError, DbtRunner
+from insight_datapath.tracked_models import TrackedModels
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BUILD_GOLD_SCRIPT = REPO_ROOT / "src/ingestion/scripts/build-gold.sh"
@@ -43,6 +46,83 @@ def _models(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 def _tags(node: dict[str, Any]) -> set[str]:
     return set(node.get("config", {}).get("tags") or [])
+
+
+def _ancestors(manifest: dict[str, Any], uid: str) -> set[str]:
+    ancestors: set[str] = set()
+    pending = list(manifest["parent_map"].get(uid, []))
+    while pending:
+        parent = pending.pop()
+        if parent in ancestors:
+            continue
+        ancestors.add(parent)
+        pending.extend(manifest["parent_map"].get(parent, []))
+    return ancestors
+
+
+@pytest.mark.parametrize("with_ancestors", [False, True], ids=["models", "ancestors"])
+def test_tracked_builds_defer_only_gold_dependent_tests_until_gold(
+    dbt_runner: DbtRunner,
+    manifest: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    with_ancestors: bool,
+) -> None:
+    models = [
+        "class_collab_chat_activity",
+        "class_collab_meeting_activity",
+        "class_hr_events",
+        "class_people",
+        "class_person_attribute_claims",
+        "identity_inputs",
+        "class_task_users",
+    ]
+    expected_tests = {"assert_task_field_value_defaults_exist"}
+    selections: list[set[str]] = []
+    assert dbt_runner._runner is not None
+    invoke = dbt_runner._runner.invoke
+
+    def list_instead_of_build(args: list[str]) -> dbtRunnerResult:
+        assert args[0] == "build"
+        result = invoke(
+            [
+                "ls",
+                *args[1:],
+                "--resource-type",
+                "test",
+                "--output",
+                "json",
+                "--output-keys",
+                "unique_id",
+            ]
+        )
+        assert result.success, result.exception
+        assert isinstance(result.result, list)
+        selections.append({json.loads(row)["unique_id"] for row in result.result})
+        return result
+
+    monkeypatch.setattr(dbt_runner._runner, "invoke", list_instead_of_build)
+    prefix = "+" if with_ancestors else ""
+    dbt_runner.build(" ".join(f"{prefix}{model}" for model in sorted(models)))
+    tracked = TrackedModels(dbt_runner, CHSeeder(dbt_runner.cfg))
+    tracked.build(models, with_ancestors=with_ancestors)
+    dbt_runner.build("tag:gold")
+
+    unfiltered, pre_gold, gold = selections
+    nodes = manifest["nodes"]
+    assert expected_tests <= {nodes[uid]["name"] for uid in unfiltered}
+    assert expected_tests <= {nodes[uid]["name"] for uid in gold}
+    assert expected_tests.isdisjoint({nodes[uid]["name"] for uid in pre_gold})
+
+    gold_models = {uid for uid, node in _models(manifest).items() if "gold" in _tags(node)}
+    for uid in pre_gold:
+        gold_ancestors = _ancestors(manifest, uid) & gold_models
+        assert not gold_ancestors, f"{uid} still depends on gold: {sorted(gold_ancestors)}"
+
+    deferred = {uid for uid in unfiltered if _ancestors(manifest, uid) & gold_models}
+    assert deferred
+    assert expected_tests <= {nodes[uid]["name"] for uid in deferred}
+    assert pre_gold == unfiltered - deferred
+    assert deferred <= gold
 
 
 def _selected(manifest: dict[str, Any], expression: str) -> set[str]:
