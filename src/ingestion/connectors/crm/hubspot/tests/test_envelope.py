@@ -38,7 +38,9 @@ class TestEnvelope:
         assert raw_properties["uncurated_std"] == "y"
 
     def test_allowlisted_property_keeps_its_column_when_empty(self):
-        out = wrap({"id": "1", "properties": {"amount": None, "dealname": ""}}, allowed=frozenset({"amount", "dealname"}))
+        out = wrap(
+            {"id": "1", "properties": {"amount": None, "dealname": ""}}, allowed=frozenset({"amount", "dealname"})
+        )
         assert out["properties_amount"] is None
         assert out["properties_dealname"] == ""
 
@@ -126,6 +128,12 @@ class TestTruncation:
         out = wrap({"id": "1", "properties": {"amount": long}})
         assert out["properties_amount"].endswith("…[truncated]")
 
+    def test_body_column_keeps_more_than_default_cap(self):
+        body = "z" * 5000
+        out = wrap({"id": "1", "properties": {"hs_note_body": body}}, allowed=frozenset({"hs_note_body"}))
+        assert out["properties_hs_note_body"] == body
+        assert json.loads(out["raw_data"])["properties"]["hs_note_body"].endswith("…[truncated]")
+
 
 class TestRawData:
     def test_keeps_record_shape_as_received(self):
@@ -169,14 +177,7 @@ class TestInjectEnvelopeProperties:
         schema = {"type": "object", "properties": {"id": {"type": "string"}}}
         out = inject_envelope_properties(schema)
         assert out is schema  # mutates and returns the same mapping
-        for field in (
-            "tenant_id",
-            "source_id",
-            "unique_key",
-            "data_source",
-            "collected_at",
-            "raw_data",
-        ):
+        for field in ("tenant_id", "source_id", "unique_key", "data_source", "collected_at", "raw_data"):
             assert field in schema["properties"], f"missing envelope field: {field}"
         assert "custom_fields" not in schema["properties"]
         assert schema["properties"]["id"] == {"type": "string"}

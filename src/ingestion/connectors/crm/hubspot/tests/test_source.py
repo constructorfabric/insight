@@ -12,7 +12,15 @@ from airbyte_cdk.utils.traced_exception import AirbyteTracedException
 from source_hubspot import source as source_mod
 from source_hubspot.constants import CURATED_STREAMS, STREAM_REGISTRY
 from source_hubspot.source import SourceHubspot
-from source_hubspot.streams import CrmArchivedListStream, CrmSearchStream, OwnersArchivedStream, OwnersStream
+from source_hubspot.streams import (
+    CrmArchivedListStream,
+    CrmSearchStream,
+    OwnersArchivedStream,
+    OwnersStream,
+    PipelinesStream,
+    PropertyDefinitionsStream,
+    PropertyHistoryStream,
+)
 
 CONFIG = {
     "hubspot_access_token": "pat-test-token",
@@ -116,6 +124,9 @@ class TestStreams:
         assert isinstance(streams["contacts_archived"], CrmArchivedListStream)
         assert isinstance(streams["owners"], OwnersStream)
         assert isinstance(streams["owners_archived"], OwnersArchivedStream)
+        assert isinstance(streams["deal_pipelines"], PipelinesStream)
+        assert isinstance(streams["property_definitions"], PropertyDefinitionsStream)
+        assert isinstance(streams["deals_property_history"], PropertyHistoryStream)
         # All streams share the configured scope.
         assert streams["deals"]._tenant_id == "T"
         assert streams["deals"]._source_id == "S"
@@ -127,6 +138,12 @@ class TestStreams:
         assert "contacts_archived" in names
         # meetings has archived_supported=False → no archived sibling.
         assert "engagements_meetings_archived" not in names
+
+    @pytest.mark.parametrize(
+        "name", ["engagements_communications_archived", "deal_pipelines_archived", "deals_property_history_archived"]
+    )
+    def test_streams_without_archived_listing_get_no_sibling(self, source, name):
+        assert name not in source._resolve_stream_list(CONFIG), f"unexpected stream: {name}"
 
 
 class TestResolveStartDate:

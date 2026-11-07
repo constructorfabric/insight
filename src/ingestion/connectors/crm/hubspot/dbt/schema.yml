@@ -5,7 +5,7 @@ version: 2
 # as emitted by the Airbyte ClickHouse destination. Every table has the
 # Insight envelope columns:
 #   tenant_id, source_id, unique_key, data_source, collected_at, raw_data
-# (JSON blob of all properties where hubspotDefined=false).
+# (JSON blob of the full record, every property included).
 
 sources:
   - name: bronze_hubspot
@@ -37,11 +37,20 @@ sources:
       - name: engagements_meetings
       - name: engagements_tasks
       - name: engagements_tasks_archived
-      # Bronze-only for v1 (no Silver staging model yet)
+      - name: engagements_notes
+      - name: engagements_notes_archived
+      # No archived sibling: HubSpot rejects paging deleted communications.
+      - name: engagements_communications
       - name: leads
       - name: leads_archived
       - name: tickets
       - name: tickets_archived
+      # Definitions and change history, re-read in full every sync.
+      - name: deal_pipelines
+      - name: ticket_pipelines
+      - name: property_definitions
+      - name: deals_property_history
+      - name: tickets_property_history
 
 models:
   - name: hubspot__crm_contacts
@@ -93,7 +102,7 @@ models:
           - accepted_values: { values: ['hubspot'] }
 
   - name: hubspot__crm_activities
-    description: "HubSpot engagements (calls/emails/meetings/tasks) → staging, feeds class_crm_activities"
+    description: "HubSpot engagements (calls/emails/meetings/tasks/notes/communications) → staging, feeds class_crm_activities"
     columns:
       - name: tenant_id
         tests: [not_null]
@@ -106,7 +115,7 @@ models:
       - name: activity_type
         tests:
           - not_null
-          - accepted_values: { values: ['call', 'email', 'meeting', 'task'] }
+          - accepted_values: { values: ['call', 'email', 'meeting', 'task', 'note', 'communication'] }
       - name: timestamp
         tests: [not_null]
       - name: data_source
@@ -136,3 +145,169 @@ models:
         tests:
           - not_null
           - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__crm_leads
+    description: "HubSpot leads → staging, feeds class_crm_leads"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null]
+      - name: lead_id
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__crm_tickets
+    description: "HubSpot tickets → staging, feeds class_crm_tickets (dim_support_ticket column layout)"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: insight_source_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null]
+      - name: source_ticket_id
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__crm_associations
+    description: "Associated object ids per (record, object type) → staging, feeds class_crm_associations"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null]
+      - name: from_object_type
+        tests: [not_null]
+      - name: from_object_id
+        tests: [not_null]
+      - name: to_object_type
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__crm_pipelines
+    description: "Deal and ticket pipelines → staging, feeds class_crm_pipelines"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null]
+      - name: pipeline_id
+        tests: [not_null]
+      - name: object_type
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__crm_pipeline_stages
+    description: "Pipeline stages → staging, feeds class_crm_pipeline_stages"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null]
+      - name: stage_id
+        tests: [not_null]
+      - name: pipeline_id
+        tests: [not_null]
+      - name: object_type
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__crm_field_history
+    description: "Deal and ticket property value changes → staging, feeds class_crm_field_history"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null]
+      - name: object_type
+        tests: [not_null]
+      - name: object_id
+        tests: [not_null]
+      - name: field
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__crm_teams
+    description: "Owner teams → staging, feeds class_crm_teams"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null]
+      - name: team_id
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__crm_property_definitions
+    description: "Property definitions of every synced object → staging, feeds class_crm_property_definitions"
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: source_id
+        tests: [not_null]
+      - name: unique_key
+        tests: [not_null]
+      - name: object_type
+        tests: [not_null]
+      - name: name
+        tests: [not_null]
+      - name: data_source
+        tests:
+          - not_null
+          - accepted_values: { values: ['hubspot'] }
+
+  - name: hubspot__owners_latest
+    description: "One row per owner across live and archived Bronze — the source of the identity snapshot"
+    columns:
+      - name: unique_key
+        tests: [not_null]
+      - name: owner_id
+        tests: [not_null]
+
+  - name: hubspot__owners_snapshot
+    description: "SCD2 snapshot of owner email, display name and archive state"
+
+  - name: hubspot__owners_fields_history
+    description: "Field-level change log of hubspot__owners_snapshot"
+
+  - name: hubspot__identity_inputs
+    description: "HubSpot owners, live and archived → identity_inputs (email, display_name)"
+    columns:
+      - name: insight_source_type
+        tests:
+          - accepted_values: { values: ['hubspot'] }
+

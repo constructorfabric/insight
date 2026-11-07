@@ -11,35 +11,30 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Tuple
+from typing import Any
 
 import pendulum
-from dateutil.relativedelta import relativedelta
-
-from airbyte_cdk.models import (
-    ConnectorSpecification,
-    FailureType,
-)
+from airbyte_cdk.models import ConnectorSpecification, FailureType
 from airbyte_cdk.sources import AbstractSource
 from airbyte_cdk.sources.streams import Stream
 from airbyte_cdk.utils.traced_exception import AirbyteTracedException
+from dateutil.relativedelta import relativedelta
 
 from source_hubspot.api import Hubspot
-from source_hubspot.constants import (
-    ARCHIVED_STREAM_SUFFIX,
-    CURATED_STREAMS,
-    STREAM_REGISTRY,
-)
+from source_hubspot.constants import ARCHIVED_STREAM_SUFFIX, CURATED_STREAMS, STREAM_REGISTRY
 from source_hubspot.streams import (
     CrmArchivedListStream,
     CrmSearchStream,
     HubspotStream,
     OwnersArchivedStream,
     OwnersStream,
+    PipelinesStream,
+    PropertyDefinitionsStream,
+    PropertyHistoryStream,
 )
-
 
 logger = logging.getLogger("airbyte")
 
@@ -55,9 +50,7 @@ class SourceHubspot(AbstractSource):
         spec_path = Path(__file__).parent / "spec.json"
         return ConnectorSpecification(**json.loads(spec_path.read_text()))
 
-    def check_connection(
-        self, logger: logging.Logger, config: Mapping[str, Any]
-    ) -> Tuple[bool, Optional[str]]:
+    def check_connection(self, logger: logging.Logger, config: Mapping[str, Any]) -> tuple[bool, str | None]:
         hubspot = Hubspot(access_token=config["hubspot_access_token"])
         reason = hubspot.check_connection()
         if reason is not None:
@@ -89,35 +82,25 @@ class SourceHubspot(AbstractSource):
                 return True
         return False
 
-    def _pick_properties_probe_object(
-        self, config: Mapping[str, Any]
-    ) -> Optional[str]:
+    def _pick_properties_probe_object(self, config: Mapping[str, Any]) -> str | None:
         """First requested stream that has a CRM properties endpoint."""
         for name in self._resolve_stream_list(config):
             entry = STREAM_REGISTRY.get(name)
             if entry is None:
                 continue
-            obj = entry.get("object_type")
-            if obj and obj != "owners":
-                return obj
+            if entry["kind"] == "crm_object":
+                return entry["object_type"]
         return None
 
     # ------- Stream discovery ----------------------------------------------
 
-    def streams(self, config: Mapping[str, Any]) -> List[Stream]:
+    def streams(self, config: Mapping[str, Any]) -> list[Stream]:
         start_date = self._resolve_start_date(config)
         hubspot = Hubspot(access_token=config["hubspot_access_token"])
-        return [
-            self._build_stream(name, config, hubspot, start_date)
-            for name in self._resolve_stream_list(config)
-        ]
+        return [self._build_stream(name, config, hubspot, start_date) for name in self._resolve_stream_list(config)]
 
     def _build_stream(
-        self,
-        stream_name: str,
-        config: Mapping[str, Any],
-        hubspot: Hubspot,
-        start_date: pendulum.DateTime,
+        self, stream_name: str, config: Mapping[str, Any], hubspot: Hubspot, start_date: pendulum.DateTime
     ) -> HubspotStream:
         kwargs = dict(
             stream_name=stream_name,
@@ -128,15 +111,8 @@ class SourceHubspot(AbstractSource):
             start_date=start_date,
         )
         registry = STREAM_REGISTRY[stream_name]
-        is_archived = bool(registry.get("is_archived"))
-        is_owners = registry.get("object_type") == "owners"
-        if is_archived and is_owners:
-            return OwnersArchivedStream(**kwargs)
-        if is_archived:
-            return CrmArchivedListStream(**kwargs)
-        if is_owners:
-            return OwnersStream(**kwargs)
-        return CrmSearchStream(**kwargs)
+        stream_class = _stream_class(registry["kind"], is_archived=bool(registry.get("is_archived")))
+        return stream_class(**kwargs)
 
     # ------- Config helpers ------------------------------------------------
 
@@ -147,10 +123,7 @@ class SourceHubspot(AbstractSource):
                 parsed = pendulum.parse(raw)
             except Exception as exc:
                 raise AirbyteTracedException(
-                    message=(
-                        f"Invalid hubspot_start_date {raw!r}. "
-                        "Expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ."
-                    ),
+                    message=(f"Invalid hubspot_start_date {raw!r}. Expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ."),
                     internal_message=str(exc),
                     failure_type=FailureType.config_error,
                 ) from exc
@@ -160,21 +133,16 @@ class SourceHubspot(AbstractSource):
             if isinstance(parsed, pendulum.DateTime):
                 return parsed.in_timezone("UTC")
             if isinstance(parsed, pendulum.Date):
-                return pendulum.datetime(
-                    parsed.year, parsed.month, parsed.day, tz="UTC"
-                )
+                return pendulum.datetime(parsed.year, parsed.month, parsed.day, tz="UTC")
             raise AirbyteTracedException(
-                message=(
-                    f"hubspot_start_date {raw!r} parsed as {type(parsed).__name__}; "
-                    "expected a date or datetime."
-                ),
+                message=(f"hubspot_start_date {raw!r} parsed as {type(parsed).__name__}; expected a date or datetime."),
                 internal_message=f"type={type(parsed).__name__}",
                 failure_type=FailureType.config_error,
             )
-        fallback = datetime.now(timezone.utc) - relativedelta(years=_START_DATE_FALLBACK_YEARS)
+        fallback = datetime.now(UTC) - relativedelta(years=_START_DATE_FALLBACK_YEARS)
         return pendulum.instance(fallback)
 
-    def _resolve_stream_list(self, config: Mapping[str, Any]) -> List[str]:
+    def _resolve_stream_list(self, config: Mapping[str, Any]) -> list[str]:
         names = list(CURATED_STREAMS)
         for live_name in CURATED_STREAMS:
             archived_name = f"{live_name}{ARCHIVED_STREAM_SUFFIX}"
@@ -183,9 +151,25 @@ class SourceHubspot(AbstractSource):
         return names
 
 
+def _stream_class(kind: str, *, is_archived: bool) -> type[HubspotStream]:
+    match kind:
+        case "crm_object":
+            return CrmArchivedListStream if is_archived else CrmSearchStream
+        case "owners":
+            return OwnersArchivedStream if is_archived else OwnersStream
+        case "pipelines":
+            return PipelinesStream
+        case "property_definitions":
+            return PropertyDefinitionsStream
+        case "property_history":
+            return PropertyHistoryStream
+    raise ValueError(f"unknown HubSpot stream kind: {kind!r}")
+
+
 def main() -> None:
     """CLI entry-point used by the Docker ENTRYPOINT and pyproject console script."""
     import sys
+
     from airbyte_cdk.entrypoint import launch
 
     source = SourceHubspot()
