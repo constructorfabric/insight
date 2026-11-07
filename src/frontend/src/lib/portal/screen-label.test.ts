@@ -13,7 +13,7 @@ describe("screenLabel", () => {
     expect(screenLabel("/portal/manage/platform-usage")).toBe(
       "Manage › Platform usage",
     );
-    expect(screenLabel("/portal/overview/trend")).toBe("Overview › Trend");
+    expect(screenLabel("/portal/overview/by-direction")).toBe("Overview › By direction");
     expect(screenLabel("/portal/people")).toBe("People");
   });
 

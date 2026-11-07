@@ -728,23 +728,46 @@ ALTER TABLE ${db}.${table} MODIFY COLUMN ${column} ${type};
 SQL
 }
 
-# `Nullable(<type>)` becomes `<type>`. ClickHouse refuses the narrowing while a
-# row holds NULL, so those rows first take `<fallback>`, the value the current
-# model writes where the old one wrote NULL.
+# WORKAROUND: some ClickHouse servers require DEFAULT for Nullable-to-non-Nullable retypes;
+# fill NULLs first for older servers, then remove the temporary fallback default.
 retype_column_not_null() {
-  local db="$1" table="$2" column="$3" type="$4" fallback="$5" current pending
+  local db="$1" table="$2" column="$3" type="$4" fallback="$5" current pending existing_default fallback_literal
   current="$(ch_column_type "${db}" "${table}" "${column}")"
-  [[ "${current}" == "Nullable(${type})" ]] || return 0
-  pending="$(ch_scalar "SELECT count() FROM ${db}.${table} WHERE ${column} IS NULL")"
-  if [[ "${pending}" -gt 0 ]]; then
-    echo "  ${db}.${table}.${column}: ${pending} NULL row(s) take ${fallback}"
-    run_ch <<SQL
+  if [[ "${current}" == "${type}" ]]; then
+    fallback_literal=${fallback//\\/\\\\}
+    fallback_literal=${fallback_literal//\'/\\\'}
+    pending="$(ch_scalar "SELECT count() FROM system.columns
+      WHERE database = '${db}' AND table = '${table}' AND name = '${column}'
+        AND default_kind = 'DEFAULT' AND default_expression = '${fallback_literal}'")"
+    [[ "${pending}" -gt 0 ]] || return 0
+  elif [[ "${current}" == "Nullable(${type})" ]]; then
+    existing_default="$(ch_scalar "SELECT count() FROM system.columns
+      WHERE database = '${db}' AND table = '${table}' AND name = '${column}'
+        AND default_kind != ''")"
+    pending="$(ch_scalar "SELECT count() FROM ${db}.${table} WHERE ${column} IS NULL")"
+    if [[ "${pending}" -gt 0 ]]; then
+      echo "  ${db}.${table}.${column}: ${pending} NULL row(s) take ${fallback}"
+      run_ch <<SQL
 ALTER TABLE ${db}.${table} UPDATE ${column} = ${fallback} WHERE ${column} IS NULL SETTINGS mutations_sync = 2;
 SQL
-  fi
-  echo "  ${db}.${table}.${column}: ${current} -> ${type}"
-  run_ch <<SQL
+    fi
+    echo "  ${db}.${table}.${column}: ${current} -> ${type}"
+    if [[ "${existing_default}" -gt 0 ]]; then
+      run_ch <<SQL
 ALTER TABLE ${db}.${table} MODIFY COLUMN ${column} ${type};
+SQL
+      return 0
+    fi
+
+    run_ch <<SQL
+ALTER TABLE ${db}.${table} MODIFY COLUMN ${column} ${type} DEFAULT ${fallback};
+SQL
+  else
+    return 0
+  fi
+
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} MODIFY COLUMN ${column} REMOVE DEFAULT;
 SQL
 }
 

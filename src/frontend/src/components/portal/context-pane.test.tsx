@@ -644,7 +644,7 @@ describe("Home pane", () => {
   it("lists the org themes for a viewer with a cohort", () => {
     pane();
     expect(screen.getByText("At a glance")).toBeInTheDocument();
-    expect(screen.getByText("Trend")).toBeInTheDocument();
+    expect(screen.getByText("By direction")).toBeInTheDocument();
   });
 
   it("holds the org themes back until the viewer's cohort is known", () => {
@@ -662,7 +662,7 @@ describe("Home pane", () => {
     (_case, canSeeOthers, shown) => {
       mocks.canSeeOthers = canSeeOthers;
       pane();
-      expect(screen.getByText("Trend")).toBeInTheDocument();
+      expect(screen.getByText("By direction")).toBeInTheDocument();
       expect(
         screen.queryByText("Contribution breakdown") !== null,
         `case: ${_case}`,
@@ -684,15 +684,15 @@ describe("ContextPane highlight", () => {
   });
 
   it("moves the highlight to the item the URL names", () => {
-    act(() => portalRouter.set({ item: "trend" }));
+    act(() => portalRouter.set({ item: "by-direction" }));
     pane();
-    expect(buttonFor("Trend")).toHaveAttribute("data-active");
+    expect(buttonFor("By direction")).toHaveAttribute("data-active");
     expect(buttonFor("At a glance")).not.toHaveAttribute("data-active");
   });
 
   it("ignores an item left behind by another zone", () => {
     inZone("people");
-    act(() => portalRouter.set({ item: "trend" }));
+    act(() => portalRouter.set({ item: "by-direction" }));
     pane();
     expect(buttonFor("My team")).toHaveAttribute("data-active");
   });
