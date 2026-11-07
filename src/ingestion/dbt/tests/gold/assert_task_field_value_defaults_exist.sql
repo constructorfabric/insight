@@ -30,7 +30,8 @@ standardized AS (
         roles.2             AS field
     FROM live_sources AS s
     INNER JOIN {{ ref('task_field_roles_current') }} AS r
-        ON r.insight_source_id = s.insight_source_id
+        ON r.tenant_id = s.tenant_id
+        AND r.insight_source_id = s.insight_source_id
     ARRAY JOIN [
         tuple('issuetype', 'issue_type'),
         tuple('resolution', 'resolution')

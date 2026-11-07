@@ -47,7 +47,7 @@
 {% set covered_kinds = ['option', 'option_array', 'obj'] %}
 
 WITH scoped AS (
-    SELECT insight_source_id, field_id, field_name, field_kind
+    SELECT tenant_id, insight_source_id, field_id, field_name, field_kind
     FROM {{ ref('jira__task_field_kind') }}
     WHERE field_kind IN ({{ "'" ~ covered_kinds | join("', '") ~ "'" }})
 ),
@@ -55,37 +55,37 @@ WITH scoped AS (
 -- The ids the SOURCE named, so only changelog rows: a synthetic_initial row
 -- carries a snapshot id, which would make every field intersect itself.
 history_ids AS (
-    SELECT insight_source_id, field_id, groupUniqArray(value_id) AS ids
+    SELECT tenant_id, insight_source_id, field_id, groupUniqArray(value_id) AS ids
     FROM (
-        SELECT insight_source_id, field_id, arrayJoin(value_ids) AS value_id
+        SELECT tenant_id, insight_source_id, field_id, arrayJoin(value_ids) AS value_id
         FROM {{ ref('jira__field_history_derived') }} FINAL
         WHERE event_kind = 'changelog'
     )
     WHERE value_id != ''
-    GROUP BY insight_source_id, field_id
+    GROUP BY tenant_id, insight_source_id, field_id
 ),
 
 holders AS (
-    SELECT DISTINCT insight_source_id, field_id, id_readable
+    SELECT DISTINCT tenant_id, insight_source_id, field_id, id_readable
     FROM (
-        SELECT insight_source_id, field_id, id_readable, arrayJoin(value_ids) AS value_id
+        SELECT tenant_id, insight_source_id, field_id, id_readable, arrayJoin(value_ids) AS value_id
         FROM {{ ref('jira__issue_field_snapshot') }} FINAL
     )
     WHERE value_id != ''
 ),
 
 current_ids AS (
-    SELECT insight_source_id, field_id, groupUniqArray(value_id) AS ids
+    SELECT tenant_id, insight_source_id, field_id, groupUniqArray(value_id) AS ids
     FROM (
-        SELECT insight_source_id, field_id, arrayJoin(value_ids) AS value_id
+        SELECT tenant_id, insight_source_id, field_id, arrayJoin(value_ids) AS value_id
         FROM {{ ref('jira__issue_field_snapshot') }} FINAL
     )
     WHERE value_id != ''
-    GROUP BY insight_source_id, field_id
+    GROUP BY tenant_id, insight_source_id, field_id
 ),
 
 changed AS (
-    SELECT DISTINCT insight_source_id, field_id, id_readable
+    SELECT DISTINCT tenant_id, insight_source_id, field_id, id_readable
     FROM {{ ref('jira__changelog_items') }} FINAL
 ),
 
@@ -95,19 +95,22 @@ changed AS (
 -- threshold then stops meaning anything.
 coverage AS (
     SELECT
+        h.tenant_id                                          AS tenant_id,
         h.insight_source_id                                  AS insight_source_id,
         h.field_id                                           AS field_id,
         count()                                              AS issues_holding_value,
         countIf(c.id_readable != '')                         AS issues_also_changed
     FROM holders AS h
     LEFT JOIN changed AS c
-        ON c.insight_source_id = h.insight_source_id
+        ON c.tenant_id = h.tenant_id
+       AND c.insight_source_id = h.insight_source_id
        AND c.field_id = h.field_id
        AND c.id_readable = h.id_readable
-    GROUP BY h.insight_source_id, h.field_id
+    GROUP BY h.tenant_id, h.insight_source_id, h.field_id
 )
 
 SELECT
+    s.tenant_id                                           AS tenant_id,
     s.insight_source_id                                   AS insight_source_id,
     s.field_id                                            AS field_id,
     s.field_name                                          AS field_name,
@@ -118,11 +121,11 @@ SELECT
     round(v.issues_also_changed / v.issues_holding_value, 2) AS event_coverage
 FROM scoped AS s
 INNER JOIN history_ids AS h
-    ON h.insight_source_id = s.insight_source_id AND h.field_id = s.field_id
+    ON h.tenant_id = s.tenant_id AND h.insight_source_id = s.insight_source_id AND h.field_id = s.field_id
 INNER JOIN current_ids AS c
-    ON c.insight_source_id = s.insight_source_id AND c.field_id = s.field_id
+    ON c.tenant_id = s.tenant_id AND c.insight_source_id = s.insight_source_id AND c.field_id = s.field_id
 INNER JOIN coverage AS v
-    ON v.insight_source_id = s.insight_source_id AND v.field_id = s.field_id
+    ON v.tenant_id = s.tenant_id AND v.insight_source_id = s.insight_source_id AND v.field_id = s.field_id
 WHERE length(arrayIntersect(h.ids, c.ids)) = 0
   AND v.issues_holding_value > 0
   AND v.issues_also_changed / v.issues_holding_value

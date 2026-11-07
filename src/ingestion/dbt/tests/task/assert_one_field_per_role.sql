@@ -28,22 +28,24 @@
 
 WITH bound AS (
     SELECT
+        tenant_id,
         insight_source_id,
         data_source,
         field_id,
         argMax(role, (valid_from, recorded_at)) AS role
     FROM config.task_field_roles FINAL
     WHERE valid_from <= now64(3)
-    GROUP BY insight_source_id, data_source, field_id
+    GROUP BY tenant_id, insight_source_id, data_source, field_id
     HAVING argMax(is_deleted, (valid_from, recorded_at)) = 0
 )
 
 SELECT
+    tenant_id,
     insight_source_id,
     data_source,
     role,
     groupArray(field_id) AS fields_bound_to_it
 FROM bound
 WHERE role != 'ignored'
-GROUP BY insight_source_id, data_source, role
+GROUP BY tenant_id, insight_source_id, data_source, role
 HAVING count() > 1

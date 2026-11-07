@@ -28,7 +28,7 @@ WITH linked AS (
     {% for relation in ['issue_timeline_events', 'pull_request_timeline_events'] %}
     SELECT
         COALESCE(source_id, '')                                 AS insight_source_id,
-        COALESCE(tenant_id, '')                                 AS tenant_id,
+        tenant_id                                               AS tenant_id,
         COALESCE(event_id, '')                                  AS event_id,
         COALESCE(event_type, '')                                AS event_type,
         parseDateTimeBestEffortOrNull(event_at)                 AS event_at,
@@ -58,9 +58,9 @@ WITH linked AS (
 )
 
 SELECT
-    CAST(concat(insight_source_id, '-github-link-', event_id) AS String)    AS unique_key,
+    CAST(concat(ifNull(tenant_id, ''), '-', insight_source_id, '-github-link-', event_id) AS String) AS unique_key,
     CAST(insight_source_id AS String)                                      AS insight_source_id,
-    CAST(tenant_id AS String)                                              AS tenant_id,
+    tenant_id                                                              AS tenant_id,
     CAST('github' AS String)                                               AS data_source,
     CAST(id_readable AS String)                                            AS id_readable,
     CAST(event_id AS String)                                               AS event_id,

@@ -15,16 +15,16 @@
 -- the open split does not, and until it is decided the value is `undefined`,
 -- so in-progress measures do not count its issues. Decide it in the
 -- environment's clickhouse/field-value-map/task-values.tsv.
-SELECT s.insight_source_id, s.status_id, any(s.status_name) AS status_name, count() AS issues
+SELECT s.tenant_id, s.insight_source_id, s.status_id, any(s.status_name) AS status_name, count() AS issues
 FROM {{ ref('youtrack__task_statuses') }} AS s FINAL
 INNER JOIN (
-    SELECT h.insight_source_id AS insight_source_id, h.issue_id AS issue_id,
+    SELECT h.tenant_id AS tenant_id, h.insight_source_id AS insight_source_id, h.issue_id AS issue_id,
         argMax(h.value_ids[1], h.event_order) AS status_id
     FROM {{ ref('youtrack__task_field_history') }} AS h FINAL
     INNER JOIN {{ ref('task_field_roles_current') }} AS r
-        ON r.insight_source_id = h.insight_source_id AND r.data_source = h.data_source AND r.field_id = h.field_id
+        ON r.tenant_id = h.tenant_id AND r.insight_source_id = h.insight_source_id AND r.data_source = h.data_source AND r.field_id = h.field_id
     WHERE r.role = 'status'
-    GROUP BY insight_source_id, issue_id
-) AS current ON current.insight_source_id = s.insight_source_id AND current.status_id = s.status_id
+    GROUP BY tenant_id, insight_source_id, issue_id
+) AS current ON current.tenant_id = s.tenant_id AND current.insight_source_id = s.insight_source_id AND current.status_id = s.status_id
 WHERE s.status_category = 'undefined'
-GROUP BY s.insight_source_id, s.status_id
+GROUP BY s.tenant_id, s.insight_source_id, s.status_id

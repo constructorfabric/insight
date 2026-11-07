@@ -37,8 +37,7 @@ pub async fn query_metric_results(
 ) -> Result<Json<MetricResultsResponse>, CanonicalError> {
     let tenant_id = ctx.subject_tenant_id();
     authorize_tenant_request(&state, &req)?;
-    let mut req = validate_request(&state.db, tenant_id, req).await?;
-    req.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
+    let req = validate_request(&state.db, tenant_id, req).await?;
     authorize_person_request(&state, &ctx, &headers, &req).await?;
 
     let (metrics, absence_context) = tokio::join!(

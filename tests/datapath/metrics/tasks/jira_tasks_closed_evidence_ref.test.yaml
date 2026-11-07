@@ -2,17 +2,17 @@ spec_version: 1
 description: >
   Metric: tasks.closed — every evidence row names its issue, #3469.
   How it's computed (bronze → silver → gold):
-    • bronze: two closed issues, both observed alive by the census. One issue
-      row carries the tenant stamp the census carries; the other does not, so
-      the availability model holds it as two entities and the census one has
-      no readable key.
+    • bronze: two closed issues, both observed alive by the census. One of
+      them is also observed under a second census key, so the availability
+      model holds it as two entities and the census-only one has no readable
+      key.
     • silver: the field history carries the issue's key on its journal rows;
       the availability row the census detection adds — the newest row of the
       issue — carries none.
     • gold:   the key is the newest one any row names, so a row naming none
       cannot blank the key every other row carries.
 
-  Cases: carol closes RFA-1 (stamped) and RFB-1 (unstamped) in August; the
+  Cases: carol closes RFA-1 (one entity) and RFB-1 (two entities) in August; the
   evidence behind her closures names both.
 
 bronze:
@@ -44,14 +44,12 @@ bronze:
 
   bronze_jira.jira_issue:
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      tenant_id: "{{ tenant }}"
       id: "10701"
       jira_id: "10701"
       unique_key: jira-test-RFA-1
       id_readable: RFA-1
       created: "2026-08-03T09:00:00"
       custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
-    # No tenant stamp: its availability entity key cannot match the census row's.
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: "10702"
       jira_id: "10702"
@@ -67,6 +65,8 @@ bronze:
   bronze_jira.jira_issue_census:
     - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10701", unique_key: "{{ tenant }}-jira-test-10701"}
     - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10702", unique_key: "{{ tenant }}-jira-test-10702"}
+    # Keyed apart from the entity the issue row derives, so this census row is a second entity with no readable key.
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10702", unique_key: "{{ tenant }}-jira-census-10702"}
 
   bronze_jira.jira_project_visibility:
     - {$ref: ../templates/jira_task.yaml#/templates/jira_visibility, id: "100", key: TST, name: Test Project, unique_key: "{{ tenant }}-jira-test-100", project_id: 100, project_key: TST}

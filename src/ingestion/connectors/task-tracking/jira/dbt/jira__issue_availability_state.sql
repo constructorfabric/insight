@@ -60,10 +60,10 @@ known AS (
 
     UNION ALL
 
-    -- COALESCE keeps the key well-defined when a stamp column is NULL;
-    -- otherwise every unstamped row would collapse into one NULL-key group.
+    -- ifNull keeps the key well-defined when the tenant is NULL; otherwise every
+    -- such row would collapse into one NULL-key group.
     SELECT
-        concat(CAST(tenant_id AS String), '-', CAST(source_id AS String), '-',
+        concat(ifNull(tenant_id, ''), '-', CAST(source_id AS String), '-',
                CAST(jira_id AS String))                      AS unique_key,
         tenant_id,
         source_id,
@@ -77,7 +77,7 @@ known AS (
 
     -- Jira project keys cannot contain '-', so the key prefix is the project.
     SELECT
-        concat(CAST(tenant_id AS String), '-', CAST(source_id AS String), '-',
+        concat(ifNull(tenant_id, ''), '-', CAST(source_id AS String), '-',
                CAST(jira_id AS String))                      AS unique_key,
         tenant_id,
         source_id,

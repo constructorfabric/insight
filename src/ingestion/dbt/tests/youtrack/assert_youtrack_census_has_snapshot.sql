@@ -16,17 +16,17 @@
 -- the next sync's. The window is read from youtrack_issues, the `updated:`
 -- search that defines it.
 WITH collection_window AS (
-    SELECT source_id,
+    SELECT tenant_id, source_id,
         min(toInt64(assumeNotNull(updated))) AS window_start,
         toUnixTimestamp64Milli(max(_airbyte_extracted_at)) AS last_read
     FROM {{ source('bronze_youtrack', 'youtrack_issues') }}
     WHERE updated IS NOT NULL
-    GROUP BY source_id
+    GROUP BY tenant_id, source_id
 )
-SELECT c.source_id, c.id
+SELECT c.tenant_id, c.source_id, c.id
 FROM {{ source('bronze_youtrack', 'youtrack_issue_census') }} AS c FINAL
-INNER JOIN collection_window AS w ON w.source_id = c.source_id
+INNER JOIN collection_window AS w ON w.tenant_id = c.tenant_id AND w.source_id = c.source_id
 LEFT ANTI JOIN {{ ref('youtrack__issues') }} AS i
-    ON i.insight_source_id = c.source_id AND i.issue_id = c.id
+    ON i.tenant_id = c.tenant_id AND i.insight_source_id = c.source_id AND i.issue_id = c.id
 WHERE toInt64(assumeNotNull(c.updated)) >= w.window_start
   AND toInt64(assumeNotNull(c.updated)) < w.last_read

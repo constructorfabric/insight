@@ -30,7 +30,7 @@
 -- A linked issue whose key resolved to no id leaves `target_id` NULL.
 
 WITH held_now AS (
-    SELECT insight_source_id, kind, type_id, type_name, target_id, target_key, extracted_at
+    SELECT tenant_id, insight_source_id, kind, type_id, type_name, target_id, target_key, extracted_at
     FROM {{ ref('jira__issue_link_snapshot') }} FINAL
 ),
 
@@ -38,6 +38,7 @@ WITH held_now AS (
 -- bronze row.
 issues AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         current_key,
@@ -51,40 +52,44 @@ issues AS (
 -- snapshot linking to it names it.
 linked_keys AS (
     SELECT
+        tenant_id,
         insight_source_id,
         target_id                                                     AS issue_id,
         argMax(target_key, extracted_at)                              AS current_key
     FROM held_now
     WHERE target_id != '' AND target_key != ''
-    GROUP BY insight_source_id, issue_id
+    GROUP BY tenant_id, insight_source_id, issue_id
 ),
 
 -- A link type's current name, by its immutable id.
 link_types AS (
     SELECT
+        tenant_id,
         insight_source_id,
         type_id,
         argMax(type_name, extracted_at)                               AS type_name
     FROM held_now
     WHERE kind = 'issuelink' AND type_id != ''
-    GROUP BY insight_source_id, type_id
+    GROUP BY tenant_id, insight_source_id, type_id
 ),
 
 occurrences AS (
     SELECT
-        o.insight_source_id AS insight_source_id, o.issue_id AS issue_id, o.kind AS kind,
+        o.tenant_id AS tenant_id, o.insight_source_id AS insight_source_id, o.issue_id AS issue_id, o.kind AS kind,
         o.occurrence_key AS occurrence_key, o.type_id AS type_id, o.direction AS direction, o.phrase AS phrase,
         o.target_ident AS target_ident, o.issue_key AS issue_key, o.target_id AS target_id,
         o.target_key AS target_key, o.ops AS ops, o.held_extracted_at AS held_extracted_at,
         o.held_before AS held_before, r.updated_at AS updated_at, r.read_at AS read_at
     FROM {{ ref('jira__link_occurrences') }} AS o FINAL
     LEFT JOIN issues AS r
-        ON r.insight_source_id = o.insight_source_id
+        ON r.tenant_id = o.tenant_id
+       AND r.insight_source_id = o.insight_source_id
        AND r.issue_id = o.issue_id
 ),
 
 current_link_keys AS (
     SELECT
+        tenant_id AS current_tenant_id,
         insight_source_id AS current_source_id,
         issue_id AS current_issue_id,
         kind AS current_kind,
@@ -95,12 +100,14 @@ current_link_keys AS (
 
 visibility_candidates AS (
     SELECT
+        o.tenant_id AS tenant_id,
         o.insight_source_id AS insight_source_id,
         o.target_id AS target_id,
         o.target_key AS target_key
     FROM {{ ref('jira__link_occurrences') }} AS o FINAL
     LEFT ANTI JOIN current_link_keys AS c
-        ON c.current_source_id = o.insight_source_id
+        ON c.current_tenant_id = o.tenant_id
+       AND c.current_source_id = o.insight_source_id
        AND c.current_issue_id = o.issue_id
        AND c.current_kind = o.kind
        AND c.current_occurrence_key = o.occurrence_key
@@ -161,6 +168,7 @@ intervals AS (
 
 owned AS (
     SELECT
+        i.tenant_id                                                   AS tenant_id,
         i.insight_source_id                                           AS insight_source_id,
         i.issue_id                                                    AS issue_id,
         COALESCE(nullIf(COALESCE(owner.current_key, ''), ''), i.issue_key) AS id_readable,
@@ -199,16 +207,20 @@ owned AS (
         )                                                             AS collected_at
     FROM intervals AS i
     LEFT JOIN issues AS owner
-        ON owner.insight_source_id = i.insight_source_id
+        ON owner.tenant_id = i.tenant_id
+       AND owner.insight_source_id = i.insight_source_id
        AND owner.issue_id = i.issue_id
     LEFT JOIN issues AS target
-        ON target.insight_source_id = i.insight_source_id
+        ON target.tenant_id = i.tenant_id
+       AND target.insight_source_id = i.insight_source_id
        AND target.issue_id = i.target_id
     LEFT JOIN linked_keys AS linked
-        ON linked.insight_source_id = i.insight_source_id
+        ON linked.tenant_id = i.tenant_id
+       AND linked.insight_source_id = i.insight_source_id
        AND linked.issue_id = i.target_id
     LEFT JOIN link_types AS lt
-        ON lt.insight_source_id = i.insight_source_id
+        ON lt.tenant_id = i.tenant_id
+       AND lt.insight_source_id = i.insight_source_id
        AND lt.type_id = i.type_id
 ),
 
@@ -222,6 +234,7 @@ lasting AS (
 -- no issue a row can belong to.
 every_interval AS (
     SELECT
+        l.tenant_id AS tenant_id,
         l.insight_source_id AS insight_source_id,
         if(is_mirrored, assumeNotNull(l.target_id), l.issue_id) AS issue_id,
         if(is_mirrored, l.target_readable, l.id_readable) AS id_readable,
@@ -244,9 +257,10 @@ every_interval AS (
 
 SELECT
     CAST(concat(
-        insight_source_id, '-jira-', issue_id, '-', link_type, '-', occurrence_key, '-',
+        ifNull(tenant_id, ''), '-', insight_source_id, '-jira-', issue_id, '-', link_type, '-', occurrence_key, '-',
         target_ident, '-', toString(toUnixTimestamp64Milli(valid_from))
     ) AS String)                                                      AS unique_key,
+    ifNull(tenant_id, '')                                             AS tenant_id,
     CAST(insight_source_id AS String)                                 AS insight_source_id,
     CAST('jira' AS String)                                            AS data_source,
     CAST(id_readable AS String)                                       AS id_readable,

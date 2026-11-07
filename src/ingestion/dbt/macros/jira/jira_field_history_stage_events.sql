@@ -18,6 +18,7 @@ changelog_items AS (
 -- resolved by the field's kind.
 events AS (
     SELECT
+        ci.tenant_id                                      AS tenant_id,
         ci.insight_source_id                              AS insight_source_id,
         ci.issue_id                                       AS issue_id,
         ci.changelog_id                                   AS changelog_id,
@@ -44,7 +45,8 @@ events AS (
                    COALESCE(ci.value_to, ''), COALESCE(ci.value_to_string, ''))  AS item_digest
     FROM changelog_items AS ci
     INNER JOIN kinds AS k
-        ON k.insight_source_id = ci.insight_source_id
+        ON k.tenant_id = ci.tenant_id
+       AND k.insight_source_id = ci.insight_source_id
        AND k.field_id = ci.field_id
 ),
 
@@ -58,7 +60,8 @@ resolved_events AS (
         )
     FROM events AS e
     LEFT JOIN {{ ref('jira__issue_key_ids') }} AS ik FINAL
-        ON ik.insight_source_id = e.insight_source_id
+        ON ik.tenant_id = e.tenant_id
+       AND ik.insight_source_id = e.insight_source_id
        AND ik.issue_key = if(e.field_kind = 'link_array', e.element.1, '')
 ),
 
@@ -91,7 +94,8 @@ ranked_events AS (
         COALESCE(r.entry_rank, toUInt32(0))               AS entry_rank
     FROM live_events AS e
     LEFT JOIN {{ ref('jira__changelog_entry_ranks') }} AS r FINAL
-        ON r.insight_source_id = e.insight_source_id
+        ON r.tenant_id = e.tenant_id
+       AND r.insight_source_id = e.insight_source_id
        AND r.issue_id = e.issue_id
        AND r.changelog_id = e.changelog_id
 )
@@ -118,18 +122,20 @@ ranked_events AS (
 -- gathered for the entries carrying several items alone.
 entry_split_keys AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         field_id,
         changelog_id
     FROM live_events
     WHERE field_kind NOT IN {{ jira_element_wise_kinds() }}
-    GROUP BY insight_source_id, issue_id, field_id, changelog_id
+    GROUP BY tenant_id, insight_source_id, issue_id, field_id, changelog_id
     HAVING count() > 1
 ),
 
 entry_split_items AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         field_id,
@@ -137,13 +143,14 @@ entry_split_items AS (
         {{ jira_entry_items_ordered('groupArray((sides.1, sides.2, sides.3, sides.4, item_digest))') }} AS items
     FROM live_events
     WHERE field_kind NOT IN {{ jira_element_wise_kinds() }}
-      AND (insight_source_id, issue_id, field_id, changelog_id)
-          IN (SELECT insight_source_id, issue_id, field_id, changelog_id FROM entry_split_keys)
-    GROUP BY insight_source_id, issue_id, field_id, changelog_id
+      AND (tenant_id, insight_source_id, issue_id, field_id, changelog_id)
+          IN (SELECT tenant_id, insight_source_id, issue_id, field_id, changelog_id FROM entry_split_keys)
+    GROUP BY tenant_id, insight_source_id, issue_id, field_id, changelog_id
 ),
 
 entry_split_ends AS (
     SELECT
+        tenant_id,
         insight_source_id,
         issue_id,
         field_id,
@@ -156,7 +163,7 @@ entry_split_ends AS (
 -- The item whose row the entry keeps, and the `from` side that row takes over.
 -- INVARIANT: a scalar, not a CTE: evaluated once per query, while a CTE is
 -- recomputed at every reference of `ordered_events`.
-(SELECT groupArray((insight_source_id, issue_id, field_id, changelog_id,
+(SELECT groupArray((tenant_id, insight_source_id, issue_id, field_id, changelog_id,
                     items[ends.2].5, items[ends.1].1, items[ends.1].2))
  FROM entry_split_ends) AS entry_split_choices,
 
@@ -166,13 +173,14 @@ ordered_events AS (
     FROM ranked_events AS e
     LEFT JOIN (
         SELECT
-            choice.1                                      AS insight_source_id,
-            choice.2                                      AS issue_id,
-            choice.3                                      AS field_id,
-            choice.4                                      AS changelog_id,
-            choice.5                                      AS kept_digest,
-            choice.6                                      AS from_ids,
-            choice.7                                      AS from_displays,
+            choice.1                                      AS tenant_id,
+            choice.2                                      AS insight_source_id,
+            choice.3                                      AS issue_id,
+            choice.4                                      AS field_id,
+            choice.5                                      AS changelog_id,
+            choice.6                                      AS kept_digest,
+            choice.7                                      AS from_ids,
+            choice.8                                      AS from_displays,
             toUInt8(1)                                    AS collapsed
         FROM (
             -- INVARIANT: the arrayJoin stays alone in its own SELECT list. Reading
@@ -180,7 +188,8 @@ ordered_events AS (
             SELECT arrayJoin(entry_split_choices) AS choice
         )
     ) AS c
-        ON c.insight_source_id = e.insight_source_id
+        ON c.tenant_id = e.tenant_id
+       AND c.insight_source_id = e.insight_source_id
        AND c.issue_id = e.issue_id
        AND c.field_id = e.field_id
        AND c.changelog_id = e.changelog_id

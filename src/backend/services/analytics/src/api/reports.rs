@@ -73,7 +73,6 @@ async fn build_preview(
         &preview_profiles,
         ReportExecutionContext {
             tenant_id: ctx.subject_tenant_id(),
-            enforce_tenant_scope: state.config.metric_catalog.enforce_tenant_scope,
         },
         &runner,
         PreviewSink::default(),

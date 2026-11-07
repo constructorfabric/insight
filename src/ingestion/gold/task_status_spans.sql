@@ -29,6 +29,7 @@ WITH
 -- literal here would only ever be one source's name for the status field.
 status_events AS (
     SELECT
+        fh.tenant_id                                              AS tenant_id,
         fh.insight_source_id                                      AS insight_source_id,
         fh.issue_id                                               AS issue_id,
         arrayMap(x -> (x.1.1, x.2),
@@ -36,13 +37,15 @@ status_events AS (
                                                    if(fh.data_source = 'youtrack' AND length(fh.value_ids) > 1, '', fh.value_ids[1]))))) AS evs
     FROM {{ ref('class_task_field_history') }} AS fh FINAL
     INNER JOIN {{ ref('task_field_roles_current') }} AS r
-        ON r.insight_source_id = fh.insight_source_id
+        ON r.tenant_id = fh.tenant_id
+        AND r.insight_source_id = fh.insight_source_id
         AND r.data_source = fh.data_source
         AND r.field_id = fh.field_id
     WHERE r.role = 'status' AND fh.delta_action = 'set'
-    GROUP BY fh.insight_source_id, fh.issue_id
+    GROUP BY fh.tenant_id, fh.insight_source_id, fh.issue_id
 )
 SELECT
+    iv.tenant_id                                                             AS tenant_id,
     iv.insight_source_id                                                     AS insight_source_id,
     iv.issue_id                                                              AS issue_id,
     iv.interval_start                                                        AS interval_start,
@@ -53,6 +56,7 @@ FROM (
     -- INVARIANT: the arrayJoin stays alone in its own SELECT list. Reading its
     -- elements beside it re-evaluates it per reference and squares the rows.
     SELECT
+        tenant_id                                                            AS tenant_id,
         insight_source_id                                                    AS insight_source_id,
         issue_id                                                             AS issue_id,
         span.1                                                               AS interval_start,
@@ -62,6 +66,7 @@ FROM (
         issue_created_at                                                     AS issue_created_at
     FROM (
         SELECT
+            e.tenant_id                                                      AS tenant_id,
             e.insight_source_id                                              AS insight_source_id,
             e.issue_id                                                       AS issue_id,
             s.created_at                                                     AS issue_created_at,
@@ -79,11 +84,15 @@ FROM (
             ))                                                               AS span
         FROM status_events AS e
         INNER JOIN {{ ref('task_issue_state') }} AS s
-            ON s.insight_source_id = e.insight_source_id AND s.issue_id = e.issue_id
+            ON s.tenant_id = e.tenant_id
+            AND s.insight_source_id = e.insight_source_id
+            AND s.issue_id = e.issue_id
     ) AS spans
 ) AS iv
 LEFT JOIN {{ ref('class_task_statuses') }} AS st FINAL
-    ON st.insight_source_id = iv.insight_source_id AND st.status_id = iv.status_id
+    ON st.tenant_id = iv.tenant_id
+    AND st.insight_source_id = iv.insight_source_id
+    AND st.status_id = iv.status_id
 WHERE iv.interval_start >= ifNull(iv.issue_created_at, toDateTime('1970-01-02'))
   AND iv.interval_end >= iv.interval_start
   AND iv.interval_end <= now() + INTERVAL 1 DAY

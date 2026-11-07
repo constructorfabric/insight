@@ -10,15 +10,16 @@
 -- snapshot: a reference into `youtrack__task_field_text`. An empty field has no row.
 
 WITH latest AS (
-    SELECT s.insight_source_id AS insight_source_id, s.issue_id AS issue_id, s.field_id AS field_id,
+    SELECT s.tenant_id AS tenant_id, s.insight_source_id AS insight_source_id, s.issue_id AS issue_id, s.field_id AS field_id,
         argMax(s.pairs, s.observed_at) AS pairs
     FROM {{ ref('youtrack__issue_field_snapshot') }} AS s
-    INNER JOIN {{ ref('youtrack__long_text_fields') }} AS f USING (insight_source_id, field_id)
-    GROUP BY s.insight_source_id, s.issue_id, s.field_id
+    INNER JOIN {{ ref('youtrack__long_text_fields') }} AS f USING (tenant_id, insight_source_id, field_id)
+    GROUP BY s.tenant_id, s.insight_source_id, s.issue_id, s.field_id
 )
 
 SELECT
-    concat(insight_source_id, '-youtrack-', issue_id, '-', field_id) AS unique_key,
+    concat(ifNull(tenant_id, ''), '-', insight_source_id, '-youtrack-', issue_id, '-', field_id) AS unique_key,
+    ifNull(tenant_id, '')                                 AS tenant_id,
     insight_source_id,
     CAST('youtrack' AS String)                            AS data_source,
     issue_id,

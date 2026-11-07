@@ -132,7 +132,7 @@ spec:
             - name: RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME
               value: {{ include "insight.clickhouse.clusterName" . | quote }}
             - name: INSIGHT_TENANT_ID
-              value: {{ required "ingestion.reconcile.tenantId is required (the Insight tenant slug; used in source/connection names per ADR-0005)" .Values.ingestion.reconcile.tenantId | quote }}
+              value: {{ include "insight.tenantId" . | quote }}
             # ARGO_INSTANCE_ID — set only when the cluster's Argo workflow
             # controller runs with `instanceID:` configured. Empty value
             # leaves the controller-instanceid label off the rendered

@@ -180,15 +180,6 @@ pub struct MetricCatalogConfig {
     /// Env: `APP__gears__analytics__config__metric_catalog__tenant_metrics_enabled`.
     pub tenant_metrics_enabled: bool,
 
-    /// Enforce the per-tenant observation filter (#1967) on metric reads.
-    /// Defaults to `false`: the ingested `tenant_id` in the bronze/silver/gold
-    /// pipeline is not yet aligned to the JWT tenant, so an exact
-    /// `tenant_id = <session>` match would silently empty every metric read.
-    /// Flip to `true` per environment once the ingest tenant is aligned (#1829).
-    ///
-    /// Env: `APP__gears__analytics__config__metric_catalog__enforce_tenant_scope`.
-    pub enforce_tenant_scope: bool,
-
     /// Revalidate managed metric definitions every five minutes after the startup pass.
     ///
     /// Env: `APP__gears__analytics__config__metric_catalog__periodic_validation_enabled`.
@@ -199,7 +190,6 @@ impl Default for MetricCatalogConfig {
     fn default() -> Self {
         Self {
             tenant_metrics_enabled: false,
-            enforce_tenant_scope: false,
             periodic_validation_enabled: true,
         }
     }
@@ -392,12 +382,18 @@ mod tests {
     }
 
     #[test]
+    fn a_retired_tenant_scope_key_is_ignored() -> anyhow::Result<()> {
+        let config: GearConfig = serde_json::from_value(serde_json::json!({
+            "metric_catalog": { "enforce_tenant_scope": false }
+        }))?;
+        assert!(config.metric_catalog.periodic_validation_enabled);
+        Ok(())
+    }
+
+    #[test]
     fn metric_validation_repeats_unless_disabled() -> anyhow::Result<()> {
         let omitted: GearConfig = serde_json::from_value(serde_json::json!({
-            "metric_catalog": {
-                "tenant_metrics_enabled": false,
-                "enforce_tenant_scope": false
-            }
+            "metric_catalog": { "tenant_metrics_enabled": false }
         }))?;
         assert!(omitted.metric_catalog.periodic_validation_enabled);
 

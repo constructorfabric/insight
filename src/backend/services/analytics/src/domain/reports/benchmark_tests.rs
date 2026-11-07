@@ -187,7 +187,6 @@ async fn run_case(
         &profiles,
         ReportExecutionContext {
             tenant_id: Uuid::from_u128(9),
-            enforce_tenant_scope: true,
         },
         &runner,
         sink,

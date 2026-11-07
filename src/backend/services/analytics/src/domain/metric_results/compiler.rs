@@ -358,7 +358,7 @@ pub(crate) fn compile_timeseries_query(
         ORDER BY entity_id, is_total, bucket_start
         LIMIT {limit}
         ",
-        metric_where = metric_where(def, req.enforce_tenant_scope),
+        metric_where = metric_where(def),
     );
     let sql = transformed_single(def, inner);
     CompiledQuery { sql, params }
@@ -370,7 +370,6 @@ pub(crate) fn compile_report_timeseries_query(
     entity: ValidatedEntitySelection,
     from: chrono::NaiveDate,
     to: chrono::NaiveDate,
-    enforce_tenant_scope: bool,
     bucket: QueryBucket,
 ) -> CompiledQuery {
     let request = ValidatedMetricResultsRequest {
@@ -379,7 +378,6 @@ pub(crate) fn compile_report_timeseries_query(
         from,
         to,
         metrics: Vec::new(),
-        enforce_tenant_scope,
         compare_to: None,
     };
 
@@ -411,7 +409,7 @@ pub(crate) fn compile_group_ranking_query(
           {filter_where}{entity_scope}
         GROUP BY {dim_group}
         ",
-        metric_where = metric_where(def, req.enforce_tenant_scope),
+        metric_where = metric_where(def),
     );
     let transformed = transformed_single(def, inner);
     let sql = format!(
@@ -511,7 +509,7 @@ fn compile_capped_timeseries_query(
         ORDER BY entity_id, group_rank, is_total, bucket_start
         LIMIT {limit}
         ",
-        metric_where = metric_where(def, req.enforce_tenant_scope),
+        metric_where = metric_where(def),
     );
     CompiledQuery { sql, params }
 }
@@ -719,7 +717,7 @@ fn metric_where_scanned(
             ],
         ),
     };
-    let tenant = tenant_predicate(req.enforce_tenant_scope);
+    let tenant = TENANT_PREDICATE;
     params.push(req.tenant_id.to_string());
     params.push(source_key);
     params.push(req.entity.entity_type().to_owned());
@@ -804,7 +802,7 @@ fn compile_uncapped_rollup_query(
         ORDER BY {dim_order}
         LIMIT {limit}
         ",
-        metric_where = metric_where(def, req.enforce_tenant_scope),
+        metric_where = metric_where(def),
     );
     let sql = transformed_single(def, inner);
     CompiledQuery { sql, params }
@@ -885,7 +883,7 @@ fn compile_capped_rollup_query(
         ORDER BY group_rank = 0, group_rank
         LIMIT {limit}
         ",
-        metric_where = metric_where(def, req.enforce_tenant_scope),
+        metric_where = metric_where(def),
     );
     CompiledQuery { sql, params }
 }
@@ -1034,7 +1032,7 @@ pub(crate) fn compile_histogram_query(
         ORDER BY entity_id, bin_idx
         LIMIT {limit}
         ",
-        metric_where = metric_where(def, req.enforce_tenant_scope),
+        metric_where = metric_where(def),
         event_value = transformed(def, "value".to_owned()),
     );
     CompiledQuery { sql, params }
@@ -1097,7 +1095,7 @@ pub(crate) fn compile_pooled_histogram_query(
         ORDER BY {dim_group}, bin_idx
         LIMIT {limit}
         ",
-        metric_where = metric_where(def, req.enforce_tenant_scope),
+        metric_where = metric_where(def),
         event_value = transformed(def, "value".to_owned()),
     );
     CompiledQuery { sql, params }
@@ -1160,10 +1158,7 @@ fn compile_declared_cohort_peer_batch_query(
     let carried = peer_carried_selects(defs);
     let stats_selects = per_target_aggregate_selects(defs);
 
-    // Same switch as every other read (#1967): peer pools staying tenant-scoped
-    // while the rest of the query bypasses would answer empty peers, which is
-    // the failure the config flag exists to avoid.
-    let tenant = tenant_predicate(req.enforce_tenant_scope);
+    let tenant = TENANT_PREDICATE;
 
     let sql = format!(
         r"
@@ -1634,7 +1629,7 @@ fn shared_observation_where_within(
         params.push(measure_key.clone());
     }
     let pair_placeholders = vec!["(?, ?)"; pairs.len()].join(", ");
-    let tenant = tenant_predicate(req.enforce_tenant_scope);
+    let tenant = TENANT_PREDICATE;
     let mut where_clause = format!(
         "{tenant} AND entity_type = ? AND {scan} AND (source_key, measure_key) IN ({pair_placeholders})"
     );
@@ -1728,28 +1723,30 @@ fn single_resolved_observation_from(
     )
 }
 
-// INVARIANT: every observation read leads with the tenant predicate, bound from
-// the request's SecurityContext (never client SQL), so an enforced request
-// scoped to tenant A cannot read tenant B's rows. `tenant_id` is the column the
-// gold observation and cohort contract exposes; the value is the raw tenant
-// UUID, the same representation the metric lineage stamps. The placeholder is
-// first here and its value first in `metric_where_params` — keep the two in
-// lockstep. When enforcement is off (the default until the ingest tenant is
-// aligned, #1829) the term is a tautology that still binds the same one
-// placeholder, so the param order is identical in both modes.
-pub(crate) fn tenant_predicate(enforce: bool) -> &'static str {
-    if enforce {
-        "tenant_id = ?"
-    } else {
-        // Bypass: still consumes the bound tenant param (String = String, so no
-        // type coercion), but `OR 1 = 1` makes it match every row — the
-        // pre-#1967 behavior, without changing placeholder arity.
-        "(tenant_id = ? OR 1 = 1)"
-    }
+// INVARIANT: every observation read carries this predicate; its one placeholder binds
+// the session tenant and leads `metric_where_params` — keep the two in lockstep.
+const TENANT_PREDICATE: &str = "tenant_id = ?";
+
+/// The same predicate on one relation's tenant, for queries that join another
+/// relation carrying its own `tenant_id`.
+pub(crate) fn tenant_predicate_on(alias: &str) -> String {
+    format!("{alias}.tenant_id = ?")
 }
 
-fn metric_where(def: &MetricDefinition, enforce_tenant_scope: bool) -> String {
-    let tenant = tenant_predicate(enforce_tenant_scope);
+#[cfg(test)]
+pub(crate) fn values_bound_by<'a>(
+    sql: &str,
+    params: &'a [String],
+    predicate: &str,
+) -> Vec<&'a str> {
+    sql.match_indices(predicate)
+        .filter_map(|(at, _)| params.get(sql[..at].matches('?').count()))
+        .map(String::as_str)
+        .collect()
+}
+
+fn metric_where(def: &MetricDefinition) -> String {
+    let tenant = TENANT_PREDICATE;
     match &def.spec {
         ComputationSpec::Sum { .. }
         | ComputationSpec::Median { .. }
@@ -2047,7 +2044,7 @@ fn resolved_observation_from(
             let person_params = placeholders(req.entity.len());
             (
                 format!(
-                    "(obs.entity_id IN (SELECT email FROM {PERSON_MAP_RELATION} WHERE person_id IN ({person_params})) \
+                    "((toString(obs.tenant_id), obs.entity_id) IN (SELECT tenant_id, email FROM {PERSON_MAP_RELATION} WHERE person_id IN ({person_params})) \
                       OR coalesce(obs.account_id, '') != ''){date_scope}"
                 ),
                 format!("resolved_person_id IN ({person_params})"),
@@ -2057,7 +2054,7 @@ fn resolved_observation_from(
             let date_scope = scan_of(req, params);
             (
                 format!(
-                    "(obs.entity_id IN (SELECT email FROM {PERSON_MAP_RELATION} \
+                    "((toString(obs.tenant_id), obs.entity_id) IN (SELECT tenant_id, email FROM {PERSON_MAP_RELATION} \
                       WHERE toString(person_id) IN (SELECT entity_id FROM cohort)) \
                       OR coalesce(obs.account_id, '') != ''){date_scope}"
                 ),
@@ -2095,11 +2092,13 @@ fn resolved_observation_from(
                 ) AS resolved_person_id
             FROM {table} AS obs
             LEFT JOIN {ACCOUNT_ASSIGNMENT_RELATION} AS account_map
-                ON account_map.source_type = obs.account_source_type
+                ON account_map.tenant_id = toString(obs.tenant_id)
+               AND account_map.source_type = obs.account_source_type
                AND account_map.source_id = {account_source_uuid}
                AND account_map.account_id = {account_id}
             LEFT JOIN {PERSON_MAP_RELATION} AS person_map
-                ON person_map.email = obs.entity_id
+                ON person_map.tenant_id = toString(obs.tenant_id)
+               AND person_map.email = obs.entity_id
             WHERE {inner_where}
         ) AS resolved
         WHERE {resolved_filter}
@@ -2116,10 +2115,16 @@ fn resolved_observation_from(
     }
 }
 
+/// `tenant_id` is aliased back to its bare name: the identity maps joined beside
+/// the relation carry it too, and an unaliased `obs.tenant_id` would surface
+/// under its qualified name, which the outer SELECT cannot see.
 fn qualified_resolved_columns(alias: &str) -> String {
     RESOLVED_OBSERVATION_COLUMNS
         .split(", ")
-        .map(|column| format!("{alias}.{column}"))
+        .map(|column| match column {
+            "tenant_id" => format!("{alias}.tenant_id AS tenant_id"),
+            _ => format!("{alias}.{column}"),
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -2462,7 +2467,6 @@ mod tests {
             to: NaiveDate::from_ymd_opt(2026, 1, 31).unwrap_or_default(),
             compare_to: None,
             metrics: Vec::new(),
-            enforce_tenant_scope: true,
         }
     }
 
@@ -2939,36 +2943,104 @@ mod tests {
     }
 
     #[test]
-    fn tenant_scope_disabled_bypasses_the_filter_but_keeps_param_arity() {
-        let sum = sum_metric();
-        let mut req = request();
-        req.enforce_tenant_scope = false;
+    fn every_compiled_read_binds_the_session_tenant_into_each_tenant_predicate() {
+        let (sum, ratio, median) = (sum_metric(), ratio_metric(), median_metric());
+        let dimensions = ["tool".to_owned()];
+        let limit = resolved_limit(true);
+        let reads = [
+            (
+                "timeseries",
+                compile_timeseries_query(&sum, &request(), QueryBucket::Day, &[], &[], None),
+            ),
+            (
+                "capped timeseries",
+                compile_timeseries_query(
+                    &ratio,
+                    &request(),
+                    QueryBucket::Week,
+                    &dimensions,
+                    &[],
+                    Some(&limit),
+                ),
+            ),
+            (
+                "ranking",
+                compile_group_ranking_query(&sum, &request(), &dimensions, &[], 5),
+            ),
+            (
+                "breakdown",
+                compile_breakdown_query(&ratio, &request(), &dimensions, &[]),
+            ),
+            (
+                "rollup",
+                compile_rollup_query(&sum, &request(), &dimensions, &[], None),
+            ),
+            (
+                "capped rollup",
+                compile_rollup_query(&sum, &request(), &dimensions, &[], Some(&limit)),
+            ),
+            (
+                "histogram",
+                compile_histogram_query(&median, &request(), &[]),
+            ),
+            (
+                "pooled histogram",
+                compile_pooled_histogram_query(&median, &request(), &dimensions, &[]),
+            ),
+            (
+                "period batch",
+                compile_period_batch_query(&[&sum, &ratio], &request(), &[]),
+            ),
+            (
+                "compared period batch",
+                compile_period_batch_query(&[&sum, &ratio], &windowed_request(), &[]),
+            ),
+            (
+                "cohort peer batch",
+                compile_peer_batch_query(
+                    &[&sum],
+                    &request(),
+                    "org_unit",
+                    PeerPopulation::DeclaredCohort,
+                    &[],
+                ),
+            ),
+            (
+                "tenant peer batch",
+                compile_peer_batch_query(
+                    &[&sum],
+                    &request(),
+                    "org_unit",
+                    PeerPopulation::Tenant,
+                    &[],
+                ),
+            ),
+            (
+                "report timeseries",
+                compile_report_timeseries_query(
+                    &sum,
+                    TEST_TENANT,
+                    request().entity,
+                    request().from,
+                    request().to,
+                    QueryBucket::Month,
+                ),
+            ),
+        ];
 
-        // With enforcement off, every contract read swaps the exact-match term
-        // for the tautology, so nothing filters by tenant — yet the placeholder
-        // (and its bound value) stays in place, so param arity is unchanged.
-        let ts = compile_timeseries_query(&sum, &req, QueryBucket::Day, &[], &[], None);
-        assert!(
-            ts.sql.contains("(tenant_id = ? OR 1 = 1)"),
-            "timeseries uses the bypass term"
-        );
-        assert!(
-            !ts.sql.contains("WHERE tenant_id = ?"),
-            "no exact-match tenant term when bypassed"
-        );
-        assert_eq!(ts.sql.matches('?').count(), ts.params.len());
-        assert_eq!(tenant_binds(&ts), 1);
-
-        // All three peer reads (targets, cohort, metric_values) bypass together.
-        let peer = compile_peer_batch_query(
-            &[&sum],
-            &req,
-            "org_unit",
-            PeerPopulation::DeclaredCohort,
-            &[],
-        );
-        assert_eq!(peer.sql.matches("(tenant_id = ? OR 1 = 1)").count(), 3);
-        assert_eq!(peer.sql.matches('?').count(), peer.params.len());
+        for (shape, query) in &reads {
+            let bound = values_bound_by(&query.sql, &query.params, "tenant_id = ?");
+            assert!(!bound.is_empty(), "should filter on the tenant: {shape}");
+            assert!(
+                bound.iter().all(|value| *value == TEST_TENANT_STR),
+                "should bind the session tenant into every tenant predicate: {shape}"
+            );
+            assert_eq!(
+                bound.len(),
+                tenant_binds(query),
+                "should bind the tenant only into tenant predicates: {shape}"
+            );
+        }
     }
 
     #[test]
@@ -3806,6 +3878,30 @@ mod tests {
     }
 
     #[test]
+    fn an_observation_resolves_only_through_its_own_tenants_identity_maps() {
+        let query = compile_period_batch_query(&[&sum_metric()], &request(), &[]);
+        let sql = query.sql.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        for map in ["account_map", "person_map"] {
+            let opened = sql.matches(&format!("AS {map} ON")).count();
+            let scoped = sql
+                .matches(&format!(
+                    "AS {map} ON {map}.tenant_id = toString(obs.tenant_id)"
+                ))
+                .count();
+            assert!(opened > 0, "should join {map}");
+            assert_eq!(
+                opened, scoped,
+                "every {map} join should match on the observation tenant"
+            );
+        }
+        assert!(
+            sql.contains("(toString(obs.tenant_id), obs.entity_id) IN (SELECT tenant_id, email FROM identity.person_map"),
+            "the prune should keep only addresses the observation's own tenant maps"
+        );
+    }
+
+    #[test]
     fn a_person_read_resolves_through_the_live_map_and_groups_by_the_person() {
         let query = compile_period_batch_query(&[&sum_metric()], &request(), &[]);
 
@@ -3819,10 +3915,21 @@ mod tests {
                 .sql
                 .contains("LEFT JOIN identity.person_map AS person_map")
         );
-        assert!(query.sql.contains("ON person_map.email = obs.entity_id"));
+        assert!(
+            query
+                .sql
+                .contains("ON person_map.tenant_id = toString(obs.tenant_id)")
+        );
+        assert!(query.sql.contains("AND person_map.email = obs.entity_id"));
+        assert!(query.sql.contains("obs.tenant_id AS tenant_id"));
+        assert!(
+            query
+                .sql
+                .contains("ON account_map.tenant_id = toString(obs.tenant_id)")
+        );
         assert!(
             query.sql.contains(
-                "(obs.entity_id IN (SELECT email FROM identity.person_map WHERE person_id IN (?, ?)) OR coalesce(obs.account_id, '') != '')"
+                "((toString(obs.tenant_id), obs.entity_id) IN (SELECT tenant_id, email FROM identity.person_map WHERE person_id IN (?, ?)) OR coalesce(obs.account_id, '') != '')"
             ),
             "the prune keeps the requested people's email parts plus every account-carrying row"
         );

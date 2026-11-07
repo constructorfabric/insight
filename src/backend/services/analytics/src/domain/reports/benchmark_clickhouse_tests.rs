@@ -222,7 +222,6 @@ async fn run_case(
         &profiles,
         ReportExecutionContext {
             tenant_id: TENANT_ID,
-            enforce_tenant_scope: true,
         },
         &runner,
         sink,

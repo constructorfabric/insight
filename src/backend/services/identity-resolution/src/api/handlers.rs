@@ -289,7 +289,7 @@ pub async fn internal_provision_person(
         return Ok(Json(person_response(external_id, person_id)));
     }
 
-    let observed = super::resolution::evidence_reader(&state)
+    let observed = super::resolution::evidence_reader(&state, tenant)
         .observed_account(source_type, external_id)
         .await
         .map_err(|e| {

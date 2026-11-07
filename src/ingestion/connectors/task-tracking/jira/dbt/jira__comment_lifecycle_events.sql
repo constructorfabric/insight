@@ -42,12 +42,13 @@ WITH transitions AS (
 -- issue; `assert_jira_substream_rows_without_issue_id` reports those.
 comment_issue AS (
     SELECT
+        tenant_id,
         source_id,
         toString(comment_id)                                    AS comment_id,
         any(jira_id)                                            AS jira_id
     FROM {{ source('bronze_jira', 'jira_comments') }}
     WHERE comment_id IS NOT NULL
-    GROUP BY source_id, comment_id
+    GROUP BY tenant_id, source_id, comment_id
 ),
 
 -- The identity timestamp is event_at, not detection time: detection time comes
@@ -57,6 +58,7 @@ comment_issue AS (
 -- millisecond timestamp for add/set; a comment is removed at most once.
 resolved AS (
     SELECT
+        t.tenant_id                                             AS tenant_id,
         t.source_id                                             AS source_id,
         t.comment_id                                            AS comment_id,
         t.action                                                AS action,
@@ -76,7 +78,8 @@ resolved AS (
         AND st.source_id = t.source_id
         AND st.comment_id = t.comment_id
     LEFT JOIN comment_issue AS own
-        ON own.source_id = t.source_id
+        ON own.tenant_id = t.tenant_id
+        AND own.source_id = t.source_id
         AND own.comment_id = t.comment_id
     LEFT JOIN {{ ref('jira__issue_availability_state') }} AS av FINAL
         ON av.tenant_id = t.tenant_id
@@ -89,8 +92,9 @@ resolved AS (
 SELECT
     -- The class's one key formula: the issue by its immutable id, the event
     -- by the comment's own id, action and instant.
-    {{ jira_history_key("CAST(t.source_id AS String)", "COALESCE(t.jira_id, '')", "'comment'",
+    {{ jira_history_key('t.tenant_id', "CAST(t.source_id AS String)", "COALESCE(t.jira_id, '')", "'comment'",
                          "concat('comment:', COALESCE(t.comment_id, ''), ':', t.action, ':', toString(toUnixTimestamp64Milli(t.event_at)))") }} AS unique_key,
+    ifNull(t.tenant_id, '')                                     AS tenant_id,
     CAST(t.source_id AS String)                                 AS insight_source_id,
     CAST('jira' AS String)                                      AS data_source,
     COALESCE(t.jira_id, '')                                     AS issue_id,
@@ -117,7 +121,7 @@ FROM (
     SELECT
         *,
         toUInt32(row_number() OVER (
-            PARTITION BY source_id, jira_id, toUnixTimestamp64Milli(event_at)
+            PARTITION BY tenant_id, source_id, jira_id, toUnixTimestamp64Milli(event_at)
             ORDER BY toUInt64OrZero(comment_id), comment_id,
                      multiIf(action = 'add', 0, action = 'set', 1, 2)
         ) - 1)                                                  AS same_instant_rank

@@ -1099,16 +1099,16 @@ is the remaining one.
 layout copies the whole body into every history row.
 
 A second model, `jira__task_field_text`, holds one row per distinct body of a
-source: `(insight_source_id, data_source, text_id, content_form, content)` with
+tenant's source: `(tenant_id, insight_source_id, data_source, text_id, content_form, content)` with
 `text_id = lower(hex(sipHash128(content)))` (the shared `task_text_id` macro),
-keyed by source and `text_id`. ReplacingMergeTree deduplicates identical bodies
+keyed by tenant, source and `text_id`. ReplacingMergeTree deduplicates identical bodies
 for free. It is tagged into `silver.class_task_field_text`, the source-neutral
 class every task tracker feeds.
 
 The history row is a text reference: `value_ids = [text_id]`,
 `value_displays = [the first task_long_text_prefix_chars characters]` (default
 200), and `value_id_type = 'text_ref'`. An empty value has no element and no
-body. A consumer joins `class_task_field_text` on (`insight_source_id`,
+body. A consumer joins `class_task_field_text` on (`tenant_id`, `insight_source_id`,
 `data_source`, `text_id = value_ids[1]`) for the full body.
 
 `content_form` says which representation a body is: `adf_json` for the current

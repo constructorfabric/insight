@@ -28,6 +28,7 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,10 @@ FIELD_HISTORY_SELECTOR = "+jira__field_history_derived +jira__task_field_text +j
 # they resolve a linked issue's key through the same map.
 LINKS_SELECTOR = f"{FIELD_HISTORY_SELECTOR} +jira__task_links"
 
+# The comment and worklog lifecycle producers and their ancestors, for a module
+# that seeds the comment and worklog streams.
+LIFECYCLE_SELECTOR = "+jira__comment_lifecycle_events +jira__worklog_lifecycle_events"
+
 
 def _env(name: str) -> str:
     value = os.environ.get(name)
@@ -84,6 +89,7 @@ class Invocation:
 
     success: bool
     statuses: tuple[str, ...]
+    failed_tests: frozenset[str]
     log: str
     status_by_node: dict[str, str]
 
@@ -116,11 +122,22 @@ class Dbt:
         result = runner.invoke([*args, *self._base])
         results = getattr(result.result, "results", ())
         statuses = tuple(str(node.status) for node in results)
+        failed_tests = frozenset(
+            outcome.node.name
+            for outcome in results
+            if outcome.node.resource_type == "test" and outcome.status in {"fail", "error"}
+        )
         status_by_node = {node.node.name: str(node.status) for node in results}
         log = "\n".join(self._log)
         if result.exception is not None:
             log = f"{log}\n{result.exception}"
-        return Invocation(success=result.success, statuses=statuses, log=log[-8000:], status_by_node=status_by_node)
+        return Invocation(
+            success=result.success,
+            statuses=statuses,
+            failed_tests=failed_tests,
+            log=log[-8000:],
+            status_by_node=status_by_node,
+        )
 
     def invoke(self, *args: str) -> Invocation:
         return self._invoke(*args)
@@ -173,6 +190,9 @@ class Warehouse:
     def dbt_status(self, *args: str) -> Invocation:
         """Run dbt and hand back what it did, judging nothing."""
         return self.dbt_project.invoke(*args)
+
+    def failing_tests(self, names: Iterable[str]) -> frozenset[str]:
+        return self.dbt_status("test", "--select", *names).failed_tests
 
     def dbt(self, *args: str) -> None:
         """Run dbt and fail the test with its output when it errors."""
@@ -323,6 +343,8 @@ class Scenario:
         issues: list[dict[str, Any]],
         events: list[dict[str, Any]] | None = None,
         statuses: list[dict[str, Any]] | None = None,
+        comments: list[dict[str, Any]] | None = None,
+        worklogs: list[dict[str, Any]] | None = None,
         census: list[dict[str, Any]] | None = None,
         projects: list[dict[str, Any]] | None = None,
     ) -> None:
@@ -330,6 +352,8 @@ class Scenario:
         self.warehouse.insert("bronze_jira.jira_issue", self._stamp(issues))
         self.warehouse.insert("bronze_jira.jira_issue_history", self._stamp(events or []))
         self.warehouse.insert("bronze_jira.jira_statuses", self._stamp(statuses or []))
+        self.warehouse.insert("bronze_jira.jira_comments", self._stamp(comments or []))
+        self.warehouse.insert("bronze_jira.jira_worklogs", self._stamp(worklogs or []))
         self.warehouse.insert("bronze_jira.jira_issue_census", self._stamp(census or []))
         self.warehouse.insert("bronze_jira.jira_project_visibility", self._stamp(projects or []))
 

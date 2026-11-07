@@ -16,4 +16,4 @@ SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_task_sprints') }}
 ) AS candidate
 -- YouTrack is reconciled whole by the pre_hook, so its rows bypass the boundary.
-{{ silver_incremental_watermark(['insight_source_id', 'data_source'], always_reread="candidate.data_source = 'youtrack'") }}
+{{ silver_incremental_watermark(['tenant_id', 'insight_source_id', 'data_source'], always_reread="candidate.data_source = 'youtrack'") }}

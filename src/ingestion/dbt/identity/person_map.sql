@@ -4,7 +4,7 @@
     tags=['identity', 'identity:map', 'sync:always']
 ) }}
 
--- INVARIANT: one row per email. A duplicate multiplies every joined fact, so
+-- INVARIANT: one row per (tenant_id, email). A duplicate multiplies every joined fact, so
 -- schema.yml asserts it at error severity instead of this model repairing it.
 -- INVARIANT: `identity_inputs` is an RMT read WITHOUT `FINAL`. Sound only while
 -- duplicate row versions of one unique_key agree on every column projected or
@@ -15,12 +15,12 @@
 -- so the compiled join applies no function to either side.
 -- SAFETY: UPSERT only. A closed account keeps claiming, because closure means
 -- the account is gone from the source, not that its history changed owner.
--- SAFETY: no tenant join. `identity_inputs` carries a producer-side hashed
--- tenant that never equals the journal's; the account triple is the only key
--- sound across the two stores.
+-- INVARIANT: one map per tenant. Both stores carry the canonical tenant, so an
+-- address two tenants share resolves within each tenant on its own.
 
 WITH account_emails AS (
     SELECT DISTINCT
+        toString(insight_tenant_id)            AS tenant_id,
         insight_source_type                    AS source_type,
         insight_source_id                      AS source_id,
         lower(trimBoth(source_account_id))     AS account_id,
@@ -33,14 +33,16 @@ WITH account_emails AS (
 )
 
 SELECT
+    account_emails.tenant_id  AS tenant_id,
     account_emails.email      AS email,
     any(assignment.person_id) AS person_id
 FROM account_emails
 INNER JOIN {{ ref('account_assignment') }} AS assignment
-    ON assignment.source_type = account_emails.source_type
+    ON assignment.tenant_id = account_emails.tenant_id
+   AND assignment.source_type = account_emails.source_type
    AND assignment.source_id = account_emails.source_id
    AND assignment.account_id = account_emails.account_id
 WHERE account_emails.email != ''
   AND assignment.person_id != {{ excluded_person_id() }}
-GROUP BY account_emails.email
+GROUP BY account_emails.tenant_id, account_emails.email
 HAVING uniqExact(assignment.person_id) = 1

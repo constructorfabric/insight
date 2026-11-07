@@ -34,7 +34,7 @@ INGESTION = [
     "ingestion.toolboxImage=ghcr.io/example/insight-toolbox:0.0.0-test",
     # The umbrella refuses to render an enabled seed CronJob without a tenant.
     "--set",
-    f"global.tenantDefaultId={TENANT}",
+    f"authenticator.oidc.defaultTenantId={TENANT}",
 ]
 
 

@@ -6,7 +6,7 @@
 ) }}
 
 -- Identity-resolution match rate, measured over ACTIVITY (source rows), not
--- over aliases: one row per source with how much of its recorded work resolves
+-- over aliases: one row per tenant and source with how much of its recorded work resolves
 -- to a canonical person. This is the measuring device for the "match rate is
 -- reported" outcome of the identity epic and the prioritization signal for
 -- resolution-quality work — a source with a low rate is where identity is
@@ -25,34 +25,34 @@
 -- identity — usually a seeding gap, and it distorts peers for whole teams.
 
 WITH source_identities AS (
-    SELECT source_key, entity_id AS email, account_source_type, account_source_id, account_id
+    SELECT toString(tenant_id) AS tenant_id, source_key, entity_id AS email, account_source_type, account_source_id, account_id
     FROM {{ ref('git_metric_evidence') }}
 
     UNION ALL
 
-    SELECT source_key, entity_id AS email, account_source_type, account_source_id, account_id
+    SELECT toString(tenant_id) AS tenant_id, source_key, entity_id AS email, account_source_type, account_source_id, account_id
     FROM {{ ref('ai_metric_evidence') }}
 
     UNION ALL
 
-    SELECT source_key, entity_id AS email, account_source_type, account_source_id, account_id
+    SELECT toString(tenant_id) AS tenant_id, source_key, entity_id AS email, account_source_type, account_source_id, account_id
     FROM {{ ref('collab_metric_evidence') }}
 
     UNION ALL
 
-    SELECT source_key, entity_id AS email, account_source_type, account_source_id, account_id
+    SELECT toString(tenant_id) AS tenant_id, source_key, entity_id AS email, account_source_type, account_source_id, account_id
     FROM {{ ref('task_metric_evidence') }}
 
     UNION ALL
 
-    SELECT source_key, entity_id AS email, account_source_type, account_source_id, account_id
+    SELECT toString(tenant_id) AS tenant_id, source_key, entity_id AS email, account_source_type, account_source_id, account_id
     FROM {{ ref('wiki_metric_evidence') }}
 
     UNION ALL
 
     -- Seat spend: the one evidence relation whose unresolved rows are money,
     -- so its match rate answers "how much of the billed amount reaches nobody".
-    SELECT source_key, entity_id AS email, account_source_type, account_source_id, account_id
+    SELECT toString(tenant_id) AS tenant_id, source_key, entity_id AS email, account_source_type, account_source_id, account_id
     FROM {{ ref('ai_cost_metric_evidence') }}
 
     UNION ALL
@@ -61,6 +61,7 @@ WITH source_identities AS (
     -- each HR email once, so collapsing row versions and duplicates is the
     -- same operation here.
     SELECT DISTINCT
+        workspace_id AS tenant_id,
         'hr_cohorts' AS source_key,
         {{ normalized_email('assumeNotNull(email)') }} AS email,
         '' AS account_source_type,
@@ -72,6 +73,7 @@ WITH source_identities AS (
 ),
 resolution AS (
     SELECT
+        source_identities.tenant_id AS tenant_id,
         source_identities.source_key AS source_key,
         source_identities.email AS email,
         source_identities.account_id AS account_id,
@@ -85,13 +87,16 @@ resolution AS (
             OR coalesce(person_map.email, '') != '') AS resolved
     FROM source_identities
     LEFT JOIN {{ ref('account_assignment') }} AS account_map
-        ON account_map.source_type = source_identities.account_source_type
+        ON account_map.tenant_id = source_identities.tenant_id
+       AND account_map.source_type = source_identities.account_source_type
        AND account_map.source_id = toUUID(UUIDNumToString(sipHash128(coalesce(source_identities.account_source_id, ''))))
        AND account_map.account_id = lower(trimBoth(coalesce(source_identities.account_id, '')))
     LEFT JOIN {{ ref('person_map') }} AS person_map
-        ON person_map.email = source_identities.email
+        ON person_map.tenant_id = source_identities.tenant_id
+       AND person_map.email = source_identities.email
 )
 SELECT
+    tenant_id,
     source_key,
     count() AS observation_rows,
     countIf(NOT resolved) AS unresolved_rows,
@@ -100,4 +105,4 @@ SELECT
     uniqExactIf(if(email != '', email, coalesce(account_id, '')), NOT resolved) AS unresolved_people,
     round(100 * countIf(resolved) / count(), 1) AS match_rate_pct
 FROM resolution
-GROUP BY source_key
+GROUP BY tenant_id, source_key

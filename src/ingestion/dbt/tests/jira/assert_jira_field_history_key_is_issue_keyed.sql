@@ -7,8 +7,8 @@
 -- Recomputed from the row's own columns, so a producer cannot disagree with
 -- the contract without this failing. An empty `issue_id` fails it too.
 
-SELECT unique_key, issue_id, id_readable, field_id, event_id
+SELECT unique_key, tenant_id, insight_source_id, issue_id, id_readable, field_id, event_id
 FROM {{ ref('jira__field_history_derived') }} FINAL
 WHERE issue_id = ''
-   OR unique_key != {{ jira_history_key('insight_source_id', 'issue_id', 'field_id', 'event_id') }}
+   OR unique_key != {{ jira_history_key('tenant_id', 'insight_source_id', 'issue_id', 'field_id', 'event_id') }}
 LIMIT 100

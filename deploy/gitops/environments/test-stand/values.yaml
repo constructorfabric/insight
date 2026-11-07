@@ -232,10 +232,9 @@ keycloakConfig:
   #     truth, not two copies to rotate.
   #
   # It does NOT carry the tenant id, and must not be made to. The Job sets
-  # INSIGHT_TENANT_ID in its own `env:` block from `global.tenantDefaultId`, so
-  # storing it here would add another copy of that UUID to the list already
-  # enumerated at `global.tenantDefaultId` — one that drifts silently because
-  # the Job's own value would keep winning.
+  # INSIGHT_TENANT_ID in its own `env:` block from
+  # `authenticator.oidc.defaultTenantId`; a copy here would drift silently
+  # because the Job's own value would keep winning.
   #
   # And it does not carry any external IdP's OAuth credentials. An earlier
   # version of this comment said it did; that describes the OTHER stand shape —
@@ -255,20 +254,7 @@ keycloakConfig:
 # ═══════════════════════════════════════════════════════════════════════════
 #  Global
 # ═══════════════════════════════════════════════════════════════════════════
-global:
-  # The stand's single tenant. Not a credential — an identifier the deploy
-  # cannot work without: the chart's default is empty, and an empty tenant
-  # fails closed in the analytics metric-catalog resolver and in
-  # identity-resolution's bootstrap-admin seed.
-  #
-  # This UUID has to stay equal to THREE other places or the stand
-  # silently half-works: `ingestion.reconcile.tenantId` below,
-  # `authenticator.oidc.defaultTenantId` below, and the value the seeder
-  # discovers from the composed `insight-identity-resolution-config` Secret
-  # at seed time (src/ingestion/tools/seed/seed-stand.sh reads it from the
-  # cluster rather than taking a flag, so a drift here silently seeds a
-  # tenant nobody can log into).
-  tenantDefaultId: "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
+global: {}
   # Not set, and worth knowing why: `global.observability.otlp.endpoint` is left at
   # the chart's empty default, which means every service emits structured
   # JSON to stdout and exports no OTLP. There is no collector on this stand
@@ -380,9 +366,6 @@ ingestion:
     # outside the release. See README.md, "What this env does not own".
     enabled: true
   reconcile:
-    # Must equal `global.tenantDefaultId`. Two copies of one UUID is a drift
-    # risk the chart does not check for us.
-    tenantId: "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
     destinationName: clickhouse-bronze
     # `<argo-release-name>-<argo-namespace>` — the instance id the Argo
     # controller filters Workflows on. A wrong value here produces Workflows
@@ -658,8 +641,12 @@ authenticator:
     sourceType: "keycloak"
     externalIdClaim: "idp_sub"
 
-    # Fallback tenant for an id_token without a tenant claim. Must equal
-    # `global.tenantDefaultId`; empty would fail closed.
+    # The stand's one tenant — not a credential, an identifier the deploy
+    # cannot work without. Every consumer reads it from here: reconcile, the
+    # realm import, the authenticator (also its fallback for an id_token
+    # without a tenant claim) and identity-resolution, whose composed config
+    # Secret the seeder reads it back from at seed time
+    # (src/ingestion/tools/seed/seed-stand.sh).
     defaultTenantId: "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -712,11 +699,6 @@ identityResolution:
     resources:
       requests: {cpu: 50m, memory: 128Mi}
       limits: {cpu: 500m, memory: 512Mi}
-      # No `tenantDefaultId` here: for an umbrella install the composed
-      # identity-resolution config Secret already carries the tenant from
-      # `global.tenantDefaultId`. Setting it here would add a fourth copy of
-      # the same UUID that can drift; the key exists for standalone installs
-      # whose Secret does not carry one.
 
   # The seed publishes the refreshed persons log into ClickHouse as its own
   # final step (full snapshot plus an atomic swap), so no separate sync

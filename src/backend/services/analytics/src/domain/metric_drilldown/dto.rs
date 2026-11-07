@@ -278,9 +278,6 @@ pub struct NotReadyDrilldown {
 pub struct ValidatedMetricDrilldown {
     pub selection: MetricDrilldownSelection,
     pub tenant_id: uuid::Uuid,
-    /// Same runtime policy switch as metric-results (#1967): the evidence read
-    /// leads with `tenant_id = ?` when set, degrades to match-all otherwise.
-    pub enforce_tenant_scope: bool,
     pub from: NaiveDate,
     pub to: NaiveDate,
     pub limit: usize,

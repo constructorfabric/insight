@@ -1,6 +1,6 @@
 {{ config(materialized='table', engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_sprints']) }}
 
-SELECT unique_key, source_id AS insight_source_id, 'youtrack' AS data_source,
+SELECT unique_key, ifNull(tenant_id, '') AS tenant_id, source_id AS insight_source_id, 'youtrack' AS data_source,
     id AS sprint_id, agile_id AS board_id,
     nullIf(JSONExtractString({{ youtrack_json('sprint_json') }}, 'agile', 'name'), '') AS board_name,
     name AS sprint_name, CAST(NULL AS Nullable(String)) AS project_key,
