@@ -133,13 +133,18 @@ fn build_query(tenant_id: Uuid, query: ListQuery<'_>) -> (String, Vec<sea_orm::V
     let mut values = vec![query.org_chart_source_type.to_owned().into()];
     values.push(tenant_id.as_bytes().to_vec().into());
     values.push(tenant_id.as_bytes().to_vec().into());
-    let protect_manager = query.restrict.visible_to.is_some();
+    let viewer = query
+        .restrict
+        .visible_to
+        .map(|scope| scope.viewer_person_id);
     let scope = visible_scope(query.restrict.visible_to, tenant_id);
     let recursive = scope.recursive;
     let visible_cte = scope.cte;
     let mut filters = String::from(scope.filter);
-    let manager_projection = manager_projection(protect_manager);
+    let manager = manager_projection(viewer);
+    let manager_projection = manager.sql;
     values.extend(scope.values);
+    values.extend(manager.values);
 
     append_filters(&mut filters, &mut values, query.terms, query.person_ids);
     append_any_of(&mut filters, &mut values, query.any_of);
@@ -259,29 +264,41 @@ fn append_filters(
     }
 }
 
-fn manager_projection(protect_manager: bool) -> &'static str {
-    if protect_manager {
-        return r"
+struct ManagerProjectionSql {
+    sql: &'static str,
+    values: Vec<sea_orm::Value>,
+}
+
+fn manager_projection(viewer: Option<Uuid>) -> ManagerProjectionSql {
+    let Some(viewer) = viewer else {
+        return ManagerProjectionSql {
+            sql: r"
                    CASE WHEN EXISTS (
+                       SELECT 1
+                       FROM people manager
+                       WHERE manager.insight_tenant_id = p.insight_tenant_id
+                         AND manager.person_id = p.manager_person_id
+                         AND manager.valid_to IS NULL
+                   ) THEN p.manager_person_id END",
+            values: Vec::new(),
+        };
+    };
+
+    ManagerProjectionSql {
+        sql: r"
+                   CASE WHEN (p.person_id = ? OR EXISTS (
                        SELECT 1
                        FROM visible_set vs
                        WHERE vs.person_id = p.manager_person_id
-                   ) AND EXISTS (
+                   )) AND EXISTS (
                        SELECT 1
                        FROM people manager
                        WHERE manager.insight_tenant_id = p.insight_tenant_id
                          AND manager.person_id = p.manager_person_id
                          AND manager.valid_to IS NULL
-                   ) THEN p.manager_person_id END";
+                   ) THEN p.manager_person_id END",
+        values: vec![viewer.as_bytes().to_vec().into()],
     }
-    r"
-                   CASE WHEN EXISTS (
-                       SELECT 1
-                       FROM people manager
-                       WHERE manager.insight_tenant_id = p.insight_tenant_id
-                         AND manager.person_id = p.manager_person_id
-                         AND manager.valid_to IS NULL
-                   ) THEN p.manager_person_id END"
 }
 
 fn push_patterns(values: &mut Vec<sea_orm::Value>, term: &str) {

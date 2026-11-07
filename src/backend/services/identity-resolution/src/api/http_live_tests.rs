@@ -906,6 +906,31 @@ async fn people_hide_a_manager_outside_the_callers_visible_set() -> TestResult {
 }
 
 #[tokio::test]
+async fn people_show_the_caller_their_own_manager() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let marker = format!("find-{}", Uuid::now_v7().simple());
+    let caller = f
+        .person(&format!("own-manager-caller-{marker}@http-live.test"))
+        .await?;
+    let manager = f
+        .person(&format!("own-manager-manager-{marker}@http-live.test"))
+        .await?;
+    f.reports_to(caller, manager).await?;
+
+    let (status, body) = get(app(&f, caller), &format!("/v1/people?q={marker}")).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, vec![caller.to_string()]);
+    assert_eq!(
+        body["items"][0]["manager_person_id"],
+        json!(manager.to_string())
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn tenant_people_visibility_lists_the_tenant_roster_to_any_member() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());

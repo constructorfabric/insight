@@ -474,6 +474,7 @@ export interface PageRequest {
 
 export interface PeopleListRequest extends PageRequest {
   q?: string;
+  ids?: readonly string[];
   visibility?: "caller" | "tenant";
 }
 
@@ -493,6 +494,7 @@ export async function listPeople(
   const params = new URLSearchParams();
   if (page.visibility) params.set("visibility", page.visibility);
   if (page.q) params.set("q", page.q);
+  if (page.ids?.length) params.set("ids", page.ids.join(","));
   if (page.cursor) params.set("cursor", page.cursor);
   if (page.limit != null) params.set("limit", String(page.limit));
   const query = params.toString();
