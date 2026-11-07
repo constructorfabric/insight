@@ -2,15 +2,16 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 
 import type { Alert, AlertNotification } from "@/api/alerts-client";
 import { refusal } from "@/components/custom/refusal";
-import { Badge, Button } from "@gears-frontx/ui-kit";
 import {
+  Badge,
+  Button,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@gears-frontx/ui-kit";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { WitnessLines } from "@/components/alerts/witness";
 import { conditionText, statusText } from "@/lib/alerts/describe";

@@ -1,12 +1,12 @@
 import { Sparkles } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "@gears-frontx/ui-kit";
 import {
+  Button,
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@gears-frontx/ui-kit";
 import { useAiAvailable, useExplainMetric } from "@/queries/ai";
 import type { MetricSnapshot } from "@/api/ai-client";
 import { TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";

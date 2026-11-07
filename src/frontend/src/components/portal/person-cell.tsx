@@ -22,8 +22,9 @@ import { useTranslation } from "react-i18next";
 
 import type { PersonSummary } from "@/api/identity-client";
 import { CopyValueButton } from "@/components/copy-value-button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
+  Avatar,
+  AvatarFallback,
   Badge,
   Tooltip,
   TooltipContent,

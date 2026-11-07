@@ -1,5 +1,5 @@
 import { isBusy, type MetricResult, type Widget } from "@/api/custom-client";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription } from "@gears-frontx/ui-kit";
 import { MetricName } from "@/components/custom/metric-name";
 import { refusal } from "@/components/custom/refusal";
 import { CustomAreaChart } from "@/components/custom/custom-area-chart";

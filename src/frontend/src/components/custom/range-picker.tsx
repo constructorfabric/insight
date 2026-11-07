@@ -3,14 +3,15 @@ import { useState } from "react";
 import type { DateRange as DayPickerRange } from "react-day-picker";
 
 import { toISODate } from "@/api/period-to-date-range";
-import { Button } from "@gears-frontx/ui-kit";
-import { Calendar } from "@/components/ui/calendar";
 import {
+  Button,
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@gears-frontx/ui-kit";
+import { Calendar } from "@/components/ui/calendar";
 import {
   RANGE_PRESETS,
   rangeLabel,

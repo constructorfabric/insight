@@ -11,8 +11,9 @@
 import { TriangleAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
+  Alert,
+  AlertDescription,
   Button,
   Dialog,
   DialogContent,

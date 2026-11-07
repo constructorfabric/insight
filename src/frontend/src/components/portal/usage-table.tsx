@@ -12,8 +12,6 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -104,7 +102,7 @@ export function VirtualTable<T, K extends string = string>({
                     type="button"
                     onClick={() => onSort(sortKey)}
                     className={cn(
-                      "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                      "group/sort flex min-w-0 items-center gap-1 rounded-sm [text-transform:inherit] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                       direction && "text-foreground",
                     )}
                   >

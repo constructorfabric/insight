@@ -43,9 +43,9 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Spinner,
 } from "@gears-frontx/ui-kit";
 import { formatMetricNumber } from "@/lib/format";
-import { Spinner } from "@/components/ui/spinner";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { nextSort } from "@/lib/metrics/evidence-rows";
 import { sameEvidenceSubject } from "@/lib/metrics/evidence-placeholder";

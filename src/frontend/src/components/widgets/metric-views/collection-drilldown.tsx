@@ -1,5 +1,5 @@
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@gears-frontx/ui-kit";
 import { MetricBreakdown } from "@/components/widgets/metric-views/metric-breakdown";
 import { MetricHistogram } from "@/components/widgets/metric-views/metric-histogram";
 import { MetricSummaryCard } from "@/components/widgets/metric-views/metric-summary-card";

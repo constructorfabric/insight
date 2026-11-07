@@ -7,7 +7,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@gears-frontx/ui-kit";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { GroupCardEmpty } from "@/components/widgets/group-card-empty";
 import { formatMetricValue } from "@/lib/format";

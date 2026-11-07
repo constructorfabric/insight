@@ -20,8 +20,8 @@ import {
   DialogHeader,
   DialogTitle,
   toast,
+  Spinner,
 } from "@gears-frontx/ui-kit";
-import { Spinner } from "@/components/ui/spinner";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import { grantsQuery, useDeleteGrant, usePutGrant } from "@/queries/custom";

@@ -6,14 +6,16 @@ import {
   selectedMembers,
   type MemberSelection,
 } from "@/components/portal/member-selection";
-import { Button, Checkbox, Input } from "@gears-frontx/ui-kit";
 import {
+  Button,
+  Checkbox,
+  Input,
   Popover,
   PopoverContent,
   PopoverHeader,
   PopoverTitle,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@gears-frontx/ui-kit";
 
 interface MemberFilterProps {
   members: readonly MembersGridMember[];

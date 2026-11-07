@@ -1,5 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@gears-frontx/ui-kit";
 
 type FullScreenLoadingProps = {
   message?: string;
