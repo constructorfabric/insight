@@ -302,9 +302,6 @@ sources:
         evidence_granularity: derived_population
       - key: stale_in_progress
         evidence_granularity: derived_population
-      - key: dev_time_hours
-        evidence_granularity: event
-        evidence_presentation: *issue_measured
       - key: resolution_days
         evidence_granularity: event
         evidence_presentation: *issue_measured
@@ -2493,28 +2490,6 @@ metrics:
       - input_role: value
         measure_key: closed_wontfix
     dimensions: []
-  - metric_key: tasks.dev_time
-    source_key: task
-    subject: cycle_time
-    tags:
-      - duration
-      - distribution
-    label: Development time
-    short_label: Dev time
-    description: Time an issue spends in active development
-    explanation: Median time closed issues spent in in-progress statuses, from first pickup to close.
-    unit: h
-    format: decimal
-    direction: lower_is_better
-    entity_type: person
-    computation: median
-    peer_cohort_key: org_unit
-    inputs:
-      - input_role: value
-        measure_key: dev_time_hours
-    dimensions:
-      - type
-      - source
   - metric_key: tasks.resolution_time
     source_key: task
     subject: cycle_time

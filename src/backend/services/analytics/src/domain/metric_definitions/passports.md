@@ -752,14 +752,6 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, neutral, unit issues
 - Notes: Issues a person closed during the period whose resolution class is wontfix. Part of issues closed, not a separate total.
 
-## tasks.dev_time — Development time
-
-- Source: task (task_metric_observations)
-- Reads: dev_time_hours
-- Formula: median(dev_time_hours)
-- Shape: decimal, lower_is_better, unit h
-- Notes: Median time closed issues spent in in-progress statuses, from first pickup to close.
-
 ## tasks.resolution_time — Time to resolution
 
 - Source: task (task_metric_observations)

@@ -5,8 +5,8 @@ types, plus the configuration rows that bind `closed:completed` and `closed:not_
 to a lifecycle category. Five department members of rank r each close r issues on one
 close date inside the custom window, so the peer distribution is {1,2,3,4,5}; erin's five
 split into 4 Task + 1 Bug, every row carries `source: github`, a not_planned closure
-still counts, a re-extracted duplicate row changes nothing, and dev time is absent
-because GitHub has no in-progress category.
+still counts, a re-extracted duplicate row changes nothing, and flow efficiency is
+absent because GitHub has no in-progress category.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ ERIN = "erin@example.com"
 
 def test_tasks_closed_via_github(spec: SpecRun) -> None:
     """Erin's five closures, their type split, the department distribution at the
-    disclosure floor, and no dev time for a tracker without an in-progress category."""
+    disclosure floor, and no flow efficiency for a tracker without an in-progress category."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -43,7 +43,7 @@ def test_tasks_closed_via_github(spec: SpecRun) -> None:
                     },
                     {"metric_key": "tasks.bugs_fixed", "views": [{"view": "period"}]},
                     {"metric_key": "tasks.closed_task", "views": [{"view": "period"}]},
-                    {"metric_key": "tasks.dev_time", "views": [{"view": "period"}]},
+                    {"metric_key": "tasks.flow_efficiency", "views": [{"view": "period"}]},
                 ],
             },
         }
@@ -67,8 +67,8 @@ def test_tasks_closed_via_github(spec: SpecRun) -> None:
     r.row("tasks.bugs_fixed", "period", entity_id=ERIN).equals(value=1)
     r.row("tasks.closed_task", "period", entity_id=ERIN).equals(value=4)
 
-    dev_time = some(r.rows("tasks.dev_time", "period"), entity_id=ERIN)
-    assert [row for row in dev_time if row.get("value") is not None] == []
+    flow_efficiency = some(r.rows("tasks.flow_efficiency", "period"), entity_id=ERIN)
+    assert [row for row in flow_efficiency if row.get("value") is not None] == []
 
 
 def test_tasks_closed_split_by_source(spec: SpecRun) -> None:

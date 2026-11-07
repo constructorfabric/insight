@@ -7,7 +7,7 @@ the removal, which is what makes the two readings separable: with the closing
 row the window reads 1, and without it the issue's last status change is the
 earlier move and the window is empty.
 
-`dev_time` looks like the natural measure and is not: it is stamped on
+`flow_efficiency` looks like the natural measure and is not: it is stamped on
 `final_close_at` and sums only spans starting before the close, so an issue that
 never closes has no value at all regardless of its spans.
 """

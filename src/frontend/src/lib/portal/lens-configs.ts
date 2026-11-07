@@ -675,11 +675,7 @@ const DEV: Record<string, LensEntry> = {
       {
         kind: "stat-tiles",
         title: "Typical task times (median)",
-        metrics: [
-          "tasks.resolution_time",
-          "tasks.pickup_time",
-          "tasks.dev_time",
-        ],
+        metrics: ["tasks.resolution_time", "tasks.pickup_time"],
       },
       { kind: "trend", metrics: ["tasks.closed", "tasks.bugs_fixed"] },
       {

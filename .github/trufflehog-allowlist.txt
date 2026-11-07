@@ -62,8 +62,6 @@ da8ef1e259b19b30  URI                src/backend/services/insight-v3-core/src/mc
 1dc9b04228f59921  JiraToken          tests/datapath/metrics/tasks/tasks_closed_deleted_excluded.test.yaml  # synthetic e2e metric fixture value
 844d1ef4ec9aed09  JiraToken          tests/datapath/metrics/tasks/tasks_closed_deleted_excluded.test.yaml  # synthetic e2e metric fixture value
 de3f304652beeef4  JiraToken          tests/datapath/metrics/tasks/tasks_closed_deleted_excluded.test.yaml  # repeated-digit placeholder identifier from an earlier revision of this fixture
-004745da342d7320  JiraToken          tests/datapath/metrics/tasks/tasks_dev_time.test.yaml  # synthetic e2e metric fixture value
-328427f59cdc64f5  JiraToken          tests/datapath/metrics/tasks/tasks_dev_time.test.yaml  # synthetic e2e metric fixture value
 437efa33245a9c5e  JiraToken          tests/datapath/metrics/tasks/tasks_due_dates.test.yaml  # synthetic e2e metric fixture value
 44e4c60c9e1aa04a  JiraToken          tests/datapath/metrics/tasks/tasks_due_dates.test.yaml  # synthetic e2e metric fixture value
 085bc675055a6aae  JiraToken          tests/datapath/metrics/tasks/tasks_estimation_accuracy.test.yaml  # synthetic e2e metric fixture value
@@ -119,8 +117,6 @@ b8e3852f9c17fe0a  JiraToken          src/ingestion/tests/e2e/metrics/task_delive
 8285fe458efd4745  JiraToken          src/ingestion/tests/e2e/metrics/task_delivery_pickup_time_jira.test.yaml  # synthetic e2e metric fixture value
 68ac3e69cd020f4f  JiraToken          src/ingestion/tests/e2e/metrics/task_delivery_stale_in_progress_jira.test.yaml  # synthetic e2e metric fixture value
 8abaf7ee111c647b  JiraToken          src/ingestion/tests/e2e/metrics/task_delivery_stale_in_progress_jira.test.yaml  # synthetic e2e metric fixture value
-809d92e44b9a9db9  JiraToken          src/ingestion/tests/e2e/metrics/task_delivery_task_dev_time_jira.test.yaml  # synthetic e2e metric fixture value
-a7c5aa5723f4d005  JiraToken          src/ingestion/tests/e2e/metrics/task_delivery_task_dev_time_jira.test.yaml  # synthetic e2e metric fixture value
 4f15b8f3a5dcd6db  JiraToken          src/ingestion/tests/e2e/metrics/task_delivery_task_reopen_rate_gate_jira.test.yaml  # synthetic e2e metric fixture value
 585582c530f9c3f6  JiraToken          src/ingestion/tests/e2e/metrics/task_delivery_task_reopen_rate_gate_jira.test.yaml  # synthetic e2e metric fixture value
 21e716cab8ef8cef  JiraToken          src/ingestion/tests/e2e/metrics/task_delivery_task_reopen_rate_jira.test.yaml  # synthetic e2e metric fixture value
