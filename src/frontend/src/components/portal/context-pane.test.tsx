@@ -181,8 +181,8 @@ describe("Home pane", () => {
   it("lists the themes and writes the selection on click", async () => {
     pane();
     const item = renderHook(() => usePortalItem());
-    await userEvent.click(screen.getByText("Data coverage"));
-    expect(item.result.current).toBe("health");
+    await userEvent.click(screen.getByText("Attention needed"));
+    expect(item.result.current).toBe("attention");
   });
 
   it("links an admin to their own dashboards", () => {

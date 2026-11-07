@@ -27,13 +27,6 @@ def test_attention_needed_loads(ceo_portal: PortalPage) -> None:
 
 
 @pytest.mark.requires_seed("ceo")
-def test_data_coverage_loads(ceo_portal: PortalPage) -> None:
-    ceo_portal.open_zone("Home")
-    ceo_portal.open_pane_entry("Data coverage")
-    ceo_portal.verify_page_loaded("page-overview-health")
-
-
-@pytest.mark.requires_seed("ceo")
 def test_contribution_breakdown_loads(ceo_portal: PortalPage) -> None:
     ceo_portal.open_zone("Home")
     ceo_portal.open_pane_entry("Contribution breakdown")

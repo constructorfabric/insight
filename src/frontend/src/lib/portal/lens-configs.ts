@@ -125,11 +125,7 @@ export type SectionSpec =
     }
   // Overview-motivated, zone-agnostic sections (design DESIGN-2026-07-27-overview §4).
   | { kind: "attention"; metrics: readonly string[]; max: number }
-  | { kind: "direction-cards"; variant: "compact" | "full" }
-  // How much of each person's work we can see at all, and for how many
-  // people (#2408). Fetches its own period-only collection across every
-  // group, so it contributes no keys to the zone grid.
-  | { kind: "coverage-levels" };
+  | { kind: "direction-cards"; variant: "compact" | "full" };
 
 export interface LensConfig {
   title: string;
@@ -422,12 +418,6 @@ export function sectionMetricKeys(config: LensConfig): string[] {
           }
         }
         break;
-      case "coverage-levels":
-        // Deliberately none. Coverage asks whether ANY metric of a group
-        // reads, so it needs every group's keys rather than the zone's
-        // chosen few — widening the shared grid to that would make one tab
-        // pay for all of them. It fetches its own period-only collection.
-        break;
       default: {
         const _exhaustive: never = s;
         throw new Error(
@@ -482,10 +472,8 @@ export function visibleSections(
         break;
       }
       case "direction-cards":
-      case "coverage-levels":
-        // Neither names a metric of its own: the cards read each direction's
-        // own Overview lens (gated where that lens is composed) and coverage
-        // counts sections.
+        // Names no metric of its own: the cards read each direction's own
+        // Overview lens, gated where that lens is composed.
         sections.push(s);
         break;
       default: {
