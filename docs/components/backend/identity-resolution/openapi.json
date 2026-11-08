@@ -675,6 +675,12 @@
               "null"
             ]
           },
+          "manager_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "manager_person_id": {
             "format": "uuid",
             "type": [
@@ -1881,7 +1887,7 @@
         "operationId": "identity_resolution.people.list",
         "parameters": [
           {
-            "description": "`caller` (default) returns people visible to the caller; `tenant` returns the entire tenant roster to any member: names and contact for everyone, attributes and managers for administrators only",
+            "description": "`caller` (default) returns people visible to the caller, each with a manager only when that manager is visible too or the row is the caller's own; `tenant` returns the entire tenant roster to any member: names and contact for everyone, attributes and managers for administrators only",
             "in": "query",
             "name": "visibility",
             "required": false,
