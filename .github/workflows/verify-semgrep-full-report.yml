@@ -1,0 +1,86 @@
+name: Verify Semgrep full report
+
+# Push to cursor/verify-semgrep-full-report-c8d5 only. Not a security gate.
+# Same uv install, full-tree scan, summary and SARIF upload as the report job.
+
+on:
+  push:
+    branches: [cursor/verify-semgrep-full-report-c8d5]
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: report
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight') && 'ubuntu-latest' || 'insight-small' }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        if: ${{ !cancelled() }}
+        with:
+          version: "0.12.17"
+
+      - name: Semgrep scan (full tree — owns the SARIF upload, never blocks)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          uv venv --python 3.12 "$RUNNER_TEMP/semgrep"
+          uv pip install --python "$RUNNER_TEMP/semgrep" \
+            --require-hashes -r .github/semgrep-requirements.txt
+          "$RUNNER_TEMP/semgrep/bin/semgrep" scan \
+            --config auto \
+            --config p/rust \
+            --exclude-rule generic.secrets.security.detected-generic-secret \
+            --sarif --output semgrep.sarif
+
+      - name: Summarize findings in the job summary
+        if: always()
+        run: |
+          [ -f semgrep.sarif ] || exit 0
+          [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
+          CS_BASE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/security/code-scanning"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            CS_URL="${CS_BASE}?query=is%3Aopen+pr%3A${GITHUB_REF_NAME%/merge}"
+          else
+            CS_URL="${CS_BASE}?query=is%3Aopen+branch%3A${GITHUB_REF_NAME}"
+          fi
+          python3 - semgrep.sarif "$GITHUB_STEP_SUMMARY" "$CS_URL" <<'PY'
+          import json, sys, collections
+          d = json.load(open(sys.argv[1]))
+          out = open(sys.argv[2], "a")
+          cs_url = sys.argv[3]
+          res = [x for r in d.get("runs", []) for x in r.get("results", [])]
+          total = len(res)
+          sev = collections.Counter((x.get("level") or "warning") for x in res)
+          rules = collections.Counter(x.get("ruleId", "?").split(".")[-1] for x in res)
+          w = out.write
+          w("## Semgrep SAST (report-only)\n\n")
+          w(f"**{total}** finding(s) from `auto` + `p/rust` (secrets excluded — TruffleHog owns those). "
+            f"This check does **not** block; full details in [Security -> Code scanning]({cs_url}).\n\n")
+          if total:
+              w("| Severity | Count |\n|---|---:|\n")
+              for s in ("error", "warning", "note"):
+                  if sev.get(s):
+                      w(f"| {s} | {sev[s]} |\n")
+              w("\n<details><summary>Findings by rule</summary>\n\n| Count | Rule |\n|---:|---|\n")
+              for rid, n in rules.most_common():
+                  w(f"| {n} | `{rid}` |\n")
+              w("\n</details>\n")
+          w("\n_Report-only: becomes blocking when `--error` is added and the baseline is clean (#1797)._\n")
+          PY
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: ${{ always() && hashFiles('semgrep.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
