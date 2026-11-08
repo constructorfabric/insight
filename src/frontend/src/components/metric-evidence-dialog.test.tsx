@@ -223,6 +223,14 @@ describe("MetricEvidenceDialog", () => {
     mocks.held = null;
   });
 
+  it("numbers its records, as custom tables do", () => {
+    render(
+      <MetricEvidenceDialog state={state} onMetricChange={vi.fn()} onClose={vi.fn()} />
+    );
+
+    expect(mocks.tableProps?.numbered).toBe(true);
+  });
+
   it("loads, orders, paginates, exports, and closes evidence", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

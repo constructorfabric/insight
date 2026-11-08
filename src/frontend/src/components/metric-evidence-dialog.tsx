@@ -520,6 +520,7 @@ export function MetricEvidenceDialog({
               // INVARIANT: remounts per metric — expansion state is the
               // table's and must not carry across.
               key={activeMetricKey}
+              numbered
               metricKey={activeMetricKey}
               rows={rows}
               columns={columns}
