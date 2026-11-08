@@ -193,13 +193,13 @@ class FeedbackEntry(BaseModel):
         extra='forbid',
     )
     display_name: str = Field(..., description="The roster's name when it lists the sender, as People shows it; else\nthe identity rows', empty when they hold none.")
-    email: str | None = Field(None, description="The roster's address; absent for a sender the roster does not list.")
+    email: str | None = Field(None, description="The roster's address; null for a sender the roster does not list.")
     feedback_id: str
     message: str
     path: str
     person_id: str
     ts: str
-    username: str = Field(..., description='The account handle, empty when no source carries one.')
+    username: str = Field(..., description="The roster's handle when it lists the sender; else the identity rows',\nempty when they hold none.")
 
 
 class FeedbackListResponse(BaseModel):
@@ -1081,11 +1081,11 @@ class UsagePerson(BaseModel):
         extra='forbid',
     )
     display_name: str = Field(..., description="The roster's name when it lists the visitor, as People shows it; else\nthe identity rows', empty when they hold none.")
-    email: str | None = Field(None, description="The roster's address; absent for a visitor the roster does not list.")
+    email: str | None = Field(None, description="The roster's address; null for a visitor the roster does not list.")
     last_seen: str
     page_views: int = Field(..., ge=0)
     person_id: str
-    username: str = Field(..., description='The account handle, empty when no source carries one.')
+    username: str = Field(..., description="The roster's handle when it lists the visitor; else the identity rows',\nempty when they hold none.")
     visits: int = Field(..., ge=0)
 
 

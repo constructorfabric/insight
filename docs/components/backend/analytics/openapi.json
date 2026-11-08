@@ -707,7 +707,7 @@
             "type": "string"
           },
           "email": {
-            "description": "The roster's address; absent for a sender the roster does not list.",
+            "description": "The roster's address; null for a sender the roster does not list.",
             "type": [
               "string",
               "null"
@@ -729,7 +729,7 @@
             "type": "string"
           },
           "username": {
-            "description": "The account handle, empty when no source carries one.",
+            "description": "The roster's handle when it lists the sender; else the identity rows',\nempty when they hold none.",
             "type": "string"
           }
         },
@@ -3412,7 +3412,7 @@
             "type": "string"
           },
           "email": {
-            "description": "The roster's address; absent for a visitor the roster does not list.",
+            "description": "The roster's address; null for a visitor the roster does not list.",
             "type": [
               "string",
               "null"
@@ -3430,7 +3430,7 @@
             "type": "string"
           },
           "username": {
-            "description": "The account handle, empty when no source carries one.",
+            "description": "The roster's handle when it lists the visitor; else the identity rows',\nempty when they hold none.",
             "type": "string"
           },
           "visits": {

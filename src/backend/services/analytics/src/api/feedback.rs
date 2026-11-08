@@ -43,9 +43,10 @@ pub struct FeedbackEntry {
     /// The roster's name when it lists the sender, as People shows it; else
     /// the identity rows', empty when they hold none.
     pub display_name: String,
-    /// The account handle, empty when no source carries one.
+    /// The roster's handle when it lists the sender; else the identity rows',
+    /// empty when they hold none.
     pub username: String,
-    /// The roster's address; absent for a sender the roster does not list.
+    /// The roster's address; null for a sender the roster does not list.
     pub email: Option<String>,
     pub message: String,
     pub path: String,

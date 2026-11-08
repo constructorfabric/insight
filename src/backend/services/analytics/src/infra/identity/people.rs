@@ -3,9 +3,6 @@ use uuid::Uuid;
 
 use super::IdentityClient;
 
-// INVARIANT: identity refuses more ids than this in one lookup.
-const MAX_IDS: usize = 200;
-
 // INVARIANT: identity serves no more people than this in one page.
 const MAX_MATCHES: usize = 500;
 
@@ -28,22 +25,19 @@ impl IdentityClient {
         person_ids: &[Uuid],
         authorization: Option<&str>,
     ) -> anyhow::Result<Vec<RosterPerson>> {
-        let mut people = Vec::with_capacity(person_ids.len());
-        for chunk in person_ids.chunks(MAX_IDS) {
-            let ids = chunk
-                .iter()
-                .map(Uuid::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            let limit = chunk.len().to_string();
-
-            people.extend(
-                self.tenant_roster(&[("ids", &ids), ("limit", &limit)], authorization)
-                    .await?,
-            );
+        if person_ids.is_empty() {
+            return Ok(Vec::new());
         }
 
-        Ok(people)
+        let ids = person_ids
+            .iter()
+            .map(Uuid::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let limit = person_ids.len().to_string();
+
+        self.tenant_roster(&[("ids", &ids), ("limit", &limit)], authorization)
+            .await
     }
 
     pub(crate) async fn tenant_people_matching(
@@ -159,23 +153,6 @@ mod tests {
         assert_eq!(params.get("visibility").map(String::as_str), Some("tenant"));
         assert_eq!(params.get("ids").cloned(), Some(format!("{ada},{bob}")));
         assert_eq!(params.get("limit").map(String::as_str), Some("2"));
-    }
-
-    #[tokio::test]
-    async fn tenant_people_splits_more_ids_than_identity_takes_at_once() {
-        let ids: Vec<Uuid> = (1..=201).map(Uuid::from_u128).collect();
-        let (url, seen) = spawn_people(StatusCode::OK, serde_json::json!({"items": []})).await;
-        let client = IdentityClient::new(&url).unwrap();
-
-        client.tenant_people(&ids, None).await.unwrap();
-
-        let asked: Vec<usize> = seen
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(_, params)| params["ids"].split(',').count())
-            .collect();
-        assert_eq!(asked, vec![200, 1]);
     }
 
     #[tokio::test]

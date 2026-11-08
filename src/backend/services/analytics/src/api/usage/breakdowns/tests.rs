@@ -161,8 +161,8 @@ fn a_search_is_bound_never_spliced_in() -> R {
     assert!(!sql.contains(needle), "{sql}");
     assert_eq!(
         sql.matches('?').count(),
-        7,
-        "window, the name lookup's tenant, the needle twice, the join's tenant"
+        8,
+        "window, the name lookup's tenant, the needle twice, the roster's matches, the join's tenant"
     );
     Ok(())
 }
@@ -176,37 +176,15 @@ fn no_search_leaves_the_visitors_unfiltered() {
 
 #[test]
 fn a_search_also_keeps_the_visitors_the_roster_names_by_it() -> R {
-    let needle = searching("Example")?;
-    let rostered = [Uuid::from_u128(1)];
     let sql = people_sql(
         Order::default(),
         Some(&PeopleSearch {
-            needle: &needle,
-            rostered: &rostered,
+            needle: &searching("Example")?,
+            rostered: &[Uuid::from_u128(1)],
         }),
     );
 
     assert!(sql.contains("OR person_id IN ?"), "{sql}");
-    assert_eq!(
-        sql.matches('?').count(),
-        8,
-        "window, the name lookup's tenant, the needle twice, the roster's matches, the join's tenant"
-    );
-    Ok(())
-}
-
-#[test]
-fn a_search_the_roster_matches_nobody_by_binds_no_empty_set() -> R {
-    let needle = searching("zzz")?;
-    let sql = people_sql(
-        Order::default(),
-        Some(&PeopleSearch {
-            needle: &needle,
-            rostered: &[],
-        }),
-    );
-
-    assert!(!sql.contains("OR person_id IN ?"), "{sql}");
     Ok(())
 }
 

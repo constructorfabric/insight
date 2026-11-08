@@ -37,12 +37,6 @@ struct PeopleSearch<'a> {
     rostered: &'a [Uuid],
 }
 
-impl PeopleSearch<'_> {
-    fn roster_filter(&self) -> Option<&[Uuid]> {
-        (!self.rostered.is_empty()).then_some(self.rostered)
-    }
-}
-
 // INVARIANT: binds follow the placeholders — the window, then a search's
 // tenant, needle twice and roster hits, then the identity join's tenant.
 fn people_query(
@@ -56,31 +50,23 @@ fn people_query(
         query = query
             .bind(binds.tenant.as_str())
             .bind(search.needle.as_str())
-            .bind(search.needle.as_str());
-        if let Some(rostered) = search.roster_filter() {
-            query = query.bind(rostered);
-        }
+            .bind(search.needle.as_str())
+            .bind(search.rostered);
     }
 
     query.bind(binds.tenant.as_str())
 }
 
-/// Names come from the mirrored identity rows; a per-caller profile lookup
-/// answers only for the caller's visible set, and this surface is org-wide.
 fn people_sql(order: Order<PeopleSort>, search: Option<&PeopleSearch<'_>>) -> String {
     let named = named_persons();
     let capped = order.clause("");
     let joined = order.clause("u.");
-    let matching = search.map_or_else(String::new, |search| {
-        let rostered = if search.roster_filter().is_some() {
-            " OR person_id IN ?"
-        } else {
-            ""
-        };
+    let matching = search.map_or_else(String::new, |_| {
         format!(
             " AND (person_id IN (SELECT person_id FROM {named} \
              WHERE positionCaseInsensitiveUTF8(display_name, ?) > 0 \
-             OR positionCaseInsensitiveUTF8(username, ?) > 0){rostered})"
+             OR positionCaseInsensitiveUTF8(username, ?) > 0) \
+             OR person_id IN ?)"
         )
     });
     format!(
@@ -128,9 +114,10 @@ pub struct UsagePerson {
     /// The roster's name when it lists the visitor, as People shows it; else
     /// the identity rows', empty when they hold none.
     pub display_name: String,
-    /// The account handle, empty when no source carries one.
+    /// The roster's handle when it lists the visitor; else the identity rows',
+    /// empty when they hold none.
     pub username: String,
-    /// The roster's address; absent for a visitor the roster does not list.
+    /// The roster's address; null for a visitor the roster does not list.
     pub email: Option<String>,
     pub visits: u64,
     pub page_views: u64,
