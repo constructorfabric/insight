@@ -18,7 +18,9 @@ Env:
 Stdout: per-package summary. Exit: non-zero on an implausibly small
 live-branch set (nothing is deleted), on a listing error other than a package
 that was never published (404 → logged, skipped), and — after every package
-has been swept — if any single delete failed (logged, counted per package).
+has been swept — if any delete failed (logged, counted per package). A delete
+HTTP 404 is a failure unless a follow-up read reports that version is already
+gone.
 """
 
 from __future__ import annotations
@@ -44,6 +46,15 @@ SUFFIX_MAX_CHARS = 60
 MIN_LIVE_BRANCHES = 2
 
 
+class GhApiError(RuntimeError):
+    """A `gh api` invocation that returned non-zero."""
+
+    def __init__(self, path: str, stderr: str) -> None:
+        self.path = path
+        self.stderr = stderr.strip()
+        super().__init__(f"gh api {path} failed: {self.stderr}")
+
+
 def emit(message: str) -> None:
     """Write one report line to the job log."""
     print(message)  # noqa: T201 — the job log is this script's interface
@@ -53,8 +64,38 @@ def gh_api(path: str, *args: str) -> str:
     """Run `gh api` and return its stdout, raising on any failure."""
     result = subprocess.run(["gh", "api", path, *args], capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"gh api {path} failed: {result.stderr.strip()}")
+        raise GhApiError(path, result.stderr)
     return result.stdout
+
+
+def http_status(err: GhApiError) -> int | None:
+    """The HTTP status gh put on an API error, if it reported one."""
+    match = re.search(r"\(HTTP (\d{3})\)", err.stderr)
+    if match is not None:
+        return int(match.group(1))
+    match = re.search(r'"status"\s*:\s*"(\d{3})"', err.stderr)
+    return int(match.group(1)) if match is not None else None
+
+
+def not_found_kind(err: GhApiError) -> str | None:
+    """`version`, `package`, or `other` for a 404; None for any other status."""
+    if http_status(err) != 404:
+        return None
+    text = err.stderr.lower()
+    if "package version not found" in text:
+        return "version"
+    if "package not found" in text:
+        return "package"
+    return "other"
+
+
+def version_path(package: str, version_id: int | None = None) -> str:
+    """REST path for a container package's versions, or one version."""
+    encoded = package.replace("/", "%2F")
+    path = f"/orgs/{ORG}/packages/container/{encoded}/versions"
+    if version_id is None:
+        return path
+    return f"{path}/{version_id}"
 
 
 def sanitize_branch(name: str) -> str:
@@ -101,12 +142,11 @@ def is_orphan_tag(tag: str, live: set[str]) -> bool:
 
 def list_versions(package: str) -> list[dict] | None:
     """All versions of an org container package; None if it was never published."""
-    encoded = package.replace("/", "%2F")
-    path = f"/orgs/{ORG}/packages/container/{encoded}/versions"
+    path = version_path(package)
     try:
         raw = gh_api(path, "--paginate", "--jq", ".")
-    except RuntimeError as err:
-        if "404" in str(err) or "Not Found" in str(err):
+    except GhApiError as err:
+        if http_status(err) == 404 or "not found" in err.stderr.lower():
             return None
         raise
 
@@ -117,10 +157,38 @@ def list_versions(package: str) -> list[dict] | None:
     return versions
 
 
+def version_is_absent(package: str, version_id: int, delete_error: GhApiError) -> bool:
+    """Whether a failed delete left the version gone."""
+    # SAFETY: a DELETE 404 is absence only when a follow-up read reports
+    # "Package version not found". The same status denies a token that can still read the version.
+    if http_status(delete_error) != 404:
+        return False
+
+    path = version_path(package, version_id)
+    try:
+        gh_api(path)
+    except GhApiError as err:
+        if not_found_kind(err) == "version":
+            return True
+        detail = f"{delete_error.stderr}; follow-up read: {err.stderr}"
+        raise GhApiError(delete_error.path, detail) from err
+
+    detail = (
+        f"{delete_error.stderr}; version is still present and was not deleted. "
+        "GitHub returns HTTP 404 Package not found on DELETE when the token lacks admin on the package."
+    )
+    raise GhApiError(delete_error.path, detail)
+
+
 def delete_version(package: str, version_id: int) -> None:
-    """Permanently delete one package version."""
-    encoded = package.replace("/", "%2F")
-    gh_api(f"/orgs/{ORG}/packages/container/{encoded}/versions/{version_id}", "-X", "DELETE")
+    """Delete one package version. A 404 counts as done only when the version is already gone."""
+    path = version_path(package, version_id)
+    try:
+        gh_api(path, "-X", "DELETE")
+    except GhApiError as err:
+        if not version_is_absent(package, version_id, err):
+            raise
+        emit(f"{package}: version {version_id} already absent")
 
 
 def sweep_package(package: str, live: set[str], dry_run: bool) -> int:
