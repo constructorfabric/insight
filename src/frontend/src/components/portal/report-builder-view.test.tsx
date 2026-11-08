@@ -279,6 +279,18 @@ describe("ReportBuilderView", () => {
     ).toBeNull();
   });
 
+  it("insets the empty-scope message like the rest of the card", async () => {
+    mocks.definitions = [metric({})];
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(screen.getByRole("button", { name: "Tenant" }));
+
+    expect(
+      screen.getByText("No metrics are available for this scope.")
+    ).toHaveClass("p-4");
+  });
+
   it("does not offer a separate report rows selector", async () => {
     const user = userEvent.setup();
     render(<ReportBuilderView />);
