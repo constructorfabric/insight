@@ -23,3 +23,21 @@ describe("synthetic period comparisons", () => {
     expect(view.values[0]).not.toHaveProperty("compare_to");
   });
 });
+
+describe("synthetic values per period", () => {
+  const valueIn = (period: MetricResultsRequest["period"]) =>
+    (buildMetricResultsResponse({ ...request, period }).metrics[0]!.views[0] as PeriodView)
+      .values[0]!.value;
+
+  it("answers a different value when the period changes", () => {
+    expect(valueIn({ from: "2026-09-08", to: "2026-09-14" })).not.toBe(
+      valueIn({ from: "2026-08-15", to: "2026-09-14" }),
+    );
+  });
+
+  it("answers the same value for the same period", () => {
+    expect(valueIn({ from: "2026-09-08", to: "2026-09-14" })).toBe(
+      valueIn({ from: "2026-09-08", to: "2026-09-14" }),
+    );
+  });
+});

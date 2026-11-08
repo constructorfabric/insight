@@ -12,7 +12,7 @@ import { metricResultFixtureByKey } from "./metric-results-fixtures";
 /**
  * Builds a `/v1/metric-results` response from the request body: every
  * requested metric and view is echoed back (the backend never returns
- * partial views), with deterministic per-(entity, metric) values so the UI
+ * partial views), with deterministic per-(entity, metric, period) values so the UI
  * is stable across reloads. Metric metadata comes from the wire fixtures
  * when the key is known, synthesized otherwise.
  */
@@ -141,6 +141,7 @@ export function buildMetricResultsResponse(
   const metrics: MetricResult[] = request.metrics.map((metricRequest) => {
     const meta = metaFor(metricRequest.metric_key);
     const key = metricRequest.metric_key;
+    const keyInPeriod = `${key}|${request.period.from}|${request.period.to}`;
     const views: MetricResultView[] = metricRequest.views.map((view) => {
       switch (view.view) {
         case "period":
@@ -148,9 +149,9 @@ export function buildMetricResultsResponse(
             view: "period",
             values: ids.map((entityId) => ({
               entity_id: entityId,
-              value: valueFor(entityId, key),
+              value: valueFor(entityId, keyInPeriod),
               ...(request.compare_to
-                ? { compare_to: valueFor(entityId, key, "previous-period") }
+                ? { compare_to: valueFor(entityId, keyInPeriod, "previous-period") }
                 : {}),
             })),
           };
@@ -158,10 +159,10 @@ export function buildMetricResultsResponse(
           return {
             view: "peer",
             values: ids.map((entityId) => {
-              const median = valueFor("cohort-median", key);
+              const median = valueFor("cohort-median", keyInPeriod);
               return {
                 entity_id: entityId,
-                target_value: valueFor(entityId, key),
+                target_value: valueFor(entityId, keyInPeriod),
                 p25: median * 0.6,
                 median,
                 p75: median * 1.4,
