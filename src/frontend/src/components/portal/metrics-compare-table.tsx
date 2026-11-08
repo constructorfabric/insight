@@ -95,14 +95,9 @@ export function MetricsCompareTable({
                         entityId={person.entityId}
                         personName={person.displayName}
                       />
+                      {index === leader ? <span className="sr-only"> (highest)</span> : null}
                       <span className="ms-2 inline-block w-14 text-start text-xs font-normal text-muted-foreground">
-                        {index === leader
-                          ? "highest"
-                          : gap == null
-                            ? ""
-                            : gap === 0
-                              ? "≈"
-                              : `−${Math.abs(gap)}%`}
+                        {gap == null ? "" : gap === 0 ? "≈" : `−${Math.abs(gap)}%`}
                       </span>
                     </td>
                   );
