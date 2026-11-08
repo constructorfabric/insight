@@ -1159,6 +1159,13 @@ const PAGE_ROWS = [
   { path: "/portal/people", views: 61, visitors: 3 },
   { path: "/portal/manage/connector-health", views: 42, visitors: 2 },
   { path: "/portal/manage/platform-usage", views: 23, visitors: 1 },
+  { path: "/portal/custom/:id", views: 31, visitors: 3 },
+  { path: "/portal/custom/q3-hiring-plan", views: 17, visitors: 2 },
+  { path: "/portal/custom/release-health", views: 12, visitors: 2 },
+  { path: "/portal/custom/metrics", views: 9, visitors: 2 },
+  { path: "/portal/custom/metrics/deploy-frequency", views: 6, visitors: 1 },
+  { path: "/portal/custom/edit/dashboards/release-health", views: 4, visitors: 1 },
+  { path: "/portal/custom/edit/metrics/deploy-frequency", views: 3, visitors: 1 },
 ];
 
 function aiAssistHandlers() {
