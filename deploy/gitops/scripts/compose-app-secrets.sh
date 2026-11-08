@@ -91,7 +91,6 @@ RD_PORT=$( yq -r '.redis.port       // 6379' "$VALUES")
 TENANT_DEFAULT=$(yq -r '.global.tenantDefaultId          // ""' "$VALUES")
 IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN=$(yq -r '.identityResolution.bootstrapAdminPersonId // ""' "$VALUES")
 IDENTITY_RESOLUTION_DB=$(yq -r '.identityResolution.databaseName // "identity"' "$VALUES")
-ROSTER_SOURCE_TYPE=$(yq -r '.identityResolution.rosterSourceType // ""' "$VALUES")
 CORE_DB=$(yq -r '.insightV3Core.databaseName // "insight_v3"' "$VALUES")
 CORE_CH_READER=$(yq -r '.insightV3Core.clickhouseReaderUsername // "insight_v3_reader"' "$VALUES")
 # The identity URL ANALYTICS calls. Empty = the identity-resolution Service
@@ -211,6 +210,7 @@ done
 # with no roster declared — every sign-in would be denied. Catch it here, while
 # the operator is still editing values.
 if [ "$AUTH_RESOLVE_BY" = "email" ]; then
+  ROSTER_SOURCE_TYPE=$(yq -r '.identityResolution.rosterSourceType // ""' "$VALUES")
   [ -n "$ROSTER_SOURCE_TYPE" ] && [ "$ROSTER_SOURCE_TYPE" != "null" ] || {
     echo "ERROR: authenticator.oidc.resolveBy=email needs identityResolution.rosterSourceType in $VALUES — the email lookup is confined to the roster, and without one identity refuses it rather than matching an address any source happened to state" >&2
     exit 1
@@ -338,7 +338,6 @@ stringData:
   APP__gears__analytics__config__clickhouse_user: "${CH_ANALYTICS_USER}"
   APP__gears__analytics__config__clickhouse_password: "${CH_ANALYTICS_PW}"
   APP__gears__analytics__config__identity_url: "${IDENTITY_URL}"
-  APP__gears__analytics__config__roster_source_type: "${ROSTER_SOURCE_TYPE}"
   APP__gears__analytics__config__redis_url: "${REDIS_URL}"
 EOF
 } | kubectl -n "$NS_APP" apply -f - >/dev/null

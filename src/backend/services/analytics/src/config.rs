@@ -124,10 +124,6 @@ pub struct GearConfig {
     /// Deployment-wide person visibility and peer-population policy.
     pub visibility_policy: VisibilityPolicy,
 
-    /// identity-resolution's `roster_source_type`: a person it lists is named
-    /// from this source alone. Empty names everyone from every source.
-    pub roster_source_type: String,
-
     /// Redis URL (e.g., `redis://localhost:6379`). Empty disables every
     /// Redis-backed path; multi-replica deploys configure it so a cache added
     /// here is coordinated across replicas rather than per-process.
@@ -162,7 +158,6 @@ impl Default for GearConfig {
             clickhouse_password: None,
             identity_url: String::new(),
             visibility_policy: VisibilityPolicy::default(),
-            roster_source_type: String::new(),
             redis_url: String::new(),
             metric_catalog: MetricCatalogConfig::default(),
             usage: UsageConfig::default(),

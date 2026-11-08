@@ -308,7 +308,7 @@ Key groups:
 - `gateway` / `authenticator` / `analytics` — **mandatory** app services (no deploy flag; the gateway is the single entrance and the product is one unit)
 - `global.insightV3Core.deploy` + `insightV3Core.*` — insight-v3-core, off by default (it needs `insightV3Core.ingest.tokenSecret` to exist first); the same flag drops the gateway's v3 routes and the `insight_v3_ro` ClickHouse role, which reads every table so that an install without the assistant does not carry it. Turning the flag off on a running install strips that role's grants; the role and its user are left standing, since the deploy did not create the identity
 - `authenticator.oidc.*` — OIDC upstream and login-resolution mode (`resolveBy: external_id | email`)
-- `identityResolution.*` — identity-resolution service (must stay deployed; `rosterSourceType` for email-mode logins, and the source analytics names a rostered person by)
+- `identityResolution.*` — identity-resolution service (must stay deployed; `rosterSourceType` for email-mode logins)
 - `keycloak.deploy` + `keycloakConfig.*` — the in-stack identity broker and its realms-as-code hook
 - `clickhouse.clusterMode` / `clickhouse.clusterName` — warehouse topology, see [ClickHouse topology](#clickhouse-topology)
 - `clickhouse.createDatabases` — whether the pre-install Hook creates the release's ClickHouse databases. `false` is for a warehouse provisioned out of band: the post-install Hook converges them only with `clickhouse.runMigrations: true` and `ingestion.toolboxImage` set, and on a fresh install with v3-core deployed its pre-install migrate Job (weight 10) asserts `insight_datasets` before that Hook runs, so the install fails unless the database already stands (see [ClickHouse topology](#clickhouse-topology))

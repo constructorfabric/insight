@@ -148,7 +148,6 @@ data:
       analytics:
         config:
           visibility_policy: {{ .Values.visibilityPolicy | default "org_chart" | quote }}
-          roster_source_type: {{ .Values.rosterSourceType | default "" | quote }}
           sql_api:
             enabled: {{ .Values.global.sqlApi.enabled }}
           mcp:
