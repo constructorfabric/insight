@@ -359,7 +359,7 @@ describe("MetricsView", () => {
       within(within(table).getByRole("row", { name: /Default branch commits/ }))
         .getAllByRole("cell")
         .map((cell) => cell.textContent),
-    ).toEqual(["10−50%", "20 (highest)"]);
+    ).toEqual(["10−50%", "20highest"]);
   });
 
   it("adds a whole team to the comparison in one pick", async () => {
