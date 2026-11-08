@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   roster: [] as PeopleListItem[],
   definitions: [] as MetricDefinition[],
   requestedKeys: [] as readonly string[],
+  requestedIds: [] as readonly string[],
   data: {
     byKey: new Map<string, NormalizedMetricResult>(),
     isPending: false,
@@ -56,8 +57,9 @@ vi.mock("@/queries/metric-definitions", () => ({
   }),
 }));
 vi.mock("@/queries/metrics-view", () => ({
-  useMetricsViewData: (keys: readonly string[]) => {
+  useMetricsViewData: (keys: readonly string[], ids: readonly string[]) => {
     mocks.requestedKeys = keys;
+    mocks.requestedIds = ids;
     return mocks.data;
   },
 }));
@@ -115,6 +117,12 @@ function result(
     },
     ...over,
   } as NormalizedMetricResult;
+}
+
+async function compare(user: ReturnType<typeof userEvent.setup>, names: readonly string[]) {
+  await user.click(screen.getByRole("button", { name: "Compare" }));
+  for (const name of names) await user.click(screen.getByRole("checkbox", { name }));
+  await user.click(screen.getByRole("button", { name: `Compare (${names.length})` }));
 }
 
 const rowHeaders = () =>
@@ -343,10 +351,7 @@ describe("MetricsView", () => {
     const user = userEvent.setup();
     render(<MetricsView />);
 
-    await user.click(screen.getByRole("button", { name: "Compare" }));
-    await user.click(screen.getByRole("checkbox", { name: "a" }));
-    await user.click(screen.getByRole("checkbox", { name: "b" }));
-    await user.click(screen.getByRole("button", { name: "Compare (2)" }));
+    await compare(user, ["a", "b"]);
 
     const table = screen.getByRole("table");
     expect(rowHeaders()).toEqual(["Default branch commits", "Messages"]);
@@ -373,10 +378,7 @@ describe("MetricsView", () => {
     const user = userEvent.setup();
     render(<MetricsView />);
 
-    await user.click(screen.getByRole("button", { name: "Compare" }));
-    await user.click(screen.getByRole("checkbox", { name: "a" }));
-    await user.click(screen.getByRole("checkbox", { name: "b" }));
-    await user.click(screen.getByRole("button", { name: "Compare (2)" }));
+    await compare(user, ["a", "b"]);
 
     expect(
       within(within(screen.getByRole("table")).getByRole("row", { name: /PR cycle time/ }))
@@ -411,10 +413,7 @@ describe("MetricsView", () => {
       </EvidenceDialogContext.Provider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Compare" }));
-    await user.click(screen.getByRole("checkbox", { name: "a" }));
-    await user.click(screen.getByRole("checkbox", { name: "b" }));
-    await user.click(screen.getByRole("button", { name: "Compare (2)" }));
+    await compare(user, ["a", "b"]);
     await user.click(screen.getByRole("button", { name: "a — Default branch commits: 10" }));
 
     expect(openEvidenceTargets).toHaveBeenCalledWith(
@@ -427,14 +426,34 @@ describe("MetricsView", () => {
     );
   });
 
+  it("keeps the comparison while new numbers load", async () => {
+    const user = userEvent.setup();
+    const view = render(<MetricsView />);
+    await compare(user, ["a", "b"]);
+
+    mocks.data.isPending = true;
+    view.rerender(<MetricsView />);
+    expect(screen.getByRole("button", { name: "Exit compare" })).toBeInTheDocument();
+
+    mocks.data.isPending = false;
+    view.rerender(<MetricsView />);
+    expect(rowHeaders()).toEqual(["Default branch commits", "Messages"]);
+  });
+
+  it("asks for everyone under the scope even with direct reports only on", () => {
+    act(() => portalRouter.set({ direct: true }));
+    render(<MetricsView />);
+
+    expect([...mocks.requestedIds].sort()).toEqual(
+      [pid("boss"), pid("a"), pid("b"), pid("c")].sort(),
+    );
+  });
+
   it("goes back to the table when the comparison is closed", async () => {
     const user = userEvent.setup();
     render(<MetricsView />);
 
-    await user.click(screen.getByRole("button", { name: "Compare" }));
-    await user.click(screen.getByRole("checkbox", { name: "a" }));
-    await user.click(screen.getByRole("checkbox", { name: "b" }));
-    await user.click(screen.getByRole("button", { name: "Compare (2)" }));
+    await compare(user, ["a", "b"]);
     await user.click(screen.getByRole("button", { name: "Exit compare" }));
 
     expect(rowHeaders()).toEqual(["boss", "a", "b"]);

@@ -9,6 +9,7 @@ import {
   type MetricsSort,
 } from "@/components/portal/metrics-table";
 import { orgScopeGate } from "@/components/portal/org-scope-gate";
+import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import {
   ReportMetricPicker,
   type OfferedReportMetric,
@@ -22,6 +23,7 @@ import type { MembersGridMember } from "@/components/widgets/dashboard/members-g
 import { Button } from "@gears-frontx/ui-kit";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { personDisplayName } from "@/lib/identities/person-display";
+import { flattenSubordinates } from "@/lib/insight/identity-tree";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
@@ -96,7 +98,7 @@ export function MetricsView() {
 
   const { pivot, roster } = orgScope;
   const people = useMemo(
-    () => [...(pivot ? [pivot] : []), ...(roster ?? [])],
+    () => (pivot ? [pivot, ...flattenSubordinates(pivot)] : (roster ?? [])),
     [pivot, roster],
   );
   const members = useMemo<MembersGridMember[]>(
@@ -121,7 +123,7 @@ export function MetricsView() {
     membersLoading: false,
     membersError: false,
     memberCount: members.length,
-    gridPending: definitions.isPending || data.isPending,
+    gridPending: definitions.isPending,
     gridError: definitions.isError || data.isError,
     emptyLabel: "No people in the current scope.",
     onRetry: () => {
@@ -191,6 +193,7 @@ export function MetricsView() {
           metricKeys={metricKeys}
           byKey={data.byKey}
           helpByKey={helpByKey}
+          loading={data.isPending}
         />
       )}
     </div>
@@ -240,14 +243,6 @@ function ScopeChip({ label }: { label: string }) {
   );
 }
 
-function managerIds(node: IdentityPerson | null): string[] {
-  if (!node || node.subordinates.length === 0) return [];
-  return [
-    normalizePersonId(node.person_id),
-    ...node.subordinates.flatMap(managerIds),
-  ];
-}
-
 function nextSort(current: MetricsSort | null, key: string): MetricsSort | null {
   if (current?.key !== key) return { key, direction: "descending" };
   if (current.direction === "descending") return { key, direction: "ascending" };
@@ -261,6 +256,7 @@ function MetricsBody({
   metricKeys,
   byKey,
   helpByKey,
+  loading,
 }: {
   pivot: IdentityPerson | null;
   people: ReadonlyArray<{ person_id: string; display_name?: string | null }>;
@@ -268,6 +264,7 @@ function MetricsBody({
   metricKeys: readonly string[];
   byKey: Map<string, NormalizedMetricResult>;
   helpByKey: ReadonlyMap<string, MetricHelpText>;
+  loading: boolean;
 }) {
   const { setScope } = usePortalNavActions();
   const [comparing, setComparing] = useState<string[] | null>(null);
@@ -275,7 +272,8 @@ function MetricsBody({
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
     () => new Set(pivot ? [normalizePersonId(pivot.person_id)] : []),
   );
-  const allManagers = managerIds(pivot);
+  const teams = compareTeams(pivot);
+  const allManagers = teams.map((team) => team.id);
   const allExpanded = allManagers.every((id) => expanded.has(id));
 
   const byId = new Map(members.map((member) => [member.entityId, member]));
@@ -330,7 +328,7 @@ function MetricsBody({
           ) : null}
           <MetricsComparePicker
             people={members}
-            teams={compareTeams(pivot)}
+            teams={teams}
             picked={comparing ?? []}
             onCompare={setComparing}
           />
@@ -338,6 +336,8 @@ function MetricsBody({
       </div>
       {metricKeys.length === 0 ? (
         <EmptyNote text="No metrics picked." />
+      ) : loading ? (
+        <CenteredSpinner className="min-h-[40vh]" />
       ) : comparing ? (
         <div className="rounded-lg border bg-card">
           <MetricsCompareTable
