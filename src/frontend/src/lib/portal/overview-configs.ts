@@ -64,19 +64,22 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     sections: [
       // Headline gives the per-capita + delta rollup AND feeds the automatic
       // by-unit comparison when a slice is active (review decision).
-      { kind: "headline", metrics: ["git.default_branch_commits"] },
+      {
+        kind: "headline",
+        metrics: ["git.default_branch_prs_merged", "git.pr_size"],
+      },
       {
         kind: "concentration",
-        metrics: ["git.default_branch_commits"],
+        metrics: ["git.default_branch_prs_merged"],
         framing: "bus-factor",
       },
       {
         kind: "distribution",
-        metric: "git.default_branch_commits",
-        title: "How many commits people made",
+        metric: "git.default_branch_prs_merged",
+        title: "How many PRs people merged",
         caption:
-          "How many people fall in each commit-count band — when the bars stretch far to the right, a few people account for most of it.",
-        unitLabel: "commits per person",
+          "How many people fall in each band of merged pull requests — when the bars stretch far to the right, a few people account for most of it.",
+        unitLabel: "PRs merged per person",
       },
     ],
   },

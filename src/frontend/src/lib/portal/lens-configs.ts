@@ -596,6 +596,14 @@ const DEV: Record<string, LensEntry> = {
         unitLabel: "commits per person",
       },
       {
+        kind: "distribution",
+        metric: "git.default_branch_prs_merged",
+        title: "How many PRs people merged",
+        caption:
+          "How many people fall in each band of merged pull requests — when the bars stretch far to the right, a few people account for most of it.",
+        unitLabel: "PRs merged per person",
+      },
+      {
         kind: "concentration",
         metrics: ["git.default_branch_commits"],
         framing: "bus-factor",

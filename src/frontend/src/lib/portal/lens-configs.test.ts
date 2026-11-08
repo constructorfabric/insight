@@ -115,6 +115,18 @@ describe("DIRECTION_LENSES registry", () => {
     expect(inFlight).toContain(IN_FLIGHT_METRICS.commits);
   });
 
+  it("shows how merged PRs split between people beside the commit split on Git output", () => {
+    const gitOutput = lensEntry("dev", "Git output") as LensConfig;
+    const distributed = gitOutput.sections.flatMap((s) =>
+      s.kind === "distribution" ? [s.metric] : [],
+    );
+
+    expect(distributed).toEqual([
+      "git.default_branch_commits",
+      "git.default_branch_prs_merged",
+    ]);
+  });
+
   it("explains a derived dimension where a label cannot", () => {
     const entry = lensEntry("dev", "Overview");
     const composition = (entry as LensConfig).sections.find(
