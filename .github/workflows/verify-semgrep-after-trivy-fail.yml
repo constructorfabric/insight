@@ -1,0 +1,50 @@
+name: Verify Semgrep follows a failed Trivy install
+
+# Push to cursor/verify-semgrep-uv-after-trivy-fail-c8d5 only. Not a security gate.
+# The missing release makes curl -f exit 22, then uv and Semgrep still run.
+
+on:
+  push:
+    branches: [cursor/verify-semgrep-uv-after-trivy-fail-c8d5]
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: report
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Trivy
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 0 -o "${RUNNER_TEMP}/trivy.tar.gz" \
+            "https://github.com/aquasecurity/trivy/releases/download/v0.0.0-verification-miss/trivy_0.0.0-verification-miss_Linux-64bit.tar.gz"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        if: ${{ !cancelled() }}
+        with:
+          version: "0.12.17"
+
+      - name: Semgrep scan (full tree — owns the SARIF upload, never blocks)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          uv --version
+          uv venv --python 3.12 "$RUNNER_TEMP/semgrep"
+          uv pip install --python "$RUNNER_TEMP/semgrep" \
+            --require-hashes -r .github/semgrep-requirements.txt
+          "$RUNNER_TEMP/semgrep/bin/semgrep" --version
+          "$RUNNER_TEMP/semgrep/bin/semgrep" scan \
+            --config auto \
+            --config p/rust \
+            --exclude-rule generic.secrets.security.detected-generic-secret \
+            --sarif --output semgrep.sarif \
+            .github/scripts
+          test -s semgrep.sarif
