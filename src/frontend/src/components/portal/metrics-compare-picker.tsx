@@ -37,8 +37,14 @@ export function MetricsComparePicker({
         ? current.filter((id) => id !== entityId)
         : [...current, entityId],
     );
-  const addTeam = (team: CompareTeam) =>
-    setDraft((current) => [...new Set([...current, ...team.memberIds])]);
+  const teamPicked = (team: CompareTeam) =>
+    team.memberIds.every((id) => draft.includes(id));
+  const toggleTeam = (team: CompareTeam) =>
+    setDraft((current) =>
+      team.memberIds.every((id) => current.includes(id))
+        ? current.filter((id) => !team.memberIds.includes(id))
+        : [...new Set([...current, ...team.memberIds])],
+    );
 
   return (
     <Popover
@@ -80,20 +86,26 @@ export function MetricsComparePicker({
               <h3 className={TEXT_EYEBROW}>Teams</h3>
               {teams
                 .filter((team) => matches(team.name))
-                .map((team) => (
-                  <button
-                    key={team.id}
-                    type="button"
-                    aria-label={`Add ${team.name}'s team`}
-                    onClick={() => addTeam(team)}
-                    className="flex cursor-pointer items-center justify-between rounded-sm px-1 py-1.5 text-start text-sm hover:bg-muted"
-                  >
-                    <span className="truncate">{`${team.name}'s team`}</span>
-                    <span className="text-xs text-muted-foreground tabular-nums">
-                      {team.memberIds.length}
-                    </span>
-                  </button>
-                ))}
+                .map((team) => {
+                  const checkboxId = `${idPrefix}-team-${team.id}`;
+                  return (
+                    <label
+                      key={team.id}
+                      htmlFor={checkboxId}
+                      className="flex cursor-pointer items-center gap-2 rounded-sm px-1 py-1.5 text-sm hover:bg-muted"
+                    >
+                      <Checkbox
+                        id={checkboxId}
+                        checked={teamPicked(team)}
+                        onCheckedChange={() => toggleTeam(team)}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{`${team.name}'s team`}</span>
+                      <span aria-hidden className="text-xs text-muted-foreground tabular-nums">
+                        {team.memberIds.length}
+                      </span>
+                    </label>
+                  );
+                })}
             </section>
           ) : null}
 

@@ -392,7 +392,7 @@ describe("MetricsView", () => {
     render(<MetricsView />);
 
     await user.click(screen.getByRole("button", { name: "Compare" }));
-    await user.click(screen.getByRole("button", { name: "Add a's team" }));
+    await user.click(screen.getByRole("checkbox", { name: "a's team" }));
     await user.click(screen.getByRole("button", { name: "Compare (2)" }));
 
     expect(
@@ -424,6 +424,20 @@ describe("MetricsView", () => {
       ],
       { activeMetricKey: "git.commits" },
     );
+  });
+
+  it("drops a whole team when it is picked again", async () => {
+    const user = userEvent.setup();
+    render(<MetricsView />);
+
+    await user.click(screen.getByRole("button", { name: "Compare" }));
+    await user.click(screen.getByRole("checkbox", { name: "a's team" }));
+    expect(screen.getByRole("checkbox", { name: "a's team" })).toBeChecked();
+
+    await user.click(screen.getByRole("checkbox", { name: "a's team" }));
+
+    expect(screen.getByRole("checkbox", { name: "a's team" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Compare (0)" })).toBeDisabled();
   });
 
   it("keeps the comparison while new numbers load", async () => {
