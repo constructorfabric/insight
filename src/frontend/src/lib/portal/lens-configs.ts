@@ -579,7 +579,6 @@ const DEV: Record<string, LensEntry> = {
         labelSource: "short",
         metrics: [
           "git.default_branch_prs_merged",
-          "git.default_branch_prs_created",
           "git.pr_size",
           "git.default_branch_code_lines",
           "git.default_branch_commits",
