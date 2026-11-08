@@ -65,6 +65,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write # cache the sha256-verified scanner tarball
 
 # Routing: .github/runners/README.md.
 jobs:
@@ -138,6 +139,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Scanner install regressions
+        run: python3 .github/actions/install-scanners/test_install_release.py
+
       - name: Install Trivy
         uses: ./.github/actions/install-scanners
         with:
@@ -192,6 +196,7 @@ jobs:
     permissions:
       contents: read # checkout
       security-events: write # upload SARIF to Code Scanning
+      actions: write # cache the sha256-verified scanner tarball
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -467,6 +472,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      actions: write # cache the sha256-verified scanner tarball
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/insight' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'insight-small' }}
     timeout-minutes: 30

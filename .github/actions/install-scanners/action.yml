@@ -1,10 +1,10 @@
 name: Install scanners
 description: >-
   Put the pinned scanner binaries on PATH, each checked against the sha256 its
-  own release publishes. This replaces `docker run` of the vendors' Docker Hub
-  images: every job on the self-hosted runners leaves through one outbound IP and
-  so shares one anonymous pull quota, and an ephemeral runner pulls again from
-  scratch each time.
+  own release publishes. The Actions cache holds that tarball only. The
+  vulnerability database is downloaded into this job's temp dir. This replaces
+  `docker run` of the vendors' Docker Hub images: every job on the self-hosted
+  runners leaves through one outbound IP and so shares one anonymous pull quota.
 
 inputs:
   trivy:
@@ -17,50 +17,85 @@ inputs:
 runs:
   using: composite
   steps:
-    - shell: bash
-      env:
-        # INVARIANT: version and digest are one pin — bump both together, taking the
-        # digest from the line for this asset in the release's own checksums.txt.
-        # Dependabot cannot see these (see .github/dependabot.yml).
-        TRIVY_VERSION: 0.75.0
-        TRIVY_SHA256: c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
-        TRUFFLEHOG_VERSION: 3.96.0
-        TRUFFLEHOG_SHA256: 7105f1cd6577f058a9e39d0578f1a99c8a1e481e4d3512cd8a09acfe22a0fdc0
-        WANT_TRIVY: ${{ inputs.trivy }}
-        WANT_TRUFFLEHOG: ${{ inputs.trufflehog }}
+    - name: Resolve scanner cache keys
+      id: pins
+      shell: bash
       run: |
         set -euo pipefail
+        # shellcheck disable=SC1091
+        source "$GITHUB_ACTION_PATH/pins.env"
+        {
+          echo "trivy-key=trivy-v1-${TRIVY_VERSION}-${TRIVY_SHA256}"
+          echo "trufflehog-key=trufflehog-v1-${TRUFFLEHOG_VERSION}-${TRUFFLEHOG_SHA256}"
+        } >> "$GITHUB_OUTPUT"
 
-        # Under RUNNER_TEMP and never /usr/local/bin: an ARC runner pod has no sudo,
-        # and a shared machine must not carry a tool one job installed into the next.
-        bin="${RUNNER_TEMP}/scanner-bin"
-        mkdir -p "$bin"
+    - name: Restore cached Trivy tarball
+      id: cache-trivy
+      if: inputs.trivy == 'true'
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/scanner-cache/trivy.tar.gz
+        key: ${{ steps.pins.outputs.trivy-key }}
 
-        # Both archives unpack flat, with the binary beside a LICENSE and docs, so
-        # each one is extracted into its own directory rather than straight into $bin.
-        install_release() {
-          local name="$1" url="$2" want="$3" work
-          work="$(mktemp -d)"
-          curl -fsSL --retry 3 --retry-delay 2 -o "$work/release.tar.gz" "$url"
-          printf '%s  %s\n' "$want" "$work/release.tar.gz" | sha256sum -c -
-          tar -xzf "$work/release.tar.gz" -C "$work" "$name"
-          install -m 0755 "$work/$name" "$bin/$name"
-          rm -rf "$work"
-          "$bin/$name" --version
-        }
+    - name: Restore cached TruffleHog tarball
+      id: cache-trufflehog
+      if: inputs.trufflehog == 'true'
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/scanner-cache/trufflehog.tar.gz
+        key: ${{ steps.pins.outputs.trufflehog-key }}
 
-        # The two projects name their assets differently — Trivy `Linux-64bit`,
-        # TruffleHog `linux_amd64` — so neither URL is derivable from the other.
+    - name: Install pinned scanners
+      # INVARIANT: a failed cache restore must not skip the download.
+      if: ${{ !cancelled() }}
+      shell: bash
+      env:
+        WANT_TRIVY: ${{ inputs.trivy }}
+        WANT_TRUFFLEHOG: ${{ inputs.trufflehog }}
+      # Under RUNNER_TEMP and never /usr/local/bin: an ARC runner pod has no sudo,
+      # and a shared machine must not carry a tool one job installed into the next.
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC1091
+        source "$GITHUB_ACTION_PATH/pins.env"
+        dest="${RUNNER_TEMP}/scanner-bin"
+        cache="${RUNNER_TEMP}/scanner-cache"
+        mkdir -p "$dest" "$cache"
         if [ "$WANT_TRIVY" = "true" ]; then
-          install_release trivy \
+          # INVARIANT: the vulnerability DB is per job. The Actions cache stores only the release tarball.
+          export TRIVY_CACHE_DIR="${RUNNER_TEMP}/trivy-db"
+          echo "TRIVY_CACHE_DIR=${TRIVY_CACHE_DIR}" >> "$GITHUB_ENV"
+          "$GITHUB_ACTION_PATH/install-release.sh" \
+            trivy \
             "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
-            "$TRIVY_SHA256"
+            "$TRIVY_SHA256" \
+            "$dest" \
+            "$cache/trivy.tar.gz"
         fi
-
         if [ "$WANT_TRUFFLEHOG" = "true" ]; then
-          install_release trufflehog \
+          "$GITHUB_ACTION_PATH/install-release.sh" \
+            trufflehog \
             "https://github.com/trufflesecurity/trufflehog/releases/download/v${TRUFFLEHOG_VERSION}/trufflehog_${TRUFFLEHOG_VERSION}_linux_amd64.tar.gz" \
-            "$TRUFFLEHOG_SHA256"
+            "$TRUFFLEHOG_SHA256" \
+            "$dest" \
+            "$cache/trufflehog.tar.gz"
         fi
+        echo "$dest" >> "$GITHUB_PATH"
 
-        echo "$bin" >> "$GITHUB_PATH"
+    - name: Save verified Trivy tarball
+      if: success() && inputs.trivy == 'true' && steps.cache-trivy.outcome == 'success' && steps.cache-trivy.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/scanner-cache/trivy.tar.gz
+        key: ${{ steps.pins.outputs.trivy-key }}
+
+    - name: Save verified TruffleHog tarball
+      if: success() && inputs.trufflehog == 'true' && steps.cache-trufflehog.outcome == 'success' && steps.cache-trufflehog.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/scanner-cache/trufflehog.tar.gz
+        key: ${{ steps.pins.outputs.trufflehog-key }}

@@ -31,6 +31,7 @@ jobs:
       contents: read # checkout (.trivyignore waivers)
       packages: read # pull the image under scan from GHCR
       security-events: write # upload SARIF to Code Scanning
+      actions: write # cache the sha256-verified scanner tarball
     strategy:
       # One image's CVEs must not hide another's.
       fail-fast: false

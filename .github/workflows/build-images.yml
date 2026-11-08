@@ -108,6 +108,7 @@ permissions:
   packages: write # publish-chart pushes the umbrella chart to GHCR
   id-token: write # keyless OIDC identity for attest-build-provenance
   attestations: write # store SLSA provenance in the repo attestation store
+  actions: write # cache the sha256-verified scanner tarball
 
 # Routing: .github/runners/README.md.
 jobs:
@@ -1497,6 +1498,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      actions: write # cache the sha256-verified scanner tarball
     timeout-minutes: 60
     steps:
       # Fail loudly rather than resolving to `skipped` — publish-chart accepts a
