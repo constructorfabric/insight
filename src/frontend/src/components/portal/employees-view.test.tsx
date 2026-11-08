@@ -31,8 +31,6 @@ const mocks = vi.hoisted(() => ({
     isError: false,
     refetch: vi.fn(),
   },
-  supervisorAsked: undefined as string | null | undefined,
-  supervisorName: null as string | null,
 }));
 
 vi.mock("@/auth", () => ({
@@ -49,12 +47,6 @@ vi.mock("@/queries/identity-me", () => ({
 vi.mock("@/queries/visible-roster", () => ({
   useVisibleRoster: () => mocks.roster,
 }));
-vi.mock("@/queries/supervisor-name", () => ({
-  useSupervisorName: (personId: string | null) => {
-    mocks.supervisorAsked = personId;
-    return mocks.supervisorName;
-  },
-}));
 
 import { EmployeesView } from "./employees-view";
 
@@ -68,6 +60,7 @@ function rosterPerson(
   label: string,
   managerPersonId: string | null = null,
   attributes: Record<string, string> = {},
+  managerName: string | null = null,
 ): PeopleListItem {
   return {
     person_id: pid(label),
@@ -78,6 +71,7 @@ function rosterPerson(
     email: `${label}@example.com`,
     attributes,
     manager_person_id: managerPersonId,
+    manager_name: managerName,
   };
 }
 
@@ -95,8 +89,6 @@ beforeEach(() => {
   ];
   mocks.roster.isPending = false;
   mocks.roster.isError = false;
-  mocks.supervisorAsked = undefined;
-  mocks.supervisorName = null;
   mocks.ic.isPending = false;
   mocks.ic.isError = false;
   mocks.ic.data = person("boss", { display_name: "Boss", job_title: "Director" }, [
@@ -131,32 +123,25 @@ describe("EmployeesView", () => {
     expect(screen.getByText(/1 of 3/)).toBeInTheDocument();
   });
 
-  it("names the viewer's own manager from their profile without listing them", () => {
+  it("names the viewer's own manager without listing them", () => {
     mocks.roster.roster = [
-      rosterPerson("boss", null, { job_title: "Director" }),
-      rosterPerson("zoe", pid("boss")),
-      rosterPerson("ann"),
+      rosterPerson("boss", pid("chief"), {}, "Chief Example"),
+      rosterPerson("zoe", pid("boss"), {}, "Boss"),
     ];
-    mocks.supervisorName = "Chief Example";
 
     render(<EmployeesView />);
 
-    expect(mocks.supervisorAsked).toBe(pid("boss"));
     const row = (name: string) => screen.getByRole("link", { name }).closest("tr")!;
     expect(within(row("Boss")).getByText("Chief Example")).toBeInTheDocument();
     expect(within(row("Zoe")).getByText("Boss")).toBeInTheDocument();
-    expect(within(row("Ann")).queryByText("Chief Example")).toBeNull();
     expect(screen.getAllByRole("link").map((a) => a.textContent)).toEqual([
-      "Ann",
       "Boss",
       "Zoe",
     ]);
   });
 
   it("names the manager of a viewer with no reports", () => {
-    mocks.personId = pid("solo");
-    mocks.roster.roster = [rosterPerson("solo")];
-    mocks.supervisorName = "Chief Example";
+    mocks.roster.roster = [rosterPerson("solo", pid("chief"), {}, "Chief Example")];
 
     render(<EmployeesView />);
 
@@ -209,12 +194,6 @@ describe("EmployeesView on an organisation with no reporting lines", () => {
     render(<EmployeesView />);
 
     expect(screen.getByText("bobby")).toBeInTheDocument();
-  });
-
-  it("asks for no manager it has no column for", () => {
-    render(<EmployeesView />);
-
-    expect(mocks.supervisorAsked).toBeNull();
   });
 
   it("drops the columns a flat organisation cannot fill", () => {

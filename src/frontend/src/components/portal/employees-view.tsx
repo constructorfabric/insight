@@ -3,7 +3,6 @@ import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { PeopleListItem } from "@/api/identity-client";
-import { useViewer } from "@/auth";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { Badge, Input } from "@gears-frontx/ui-kit";
@@ -18,7 +17,6 @@ import {
 import { personName } from "@/lib/identities/person-display";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { useVisibilityPolicy } from "@/queries/identity-me";
-import { useSupervisorName } from "@/queries/supervisor-name";
 import { useVisibleRoster } from "@/queries/visible-roster";
 import { cn } from "@/lib/utils";
 
@@ -35,24 +33,7 @@ interface EmployeeRow {
   status: string;
 }
 
-function rosterEmployees(
-  roster: readonly PeopleListItem[],
-  viewerId: string | null,
-  viewerManager: string | null,
-): EmployeeRow[] {
-  const byId = new Map(
-    roster.map((person) => [person.person_id.toLowerCase(), person]),
-  );
-
-  function managerName(person: PeopleListItem): string | null {
-    if (person.manager_person_id) {
-      return personName(byId.get(person.manager_person_id.toLowerCase()) ?? {});
-    }
-    return person.person_id.toLowerCase() === viewerId?.toLowerCase()
-      ? viewerManager
-      : null;
-  }
-
+function rosterEmployees(roster: readonly PeopleListItem[]): EmployeeRow[] {
   return roster
     .map((person) => ({
       personId: person.person_id,
@@ -60,7 +41,7 @@ function rosterEmployees(
       jobTitle: person.attributes.job_title ?? "",
       department: person.attributes.department ?? "",
       division: person.attributes.division ?? "",
-      supervisorName: managerName(person) ?? "",
+      supervisorName: person.manager_name ?? "",
       status: person.attributes.status ?? "",
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -75,12 +56,10 @@ export function EmployeesView() {
   const { isFlat } = useVisibilityPolicy();
   const visibleRoster = useVisibleRoster(true);
   const [query, setQuery] = useState("");
-  const { personId: viewerId } = useViewer();
-  const viewerManager = useSupervisorName(isFlat ? null : viewerId);
 
   const employees = useMemo(
-    () => rosterEmployees(visibleRoster.roster, viewerId, viewerManager),
-    [visibleRoster.roster, viewerId, viewerManager],
+    () => rosterEmployees(visibleRoster.roster),
+    [visibleRoster.roster],
   );
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

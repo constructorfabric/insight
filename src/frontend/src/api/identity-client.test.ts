@@ -12,7 +12,6 @@ import {
   getMe,
   getPerson,
   getPersonAccounts,
-  getSupervisor,
   IdentityApiError,
   grantPersonRole,
   listPeople,
@@ -586,52 +585,5 @@ describe("revokePersonRole", () => {
       status: 409,
       body: { context: { reason: "last_admin_protected" } },
     });
-  });
-});
-
-describe("getSupervisor", () => {
-  it("reads the supervisor from the person's profile", async () => {
-    mockFetch.mockResolvedValueOnce(
-      response({
-        profiles: [
-          {
-            person_id: "019e27bc-0000-7000-8000-000000000001",
-            attributes: {},
-            supervisor: {
-              person_id: "019e27bc-0000-7000-8000-000000000002",
-              attributes: { display_name: "Chief Example" },
-            },
-          },
-        ],
-      })
-    );
-
-    const supervisor = await getSupervisor("019E27BC-0000-7000-8000-000000000001");
-
-    expect(supervisor).toEqual({ display_name: "Chief Example" });
-    expect(mockFetch).toHaveBeenCalledWith("/api/identity/v1/profiles/batch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        person_ids: ["019e27bc-0000-7000-8000-000000000001"],
-      }),
-      signal: undefined,
-    });
-  });
-
-  it("answers null for a person with no supervisor", async () => {
-    mockFetch.mockResolvedValueOnce(
-      response({ profiles: [{ person_id: "p-1", attributes: {} }] })
-    );
-
-    expect(await getSupervisor("p-1")).toBeNull();
-  });
-
-  it("carries a refusal through as an error", async () => {
-    mockFetch.mockResolvedValueOnce(
-      response({ error: "forbidden" }, { ok: false, status: 403 })
-    );
-
-    await expect(getSupervisor("p-1")).rejects.toMatchObject({ status: 403 });
   });
 });
