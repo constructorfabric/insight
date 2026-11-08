@@ -931,6 +931,24 @@ async fn people_show_the_caller_their_own_manager() -> TestResult {
 }
 
 #[tokio::test]
+async fn people_detail_shows_the_caller_their_own_manager() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("detail-own-manager-caller@http-live.test").await?;
+    let manager = f
+        .person("detail-own-manager-manager@http-live.test")
+        .await?;
+    f.reports_to(caller, manager).await?;
+
+    let (status, body) = get(app(&f, caller), &format!("/v1/people/{caller}")).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["manager_person_id"], manager.to_string());
+    Ok(())
+}
+
+#[tokio::test]
 async fn tenant_people_visibility_lists_the_tenant_roster_to_any_member() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
