@@ -510,12 +510,35 @@ describe("AccountSearchView unmatched block", () => {
     expect(names).toEqual(["a@example.com", "u2", "N3", "4"]);
   });
 
-  it("is hidden when nothing is unmatched", () => {
+  it("keeps the heading and says so when the read is complete and nothing is unmatched", () => {
     hooks.search.data = page([match()]);
     hooks.attention.data = { items: [queued({ kind: "pending" })] };
     render(<AccountSearchView />);
 
-    expect(screen.queryByText("Unmatched")).not.toBeInTheDocument();
+    expect(within(unmatched()).getByText("No unmatched accounts")).toBeInTheDocument();
+    expect(within(unmatched()).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("does not claim nothing is unmatched while the read is not a complete answer", () => {
+    for (const [case_, state] of [
+      ["loading", { isLoading: true, data: undefined }],
+      ["failed", { isError: true, data: undefined }],
+      ["capped", { data: { items: [], truncated: true } }],
+      ["cut", { data: { items: [], items_truncated: true } }],
+    ] as const) {
+      Object.assign(hooks.attention, {
+        isLoading: false,
+        isError: false,
+        ...state,
+      });
+      const { unmount } = render(<AccountSearchView />);
+
+      expect(
+        screen.queryByText("No unmatched accounts"),
+        `should not say it for: ${case_}`,
+      ).not.toBeInTheDocument();
+      unmount();
+    }
   });
 
   it("holds the heading with a spinner, and no rows, while the queue is being read", () => {
@@ -575,10 +598,39 @@ describe("AccountSearchView unmatched block", () => {
 
     await userEvent.clear(field);
     await userEvent.type(field, "no-such-value");
-    expect(screen.queryByRole("region", { name: "Unmatched" })).not.toBeInTheDocument();
+    expect(within(unmatched()).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(unmatched()).getByText("No unmatched accounts")).toBeInTheDocument();
 
     await userEvent.clear(field);
     expect(within(unmatched()).getAllByRole("button")).toHaveLength(4);
+  });
+
+  it("narrows by source the way the listing does, at a segment start only", async () => {
+    hooks.attention.data = {
+      items: [
+        queued({ account_id: "1", username: null, source: "github" }),
+        queued({ account_id: "2", username: null, source: "ms_entra" }),
+        queued({ account_id: "3", username: null, source: "gitlab-commit-email" }),
+      ],
+    };
+    render(<AccountSearchView />);
+    const field = screen.getByRole("searchbox");
+
+    for (const [needle, expected] of [
+      ["hub", []],
+      ["entra", ["ms_entra · 2"]],
+      ["commit", ["gitlab-commit-email · 3"]],
+    ] as const) {
+      await userEvent.clear(field);
+      await userEvent.type(field, needle);
+
+      expect(
+        within(unmatched())
+          .queryAllByText(/ · /)
+          .map((node) => node.textContent),
+        `wrong rows for: ${needle}`,
+      ).toEqual(expected);
+    }
   });
 
   it("states its own error while the accounts below still list", () => {
@@ -694,6 +746,7 @@ describe("AccountSearchView all accounts block", () => {
     hooks.search.data = page([
       match({ person: null, address_holder: BOB, bound_by_operator: false }),
     ]);
+    hooks.attention.data = { items: [] };
     render(<AccountSearchView />);
 
     const block = within(everyAccount());
@@ -702,6 +755,31 @@ describe("AccountSearchView all accounts block", () => {
     expect(block.getByText("matched by email")).toBeInTheDocument();
     expect(block.queryByText(/bound automatically/i)).not.toBeInTheDocument();
     expect(block.queryByText(/bound to nobody/i)).not.toBeInTheDocument();
+  });
+
+  it("states bound to nobody, with no holder and no badge, unless the unmatched read is a complete answer", () => {
+    for (const [case_, state] of [
+      ["loading", { isLoading: true, data: undefined }],
+      ["failed", { isError: true, data: undefined }],
+      ["not read", { data: undefined }],
+      ["truncated", { data: { items: [], truncated: true } }],
+      ["items_truncated", { data: { items: [], items_truncated: true } }],
+    ] as const) {
+      hooks.search.data = page([match({ person: null, address_holder: BOB })]);
+      Object.assign(hooks.attention, {
+        isLoading: false,
+        isError: false,
+        ...state,
+      });
+      const { unmount } = render(<AccountSearchView />);
+
+      const block = within(everyAccount());
+
+      expect(block.queryByText("Bob Park"), `holder shown while: ${case_}`).not.toBeInTheDocument();
+      expect(block.queryByText("matched by email"), `badge shown while: ${case_}`).not.toBeInTheDocument();
+      expect(block.getByText(/bound to nobody/i), `no nobody while: ${case_}`).toBeInTheDocument();
+      unmount();
+    }
   });
 
   it("shows no address holder and no matched-by-email badge on an account that is also unmatched", () => {

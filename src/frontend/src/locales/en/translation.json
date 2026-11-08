@@ -557,6 +557,7 @@
       "loading_more": "Loading…",
       "excluded": "excluded — bot / CI",
       "unmatched": "Unmatched",
+      "none_unmatched": "No unmatched accounts",
       "all_accounts": "All accounts",
       "matched_by_email": "matched by email",
       "reasons": {

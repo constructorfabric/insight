@@ -39,6 +39,7 @@ import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
 import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { accountKey, itemKey } from "@/lib/identities/account-key";
+import { matchesAccountSearch } from "@/lib/identities/account-search";
 import { KIND_SEARCH_MATCH } from "@/lib/identities/cases";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
@@ -81,23 +82,6 @@ function accountLabel(item: {
     item.display_name?.trim() ||
     item.account_id
   );
-}
-
-function shownValues(item: {
-  email?: string | null;
-  username?: string | null;
-  display_name?: string | null;
-  account_id: string;
-  source: string;
-}): string[] {
-  return [
-    accountLabel(item),
-    item.email,
-    item.username,
-    item.display_name,
-    item.account_id,
-    item.source,
-  ].filter((value): value is string => Boolean(value));
 }
 
 /**
@@ -157,10 +141,15 @@ export function AccountSearchView() {
         (item) => Object.hasOwn(UNMATCHED_REASON_KEYS, item.kind),
       );
   const queued = new Set(unmatchedAll.map(itemKey));
-  const needle = debounced.trim().toLowerCase();
-  const unmatched = needle
-    ? unmatchedAll.filter((item) => shownValues(item).some((value) => value.toLowerCase().includes(needle)))
-    : unmatchedAll;
+  const unmatched = unmatchedAll.filter((item) =>
+    matchesAccountSearch(item, debounced),
+  );
+  const unmatchedComplete =
+    !attention.isLoading &&
+    !attention.isError &&
+    attention.data != null &&
+    attention.data.truncated !== true &&
+    attention.data.items_truncated !== true;
   const walk = unmatched.map(itemKey);
   const listed: CaseRow[] = items.map((m) => ({
     kind: KIND_SEARCH_MATCH,
@@ -183,6 +172,7 @@ export function AccountSearchView() {
     attention.isError ||
     attention.isLoading ||
     attentionTruncated ||
+    unmatchedComplete ||
     unmatched.length > 0;
   const showAccounts =
     search.isError ||
@@ -254,6 +244,11 @@ export function AccountSearchView() {
                         {t("identities.queue.truncated")}
                       </AlertDescription>
                     </Alert>
+                  ) : null}
+                  {unmatchedComplete && unmatched.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      {t("identities.accounts.none_unmatched")}
+                    </p>
                   ) : null}
                   {unmatched.length > 0 ? (
                     <Card className="py-0">
@@ -341,7 +336,9 @@ export function AccountSearchView() {
                         key={accountKey(item)}
                         item={item}
                         selected={accountKey(item) === acct}
-                        unmatched={queued.has(accountKey(item))}
+                        addressesKnown={
+                          unmatchedComplete && !queued.has(accountKey(item))
+                        }
                         onOpen={() => setAcct(accountKey(item))}
                       />
                     ))}
@@ -431,18 +428,18 @@ function UnmatchedRow({
 function AccountRow({
   item,
   selected,
-  unmatched,
+  addressesKnown,
   onOpen,
 }: {
   item: AccountMatch;
   selected: boolean;
-  unmatched: boolean;
+  addressesKnown: boolean;
   onOpen: () => void;
 }) {
   const { t } = useTranslation();
   const label = accountLabel(item);
   const holder =
-    item.person ?? (item.excluded || unmatched ? null : item.address_holder);
+    item.person ?? (item.excluded || !addressesKnown ? null : item.address_holder);
   const matchedByEmail = item.person == null && holder != null;
   return (
     // Fixed columns, not content-sized ones: a list is read down a column, and
