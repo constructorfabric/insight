@@ -232,7 +232,7 @@ export function MetricValue({
   const selection = result.drilldown
     ? evidenceSelection(result.selection, entityId)
     : null;
-  if (!selection || !evidence) return <>{text}</>;
+  if (!selection || !evidence) return <span>{text}</span>;
 
   return (
     <button

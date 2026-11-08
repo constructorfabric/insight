@@ -14,6 +14,7 @@ import { compareGaps } from "@/lib/portal/metrics-view";
 import { cn } from "@/lib/utils";
 
 const STICKY_START = "sticky start-0 z-10 bg-card";
+const GAP_SLOT = "ms-2 inline-block w-14 text-start text-xs font-normal text-muted-foreground";
 
 export function MetricsCompareTable({
   people,
@@ -51,6 +52,7 @@ export function MetricsCompareTable({
                 >
                   {person.displayName}
                 </Link>
+                <span aria-hidden className={GAP_SLOT} />
               </th>
             ))}
           </tr>
@@ -97,7 +99,7 @@ export function MetricsCompareTable({
                         personName={person.displayName}
                       />
                       {index === leader ? <span className="sr-only"> (best)</span> : null}
-                      <span className="ms-2 inline-block w-14 text-start text-xs font-normal text-muted-foreground">
+                      <span className={GAP_SLOT}>
                         {gap == null ? "" : gap === 0 ? "≈" : `${gap > 0 ? "+" : "−"}${Math.abs(gap)}%`}
                       </span>
                     </td>
