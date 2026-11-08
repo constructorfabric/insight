@@ -236,7 +236,7 @@ describe("sectionMetricKeys — Overview section kinds", () => {
       title: "t",
       sections: [{ kind: "direction-cards", variant: "full" }],
     });
-    expect(keys).toContain("git.default_branch_commits");
+    expect(keys).toContain("git.default_branch_prs_merged");
     expect(keys).toContain("collab.messages_sent");
     expect(keys).toContain("wiki.pages_created");
   });
@@ -351,5 +351,67 @@ describe("visibleSections", () => {
     const gated = visibleSections(config, true, gate(["metric:ai.*"]));
 
     expect(gated.sections).toEqual(config.sections);
+  });
+});
+
+describe("commit counts lead nothing", () => {
+  const COMMIT_COUNTS = new Set([
+    "git.commits",
+    "git.default_branch_commits",
+    "git.non_default_branch_commits",
+  ]);
+
+  function leadMetric(section: SectionSpec): string | undefined {
+    switch (section.kind) {
+      case "headline":
+      case "trend":
+      case "concentration":
+        return section.metrics[0];
+      case "distribution":
+        return section.metric;
+      default:
+        return undefined;
+    }
+  }
+
+  const pages: Array<[string, readonly SectionSpec[]]> = [
+    ...Object.entries(OVERVIEW_ITEMS).map(
+      ([item, config]) => [`overview ${item}`, config.sections] as [string, readonly SectionSpec[]],
+    ),
+    ...Object.entries(DIRECTION_LENSES).flatMap(([dir, lenses]) =>
+      Object.entries(lenses).flatMap(([lens, entry]): Array<[string, readonly SectionSpec[]]> => {
+        if ("comingSoon" in entry || "entity" in entry) return [];
+        if (dir === "dev" && lens === IN_FLIGHT_LENS) return [];
+        const drilldown: Array<[string, readonly SectionSpec[]]> = entry.drilldown
+          ? [[`${dir} ${lens} drilldown`, entry.drilldown.sections]]
+          : [];
+        return [[`${dir} ${lens}`, entry.sections], ...drilldown];
+      }),
+    ),
+  ];
+
+  it("on any headline, trend, bus factor or distribution outside work in flight", () => {
+    for (const [page, sections] of pages) {
+      for (const section of sections) {
+        expect(COMMIT_COUNTS.has(leadMetric(section) ?? ""), `${page} ${section.kind}`).toBe(false);
+      }
+    }
+  });
+
+  it("on any metric group card", () => {
+    for (const group of GROUPS) {
+      expect(COMMIT_COUNTS.has(group.card.preview[0] ?? ""), group.id).toBe(false);
+    }
+  });
+
+  it("in the order of any drilldown table", () => {
+    for (const group of GROUPS) {
+      for (const block of group.drilldown) {
+        const limits = "groupBy" in block ? Object.values(block.groupBy?.limits ?? {}) : [];
+        for (const limit of limits) {
+          expect(COMMIT_COUNTS.has(limit.rankBy ?? ""), group.id).toBe(false);
+        }
+      }
+    }
   });
 });

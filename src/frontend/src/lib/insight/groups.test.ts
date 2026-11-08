@@ -71,19 +71,17 @@ describe("groups registry", () => {
     };
     expect(timeseries[0]?.groupBy?.limits?.repository).toEqual({
       count: 10,
-      rankBy: "git.default_branch_commits",
+      rankBy: "git.default_branch_prs_merged",
       includeRemainder: true,
     });
     // The request is built from the block's `metrics`, not from its columns, so
     // a column whose metric is missing here renders empty.
     expect(timeseries[0]?.metrics).toEqual([
-      "git.default_branch_commits",
       "git.default_branch_prs_merged",
       "git.default_branch_lines_added",
       "git.default_branch_lines_removed",
     ]);
     expect(timeseries[0]?.table?.columns).toEqual([
-      { metric: "git.default_branch_commits" },
       { metric: "git.default_branch_prs_merged", labelSource: "short" },
       lines,
     ]);
