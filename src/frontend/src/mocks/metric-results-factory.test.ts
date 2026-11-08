@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MetricResultsRequest, PeriodView } from "@/api/metric-results-client";
-import { buildMetricResultsResponse } from "./metric-results-factory";
+import { buildMetricResultsResponse, metaFor } from "./metric-results-factory";
 import { normalizeMetricResults, projectComparison } from "@/lib/metrics/collection";
 
 const request: MetricResultsRequest = {
@@ -39,5 +39,34 @@ describe("synthetic values per period", () => {
     expect(valueIn({ from: "2026-09-08", to: "2026-09-14" })).toBe(
       valueIn({ from: "2026-09-08", to: "2026-09-14" }),
     );
+  });
+});
+
+describe("synthetic metrics follow the catalog", () => {
+  const ids = Array.from(
+    { length: 40 },
+    (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+  );
+  const valuesOf = (metricKey: string) =>
+    (
+      buildMetricResultsResponse({
+        ...request,
+        entity: { type: "person", ids },
+        metrics: [{ metric_key: metricKey, views: [{ view: "period" }] }],
+      }).metrics[0]!.views[0] as PeriodView
+    ).values.map((v) => v.value!);
+
+  it("describes a metric with no fixture the way the catalog does", () => {
+    expect(metaFor("git.first_review_time_h")).toMatchObject({
+      format: "decimal",
+      direction: "lower_is_better",
+      unit: "h",
+    });
+  });
+
+  it("keeps a percent metric between 0 and 100", () => {
+    const values = valuesOf("git.default_branch_merge_rate");
+
+    expect(values.every((v) => v >= 0 && v <= 100), `out of range: ${values}`).toBe(true);
   });
 });
