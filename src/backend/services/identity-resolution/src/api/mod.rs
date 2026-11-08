@@ -1,13 +1,13 @@
 //! HTTP API layer — shared state, route table, extractors.
 
 pub(crate) mod canonical_json;
+pub(crate) mod comma_list;
 pub(crate) mod datetime;
 pub mod error;
 mod gate;
 mod handlers;
 #[cfg(test)]
 mod http_live_tests;
-pub(crate) mod kind_set;
 mod listing;
 pub mod me;
 pub mod people;

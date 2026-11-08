@@ -19,14 +19,14 @@ use uuid::Uuid;
 
 use super::AppState;
 use super::canonical_json::CanonicalJson;
+use super::comma_list::{self, CommaListError, ListSpec};
 use super::error::CorrectionError;
 use super::gate::require_admin;
-use super::kind_set::KindSet;
 use super::listing;
 use super::source_set::SourceSet;
 use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
-use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, QueueItem, Review};
+use crate::domain::review_queue::{self, EvidenceAccount, KindFilter, QueueItem, Review};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
 use crate::infra::db::{ops_repo, persons_repo, resolution_repo, seed_repo};
 use crate::infra::identity_evidence::{
@@ -874,7 +874,7 @@ pub async fn attention(
     let items = page
         .into_iter()
         .map(|i| QueueItemResponse {
-            kind: kind_label(i.kind).to_owned(),
+            kind: i.kind.label().to_owned(),
             source: i.account.source_type,
             source_id: i.account.source_id,
             account_id: i.account.account_id,
@@ -1169,26 +1169,29 @@ fn person_summary(
 }
 
 fn parse_sources(raw: Option<&str>) -> Result<SourceSet, CanonicalError> {
-    SourceSet::parse(raw).map_err(|e| invalid("source", &e.to_string()))
+    SourceSet::parse(raw).map_err(|e| invalid_list(&e))
 }
 
-fn parse_kinds(raw: Option<&str>) -> Result<KindSet, CanonicalError> {
-    KindSet::parse(raw).map_err(|e| invalid("kind", &e.to_string()))
+fn parse_kinds(raw: Option<&str>) -> Result<KindFilter, CanonicalError> {
+    comma_list::parse(raw, KIND_SPEC)
+        .map(|labels| KindFilter::from_labels(&labels))
+        .map_err(|e| invalid_list(&e))
+}
+
+fn invalid_list(error: &CommaListError) -> CanonicalError {
+    let (CommaListError::EntryTooLong { field, .. } | CommaListError::TooManyEntries { field, .. }) =
+        error;
+
+    invalid(field, &error.to_string())
 }
 
 fn queue_page(
     items: Vec<QueueItem>,
     sources: &SourceSet,
-    kinds: &KindSet,
+    kinds: &KindFilter,
     limit: usize,
 ) -> (Vec<QueueItem>, bool) {
-    let narrowed = review_queue::items_from_sources(items, |source| {
-        sources.is_empty() || sources.contains(source)
-    });
-    let narrowed: Vec<QueueItem> = narrowed
-        .into_iter()
-        .filter(|item| kinds.is_empty() || kinds.contains(kind_label(item.kind)))
-        .collect();
+    let narrowed = review_queue::narrow(items, sources.as_slice(), kinds);
     let truncated = narrowed.len() > limit;
 
     (narrowed.into_iter().take(limit).collect(), truncated)
@@ -1429,16 +1432,11 @@ pub async fn person_accounts(
 const DEFAULT_QUEUE_LIMIT: usize = 100;
 const MAX_QUEUE_LIMIT: usize = 1_000;
 
-fn kind_label(kind: ItemKind) -> &'static str {
-    match kind {
-        ItemKind::Contested => "contested",
-        ItemKind::BindingConflict => "binding_conflict",
-        ItemKind::ProvisionedAtLogin => "provisioned_at_login",
-        ItemKind::MintedFromRoster => "minted_from_roster",
-        ItemKind::NoSourceId => "no_source_id",
-        ItemKind::NoEvidence => "no_evidence",
-    }
-}
+const KIND_SPEC: ListSpec = ListSpec {
+    field: "kind",
+    max_entries: 20,
+    max_chars: 40,
+};
 
 /// Join folded evidence with current bindings into the review, keeping the
 /// read's own honesty flag: `truncated` means the rates cover a prefix of the
@@ -1530,23 +1528,7 @@ async fn read_evidence(state: &AppState) -> Result<EvidenceSnapshot, CanonicalEr
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn every_queue_kind_has_the_wire_label_its_consumers_switch_on() {
-        // The console groups by this exact string and drops anything it does not
-        // know into a catch-all "needs review" bucket, so a typo here is not a
-        // broken response — it is a queue that quietly stops explaining itself.
-        for (kind, expected) in [
-            (ItemKind::Contested, "contested"),
-            (ItemKind::BindingConflict, "binding_conflict"),
-            (ItemKind::ProvisionedAtLogin, "provisioned_at_login"),
-            (ItemKind::MintedFromRoster, "minted_from_roster"),
-            (ItemKind::NoSourceId, "no_source_id"),
-            (ItemKind::NoEvidence, "no_evidence"),
-        ] {
-            assert_eq!(kind_label(kind), expected, "wrong label for {kind:?}");
-        }
-    }
+    use crate::domain::review_queue::ItemKind;
 
     fn queued(kind: ItemKind, source: &str, account_id: &str) -> QueueItem {
         QueueItem {
@@ -1571,49 +1553,85 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn the_kind_filter_applies_before_the_limit() -> anyhow::Result<()> {
-        let items = vec![
+    fn sample_queue() -> Vec<QueueItem> {
+        vec![
             queued(ItemKind::BindingConflict, "gitlab", "x-1"),
             queued(ItemKind::BindingConflict, "gitlab", "x-2"),
             queued(ItemKind::Contested, "gitlab", "c-1"),
             queued(ItemKind::NoEvidence, "gitlab", "e-1"),
             queued(ItemKind::NoEvidence, "github", "e-2"),
-        ];
-        let kinds = KindSet::parse(Some("contested,no_evidence"))?;
+        ]
+    }
 
-        let (page, truncated) = queue_page(items.clone(), &SourceSet::default(), &kinds, 2);
-        assert_eq!(ids(&page), ["c-1", "e-1"]);
-        assert!(truncated, "e-2 was cut by the limit");
+    #[test]
+    fn the_queue_page_filters_before_the_limit() -> anyhow::Result<()> {
+        let kinds = parse_kinds(Some("contested,no_evidence"))?;
+        let gitlab = parse_sources(Some("gitlab"))?;
+        let any = SourceSet::default();
 
-        let (page, truncated) = queue_page(items.clone(), &SourceSet::default(), &kinds, 3);
-        assert_eq!(ids(&page), ["c-1", "e-1", "e-2"]);
-        assert!(!truncated);
+        for (case, sources, kinds, limit, expected, expected_truncated) in [
+            (
+                "limit cuts the filtered list",
+                &any,
+                &kinds,
+                2,
+                vec!["c-1", "e-1"],
+                true,
+            ),
+            (
+                "limit above the filtered list",
+                &any,
+                &kinds,
+                3,
+                vec!["c-1", "e-1", "e-2"],
+                false,
+            ),
+            (
+                "source and kind together",
+                &gitlab,
+                &kinds,
+                2,
+                vec!["c-1", "e-1"],
+                false,
+            ),
+            (
+                "no kind param keeps every kind",
+                &any,
+                &KindFilter::Any,
+                10,
+                vec!["x-1", "x-2", "c-1", "e-1", "e-2"],
+                false,
+            ),
+        ] {
+            let (page, truncated) = queue_page(sample_queue(), sources, kinds, limit);
 
-        let sources = SourceSet::parse(Some("gitlab"))?;
-        let (page, truncated) = queue_page(items.clone(), &sources, &kinds, 2);
-        assert_eq!(ids(&page), ["c-1", "e-1"]);
-        assert!(!truncated, "the source filter applies with the kind filter");
-
-        let (page, _) = queue_page(items, &SourceSet::default(), &KindSet::default(), 10);
-        assert_eq!(page.len(), 5, "no kind set keeps every kind");
+            assert_eq!(ids(&page), expected, "wrong page for: {case}");
+            assert_eq!(truncated, expected_truncated, "wrong flag for: {case}");
+        }
         Ok(())
     }
 
     #[test]
-    fn an_unknown_kind_matches_nothing() -> anyhow::Result<()> {
-        let items = vec![queued(ItemKind::Contested, "gitlab", "c-1")];
+    fn kinds_requested_but_none_known_match_nothing() -> anyhow::Result<()> {
+        let kinds = parse_kinds(Some("nope"))?;
 
-        let (page, truncated) = queue_page(
-            items,
-            &SourceSet::default(),
-            &KindSet::parse(Some("nope"))?,
-            10,
-        );
+        let (page, truncated) = queue_page(sample_queue(), &SourceSet::default(), &kinds, 10);
 
         assert!(page.is_empty());
         assert!(!truncated);
         Ok(())
+    }
+
+    #[test]
+    fn the_kind_param_is_limited_to_twenty_entries_of_forty_characters() {
+        let many = (0..21)
+            .map(|i| format!("k{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        assert!(parse_kinds(Some(&"a".repeat(40))).is_ok());
+        assert!(parse_kinds(Some(&"a".repeat(41))).is_err());
+        assert!(parse_kinds(Some(&many)).is_err());
     }
 
     fn scope(needle: &str, sources: &str) -> anyhow::Result<String> {

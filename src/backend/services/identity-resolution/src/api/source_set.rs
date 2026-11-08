@@ -1,44 +1,17 @@
-use std::collections::BTreeSet;
+use super::comma_list::{self, CommaListError, ListSpec};
 
-const MAX_SOURCES: usize = 20;
-const MAX_SOURCE_CHARS: usize = 30;
+const SPEC: ListSpec = ListSpec {
+    field: "source",
+    max_entries: 20,
+    max_chars: 30,
+};
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum SourceSetError {
-    #[error("each source is at most {MAX_SOURCE_CHARS} characters")]
-    EntryTooLong,
-    #[error("at most {MAX_SOURCES} sources are accepted")]
-    TooManyEntries,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct SourceSet(Vec<String>);
 
 impl SourceSet {
-    pub(crate) fn parse(raw: Option<&str>) -> Result<Self, SourceSetError> {
-        let entries: BTreeSet<&str> = raw
-            .unwrap_or_default()
-            .split(',')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-            .collect();
-
-        if entries.iter().any(|e| e.chars().count() > MAX_SOURCE_CHARS) {
-            return Err(SourceSetError::EntryTooLong);
-        }
-        if entries.len() > MAX_SOURCES {
-            return Err(SourceSetError::TooManyEntries);
-        }
-
-        Ok(Self(entries.into_iter().map(str::to_owned).collect()))
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub(crate) fn contains(&self, source_type: &str) -> bool {
-        self.0.iter().any(|s| s == source_type)
+    pub(crate) fn parse(raw: Option<&str>) -> Result<Self, CommaListError> {
+        comma_list::parse(raw, SPEC).map(Self)
     }
 
     pub(crate) fn as_slice(&self) -> &[String] {
@@ -58,69 +31,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn blank_input_is_the_empty_set() -> anyhow::Result<()> {
-        for raw in [None, Some(""), Some(" , "), Some(",,")] {
-            assert!(
-                SourceSet::parse(raw)?.is_empty(),
-                "should be empty: {raw:?}"
-            );
-        }
-        Ok(())
+    fn the_wire_limits_are_twenty_entries_of_thirty_characters() {
+        let long = "a".repeat(31);
+        let many = (0..21)
+            .map(|i| format!("src{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        assert!(SourceSet::parse(Some(&"a".repeat(30))).is_ok());
+        assert!(matches!(
+            SourceSet::parse(Some(&long)),
+            Err(CommaListError::EntryTooLong {
+                field: "source",
+                max: 30
+            })
+        ));
+        assert!(matches!(
+            SourceSet::parse(Some(&many)),
+            Err(CommaListError::TooManyEntries {
+                field: "source",
+                max: 20
+            })
+        ));
     }
 
     #[test]
-    fn entries_are_trimmed_deduped_and_sorted() -> anyhow::Result<()> {
+    fn entries_are_kept_exactly_for_matching() -> anyhow::Result<()> {
         let set = SourceSet::parse(Some("gitlab, github,gitlab"))?;
 
         assert_eq!(set.as_slice(), ["github", "gitlab"]);
         Ok(())
-    }
-
-    #[test]
-    fn contains_is_an_exact_match() -> anyhow::Result<()> {
-        let set = SourceSet::parse(Some("gitlab"))?;
-
-        for (source, expected) in [
-            ("gitlab", true),
-            ("gitlab-commit-email", false),
-            ("git", false),
-            ("GitLab", false),
-        ] {
-            assert_eq!(
-                set.contains(source),
-                expected,
-                "should match exactly: {source}"
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn an_entry_over_thirty_characters_is_rejected() {
-        let long = "a".repeat(31);
-        let fits = "a".repeat(30);
-
-        assert_eq!(
-            SourceSet::parse(Some(&long)),
-            Err(SourceSetError::EntryTooLong)
-        );
-        assert!(SourceSet::parse(Some(&fits)).is_ok());
-    }
-
-    #[test]
-    fn more_than_twenty_entries_are_rejected() {
-        let many = |n: usize| {
-            (0..n)
-                .map(|i| format!("src{i}"))
-                .collect::<Vec<_>>()
-                .join(",")
-        };
-
-        assert_eq!(
-            SourceSet::parse(Some(&many(21))),
-            Err(SourceSetError::TooManyEntries)
-        );
-        assert!(SourceSet::parse(Some(&many(20))).is_ok());
     }
 
     #[test]
