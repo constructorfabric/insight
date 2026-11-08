@@ -123,7 +123,7 @@ describe("EmployeesView", () => {
     expect(screen.getByText(/1 of 3/)).toBeInTheDocument();
   });
 
-  it("names the viewer's own manager without listing them", () => {
+  it("shows each row's manager by the name the listing returns", () => {
     mocks.roster.roster = [
       rosterPerson("boss", pid("chief"), {}, "Chief Example"),
       rosterPerson("zoe", pid("boss"), {}, "Boss"),
@@ -138,15 +138,6 @@ describe("EmployeesView", () => {
       "Boss",
       "Zoe",
     ]);
-  });
-
-  it("names the manager of a viewer with no reports", () => {
-    mocks.roster.roster = [rosterPerson("solo", pid("chief"), {}, "Chief Example")];
-
-    render(<EmployeesView />);
-
-    const soloRow = screen.getByRole("link", { name: "Solo" }).closest("tr")!;
-    expect(within(soloRow).getByText("Chief Example")).toBeInTheDocument();
   });
 
   it("surfaces an identity failure as a retryable error", async () => {

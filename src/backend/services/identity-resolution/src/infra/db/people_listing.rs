@@ -417,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn the_callers_own_row_gate_binds_the_viewer() {
+    fn the_own_row_exception_is_keyed_to_the_caller() {
         let viewer = Uuid::from_u128(3);
         let restrict = Restrict {
             visible_to: Some(VisibleTo {
