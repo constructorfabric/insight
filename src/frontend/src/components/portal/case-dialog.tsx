@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import type { AttentionItem, PersonSummary } from "@/api/identity-client";
 import { AccountDetail } from "@/components/portal/account-detail";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -10,6 +11,8 @@ import {
   DialogTitle,
 } from "@gears-frontx/ui-kit";
 import { itemKey, parseAccountKey } from "@/lib/identities/account-key";
+import { nextInWalk } from "@/lib/identities/walk";
+import { useTranslation } from "react-i18next";
 
 /**
  * A row this window can open.
@@ -33,6 +36,7 @@ export interface CaseRow extends AttentionItem {
 interface HeldCase {
   acct?: string;
   item?: CaseRow;
+  walk?: readonly string[];
 }
 
 /**
@@ -52,12 +56,17 @@ interface HeldCase {
 export function CaseDialog({
   acct,
   items,
+  walk,
+  onNavigate,
   onClose,
 }: {
   acct: string | undefined;
   items: CaseRow[];
+  walk?: readonly string[];
+  onNavigate?: (key: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const popupRef = useRef<HTMLDivElement>(null);
   const ref = parseAccountKey(acct);
 
@@ -66,14 +75,33 @@ export function CaseDialog({
   // Held via state adjusted during render (the sanctioned previous-render
   // pattern), so the freshest row sticks for the open case.
   const [held, setHeld] = useState<HeldCase>({});
+
+  // INVARIANT: the walk is the one the account opened with. A decision prunes
+  // its row from the live list at once, so the live walk no longer contains the
+  // account being decided and would lose the place the next key is read from.
+  const heldWalk =
+    acct != null && held.acct === acct && held.walk?.includes(acct)
+      ? held.walk
+      : walk;
   const fresh: HeldCase = {
     acct,
     item: live ?? (held.acct === acct ? held.item : undefined),
+    walk: heldWalk,
   };
-  if (held.acct !== fresh.acct || held.item !== fresh.item) {
+  if (
+    held.acct !== fresh.acct ||
+    held.item !== fresh.item ||
+    held.walk !== fresh.walk
+  ) {
     setHeld(fresh);
   }
   const queueItem = fresh.item;
+  const inWalk = acct != null && fresh.walk?.includes(acct) === true;
+  const next = acct != null && fresh.walk ? nextInWalk(fresh.walk, acct) : null;
+  const decided = () => {
+    if (next != null && onNavigate) onNavigate(next);
+    else onClose();
+  };
 
   const heading =
     queueItem?.email?.trim() ||
@@ -129,8 +157,21 @@ export function CaseDialog({
             // list and its binding are both reads the server has moved past.
             // The surface behind re-reads (see `useCorrection`), so handing the
             // window back shows the new state instead of the one just replaced.
-            onDecided={onClose}
+            onDecided={decided}
           />
+        ) : null}
+        {inWalk && onNavigate ? (
+          <div className="flex shrink-0 justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={next == null}
+              onClick={() => next != null && onNavigate(next)}
+            >
+              {t("identities.actions.skip")}
+            </Button>
+          </div>
         ) : null}
       </DialogContent>
     </Dialog>

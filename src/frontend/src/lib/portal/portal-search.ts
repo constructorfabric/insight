@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import type { OwnedFilter } from "@/api/custom-client";
 import { validateDateRange } from "@/api/period-to-date-range";
 import { isRangeToken } from "@/lib/custom/time-range";
+import { formatSources, parseSources } from "@/lib/identities/sources";
 import type { PeriodValue } from "@/types/insight";
 
 /**
@@ -30,6 +31,7 @@ export interface PortalSearch {
   acct?: string;
   /** Which Identities mode is open (the review queue, a person). */
   mode?: string;
+  src?: string;
   /** Person under inspection in the Identities person mode. */
   person?: string;
   /**
@@ -104,6 +106,10 @@ function strs(v: unknown): string[] | undefined {
   return values.length > 0 ? values : undefined;
 }
 
+/** INVARIANT: mirror the identity-resolution service's `source` limits. */
+const MAX_SOURCES = 20;
+const MAX_SOURCE_CHARS = 30;
+
 /**
  * Validate rather than trust: search params are user-editable text, and a
  * malformed one must not reach a metric request or a date range. Anything
@@ -130,6 +136,11 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     item: str(raw.item),
     acct: str(raw.acct),
     mode: str(raw.mode),
+    src: formatSources(
+      parseSources(str(raw.src))
+        .filter((source) => source.length <= MAX_SOURCE_CHARS)
+        .slice(0, MAX_SOURCES),
+    ),
     person: str(raw.person)?.toLowerCase(),
     find: str(raw.find),
     dir: str(raw.dir),
@@ -167,6 +178,7 @@ export const PORTAL_SEARCH_KEYS = [
   "item",
   "acct",
   "mode",
+  "src",
   "person",
   "find",
   "dir",

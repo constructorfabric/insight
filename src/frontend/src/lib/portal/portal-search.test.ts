@@ -18,6 +18,31 @@ import {
  * boundary in place of a dashboard over one mistyped character.
  */
 describe("validatePortalSearch", () => {
+  it("normalises the picked sources and drops an empty list", () => {
+    expect(validatePortalSearch({ src: " gitlab,github,github" }).src).toBe(
+      "github,gitlab",
+    );
+    expect(validatePortalSearch({ src: ",," }).src).toBeUndefined();
+    expect(validatePortalSearch({ src: 5 }).src).toBeUndefined();
+  });
+
+  it("degrades an oversized src to at most 20 entries of at most 30 characters", () => {
+    const many = Array.from({ length: 25 }, (_, i) => `s${String(i).padStart(2, "0")}`);
+    const long = "x".repeat(31);
+    const fits = "y".repeat(30);
+
+    const kept = validatePortalSearch({ src: [...many, long, fits].join(",") }).src?.split(",");
+
+    expect(kept).toHaveLength(20);
+    expect(kept?.every((entry) => entry.length <= 30)).toBe(true);
+    expect(kept).not.toContain(long);
+    expect(validatePortalSearch({ src: `${long},${fits}` }).src).toBe(fits);
+  });
+
+  it("carries src across a route change", () => {
+    expect(PORTAL_SEARCH_KEYS).toContain("src");
+  });
+
   it("keeps the navigation keys it recognises", () => {
     expect(
       validatePortalSearch({ zone: "directions", dir: "dev", lens: "Delivery" }),
