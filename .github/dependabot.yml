@@ -4,8 +4,7 @@
 #
 # Semgrep's direct pin is .github/semgrep-requirements.in. The hashed txt beside
 # it is the lock CI installs with --require-hashes. The pip entry recompiles
-# that lock from the .in, so one bump moves the whole closure. .python-version
-# in that directory is the interpreter the Semgrep lane installs.
+# that pair. .python-version is the interpreter the Semgrep lane installs.
 #
 # Trivy and TruffleHog version and sha256 pairs are shell assignments in
 # .github/actions/install-scanners/action.yml. No entry here updates them.
