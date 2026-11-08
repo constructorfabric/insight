@@ -74,24 +74,19 @@ describe("screenLabel", () => {
     );
   });
 
-  it("names a dashboard by the name its path carries", () => {
-    expect(screenLabel("/portal/custom/q3-hiring-plan")).toBe("Dashboards › q3-hiring-plan");
-  });
-
-  it("names a dashboard whose id was masked", () => {
-    expect(screenLabel("/portal/custom/:id")).toBe("Dashboards › Dashboard");
-  });
-
-  it("names the definition a custom page opened", () => {
-    expect(screenLabel("/portal/custom/metrics/deploy-frequency")).toBe(
-      "Dashboards › Metrics › deploy-frequency",
-    );
-    expect(screenLabel("/portal/custom/edit/dashboards/release-health")).toBe(
+  it.each([
+    ["/portal/custom/:id", "Dashboards › Dashboard"],
+    ["/portal/custom/q3-hiring-plan", "Dashboards › q3-hiring-plan"],
+    ["/portal/custom/metrics/deploy-frequency", "Dashboards › Metrics › deploy-frequency"],
+    ["/portal/custom/metrics/:id", "Dashboards › Metrics › Metric"],
+    [
+      "/portal/custom/edit/dashboards/release-health",
       "Dashboards › Edit › Dashboards › release-health",
-    );
-    expect(screenLabel("/portal/custom/alerts/:id/edit")).toBe(
-      "Dashboards › Alerts › :id › Edit",
-    );
+    ],
+    ["/portal/custom/edit/dashboards/:id", "Dashboards › Edit › Dashboards › Dashboard"],
+    ["/portal/custom/alerts/:id/edit", "Dashboards › Alerts › Alert › Edit"],
+  ])("names the custom page %s as %s", (path, title) => {
+    expect(screenLabel(path), `path: ${path}`).toBe(title);
   });
 
   it("gives every custom page its own title", () => {
@@ -99,9 +94,9 @@ describe("screenLabel", () => {
       "/portal/custom/:id",
       "/portal/custom/q3-hiring-plan",
       "/portal/custom/release-health",
-      "/portal/custom/:id/overview",
       "/portal/custom/metrics",
       "/portal/custom/metrics/deploy-frequency",
+      "/portal/custom/metrics/:id",
       "/portal/custom/new/dashboards",
       "/portal/custom/new/metrics",
       "/portal/custom/edit/dashboards/:id",
@@ -112,7 +107,12 @@ describe("screenLabel", () => {
       "/portal/custom/alerts/:id/edit",
     ];
 
-    expect(new Set(paths.map(screenLabel)).size).toBe(paths.length);
+    const titles = paths.map(screenLabel);
+    const shared = paths.filter(
+      (_, i) => titles.indexOf(titles[i]) !== titles.lastIndexOf(titles[i]),
+    );
+
+    expect(shared, "paths that share a title").toEqual([]);
   });
 
   it("keeps a path it cannot name rather than inventing one", () => {

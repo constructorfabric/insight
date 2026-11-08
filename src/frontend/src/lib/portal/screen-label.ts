@@ -21,6 +21,14 @@ const DASHBOARD_PAGES: Record<string, string> = {
   edit: "Edit",
 };
 
+const MASKED_ITEMS: Record<string, string> = {
+  dashboards: "Dashboard",
+  metrics: "Metric",
+  widgets: "Widget",
+  datasets: "Dataset",
+  alerts: "Alert",
+};
+
 const PERSON_VIEWS: Record<string, string> = {
   personal: "Personal",
 };
@@ -35,10 +43,15 @@ function sectionLabel(section: string): string {
   return GROUPS.find((group) => group.id === section)?.title ?? section;
 }
 
-function customLabel([page, ...rest]: string[]): string {
-  const head = page === ":id" ? "Dashboard" : (DASHBOARD_PAGES[page] ?? page);
-  const tail = rest.filter(Boolean).map((segment) => DASHBOARD_PAGES[segment] ?? segment);
-  return [head, ...tail].join(SEPARATOR);
+function customLabel(detail: string[]): string {
+  return detail
+    .filter(Boolean)
+    .map((segment, i, segments) =>
+      segment === ":id"
+        ? (MASKED_ITEMS[segments[i - 1]] ?? "Dashboard")
+        : (DASHBOARD_PAGES[segment] ?? segment),
+    )
+    .join(SEPARATOR);
 }
 
 function detailLabel(zone: string, detail: string[]): string {
