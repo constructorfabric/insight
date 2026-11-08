@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { personName } from "@/lib/identities/person-display";
+import { normalizePersonId } from "@/lib/metrics/entity";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { useDirectoryNames } from "@/queries/directory-names";
 import { useVisibilityPolicy } from "@/queries/identity-me";
@@ -34,33 +35,34 @@ interface EmployeeRow {
   status: string;
 }
 
-function managersOffRoster(roster: readonly PeopleListItem[]): string[] {
-  const onRoster = new Set(
-    roster.map((person) => person.person_id.toLowerCase()),
+function rosterNames(
+  roster: readonly PeopleListItem[],
+): ReadonlyMap<string, string> {
+  return new Map(
+    roster.map((person) => [
+      normalizePersonId(person.person_id),
+      personName(person) ?? "",
+    ]),
   );
+}
+
+function managersOffRoster(
+  roster: readonly PeopleListItem[],
+  onRoster: ReadonlyMap<string, string>,
+): string[] {
   const missing = roster
-    .map((person) => person.manager_person_id?.toLowerCase())
-    .filter((id): id is string => id != null && !onRoster.has(id));
+    .map((person) => person.manager_person_id)
+    .filter((id): id is string => id != null)
+    .map(normalizePersonId)
+    .filter((id) => !onRoster.has(id));
 
   return [...new Set(missing)].sort();
 }
 
 function rosterEmployees(
   roster: readonly PeopleListItem[],
-  directoryNames: ReadonlyMap<string, string>,
+  managerNames: ReadonlyMap<string, string>,
 ): EmployeeRow[] {
-  const byId = new Map(
-    roster.map((person) => [person.person_id.toLowerCase(), person]),
-  );
-  const managerName = (managerId: string): string => {
-    const key = managerId.toLowerCase();
-    const rostered = byId.get(key);
-
-    return rostered
-      ? (personName(rostered) ?? "")
-      : (directoryNames.get(key) ?? "");
-  };
-
   return roster
     .map((person) => ({
       personId: person.person_id,
@@ -69,7 +71,7 @@ function rosterEmployees(
       department: person.attributes.department ?? "",
       division: person.attributes.division ?? "",
       supervisorName: person.manager_person_id
-        ? managerName(person.manager_person_id)
+        ? (managerNames.get(normalizePersonId(person.manager_person_id)) ?? "")
         : "",
       status: person.attributes.status ?? "",
     }))
@@ -86,14 +88,22 @@ export function EmployeesView() {
   const visibleRoster = useVisibleRoster(true);
   const [query, setQuery] = useState("");
 
-  const offRoster = useMemo(
-    () => managersOffRoster(visibleRoster.roster),
+  const onRoster = useMemo(
+    () => rosterNames(visibleRoster.roster),
     [visibleRoster.roster],
+  );
+  const offRoster = useMemo(
+    () => managersOffRoster(visibleRoster.roster, onRoster),
+    [visibleRoster.roster, onRoster],
   );
   const directoryNames = useDirectoryNames(offRoster);
   const employees = useMemo(
-    () => rosterEmployees(visibleRoster.roster, directoryNames),
-    [visibleRoster.roster, directoryNames],
+    () =>
+      rosterEmployees(
+        visibleRoster.roster,
+        new Map([...directoryNames, ...onRoster]),
+      ),
+    [visibleRoster.roster, directoryNames, onRoster],
   );
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

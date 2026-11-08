@@ -149,6 +149,16 @@ describe("EmployeesView", () => {
     ]);
   });
 
+  it("names the manager of a viewer with no reports", () => {
+    mocks.roster.roster = [rosterPerson("solo", pid("chief"))];
+    mocks.directory = new Map([[pid("chief"), "Chief Example"]]);
+
+    render(<EmployeesView />);
+
+    const soloRow = screen.getByRole("link", { name: "Solo" }).closest("tr")!;
+    expect(within(soloRow).getByText("Chief Example")).toBeInTheDocument();
+  });
+
   it("asks the directory for no one when every manager is on the roster", () => {
     render(<EmployeesView />);
 

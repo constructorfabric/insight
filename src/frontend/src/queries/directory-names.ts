@@ -4,6 +4,7 @@ import { listPeople } from "@/api/identity-client";
 import { useAuth } from "@/auth/use-auth";
 import { sessionAuthorizationScope } from "@/auth/session-scope";
 import { personName } from "@/lib/identities/person-display";
+import { normalizePersonId } from "@/lib/metrics/entity";
 
 const DIRECTORY_STALE_TIME = 60 * 1000;
 
@@ -21,7 +22,7 @@ async function directoryNames(
   const names = new Map<string, string>();
   for (const person of listed.items) {
     const name = personName(person);
-    if (name) names.set(person.person_id.toLowerCase(), name);
+    if (name) names.set(normalizePersonId(person.person_id), name);
   }
   return names;
 }

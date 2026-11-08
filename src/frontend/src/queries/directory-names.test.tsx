@@ -1,9 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
-import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as identityClient from "@/api/identity-client";
+import { wrapper } from "@/test/alerts";
 
 vi.mock("@/api/identity-client");
 vi.mock("@/auth/use-auth", () => ({
@@ -17,15 +16,6 @@ vi.mock("@/auth/session-scope", () => ({
 import { useDirectoryNames } from "./directory-names";
 
 const listPeople = vi.mocked(identityClient.listPeople);
-
-function harness() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) =>
-    createElement(QueryClientProvider, { client: queryClient }, children);
-  return { wrapper };
-}
 
 function directoryEntry(
   id: string,
@@ -60,7 +50,7 @@ describe("useDirectoryNames", () => {
 
     const { result } = renderHook(
       () => useDirectoryNames(["AAAA-1", "bbbb-2"]),
-      harness(),
+      { wrapper },
     );
 
     await waitFor(() => expect(result.current.size).toBe(2));
@@ -73,7 +63,7 @@ describe("useDirectoryNames", () => {
   });
 
   it("asks nothing when no one needs a name", () => {
-    const { result } = renderHook(() => useDirectoryNames([]), harness());
+    const { result } = renderHook(() => useDirectoryNames([]), { wrapper });
 
     expect(result.current.size).toBe(0);
     expect(listPeople).not.toHaveBeenCalled();
@@ -84,7 +74,7 @@ describe("useDirectoryNames", () => {
 
     const { result } = renderHook(
       () => useDirectoryNames(["aaaa-1"]),
-      harness(),
+      { wrapper },
     );
 
     await waitFor(() => expect(listPeople).toHaveBeenCalled());
