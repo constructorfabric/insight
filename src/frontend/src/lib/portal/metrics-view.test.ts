@@ -8,6 +8,7 @@ import { identityPerson, pid } from "@/test/identity";
 import {
   chunkKeys,
   compareGaps,
+  formatGap,
   keysWithData,
   metricGroups,
   metricsRows,
@@ -213,17 +214,27 @@ describe("metricGroups", () => {
 
 describe("compareGaps", () => {
   it("marks the biggest value best when higher is better, with everyone else's gap in percent", () => {
-    expect(compareGaps([50, 200, null, 100], "higher_is_better")).toEqual({
-      leader: 1,
-      gaps: [-75, null, null, -50],
-    });
+    expect(compareGaps([50, 200, null, 100], "higher_is_better")).toEqual([
+      { best: false, gap: -75 },
+      { best: true, gap: null },
+      { best: false, gap: null },
+      { best: false, gap: -50 },
+    ]);
   });
 
   it("marks the smallest value best when lower is better, with everyone else's excess in percent", () => {
-    expect(compareGaps([83, 698], "lower_is_better")).toEqual({
-      leader: 0,
-      gaps: [null, 741],
-    });
+    expect(compareGaps([83, 698], "lower_is_better")).toEqual([
+      { best: true, gap: null },
+      { best: false, gap: 741 },
+    ]);
+  });
+
+  it("marks every person who ties for best", () => {
+    expect(compareGaps([5, 5, 8], "lower_is_better").map((cell) => cell.best)).toEqual([
+      true,
+      true,
+      false,
+    ]);
   });
 
   it.each([
@@ -232,10 +243,24 @@ describe("compareGaps", () => {
     ["a single value", [7, null], "higher_is_better"],
     ["no values", [null, null], "lower_is_better"],
   ] as const)("names no best with %s", (_case, values, direction) => {
-    expect(compareGaps(values, direction).leader).toBeNull();
+    expect(compareGaps(values, direction).some((cell) => cell.best)).toBe(false);
   });
 
   it("gives no percent when the best value is zero", () => {
-    expect(compareGaps([0, 4], "lower_is_better")).toEqual({ leader: 0, gaps: [null, null] });
+    expect(compareGaps([0, 4], "lower_is_better")).toEqual([
+      { best: true, gap: null },
+      { best: false, gap: null },
+    ]);
+  });
+});
+
+describe("formatGap", () => {
+  it.each([
+    [null, ""],
+    [0, "≈"],
+    [63, "+63%"],
+    [-47, "−47%"],
+  ] as const)("writes a gap of %s as %j", (gap, text) => {
+    expect(formatGap(gap)).toBe(text);
   });
 });

@@ -7,14 +7,12 @@ import { useMetricEvidenceOptional } from "@/components/metric-evidence-context"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@gears-frontx/ui-kit";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
 import { formatMetricValue } from "@/lib/format";
+import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import {
-  forEntity,
-  type NormalizedMetricResult,
-} from "@/lib/metrics/collection";
-import type {
-  MetricGroup,
-  MetricsRow,
-  SortDirection,
+  finiteValue,
+  type MetricGroup,
+  type MetricsRow,
+  type SortDirection,
 } from "@/lib/portal/metrics-view";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +46,7 @@ export function MetricsTable({
   onScope: (entityId: string) => void;
 }) {
   const keys = groups.flatMap((group) => group.keys);
+  const groupStarts = new Set(groups.slice(1).map((group) => group.keys[0]));
 
   return (
     <div className="max-h-[calc(100svh-13rem)] overflow-auto rounded-lg border bg-card">
@@ -81,12 +80,11 @@ export function MetricsTable({
             ))}
           </tr>
           <tr>
-            {keys.map((key, index) => {
+            {keys.map((key) => {
               const result = byKey.get(key);
               const label = result?.label ?? key;
               const help = helpByKey.get(key) ?? (result ? metricHelp(result) : null);
               const direction = sort?.key === key ? sort.direction : undefined;
-              const startsGroup = groups.some((group) => group.keys[0] === key);
               return (
                 <th
                   key={key}
@@ -96,7 +94,7 @@ export function MetricsTable({
                     HEADER_CELL,
                     BELOW_GROUP_ROW,
                     "min-w-28 max-w-36 py-2 align-bottom",
-                    startsGroup && index > 0 && "border-s",
+                    groupStarts.has(key) && "border-s",
                   )}
                 >
                   <MetricHelpTooltip label={label} help={help}>
@@ -167,12 +165,12 @@ export function MetricsTable({
                   </Link>
                 </div>
               </th>
-              {keys.map((key, index) => (
+              {keys.map((key) => (
                 <td
                   key={key}
                   className={cn(
                     "border-b px-2 py-1 text-end whitespace-nowrap tabular-nums",
-                    groups.some((group) => group.keys[0] === key) && index > 0 && "border-s",
+                    groupStarts.has(key) && "border-s",
                   )}
                 >
                   <MetricValue
@@ -223,8 +221,8 @@ export function MetricValue({
   personName: string;
 }) {
   const evidence = useMetricEvidenceOptional();
-  const value = result ? forEntity(result, entityId).value : null;
-  if (!result || value == null || !Number.isFinite(value)) {
+  const value = result ? finiteValue(result, entityId) : null;
+  if (!result || value == null) {
     return <span className="text-muted-foreground">—</span>;
   }
 
@@ -243,7 +241,7 @@ export function MetricValue({
           activeMetricKey: selection.metric_key,
         })
       }
-      className="cursor-pointer rounded-sm px-1 hover:bg-primary/10 hover:text-primary hover:underline"
+      className="cursor-pointer hover:text-primary hover:underline"
     >
       {text}
     </button>

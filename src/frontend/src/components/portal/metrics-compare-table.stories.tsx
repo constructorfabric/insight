@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, within } from "storybook/test";
 
+import { EvidenceDialogContext } from "@/components/metric-evidence-context";
 import { MetricsCompareTable } from "@/components/portal/metrics-compare-table";
 import { normalizeMetricResults } from "@/lib/metrics/collection";
 
@@ -17,6 +18,13 @@ const BY_KEY = normalizeMetricResults([
     format: "integer",
     computation: "sum",
     direction: "higher_is_better",
+    drilldown: { granularity: ["event"] },
+    selection: {
+      metric_key: "git.commits",
+      entity: { type: "person", ids: PEOPLE.map((person) => person.entityId) },
+      period: { from: "2026-10-01", to: "2026-10-31" },
+      filters: [],
+    },
     views: [
       {
         view: "period",
@@ -40,9 +48,13 @@ const meta: Meta<typeof MetricsCompareTable> = {
   },
   decorators: [
     (Story) => (
-      <div style={{ width: 900 }}>
-        <Story />
-      </div>
+      <EvidenceDialogContext.Provider
+        value={{ openEvidence: () => {}, openEvidenceTargets: () => {}, openEvidencePeople: () => {} }}
+      >
+        <div style={{ width: 900 }}>
+          <Story />
+        </div>
+      </EvidenceDialogContext.Provider>
     ),
   ],
 };
@@ -61,7 +73,9 @@ export const TestEachNameLinesUpWithItsValues: Story = {
       ["Bo Ng", "822 commits"],
     ] as const) {
       const nameEdge = canvas.getByRole("link", { name }).getBoundingClientRect().right;
-      const valueEdge = canvas.getByText(value).getBoundingClientRect().right;
+      const text = document.createRange();
+      text.selectNodeContents(canvas.getByRole("button", { name: new RegExp(`${value}$`) }));
+      const valueEdge = text.getBoundingClientRect().right;
 
       await expect(
         Math.abs(nameEdge - valueEdge),

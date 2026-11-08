@@ -6,11 +6,8 @@ import {
 } from "@/components/portal/metrics-table";
 import type { MembersGridMember } from "@/components/widgets/dashboard/members-grid";
 import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
-import {
-  forEntity,
-  type NormalizedMetricResult,
-} from "@/lib/metrics/collection";
-import { compareGaps } from "@/lib/portal/metrics-view";
+import type { NormalizedMetricResult } from "@/lib/metrics/collection";
+import { compareGaps, finiteValue, formatGap } from "@/lib/portal/metrics-view";
 import { cn } from "@/lib/utils";
 
 const STICKY_START = "sticky start-0 z-10 bg-card";
@@ -62,11 +59,8 @@ export function MetricsCompareTable({
             const result = byKey.get(key);
             if (!result) return [];
 
-            const { leader, gaps } = compareGaps(
-              people.map((person) => {
-                const { value } = forEntity(result, person.entityId);
-                return value != null && Number.isFinite(value) ? value : null;
-              }),
+            const cells = compareGaps(
+              people.map((person) => finiteValue(result, person.entityId)),
               result.direction,
             );
 
@@ -84,13 +78,13 @@ export function MetricsCompareTable({
                   </MetricHelpTooltip>
                 </th>
                 {people.map((person, index) => {
-                  const gap = gaps[index];
+                  const cell = cells[index]!;
                   return (
                     <td
                       key={person.entityId}
                       className={cn(
                         "border-b px-3 py-1.5 text-end tabular-nums",
-                        index === leader && "font-semibold",
+                        cell.best && "font-semibold",
                       )}
                     >
                       <MetricValue
@@ -98,10 +92,8 @@ export function MetricsCompareTable({
                         entityId={person.entityId}
                         personName={person.displayName}
                       />
-                      {index === leader ? <span className="sr-only"> (best)</span> : null}
-                      <span className={GAP_SLOT}>
-                        {gap == null ? "" : gap === 0 ? "≈" : `${gap > 0 ? "+" : "−"}${Math.abs(gap)}%`}
-                      </span>
+                      {cell.best ? <span className="sr-only"> (best)</span> : null}
+                      <span className={GAP_SLOT}>{formatGap(cell.gap)}</span>
                     </td>
                   );
                 })}

@@ -56,7 +56,7 @@ export function chunkKeys(keys: readonly string[], size: number): string[][] {
   return chunks;
 }
 
-function finiteValue(
+export function finiteValue(
   result: NormalizedMetricResult,
   entityId: string,
 ): number | null {
@@ -176,32 +176,32 @@ export function compareTeams(root: IdentityPerson | null): CompareTeam[] {
   ];
 }
 
-export interface CompareGaps {
-  leader: number | null;
-  gaps: Array<number | null>;
+export interface CompareCell {
+  best: boolean;
+  gap: number | null;
 }
 
 export function compareGaps(
   values: ReadonlyArray<number | null>,
   direction: MetricDirection,
-): CompareGaps {
+): CompareCell[] {
   const present = values.filter((value): value is number => value != null);
-  if (direction === "neutral" || present.length < 2) {
-    return { leader: null, gaps: values.map(() => null) };
-  }
-
   const best = direction === "lower_is_better" ? Math.min(...present) : Math.max(...present);
-  if (present.every((value) => value === best)) {
-    return { leader: null, gaps: values.map(() => null) };
-  }
+  const ranked =
+    direction !== "neutral" && present.length >= 2 && present.some((value) => value !== best);
 
-  const leader = values.indexOf(best);
-  return {
-    leader,
-    gaps: values.map((value, index) =>
-      index === leader || value == null || best === 0
-        ? null
-        : Math.round(((value - best) / Math.abs(best)) * 100),
-    ),
-  };
+  return values.map((value) => {
+    if (!ranked || value == null) return { best: false, gap: null };
+    if (value === best) return { best: true, gap: null };
+    return {
+      best: false,
+      gap: best === 0 ? null : Math.round(((value - best) / Math.abs(best)) * 100),
+    };
+  });
+}
+
+export function formatGap(gap: number | null): string {
+  if (gap == null) return "";
+  if (gap === 0) return "≈";
+  return `${gap > 0 ? "+" : "−"}${Math.abs(gap)}%`;
 }
