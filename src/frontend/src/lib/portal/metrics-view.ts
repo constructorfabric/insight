@@ -174,3 +174,26 @@ export function compareTeams(root: IdentityPerson | null): CompareTeam[] {
     ...root.subordinates.flatMap(compareTeams),
   ];
 }
+
+export interface CompareGaps {
+  leader: number | null;
+  gaps: Array<number | null>;
+}
+
+export function compareGaps(values: ReadonlyArray<number | null>): CompareGaps {
+  const present = values.filter((value): value is number => value != null);
+  const max = Math.max(...present);
+  const leader =
+    present.length >= 2 && present.some((value) => value !== max)
+      ? values.indexOf(max)
+      : null;
+
+  return {
+    leader,
+    gaps: values.map((value, index) =>
+      leader == null || index === leader || value == null || max === 0
+        ? null
+        : Math.round(((value - max) / Math.abs(max)) * 100),
+    ),
+  };
+}

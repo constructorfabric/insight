@@ -7,6 +7,7 @@ import { identityPerson, pid } from "@/test/identity";
 
 import {
   chunkKeys,
+  compareGaps,
   keysWithData,
   metricGroups,
   metricsRows,
@@ -207,5 +208,26 @@ describe("metricGroups", () => {
       { family: "tasks", name: "Development · Delivery", keys: ["tasks.closed"] },
       { family: "ai", name: "AI", keys: ["ai.cost"] },
     ]);
+  });
+});
+
+describe("compareGaps", () => {
+  it("marks the biggest value and gives everyone else's gap to it in percent", () => {
+    expect(compareGaps([50, 200, null, 100])).toEqual({
+      leader: 1,
+      gaps: [-75, null, null, -50],
+    });
+  });
+
+  it.each([
+    ["everyone equal", [5, 5]],
+    ["a single value", [7, null]],
+    ["no values", [null, null]],
+  ] as const)("names no leader with %s", (_case, values) => {
+    expect(compareGaps(values).leader).toBeNull();
+  });
+
+  it("gives no percent when the biggest value is zero", () => {
+    expect(compareGaps([0, -4]).gaps).toEqual([null, null]);
   });
 });
